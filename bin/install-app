@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# install-app — build "Arigami.app" (a one-click launcher) into ~/Applications.
+# The app runs `bin/host launch`: start the host + local login, then open the
+# cockpit in a Chrome app-mode window. Re-run after moving the repo.
+set -eu
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+APP="$HOME/Applications/Arigami.app"
+CONTENTS="$APP/Contents"
+
+rm -rf "$APP"
+mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
+
+# launcher executable → repo's bin/host launch (PATH extended so it finds bun/chrome)
+# The executable opens ONLY the Chrome app window — it deliberately touches
+# nothing under ~/Desktop (macOS TCC blocks a Finder-launched app from the repo
+# there). Chrome (/Applications), the profile (~/.arigami), and localhost need
+# no permission. Services are kept up by the launchd agents (`bin/host install`).
+cat >"$CONTENTS/MacOS/Arigami" <<'EOF'
+#!/bin/bash
+LOG="$HOME/.arigami/logs/launcher.log"; mkdir -p "$HOME/.arigami/logs"
+PROFILE="$HOME/.arigami/chrome-profile"; mkdir -p "$PROFILE"
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+{
+  # wait briefly for the host (launchd should have started it)
+  for _ in $(seq 1 20); do curl -fsS -m1 http://localhost:3099/__api/config >/dev/null 2>&1 && break; sleep 0.3; done
+  if ! curl -fsS -m1 http://localhost:3099/__api/config >/dev/null 2>&1; then
+    osascript -e 'display alert "Arigami" message "The host service isn'\''t running. Start it once with: bin/host start  (and bin/host login), or install autostart with: bin/host install."' >/dev/null 2>&1
+  fi
+  pgrep -f "user-data-dir=$PROFILE" >/dev/null 2>&1 || rm -f "$PROFILE/Singleton"* 2>/dev/null
+  open -na "Google Chrome" --args --user-data-dir="$PROFILE" \
+    --app="http://localhost:3099/__host/" --no-first-run --no-default-browser-check
+} >>"$LOG" 2>&1
+EOF
+chmod +x "$CONTENTS/MacOS/Arigami"
+
+cat >"$CONTENTS/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Arigami</string>
+  <key>CFBundleDisplayName</key><string>Arigami</string>
+  <key>CFBundleIdentifier</key><string>com.example.arigami.launcher</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleExecutable</key><string>Arigami</string>
+  <key>CFBundleIconFile</key><string>icon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+</dict>
+</plist>
+EOF
+
+# icon: render the yellow wave glyph (via the shared Chrome, if up) → icns.
+ICON_SRC="$ROOT/bin/.appicon.png"
+if [ ! -f "$ICON_SRC" ] && [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+  HTML="$(mktemp /tmp/mh-icon-XXXX.html)"
+  cat >"$HTML" <<'H'
+<!doctype html><body style="margin:0"><div style="width:1024px;height:1024px;background:#1f1f1f;border-radius:180px;display:flex;align-items:center;justify-content:center"><div style="display:flex;gap:34px;align-items:flex-end"><div style="width:58px;height:210px;background:#F9D312;border-radius:16px"></div><div style="width:58px;height:340px;background:#F9D312;border-radius:16px"></div><div style="width:58px;height:260px;background:#F9D312;border-radius:16px"></div><div style="width:58px;height:420px;background:#F9D312;border-radius:16px"></div></div></div></body>
+H
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu \
+    --screenshot="$ICON_SRC" --window-size=1024,1024 --default-background-color=00000000 \
+    "file://$HTML" >/dev/null 2>&1 || true
+  rm -f "$HTML"
+fi
+
+if [ -f "$ICON_SRC" ]; then
+  ICONSET="$(mktemp -d)/icon.iconset"; mkdir -p "$ICONSET"
+  for s in 16 32 64 128 256 512; do
+    sips -z "$s" "$s" "$ICON_SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null 2>&1
+    d=$((s*2)); sips -z "$d" "$d" "$ICON_SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null 2>&1
+  done
+  iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/icon.icns" 2>/dev/null || true
+fi
+
+# de-quarantine + refresh the Dock/Finder icon cache
+touch "$APP"
+echo "✓ installed: $APP"
+echo "  Open it from ~/Applications (or: open \"$APP\"). First run logs you into Acme in the app window."

@@ -1,0 +1,1754 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Markdown from 'react-markdown';
+import { api, PALETTE } from '../lib/api.js';
+import { useStore } from '../lib/store.js';
+import { useLinearList } from '../lib/linearMeta.js';
+import { Icon } from '../lib/icons.js';
+import {
+  faArrowUp,
+  faBolt,
+  faCaretDown,
+  faStar,
+  faTriangleExclamation,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons';
+import {
+  usePrefs,
+  setPrefs,
+  EMPTY_TICKET_FILTERS,
+  sanitizeFilters,
+  saveTicketPreset,
+  deleteTicketPreset,
+  setDefaultTicketPreset,
+} from '../lib/prefs.js';
+import { Wave, Dot, YellowButton, tint } from './ui.jsx';
+
+const STATE_OPTS = [
+  ['', 'Any state'],
+  ['triage', 'Triage'],
+  ['backlog', 'Backlog'],
+  ['unstarted', 'Todo'],
+  ['started', 'In Progress'],
+  ['completed', 'Done'],
+  ['canceled', 'Canceled'],
+];
+const PRIORITY_OPTS = [
+  ['', 'Any priority'],
+  ['1', 'Urgent'],
+  ['2', 'High'],
+  ['3', 'Medium'],
+  ['4', 'Low'],
+  ['0', 'No priority'],
+];
+
+const filtersEqual = (a, b) =>
+  JSON.stringify(sanitizeFilters(a)) === JSON.stringify(sanitizeFilters(b));
+
+// Built-in preset, always present + the default when the user hasn't picked one.
+// "My open work": my tickets, recent first, hiding ones already in a session.
+const BUILTIN_PRESET = {
+  id: 'builtin:my-open',
+  name: 'My open work',
+  builtin: true,
+  filters: sanitizeFilters({ assignee: 'me', orderBy: 'updatedAt', hideOpen: true }),
+};
+
+/* ---------- shared launcher helpers --------------------------------------- */
+
+export function extractTicketId(raw) {
+  const m = String(raw || '').match(/([A-Za-z]{2,8}-\d{1,6})/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function slug(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28)
+    .replace(/-+$/, '');
+}
+
+// The default first prompt for a ticket session, from config (or a sane fallback).
+export function defaultTicketPrompt(id, config) {
+  const tpl =
+    config?.launcherPrompt || config?.ticketPrompt || config?.prompts?.ticket || null;
+  return tpl
+    ? tpl.includes('{ticket}')
+      ? tpl.replaceAll('{ticket}', id)
+      : `${tpl} ${id}`
+    : `Use the create-from-ticket skill to set up and work ${id}.`;
+}
+
+export function buildTicketPayload(ticket, config, sessions, permissionMode, promptOverride) {
+  const id = ticket.id;
+  const prompt =
+    promptOverride && promptOverride.trim() ? promptOverride : defaultTicketPrompt(id, config);
+  return {
+    title: ticket.title && ticket.title !== id ? ticket.title : id,
+    cwd: config?.reposDir || config?.defaultCwd || undefined,
+    metadata: { ticket: id },
+    ...(permissionMode ? { permissionMode } : {}),
+    prompt,
+  };
+}
+
+export function nextPaletteColor(sessions, config) {
+  const palette = config?.palette?.length ? config.palette : PALETTE;
+  return palette[(sessions?.length || 0) % palette.length];
+}
+
+/* ---------- ticket normalization ------------------------------------------- */
+
+function normalizeTicket(t) {
+  if (!t || typeof t !== 'object') return null;
+  const id = t.identifier || t.id || t.key;
+  if (!id) return null;
+  return {
+    id: String(id),
+    title: t.title || t.name || '',
+    status: t.status || t.state?.name || t.state || '',
+    project: t.project?.name || t.project || t.team?.name || '',
+    priority:
+      (t.priority && typeof t.priority === 'object' ? (t.priority.value ?? t.priority.name) : t.priority) ??
+      t.priorityLabel ??
+      null,
+    assignee: t.assignee?.name || t.assignee || '',
+    labels: Array.isArray(t.labels)
+      ? t.labels.map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean)
+      : Array.isArray(t.labels?.nodes)
+        ? t.labels.nodes.map((l) => l?.name).filter(Boolean)
+        : [],
+    updatedAt: t.updatedAt || t.updated_at || '',
+    createdAt: t.createdAt || t.created_at || '',
+  };
+}
+
+// Linear-style priority glyph: 1 urgent / 2 high → amber bars; 3 normal → grey
+// bars; 4 low / 0 none → flat dash.
+function PriorityGlyph({ priority }) {
+  const p = typeof priority === 'string' ? priority.toLowerCase() : priority;
+  const high = p === 1 || p === 2 || p === 'urgent' || p === 'high';
+  const normal = p === 3 || p === 'medium' || p === 'normal';
+  if (high || normal) {
+    const c = high ? '#CE8324' : '#A7A9B0';
+    const dim = high ? '#CE8324' : '#d8d8d8';
+    return (
+      <span className="flex shrink-0 flex-col gap-[1.5px]" aria-hidden="true">
+        <span style={{ width: 4, height: 5, background: dim }} />
+        <span style={{ width: 4, height: 8, background: c }} />
+        <span style={{ width: 4, height: 11, background: high ? c : dim }} />
+      </span>
+    );
+  }
+  return (
+    <span
+      className="shrink-0 rounded-[2px]"
+      style={{ width: 11, height: 4, background: '#d5d8e0' }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/* ---------- launcher pieces ------------------------------------------------- */
+
+function PasteField({ onPick, autoFocus }) {
+  const [val, setVal] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus();
+  }, [autoFocus]);
+  const commit = () => {
+    const id = extractTicketId(val);
+    if (id) {
+      onPick({ id, title: '', status: '', project: '', priority: null, pasted: true });
+      setVal('');
+    }
+  };
+  return (
+    <div className="flex items-center gap-[9px] rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
+      <span
+        className="h-[13px] w-[13px] shrink-0 rotate-45 rounded-[2px]"
+        style={{ background: '#5b62d6' }}
+      />
+      <input
+        ref={ref}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+        placeholder="Paste a Linear URL or ID…"
+        className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-fgdim"
+      />
+      <span className="shrink-0 font-mono text-[11px] text-fgdim">ENG-16498</span>
+    </div>
+  );
+}
+
+const selCls =
+  'cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-[3px] text-[11px] text-fg outline-none hover:border-fgdim focus:border-ink disabled:opacity-40';
+
+// Multi-select tag filter with an Any/All (OR/AND) operator. Linear's API only
+// takes one label, so the server (listIssuesByFacets) fans out OR into N calls
+// and resolves AND by intersection — here we just collect the selection + op.
+function LabelPicker({ options, selected, op, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const toggle = (name) => {
+    const has = selected.includes(name);
+    onChange({
+      labels: has ? selected.filter((l) => l !== name) : [...selected, name],
+      labelOp: op,
+    });
+  };
+
+  const summary =
+    selected.length === 0
+      ? 'Any label'
+      : selected.length === 1
+        ? selected[0]
+        : `${selected[0]} +${selected.length - 1}`;
+  const filtered = q ? options.filter((l) => l.toLowerCase().includes(q.toLowerCase())) : options;
+
+  return (
+    <span className="relative" ref={ref}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        title="Filter by labels"
+        className={`${selCls} flex items-center gap-1 ${selected.length ? 'border-ink font-bold' : ''}`}
+      >
+        <span className="max-w-[120px] truncate">{summary}</span>
+        {selected.length > 1 && (
+          <span className="font-mono text-[9px] text-fgdim uppercase">{op}</span>
+        )}
+        <span className="text-[8px] text-fgdim"><Icon icon={faCaretDown} /></span>
+      </button>
+      {open && !disabled && (
+        <div className="absolute top-full left-0 z-30 mt-1 w-[220px] rounded-[9px] border-[1.5px] border-ink bg-panel p-2 shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">Match</span>
+            <span className="flex overflow-hidden rounded-[6px] border border-border">
+              {[
+                ['or', 'Any'],
+                ['and', 'All'],
+              ].map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => onChange({ labels: selected, labelOp: v })}
+                  className={`cursor-pointer px-2 py-[2px] text-[10.5px] ${
+                    op === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </span>
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange({ labels: [], labelOp: op })}
+                className="ml-auto cursor-pointer text-[10.5px] text-fgdim hover:text-danger"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search labels…"
+            className="mb-1.5 w-full rounded-[6px] border border-border bg-bg px-2 py-[3px] text-[11px] outline-none focus:border-ink"
+          />
+          <div className="thin-scroll max-h-[180px] overflow-y-auto">
+            {filtered.length === 0 && <div className="px-1 py-2 text-[11px] text-fgdim">No labels.</div>}
+            {filtered.map((l) => (
+              <label
+                key={l}
+                className="flex cursor-pointer items-center gap-2 rounded-[6px] px-1.5 py-[3px] text-[11.5px] hover:bg-chip"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(l)}
+                  onChange={() => toggle(l)}
+                  className="cursor-pointer"
+                />
+                <span className="min-w-0 truncate">{l}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// Faceted, combinable filters → one list_issues call. `disabled` while not connected.
+function FilterBar({
+  filters,
+  onChange,
+  labels,
+  statuses = [],
+  disabled,
+  showSearch = true,
+  showHideOpen = true,
+}) {
+  const set = (patch) => onChange({ ...filters, ...patch });
+  // Live workspace statuses when we have them; the state-type buckets as a
+  // fallback (offline / not yet loaded).
+  const stateOpts = statuses.length
+    ? [['', 'Any state'], ...statuses.map((s) => [s.name, s.name])]
+    : STATE_OPTS;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2">
+      <span className="flex overflow-hidden rounded-[7px] border border-border">
+        {[
+          ['me', 'Me'],
+          ['any', 'Anyone'],
+        ].map(([v, l]) => (
+          <button
+            key={v}
+            type="button"
+            disabled={disabled}
+            onClick={() => set({ assignee: v })}
+            className={`cursor-pointer px-2.5 py-[3px] text-[11px] disabled:opacity-40 ${
+              filters.assignee === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </span>
+      <select disabled={disabled} value={filters.state} onChange={(e) => set({ state: e.target.value })} className={selCls}>
+        {stateOpts.map(([v, l]) => (
+          <option key={v} value={v}>{l}</option>
+        ))}
+      </select>
+      <select disabled={disabled} value={filters.priority} onChange={(e) => set({ priority: e.target.value })} className={selCls}>
+        {PRIORITY_OPTS.map(([v, l]) => (
+          <option key={v} value={v}>{l}</option>
+        ))}
+      </select>
+      <LabelPicker
+        options={labels}
+        selected={filters.labels}
+        op={filters.labelOp}
+        onChange={({ labels: ls, labelOp }) => set({ labels: ls, labelOp })}
+        disabled={disabled}
+      />
+      {showSearch && (
+        <input
+          disabled={disabled}
+          value={filters.query}
+          onChange={(e) => set({ query: e.target.value })}
+          placeholder="Search…"
+          className="min-w-[120px] flex-1 rounded-[7px] border border-border bg-panel px-2.5 py-[3px] text-[11px] outline-none focus:border-ink disabled:opacity-40"
+        />
+      )}
+      <span className="flex overflow-hidden rounded-[7px] border border-border" title="Sort (recent first)">
+        {[
+          ['updatedAt', 'Updated'],
+          ['createdAt', 'Created'],
+        ].map(([v, l]) => (
+          <button
+            key={v}
+            type="button"
+            disabled={disabled}
+            onClick={() => set({ orderBy: v })}
+            className={`cursor-pointer px-2 py-[3px] text-[11px] disabled:opacity-40 ${
+              filters.orderBy === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </span>
+      {showHideOpen && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => set({ hideOpen: !filters.hideOpen })}
+          title="Hide tickets that already have an open session"
+          className={`flex cursor-pointer items-center gap-1 rounded-[7px] border px-2 py-[3px] text-[11px] disabled:opacity-40 ${
+            filters.hideOpen ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim hover:border-fgdim'
+          }`}
+        >
+          <span className="text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> Hide open
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Saved presets: apply (chip), set default (★), delete (×), save current (+).
+// `presets` includes the built-in first; the built-in can't be deleted.
+function PresetBar({ presets, defaultId, current, onApply }) {
+  const activeId = presets.find((p) => filtersEqual(p.filters, current))?.id || null;
+  const [naming, setNaming] = useState(false);
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    const name = draft.trim();
+    if (name) saveTicketPreset(name, current);
+    setDraft('');
+    setNaming(false);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2.5">
+      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">Presets</span>
+      {presets.map((p) => (
+        <span
+          key={p.id}
+          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10.5px] ${
+            activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setDefaultTicketPreset(p.id)}
+            title={defaultId === p.id ? 'Default — click to unset' : 'Set as default'}
+            className={`cursor-pointer ${defaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
+          >
+            <Icon icon={faStar} className={defaultId === p.id ? undefined : 'opacity-30'} />
+          </button>
+          <button type="button" onClick={() => onApply(p.filters)} className="cursor-pointer">
+            {p.name}
+          </button>
+          {!p.builtin && (
+            <button
+              type="button"
+              onClick={() => deleteTicketPreset(p.id)}
+              title="Delete preset"
+              className="cursor-pointer text-fgdim hover:text-danger"
+            >
+              <Icon icon={faXmark} />
+            </button>
+          )}
+        </span>
+      ))}
+      {naming ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
+          }}
+          placeholder="Preset name…"
+          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[10.5px] outline-none placeholder:text-fgdim"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setNaming(true)}
+          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[10.5px] font-bold text-fg hover:border-ink"
+        >
+          + Save current
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TicketRow({ ticket, selected, onPick, openSession }) {
+  // A ticket already in a host session: disabled (not selectable), tinted with
+  // the session colour, and badged "in session".
+  if (openSession) {
+    const color = openSession.color || '#c4c4c4';
+    return (
+      <div
+        title={`Open session: ${openSession.title || openSession.id}`}
+        className="mb-1 flex cursor-not-allowed items-center gap-[11px] rounded-[9px] border-2 border-transparent px-[11px] py-[9px] opacity-70"
+        style={{ background: tint(color, '14'), borderLeft: `3px solid ${color}` }}
+      >
+        <Dot color={color} size={10} />
+        <span className="shrink-0 font-mono text-[11.5px] font-bold text-fgdim">{ticket.id}</span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-fgdim">{ticket.title}</span>
+        <span
+          className="shrink-0 rounded-[5px] px-[7px] py-px text-[10px] font-bold"
+          style={{ background: tint(color, '2a'), color: '#2a2a2a' }}
+        >
+          in session
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      onClick={() => onPick(ticket)}
+      className={`mb-1 flex cursor-pointer items-center gap-[11px] rounded-[9px] px-[11px] py-[9px] ${
+        selected
+          ? 'border-2 border-ink bg-chip shadow-[2px_2px_0_rgba(42,42,42,0.16)]'
+          : 'border-2 border-transparent hover:bg-chip'
+      }`}
+    >
+      <PriorityGlyph priority={ticket.priority} />
+      <span className="shrink-0 font-mono text-[11.5px] font-bold">{ticket.id}</span>
+      <span className={`min-w-0 flex-1 truncate text-[12.5px] ${selected ? 'text-fg' : 'text-fgdim'}`}>
+        {ticket.title}
+      </span>
+      {ticket.status && (
+        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
+          {ticket.status}
+        </span>
+      )}
+      {ticket.project && (
+        <span className="shrink-0 font-mono text-[10px] text-fgdim">{ticket.project}</span>
+      )}
+    </div>
+  );
+}
+
+// Live "Connect Linear" banner — kicks off the server-side OAuth flow, opens the
+// consent page, and polls status until the host has tokens.
+function ConnectLinear({ onConnected }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const pollRef = useRef(null);
+
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  const connect = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      const r = await api.post('/linear/connect');
+      if (r.connected) {
+        onConnected();
+        setBusy(false);
+        return;
+      }
+      if (r.authUrl) {
+        window.open(r.authUrl, 'linear-auth', 'width=520,height=720');
+        pollRef.current = setInterval(async () => {
+          try {
+            const s = await api.get('/linear/status');
+            if (s.connected) {
+              clearInterval(pollRef.current);
+              setBusy(false);
+              onConnected();
+            }
+          } catch {}
+        }, 1500);
+      } else {
+        setErr('Could not start Linear authorization.');
+        setBusy(false);
+      }
+    } catch (e) {
+      setErr(String(e.message || e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mx-3 mb-3 rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-3.5 shadow-[2px_2px_0_rgba(42,42,42,0.12)]">
+      <div className="mb-1 text-[12.5px] font-bold">Connect Linear for live tickets</div>
+      <div className="mb-3 text-[11px] leading-relaxed text-fgdim">
+        Sync your assigned issues and enable filters. Opens a one-time Linear consent page;
+        the token is stored only by the host (separate from Claude Code).
+      </div>
+      <button
+        type="button"
+        onClick={connect}
+        disabled={busy}
+        className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-fg disabled:opacity-60"
+      >
+        {busy ? 'Waiting for authorization…' : 'Connect Linear →'}
+      </button>
+      {err && <div className="mt-2 text-[10.5px] text-danger">{err}</div>}
+    </div>
+  );
+}
+
+function TicketPicker({ selected, onPick, sessions }) {
+  const prefs = usePrefs();
+  // built-in preset first; user presets after. Effective default falls back to
+  // the built-in when the user hasn't starred one — so it's active on open.
+  const allPresets = useMemo(() => [BUILTIN_PRESET, ...prefs.ticketPresets], [prefs.ticketPresets]);
+  const effectiveDefaultId = prefs.ticketDefaultPresetId || BUILTIN_PRESET.id;
+  const [filters, setFilters] = useState(() => {
+    const d = allPresets.find((p) => p.id === effectiveDefaultId) || BUILTIN_PRESET;
+    return sanitizeFilters(d.filters);
+  });
+  const [tickets, setTickets] = useState(null); // null = loading
+  const [error, setError] = useState(null);
+  const [connected, setConnected] = useState(null); // null=unknown
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const labels = useLinearList('labels', !!connected);
+  const statuses = useLinearList('statuses', !!connected);
+
+  // tickets that already have a (non-archived) host session → id → session.
+  const openByTicket = useMemo(() => {
+    const m = {};
+    for (const s of sessions || []) {
+      if (s.archived) continue;
+      // metadata.ticket is authoritative; fall back to an id parsed from the title
+      const tid = (s.metadata?.ticket || extractTicketId(s.title) || '').toUpperCase();
+      if (tid) m[tid] = s;
+    }
+    return m;
+  }, [sessions]);
+
+  useEffect(() => {
+    api.get('/linear/status').then((s) => setConnected(!!s.connected)).catch(() => setConnected(false));
+  }, [reloadKey]);
+
+  // debounce so typing in search doesn't fire a request per keystroke
+  const qs = useMemo(() => new URLSearchParams(filters).toString(), [filters]);
+  useEffect(() => {
+    let dead = false;
+    const run = () => {
+      setTickets(null);
+      setError(null);
+      api
+        .get(`/linear/tickets?${qs}`)
+        .then((res) => {
+          if (dead) return;
+          if (res?.needsAuth) { setNeedsAuth(true); setTickets([]); return; }
+          setNeedsAuth(false);
+          const list = Array.isArray(res) ? res : res?.tickets || res?.issues || [];
+          const rows = list.map(normalizeTicket).filter(Boolean);
+          const key = filters.orderBy; // recent-first
+          rows.sort((a, b) => String(b[key] || '').localeCompare(String(a[key] || '')));
+          setTickets(rows);
+        })
+        .catch((e) => {
+          if (!dead) { setError(String(e.message || e)); setTickets([]); }
+        });
+    };
+    const t = setTimeout(run, filters.query ? 300 : 0);
+    return () => { dead = true; clearTimeout(t); };
+  }, [qs, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const showConnect = connected === false || needsAuth;
+  const visible = (tickets || []).filter(
+    (t) => !(filters.hideOpen && openByTicket[t.id.toUpperCase()])
+  );
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-hair md:border-r md:border-b-0">
+      <div className="flex items-center gap-2 px-[18px] pt-4 pb-2">
+        <span className="flex-1"><PasteField onPick={onPick} autoFocus /></span>
+        {connected && (
+          <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim" title="Live from Linear">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#3C9A4E]" /> live
+          </span>
+        )}
+      </div>
+      {showConnect && <ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} />}
+      <FilterBar filters={filters} onChange={setFilters} labels={labels} statuses={statuses} disabled={showConnect} />
+      <PresetBar
+        presets={allPresets}
+        defaultId={effectiveDefaultId}
+        current={filters}
+        onApply={(f) => setFilters(sanitizeFilters(f))}
+      />
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        {tickets === null && (
+          <div className="flex items-center gap-2 px-3 py-5 text-xs text-fgdim">
+            <span className="host-spinner h-3.5 w-3.5" /> Loading tickets…
+          </div>
+        )}
+        {tickets !== null && error && (
+          <div className="flex flex-col items-start gap-2 px-3 py-5 text-xs text-fgdim">
+            <span>Couldn&rsquo;t load tickets — paste a Linear URL or ID above instead.</span>
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="rounded border border-border px-2 py-1 text-[11px] hover:border-ink hover:text-fg"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {tickets !== null && !error && !needsAuth && visible.length === 0 && (
+          <div className="px-3 py-5 text-xs text-fgdim">No tickets match these filters.</div>
+        )}
+        {visible.map((t) => (
+          <TicketRow
+            key={t.id}
+            ticket={t}
+            selected={selected?.id === t.id}
+            onPick={onPick}
+            openSession={openByTicket[t.id.toUpperCase()]}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Normalize a ticket-details payload from either the Linear MCP (get_issue) or
+// the cache/API-key path (pages.getTicket) into one shape the modal renders.
+function normalizeDetails(d) {
+  if (!d || typeof d !== 'object') return null;
+  const name = (x) => (x && typeof x === 'object' ? x.name || x.displayName || '' : x || '');
+  const labels = (Array.isArray(d.labels) ? d.labels : d.labels?.nodes || []).map((l) =>
+    typeof l === 'string' ? { name: l } : { name: l?.name, color: l?.color }
+  ).filter((l) => l.name);
+  const comments = (Array.isArray(d.comments) ? d.comments : d.comments?.nodes || []).map((c) => ({
+    body: c.body || c.text || '',
+    author: name(c.author || c.user) || '',
+    createdAt: c.createdAt || c.created_at || '',
+  })).filter((c) => c.body);
+  const links = (Array.isArray(d.attachments) ? d.attachments : d.attachments?.nodes || []).map((a) => ({
+    title: a.title || a.subtitle || a.url,
+    url: a.url,
+  })).filter((a) => a.url);
+  return {
+    id: d.identifier || d.id || d.key || '',
+    title: d.title || d.name || '',
+    description: d.description || d.body || '',
+    status: name(d.state) || d.status || '',
+    statusColor: d.state?.color || d.statusColor || '#9aa3ad',
+    priority:
+      d.priorityLabel ||
+      (d.priority && typeof d.priority === 'object' ? d.priority.name : d.priority) ||
+      '',
+    assignee: name(d.assignee) || '',
+    creator: name(d.creator) || d.createdBy || '',
+    project: name(d.project) || '',
+    team: name(d.team) || '',
+    url: d.url || '',
+    createdAt: d.createdAt || '',
+    updatedAt: d.updatedAt || '',
+    labels,
+    comments,
+    links,
+  };
+}
+
+function MetaRow({ label, children }) {
+  if (!children) return null;
+  return (
+    <>
+      <span className="text-fgdim">{label}</span>
+      <span className="min-w-0 text-fg">{children}</span>
+    </>
+  );
+}
+
+// Full ticket details (description + comments + links) before you commit to it.
+function TicketDetailsModal({ id, onClose }) {
+  const [data, setData] = useState(undefined); // undefined=loading, null=error
+  useEffect(() => {
+    let dead = false;
+    setData(undefined);
+    api
+      .get(`/linear/ticket/${id}`)
+      .then((d) => !dead && setData(normalizeDetails(d)))
+      .catch(() => !dead && setData(null));
+    return () => { dead = true; };
+  }, [id]);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onMouseDown={onClose}>
+      <div
+        className="flex max-h-[85vh] w-[720px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-hair px-4 py-3">
+          <span className="font-mono text-[12.5px] font-bold text-fg">{id}</span>
+          {data?.status && (
+            <span
+              className="rounded-[5px] border px-[7px] py-px text-[10px]"
+              style={{ borderColor: data.statusColor, color: data.statusColor }}
+            >
+              {data.status}
+            </span>
+          )}
+          {data?.url && (
+            <a href={data.url} target="_blank" rel="noopener" className="text-[11px] text-fgdim underline hover:text-fg">
+              open in Linear ↗
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
+          >
+            <Icon icon={faXmark} />
+          </button>
+        </div>
+
+        <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {data === undefined && (
+            <div className="flex items-center gap-2 py-6 text-xs text-fgdim">
+              <span className="host-spinner h-3.5 w-3.5" /> Loading ticket…
+            </div>
+          )}
+          {data === null && (
+            <div className="py-6 text-xs text-danger">Couldn&rsquo;t load this ticket&rsquo;s details.</div>
+          )}
+          {data && (
+            <>
+              <h2 className="mb-3 text-[16px] leading-snug font-bold text-fg">{data.title}</h2>
+              <div className="mb-4 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
+                <MetaRow label="Assignee">{data.assignee}</MetaRow>
+                <MetaRow label="Priority">{data.priority}</MetaRow>
+                <MetaRow label="Project">{data.project}</MetaRow>
+                <MetaRow label="Team">{data.team}</MetaRow>
+                <MetaRow label="Creator">{data.creator}</MetaRow>
+                {data.labels.length > 0 && (
+                  <MetaRow label="Labels">
+                    <span className="flex flex-wrap gap-1">
+                      {data.labels.map((l) => (
+                        <span
+                          key={l.name}
+                          className="rounded-[5px] border px-1.5 py-px text-[10px]"
+                          style={{ borderColor: l.color || '#cbd0d8', color: l.color || '#6b7280' }}
+                        >
+                          {l.name}
+                        </span>
+                      ))}
+                    </span>
+                  </MetaRow>
+                )}
+              </div>
+
+              {data.description ? (
+                <div className="md-light border-t border-hair pt-4">
+                  <Markdown>{data.description}</Markdown>
+                </div>
+              ) : (
+                <div className="border-t border-hair pt-4 text-xs text-fgdim">No description.</div>
+              )}
+
+              {data.links.length > 0 && (
+                <div className="mt-4 border-t border-hair pt-3">
+                  <div className="mb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">Links</div>
+                  <div className="flex flex-col gap-1">
+                    {data.links.map((a) => (
+                      <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-[#2C6BD6] hover:underline">
+                        {a.title}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {data.comments.length > 0 && (
+                <div className="mt-4 border-t border-hair pt-3">
+                  <div className="mb-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+                    Comments · {data.comments.length}
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {data.comments.map((c, i) => (
+                      <div key={i} className="rounded-md border border-hair bg-bg px-3 py-2">
+                        <div className="mb-1 text-[10.5px] font-bold text-fg">{c.author || 'Someone'}</div>
+                        <div className="md-light text-[12px]"><Markdown>{c.body}</Markdown></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProvisionRow({ label, children }) {
+  return (
+    <div className="flex items-center gap-[9px] text-[11.5px]">
+      <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
+      <span className="text-fgdim">{label}</span>
+      <span className="ml-auto min-w-0 truncate text-right font-mono text-[10.5px] text-fg">
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt }) {
+  const color = nextPaletteColor(sessions, config);
+  return (
+    <div className="flex w-full shrink-0 flex-col bg-panel p-[16px_18px] md:w-[332px]">
+      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        Selected ticket
+      </div>
+      {!ticket ? (
+        <div className="flex-1 pt-2 text-xs leading-relaxed text-fgdim">
+          Pick a ticket — or paste a Linear URL / ID — to see the spin-up plan.
+        </div>
+      ) : (
+        <>
+          <div className="mb-[5px] flex items-center gap-2">
+            <span className="font-mono text-[12.5px] font-bold">{ticket.id}</span>
+            {ticket.status && (
+              <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
+                {ticket.status}
+              </span>
+            )}
+          </div>
+          <div className="mb-2 text-sm leading-snug text-fg">
+            {ticket.title || 'Pasted ticket — Host will pull the details.'}
+          </div>
+          <button
+            type="button"
+            onClick={() => onViewDetails(ticket.id)}
+            className="mb-3 cursor-pointer self-start rounded-[7px] border border-border bg-bg px-2.5 py-1 text-[11px] font-bold text-fg hover:border-ink"
+          >
+            View full details
+          </button>
+          <div className="mb-3.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
+            <span className="text-fgdim">Assignee</span>
+            <span className="text-fgdim">{ticket.assignee || 'you'}</span>
+            {ticket.priority != null && (
+              <>
+                <span className="text-fgdim">Priority</span>
+                <span className="text-fgdim">
+                  {{ 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' }[ticket.priority] ||
+                    String(ticket.priority)}
+                </span>
+              </>
+            )}
+            {ticket.project && (
+              <>
+                <span className="text-fgdim">Project</span>
+                <span className="text-fgdim">{ticket.project}</span>
+              </>
+            )}
+            {ticket.labels?.length > 0 && (
+              <>
+                <span className="text-fgdim">Labels</span>
+                <span className="text-fgdim">{ticket.labels.join(', ')}</span>
+              </>
+            )}
+          </div>
+          <div className="border-t border-dashed border-border pt-3">
+            <div className="mb-2.5 text-[13px] font-bold">Host will provision</div>
+            <div className="flex flex-col gap-2">
+              <ProvisionRow label="Worktree">app-worktrees/{ticket.id.toLowerCase()}</ProvisionRow>
+              <ProvisionRow label="Branch">
+                feat/{slug(ticket.title) || ticket.id.toLowerCase()}
+              </ProvisionRow>
+              <ProvisionRow label="Dev server">
+                :{config?.devServerPorts?.[0] ?? 'auto'}
+              </ProvisionRow>
+              <div className="flex items-center gap-[9px] text-[11.5px]">
+                <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
+                <span className="text-fgdim">Session colour</span>
+                <span className="ml-auto flex items-center gap-[5px]">
+                  <Dot color={color} />
+                  <span className="font-mono text-[10px] text-fgdim">auto</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+      {error && <div className="mt-3 text-[11px] text-danger">{error}</div>}
+      <div className="mt-auto flex flex-col gap-2 pt-3.5">
+        {ticket && (
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+              Starting prompt
+            </span>
+            <textarea
+              value={prompt}
+              onChange={(e) => onPrompt(e.target.value)}
+              rows={5}
+              spellCheck={false}
+              className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[10.5px] leading-snug outline-none focus:border-ink"
+            />
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+            Permissions
+          </span>
+          <select
+            value={mode}
+            onChange={(e) => onMode(e.target.value)}
+            className="min-w-0 flex-1 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[10.5px] outline-none focus:border-ink"
+          >
+            <option value="default">default — ask in chat</option>
+            <option value="acceptEdits">acceptEdits</option>
+            <option value="plan">plan</option>
+            <option value="bypassPermissions">bypassPermissions</option>
+          </select>
+        </div>
+        <YellowButton
+          className="w-full rounded-[9px] py-2.5"
+          disabled={!ticket || busy}
+          onClick={onCreate}
+        >
+          {busy ? 'Creating…' : 'Create session →'}
+        </YellowButton>
+        <button
+          type="button"
+          onClick={onLater}
+          disabled={!ticket || busy}
+          className="cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:opacity-40"
+        >
+          Do it later — add to Pending
+        </button>
+        <button
+          type="button"
+          onClick={onEmptyInstead}
+          className="cursor-pointer p-1 text-xs text-fgdim hover:text-fg"
+        >
+          Start an empty session instead
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EmptyForm({ config, sessions, onCreated }) {
+  const [name, setName] = useState('');
+  const [cwd, setCwd] = useState(config?.defaultCwd || '');
+  const [mode, setMode] = useState('bypassPermissions');
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!cwd && config?.defaultCwd) setCwd(config.defaultCwd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.defaultCwd]);
+
+  const scratchN = useMemo(() => {
+    const n = (sessions || []).filter((s) => /^scratch-\d+$/.test(s.title || '')).length;
+    return `scratch-${n + 1}`;
+  }, [sessions]);
+
+  const create = async () => {
+    if (busy) return; // guard: Enter can fire while a POST is already in flight
+    setBusy(true);
+    setError(null);
+    try {
+      const session = await api.post('/sessions', {
+        ...(name.trim() ? { title: name.trim() } : {}),
+        ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+        permissionMode: mode,
+        ...(prompt.trim() ? { prompt } : {}),
+      });
+      onCreated(session);
+    } catch (e) {
+      setError(String(e.message || e));
+      setBusy(false);
+    }
+  };
+
+  // Defer an empty session into the Pending queue instead of starting it now.
+  // A starting prompt is required — a queued blank session with no prompt would
+  // have nothing to do when it's later started (incl. by autoplay).
+  const later = async () => {
+    if (busy) return; // guard against double-submit
+    if (!prompt.trim()) {
+      setError('A starting prompt is required to defer an empty session.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/pending', {
+        kind: 'empty',
+        title: name.trim() || scratchN,
+        ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+        permissionMode: mode,
+        ...(prompt.trim() ? { prompt } : {}),
+      });
+      setName('');
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex min-w-0 flex-1 justify-center overflow-y-auto">
+      <div className="w-full max-w-[440px] px-6 py-7">
+        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          Session name
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && create()}
+          placeholder="Name this session…"
+          autoFocus
+          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+        />
+        <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-fgdim">
+          <span>Leave blank →</span>
+          <span className="rounded-[5px] border border-border bg-panel px-1.5 py-px font-mono text-[10.5px] text-fgdim">
+            {scratchN}
+          </span>
+          <span>— renamed by</span>
+          <span className="rounded-[5px] border border-[#ecd9a0] bg-chip px-1.5 py-px font-mono text-[10px] text-fg">
+            host.set_title()
+          </span>
+        </div>
+
+        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          Working directory
+        </div>
+        <input
+          value={cwd}
+          onChange={(e) => setCwd(e.target.value)}
+          placeholder={config?.defaultCwd || '~/Desktop/repos'}
+          className="mb-4 w-full rounded-[9px] border-[1.5px] border-border px-3 py-[9px] font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+        />
+
+        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          Permission mode
+        </div>
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value)}
+          className="mb-5 w-full cursor-pointer rounded-[9px] border-[1.5px] border-border bg-panel px-3 py-[9px] font-mono text-[11.5px] outline-none focus:border-ink"
+        >
+          <option value="default">default</option>
+          <option value="acceptEdits">acceptEdits</option>
+          <option value="plan">plan</option>
+          <option value="bypassPermissions">bypassPermissions</option>
+        </select>
+
+        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          Starting prompt{' '}
+          <span className="text-fgdim/70 normal-case">(optional to start · required to defer)</span>
+        </div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          rows={4}
+          placeholder="First message to send the session on start. Required if you “Do it later”."
+          className="mb-5 w-full resize-y rounded-[9px] border-[1.5px] border-border px-3 py-[9px] text-[11.5px] leading-snug outline-none placeholder:text-fgdim focus:border-ink"
+        />
+
+        {error && <div className="mb-3 text-[11px] text-danger">{error}</div>}
+        <YellowButton className="w-full rounded-[9px] py-2.5" disabled={busy} onClick={create}>
+          {busy ? 'Creating…' : 'Create empty session →'}
+        </YellowButton>
+        <button
+          type="button"
+          onClick={later}
+          disabled={busy || !prompt.trim()}
+          title={prompt.trim() ? 'Add to Pending' : 'A starting prompt is required to defer'}
+          className="mt-2 w-full cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:cursor-default disabled:opacity-40"
+        >
+          Do it later — add to Pending
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- triggers tab ----------------------------------------------------- */
+
+function filterSummary(f) {
+  const s = sanitizeFilters(f);
+  const parts = [s.assignee === 'any' ? 'Anyone' : 'Me'];
+  if (s.state) parts.push(STATE_OPTS.find(([v]) => v === s.state)?.[1] || s.state);
+  if (s.priority) parts.push(PRIORITY_OPTS.find(([v]) => v === s.priority)?.[1] || s.priority);
+  if (s.labels.length) parts.push(s.labels.join(s.labelOp === 'and' ? ' & ' : ' / '));
+  if (s.query) parts.push(`“${s.query}”`);
+  return parts.join(' · ');
+}
+
+const TLOG_COLOR = { fire: '#7ee787', warn: '#e3b341', error: '#ff7b72', info: '#9aa0a6' };
+const fmtClock = (ts) =>
+  new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fmtAgo = (ts) => {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+};
+
+// Service modal for a trigger — polls GET /__api/triggers/:id every 1.5s for the
+// live detail + activity log (mirrors the listener details modal).
+function TriggerLogModal({ triggerId, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const logRef = useRef(null);
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      try {
+        const d = await api.get(`/triggers/${triggerId}`);
+        if (!stop) setDetail(d);
+      } catch {
+        /* trigger may have been deleted */
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => {
+      stop = true;
+      clearInterval(iv);
+    };
+  }, [triggerId]);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [detail?.log?.length]);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const log = detail?.log || [];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onMouseDown={onClose}>
+      <div
+        className="flex h-[72vh] w-[760px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
+          <span className="text-[13px] leading-none"><Icon icon={faBolt} /></span>
+          <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || 'Trigger'}</span>
+          <span className="font-mono text-[10.5px] text-fgdim">
+            {detail?.enabled ? 'polling' : 'disabled'}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
+          >
+            <Icon icon={faXmark} />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-hair px-4 py-2.5 font-mono text-[10px] text-fgdim">
+          <span>filter: <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
+          <span>poll: <span className="text-fg">every 60s</span></span>
+          <span>last poll: <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
+          <span>spawned: <span className="text-fg">{detail?.createdSessions?.length || 0}</span></span>
+          <span>seen: <span className="text-fg">{detail?.seen?.length || 0} ticket(s)</span></span>
+          <span>primed: <span className="text-fg">{detail?.primed ? 'yes' : 'no'}</span></span>
+          {detail?.lastError && (
+            <span className="col-span-2 text-danger">last error: {detail.lastError}</span>
+          )}
+        </div>
+        <div className="border-b border-hair px-4 py-1.5 font-mono text-[9.5px] tracking-wide text-fgdim uppercase">
+          activity
+        </div>
+        <pre
+          ref={logRef}
+          dir="ltr"
+          className="thin-scroll min-h-0 flex-1 overflow-auto bg-term px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+        >
+          {detail == null ? (
+            <span className="text-[#888]">loading…</span>
+          ) : log.length === 0 ? (
+            <span className="text-[#888]">No activity yet — waiting for the next poll (every 60s).</span>
+          ) : (
+            log.map((e, i) => (
+              <div key={i}>
+                <span className="text-[#6a6a6a]">{fmtClock(e.ts)} </span>
+                <span style={{ color: TLOG_COLOR[e.level] || '#cfcfcf' }}>{e.text}</span>
+              </div>
+            ))
+          )}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+// Shown when enabling autonomous mode on a trigger — spells out the blast radius.
+function AutonomyWarningModal({ onConfirm, onCancel }) {
+  const [dontShow, setDontShow] = useState(false);
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6"
+      onMouseDown={onCancel}
+    >
+      <div
+        className="w-[460px] max-w-full rounded-[12px] border-[1.5px] border-ink bg-panel p-5 shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-[18px]"><Icon icon={faTriangleExclamation} /></span>
+          <span className="text-[14px] font-bold">Run sessions without supervision?</span>
+        </div>
+        <div className="mb-4 text-[12px] leading-relaxed text-fgdim">
+          Sessions this trigger starts will run in <b>autonomous mode</b>:
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            <li>
+              Every permission prompt is <b>auto-approved</b> — the agent can run any command,
+              edit or delete files, and push code with no confirmation.
+            </li>
+            <li>
+              It <b>won't stop for review</b> — it proceeds all the way to completion (including
+              shipping) on its own.
+            </li>
+            <li>It won't ask you questions; it decides for itself.</li>
+          </ul>
+          <div className="mt-2">
+            Only enable this for triggers you trust, on an isolated / unattended machine (e.g. EC2).
+          </div>
+        </div>
+        <label className="mb-4 flex cursor-pointer items-center gap-2 text-[11.5px] text-fgdim">
+          <input
+            type="checkbox"
+            checked={dontShow}
+            onChange={(e) => setDontShow(e.target.checked)}
+            className="cursor-pointer"
+          />
+          Don&rsquo;t show this again
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="cursor-pointer rounded-[8px] border border-border px-3 py-1.5 text-[12px] text-fg hover:border-ink"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(dontShow)}
+            className="cursor-pointer rounded-[8px] border-[1.5px] border-danger bg-danger px-3 py-1.5 text-[12px] font-bold text-white"
+          >
+            Enable autonomous
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The "From trigger" tab: a new-trigger form (reusing FilterBar) + the list of
+// standing triggers. Creating a trigger arms-and-primes it server-side; it then
+// drops matching tickets into the Pending queue. No session is born here.
+function TriggerTab() {
+  const { triggers } = useStore();
+  const prefs = usePrefs();
+  const [logId, setLogId] = useState(null);
+  const [autonomous, setAutonomous] = useState(false);
+  const [injectPrompt, setInjectPrompt] = useState('');
+  const [warnOpen, setWarnOpen] = useState(false);
+
+  const onToggleAutonomous = (checked) => {
+    if (!checked) return setAutonomous(false);
+    if (prefs.autonomyWarningDismissed) return setAutonomous(true);
+    setWarnOpen(true);
+  };
+  const [name, setName] = useState('');
+  const [filters, setFilters] = useState(() => sanitizeFilters(EMPTY_TICKET_FILTERS));
+  const [connected, setConnected] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const labels = useLinearList('labels', !!connected);
+  const statuses = useLinearList('statuses', !!connected);
+
+  useEffect(() => {
+    api.get('/linear/status').then((s) => setConnected(!!s.connected)).catch(() => setConnected(false));
+  }, [reloadKey]);
+
+  const showConnect = connected === false;
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/triggers', {
+        name: name.trim() || 'Untitled trigger',
+        filters,
+        autonomous,
+        injectPrompt,
+      });
+      setName('');
+      setFilters(sanitizeFilters(EMPTY_TICKET_FILTERS));
+      setAutonomous(false);
+      setInjectPrompt('');
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="border-b border-hair px-[18px] pt-4 pb-3">
+        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+          New trigger
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Trigger name (e.g. My bugs)…"
+          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+        />
+        {showConnect && <ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} />}
+        <FilterBar
+          filters={filters}
+          onChange={setFilters}
+          labels={labels}
+          statuses={statuses}
+          disabled={showConnect}
+          showSearch={false}
+          showHideOpen={false}
+        />
+
+        {/* extra instructions injected into the task prompt on start */}
+        <textarea
+          value={injectPrompt}
+          onChange={(e) => setInjectPrompt(e.target.value)}
+          placeholder="Optional: extra instructions injected into each started task (e.g. “Prioritise a fix over a refactor; add a test.”)"
+          rows={2}
+          className="mt-2 w-full resize-y rounded-[9px] border border-border bg-panel px-3 py-2 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+        />
+
+        {/* autonomous (unattended) mode — gated behind the warning modal */}
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11.5px]">
+          <input
+            type="checkbox"
+            checked={autonomous}
+            onChange={(e) => onToggleAutonomous(e.target.checked)}
+            className="mt-0.5 cursor-pointer"
+          />
+          <span className={autonomous ? 'text-danger' : 'text-fgdim'}>
+            {autonomous && (
+              <span
+                className="mr-1 cursor-help"
+                title={
+                  'Sessions run unattended:\n' +
+                  '• permission prompts auto-approved (any command, file edits/deletes, pushes)\n' +
+                  '• no review gate — proceeds to completion on its own\n' +
+                  '• never asks you questions'
+                }
+              >
+                <Icon icon={faTriangleExclamation} />
+              </span>
+            )}
+            Autonomous — skip all questions, run unattended (bypass permissions, no review gate).
+          </span>
+        </label>
+
+        {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
+        <div className="mt-2 flex items-center gap-3">
+          <span className="text-[11px] leading-snug text-fgdim">
+            Fires on tickets that enter this filter <em>after</em> you create it — into the
+            Pending&nbsp;tasks queue.
+          </span>
+          <YellowButton
+            className="ml-auto shrink-0 rounded-[9px] px-3.5 py-1.5 text-[11.5px]"
+            disabled={busy || showConnect}
+            onClick={create}
+          >
+            {busy ? 'Creating…' : 'Create trigger →'}
+          </YellowButton>
+        </div>
+      </div>
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
+        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+          Triggers · {triggers.length}
+        </div>
+        {triggers.length === 0 && (
+          <div className="py-4 text-xs text-fgdim">
+            No triggers yet. Create one above to watch a Linear filter.
+          </div>
+        )}
+        {triggers.map((t) => (
+          <div
+            key={t.id}
+            className="mb-2 flex items-center gap-2 rounded-[9px] border border-border px-3 py-2"
+          >
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ background: t.enabled ? '#3C9A4E' : '#d2d2d2' }}
+              title={t.enabled ? 'Enabled — polling' : 'Disabled'}
+            />
+            {t.autonomous && (
+              <span
+                className="shrink-0 cursor-help text-[13px]"
+                title={
+                  'Autonomous trigger — sessions run unattended:\n' +
+                  '• permission prompts auto-approved (any command, file edits/deletes, pushes)\n' +
+                  '• no review gate — proceeds to completion on its own\n' +
+                  '• never asks you questions'
+                }
+              >
+                <Icon icon={faTriangleExclamation} />
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-bold">{t.name}</span>
+              <span className="block truncate text-[10.5px] text-fgdim">
+                {filterSummary(t.filters)}
+                {t.lastError ? <> · <Icon icon={faTriangleExclamation} /> {t.lastError}</> : ''}
+              </span>
+            </span>
+            <span className="shrink-0 font-mono text-[10px] text-fgdim" title="Sessions spawned">
+              {t.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[8px]" />
+            </span>
+            <button
+              type="button"
+              onClick={() => setLogId(t.id)}
+              title="Open activity log"
+              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+            >
+              <Icon icon={faBolt} /> logs
+            </button>
+            <button
+              type="button"
+              onClick={() => api.patch(`/triggers/${t.id}`, { enabled: !t.enabled }).catch(() => {})}
+              title={t.enabled ? 'Disable (stop polling)' : 'Enable'}
+              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+            >
+              {t.enabled ? 'On' : 'Off'}
+            </button>
+            <button
+              type="button"
+              onClick={() => api.del(`/triggers/${t.id}`).catch(() => {})}
+              title="Delete trigger"
+              className="shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
+            >
+              <Icon icon={faXmark} />
+            </button>
+          </div>
+        ))}
+      </div>
+      {logId && <TriggerLogModal triggerId={logId} onClose={() => setLogId(null)} />}
+      {warnOpen && (
+        <AutonomyWarningModal
+          onCancel={() => setWarnOpen(false)}
+          onConfirm={(dontShow) => {
+            if (dontShow) setPrefs({ autonomyWarningDismissed: true });
+            setAutonomous(true);
+            setWarnOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- the launcher ----------------------------------------------------- */
+
+export default function Launcher({ config, sessions, onClose, onCreated, onNeedsSetup, initialMode }) {
+  const [mode, setMode] = useState(initialMode || 'ticket');
+  const [selected, setSelected] = useState(null);
+  const [permMode, setPermMode] = useState('bypassPermissions');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [detailsId, setDetailsId] = useState(null);
+  const [gated, setGated] = useState(false); // no ready repo → offer Setup / chat
+  // Editable starting prompt — defaults to the create-from-ticket prompt for the
+  // selected ticket, re-derived whenever the selection changes.
+  const [ticketPrompt, setTicketPrompt] = useState('');
+  useEffect(() => {
+    setTicketPrompt(selected ? defaultTicketPrompt(selected.id, config) : '');
+  }, [selected?.id, config]);
+
+  const createFromTicket = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    // Launcher gating: the ticket flow needs a provisioned workspace. If no repo
+    // is ready, route to Setup instead of creating a session that dead-ends on a
+    // missing workspace ("paste ticket details / set ACME_WORKSPACE_ROOT").
+    try {
+      const st = await api.get('/onboarding/status');
+      const steps = st?.steps || [];
+      const globalsOk = steps
+        .filter((s) => s.scope === 'global')
+        .every((s) => s.status === 'ok');
+      const repoNames = [
+        ...new Set(steps.filter((s) => s.scope.startsWith('repo:')).map((s) => s.scope.slice(5))),
+      ];
+      const anyReady =
+        globalsOk &&
+        repoNames.some((n) =>
+          steps.filter((s) => s.scope === `repo:${n}`).every((s) => s.status === 'ok'),
+        );
+      if (!anyReady) {
+        setBusy(false);
+        setGated(true); // offer Setup UI or chat onboarding
+        return;
+      }
+    } catch {
+      /* status unavailable — don't block; fall through to create */
+    }
+    try {
+      const session = await api.post(
+        '/sessions',
+        buildTicketPayload(selected, config, sessions, permMode, ticketPrompt),
+      );
+      onCreated(session);
+    } catch (e) {
+      setError(String(e.message || e));
+      setBusy(false);
+    }
+  };
+
+  // Chat onboarding — spawn a session that runs the onboarding skill, which
+  // drives the same /__api/onboarding/* engine conversationally.
+  const startChatOnboarding = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await api.post('/sessions', {
+        title: 'Onboarding',
+        prompt:
+          'Run the arigami:onboarding skill to provision a workspace so I can work on tickets. Follow that skill exactly — ask me which repo to add if it is not obvious.',
+        permissionMode: 'bypassPermissions',
+      });
+      setGated(false);
+      onCreated(s);
+    } catch (e) {
+      setError(String(e.message || e));
+      setBusy(false);
+    }
+  };
+
+  // "Do it later" — defer the selected ticket into the Pending queue instead of
+  // starting it now. It shows up in the rail's Pending tasks section.
+  const deferSelected = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/pending', {
+        ticket: selected.id,
+        title: selected.title || selected.id,
+        ...(ticketPrompt.trim() ? { prompt: ticketPrompt } : {}),
+      });
+      setSelected(null);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col bg-bg text-fg">
+      {/* Launcher gate: fired when no repo is ready — offer Setup UI or chat onboarding */}
+      {gated && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-[420px] rounded-[12px] border-[1.5px] border-ink bg-panel p-5 shadow-xl">
+            <div className="text-[14px] font-bold text-fg">No workspace is ready</div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-fgdim">
+              This session needs a provisioned repo (cloned + installed) before it can
+              run. Set one up first — visually, or let an agent walk you through it in chat.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={startChatOnboarding}
+                className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12px] font-bold text-fg disabled:opacity-50"
+              >
+                {busy ? 'Starting…' : 'Set up in chat →'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setGated(false); onNeedsSetup?.(); }}
+                className="cursor-pointer rounded-[8px] border border-border bg-bg px-3 py-2 text-[12px] font-semibold text-fg hover:border-ink"
+              >
+                Open Setup panel
+              </button>
+              <button
+                type="button"
+                onClick={() => setGated(false)}
+                className="cursor-pointer px-3 py-1 text-[11px] text-fgdim hover:text-fg"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* header */}
+      <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
+        <Wave />
+        <span className="text-sm font-bold">Start a session</span>
+        <span className="ml-3.5 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
+          <button
+            type="button"
+            onClick={() => setMode('ticket')}
+            className={`cursor-pointer px-[11px] py-1 text-[11px] ${
+              mode === 'ticket' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
+            }`}
+          >
+            From a ticket
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('empty')}
+            className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
+              mode === 'empty' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
+            }`}
+          >
+            Empty session
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('trigger')}
+            className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
+              mode === 'trigger' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
+            }`}
+          >
+            From trigger
+          </button>
+        </span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close launcher (esc)"
+            className="ml-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
+          >
+            <Icon icon={faXmark} />
+          </button>
+        )}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {mode === 'ticket' ? (
+          <>
+            <TicketPicker selected={selected} onPick={setSelected} sessions={sessions} />
+            <PlanPanel
+              ticket={selected}
+              config={config}
+              sessions={sessions}
+              busy={busy}
+              error={error}
+              onCreate={createFromTicket}
+              onEmptyInstead={() => setMode('empty')}
+              onLater={deferSelected}
+              mode={permMode}
+              onMode={setPermMode}
+              onViewDetails={setDetailsId}
+              prompt={ticketPrompt}
+              onPrompt={setTicketPrompt}
+            />
+          </>
+        ) : mode === 'trigger' ? (
+          <TriggerTab />
+        ) : (
+          <EmptyForm config={config} sessions={sessions} onCreated={onCreated} />
+        )}
+      </div>
+      {detailsId && <TicketDetailsModal id={detailsId} onClose={() => setDetailsId(null)} />}
+    </div>
+  );
+}

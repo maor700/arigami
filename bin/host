@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor
+# Pidfile + logs under ~/.arigami/; health check = GET /__api/config.
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DIR="$HOME/.arigami"
+LOGDIR="$DIR/logs"
+PIDFILE="$DIR/host.pid"
+LOG="$LOGDIR/host.log"
+ERRLOG="$LOGDIR/host.err.log"
+CONFIG="$DIR/config.json"
+
+# port from config.json when present, else 3099
+PORT=3099
+if [ -f "$CONFIG" ]; then
+  p="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG" | head -1)"
+  [ -n "$p" ] && PORT="$p"
+fi
+URL="http://localhost:$PORT"
+
+# Local login service (prod build of the login repo) — gives the app a
+# same-origin /login that authenticates without the deployed redirect_uri wall.
+LOGIN_DIR="${ACME_LOGIN_DIR:-$HOME/Desktop/repos/login}"
+LOGIN_PORT=3001
+LOGIN_LOG="$LOGDIR/login.log"
+LOGIN_PIDFILE="$DIR/login.pid"
+login_health() { curl -fsS -m 2 "http://localhost:$LOGIN_PORT/login/" >/dev/null 2>&1; }
+
+# Dedicated Chrome profile for the cockpit window: a clean app-mode window,
+# isolated from your everyday Chrome, with its own persistent Acme login.
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_PROFILE="$DIR/chrome-profile"
+
+g() { printf '\033[32m%s\033[0m' "$1"; }
+r() { printf '\033[31m%s\033[0m' "$1"; }
+y() { printf '\033[33m%s\033[0m' "$1"; }
+d() { printf '\033[2m%s\033[0m' "$1"; }
+# newline-terminated variants for standalone lines (keeps shellcheck SC2005 happy)
+gl() { printf '\033[32m%s\033[0m\n' "$1"; }
+rl() { printf '\033[31m%s\033[0m\n' "$1"; }
+yl() { printf '\033[33m%s\033[0m\n' "$1"; }
+dl() { printf '\033[2m%s\033[0m\n' "$1"; }
+
+read_pid() { cat "$PIDFILE" 2>/dev/null || true; }
+alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+health() { curl -fsS -m 2 "$URL/__api/config" >/dev/null 2>&1; }
+
+PLIST_LABEL="com.example.arigami"
+PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
+LOGIN_PLIST_LABEL="com.example.login"
+LOGIN_PLIST="$HOME/Library/LaunchAgents/$LOGIN_PLIST_LABEL.plist"
+launchd_loaded() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
+
+start() {
+  pid="$(read_pid)"
+  if alive "$pid" && health; then
+    echo "$(y "already running") (pid $pid) on :$PORT"
+    return 0
+  fi
+  # launchd-managed install: load the agent instead of forking our own process,
+  # otherwise KeepAlive and the pidfile copy would fight over the port.
+  if [ -f "$PLIST" ]; then
+    launchctl load "$PLIST" 2>/dev/null || true
+    i=0
+    while [ "$i" -lt 40 ]; do
+      if health; then echo "$(g "✓ host started") (launchd) → $URL"; return 0; fi
+      sleep 0.15; i=$((i + 1))
+    done
+    echo "$(r "launchd agent loaded but health check failed") — see: host logs"
+    return 1
+  fi
+  mkdir -p "$LOGDIR" "$DIR"
+  nohup bun "$ROOT/server/index.ts" >>"$LOG" 2>>"$ERRLOG" </dev/null &
+  pid=$!
+  echo "$pid" >"$PIDFILE"
+  i=0
+  while [ "$i" -lt 40 ]; do
+    if health; then
+      echo "$(g "✓ host started") (pid $pid) → $URL"
+      return 0
+    fi
+    if ! alive "$pid"; then
+      echo "$(r "✗ process died on startup") — see: host logs"
+      return 1
+    fi
+    sleep 0.15
+    i=$((i + 1))
+  done
+  echo "$(r "started (pid $pid) but health check failed") — see: host logs"
+  return 1
+}
+
+stop_pid() {
+  alive "$1" || return 1
+  kill "$1" 2>/dev/null
+  i=0
+  while [ "$i" -lt 30 ]; do
+    alive "$1" || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -9 "$1" 2>/dev/null
+  return 0
+}
+
+stop() {
+  # Unload the launchd agent first or KeepAlive instantly respawns what we kill.
+  if launchd_loaded; then
+    launchctl unload "$PLIST" 2>/dev/null || true
+    echo "$(g "✓ launchd agent unloaded") $(d "(host install re-enables autostart)")"
+  fi
+  pid="$(read_pid)"
+  if stop_pid "$pid"; then
+    rm -f "$PIDFILE"
+    echo "$(g "✓ stopped") (pid $pid)"
+    return 0
+  fi
+  # fallback: whatever listens on the port
+  pids="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    for p in $pids; do stop_pid "$p"; done
+    rm -f "$PIDFILE"
+    echo "$(g "✓ stopped") (port :$PORT, pid $pids)"
+    return 0
+  fi
+  yl "not running"
+}
+
+status() {
+  pid="$(read_pid)"
+  # launchd-managed instances have no pidfile — resolve by port.
+  [ -z "$pid" ] && pid="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+  if health; then
+    sessions="$(curl -fsS -m 2 "$URL/__api/sessions" 2>/dev/null | grep -o '"id":"sess_' | wc -l | tr -d ' ')"
+    mgr=""; launchd_loaded && mgr=" (launchd)"
+    echo "$(g "● running")  pid ${pid:-?}$mgr  :$PORT  sessions: ${sessions:-?}"
+  elif alive "$pid"; then
+    echo "$(y "◍ process alive but not responding") (pid $pid) — check: host logs"
+  else
+    rl "○ not running"
+  fi
+}
+
+logs() {
+  if [ ! -f "$LOG" ]; then
+    dl "(no log yet)"
+    return 0
+  fi
+  if [ "${1:-}" = "-f" ] || [ "${1:-}" = "--follow" ]; then
+    exec tail -n 100 -F "$LOG" "$ERRLOG"
+  fi
+  tail -n 200 "$LOG"
+}
+
+doctor() {
+  printf '\033[1mhost doctor\033[0m\n\n'
+  if [ -f "$CONFIG" ]; then echo "config: $CONFIG $(g "✓")"; else echo "config: $CONFIG $(y "(defaults)")"; fi
+  echo "port: $PORT"
+  echo
+  dl "tooling:"
+  for bin in bun claude curl; do
+    if command -v "$bin" >/dev/null 2>&1; then
+      v="$("$bin" --version 2>/dev/null | head -1)"
+      echo "  $bin: $(g "${v:-found}")"
+    else
+      echo "  $bin: $(r "not found")"
+    fi
+  done
+  echo
+  dl "files:"
+  [ -d "$ROOT/node_modules" ] && echo "  node_modules: $(g "✓")" || echo "  node_modules: $(r "✗ — run: bun install")"
+  [ -f "$ROOT/web/dist/index.html" ] && echo "  web/dist: $(g "✓")" || echo "  web/dist: $(y "missing — run: bun run build:web")"
+  [ -f "$ROOT/server/lib/config.ts" ] && echo "  server/lib/config.ts: $(g "✓")" || echo "  server/lib/config.ts: $(y "missing (stub fallback in use)")"
+  echo
+  dl "runtime:"
+  printf '  '
+  status
+}
+
+install() {
+  bun_bin="$(command -v bun)"
+  if [ -z "$bun_bin" ]; then rl "bun not found on PATH"; return 1; fi
+  mkdir -p "$HOME/Library/LaunchAgents" "$LOGDIR"
+  cat >"$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$PLIST_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$bun_bin</string>
+    <string>$ROOT/server/index.ts</string>
+  </array>
+  <key>WorkingDirectory</key><string>$ROOT</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${PATH:-/usr/local/bin:/usr/bin:/bin}</string>
+    <key>HOME</key><string>$HOME</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$ERRLOG</string>
+</dict>
+</plist>
+EOF
+  # Hand over from a pidfile-managed process to launchd cleanly.
+  pid="$(read_pid)"
+  if alive "$pid"; then stop_pid "$pid"; rm -f "$PIDFILE"; fi
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST"
+  gl "✓ installed launchd agent $PLIST_LABEL (host :$PORT)"
+
+  # login agent — autostart the local login prod build (:3001) too
+  if [ -d "$LOGIN_DIR" ]; then
+    [ -d "$LOGIN_DIR/.next" ] || ( cd "$LOGIN_DIR" && bun run build >>"$LOGIN_LOG" 2>&1 ) || yl "  (login not built; agent will build-less-fail until 'bin/host login')"
+    cat >"$LOGIN_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LOGIN_PLIST_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$bun_bin</string><string>run</string><string>start</string></array>
+  <key>WorkingDirectory</key><string>$LOGIN_DIR</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>${PATH:-/usr/local/bin:/usr/bin:/bin}</string><key>HOME</key><string>$HOME</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOGIN_LOG</string>
+  <key>StandardErrorPath</key><string>$LOGIN_LOG</string>
+</dict>
+</plist>
+EOF
+    pid="$(cat "$LOGIN_PIDFILE" 2>/dev/null || true)"; alive "$pid" && { stop_pid "$pid"; rm -f "$LOGIN_PIDFILE"; }
+    launchctl unload "$LOGIN_PLIST" 2>/dev/null || true
+    launchctl load "$LOGIN_PLIST"
+    gl "✓ installed launchd agent $LOGIN_PLIST_LABEL (login :$LOGIN_PORT)"
+  fi
+  dl "  both auto-start on login + respawn on crash. The Arigami.app just opens the window."
+}
+
+uninstall() {
+  for p in "$PLIST" "$LOGIN_PLIST"; do
+    launchctl unload "$p" 2>/dev/null || true
+    [ -f "$p" ] && rm -f "$p"
+  done
+  gl "✓ removed launchd agents (host + login)"
+}
+
+start_login() {
+  if login_health; then echo "$(d "login already up") :$LOGIN_PORT"; return 0; fi
+  if [ ! -d "$LOGIN_DIR" ]; then rl "login repo not found at $LOGIN_DIR (set ACME_LOGIN_DIR)"; return 1; fi
+  if [ ! -d "$LOGIN_DIR/.next" ]; then
+    dl "building login (first run)…"
+    ( cd "$LOGIN_DIR" && bun run build >>"$LOGIN_LOG" 2>&1 ) || { rl "login build failed — see $LOGIN_LOG"; return 1; }
+  fi
+  mkdir -p "$LOGDIR"
+  ( cd "$LOGIN_DIR" && nohup bun run start >>"$LOGIN_LOG" 2>&1 </dev/null & echo $! >"$LOGIN_PIDFILE" )
+  i=0; while [ "$i" -lt 60 ]; do login_health && { echo "$(g "✓ login up") :$LOGIN_PORT"; return 0; }; sleep 0.25; i=$((i+1)); done
+  rl "login did not come up — see $LOGIN_LOG"; return 1
+}
+
+stop_login() {
+  pid="$(cat "$LOGIN_PIDFILE" 2>/dev/null || true)"
+  [ -n "$pid" ] && stop_pid "$pid"
+  pids="$(lsof -nP -iTCP:"$LOGIN_PORT" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [ -n "$pids" ] && for p in $pids; do stop_pid "$p"; done
+  rm -f "$LOGIN_PIDFILE"; gl "✓ login stopped"
+}
+
+# One-click: bring up host + login, then open the cockpit in a Chrome app window.
+launch() {
+  start || return 1
+  start_login || dl "(continuing without local login — app-tab login may need it)"
+  if [ ! -x "$CHROME" ]; then rl "Google Chrome not found at $CHROME"; return 1; fi
+  mkdir -p "$CHROME_PROFILE"
+  # A force-killed/crashed Chrome leaves Singleton* locks that block the next
+  # launch with this profile. Clear them when nothing is using the profile.
+  if ! pgrep -f "user-data-dir=$CHROME_PROFILE" >/dev/null 2>&1; then
+    rm -f "$CHROME_PROFILE/SingletonLock" "$CHROME_PROFILE/SingletonCookie" "$CHROME_PROFILE/SingletonSocket" 2>/dev/null || true
+  fi
+  dl "opening cockpit in Chrome…"
+  # Dedicated profile + --app = a standalone app window (no tabs/omnibox), its own
+  # persistent Acme login, isolated from your everyday Chrome. `open -na` launches
+  # a NEW Chrome instance fully DETACHED from this launcher (so it survives the
+  # .app process exiting, when run from Finder) and brings it to the front.
+  open -na "Google Chrome" --args \
+    --user-data-dir="$CHROME_PROFILE" --app="$URL/__host/" \
+    --no-first-run --no-default-browser-check
+  echo "$(g "✓ Arigami open") → $URL/__host/"
+}
+
+case "${1:-status}" in
+  start) start ;;
+  launch|app) launch ;;
+  login) start_login ;;
+  stop) stop; stop_login 2>/dev/null ;;
+  restart)
+    stop
+    sleep 0.4
+    start
+    ;;
+  status) status ;;
+  logs) shift; logs "${1:-}" ;;
+  doctor) doctor ;;
+  install) install ;;
+  uninstall) uninstall ;;
+  *)
+    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|install|uninstall>"
+    exit 1
+    ;;
+esac

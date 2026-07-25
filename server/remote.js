@@ -1,0 +1,105 @@
+// Remote access toggle — drive Tailscale `serve` so the cockpit is reachable
+// from your other tailnet devices (phone) over HTTPS. This is `serve` (private
+// to YOUR tailnet, encrypted, real cert) — never `funnel` (which is public).
+//
+// One-way dependency: imports lib/config only. Shells out to the tailscale CLI;
+// every failure is returned as a message for the UI rather than thrown.
+import { cfg } from './lib/config.js';
+
+const CANDIDATES = [
+  'tailscale',
+  // macOS
+  '/opt/homebrew/bin/tailscale',
+  '/usr/local/bin/tailscale',
+  '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+  // Windows (the MSI installs outside PATH by default)
+  'C:\\Program Files\\Tailscale\\tailscale.exe',
+  'C:\\Program Files (x86)\\Tailscale\\tailscale.exe',
+];
+
+let cliPath = null;
+function findCli() {
+  if (cliPath) return cliPath;
+  for (const c of CANDIDATES) {
+    try {
+      if (Bun.spawnSync([c, 'version']).exitCode === 0) { cliPath = c; return c; }
+    } catch {}
+  }
+  return null;
+}
+
+function run(args) {
+  const cli = findCli();
+  if (!cli) return { ok: false, code: 127, out: '', err: 'tailscale CLI not found' };
+  try {
+    const r = Bun.spawnSync([cli, ...args]);
+    return {
+      ok: r.exitCode === 0,
+      code: r.exitCode,
+      out: new TextDecoder().decode(r.stdout),
+      err: new TextDecoder().decode(r.stderr),
+    };
+  } catch (e) {
+    return { ok: false, code: -1, out: '', err: e.message };
+  }
+}
+
+// Does a `serve` mapping for our port currently exist?
+function isServing() {
+  const r = run(['serve', 'status']);
+  return r.ok && new RegExp(`(^|\\D)${cfg.port}(\\D|$)`).test(r.out);
+}
+
+export function remoteStatus() {
+  const cli = findCli();
+  if (!cli) return { available: false, reason: 'Tailscale is not installed.' };
+  const st = run(['status', '--json']);
+  if (!st.ok) {
+    return { available: true, loggedIn: false, reason: 'Tailscale is installed but not running — open the app and sign in.' };
+  }
+  let dns = null, backend = null;
+  try {
+    const j = JSON.parse(st.out);
+    backend = j.BackendState;
+    dns = (j.Self?.DNSName || '').replace(/\.$/, '');
+  } catch {}
+  if (backend !== 'Running') {
+    return { available: true, loggedIn: false, reason: 'Tailscale is not connected — sign in to enable remote access.' };
+  }
+  const serving = isServing();
+  return {
+    available: true,
+    loggedIn: true,
+    hostname: dns,
+    port: cfg.port,
+    // Works the moment Tailscale is up on both devices — no serve, no cert
+    // (the host binds all interfaces; the tailnet tunnel encrypts the hop).
+    directUrl: dns ? `http://${dns}:${cfg.port}/__host/` : null,
+    // The pretty HTTPS URL, only live once `serve` is on (needs HTTPS certs).
+    serving,
+    httpsUrl: dns && serving ? `https://${dns}/__host/` : null,
+  };
+}
+
+export function setRemote(enable) {
+  const cli = findCli();
+  if (!cli) return { ok: false, error: 'Tailscale is not installed.' };
+  if (enable) {
+    // NOTE: `tailscale serve` can exit 0 while printing an actionable error and
+    // creating no config (e.g. "Serve is not enabled on your tailnet" when the
+    // tailnet hasn't enabled HTTPS). So we can't trust the exit code — verify by
+    // re-reading serve status, and surface the CLI's own message on failure.
+    let r = run(['serve', '--bg', String(cfg.port)]);
+    if (!isServing()) r = run(['serve', '--bg', '--https=443', `http://127.0.0.1:${cfg.port}`]); // older-CLI form
+    if (!isServing()) {
+      const msg = [r.err, r.out].map((s) => (s || '').trim()).filter(Boolean).join(' — ');
+      const hint = /not enabled|HTTPS|administrator|cert/i.test(msg)
+        ? ' Enable HTTPS for your tailnet: Tailscale admin console → DNS → HTTPS Certificates → Enable, then retry.'
+        : '';
+      return { ok: false, error: (msg || 'Could not enable Tailscale serve.') + hint, ...remoteStatus() };
+    }
+  } else {
+    run(['serve', 'reset']);
+  }
+  return { ok: true, ...remoteStatus() };
+}

@@ -1,0 +1,41 @@
+#!/usr/bin/env bun
+// Pull the Chromatic auth cookies from the shared automation Chrome (CDP :9333)
+// and write them into ~/.arigami/config.json upstreamCookies — so the proxy
+// can render private Chromatic builds (the Storybook compare baseline).
+//
+//   bin/chromatic-cookies            # refresh cookies (log into chromatic.com
+//                                    # in the shared Chrome first if it fails)
+//
+// The CloudFront-* cookies are time-limited; re-run this when the compare pane
+// starts 401ing again.
+import fs from 'node:fs';
+import path from 'node:path';
+import WebSocket from 'ws';
+
+const CDP = process.env.ACME_CDP || 'http://127.0.0.1:9333';
+const CONFIG = path.join(process.env.HOME, '.arigami', 'config.json');
+// The cookies that actually gate access to *.chromatic.com build domains.
+const WANTED = ['asset-token', 'CloudFront-Policy', 'CloudFront-Key-Pair-Id', 'CloudFront-Signature', 'logged-in'];
+
+const version = await fetch(`${CDP}/json/version`).then((r) => r.json());
+const ws = new WebSocket(version.webSocketDebuggerUrl, { perMessageDeflate: false });
+await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+const cookies = await new Promise((res, rej) => {
+  ws.once('message', (m) => { const d = JSON.parse(m); d.error ? rej(new Error(d.error.message)) : res(d.result.cookies); });
+  ws.send(JSON.stringify({ id: 1, method: 'Storage.getCookies' }));
+});
+ws.close();
+
+const picked = cookies.filter((c) => c.domain.endsWith('chromatic.com') && WANTED.includes(c.name));
+if (!picked.some((c) => c.name === 'asset-token')) {
+  console.error('✗ no asset-token cookie found — open https://www.chromatic.com in the shared Chrome and log in, then re-run.');
+  process.exit(1);
+}
+const header = picked.map((c) => `${c.name}=${c.value}`).join('; ');
+
+const cfg = fs.existsSync(CONFIG) ? JSON.parse(fs.readFileSync(CONFIG, 'utf8')) : {};
+cfg.upstreamCookies = { ...(cfg.upstreamCookies || {}), 'chromatic.com': header };
+fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n');
+const exp = picked.find((c) => c.name === 'CloudFront-Policy')?.expires;
+console.log(`✓ wrote ${picked.length} chromatic cookies to upstreamCookies` + (exp && exp > 0 ? ` (CloudFront expires ${new Date(exp * 1000).toLocaleString()})` : ''));
+console.log('  restart to apply: bin/host restart');

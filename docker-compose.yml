@@ -1,0 +1,38 @@
+# Local single-node run of arigami on Docker.
+#
+# This mirrors the eventual K8s shape on purpose: ONE container, ONE named
+# volume (= the PVC), config from an env file (= a Secret). There is no second
+# replica — the listeners scheduler in server/state.ts is a singleton and the
+# sessions write git worktrees; two of these on the same volume corrupt state.
+#
+#   cp docker/.env.example .env   # fill in ANTHROPIC_API_KEY at minimum
+#   docker compose up --build
+#   open http://localhost:3099/__host/
+
+services:
+  arigami:
+    build: .
+    image: arigami:local
+    container_name: arigami
+    # Port 3199 (not 3099): the native launchd host (com.example.arigami) already owns
+    # localhost:3099.  localhost:3099 = native/local host | localhost:3199 = container.
+    # The container runs on 3199 INTERNALLY too (ARIGAMI_PORT) — not just the
+    # host-side map — so self-built URLs like the Linear OAuth redirect_uri
+    # (http://localhost:<port>/__api/linear/oauth/callback) point back at the
+    # container, not the native host. Otherwise the callback lands on :3099 and
+    # the in-memory OAuth `state` never matches → "OAuth state mismatch".
+    ports:
+      - "3199:3199"
+    environment:
+      ARIGAMI_PORT: "3199"
+    env_file:
+      - .env
+    volumes:
+      - arigami-data:/data
+    restart: unless-stopped
+    # Chromium (Playwright, for visual ticket skills) crashes on the default
+    # 64MB /dev/shm — give it room.
+    shm_size: "1gb"
+
+volumes:
+  arigami-data:

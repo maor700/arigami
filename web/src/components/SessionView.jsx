@@ -1,0 +1,1424 @@
+import { useState, useRef, useMemo, useEffect } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { api } from '../lib/api.js';
+import { relTime } from '../lib/time.js';
+import { toastError } from '../lib/toast.js';
+import { useStore, listenersForSession, getDraft, setDraft, setLastSent, interruptSession } from '../lib/store.js';
+import { useIsDesktop } from '../lib/useMedia.js';
+import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
+import { useVoice, toggleRecording } from '../lib/voice.js';
+import { Dot, TriggerTag } from './ui.jsx';
+import { Icon } from '../lib/icons.js';
+import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import TabBar from './TabBar.jsx';
+import ChatPane from './ChatPane.jsx';
+import ChangesTab from './ChangesTab.jsx';
+import OrchestrationTab from './OrchestrationTab.jsx';
+import { Truncate } from './Truncate.jsx';
+import { SlashPalette, CapabilitiesPanel, buildSlashItems } from './SlashCommands.jsx';
+import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
+import TermControls from './TermControls.jsx';
+
+// Built-in "Changes" tab id — distinguishes it from agent-opened tabs.
+export const CHANGES_TAB_ID = '__changes';
+// Built-in "Orchestration" tab id — auto-appears on any session that has workers.
+export const ORCH_TAB_ID = '__orchestration';
+
+// Resolve the tab list for a session: the base tabs (defaulting to a single
+// Session tab) plus a built-in "Changes" tab inserted right after Session —
+// UNLESS the agent already opened a tab titled "Changes" (don't duplicate).
+// When the session has workers (hasChildren), an "Orchestration" tab follows it.
+export function resolveTabs(session, hasChildren = false) {
+  const base = session.tabs?.length
+    ? session.tabs
+    : [{ id: '__session', type: 'session', title: 'Session' }];
+  const hasChanges = base.some((t) => t.type === 'changes' || t.id === CHANGES_TAB_ID);
+  const sessionIdx = base.findIndex((t) => t.type === 'session');
+  const inserts = [];
+  if (!hasChanges)
+    inserts.push({ id: CHANGES_TAB_ID, type: 'changes', title: 'Changes', builtIn: true });
+  if (hasChildren)
+    inserts.push({ id: ORCH_TAB_ID, type: 'orchestration', title: 'Orchestration', builtIn: true });
+  if (!inserts.length) return base;
+  if (sessionIdx === -1) return [...base, ...inserts];
+  return [...base.slice(0, sessionIdx + 1), ...inserts, ...base.slice(sessionIdx + 1)];
+}
+
+/* ---------- terminal header strip ---------------------------------------- */
+
+function StatusChip({ session }) {
+  const cState = session.claude?.state;
+  // A restart in flight beats the free-form status — it's the live signal the
+  // user is waiting on (upsertSession toasts when it completes).
+  const restarting = cState === 'restarting';
+  const status = restarting ? 'restarting…' : session.status || cState || 'idle';
+  const awaiting = !restarting && (/review/i.test(session.status || '') || cState === 'awaiting-input');
+  const dotColor = awaiting
+    ? '#F9D312'
+    : cState === 'working'
+      ? '#3C9A4E'
+      : cState === 'dead'
+        ? '#B23B30'
+        : '#c4c4c4';
+  return (
+    <span
+      className={`ml-auto flex shrink-0 items-center gap-[7px] rounded-full border-[1.5px] px-[11px] py-[3px] whitespace-nowrap ${
+        awaiting ? 'border-ink bg-chip' : 'border-border bg-panel'
+      }`}
+    >
+      {restarting ? (
+        <span className="host-spinner h-[9px] w-[9px]" />
+      ) : (
+        <span
+          className={`h-[7px] w-[7px] rounded-full ${awaiting ? 'pulse-yellow' : ''}`}
+          style={{ background: dotColor }}
+        />
+      )}
+      <span
+        className={`font-mono text-[10.5px] font-bold ${awaiting ? 'text-[#4a3f12]' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
+      >
+        {String(status).toLowerCase()}
+      </span>
+    </span>
+  );
+}
+
+// Which account this session runs on. Reads the session's pinned accountId (or
+// the active account if unpinned) so switching accounts is VISIBLE per session —
+// otherwise a switch looks like it did nothing.
+function AccountChip({ session }) {
+  const { accounts } = useStore();
+  const list = accounts?.accounts || [];
+  const pinned = session.claude?.accountId;
+  const acc = (pinned && list.find((a) => a.id === pinned)) || list.find((a) => a.active) || null;
+  if (!acc) return null;
+  const name = acc.email || acc.label || 'account';
+  return (
+    <span
+      className="hidden items-center gap-1 font-mono text-[10px] text-fgdim sm:flex"
+      title={`This session runs on: ${name}${acc.active ? ' · active account' : ''}`}
+      onClick={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}
+      style={{ cursor: 'pointer' }}
+    >
+      <span><Icon icon={faCircleUser} /></span>
+      <span className="max-w-[90px] truncate sm:max-w-[150px]">{name}</span>
+    </span>
+  );
+}
+
+// Mobile stand-in for the full listeners row: one "👀 N" chip in the terminal
+// header that opens the same ListenersPanel. The chips row itself is desktop-only.
+function ListenersChipCompact({ session }) {
+  const store = useStore();
+  const listeners = listenersForSession(store, session.id);
+  const [open, setOpen] = useState(false);
+  if (!listeners.length) return null;
+  const errored = listeners.some((l) => l.status === 'errored');
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={`${listeners.length} listener${listeners.length > 1 ? 's' : ''} watching`}
+        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] sm:hidden ${
+          errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-white text-[#555]'
+        }`}
+      >
+        <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
+        <span className="font-mono font-bold">{listeners.length}</span>
+      </button>
+      {open && <ListenersPanel session={session} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// Auto (follow the conversation) | English segmented control, reused in the
+// summary popover's empty state (pre-choice) and footer (post-generation).
+function LangToggle({ value, onChange, disabled }) {
+  return (
+    <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title="Summary language">
+      {[['auto', 'Auto'], ['en', 'English']].map(([key, label], i) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => value !== key && onChange(key)}
+          disabled={disabled}
+          className={`cursor-pointer px-1.5 py-[1px] text-[10.5px] leading-none disabled:opacity-50 ${i ? 'border-l border-border' : ''} ${
+            value === key ? 'bg-ink text-white' : 'bg-panel text-fgdim hover:text-fg'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// Manually-enabled status brief for the session. The button lives in the header;
+// clicking opens a popover with the summary + controls. A cheap headless run
+// generates it server-side (folding only the transcript delta on auto-update).
+function SummaryChip({ session }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open]);
+
+  const summary = session.statusSummary;
+  const busy = !!session.summarizing;
+  const on = !!summary;
+  const sid = session.id;
+  // Language chosen in the empty state, before the first summary exists.
+  const [pendingLang, setPendingLang] = useState('auto');
+
+  const enable = () => api.post(`/sessions/${sid}/summary`, { autoUpdate: summary?.autoUpdate ?? false, lang: pendingLang })
+    .catch((e) => toastError(`Summary failed: ${e.message || e}`));
+  const updateNow = () => api.post(`/sessions/${sid}/summary/update`)
+    .catch((e) => toastError(`Update failed: ${e.message || e}`));
+  const toggleAuto = () => api.patch(`/sessions/${sid}/summary`, { autoUpdate: !summary?.autoUpdate }).catch(() => {});
+  const setLang = (lang) => api.patch(`/sessions/${sid}/summary`, { lang }).catch((e) => toastError(`Update failed: ${e.message || e}`));
+  const turnOff = () => { api.del(`/sessions/${sid}/summary`).catch(() => {}); setOpen(false); };
+  const lang = summary?.lang || 'auto';
+
+  return (
+    <span ref={ref} className="relative flex items-center">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Status summary"
+        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${
+          on ? 'border-ink bg-chip text-fg' : 'border-hair bg-white text-[#555]'
+        }`}
+      >
+        {busy ? <span className="host-spinner h-2.5 w-2.5" /> : <Icon icon={faListCheck} />}
+        <span className="hidden font-mono sm:inline">Summary</span>
+      </button>
+      {open && (
+        <div className="absolute top-[28px] right-0 z-30 w-[340px] max-w-[86vw] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+          <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
+            <span className="font-mono text-[11px] font-bold text-fg">Status summary</span>
+            <span className="ml-auto flex items-center gap-1.5">
+              {on && (
+                <button type="button" onClick={updateNow} disabled={busy} title="Update now"
+                  className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg disabled:opacity-40">
+                  <Icon icon={faRotateRight} className={busy ? 'animate-spin' : ''} />
+                </button>
+              )}
+              <button type="button" onClick={() => setOpen(false)} title="Close"
+                className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg">
+                <Icon icon={faXmark} />
+              </button>
+            </span>
+          </div>
+          <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
+            {!on ? (
+              <div className="text-[12px] text-fgdim">
+                <p className="mb-2.5">A running brief of this session — the task, what's done, the current state, and what to do next. Summarizes the whole conversation, even from mid-session.</p>
+                <div className="mb-2.5 flex items-center gap-2">
+                  <span>Language</span>
+                  <LangToggle value={pendingLang} onChange={setPendingLang} />
+                </div>
+                <button type="button" onClick={enable}
+                  className="cursor-pointer rounded-md border-2 border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] active:translate-x-[1px] active:translate-y-[1px]">
+                  Summarize this conversation
+                </button>
+              </div>
+            ) : busy && !summary.text ? (
+              <div className="flex items-center gap-2 text-[12px] text-fgdim"><span className="host-spinner h-3 w-3" /> generating…</div>
+            ) : (
+              <div className="md text-[12.5px]" dir="auto">
+                <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
+              </div>
+            )}
+          </div>
+          {on && (
+            <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[10.5px] text-fgdim">
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="checkbox" className="accent-brand" checked={!!summary.autoUpdate} onChange={toggleAuto} />
+                Auto-update each turn
+              </label>
+              {/* Output language: Auto (follow the conversation) | English */}
+              <span className="ml-auto">
+                <LangToggle value={lang} onChange={setLang} disabled={busy} />
+              </span>
+            </div>
+          )}
+          {on && (
+            <div className="border-t border-hair px-3 py-1.5 text-right">
+              <button type="button" onClick={turnOff} className="cursor-pointer text-[10.5px] text-danger hover:underline">Turn off</button>
+            </div>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function TerminalHeader({ session }) {
+  const [procPanel, setProcPanel] = useState(false);
+  const meta = [session.metadata?.ticket, session.metadata?.branch].filter(Boolean).join(' · ');
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
+      <Dot color={session.color} size={9} />
+      <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
+      {/* ticket · branch is already in the rail/tab title — desktop-only detail */}
+      {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[10.5px] text-fgdim sm:block" />}
+      {session.metadata?.fromTriggerName && (
+        <TriggerTag
+          name={session.metadata.fromTriggerName}
+          className="max-w-[160px] text-[10.5px]"
+        />
+      )}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <AccountChip session={session} />
+        <ProcessChip session={session} onClick={() => setProcPanel(true)} />
+        <ListenersChipCompact session={session} />
+        <SummaryChip session={session} />
+        <TermControls session={session} />
+        <StatusChip session={session} />
+      </div>
+      {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}
+    </div>
+  );
+}
+
+/* ---------- progress strip (set_progress) --------------------------------- */
+
+export function ProgressStrip({ progress }) {
+  const steps = progress?.steps;
+  if (!Array.isArray(steps) || steps.length === 0) return null;
+  return (
+    <div className="flex shrink-0 items-stretch border-b border-hair bg-panel">
+      {steps.map((step, i) => {
+        const st = step.state || 'pending';
+        return (
+          <div
+            key={i}
+            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-3.5 sm:py-2.5 ${
+              i < steps.length - 1 ? 'border-r border-hair' : ''
+            } ${st === 'active' ? 'bg-[#FEFBE8]' : ''}`}
+          >
+            {st === 'done' ? (
+              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
+                <Icon icon={faCheck} />
+              </span>
+            ) : st === 'active' ? (
+              <span className="host-spinner h-[14px] w-[14px] shrink-0 sm:h-[18px] sm:w-[18px]" />
+            ) : st === 'error' ? (
+              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-danger text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
+                <Icon icon={faXmark} />
+              </span>
+            ) : (
+              <span className="h-[14px] w-[14px] shrink-0 rounded-full border-2 border-dashed border-[#cfcfcf] sm:h-[18px] sm:w-[18px]" />
+            )}
+            {/* on phones only the active step keeps its label — the others are
+                just state icons, so five steps never overflow the viewport */}
+            <span
+              className={`truncate text-xs ${
+                st === 'pending' ? 'text-[#999]' : 'text-[#333]'
+              } ${st === 'active' ? 'font-mono' : 'hidden sm:block'}`}
+            >
+              {step.label || ''}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- listener chips + details modal (deterministic pollers) -------- */
+
+const fmtAgo = (ts) => {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+};
+const fmtIn = (ts) => {
+  if (!ts) return '—';
+  const s = Math.round((ts - Date.now()) / 1000);
+  return s <= 0 ? 'due now' : s < 60 ? `in ${s}s` : `in ${Math.floor(s / 60)}m`;
+};
+const fmtClock = (ts) =>
+  new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const LOG_COLOR = { fire: '#7ee787', warn: '#e3b341', error: '#ff7b72', info: '#9aa0a6' };
+
+export function ListenerChips({ session }) {
+  const store = useStore();
+  const listeners = listenersForSession(store, session.id);
+  const [openId, setOpenId] = useState(null);
+  if (!listeners.length) return null;
+  const cancel = async (lid, e) => {
+    e?.stopPropagation();
+    try {
+      await api.del(`/sessions/${session.id}/listeners/${lid}`);
+    } catch {
+      /* chip clears via WS echo on success */
+    }
+  };
+  return (
+    // Desktop-only: on phones this whole row folds into the header's 👀 chip.
+    <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
+      <span className="font-mono text-[10px] tracking-wide text-[#999] uppercase">watching</span>
+      {listeners.map((l) => {
+        const errored = l.status === 'errored';
+        return (
+          <button
+            key={l.id}
+            type="button"
+            onClick={() => setOpenId(l.id)}
+            title="Open listener details"
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
+              errored
+                ? 'border-danger/40 bg-danger/10 text-danger'
+                : 'border-hair bg-white text-[#555] hover:bg-chip'
+            }`}
+          >
+            <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
+            <span className="font-medium">{l.label}</span>
+            {l.firedCount > 0 && !errored && <span className="text-[#999]">· fired {l.firedCount}</span>}
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => cancel(l.id, e)}
+              title="Cancel listener"
+              className="ml-0.5 cursor-pointer text-[#bbb] hover:text-danger"
+            >
+              <Icon icon={faXmark} />
+            </span>
+          </button>
+        );
+      })}
+      {openId && (
+        <ListenersPanel session={session} initialId={openId} onClose={() => setOpenId(null)} />
+      )}
+    </div>
+  );
+}
+
+function ListenersPanel({ session, initialId, onClose }) {
+  const store = useStore();
+  const list = (store.listeners || []).filter((l) => l.sessionId === session.id);
+  const [selId, setSelId] = useState(initialId || list[0]?.id || null);
+  const sel = list.find((l) => l.id === selId) || list[0] || null;
+  const [detail, setDetail] = useState(null); // {..listener, log}
+  const logRef = useRef(null);
+
+  // Poll the selected listener's full detail + activity log.
+  useEffect(() => {
+    if (!sel) return;
+    let stop = false;
+    setDetail(null);
+    const tick = async () => {
+      try {
+        const d = await api.get(`/sessions/${session.id}/listeners/${sel.id}`);
+        if (!stop) setDetail(d);
+      } catch {
+        /* listener may have been cancelled */
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 1500);
+    return () => {
+      stop = true;
+      clearInterval(iv);
+    };
+  }, [sel?.id, session.id]);
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [detail?.log?.length]);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const cancel = async (lid) => {
+    try {
+      await api.del(`/sessions/${session.id}/listeners/${lid}`);
+    } catch {
+      /* WS echo updates the list */
+    }
+  };
+
+  const dotColor = (l) => (l.status === 'errored' ? '#B23B30' : l.status === 'stopped' ? '#9a9a9a' : '#3C9A4E');
+  const log = detail?.log || [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
+      <div
+        className="flex h-[78vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
+          <span className="text-[13px] leading-none"><Icon icon={faEye} /></span>
+          <span className="font-mono text-[13px] font-bold text-fg">Listeners</span>
+          <span className="font-mono text-[10.5px] text-fgdim">{list.length} watching</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
+          >
+            <Icon icon={faXmark} />
+          </button>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* left: listener list — stacks on top of the details on phones */}
+          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[300px] md:border-r md:border-b-0">
+            {list.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => setSelId(l.id)}
+                className={`flex w-full flex-col gap-1 border-b border-hair px-3 py-2.5 text-left ${
+                  l.id === sel?.id ? 'bg-chip' : 'hover:bg-panel'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor(l) }} />
+                  <span className="font-mono text-[11px] font-bold text-fg">{l.label}</span>
+                  <span className="ml-auto font-mono text-[9.5px] text-fgdim">{l.status}</span>
+                </div>
+                <span className="font-mono text-[9.5px] text-fgdim">
+                  {l.type} · {l.firedCount || 0} fired
+                </span>
+              </button>
+            ))}
+            {!list.length && (
+              <div className="px-3 py-4 text-center text-[11px] text-fgdim">No listeners.</div>
+            )}
+          </div>
+
+          {/* right: details + activity log */}
+          <div className="flex min-w-0 flex-1 flex-col bg-term">
+            {sel ? (
+              <>
+                <div className="border-b border-white/10 px-3.5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor(sel) }} />
+                    <span className="font-mono text-[12px] font-bold text-[#e4e4e4]">{sel.label}</span>
+                    <span className="font-mono text-[10px] text-[#8a8a8a]">{sel.status}</span>
+                    {sel.status !== 'stopped' && (
+                      <button
+                        type="button"
+                        onClick={() => cancel(sel.id)}
+                        className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                      >
+                        <Icon icon={faStop} className="text-[9px]" /> cancel
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-[#9aa0a6]">
+                    <span>fires on: <span className="text-[#cfcfcf]">{(sel.fireOn || []).join(', ') || '—'}</span></span>
+                    <span>every: <span className="text-[#cfcfcf]">{sel.intervalSec}s</span></span>
+                    <span>last poll: <span className="text-[#cfcfcf]">{fmtAgo(detail?.lastPolledAt ?? sel.lastPolledAt)}</span></span>
+                    <span>next poll: <span className="text-[#cfcfcf]">{fmtIn(detail?.nextPollAt ?? sel.nextPollAt)}</span></span>
+                    <span>fired: <span className="text-[#cfcfcf]">{detail?.firedCount ?? sel.firedCount ?? 0}×</span></span>
+                    <span>expires: <span className="text-[#cfcfcf]">{fmtIn(sel.ttlAt)}</span></span>
+                    {(detail?.lastError ?? sel.lastError) && (
+                      <span className="col-span-2 text-danger">last error: {detail?.lastError ?? sel.lastError}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="border-b border-white/10 px-3.5 py-1.5 font-mono text-[9.5px] tracking-wide text-[#6a6a6a] uppercase">
+                  activity
+                </div>
+                <pre
+                  ref={logRef}
+                  dir="ltr"
+                  className="thin-scroll min-h-0 flex-1 overflow-auto px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+                >
+                  {detail == null ? (
+                    <span className="text-[#888]">loading…</span>
+                  ) : log.length === 0 ? (
+                    <span className="text-[#888]">No activity yet — waiting for the next poll.</span>
+                  ) : (
+                    log.map((e, i) => (
+                      <div key={i}>
+                        <span className="text-[#6a6a6a]">{fmtClock(e.ts)} </span>
+                        <span style={{ color: LOG_COLOR[e.level] || '#cfcfcf' }}>{e.text}</span>
+                      </div>
+                    ))
+                  )}
+                </pre>
+              </>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-[12px] text-[#888]">
+                No active listeners.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- action bar (host.request_action) ------------------------------ */
+
+function actionBtnClass(style) {
+  if (style === 'primary')
+    return 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-[7px] text-[12.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]';
+  if (style === 'danger')
+    return 'cursor-pointer rounded-lg border-[1.5px] border-danger bg-danger px-3.5 py-[7px] text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23]';
+  return 'cursor-pointer rounded-lg border-[1.5px] border-[#cdbb66] bg-white px-3 py-[7px] text-xs text-[#6b5d20] hover:bg-[#fffdf2]';
+}
+
+export function ActionBar({ session }) {
+  const action = session.action;
+  const [busy, setBusy] = useState(false);
+  if (!action || !Array.isArray(action.buttons)) return null;
+  const answer = async (value) => {
+    setBusy(true);
+    try {
+      await api.post(`/sessions/${session.id}/action/answer`, { value });
+    } catch {
+      /* bar clears via WS echo on success */
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-t-2 border-ink bg-chip px-3.5 py-2.5">
+      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-ink bg-brand text-xs">
+        <Icon icon={faCheck} />
+      </span>
+      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
+        {action.prompt}{' '}
+        <span className="font-mono text-[10px] text-[#8a7a2f]">
+          revealed by host.request_action()
+        </span>
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {action.buttons.map((b, i) => (
+          <button
+            key={i}
+            type="button"
+            disabled={busy}
+            onClick={() => answer(b.value)}
+            className={`${actionBtnClass(b.style)} disabled:opacity-50`}
+          >
+            {b.label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/* ---------- chat footer ---------------------------------------------------- */
+
+// Archived sessions are a read-only peek — swap the live composer for a banner
+// so the user can't type into a session that won't respond, with a one-click
+// restore.
+function ArchivedFooter({ session }) {
+  const [busy, setBusy] = useState(false);
+  const restore = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/sessions/${session.id}`, { archived: false });
+    } catch (e) {
+      toastError(`Couldn't restore: ${e?.message || e}`);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-hair bg-panel px-4 py-3">
+      <span className="min-w-0 flex-1 basis-52 text-[12px] text-fgdim">
+        This session is archived — read-only. Restore it to send messages.
+      </span>
+      <button
+        type="button"
+        onClick={restore}
+        disabled={busy}
+        className="ml-auto cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
+      >
+        {busy ? 'Restoring…' : 'Restore session'}
+      </button>
+    </div>
+  );
+}
+
+/* ---------- pending prompts (queued while busy) ---------------------------- */
+
+function PendingPromptsPanel({ session }) {
+  const prompts = session.pendingPrompts || [];
+  const autoPlay = !!session.promptAutoPlay;
+  const [open, setOpen] = useState(false);
+  // Optimistic order mirror for drag-sort (same HTML5 pattern as the rail's
+  // Pending tasks list — no library, plain draggable + dataTransfer).
+  const [order, setOrder] = useState(prompts.map((p) => p.id));
+  const dragId = useRef(null);
+  const [overId, setOverId] = useState(null);
+  useEffect(() => {
+    setOrder(prompts.map((p) => p.id));
+  }, [prompts.map((p) => p.id).join('|')]);
+  if (!prompts.length) return null;
+  const byId = new Map(prompts.map((p) => [p.id, p]));
+  const rows = order.map((pid) => byId.get(pid)).filter(Boolean);
+
+  const play = (pid) => api.post(`/sessions/${session.id}/prompts/${pid}/play`).catch(toastError);
+  const del = (pid) => api.del(`/sessions/${session.id}/prompts/${pid}`).catch(toastError);
+  const toggleAuto = () =>
+    api.post(`/sessions/${session.id}/prompts/autoplay`, { on: !autoPlay }).catch(toastError);
+
+  const onDragStart = (e, pid) => {
+    dragId.current = pid;
+    e.dataTransfer.effectAllowed = 'move';
+    // Tag the drag so ancestors (the composer's attachment drop zone) can tell
+    // it apart from a file/session drag and ignore it.
+    e.dataTransfer.setData('application/x-arigami-prompt', pid);
+  };
+  const onDragOver = (e, pid) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pid !== overId) setOverId(pid);
+  };
+  const onDropRow = (e, pid) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOverId(null);
+    const from = order.indexOf(dragId.current);
+    const to = order.indexOf(pid);
+    dragId.current = null;
+    if (from === -1 || to === -1 || from === to) return;
+    const ids = [...order];
+    ids.splice(to, 0, ...ids.splice(from, 1));
+    setOrder(ids);
+    api.post(`/sessions/${session.id}/prompts/reorder`, { order: ids }).catch(toastError);
+  };
+
+  return (
+    <div className="relative">
+      {/* collapsed pill row */}
+      <div className="mb-1.5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-bg px-2.5 py-1 text-[11px] text-fg hover:border-ink"
+          title={open ? 'Hide queued prompts' : 'Show queued prompts'}
+        >
+          <span><Icon icon={faHourglassHalf} /></span>
+          <span className="font-mono font-bold">{prompts.length}</span>
+          <span className="text-fgdim">queued</span>
+          <span className="text-[9px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretUp} /></span>
+        </button>
+        <label
+          className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-fgdim"
+          title="Automatically play the next queued prompt when the current turn finishes (Claude may defer it if the conversation is mid-question)"
+        >
+          <span
+            onClick={toggleAuto}
+            className="relative h-[13px] w-[22px] cursor-pointer rounded-full transition-colors"
+            style={{ background: autoPlay ? '#F9D312' : '#d6d6d6' }}
+          >
+            <span
+              className="absolute top-px h-[11px] w-[11px] rounded-full bg-white transition-[left]"
+              style={{ left: autoPlay ? 10 : 1, border: `1px solid ${autoPlay ? '#2a2a2a' : '#999'}` }}
+            />
+          </span>
+          auto-play
+        </label>
+      </div>
+      {/* floating list */}
+      {open && (
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-full max-w-[560px] rounded-[10px] border-[1.5px] border-ink bg-panel p-2 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+          <div className="mb-1.5 px-1 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
+            Queued prompts — drag to reorder, ▶ to start now
+          </div>
+          <div className="thin-scroll flex max-h-[38vh] flex-col gap-1 overflow-y-auto">
+            {rows.map((p) => (
+              <div
+                key={p.id}
+                draggable
+                onDragStart={(e) => onDragStart(e, p.id)}
+                onDragOver={(e) => onDragOver(e, p.id)}
+                onDrop={(e) => onDropRow(e, p.id)}
+                onDragEnd={() => setOverId(null)}
+                className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 ${
+                  overId === p.id ? 'border-ink bg-chip/60' : 'border-hair bg-bg'
+                }`}
+              >
+                <span className="cursor-grab pt-px text-[11px] text-fgdim select-none" title="Drag to reorder">
+                  <Icon icon={faGripVertical} />
+                </span>
+                <span dir="auto" className="min-w-0 flex-1 text-[11.5px] leading-snug break-words text-fg">
+                  {p.text.length > 220 ? `${p.text.slice(0, 220)}…` : p.text}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => play(p.id)}
+                  title={
+                    session.claude?.state === 'working'
+                      ? 'Interrupt the current work and send this prompt now'
+                      : 'Send this prompt now'
+                  }
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fg hover:border-ink"
+                >
+                  <Icon icon={faPlay} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => del(p.id)}
+                  title="Remove from queue"
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fgdim hover:border-danger hover:text-danger"
+                >
+                  <Icon icon={faXmark} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatFooter({ session }) {
+  // Draft text/attachments are mirrored into the global store keyed by session
+  // id, so they survive switching to another session and back — local state
+  // alone doesn't, since ChatFooter unmounts when the active session changes.
+  const [text, setTextLocal] = useState(() => getDraft(session.id).text);
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  const [panelTab, setPanelTab] = useState(null); // null = closed; else a tab id
+  const [attachments, setAttachmentsLocal] = useState(() => getDraft(session.id).attachments);
+  const [dragging, setDragging] = useState(false);
+  const isDesktop = useIsDesktop();
+  const taRef = useRef(null);
+  const fileRef = useRef(null);
+  const setText = (updater) =>
+    setTextLocal((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      setDraft(session.id, { text: next });
+      return next;
+    });
+  const setAttachments = (updater) =>
+    setAttachmentsLocal((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      setDraft(session.id, { attachments: next });
+      return next;
+    });
+  // Covers the case where ChatFooter stays mounted and only `session` changes.
+  const prevSessionId = useRef(session.id);
+  useEffect(() => {
+    if (prevSessionId.current === session.id) return;
+    prevSessionId.current = session.id;
+    const d = getDraft(session.id);
+    setTextLocal(d.text);
+    setAttachmentsLocal(d.attachments);
+  }, [session.id]);
+  const working = session.claude?.state === 'working';
+  const caps = session.claude?.capabilities;
+  // Rich command objects from the initialize handshake; fall back to legacy
+  // bare-string slashCommands captured before this shape existed.
+  const commands = caps?.commands || (caps?.slashCommands || []).map((name) => ({ name }));
+
+  // The palette shows while the input is a single "/token" (no space yet).
+  const slashMatch = /^\/([\w:-]*)$/.exec(text);
+  const query = slashMatch ? slashMatch[1] : '';
+  const items = useMemo(
+    () => (slashMatch ? buildSlashItems(query, commands) : []),
+    [slashMatch, query, commands]
+  );
+  const paletteOpen = !!slashMatch && !dismissed && items.length > 0;
+  useEffect(() => setActive(0), [query]);
+  useEffect(() => { if (!slashMatch) setDismissed(false); }, [slashMatch]);
+
+  const focusInput = () => requestAnimationFrame(() => taRef.current?.focus());
+
+  // Command bus → focus the composer (voice: "let me type", "focus the input").
+  useEffect(() => {
+    const onFocus = () => focusInput();
+    window.addEventListener('host:focus-input', onFocus);
+    return () => window.removeEventListener('host:focus-input', onFocus);
+  }, []);
+
+
+  // Accept a palette item: host "inspect" commands open the panel; real
+  // commands are inserted as "/name " so the user can add args, then ↵ sends.
+  const accept = (item) => {
+    if (!item) return;
+    if (item.host) {
+      setPanelTab(item.tab);
+      setText('');
+    } else {
+      setText('/' + item.name + ' ');
+      setDismissed(true);
+      focusInput();
+    }
+  };
+
+  // Insert a command from the Capabilities panel into the input.
+  const insertCommand = (name) => {
+    setPanelTab(null);
+    setText('/' + name + ' ');
+    focusInput();
+  };
+
+  // ---- attachments (file picker / drag-drop / paste) ----
+  const MAX_FILE = 20 * 1024 * 1024; // 20MB/file (body cap is 32MB)
+  const fileToB64 = (file) =>
+    new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => resolve('');
+      r.readAsDataURL(file);
+    });
+  const addFiles = async (fileList) => {
+    const arr = Array.from(fileList || []).filter((f) => f.size <= MAX_FILE);
+    const read = await Promise.all(
+      arr.map(async (f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size, dataBase64: await fileToB64(f) }))
+    );
+    setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
+  };
+  const removeAttachment = (i) => setAttachments((a) => a.filter((_, k) => k !== i));
+
+  // Guards against a double-fire from the Enter-keydown handler and the Send
+  // button's onClick landing in the same tick, before React re-renders to
+  // reflect the cleared `text` — without this, one submission could POST twice.
+  const sendingRef = useRef(false);
+  const send = async () => {
+    if (sendingRef.current) return;
+    const t = text.trim();
+    if (!t && !attachments.length) return;
+    sendingRef.current = true;
+    const sentAttachments = attachments;
+    const payload = { text: t, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
+    setLastSent(session.id, { text: t, attachments: sentAttachments });
+    setText('');
+    setAttachments([]);
+    try {
+      await api.post(`/sessions/${session.id}/message`, payload);
+    } catch {
+      setText(t); // restore on failure
+      setAttachments(sentAttachments);
+    } finally {
+      sendingRef.current = false;
+    }
+  };
+
+  const interrupt = () => interruptSession(session.id);
+
+  // Queue the composer text as a pending prompt instead of interjecting into
+  // the running turn (attachments stay in the draft — the queue is text-only).
+  const queue = async () => {
+    const t = text.trim();
+    if (!t) return;
+    setText('');
+    try {
+      await api.post(`/sessions/${session.id}/prompts`, { text: t });
+    } catch (e) {
+      setText(t); // restore on failure
+      toastError(e);
+    }
+  };
+
+  // Stopping a running turn (Esc, ■, or a voice "stop") hands the in-flight
+  // prompt back to this session's draft — sync it in if we're still mounted.
+  useEffect(() => {
+    const onRestored = (e) => {
+      if (e.detail?.sessionId !== session.id) return;
+      const d = getDraft(session.id);
+      setTextLocal(d.text);
+      setAttachmentsLocal(d.attachments);
+    };
+    window.addEventListener('host:draft-restored', onRestored);
+    return () => window.removeEventListener('host:draft-restored', onRestored);
+  }, [session.id]);
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    // A rail session row dropped here becomes an inline reference the agent can
+    // act on (it can read that session via the host MCP's list_sessions).
+    const sessRef = e.dataTransfer?.getData('application/x-arigami-session');
+    if (sessRef) {
+      try {
+        const { id: sid, title } = JSON.parse(sessRef);
+        if (sid && sid !== session.id) {
+          const ref = `[host session: "${title || sid}" — id ${sid}] `;
+          setText((t) => (t ? `${t} ${ref}` : ref));
+          focusInput();
+        }
+      } catch { /* malformed payload — ignore */ }
+      return;
+    }
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+  };
+  const onPaste = (e) => {
+    const files = [...(e.clipboardData?.items || [])]
+      .filter((it) => it.kind === 'file')
+      .map((it) => it.getAsFile())
+      .filter(Boolean);
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  };
+
+  const onKeyDown = (e) => {
+    if (paletteOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(items.length - 1, i + 1)); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); accept(items[active]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setDismissed(true); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  return (
+    <div
+      className="relative shrink-0 border-t border-hair bg-panel px-2.5 py-2 sm:px-3.5 sm:py-2.5"
+      onDragOver={(e) => {
+        // Only react to drags this zone can accept — real files or a rail
+        // session row. Internal drags (queued-prompt reorder) fall through.
+        const types = e.dataTransfer?.types || [];
+        const kind = types.includes('application/x-arigami-session')
+          ? 'session'
+          : types.includes('Files')
+            ? 'file'
+            : null;
+        if (!kind) return;
+        e.preventDefault();
+        if (!dragging) setDragging(kind);
+      }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
+      onDrop={onDrop}
+    >
+      {paletteOpen && <SlashPalette items={items} active={active} onPick={accept} onHover={setActive} />}
+      {panelTab && (
+        <CapabilitiesPanel capabilities={caps} session={session} initialTab={panelTab} onClose={() => setPanelTab(null)} onPickCommand={insertCommand} />
+      )}
+      {dragging && (
+        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-[10px] border-2 border-dashed border-ink bg-chip/80 font-mono text-[12px] font-bold text-[#4a3f12]">
+          {dragging === 'session' ? 'Drop to reference that session' : 'Drop files to attach'}
+        </div>
+      )}
+
+      <PendingPromptsPanel session={session} />
+
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {attachments.map((a, i) => (
+            <div key={i} className="flex items-center gap-1.5 rounded-md border border-border bg-bg py-1 pr-1 pl-1.5">
+              {a.type.startsWith('image/') ? (
+                <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
+              ) : (
+                <span className="text-[12px]"><Icon icon={faFile} /></span>
+              )}
+              <span className="max-w-[140px] truncate font-mono text-[10.5px] text-fg">{a.name}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachment(i)}
+                title="remove"
+                className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[10px] text-fgdim hover:bg-hair hover:text-danger"
+              >
+                <Icon icon={faXmark} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-end gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
+        />
+        <button
+          type="button"
+          title="Attach files"
+          onClick={() => fileRef.current?.click()}
+          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[14px] text-fgdim hover:border-ink hover:text-fg"
+        >
+          <Icon icon={faPaperclip} />
+        </button>
+        {/* phones: typing "/" opens the same palette — the button isn't worth
+            the composer width it costs */}
+        <button
+          type="button"
+          title="Slash commands & capabilities"
+          onClick={() => setPanelTab('commands')}
+          className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg font-mono text-[13px] text-fgdim hover:border-ink hover:text-fg sm:flex"
+        >
+          /
+        </button>
+        <div className="flex min-w-0 flex-1 items-end gap-2 rounded-[10px] border-[1.5px] border-border px-3 py-2 focus-within:border-[#9a9a9a]">
+          <textarea
+            ref={taRef}
+            rows={1}
+            dir="auto"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            placeholder={isDesktop ? 'Reply to Claude Code…  (type / for commands · drop or 📎 to attach)' : 'Reply to Claude Code…'}
+            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
+            style={{ fieldSizing: 'content' }}
+          />
+          <span className="hidden shrink-0 pb-px font-mono text-[10px] text-[#ccc] sm:block" title="Enter sends · Shift+Enter inserts a newline">↵ send · ⇧↵ newline</span>
+        </div>
+        {working && (
+          <button
+            type="button"
+            title="Interrupt Claude"
+            onClick={interrupt}
+            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
+          >
+            <Icon icon={faStop} />
+          </button>
+        )}
+        {working && (
+          <button
+            type="button"
+            title="Queue as pending prompt — runs when the current turn is done (or via ▶)"
+            onClick={queue}
+            disabled={!text.trim()}
+            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[13px] text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
+          >
+            <Icon icon={faHourglassHalf} />
+          </button>
+        )}
+        <MicButton />
+        <button
+          type="button"
+          title="Send"
+          onClick={send}
+          disabled={!text.trim() && !attachments.length}
+          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-sm text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
+        >
+          <Icon icon={faArrowUp} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Always-visible voice trigger — voice used to hide inside the rail's profile
+// menu, unreachable on phones where the rail is a closed drawer.
+function MicButton() {
+  const { status } = useVoice();
+  const rec = status === 'recording';
+  return (
+    <button
+      type="button"
+      title="Voice control (tap to talk, tap again to stop)"
+      onClick={toggleRecording}
+      className={`flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] text-[13px] ${
+        rec
+          ? 'border-danger bg-[#fdf6f5] text-danger'
+          : 'border-border bg-bg text-fgdim hover:border-ink hover:text-fg'
+      }`}
+    >
+      <Icon icon={rec ? faCircle : faMicrophone} className={rec ? 'text-[9px]' : undefined} />
+    </button>
+  );
+}
+
+/* ---------- url / content tabs --------------------------------------------- */
+
+function ComparePill({ on, onToggle, label = 'compare to prod' }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-ink py-0.5 pr-2.5 pl-1.5 ${
+        on ? 'bg-chip' : 'bg-panel'
+      }`}
+    >
+      <span
+        className="relative h-[13px] w-[22px] rounded-full transition-colors"
+        style={{ background: on ? '#F9D312' : '#d6d6d6' }}
+      >
+        <span
+          className="absolute top-px h-[11px] w-[11px] rounded-full bg-white transition-[left]"
+          style={{
+            left: on ? 10 : 1,
+            border: `1px solid ${on ? '#2a2a2a' : '#999'}`,
+          }}
+        />
+      </span>
+      <span className={`text-[10.5px] ${on ? 'text-[#4a3f12]' : 'text-fgdim'}`}>
+        {label}
+      </span>
+    </button>
+  );
+}
+
+function UrlTab({ tab, active }) {
+  // A session can open a tab already split in comparison mode (compare.open via
+  // the open_tab MCP tool); otherwise it starts on the live view with the toggle.
+  const compareProxied = !!tab.url && !tab.url.startsWith('/') && !tab.url.startsWith(HOST_ORIGIN);
+  const [compareOn, setCompareOn] = useState(!!tab.compare?.open && compareProxied);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const { config } = useStore();
+  // The server can flip compare mode on later via update_tab (tab-updated WS):
+  // sync the local toggle when the server's compare.open changes, mirroring how
+  // the active-tab override works. Local user toggling still wins between server
+  // changes because we only react to the server value flipping.
+  const serverCompareOpen = !!tab.compare?.open && compareProxied;
+  const prevServerCompare = useRef(serverCompareOpen);
+  useEffect(() => {
+    if (serverCompareOpen !== prevServerCompare.current) {
+      prevServerCompare.current = serverCompareOpen;
+      setCompareOn(serverCompareOpen);
+    }
+  }, [serverCompareOpen]);
+  // Command bus → reload the live tab (voice: "reload the page"). Only the
+  // ACTIVE tab responds — otherwise every hidden URL tab in the session would
+  // remount its iframe and lose its navigation/scroll/login state. Bumping the
+  // iframe key forces a fresh mount, the simplest cross-origin-safe reload.
+  useEffect(() => {
+    if (!active) return;
+    const onReload = () => { setLoading(true); setReloadKey((k) => k + 1); };
+    window.addEventListener('host:reload-tab', onReload);
+    return () => window.removeEventListener('host:reload-tab', onReload);
+  }, [active]);
+  // Every proxied URL tab gets the compare toggle. Baseline priority:
+  // explicit tab.compare.url → storybookCompareUrl for Storybook-port targets
+  // (the latest published build, e.g. Chromatic main) → prod at the same path
+  // (the /__compare page's own default).
+  const proxied = !!tab.url && !tab.url.startsWith('/') && !tab.url.startsWith(HOST_ORIGIN);
+  const isStorybook = /:60\d\d(\/|$)/.test(tab.url || '');
+  const compareTo =
+    tab.compare?.url || (isStorybook && config?.storybookCompareUrl) || null;
+  // A url tab with no url is malformed (nothing to show) — render a calm empty
+  // state rather than an iframe, so it can never spin the host-proxy bootstrap.
+  if (!tab.url) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 bg-bg text-center">
+        <div className="text-[13px] font-bold text-fg">No URL for this tab</div>
+        <div className="text-[11.5px] text-fgdim">This tab has no address to load.</div>
+      </div>
+    );
+  }
+  const src = compareOn
+    ? `${HOST_ORIGIN}/__compare?a=${encodeURIComponent(tab.url || '')}${
+        compareTo ? `&b=${encodeURIComponent(compareTo)}` : ''
+      }`
+    : tabSrc(tab.url);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-bg">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5">
+        <button
+          type="button"
+          onClick={() => { setLoading(true); setReloadKey((k) => k + 1); }}
+          title="Reload this preview"
+          aria-label="Reload preview"
+          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+        >
+          <Icon icon={faRotateRight} />
+        </button>
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fgdim">{tab.url}</span>
+        <a
+          /* proxied so it opens from any device — the raw tab.url may point at
+             the HOST's localhost, which a phone over VPN can't reach */
+          href={tabSrc(tab.url)}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in a new browser tab"
+          aria-label="Open in a new browser tab"
+          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+        >
+          ↗
+        </a>
+        {proxied && (
+          <ComparePill
+            on={compareOn}
+            onToggle={() => { setLoading(true); setCompareOn((v) => !v); }}
+            label={tab.compare?.url ? 'compare' : isStorybook && compareTo ? 'vs main build' : 'compare to prod'}
+          />
+        )}
+      </div>
+      <div className="relative min-h-0 flex-1">
+        {loading && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 bg-white/80 text-[11px] text-fgdim">
+            <span className="host-spinner h-3.5 w-3.5" /> loading preview…
+          </div>
+        )}
+        <iframe
+          key={reloadKey}
+          title={tab.title || 'tab'}
+          src={src}
+          onLoad={() => setLoading(false)}
+          className="absolute inset-0 h-full w-full border-0 bg-white"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ContentTab({ tab }) {
+  if (tab.format === 'html') {
+    return (
+      <iframe
+        title={tab.title || 'content'}
+        sandbox="allow-scripts"
+        srcDoc={tab.body || ''}
+        className="min-h-0 w-full flex-1 border-0 bg-white"
+      />
+    );
+  }
+  return (
+    <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-white">
+      <div className="md-light mx-auto max-w-[860px] px-7 py-6">
+        <Markdown>{tab.body || ''}</Markdown>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- the session view ------------------------------------------------ */
+
+export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen }) {
+  const { sessions: allSessions } = useStore();
+  const hasChildren = allSessions.some((s) => s.metadata?.master === session.id);
+  const tabs = resolveTabs(session, hasChildren);
+  // The built-in Changes tab isn't a server tab, so its activation is local.
+  const [localActive, setLocalActive] = useState(null);
+  // A server-side activation (e.g. a skill opening the Changes tab via MCP) is
+  // an explicit command — let it override a stale local pick.
+  const prevServerActive = useRef(session.activeTabId);
+  useEffect(() => {
+    if (session.activeTabId !== prevServerActive.current) {
+      prevServerActive.current = session.activeTabId;
+      setLocalActive(null);
+    }
+  }, [session.activeTabId]);
+
+  const serverActive =
+    session.activeTabId && tabs.some((t) => t.id === session.activeTabId)
+      ? session.activeTabId
+      : tabs[0].id;
+  // A local pick wins until the server activates a (real) tab again.
+  const activeTabId =
+    localActive && tabs.some((t) => t.id === localActive) ? localActive : serverActive;
+
+  // Auto-focus the composer whenever the chat (session) tab is the active tab —
+  // on a session switch or when the user switches to that tab. All tabs stay
+  // mounted (hidden via CSS), so this is driven by the active tab, not mount.
+  // Defer while the session is awaiting an answer — the permission / question
+  // card grabs focus instead and hands it back here once answered.
+  const chatTabId = tabs.find((t) => t.type === 'session')?.id;
+  useEffect(() => {
+    if (activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
+      window.dispatchEvent(new CustomEvent('host:focus-input'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, session.id]);
+
+  const onActivate = (tab) => {
+    if (tab.id === CHANGES_TAB_ID || tab.id === ORCH_TAB_ID) {
+      setLocalActive(tab.id);
+    } else {
+      setLocalActive(tab.id);
+      if (tab.id !== session.activeTabId) {
+        api.post(`/sessions/${session.id}/activate-tab`, { tabId: tab.id }).catch(() => {});
+      }
+    }
+  };
+
+  // URL ↔ active tab. The hash carries `#/session/<id>/tab/<tabId>` so a
+  // refresh (or shared link) lands on the same tab. replaceState only — tab
+  // switches shouldn't pile up history entries.
+  useEffect(() => {
+    const applyHashTab = () => {
+      const m = /^#\/session\/([^/]+)\/tab\/(.+)$/.exec(window.location.hash || '');
+      if (!m || decodeURIComponent(m[1]) !== session.id) return;
+      const tid = decodeURIComponent(m[2]);
+      if (tid !== activeTabId && tabs.some((t) => t.id === tid)) onActivate({ id: tid });
+    };
+    applyHashTab();
+    window.addEventListener('hashchange', applyHashTab);
+    return () => window.removeEventListener('hashchange', applyHashTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id]);
+  useEffect(() => {
+    const base = `#/session/${encodeURIComponent(session.id)}`;
+    const cur = window.location.hash || '';
+    if (cur !== base && !cur.startsWith(`${base}/tab/`)) return; // another view owns the URL
+    const want =
+      activeTabId === chatTabId ? base : `${base}/tab/${encodeURIComponent(activeTabId)}`;
+    if (cur !== want) {
+      try { window.history.replaceState(null, '', want); } catch { /* very old engines */ }
+    }
+  }, [activeTabId, session.id, chatTabId]);
+
+  // Command bus → tab activation (voice: "open the changes tab", "go to terminal").
+  // The command handler dispatches a window event after selecting this session;
+  // route it through onActivate so local (Changes) and server tabs both work.
+  useEffect(() => {
+    const onCmd = (e) => {
+      if (e.detail?.sessionId && e.detail.sessionId !== session.id) return;
+      if (e.detail?.tabId) onActivate({ id: e.detail.tabId });
+    };
+    window.addEventListener('host:activate-tab', onCmd);
+    return () => window.removeEventListener('host:activate-tab', onCmd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id, session.activeTabId]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <TabBar
+        session={session}
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onActivate={onActivate}
+        addOpen={addTabOpen}
+        setAddOpen={setAddTabOpen}
+      />
+      <div className="relative min-h-0 flex-1">
+        {tabs.map((tab) => {
+          const active = tab.id === activeTabId;
+          return (
+            <div
+              key={tab.id}
+              className={`absolute inset-0 flex-col bg-bg ${active ? 'flex' : 'hidden'}`}
+            >
+              {tab.type === 'session' ? (
+                <>
+                  <TerminalHeader session={session} />
+                  <ProgressStrip progress={session.progress} />
+                  <ListenerChips session={session} />
+                  <ChatPane
+                    sessionId={session.id}
+                    events={events}
+                    loading={chatLoading}
+                    working={session.claude?.state === 'working'}
+                    awaiting={session.claude?.state === 'awaiting-input'}
+                    action={session.action}
+                  />
+                  {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+                </>
+              ) : tab.type === 'changes' ? (
+                <ChangesTab session={session} active={active} />
+              ) : tab.type === 'orchestration' ? (
+                <OrchestrationTab session={session} active={active} />
+              ) : tab.type === 'url' ? (
+                <UrlTab tab={tab} active={active} />
+              ) : (
+                <ContentTab tab={tab} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

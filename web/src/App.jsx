@@ -1,0 +1,825 @@
+import { useEffect, useRef, useState } from 'react';
+import { api } from './lib/api.js';
+import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState } from './lib/store.js';
+import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
+import { useIsDesktop } from './lib/useMedia.js';
+import { startRecording, stopRecording, toggleRecording, setSelectedContext } from './lib/voice.js';
+import { setCommandHandlers } from './lib/commands.js';
+import { Icon } from './lib/icons.js';
+import {
+  faBars,
+  faBoxArchive,
+  faCircleHalfStroke,
+  faCircleUser,
+  faGear,
+  faHouse,
+  faMicrophone,
+  faPen,
+  faPlus,
+  faPlusMinus,
+  faPuzzlePiece,
+  faQuestion,
+  faTrash,
+} from '@fortawesome/free-solid-svg-icons';
+import Rail from './components/Rail.jsx';
+import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
+import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
+import FirstRun from './components/FirstRun.jsx';
+import Settings from './components/Settings.jsx';
+import SkillsView from './components/SkillsView.jsx';
+import AccountsView from './components/AccountsView.jsx';
+import Setup from './components/Setup.jsx';
+import VoiceHUD from './components/VoiceHUD.jsx';
+import QuickSwitcher from './components/QuickSwitcher.jsx';
+import ShortcutsHelp from './components/ShortcutsHelp.jsx';
+import Toaster from './components/Toaster.jsx';
+import ConfirmHost from './components/ConfirmHost.jsx';
+import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
+
+// Parse a "Cmd+Shift+V" hotkey string and test a keyboard event against it.
+function matchesHotkey(e, hotkey) {
+  if (!hotkey || typeof hotkey !== 'string') return false;
+  const parts = hotkey.split('+').map((p) => p.trim());
+  const wantCmd = parts.includes('Cmd');
+  const wantCtrl = parts.includes('Ctrl');
+  const wantAlt = parts.includes('Alt');
+  const wantShift = parts.includes('Shift');
+  const wantKey = (parts.find((p) => !['Cmd', 'Ctrl', 'Alt', 'Shift'].includes(p)) || '').toLowerCase();
+  if (!wantKey) return false;
+  const key = (e.key === ' ' ? 'space' : e.key).toLowerCase();
+  return (
+    !!e.metaKey === wantCmd &&
+    !!e.ctrlKey === wantCtrl &&
+    !!e.altKey === wantAlt &&
+    !!e.shiftKey === wantShift &&
+    key === wantKey
+  );
+}
+
+// Next unused "scratch-N" name for an instant empty session.
+function scratchName(sessions) {
+  const n = (sessions || []).filter((s) => /^scratch-\d+$/.test(s.title || '')).length;
+  return `scratch-${n + 1}`;
+}
+
+// ---- URL routing (hash-based) ---------------------------------------------
+// Each main view is reflected in window.location.hash so pages are deep-linkable
+// and survive a refresh. parseHash → the view state; routeFromState → the hash.
+// The two are inverses so syncing them can't drift.
+function parseHash(hash) {
+  const h = (hash || '').replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');
+  const seg = h.split('/');
+  switch (seg[0]) {
+    case 'settings': return { view: 'settings' };
+    case 'skills': return { view: 'skills' };
+    case 'setup': return { view: 'setup' };
+    case 'accounts': return { view: 'accounts', add: seg[1] === 'add' };
+    case 'new':
+    case 'launcher': return { view: 'launcher', mode: ['ticket', 'empty', 'trigger'].includes(seg[1]) ? seg[1] : 'ticket' };
+    case 'ticket': return seg[1] ? { view: 'ticket', id: decodeURIComponent(seg[1]) } : { view: 'home' };
+    case 'session': return seg[1] ? { view: 'session', id: decodeURIComponent(seg[1]) } : { view: 'home' };
+    default: return { view: 'home' };
+  }
+}
+
+function routeFromState(s) {
+  if (s.settingsOpen) return '#/settings';
+  if (s.skillsOpen) return '#/skills';
+  if (s.setupOpen) return '#/setup';
+  if (s.accountsOpen) return s.accountsAddIntent ? '#/accounts/add' : '#/accounts';
+  if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
+  if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
+  if (s.selectedId) return `#/session/${encodeURIComponent(s.selectedId)}`;
+  return '#/';
+}
+
+// The session-type tab's id (where the chat/terminal lives) for a session.
+function sessionTabId(session) {
+  const tabs = resolveTabs(session);
+  return (tabs.find((t) => t.type === 'session') || tabs[0])?.id || '__session';
+}
+
+// Short, gentle WebAudio beep — fired when a session starts needing attention
+// while it's not focused/selected. Reuses one shared AudioContext.
+let audioCtx = null;
+function beep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 660;
+    const now = audioCtx.currentTime;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  } catch {
+    /* audio may be blocked until first interaction — ignore */
+  }
+}
+
+function isTyping(e) {
+  const el = e.target;
+  const tag = el?.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable;
+}
+
+// Full-pane preview of a pending (not-yet-a-session) ticket — the same
+// /__ticket/<id> host page create-from-ticket opens as a tab, shown standalone
+// since there's no session yet. "Start session" promotes it via the queue.
+function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
+  // The pending item already carries a title from trigger time — pass it
+  // through so the card can show *something* if the live Linear fetch fails
+  // (e.g. no API key configured, or the ticket was never cached) instead of
+  // a bare "isn't loaded".
+  const src = fallbackTitle
+    ? `/__ticket/${ticket}?title=${encodeURIComponent(fallbackTitle)}`
+    : `/__ticket/${ticket}`;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
+      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
+        <span className="font-mono text-[12.5px] font-bold">{ticket}</span>
+        <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
+          pending
+        </span>
+        <button
+          type="button"
+          onClick={onStart}
+          className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
+        >
+          Start session →
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Close preview"
+          className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
+        >
+          ×
+        </button>
+      </div>
+      <iframe
+        title={`Ticket ${ticket}`}
+        src={src}
+        className="min-h-0 flex-1 border-0"
+      />
+    </div>
+  );
+}
+
+export default function App() {
+  const { sessions, chats, chatLoaded, conn, config, pending } = useStore();
+  const prefs = usePrefs();
+  // Seed each view flag from the URL hash so a deep link / refresh lands on the
+  // right page. The two sync effects below keep hash ↔ state aligned thereafter.
+  const initial = parseHash(window.location.hash);
+  const [selectedId, setSelectedId] = useState(initial.view === 'session' ? initial.id : null);
+  const [launcher, setLauncher] = useState(initial.view === 'launcher' ? { mode: initial.mode } : null); // null | {mode:'ticket'|'empty'|'trigger'}
+  const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
+  const [settingsOpen, setSettingsOpen] = useState(initial.view === 'settings');
+  const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
+  const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
+  const [accountsOpen, setAccountsOpen] = useState(initial.view === 'accounts');
+  const [accountsAddIntent, setAccountsAddIntent] = useState(initial.view === 'accounts' && !!initial.add);
+  const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
+  const [addTabOpen, setAddTabOpen] = useState(false);
+  const [railOpen, setRailOpen] = useState(false); // mobile drawer
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const searchRef = useRef(null);
+  const isDesktop = useIsDesktop();
+
+  // Order matches the rail's flat list (drag-to-reorder sets sortOrder), so
+  // ⌘1–9, ⌘⇧↑/↓ prev-next, and the quick switcher all follow the visual d&d
+  // order — new/unordered sessions sink to the end, keeping insertion order.
+  const active = sessions
+    .filter((s) => !s.archived)
+    .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
+  const selected = sessions.find((s) => s.id === selectedId) || null;
+
+  // Apply a parsed route to the view flags (one active, others cleared).
+  const applyRoute = (r) => {
+    setSettingsOpen(r.view === 'settings');
+    setSkillsOpen(r.view === 'skills');
+    setSetupOpen(r.view === 'setup');
+    setAccountsOpen(r.view === 'accounts');
+    setAccountsAddIntent(r.view === 'accounts' && !!r.add);
+    setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
+    setPreviewTicket(r.view === 'ticket' ? r.id : null);
+    if (r.view === 'session') setSelectedId(r.id);
+    else if (r.view === 'home') setSelectedId(null);
+  };
+
+  // URL ↔ state sync, with real browser history.
+  //   state→hash: pushState so Back/Forward step through the pages — EXCEPT the
+  //   first sync and any transition out of bare home (`#/`), which are
+  //   normalizations (e.g. auto-selecting the first session on load) and use
+  //   replaceState so they don't leave a dead `#/` entry you'd bounce off of.
+  //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
+  //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
+  const firstSync = useRef(true);
+  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
+  useEffect(() => {
+    const want = routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
+    const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
+    // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
+    // `#/session/<id>` — leave it alone so the active tab survives a refresh.
+    const isTabRefinement = want.startsWith('#/session/') && cur.startsWith(`${want}/tab/`);
+    if (cur !== want && !isTabRefinement) {
+      const replace = firstSync.current || lastRoute.current === '#/';
+      try {
+        window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
+      } catch {
+        window.location.hash = want;
+      }
+    }
+    firstSync.current = false;
+    lastRoute.current = want;
+  }, [settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
+
+  useEffect(() => {
+    const onHash = () => {
+      lastRoute.current = '#' + (window.location.hash.replace(/^#/, '') || '/');
+      applyRoute(parseHash(window.location.hash));
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // keep a valid selection. Guard the reset with `sessions.length` so a
+  // deep-linked #/session/<id> isn't nulled during the initial empty phase
+  // before the sessions list has loaded.
+  useEffect(() => {
+    if (selectedId && sessions.length && !sessions.some((s) => s.id === selectedId)) setSelectedId(null);
+    if (!selectedId && active.length > 0) setSelectedId(active[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, selectedId]);
+
+  // rehydrate chat history for the selected session
+  useEffect(() => {
+    if (selected?.id) loadChat(selected.id);
+  }, [selected?.id]);
+
+  // keep the dialog's session object fresh (WS may patch it)
+  const dialogSession = dialog
+    ? sessions.find((s) => s.id === dialog.session.id) || dialog.session
+    : null;
+
+  // Question beep + title badge: beep ONCE per (clean→attention) transition when
+  // the session is unfocused/unselected or the page is hidden. Store fires the
+  // handler exactly once per transition, so no double-beeping here.
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  useEffect(() => {
+    setAttentionHandler((s) => {
+      const unfocused = s.id !== selectedRef.current || document.hidden;
+      if (unfocused) beep();
+    });
+    return () => setAttentionHandler(null);
+  }, []);
+
+  // Title badge: show "(?)" while any UNSELECTED session needs attention.
+  const anyOtherNeedsAttention = sessions.some(
+    (s) => needsAttention(s) && s.id !== selectedId,
+  );
+  useEffect(() => {
+    const base = 'Arigami';
+    document.title = anyOtherNeedsAttention ? `(?) ${base}` : base;
+  }, [anyOtherNeedsAttention]);
+
+  // Tell the voice router which session is current (for context + inject target).
+  useEffect(() => {
+    setSelectedContext(selectedId);
+  }, [selectedId]);
+
+  // ---- auto-compact: when a session's live context % crosses the configured
+  // threshold, send "/compact" for it. Armed per-session and re-armed only after
+  // usage falls back below the threshold (hysteresis), so each crossing fires
+  // exactly once. Only fires for a started, idle session so we never interleave
+  // a turn. Toggle + threshold live in the per-session context modal (global pref).
+  const compactArmed = useRef({});
+  useEffect(() => {
+    if (!prefs.autoCompact) { compactArmed.current = {}; return; }
+    const thr = prefs.autoCompactPct;
+    for (const s of sessions) {
+      if (s.archived) continue;
+      const pct = s.claude?.usage?.ctxPct;
+      if (pct == null) continue;
+      if (pct < thr - 5) { compactArmed.current[s.id] = true; continue; } // re-arm
+      const armed = compactArmed.current[s.id] !== false; // default: armed
+      if (pct >= thr && armed && s.claude?.sessionId && s.claude?.state === 'idle') {
+        compactArmed.current[s.id] = false;
+        api.post(`/sessions/${s.id}/message`, { text: '/compact' }).catch(() => {});
+      }
+    }
+  }, [sessions, prefs.autoCompact, prefs.autoCompactPct]);
+
+  // ---- command bus: the single action surface voice control drives ----------
+  // Handlers are registered ONCE but read fresh state/setters from this ref, so
+  // a voice plan built minutes ago still acts on the live app. Action types and
+  // args mirror server/voice.js COMMANDS exactly.
+  const cmd = useRef({});
+  cmd.current = {
+    sessions, active, selectedId, config,
+    setSelectedId, setLauncher, setSettingsOpen, setAccountsOpen, setDialog, setAddTabOpen,
+    setQuickSwitcherOpen, setShortcutsOpen, searchRef,
+  };
+  useEffect(() => {
+    const C = () => cmd.current;
+    const resolveId = (a) => a?.sessionId || C().selectedId;
+    const findSession = (id) => C().sessions.find((s) => s.id === id);
+    // Switch to a session, then drive its (only-when-mounted) SessionView to a
+    // tab via a window event SessionView listens for. Cross-session needs a tick
+    // for the new SessionView to mount before it can hear the event.
+    const goToTab = (sessionId, tabId) => {
+      const id = sessionId || C().selectedId;
+      if (!id) return;
+      const dispatch = () => window.dispatchEvent(new CustomEvent('host:activate-tab', { detail: { sessionId: id, tabId } }));
+      if (id !== C().selectedId) {
+        C().setSelectedId(id);
+        C().setLauncher(null);
+        C().setSettingsOpen(false);
+        C().setAccountsOpen(false);
+        setTimeout(dispatch, 60);
+      } else {
+        dispatch();
+      }
+    };
+    const closeOverlays = () => {
+      C().setLauncher(null);
+      C().setSettingsOpen(false);
+      C().setAccountsOpen(false);
+      C().setDialog(null);
+      C().setAddTabOpen(false);
+      C().setQuickSwitcherOpen(false);
+      C().setShortcutsOpen(false);
+    };
+
+    setCommandHandlers({
+      select_session: (a, ctx) => {
+        const s = findSession(a.sessionId);
+        if (!s) return;
+        C().setSelectedId(s.id); C().setLauncher(null); C().setSettingsOpen(false); C().setAccountsOpen(false);
+        ctx.targetSessionId = s.id;
+      },
+      next_session: () => {
+        const list = C().active; if (!list.length) return;
+        const i = list.findIndex((s) => s.id === C().selectedId);
+        C().setSelectedId(list[(i + 1 + list.length) % list.length].id);
+      },
+      prev_session: () => {
+        const list = C().active; if (!list.length) return;
+        const i = list.findIndex((s) => s.id === C().selectedId);
+        C().setSelectedId(list[(i - 1 + list.length) % list.length].id);
+      },
+      new_session: async (a, ctx) => {
+        const cfg = C().config;
+        const s = await api.post('/sessions', {
+          title: scratchName(C().sessions),
+          cwd: cfg?.reposDir || cfg?.defaultCwd || undefined,
+        }).catch(() => null);
+        if (s?.id) { C().setSelectedId(s.id); C().setLauncher(null); ctx.targetSessionId = s.id; }
+      },
+      open_launcher: () => { C().setLauncher({ mode: 'ticket' }); },
+      open_terminal: (a) => {
+        const s = findSession(resolveId(a)); if (!s) return;
+        goToTab(s.id, sessionTabId(s));
+      },
+      open_changes: (a) => { goToTab(resolveId(a), CHANGES_TAB_ID); },
+      activate_tab: (a) => { if (a.tabId) goToTab(resolveId(a), a.tabId); },
+      open_tab: async (a) => {
+        const id = resolveId(a); if (!id || !a.url) return;
+        await api.post(`/sessions/${id}/tabs`, { type: 'url', url: a.url, title: a.title || a.url }).catch(() => {});
+      },
+      reload_tab: () => { window.dispatchEvent(new CustomEvent('host:reload-tab', { detail: { sessionId: C().selectedId } })); },
+      close_tab: async (a) => {
+        const id = resolveId(a); if (!id || !a.tabId) return;
+        await api.del(`/sessions/${id}/tabs/${a.tabId}`).catch(() => {});
+      },
+      rename_session: async (a) => {
+        const id = resolveId(a); if (!id || !a.title) return;
+        await api.patch(`/sessions/${id}`, { title: a.title }).catch(() => {});
+      },
+      archive_session: (a) => {
+        const s = findSession(resolveId(a)); if (s) C().setDialog({ type: 'archive', session: s });
+      },
+      delete_session: (a) => {
+        const s = findSession(a.sessionId); if (s) C().setDialog({ type: 'delete', session: s });
+      },
+      restore_session: async (a) => {
+        if (a.sessionId) await api.patch(`/sessions/${a.sessionId}`, { archived: false }).catch(() => {});
+      },
+      focus_input: () => { window.dispatchEvent(new CustomEvent('host:focus-input')); },
+      set_theme: (a) => {
+        const cur = getPrefs().theme;
+        const mode = a.mode === 'toggle' ? (cur === 'dark' ? 'light' : 'dark') : a.mode;
+        if (mode === 'light' || mode === 'dark') setPrefs({ theme: mode });
+      },
+      set_terminal: (a) => {
+        const id = resolveId(a); if (!id) return;
+        const patch = {};
+        if (['light', 'dark'].includes(a.theme)) patch.theme = a.theme;
+        if (['auto', 'ltr', 'rtl'].includes(a.dir)) patch.dir = a.dir;
+        if (Object.keys(patch).length) setTermOverride(id, patch);
+      },
+      open_settings: () => { C().setSettingsOpen(true); C().setLauncher(null); },
+      dismiss: () => { closeOverlays(); },
+      interrupt: async (a) => {
+        const id = resolveId(a); if (id) await interruptSession(id);
+      },
+      inject_prompt: async (a, ctx) => {
+        const id = a.sessionId || ctx?.targetSessionId || C().selectedId;
+        const text = (a.text || '').trim();
+        if (!id || !text) return;
+        await api.post(`/sessions/${id}/message`, { text }).catch(() => {});
+      },
+      clarify: () => {},
+    });
+    return () => setCommandHandlers({});
+  }, []);
+
+  // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
+  const keyCtx = useRef({});
+  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, sessionCount: sessions.length };
+  const pttActive = useRef(false); // push-to-talk: recording while the hotkey is held
+  useEffect(() => {
+    const onKey = (e) => {
+      const ctx = keyCtx.current;
+      if (e.key === 'Escape') {
+        // dialogs/popovers/settings handle their own esc via capture listeners.
+        // Esc-to-interrupt: only when there's nothing to close AND the selected
+        // session is working AND the user isn't typing in an input.
+        const nothingOpen =
+          !ctx.dialog && !ctx.launcher && !ctx.settingsOpen && !ctx.addTabOpen;
+        if (nothingOpen && !isTyping(e) && ctx.selected?.claude?.state === 'working') {
+          e.preventDefault();
+          interruptSession(ctx.selected.id);
+          return;
+        }
+        // Match the ✕ button's predicate (any session, incl. archived) so Esc
+        // can always close the launcher whenever the ✕ is shown.
+        if (!ctx.dialog && ctx.launcher && ctx.sessionCount > 0) setLauncher(null);
+        return;
+      }
+      if (e.key === '/' && !isTyping(e) && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      // Quick switcher: Cmd+K
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !isTyping(e)) {
+        e.preventDefault();
+        setQuickSwitcherOpen(true);
+        return;
+      }
+      // Shortcuts help: ? (Shift+/)
+      if (e.shiftKey && e.key === '?' && !isTyping(e) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+        return;
+      }
+      // Voice control: user-configurable hotkey (default Cmd/Ctrl+Shift+V).
+      // 'hold' = push-to-talk (record while held); 'toggle' = press to start/stop.
+      if (matchesHotkey(e, getPrefs().voiceHotkey) && !isTyping(e)) {
+        e.preventDefault();
+        if (getPrefs().voiceMode === 'hold') {
+          if (!e.repeat && !pttActive.current) { pttActive.current = true; startRecording(); }
+        } else {
+          toggleRecording();
+        }
+        return;
+      }
+      // Cmd/Ctrl+Shift chords (documented in the cheat-sheet): session nav,
+      // new empty session, focus composer.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+        const list = ctx.active;
+        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && list.length) {
+          e.preventDefault();
+          const i = list.findIndex((s) => s.id === ctx.selected?.id);
+          const from = i < 0 ? 0 : i;
+          const delta = e.key === 'ArrowUp' ? -1 : 1;
+          setSelectedId(list[(from + delta + list.length) % list.length].id);
+          setLauncher(null);
+          return;
+        }
+        if (e.key.toLowerCase() === 'n') {
+          e.preventDefault();
+          const cfg = getState().config;
+          api
+            .post('/sessions', {
+              title: scratchName(getState().sessions),
+              cwd: cfg?.reposDir || cfg?.defaultCwd || undefined,
+            })
+            .then((s) => {
+              if (s?.id) {
+                setSelectedId(s.id);
+                setLauncher(null);
+              }
+            })
+            .catch(() => {});
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent('host:focus-input'));
+          return;
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        if (e.key >= '1' && e.key <= '9') {
+          const idx = Number(e.key) - 1;
+          const target = ctx.active[idx];
+          if (target) {
+            e.preventDefault();
+            setSelectedId(target.id);
+            setLauncher(null);
+          }
+          return;
+        }
+        if (e.key === 't' && ctx.selected && !ctx.launcher) {
+          e.preventDefault();
+          setAddTabOpen((v) => !v);
+        }
+      }
+    };
+    // Push-to-talk release: while a hold-recording is active, releasing any part
+    // of the chord (the key or a modifier) ends the take and sends it.
+    const onKeyUp = () => {
+      if (pttActive.current) { pttActive.current = false; stopRecording(); }
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
+  // Jump to a session from anywhere (e.g. the Orchestration tab clicking a worker).
+  useEffect(() => {
+    const onJump = (e) => {
+      const id = e.detail?.id;
+      if (id && sessions.some((s) => s.id === id)) {
+        setSelectedId(id);
+        setLauncher(null);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setSetupOpen(false);
+        setAccountsOpen(false);
+      }
+    };
+    window.addEventListener('host:select-session', onJump);
+    return () => window.removeEventListener('host:select-session', onJump);
+  }, [sessions]);
+
+  // Open the rail drawer from anywhere (e.g. the TabBar's mobile hamburger —
+  // the session view has no top bar of its own, the tab bar hosts the button).
+  useEffect(() => {
+    const onOpen = () => setRailOpen(true);
+    window.addEventListener('host:open-rail', onOpen);
+    return () => window.removeEventListener('host:open-rail', onOpen);
+  }, []);
+
+  // Open the Accounts page from anywhere (e.g. the /mcp panel's Authenticate…).
+  useEffect(() => {
+    const onOpen = (e) => {
+      setAccountsAddIntent(!!e.detail?.add);
+      setAccountsOpen(true);
+      setSettingsOpen(false);
+      setSkillsOpen(false);
+      setSetupOpen(false);
+      setLauncher(null);
+    };
+    window.addEventListener('host:open-accounts', onOpen);
+    return () => window.removeEventListener('host:open-accounts', onOpen);
+  }, []);
+
+  const onCreated = (session) => {
+    if (session?.id) setSelectedId(session.id);
+    setLauncher(null);
+  };
+
+  // ⌘K command-palette actions — everything reachable keyboard-only. Building
+  // fresh each render is cheap and keeps `selected` current.
+  const goToChanges = () => {
+    if (!selected) return;
+    setSelectedId(selected.id);
+    requestAnimationFrame(() =>
+      window.dispatchEvent(new CustomEvent('host:activate-tab', { detail: { sessionId: selected.id, tabId: CHANGES_TAB_ID } })),
+    );
+  };
+  const paletteActions = [
+    { id: 'new-empty', label: 'New empty session', keywords: 'create scratch blank', icon: faPlus, run: () => {
+      const cfg = getState().config;
+      api.post('/sessions', { title: scratchName(getState().sessions), cwd: cfg?.reposDir || cfg?.defaultCwd || undefined })
+        .then((s) => { if (s?.id) { setSelectedId(s.id); setLauncher(null); } }).catch(() => {});
+    } },
+    { id: 'new-ticket', label: 'New session from a ticket…', keywords: 'launcher linear create start', icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
+    { id: 'settings', label: 'Open Settings', keywords: 'preferences theme voice', icon: faGear, run: () => setSettingsOpen(true) },
+    { id: 'skills', label: 'Open Skills', keywords: 'skill pack', icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
+    { id: 'accounts', label: 'Open Accounts', keywords: 'account login switch', icon: faCircleUser, run: () => setAccountsOpen(true) },
+    { id: 'setup', label: 'Open Setup / workspace', keywords: 'onboarding repos', icon: faHouse, run: () => setSetupOpen(true) },
+    { id: 'shortcuts', label: 'Keyboard shortcuts', keywords: 'help keys cheat sheet', icon: faQuestion, run: () => setShortcutsOpen(true) },
+    { id: 'theme', label: 'Toggle light / dark theme', keywords: 'appearance dark mode', icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
+    ...(selected ? [
+      { id: 'changes', label: 'Open Changes (current session)', keywords: 'diff git review', icon: faPlusMinus, run: goToChanges },
+      { id: 'edit', label: 'Edit session details', keywords: 'rename title status description', icon: faPen, run: () => setDialog({ type: 'edit', session: selected }) },
+      { id: 'archive', label: 'Archive current session', keywords: 'close hide', icon: faBoxArchive, run: () => setDialog({ type: 'archive', session: selected }) },
+      { id: 'delete', label: 'Delete current session', keywords: 'remove', icon: faTrash, run: () => setDialog({ type: 'delete', session: selected }) },
+    ] : []),
+  ];
+
+  // When a session is the main view its TabBar carries the mobile hamburger, so
+  // the extra top bar would only duplicate the title — skip it there and keep
+  // the pixels for the chat. Every other view still gets it for drawer access.
+  const sessionIsMain =
+    !!selected && !settingsOpen && !skillsOpen && !setupOpen && !accountsOpen && !launcher && !previewTicket;
+  // Top-bar label names the view you're IN, not the session you came from.
+  const topBarTitle = settingsOpen
+    ? 'Settings'
+    : skillsOpen
+      ? 'Skills'
+      : setupOpen
+        ? 'Setup'
+        : accountsOpen
+          ? 'Accounts'
+          : launcher
+            ? 'New session'
+            : previewTicket || selected?.title || 'Arigami';
+
+  let main;
+  if (settingsOpen) {
+    main = <Settings onClose={() => setSettingsOpen(false)} />;
+  } else if (skillsOpen) {
+    main = <SkillsView session={selected} onClose={() => setSkillsOpen(false)} />;
+  } else if (setupOpen) {
+    main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} />;
+  } else if (accountsOpen) {
+    main = <AccountsView onClose={() => setAccountsOpen(false)} initialAdd={accountsAddIntent} />;
+  } else if (launcher) {
+    main = (
+      <Launcher
+        config={config}
+        sessions={sessions}
+        initialMode={launcher.mode}
+        onClose={sessions.length > 0 ? () => setLauncher(null) : null}
+        onCreated={onCreated}
+        onNeedsSetup={() => { setLauncher(null); setSetupOpen(true); }}
+      />
+    );
+  } else if (previewTicket) {
+    const previewItem = (pending || []).find(
+      (p) => p.ticket?.toUpperCase() === previewTicket.toUpperCase(),
+    );
+    main = (
+      <TicketPreview
+        ticket={previewTicket}
+        fallbackTitle={previewItem?.title}
+        onClose={() => setPreviewTicket(null)}
+        onStart={() => {
+          const item = (pending || []).find(
+            (p) => p.ticket?.toUpperCase() === previewTicket.toUpperCase(),
+          );
+          if (item) api.post(`/pending/${item.id}/start`).catch(() => {});
+          setPreviewTicket(null);
+        }}
+      />
+    );
+  } else if (selected) {
+    // archived sessions render the same view (read-only peek; restore via ⋯ menu)
+    main = (
+      <SessionView
+        session={selected}
+        events={chats[selected.id] || []}
+        chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
+        addTabOpen={addTabOpen}
+        setAddTabOpen={setAddTabOpen}
+      />
+    );
+  } else {
+    main = (
+      <FirstRun
+        config={config}
+        sessions={sessions}
+        onCreated={onCreated}
+        onOpenLauncher={() => setLauncher({ mode: 'ticket' })}
+      />
+    );
+  }
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-bg font-sans text-fg">
+      {/* mobile drawer backdrop */}
+      {railOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          onClick={() => setRailOpen(false)}
+        />
+      )}
+      <Rail
+        sessions={sessions}
+        selectedId={selected?.id}
+        isDesktop={isDesktop}
+        mobileOpen={railOpen}
+        onClose={() => setRailOpen(false)}
+        onSelect={(id) => {
+          setSelectedId(id);
+          setLauncher(null);
+          setPreviewTicket(null);
+          setSettingsOpen(false);
+          setSkillsOpen(false);
+          setSetupOpen(false);
+          setAccountsOpen(false);
+          setAddTabOpen(false);
+          setRailOpen(false);
+        }}
+        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setSettingsOpen(false); setAccountsOpen(false); setLauncher(null); setRailOpen(false); }}
+        onOpenAccounts={() => { setAccountsAddIntent(false); setAccountsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false); }}
+        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        searchRef={searchRef}
+        onArchive={(s) => setDialog({ type: 'archive', session: s })}
+        onEdit={(s) => setDialog({ type: 'edit', session: s })}
+        onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
+        onRestart={restartSession}
+        onDelete={(s) => setDialog({ type: 'delete', session: s })}
+        config={config}
+        conn={conn}
+      />
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        {/* mobile top bar: hamburger + current view — not shown over a session,
+            where the TabBar hosts the hamburger instead */}
+        {!sessionIsMain && (
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-hair bg-panel px-3 py-2 md:hidden">
+            <button
+              type="button"
+              onClick={() => setRailOpen(true)}
+              aria-label="Open sessions"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[15px] text-fg"
+            >
+              <Icon icon={faBars} />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-fg">
+              {topBarTitle}
+            </span>
+            {/* voice trigger — the rail (its old home) is a closed drawer on phones */}
+            <button
+              type="button"
+              onClick={() => toggleRecording()}
+              aria-label="Voice control"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[13px] text-fg"
+            >
+              <Icon icon={faMicrophone} />
+            </button>
+          </div>
+        )}
+        {conn !== 'open' && (
+          <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
+            {conn === 'connecting' ? 'connecting to host…' : 'host offline — retrying'}
+          </div>
+        )}
+        {main}
+      </main>
+      <VoiceHUD />
+      {quickSwitcherOpen && (
+        <QuickSwitcher
+          sessions={active}
+          selectedId={selectedId}
+          actions={paletteActions}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setQuickSwitcherOpen(false);
+          }}
+          onClose={() => setQuickSwitcherOpen(false)}
+        />
+      )}
+      {shortcutsOpen && <ShortcutsHelp onClose={() => setShortcutsOpen(false)} />}
+      {dialog?.type === 'archive' && (
+        <ArchiveDialog session={dialogSession} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.type === 'edit' && (
+        <EditSessionDialog session={dialogSession} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.type === 'delete' && (
+        <DeleteDialog
+          session={dialogSession}
+          onClose={() => setDialog(null)}
+          onDeleted={(id) => {
+            if (selectedId === id) setSelectedId(null);
+          }}
+        />
+      )}
+      <ConfirmHost />
+      <Toaster />
+    </div>
+  );
+}
