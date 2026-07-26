@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faCheck, faRotateRight, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 const PILL = {
@@ -24,16 +25,25 @@ const ACTION_EP = {
 };
 
 function StatusPill({ status }) {
+  const t = useT();
+  const STATUS_KEYS = {
+    ok: 'launcher.setup.status.ok',
+    missing: 'launcher.setup.status.missing',
+    error: 'launcher.setup.status.error',
+    blocked: 'launcher.setup.status.blocked',
+    running: 'launcher.setup.status.running',
+  };
   return (
     <span
       className={`shrink-0 rounded-full border px-2 py-px text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}
     >
-      {status}
+      {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
     </span>
   );
 }
 
 function StepRow({ step, onFix, busy }) {
+  const t = useT();
   const name = step.scope.startsWith('repo:') ? step.scope.slice(5) : null;
   const ep = ACTION_EP[step.action];
   const fixable = name && ep && (step.status === 'missing' || step.status === 'error');
@@ -53,7 +63,7 @@ function StepRow({ step, onFix, busy }) {
           onClick={() => onFix(name, ep)}
           className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
         >
-          {busy ? '…' : 'Fix'}
+          {busy ? '…' : t('launcher.setup.fix')}
         </button>
       )}
     </div>
@@ -79,6 +89,7 @@ const MONO = 'rounded-[7px] border border-border bg-panel px-2 py-1 font-mono te
 // working dir (minus node_modules). Either way you can pick env files (.env.local
 // etc.) to copy in, so a fresh clone/copy is actually installable.
 function AddRepo({ onAdd, busy }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState('github'); // 'github' | 'local'
   const [name, setName] = useState('');
@@ -137,7 +148,7 @@ function AddRepo({ onAdd, busy }) {
         onClick={() => setOpen(true)}
         className="w-full cursor-pointer border-t border-hair px-3 py-2 text-left text-[11.5px] font-bold text-brand-ink hover:bg-chip/60"
       >
-        + Add repo
+        {t('launcher.setup.addRepo')}
       </button>
     );
 
@@ -146,7 +157,7 @@ function AddRepo({ onAdd, busy }) {
     <div className="flex flex-col gap-2.5 border-t border-hair bg-bg px-3 py-3">
       {/* source kind */}
       <div className="flex gap-1 rounded-[8px] border border-border bg-panel p-0.5 text-[11px] font-semibold">
-        {[['github', 'From GitHub'], ['local', 'From local folder']].map(([k, label]) => (
+        {[['github', t('launcher.setup.fromGithub')], ['local', t('launcher.setup.fromLocal')]].map(([k, label]) => (
           <button
             key={k} type="button" onClick={() => { setKind(k); setDetect(null); setPicked([]); }}
             className={`flex-1 cursor-pointer rounded-[6px] px-2 py-1 ${kind === k ? 'bg-brand text-fg' : 'text-fgdim hover:text-fg'}`}
@@ -156,44 +167,44 @@ function AddRepo({ onAdd, busy }) {
         ))}
       </div>
 
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name (e.g. app)" className={INPUT} />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('launcher.setup.namePlaceholder')} className={INPUT} />
       <input
         value={source}
         onChange={(e) => setSource(e.target.value)}
         onBlur={(e) => { if (kind === 'local') probe(e.target.value); }}
-        placeholder={kind === 'github' ? 'owner/repo or git URL' : '/Users/you/Desktop/repos/app'}
+        placeholder={kind === 'github' ? t('launcher.setup.sourceGithubPlaceholder') : '/Users/you/Desktop/repos/app'}
         className={MONO}
       />
       {kind === 'local' && (
         <div className="text-[10px] text-fgdim">
-          {detecting ? 'scanning…'
+          {detecting ? t('launcher.setup.scanning')
             : detect ? (detect.exists
-              ? <><Icon icon={faCheck} /> {detect.isGit ? 'git repo' : 'folder'}{detect.toolchain?.pm ? ` · ${detect.toolchain.pm}` : ''} — copied minus node_modules</>
-              : <><Icon icon={faTriangleExclamation} /> folder not found</>)
-            : 'the working tree is copied into the host workspace (node_modules excluded, rebuilt on install)'}
+              ? <><Icon icon={faCheck} /> {detect.isGit ? t('launcher.setup.gitRepo') : t('launcher.setup.folder')}{detect.toolchain?.pm ? ` · ${detect.toolchain.pm}` : ''}{t('launcher.setup.copiedMinus')}</>
+              : <><Icon icon={faTriangleExclamation} /> {t('launcher.setup.folderNotFound')}</>)
+            : t('launcher.setup.workingTreeHint')}
         </div>
       )}
 
-      <input value={installCmd} onChange={(e) => setInstallCmd(e.target.value)} placeholder="install command (auto-detected if blank)" className={MONO} />
+      <input value={installCmd} onChange={(e) => setInstallCmd(e.target.value)} placeholder={t('launcher.setup.installPlaceholder')} className={MONO} />
 
       {/* env files to copy */}
       {kind === 'github' && (
         <div className="flex gap-1.5">
           <input
             value={envFolder} onChange={(e) => setEnvFolder(e.target.value)}
-            placeholder="copy env from local folder (optional)" className={`${MONO} flex-1`}
+            placeholder={t('launcher.setup.copyEnvPlaceholder')} className={`${MONO} flex-1`}
           />
           <button
             type="button" onClick={() => probe(envFolder)} disabled={detecting || !envFolder.trim()}
             className="shrink-0 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 text-[11px] font-semibold text-fg hover:border-ink disabled:opacity-40"
           >
-            {detecting ? '…' : 'Scan'}
+            {detecting ? '…' : t('launcher.setup.scan')}
           </button>
         </div>
       )}
       {candidates.length > 0 ? (
         <div className="rounded-[7px] border border-border bg-panel px-2 py-1.5">
-          <div className="mb-1 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">env files to copy</div>
+          <div className="mb-1 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.setup.envFilesToCopy')}</div>
           {candidates.map((f) => (
             <label key={f} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[11.5px] text-fg">
               <input type="checkbox" checked={picked.includes(f)} onChange={() => toggle(f)} />
@@ -203,11 +214,11 @@ function AddRepo({ onAdd, busy }) {
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <label className="text-[10.5px] text-fgdim">env:</label>
+          <label className="text-[10.5px] text-fgdim">{t('launcher.setup.envLabel')}</label>
           <select value={simpleEnv} onChange={(e) => setSimpleEnv(e.target.value)} className="rounded-[7px] border border-border bg-panel px-2 py-1 text-[11.5px] text-fg">
-            <option value="none">none</option>
-            <option value="file">file (already present)</option>
-            <option value="command">command</option>
+            <option value="none">{t('launcher.setup.envNone')}</option>
+            <option value="file">{t('launcher.setup.envFile')}</option>
+            <option value="command">{t('launcher.setup.envCommand')}</option>
           </select>
         </div>
       )}
@@ -217,7 +228,7 @@ function AddRepo({ onAdd, busy }) {
           type="button" disabled={busy} onClick={submit}
           className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg disabled:opacity-50"
         >
-          Add
+          {t('launcher.setup.add')}
         </button>
         <button type="button" onClick={reset} className="cursor-pointer px-1 text-[13px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
       </div>
@@ -231,6 +242,7 @@ function AddRepo({ onAdd, busy }) {
 // steps therefore hard-gate the "Go!" button: we surface the fix (install
 // command / token) + a Recheck, and only enable Go once both are ok.
 function Welcome({ steps, onGo, onRecheck, busy }) {
+  const t = useT();
   const cli = steps.find((s) => s.id === 'claude-cli');
   const auth = steps.find((s) => s.id === 'claude-auth');
   const blocker = cli && cli.status !== 'ok' ? cli : auth && auth.status !== 'ok' ? auth : null;
@@ -238,19 +250,18 @@ function Welcome({ steps, onGo, onRecheck, busy }) {
   return (
     <div className="mb-4 overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel">
       <div className="px-4 py-4">
-        <div className="text-[15px] font-bold text-fg">Set up your workspace</div>
+        <div className="text-[15px] font-bold text-fg">{t('launcher.setup.welcomeTitle')}</div>
         <p className="mt-1 text-[12px] leading-relaxed text-fgdim">
-          Add a repo (from GitHub or a local folder), pull its env, install — and you're
-          ready to run tickets. Let an agent walk you through it in chat, or do it by hand below.
+          {t('launcher.setup.welcomeBody')}
         </p>
 
         {blocker ? (
           <div className="mt-3 rounded-[9px] border border-[#e7d3a8] bg-[#FBF3E0] px-3 py-2.5">
             <div className="text-[12px] font-bold text-[#8a6d1f]">
-              {blocker.id === 'claude-cli' ? 'Install Claude Code first' : 'Authenticate Claude Code first'}
+              {blocker.id === 'claude-cli' ? t('launcher.setup.installCli') : t('launcher.setup.authCli')}
             </div>
             <p className="mt-0.5 text-[11px] leading-snug text-[#8a6d1f]/90">
-              The onboarding runs inside a Claude session, so this is needed before it can start.
+              {t('launcher.setup.blockerBody')}
             </p>
             {blocker.detail && (
               <code className="mt-2 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[10.5px] text-[#7a5f18] select-all">
@@ -261,7 +272,7 @@ function Welcome({ steps, onGo, onRecheck, busy }) {
               type="button" onClick={onRecheck}
               className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
             >
-              <Icon icon={faRotateRight} /> Recheck
+              <Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}
             </button>
           </div>
         ) : (
@@ -269,7 +280,7 @@ function Welcome({ steps, onGo, onRecheck, busy }) {
             type="button" disabled={busy} onClick={onGo}
             className="mt-3 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
           >
-            {busy ? 'Starting…' : 'Start onboarding — Go!'}
+            {busy ? t('launcher.setup.starting') : t('launcher.setup.startOnboarding')}
           </button>
         )}
       </div>
@@ -278,6 +289,7 @@ function Welcome({ steps, onGo, onRecheck, busy }) {
 }
 
 export default function Setup({ onClose, onCreated }) {
+  const t = useT();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -383,17 +395,17 @@ export default function Setup({ onClose, onCreated }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
-        <span className="text-[13px] font-bold">Setup</span>
+        <span className="text-[13px] font-bold">{t('launcher.setup.title')}</span>
         {env && (
           <span className="rounded-[5px] border border-border px-[7px] py-px font-mono text-[10px] text-fgdim">
-            {env.container ? 'container' : 'native'} · {env.strategy}
+            {env.container ? t('launcher.setup.container') : t('launcher.setup.native')} · {env.strategy}
           </span>
         )}
         <button
           type="button" onClick={refresh}
           className="ml-auto cursor-pointer text-[11px] text-fgdim hover:text-fg"
         >
-          <Icon icon={faRotateRight} /> refresh
+          <Icon icon={faRotateRight} /> {t('launcher.setup.refresh')}
         </button>
         <button
           type="button" onClick={onClose}
@@ -409,7 +421,7 @@ export default function Setup({ onClose, onCreated }) {
             {err}
           </div>
         )}
-        {!data && !err && <div className="text-[12px] text-fgdim">Loading…</div>}
+        {!data && !err && <div className="text-[12px] text-fgdim">{t('launcher.setup.loading')}</div>}
 
         {data && (
           <>
@@ -417,16 +429,16 @@ export default function Setup({ onClose, onCreated }) {
               <Welcome steps={steps} onGo={startOnboarding} onRecheck={refresh} busy={busy} />
             )}
 
-            <Section title="Connections">
+            <Section title={t('launcher.setup.connections')}>
               {global.map((s) => (
                 <StepRow key={s.id} step={s} onFix={fix} busy={busy} />
               ))}
             </Section>
 
-            <Section title={`Repos${repoNames.length ? ` · ${repoNames.length}` : ''}`}>
+            <Section title={`${t('launcher.setup.repos')}${repoNames.length ? ` · ${repoNames.length}` : ''}`}>
               {repoNames.length === 0 && (
                 <div className="px-3 py-3 text-[11.5px] text-fgdim">
-                  No repos yet. Add one to clone, install, and work against it.
+                  {t('launcher.setup.noRepos')}
                 </div>
               )}
               {repoNames.map((name) => (
@@ -437,10 +449,10 @@ export default function Setup({ onClose, onCreated }) {
                       type="button"
                       disabled={busy}
                       onClick={() => removeRepo(name)}
-                      title="Remove from workspace (unregister — cloned files stay on disk)"
+                      title={t('launcher.setup.removeTitle')}
                       className="ml-auto cursor-pointer text-[10.5px] text-fgdim hover:text-[#9c3b33] disabled:opacity-50"
                     >
-                      Remove
+                      {t('launcher.setup.remove')}
                     </button>
                   </div>
                   {steps
@@ -454,7 +466,7 @@ export default function Setup({ onClose, onCreated }) {
             </Section>
 
             {profiles.length > 0 && (
-              <Section title="Profiles">
+              <Section title={t('launcher.setup.profiles')}>
                 {profiles.map((prof) => (
                   <div
                     key={prof.name}
@@ -474,10 +486,10 @@ export default function Setup({ onClose, onCreated }) {
                       type="button"
                       disabled={busy}
                       onClick={() => applyProfile(prof.name)}
-                      title="Seed this profile's repos into the workspace"
+                      title={t('launcher.setup.profileApplyTitle')}
                       className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
                     >
-                      Apply
+                      {t('launcher.setup.apply')}
                     </button>
                   </div>
                 ))}

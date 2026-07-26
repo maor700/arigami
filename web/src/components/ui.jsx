@@ -1,4 +1,5 @@
 // Tiny shared primitives for the host chrome.
+import { t } from '../lib/i18n.js';
 
 // The Acme "wave" brand glyph — 4 ascending yellow bars.
 export function Wave({ scale = 1 }) {
@@ -67,7 +68,7 @@ export function TriggerTag({ name, className = '', showName = true }) {
   return (
     <span
       className={`inline-flex min-w-0 items-center gap-1 text-fgdim ${className}`}
-      title={`Started by trigger: ${name}`}
+      title={t('dialogs.startedByTrigger', { name })}
     >
       <svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true" className="shrink-0">
         <path d="M13 2 4 13h6l-1 9 9-12h-6z" />

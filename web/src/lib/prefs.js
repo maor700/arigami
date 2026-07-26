@@ -3,6 +3,7 @@
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
 import { logoDataUri, isLogoId, DEFAULT_ACCENT } from './logos.js';
+import { langDir, resolveLang, isLangId } from './langs.js';
 
 const KEY = 'arigami-prefs';
 
@@ -25,6 +26,7 @@ const DEFAULTS = {
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: 'crane', // origami logo preset: 'crane' | 'fold' | 'plane' | 'boat'
+  language: 'auto', // 'auto' (browser) | 'en' | 'he' — drives strings + text direction
 };
 
 export const EMPTY_TICKET_FILTERS = {
@@ -108,6 +110,7 @@ function sanitize(raw) {
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
     logo: isLogoId(p.logo) ? p.logo : 'crane',
+    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
   };
 }
 
@@ -134,6 +137,8 @@ function applyBranding() {
   const root = document.documentElement;
   if (state.accent) root.style.setProperty('--color-brand', state.accent);
   else root.style.removeProperty('--color-brand');
+  root.setAttribute('dir', langDir(state.language));
+  root.setAttribute('lang', resolveLang(state.language));
   const link = document.querySelector("link[rel='icon']");
   if (link) link.setAttribute('href', logoDataUri(state.logo, state.accent || DEFAULT_ACCENT));
 }

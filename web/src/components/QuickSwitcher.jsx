@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dot, sessionLabel } from './ui.jsx';
 import { needsAttention } from '../lib/store.js';
+import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 
 // ⌘K command palette: fuzzy-filter sessions AND commands, then run/jump. Arrow
@@ -8,6 +9,7 @@ import { Icon } from '../lib/icons.js';
 // jump-to path); typing also surfaces matching commands (open Settings, new
 // session, archive current, …) so everything is reachable keyboard-only.
 export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose, actions = [] }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef(null);
@@ -60,12 +62,12 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Search sessions and commands…"
+          placeholder={t('rail.searchSessionsCommands')}
           className="w-full border-b border-hair bg-transparent px-4 py-3 text-[13px] outline-none placeholder:text-[#aaa]"
         />
         <div className="thin-scroll max-h-[50vh] overflow-auto py-1.5">
           {items.length === 0 && (
-            <div className="px-4 py-3 text-[12px] text-fgdim">No sessions or commands match “{q}”.</div>
+            <div className="px-4 py-3 text-[12px] text-fgdim">{t('rail.noMatchQuery', { q })}</div>
           )}
           {items.map((item, i) => {
             const isActive = i === active;
@@ -81,7 +83,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
                 >
                   <span className="w-[11px] shrink-0 text-center text-[11px] text-fgdim">{a.icon ? typeof a.icon === 'string' ? a.icon : <Icon icon={a.icon} /> : '⌘'}</span>
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{a.label}</span>
-                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">command</span>
+                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.command')}</span>
                 </button>
               );
             }
@@ -99,7 +101,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
                 <Dot color={s.color} size={11} />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{sessionLabel(s)}</span>
                 {s.id === selectedId && (
-                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">current</span>
+                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.current')}</span>
                 )}
                 {working && <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />}
                 {attn && !working && <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-danger" />}
@@ -108,9 +110,9 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
           })}
         </div>
         <div className="flex items-center gap-3 border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
-          <span>↑↓ move</span>
-          <span>↵ run</span>
-          <span>esc close</span>
+          <span>{t('rail.qsMove')}</span>
+          <span>{t('rail.qsRun')}</span>
+          <span>{t('rail.qsClose')}</span>
         </div>
       </div>
     </div>

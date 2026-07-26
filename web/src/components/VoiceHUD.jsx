@@ -4,6 +4,7 @@ import { runAction } from '../lib/commands.js';
 import { useStore } from '../lib/store.js';
 import { usePrefs } from '../lib/prefs.js';
 import { sessionLabel } from './ui.jsx';
+import { t as tr, useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faMicrophone, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -23,19 +24,20 @@ function labelForAction(a, sessions) {
   switch (a.type) {
     case 'select_session': {
       const s = sessions.find((x) => x.id === a.sessionId);
-      return `Go to ${s ? sessionLabel(s) : 'session'}`;
+      return tr('dialogs.voiceGoTo', { target: s ? sessionLabel(s) : tr('dialogs.voiceSessionFallback') });
     }
-    case 'next_session': return 'Next session';
-    case 'prev_session': return 'Previous session';
-    case 'new_session': return 'New session';
-    case 'open_changes': return 'Open changes';
-    case 'interrupt': return 'Interrupt';
-    case 'inject_prompt': return 'Send prompt';
+    case 'next_session': return tr('dialogs.voiceNextSession');
+    case 'prev_session': return tr('dialogs.voicePrevSession');
+    case 'new_session': return tr('dialogs.voiceNewSession');
+    case 'open_changes': return tr('dialogs.voiceOpenChanges');
+    case 'interrupt': return tr('dialogs.voiceInterrupt');
+    case 'inject_prompt': return tr('dialogs.voiceSendPrompt');
     default: return a.type;
   }
 }
 
 export default function VoiceHUD() {
+  const t = useT();
   const { status, transcript, plan, error, level } = useVoice();
   const { sessions } = useStore();
   const autoSend = usePrefs().voiceAutoSend;
@@ -103,10 +105,10 @@ export default function VoiceHUD() {
             <span className="text-[13px]"><Icon icon={faMicrophone} /></span>
           )}
           <span className="flex-1 text-[12px] font-bold">
-            {status === 'recording' && 'Listening… (speak, then Stop)'}
-            {status === 'thinking' && 'Transcribing & understanding…'}
-            {status === 'review' && 'Voice command'}
-            {status === 'error' && 'Voice error'}
+            {status === 'recording' && t('dialogs.voiceListening')}
+            {status === 'thinking' && t('dialogs.voiceTranscribing')}
+            {status === 'review' && t('dialogs.voiceCommand')}
+            {status === 'error' && t('dialogs.voiceError')}
           </span>
           <button type="button" onClick={close} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
         </div>
@@ -121,7 +123,7 @@ export default function VoiceHUD() {
                 />
               </div>
               <div className="mt-1 font-mono text-[10px] text-fgdim">
-                {(level || 0) > 0.03 ? <>mic is picking you up <Icon icon={faCheck} /></> : 'no input detected — check your mic'}
+                {(level || 0) > 0.03 ? <>{t('dialogs.voiceMicPicking')} <Icon icon={faCheck} /></> : t('dialogs.voiceNoInput')}
               </div>
             </div>
           )}
@@ -132,7 +134,7 @@ export default function VoiceHUD() {
           {plan?.say && <div dir="auto" className="mb-2 text-[12px] text-fgdim">{plan.say}</div>}
 
           {status === 'review' && injects.length === 0 && !plan?.say && (
-            <div className="text-[11.5px] text-fgdim">Done.</div>
+            <div className="text-[11.5px] text-fgdim">{t('dialogs.voiceDone')}</div>
           )}
 
           {injects.map((a, i) => {
@@ -140,7 +142,7 @@ export default function VoiceHUD() {
             return (
               <div key={i} className="mb-2 rounded-[9px] border border-border bg-bg p-2.5">
                 <div className="mb-1.5 font-mono text-[10px] tracking-[0.05em] text-fgdim uppercase">
-                  Send to {target ? sessionLabel(target) : 'current session'}
+                  {t('dialogs.voiceSendTo', { target: target ? sessionLabel(target) : t('dialogs.voiceCurrentSession') })}
                 </div>
                 <textarea
                   dir="auto"
@@ -155,14 +157,14 @@ export default function VoiceHUD() {
                     onClick={() => { const rest = injects.filter((_, j) => j !== i); setInjects(rest); if (!rest.length) close(); }}
                     className="cursor-pointer rounded-[7px] border-[1.5px] border-border px-3 py-1 text-[11.5px] text-fgdim hover:border-ink hover:text-fg"
                   >
-                    Discard
+                    {t('dialogs.discard')}
                   </button>
                   <button
                     type="button"
                     onClick={() => sendInject(i)}
                     className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]"
                   >
-                    Send →
+                    {t('dialogs.send')} →
                   </button>
                 </div>
               </div>
@@ -171,18 +173,18 @@ export default function VoiceHUD() {
         </div>
 
         <div className="flex items-center justify-between border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
-          <span>⌘⇧V mic</span>
+          <span>⌘⇧V {t('dialogs.mic')}</span>
           {status === 'recording' ? (
             <button type="button" onClick={stopRecording} className="cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a]">
-              Stop
+              {t('dialogs.stop')}
             </button>
           ) : status === 'error' ? (
             <button type="button" onClick={() => { ranFor.current = null; startRecording(); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
-              Try again
+              {t('dialogs.tryAgain')}
             </button>
           ) : status === 'thinking' ? (
             <button type="button" onClick={cancel} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
-              Cancel
+              {t('dialogs.cancel')}
             </button>
           ) : <span />}
         </div>

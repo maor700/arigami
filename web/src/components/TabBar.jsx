@@ -3,6 +3,7 @@ import { api } from '../lib/api.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { Wave, Dot, YellowButton } from './ui.jsx';
 import { Truncate } from './Truncate.jsx';
+import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faBars, faFolderTree, faPlusMinus, faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -44,6 +45,7 @@ function isExternal(tab) {
 }
 
 function AddTabPopover({ sessionId, onClose }) {
+  const t = useT();
   const ref = useRef(null);
   const urlRef = useRef(null);
   const [title, setTitle] = useState('');
@@ -105,7 +107,7 @@ function AddTabPopover({ sessionId, onClose }) {
       className="absolute top-[42px] right-0 z-30 w-[280px] rounded-[10px] border-[1.5px] border-ink bg-panel p-3 shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
     >
       <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-        Open a URL as a tab
+        {t('rail.openUrlAsTab')}
       </div>
       <input
         ref={urlRef}
@@ -119,7 +121,7 @@ function AddTabPopover({ sessionId, onClose }) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
-        placeholder="Title (optional)"
+        placeholder={t('rail.titleOptional')}
         className="mb-2.5 w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 text-xs outline-none placeholder:text-fgdim focus:border-fgdim"
       />
       {error && <div className="mb-2 text-[11px] text-danger">{error}</div>}
@@ -128,13 +130,14 @@ function AddTabPopover({ sessionId, onClose }) {
         disabled={busy || !url.trim()}
         className="w-full px-3 py-2 text-xs"
       >
-        {busy ? 'Opening…' : 'Open tab'}
+        {busy ? t('rail.opening') : t('rail.openTab')}
       </YellowButton>
     </div>
   );
 }
 
 export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivate, addOpen, setAddOpen }) {
+  const t = useT();
   const tabs = tabsProp?.length
     ? tabsProp
     : session.tabs?.length
@@ -175,7 +178,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           over a session — this row is the top bar) */}
       <button
         type="button"
-        aria-label="Open sessions"
+        aria-label={t('rail.openSessions')}
         onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
         className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
       >
@@ -204,7 +207,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
               {isSession ? (
                 <>
                   <Dot color={color} size={10} />
-                  <Truncate text={tab.title || 'Session'} className="min-w-0" />
+                  <Truncate text={tab.title || t('rail.tabSession')} className="min-w-0" />
                   {awaiting && (
                     <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />
                   )}
@@ -212,12 +215,12 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
               ) : tab.type === 'changes' ? (
                 <>
                   <span className="shrink-0 text-[12px] leading-none text-fgdim"><Icon icon={faPlusMinus} /></span>
-                  <span className="shrink-0">{tab.title || 'Changes'}</span>
+                  <span className="shrink-0">{tab.title || t('rail.tabChanges')}</span>
                 </>
               ) : tab.type === 'orchestration' ? (
                 <>
                   <span className="shrink-0 text-[12px] leading-none text-fgdim"><Icon icon={faFolderTree} /></span>
-                  <span className="shrink-0">{tab.title || 'Orchestration'}</span>
+                  <span className="shrink-0">{tab.title || t('rail.tabOrchestration')}</span>
                 </>
               ) : (
                 <>
@@ -229,7 +232,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                   <Badge badge={tab.badge} />
                   <span
                     role="button"
-                    title="Close tab"
+                    title={t('rail.closeTab')}
                     onClick={(e) => closeTab(e, tab)}
                     className="-mr-1 ml-0.5 hidden rounded px-0.5 text-[11px] text-fgdim hover:text-fg group-hover:inline [@media(pointer:coarse)]:inline"
                   >
@@ -242,7 +245,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
         })}
         <button
           type="button"
-          title="Open a URL as a tab (⌘T)"
+          title={t('rail.openUrlAsTabCmd')}
           onClick={() => setAddOpen((v) => !v)}
           className="shrink-0 cursor-pointer border-b-2 border-transparent px-[9px] text-[15px] leading-none text-fgdim hover:text-fg"
         >

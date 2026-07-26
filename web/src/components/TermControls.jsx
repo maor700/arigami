@@ -5,15 +5,16 @@ import { useModels, refreshModels } from '../lib/models.js';
 import { restartSession } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
+import { t, useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faGear, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 
 // Permission modes mirror server/claude.js PERMISSION_MODES.
 const PERMISSION_OPTIONS = [
-  { value: 'default', label: 'Default', desc: 'Ask before edits & commands' },
-  { value: 'acceptEdits', label: 'Accept edits', desc: 'Auto-accept file edits; still ask for commands' },
-  { value: 'plan', label: 'Plan mode', desc: 'Read & plan only — makes no changes' },
-  { value: 'bypassPermissions', label: 'Bypass permissions', desc: 'Run everything without asking', danger: true },
+  { value: 'default', label: t('rail.permDefault'), desc: t('rail.permDefaultDesc') },
+  { value: 'acceptEdits', label: t('rail.permAcceptEdits'), desc: t('rail.permAcceptEditsDesc') },
+  { value: 'plan', label: t('rail.permPlan'), desc: t('rail.permPlanDesc') },
+  { value: 'bypassPermissions', label: t('rail.permBypass'), desc: t('rail.permBypassDesc'), danger: true },
 ];
 const PERMISSION_LABEL = Object.fromEntries(PERMISSION_OPTIONS.map((o) => [o.value, o.label]));
 
@@ -34,18 +35,19 @@ function prettyModel(m) {
 }
 
 const DIR_OPTIONS = [
-  { value: 'auto', label: 'Auto', desc: 'Match the terminal output' },
-  { value: 'ltr', label: 'Left → right', desc: 'Force LTR' },
-  { value: 'rtl', label: 'Right → left', desc: 'Force RTL' },
+  { value: 'auto', label: t('rail.dirAuto'), desc: t('rail.dirAutoDesc') },
+  { value: 'ltr', label: t('rail.dirLtr'), desc: t('rail.dirLtrDesc') },
+  { value: 'rtl', label: t('rail.dirRtl'), desc: t('rail.dirRtlDesc') },
 ];
 const THEME_OPTIONS = [
-  { value: 'light', label: 'Light', desc: 'Light terminal' },
-  { value: 'dark', label: 'Dark', desc: 'Dark terminal' },
+  { value: 'light', label: t('rail.themeLight'), desc: t('rail.themeLightDesc') },
+  { value: 'dark', label: t('rail.themeDark'), desc: t('rail.themeDarkDesc') },
 ];
 
 /* ---------- generic option-picker modal ----------------------------------- */
 
 function OptionsModal({ title, subtitle, options, value, onSelect, onClose, footer, headerExtra }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
@@ -86,7 +88,7 @@ function OptionsModal({ title, subtitle, options, value, onSelect, onClose, foot
                 <span className="min-w-0 flex-1">
                   <span className={`block text-[13px] ${o.danger ? 'font-bold text-danger' : 'font-bold text-fg'}`}>
                     {o.label}
-                    {active && <span className="ml-1.5 font-mono text-[9.5px] font-normal text-fgdim">current</span>}
+                    {active && <span className="ml-1.5 font-mono text-[9.5px] font-normal text-fgdim">{t('rail.current')}</span>}
                   </span>
                   {o.desc && <span className="mt-px block text-[11px] text-fgdim">{o.desc}</span>}
                 </span>
@@ -102,7 +104,7 @@ function OptionsModal({ title, subtitle, options, value, onSelect, onClose, foot
               onClick={onClose}
               className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
             >
-              Close
+              {t('rail.close')}
             </button>
           </div>
         )}
@@ -114,6 +116,7 @@ function OptionsModal({ title, subtitle, options, value, onSelect, onClose, foot
 /* ---------- permission-mode picker (with stop-and-resume confirm) --------- */
 
 function PermissionModal({ session, onClose }) {
+  const t = useT();
   const current = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
   const working = session.claude?.state === 'working';
   const [pending, setPending] = useState(null); // mode awaiting "this will stop it" confirm
@@ -139,9 +142,7 @@ function PermissionModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        Claude is <b>working</b> in this session. Switching to{' '}
-        <b>{PERMISSION_LABEL[pending]}</b> will <b>stop the current run</b> and resume the same
-        conversation in this terminal with the new mode.
+        {t('rail.switchModeWarnBefore')}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -150,7 +151,7 @@ function PermissionModal({ session, onClose }) {
           onClick={onClose}
           className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
         >
-          Cancel
+          {t('rail.cancelBtn')}
         </button>
         <button
           type="button"
@@ -158,7 +159,7 @@ function PermissionModal({ session, onClose }) {
           onClick={() => apply(pending)}
           className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
         >
-          {busy ? 'Stopping…' : 'Stop & switch'}
+          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
         </button>
       </div>
     </div>
@@ -166,8 +167,8 @@ function PermissionModal({ session, onClose }) {
 
   return (
     <OptionsModal
-      title="Permission mode"
-      subtitle={working ? 'Claude is working — switching will stop the current run.' : 'Applies to this terminal session.'}
+      title={t('rail.permissionMode')}
+      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
       options={PERMISSION_OPTIONS}
       value={current}
       onSelect={pick}
@@ -180,6 +181,7 @@ function PermissionModal({ session, onClose }) {
 /* ---------- model picker (same stop-and-resume UX as permission mode) ------ */
 
 function ModelModal({ session, onClose }) {
+  const t = useT();
   const current = session.claude?.modelChoice || 'default';
   const working = session.claude?.state === 'working';
   const [pending, setPending] = useState(null); // model awaiting "this will stop it" confirm
@@ -207,9 +209,7 @@ function ModelModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        Claude is <b>working</b> in this session. Switching to{' '}
-        <b>{modelLabel[pending] || pending}</b> will <b>stop the current run</b> and resume the same
-        conversation in this terminal with the new model.
+        {t('rail.switchModelWarnBefore')}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -218,7 +218,7 @@ function ModelModal({ session, onClose }) {
           onClick={onClose}
           className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
         >
-          Cancel
+          {t('rail.cancelBtn')}
         </button>
         <button
           type="button"
@@ -226,7 +226,7 @@ function ModelModal({ session, onClose }) {
           onClick={() => apply(pending)}
           className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
         >
-          {busy ? 'Stopping…' : 'Stop & switch'}
+          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
         </button>
       </div>
     </div>
@@ -234,8 +234,8 @@ function ModelModal({ session, onClose }) {
 
   return (
     <OptionsModal
-      title="Model"
-      subtitle={working ? 'Claude is working — switching will stop the current run.' : 'Applies to this terminal session.'}
+      title={t('rail.model')}
+      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
       options={options}
       value={current}
       onSelect={pick}
@@ -245,11 +245,11 @@ function ModelModal({ session, onClose }) {
         <button
           type="button"
           onClick={refreshModels}
-          title="Re-fetch the model list from the claude CLI"
+          title={t('rail.refetchModelList')}
           disabled={loading}
           className="mt-0.5 shrink-0 cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-50"
         >
-          {loading ? '…' : <><Icon icon={faRotateRight} /> refresh</>}
+          {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
         </button>
       }
     />
@@ -263,18 +263,19 @@ function MenuRow({ label, value, danger, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] text-fg hover:bg-chip"
+      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-start text-[12px] text-fg hover:bg-chip"
     >
       <span className="flex-1">{label}</span>
       <span className={`shrink-0 font-mono text-[10.5px] ${danger ? 'font-bold text-danger' : 'text-fgdim'}`}>
         {value}
       </span>
-      <span className="shrink-0 text-[10px] text-fgdim">›</span>
+      <span className="shrink-0 text-[10px] text-fgdim rtl:-scale-x-100">›</span>
     </button>
   );
 }
 
 export default function TermControls({ session }) {
+  const t = useT();
   const prefs = usePrefs();
   const view = termViewFrom(prefs, session.id);
   const ctx = session.claude?.usage;
@@ -286,7 +287,7 @@ export default function TermControls({ session }) {
   const modelValue =
     modelChoice !== 'default'
       ? modelOptions.find((o) => o.value === modelChoice)?.label || modelChoice
-      : prettyModel(reportedModel) || 'Default';
+      : prettyModel(reportedModel) || t('rail.permDefault');
   const restarting = session.claude?.state === 'restarting';
   const [open, setOpen] = useState(false);
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission'
@@ -311,8 +312,8 @@ export default function TermControls({ session }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Terminal controls"
-        aria-label="Terminal controls"
+        title={t('rail.terminalControls')}
+        aria-label={t('rail.terminalControls')}
         className={`flex h-[22px] items-center gap-1.5 rounded-full border-[1.5px] px-2 text-fgdim hover:border-ink hover:text-fg ${
           open ? 'border-ink text-fg' : 'border-border bg-bg'
         }`}
@@ -326,26 +327,26 @@ export default function TermControls({ session }) {
       </button>
 
       {open && (
-        <div className="absolute top-[28px] right-0 z-30 w-[224px] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+        <div className="absolute top-[28px] end-0 z-30 w-[224px] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
           <MenuRow
-            label="Context"
+            label={t('rail.context')}
             value={ctx?.ctxPct != null ? `${ctx.ctxPct}%` : '—'}
             onClick={() => openModal('context')}
           />
           <span className="block h-px bg-hair" />
-          <MenuRow label="Direction" value={view.dir} onClick={() => openModal('dir')} />
-          <MenuRow label="Theme" value={view.theme} onClick={() => openModal('theme')} />
+          <MenuRow label={t('rail.direction')} value={view.dir} onClick={() => openModal('dir')} />
+          <MenuRow label={t('rail.theme')} value={view.theme} onClick={() => openModal('theme')} />
           <span className="block h-px bg-hair" />
           <MenuRow
-            label="Permission mode"
+            label={t('rail.permissionMode')}
             value={PERMISSION_LABEL[perm] || perm}
             danger={perm === 'bypassPermissions'}
             onClick={() => openModal('permission')}
           />
-          <MenuRow label="Model" value={modelValue} onClick={() => openModal('model')} />
+          <MenuRow label={t('rail.model')} value={modelValue} onClick={() => openModal('model')} />
           <span className="block h-px bg-hair" />
           <MenuRow
-            label={restarting ? 'Restarting…' : 'Restart session'}
+            label={restarting ? t('rail.restartingEllipsis') : t('rail.restartSession')}
             value={<Icon icon={faRotateRight} />}
             onClick={() => { setOpen(false); if (!restarting) restartSession(session); }}
           />
@@ -355,8 +356,8 @@ export default function TermControls({ session }) {
       {modal === 'context' && <ContextModal usage={ctx} onClose={() => setModal(null)} />}
       {modal === 'dir' && (
         <OptionsModal
-          title="Terminal direction"
-          subtitle="Text flow for this terminal's output."
+          title={t('rail.terminalDirection')}
+          subtitle={t('rail.textFlowOutput')}
           options={DIR_OPTIONS}
           value={view.dir}
           onSelect={(v) => { setTermOverride(session.id, { dir: v }); setModal(null); }}
@@ -365,8 +366,8 @@ export default function TermControls({ session }) {
       )}
       {modal === 'theme' && (
         <OptionsModal
-          title="Terminal theme"
-          subtitle="Light or dark for this terminal."
+          title={t('rail.terminalTheme')}
+          subtitle={t('rail.lightOrDark')}
           options={THEME_OPTIONS}
           value={view.theme}
           onSelect={(v) => { setTermOverride(session.id, { theme: v }); setModal(null); }}

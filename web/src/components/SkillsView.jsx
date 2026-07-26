@@ -9,6 +9,7 @@ import Markdown from 'react-markdown';
 import { api } from '../lib/api.js';
 import { toastSuccess } from '../lib/toast.js';
 import { confirmDialog } from '../lib/confirm.js';
+import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import { faCaretDown, faCaretUp, faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -21,6 +22,7 @@ const nsOf = (name) => {
 /* ---------- left column: host pack + session context ---------------------- */
 
 function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, className }) {
+  const t = useT();
   const grouped = useMemo(() => {
     const g = {};
     for (const n of [...(sessionSkills || [])].sort()) (g[nsOf(n)] ||= []).push(n);
@@ -30,7 +32,7 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
   return (
     <div className={`thin-scroll flex shrink-0 flex-col overflow-y-auto bg-panel ${className}`}>
       <div className="px-3 pt-3 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-        Host skill pack · {skills.length}
+        {t('dialogs.hostSkillPack')} · {skills.length}
       </div>
       {skills.map((s) => (
         <button
@@ -58,7 +60,7 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
       {sessionSkills?.length > 0 && (
         <>
           <div className="px-3 pt-4 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-            Also in this session
+            {t('dialogs.alsoInThisSession')}
             {sessionTitle && <span className="font-normal normal-case"> · {sessionTitle}</span>}
           </div>
           <div className="flex flex-col gap-2.5 px-3 pb-4">
@@ -91,6 +93,7 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
 /* ---------- right pane: detail + edit ------------------------------------- */
 
 function DetailPane({ name, aiSummary }) {
+  const t = useT();
   const [detail, setDetail] = useState(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -133,7 +136,7 @@ function DetailPane({ name, aiSummary }) {
   if (loadErr)
     return (
       <div className="p-6 text-[12px] text-fgdim">
-        <div className="mb-2 text-danger">Couldn’t load “{name}”: {loadErr}</div>
+        <div className="mb-2 text-danger">{t('dialogs.couldntLoadSkill', { name, err: loadErr })}</div>
         <button
           className="rounded border border-hair px-2 py-1 text-[11px] hover:bg-chip"
           onClick={() => {
@@ -147,11 +150,11 @@ function DetailPane({ name, aiSummary }) {
               .catch((e) => setLoadErr(String(e?.message || e).replace(/^HTTP \d+ — /, '')));
           }}
         >
-          Retry
+          {t('dialogs.retry')}
         </button>
       </div>
     );
-  if (!detail) return <div className="p-6 text-[12px] text-fgdim">Loading…</div>;
+  if (!detail) return <div className="p-6 text-[12px] text-fgdim">{t('dialogs.loading')}</div>;
 
   const save = async () => {
     setSaving(true);
@@ -160,7 +163,7 @@ function DetailPane({ name, aiSummary }) {
       await api.put(`/skills/${name}`, { content: draft });
       setDetail({ ...detail, content: draft });
       setEditing(false);
-      toastSuccess(`Saved ${name}/SKILL.md`);
+      toastSuccess(t('dialogs.savedSkill', { name }));
     } catch (e) {
       // server returns 400 with the validation message in the body
       setErr(String(e.message || e).replace(/^HTTP \d+ — /, ''));
@@ -180,14 +183,14 @@ function DetailPane({ name, aiSummary }) {
               <button
                 type="button"
                 onClick={async () => {
-                  if (dirty && !(await confirmDialog({ title: 'Discard unsaved changes?', confirmLabel: 'Discard', danger: true }))) return;
+                  if (dirty && !(await confirmDialog({ title: t('dialogs.discardUnsavedTitle'), confirmLabel: t('dialogs.discard'), danger: true }))) return;
                   setEditing(false);
                   setDraft(detail.content);
                   setErr('');
                 }}
                 className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[11px] font-bold text-fg hover:bg-chip"
               >
-                Cancel
+                {t('dialogs.cancel')}
               </button>
               <button
                 type="button"
@@ -195,7 +198,7 @@ function DetailPane({ name, aiSummary }) {
                 disabled={saving || !dirty}
                 className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t('dialogs.saving') : t('dialogs.save')}
               </button>
             </>
           ) : (
@@ -204,7 +207,7 @@ function DetailPane({ name, aiSummary }) {
               onClick={() => { setDraft(detail.content); setEditing(true); }}
               className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[11px] font-bold text-fg hover:bg-brand"
             >
-              Edit
+              {t('dialogs.edit')}
             </button>
           )}
         </div>
@@ -229,7 +232,7 @@ function DetailPane({ name, aiSummary }) {
           <div className="md-light mx-auto max-w-[820px] px-7 py-6">
             {aiSummary && (
               <div className="mb-4 rounded-lg border border-[#cdb9ea] bg-[#f3eefc] px-3 py-2 text-[11.5px] text-[#5a3aa6]">
-                <span className="font-bold">AI summary · </span>
+                <span className="font-bold">{t('dialogs.aiSummaryLabel')}</span>
                 {aiSummary}
               </div>
             )}
@@ -238,7 +241,7 @@ function DetailPane({ name, aiSummary }) {
             {detail.supporting?.length > 0 && (
               <div className="mt-8 border-t border-hair pt-4">
                 <div className="mb-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-                  Supporting files · read-only
+                  {t('dialogs.supportingFilesReadOnly')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {detail.supporting.map((f) => (
@@ -256,7 +259,7 @@ function DetailPane({ name, aiSummary }) {
                 </div>
                 {showFile && (
                   <pre className="thin-scroll mt-3 max-h-96 overflow-auto rounded-md border border-hair bg-bg px-3 py-2 font-mono text-[10.5px] leading-relaxed text-fg">
-                    {showFile.content ?? `(binary file · ${showFile.size} bytes)`}
+                    {showFile.content ?? t('dialogs.binaryFile', { size: showFile.size })}
                   </pre>
                 )}
               </div>
@@ -320,6 +323,7 @@ function edgePath(from, to) {
 }
 
 function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzing, analysisMeta }) {
+  const t = useT();
   const [hl, setHl] = useState(null); // highlighted node id (surface/lib click)
   const { nodes, width, height } = useMemo(() => buildLayout(data), [data]);
 
@@ -343,13 +347,13 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
     <div className="flex min-h-0 flex-1 flex-col bg-white">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="text-[11px] text-fgdim">
-          <span className="mr-1 inline-block h-2 w-4 rounded-sm bg-[#2a2a2a] align-middle" /> host invokes skill
-          <span className="ml-3 mr-1 inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4fc4] align-middle" /> AI-suggested
+          <span className="mr-1 inline-block h-2 w-4 rounded-sm bg-[#2a2a2a] align-middle" /> {t('dialogs.hostInvokesSkill')}
+          <span className="ml-3 mr-1 inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4fc4] align-middle" /> {t('dialogs.aiSuggested')}
         </span>
         <div className="ml-auto flex items-center gap-2">
           {analysisMeta?.generatedAt && (
             <span className={`text-[10px] ${analysisMeta.stale ? 'text-[#b8791f]' : 'text-fgdim'}`}>
-              {analysisMeta.stale ? 'analysis stale' : 'analyzed'} · {new Date(analysisMeta.generatedAt).toLocaleString()}
+              {analysisMeta.stale ? t('dialogs.analysisStale') : t('dialogs.analyzed')} · {new Date(analysisMeta.generatedAt).toLocaleString()}
             </span>
           )}
           <button
@@ -358,7 +362,7 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
             disabled={analyzing}
             className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[11px] font-bold text-fg hover:bg-brand disabled:cursor-default disabled:opacity-50"
           >
-            {analyzing ? 'Analyzing…' : analysisMeta?.generatedAt ? 'Refresh AI analysis' : 'Run AI analysis'}
+            {analyzing ? t('dialogs.analyzing') : analysisMeta?.generatedAt ? t('dialogs.refreshAiAnalysis') : t('dialogs.runAiAnalysis')}
           </button>
         </div>
       </div>
@@ -432,6 +436,7 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
 /* ---------- the view ------------------------------------------------------- */
 
 export default function SkillsView({ session, onClose }) {
+  const t = useT();
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [mode, setMode] = useState('detail'); // 'detail' | 'graph'
@@ -452,7 +457,7 @@ export default function SkillsView({ session, onClose }) {
       .catch((e) =>
         setLoadErr(
           /HTTP 404/.test(String(e.message || e))
-            ? 'Skills API not found — the host server is running older code. Restart it (the routes were just added).'
+            ? t('dialogs.skillsApiNotFound')
             : String(e.message || e)
         )
       );
@@ -484,11 +489,11 @@ export default function SkillsView({ session, onClose }) {
           onClick={onClose}
           className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-chip"
         >
-          Close
+          {t('dialogs.close')}
         </button>
       </div>
     );
-  if (!data) return <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">Loading skills…</div>;
+  if (!data) return <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.loadingSkills')}</div>;
 
   const pick = (name) => {
     setSelected(name);
@@ -499,7 +504,7 @@ export default function SkillsView({ session, onClose }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-3 border-b border-hair bg-panel px-4 py-2.5">
-        <span className="text-[14px] font-bold text-fg">Skills</span>
+        <span className="text-[14px] font-bold text-fg">{t('dialogs.skills')}</span>
         <div className="ml-2 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
           {['detail', 'graph'].map((mItem) => (
             <button
@@ -510,7 +515,7 @@ export default function SkillsView({ session, onClose }) {
                 mode === mItem ? 'bg-brand text-fg' : 'bg-panel text-fgdim hover:bg-chip'
               }`}
             >
-              {mItem === 'detail' ? 'Detail / Edit' : 'Graph'}
+              {mItem === 'detail' ? t('dialogs.detailEdit') : t('dialogs.graph')}
             </button>
           ))}
         </div>
@@ -519,7 +524,7 @@ export default function SkillsView({ session, onClose }) {
           type="button"
           onClick={onClose}
           className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          title="Close"
+          title={t('dialogs.close')}
         >
           <Icon icon={faXmark} />
         </button>
@@ -534,7 +539,7 @@ export default function SkillsView({ session, onClose }) {
             onClick={() => setListOpen((o) => !o)}
             className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-3 py-1.5 text-left font-mono text-[11px] text-fgdim"
           >
-            <span className="font-bold text-fg">Skills · {data.skills.length}</span>
+            <span className="font-bold text-fg">{t('dialogs.skills')} · {data.skills.length}</span>
             <span className="ml-auto truncate">{selected || ''}</span>
             <span className="shrink-0"><Icon icon={listOpen ? faCaretUp : faCaretDown} /></span>
           </button>
@@ -551,7 +556,7 @@ export default function SkillsView({ session, onClose }) {
           selected ? (
             <DetailPane key={selected} name={selected} aiSummary={aiSummary} />
           ) : (
-            <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">Select a skill</div>
+            <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.selectASkill')}</div>
           )
         ) : (
           <GraphPane

@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api.js';
 import { Truncate } from './Truncate.jsx';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faStop, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 const STATUS_COLOR = { running: '#3C9A4E', exited: '#9a9a9a', killed: '#B23B30' };
@@ -22,6 +23,7 @@ export const bgRunningCount = (session) => (session.bg || []).filter((b) => b.st
 /* ---------- header chip --------------------------------------------------- */
 
 export function ProcessChip({ session, onClick }) {
+  const t = useT();
   const procs = session.bg || [];
   if (!procs.length) return null;
   const running = bgRunningCount(session);
@@ -29,7 +31,7 @@ export function ProcessChip({ session, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      title={`${running} running · ${procs.length} background process${procs.length === 1 ? '' : 'es'}`}
+      title={t('chat.bgChipTitle', { running, total: procs.length })}
       className="flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-ink bg-bg px-2.5 py-[3px] font-mono text-[10.5px] text-fg hover:bg-chip"
     >
       <span className="text-[11px] leading-none">❯_</span>
@@ -42,6 +44,9 @@ export function ProcessChip({ session, onClick }) {
 /* ---------- split panel --------------------------------------------------- */
 
 export function BgProcessesPanel({ session, onClose }) {
+  const t = useT();
+  const statusLabel = (st) =>
+    st === 'running' ? t('chat.bgRunning') : st === 'exited' ? t('chat.bgExited') : st === 'killed' ? t('chat.bgKilled') : st;
   const procs = session.bg || [];
   const [selId, setSelId] = useState(procs[0]?.id || null);
   const sel = procs.find((p) => p.id === selId) || procs[0] || null;
@@ -90,9 +95,9 @@ export function BgProcessesPanel({ session, onClose }) {
       >
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none">❯_</span>
-          <span className="font-mono text-[13px] font-bold text-fg">Background processes</span>
+          <span className="font-mono text-[13px] font-bold text-fg">{t('chat.backgroundProcesses')}</span>
           <span className="font-mono text-[10.5px] text-fgdim">
-            {bgRunningCount(session)} running · {procs.length} total
+            {t('chat.bgRunningTotal', { running: bgRunningCount(session), total: procs.length })}
           </span>
           <button
             type="button"
@@ -120,13 +125,13 @@ export function BgProcessesPanel({ session, onClose }) {
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[st] || '#9a9a9a' }} />
                     <span className="font-mono text-[10px] text-fgdim">{p.id}</span>
-                    <span className="ml-auto font-mono text-[9.5px] text-fgdim">{st}</span>
+                    <span className="ml-auto font-mono text-[9.5px] text-fgdim">{statusLabel(st)}</span>
                   </div>
                   <Truncate
                     text={p.description || p.command}
                     className="font-mono text-[11px] text-fg"
                   />
-                  <span className="font-mono text-[9.5px] text-fgdim">started {fmtAgo(p.startedAt)} ago</span>
+                  <span className="font-mono text-[9.5px] text-fgdim">{t('chat.startedAgo', { ago: fmtAgo(p.startedAt) })}</span>
                 </button>
               );
             })}
@@ -145,7 +150,7 @@ export function BgProcessesPanel({ session, onClose }) {
                       onClick={() => kill(sel.id)}
                       className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
                     >
-                      <Icon icon={faStop} className="text-[9px]" /> kill
+                      <Icon icon={faStop} className="text-[9px]" /> {t('chat.killLower')}
                     </button>
                   )}
                 </div>
@@ -154,12 +159,12 @@ export function BgProcessesPanel({ session, onClose }) {
                   dir="ltr"
                   className="thin-scroll min-h-0 flex-1 overflow-auto px-3.5 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-[#cfcfcf]"
                 >
-                  {detail ? detail.output || '(no output)' : 'loading…'}
+                  {detail ? detail.output || t('chat.noOutput') : t('chat.loading')}
                 </pre>
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center text-[12px] text-[#888]">
-                No background processes.
+                {t('chat.noBgProcesses')}
               </div>
             )}
           </div>

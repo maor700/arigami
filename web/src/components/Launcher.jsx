@@ -22,23 +22,25 @@ import {
   setDefaultTicketPreset,
 } from '../lib/prefs.js';
 import { Wave, Dot, YellowButton, tint } from './ui.jsx';
+import { t, useT } from '../lib/i18n.js';
 
+// [value, i18n key]; labels resolved with t() at render/summary time.
 const STATE_OPTS = [
-  ['', 'Any state'],
-  ['triage', 'Triage'],
-  ['backlog', 'Backlog'],
-  ['unstarted', 'Todo'],
-  ['started', 'In Progress'],
-  ['completed', 'Done'],
-  ['canceled', 'Canceled'],
+  ['', 'launcher.state.any'],
+  ['triage', 'launcher.state.triage'],
+  ['backlog', 'launcher.state.backlog'],
+  ['unstarted', 'launcher.state.todo'],
+  ['started', 'launcher.state.inProgress'],
+  ['completed', 'launcher.state.done'],
+  ['canceled', 'launcher.state.canceled'],
 ];
 const PRIORITY_OPTS = [
-  ['', 'Any priority'],
-  ['1', 'Urgent'],
-  ['2', 'High'],
-  ['3', 'Medium'],
-  ['4', 'Low'],
-  ['0', 'No priority'],
+  ['', 'launcher.priority.any'],
+  ['1', 'launcher.priority.urgent'],
+  ['2', 'launcher.priority.high'],
+  ['3', 'launcher.priority.medium'],
+  ['4', 'launcher.priority.low'],
+  ['0', 'launcher.priority.none'],
 ];
 
 const filtersEqual = (a, b) =>
@@ -153,6 +155,7 @@ function PriorityGlyph({ priority }) {
 /* ---------- launcher pieces ------------------------------------------------- */
 
 function PasteField({ onPick, autoFocus }) {
+  const t = useT();
   const [val, setVal] = useState('');
   const ref = useRef(null);
   useEffect(() => {
@@ -176,7 +179,7 @@ function PasteField({ onPick, autoFocus }) {
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
-        placeholder="Paste a Linear URL or ID…"
+        placeholder={t('launcher.paste.placeholder')}
         className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-fgdim"
       />
       <span className="shrink-0 font-mono text-[11px] text-fgdim">ENG-16498</span>
@@ -191,6 +194,7 @@ const selCls =
 // takes one label, so the server (listIssuesByFacets) fans out OR into N calls
 // and resolves AND by intersection — here we just collect the selection + op.
 function LabelPicker({ options, selected, op, onChange, disabled }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef(null);
@@ -213,7 +217,7 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
 
   const summary =
     selected.length === 0
-      ? 'Any label'
+      ? t('launcher.labels.any')
       : selected.length === 1
         ? selected[0]
         : `${selected[0]} +${selected.length - 1}`;
@@ -225,7 +229,7 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        title="Filter by labels"
+        title={t('launcher.labels.filterTitle')}
         className={`${selCls} flex items-center gap-1 ${selected.length ? 'border-ink font-bold' : ''}`}
       >
         <span className="max-w-[120px] truncate">{summary}</span>
@@ -237,11 +241,11 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
       {open && !disabled && (
         <div className="absolute top-full left-0 z-30 mt-1 w-[220px] rounded-[9px] border-[1.5px] border-ink bg-panel p-2 shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
           <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">Match</span>
+            <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.labels.match')}</span>
             <span className="flex overflow-hidden rounded-[6px] border border-border">
               {[
-                ['or', 'Any'],
-                ['and', 'All'],
+                ['or', t('launcher.labels.opAny')],
+                ['and', t('launcher.labels.opAll')],
               ].map(([v, l]) => (
                 <button
                   key={v}
@@ -261,18 +265,18 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
                 onClick={() => onChange({ labels: [], labelOp: op })}
                 className="ml-auto cursor-pointer text-[10.5px] text-fgdim hover:text-danger"
               >
-                Clear
+                {t('launcher.labels.clear')}
               </button>
             )}
           </div>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search labels…"
+            placeholder={t('launcher.labels.searchPlaceholder')}
             className="mb-1.5 w-full rounded-[6px] border border-border bg-bg px-2 py-[3px] text-[11px] outline-none focus:border-ink"
           />
           <div className="thin-scroll max-h-[180px] overflow-y-auto">
-            {filtered.length === 0 && <div className="px-1 py-2 text-[11px] text-fgdim">No labels.</div>}
+            {filtered.length === 0 && <div className="px-1 py-2 text-[11px] text-fgdim">{t('launcher.labels.none')}</div>}
             {filtered.map((l) => (
               <label
                 key={l}
@@ -304,18 +308,19 @@ function FilterBar({
   showSearch = true,
   showHideOpen = true,
 }) {
+  const t = useT();
   const set = (patch) => onChange({ ...filters, ...patch });
   // Live workspace statuses when we have them; the state-type buckets as a
   // fallback (offline / not yet loaded).
   const stateOpts = statuses.length
-    ? [['', 'Any state'], ...statuses.map((s) => [s.name, s.name])]
-    : STATE_OPTS;
+    ? [['', t('launcher.state.any')], ...statuses.map((s) => [s.name, s.name])]
+    : STATE_OPTS.map(([v, k]) => [v, t(k)]);
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2">
       <span className="flex overflow-hidden rounded-[7px] border border-border">
         {[
-          ['me', 'Me'],
-          ['any', 'Anyone'],
+          ['me', t('launcher.filter.me')],
+          ['any', t('launcher.filter.anyone')],
         ].map(([v, l]) => (
           <button
             key={v}
@@ -336,8 +341,8 @@ function FilterBar({
         ))}
       </select>
       <select disabled={disabled} value={filters.priority} onChange={(e) => set({ priority: e.target.value })} className={selCls}>
-        {PRIORITY_OPTS.map(([v, l]) => (
-          <option key={v} value={v}>{l}</option>
+        {PRIORITY_OPTS.map(([v, k]) => (
+          <option key={v} value={v}>{t(k)}</option>
         ))}
       </select>
       <LabelPicker
@@ -352,14 +357,14 @@ function FilterBar({
           disabled={disabled}
           value={filters.query}
           onChange={(e) => set({ query: e.target.value })}
-          placeholder="Search…"
+          placeholder={t('launcher.filter.searchPlaceholder')}
           className="min-w-[120px] flex-1 rounded-[7px] border border-border bg-panel px-2.5 py-[3px] text-[11px] outline-none focus:border-ink disabled:opacity-40"
         />
       )}
-      <span className="flex overflow-hidden rounded-[7px] border border-border" title="Sort (recent first)">
+      <span className="flex overflow-hidden rounded-[7px] border border-border" title={t('launcher.filter.sortTitle')}>
         {[
-          ['updatedAt', 'Updated'],
-          ['createdAt', 'Created'],
+          ['updatedAt', t('launcher.filter.updated')],
+          ['createdAt', t('launcher.filter.created')],
         ].map(([v, l]) => (
           <button
             key={v}
@@ -379,12 +384,12 @@ function FilterBar({
           type="button"
           disabled={disabled}
           onClick={() => set({ hideOpen: !filters.hideOpen })}
-          title="Hide tickets that already have an open session"
+          title={t('launcher.filter.hideOpenTitle')}
           className={`flex cursor-pointer items-center gap-1 rounded-[7px] border px-2 py-[3px] text-[11px] disabled:opacity-40 ${
             filters.hideOpen ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim hover:border-fgdim'
           }`}
         >
-          <span className="text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> Hide open
+          <span className="text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> {t('launcher.filter.hideOpen')}
         </button>
       )}
     </div>
@@ -394,6 +399,7 @@ function FilterBar({
 // Saved presets: apply (chip), set default (★), delete (×), save current (+).
 // `presets` includes the built-in first; the built-in can't be deleted.
 function PresetBar({ presets, defaultId, current, onApply }) {
+  const t = useT();
   const activeId = presets.find((p) => filtersEqual(p.filters, current))?.id || null;
   const [naming, setNaming] = useState(false);
   const [draft, setDraft] = useState('');
@@ -405,7 +411,7 @@ function PresetBar({ presets, defaultId, current, onApply }) {
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2.5">
-      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">Presets</span>
+      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
       {presets.map((p) => (
         <span
           key={p.id}
@@ -416,19 +422,19 @@ function PresetBar({ presets, defaultId, current, onApply }) {
           <button
             type="button"
             onClick={() => setDefaultTicketPreset(p.id)}
-            title={defaultId === p.id ? 'Default — click to unset' : 'Set as default'}
+            title={defaultId === p.id ? t('launcher.presets.unsetDefault') : t('launcher.presets.setDefault')}
             className={`cursor-pointer ${defaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
           >
             <Icon icon={faStar} className={defaultId === p.id ? undefined : 'opacity-30'} />
           </button>
           <button type="button" onClick={() => onApply(p.filters)} className="cursor-pointer">
-            {p.name}
+            {p.builtin ? t('launcher.preset.myOpenWork') : p.name}
           </button>
           {!p.builtin && (
             <button
               type="button"
               onClick={() => deleteTicketPreset(p.id)}
-              title="Delete preset"
+              title={t('launcher.presets.delete')}
               className="cursor-pointer text-fgdim hover:text-danger"
             >
               <Icon icon={faXmark} />
@@ -446,7 +452,7 @@ function PresetBar({ presets, defaultId, current, onApply }) {
             if (e.key === 'Enter') commit();
             else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
           }}
-          placeholder="Preset name…"
+          placeholder={t('launcher.presets.namePlaceholder')}
           className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[10.5px] outline-none placeholder:text-fgdim"
         />
       ) : (
@@ -455,7 +461,7 @@ function PresetBar({ presets, defaultId, current, onApply }) {
           onClick={() => setNaming(true)}
           className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[10.5px] font-bold text-fg hover:border-ink"
         >
-          + Save current
+          {t('launcher.presets.saveCurrent')}
         </button>
       )}
     </div>
@@ -463,13 +469,14 @@ function PresetBar({ presets, defaultId, current, onApply }) {
 }
 
 function TicketRow({ ticket, selected, onPick, openSession }) {
+  const t = useT();
   // A ticket already in a host session: disabled (not selectable), tinted with
   // the session colour, and badged "in session".
   if (openSession) {
     const color = openSession.color || '#c4c4c4';
     return (
       <div
-        title={`Open session: ${openSession.title || openSession.id}`}
+        title={t('launcher.ticket.openSessionTitle', { name: openSession.title || openSession.id })}
         className="mb-1 flex cursor-not-allowed items-center gap-[11px] rounded-[9px] border-2 border-transparent px-[11px] py-[9px] opacity-70"
         style={{ background: tint(color, '14'), borderLeft: `3px solid ${color}` }}
       >
@@ -480,7 +487,7 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
           className="shrink-0 rounded-[5px] px-[7px] py-px text-[10px] font-bold"
           style={{ background: tint(color, '2a'), color: '#2a2a2a' }}
         >
-          in session
+          {t('launcher.ticket.inSession')}
         </span>
       </div>
     );
@@ -514,6 +521,7 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
 // Live "Connect Linear" banner — kicks off the server-side OAuth flow, opens the
 // consent page, and polls status until the host has tokens.
 function ConnectLinear({ onConnected }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const pollRef = useRef(null);
@@ -543,7 +551,7 @@ function ConnectLinear({ onConnected }) {
           } catch {}
         }, 1500);
       } else {
-        setErr('Could not start Linear authorization.');
+        setErr(t('launcher.connect.startError'));
         setBusy(false);
       }
     } catch (e) {
@@ -554,10 +562,9 @@ function ConnectLinear({ onConnected }) {
 
   return (
     <div className="mx-3 mb-3 rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-3.5 shadow-[2px_2px_0_rgba(42,42,42,0.12)]">
-      <div className="mb-1 text-[12.5px] font-bold">Connect Linear for live tickets</div>
+      <div className="mb-1 text-[12.5px] font-bold">{t('launcher.connect.heading')}</div>
       <div className="mb-3 text-[11px] leading-relaxed text-fgdim">
-        Sync your assigned issues and enable filters. Opens a one-time Linear consent page;
-        the token is stored only by the host (separate from Claude Code).
+        {t('launcher.connect.body')}
       </div>
       <button
         type="button"
@@ -565,7 +572,7 @@ function ConnectLinear({ onConnected }) {
         disabled={busy}
         className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-fg disabled:opacity-60"
       >
-        {busy ? 'Waiting for authorization…' : 'Connect Linear →'}
+        {busy ? t('launcher.connect.waiting') : t('launcher.connect.button')}
       </button>
       {err && <div className="mt-2 text-[10.5px] text-danger">{err}</div>}
     </div>
@@ -573,6 +580,7 @@ function ConnectLinear({ onConnected }) {
 }
 
 function TicketPicker({ selected, onPick, sessions }) {
+  const t = useT();
   const prefs = usePrefs();
   // built-in preset first; user presets after. Effective default falls back to
   // the built-in when the user hasn't starred one — so it's active on open.
@@ -643,8 +651,8 @@ function TicketPicker({ selected, onPick, sessions }) {
       <div className="flex items-center gap-2 px-[18px] pt-4 pb-2">
         <span className="flex-1"><PasteField onPick={onPick} autoFocus /></span>
         {connected && (
-          <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim" title="Live from Linear">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#3C9A4E]" /> live
+          <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim" title={t('launcher.picker.liveTitle')}>
+            <span className="h-1.5 w-1.5 rounded-full bg-[#3C9A4E]" /> {t('launcher.picker.live')}
           </span>
         )}
       </div>
@@ -659,23 +667,23 @@ function TicketPicker({ selected, onPick, sessions }) {
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {tickets === null && (
           <div className="flex items-center gap-2 px-3 py-5 text-xs text-fgdim">
-            <span className="host-spinner h-3.5 w-3.5" /> Loading tickets…
+            <span className="host-spinner h-3.5 w-3.5" /> {t('launcher.picker.loading')}
           </div>
         )}
         {tickets !== null && error && (
           <div className="flex flex-col items-start gap-2 px-3 py-5 text-xs text-fgdim">
-            <span>Couldn&rsquo;t load tickets — paste a Linear URL or ID above instead.</span>
+            <span>{t('launcher.picker.loadError')}</span>
             <button
               type="button"
               onClick={() => setReloadKey((k) => k + 1)}
               className="rounded border border-border px-2 py-1 text-[11px] hover:border-ink hover:text-fg"
             >
-              Retry
+              {t('launcher.picker.retry')}
             </button>
           </div>
         )}
         {tickets !== null && !error && !needsAuth && visible.length === 0 && (
-          <div className="px-3 py-5 text-xs text-fgdim">No tickets match these filters.</div>
+          <div className="px-3 py-5 text-xs text-fgdim">{t('launcher.picker.empty')}</div>
         )}
         {visible.map((t) => (
           <TicketRow
@@ -743,6 +751,7 @@ function MetaRow({ label, children }) {
 
 // Full ticket details (description + comments + links) before you commit to it.
 function TicketDetailsModal({ id, onClose }) {
+  const t = useT();
   const [data, setData] = useState(undefined); // undefined=loading, null=error
   useEffect(() => {
     let dead = false;
@@ -778,7 +787,7 @@ function TicketDetailsModal({ id, onClose }) {
           )}
           {data?.url && (
             <a href={data.url} target="_blank" rel="noopener" className="text-[11px] text-fgdim underline hover:text-fg">
-              open in Linear ↗
+              {t('launcher.details.openInLinear')}
             </a>
           )}
           <button
@@ -793,23 +802,23 @@ function TicketDetailsModal({ id, onClose }) {
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {data === undefined && (
             <div className="flex items-center gap-2 py-6 text-xs text-fgdim">
-              <span className="host-spinner h-3.5 w-3.5" /> Loading ticket…
+              <span className="host-spinner h-3.5 w-3.5" /> {t('launcher.details.loading')}
             </div>
           )}
           {data === null && (
-            <div className="py-6 text-xs text-danger">Couldn&rsquo;t load this ticket&rsquo;s details.</div>
+            <div className="py-6 text-xs text-danger">{t('launcher.details.error')}</div>
           )}
           {data && (
             <>
               <h2 className="mb-3 text-[16px] leading-snug font-bold text-fg">{data.title}</h2>
               <div className="mb-4 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
-                <MetaRow label="Assignee">{data.assignee}</MetaRow>
-                <MetaRow label="Priority">{data.priority}</MetaRow>
-                <MetaRow label="Project">{data.project}</MetaRow>
-                <MetaRow label="Team">{data.team}</MetaRow>
-                <MetaRow label="Creator">{data.creator}</MetaRow>
+                <MetaRow label={t('launcher.meta.assignee')}>{data.assignee}</MetaRow>
+                <MetaRow label={t('launcher.meta.priority')}>{data.priority}</MetaRow>
+                <MetaRow label={t('launcher.meta.project')}>{data.project}</MetaRow>
+                <MetaRow label={t('launcher.meta.team')}>{data.team}</MetaRow>
+                <MetaRow label={t('launcher.meta.creator')}>{data.creator}</MetaRow>
                 {data.labels.length > 0 && (
-                  <MetaRow label="Labels">
+                  <MetaRow label={t('launcher.meta.labels')}>
                     <span className="flex flex-wrap gap-1">
                       {data.labels.map((l) => (
                         <span
@@ -830,12 +839,12 @@ function TicketDetailsModal({ id, onClose }) {
                   <Markdown>{data.description}</Markdown>
                 </div>
               ) : (
-                <div className="border-t border-hair pt-4 text-xs text-fgdim">No description.</div>
+                <div className="border-t border-hair pt-4 text-xs text-fgdim">{t('launcher.details.noDescription')}</div>
               )}
 
               {data.links.length > 0 && (
                 <div className="mt-4 border-t border-hair pt-3">
-                  <div className="mb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">Links</div>
+                  <div className="mb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.details.links')}</div>
                   <div className="flex flex-col gap-1">
                     {data.links.map((a) => (
                       <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-[#2C6BD6] hover:underline">
@@ -849,12 +858,12 @@ function TicketDetailsModal({ id, onClose }) {
               {data.comments.length > 0 && (
                 <div className="mt-4 border-t border-hair pt-3">
                   <div className="mb-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-                    Comments · {data.comments.length}
+                    {t('launcher.details.comments', { n: data.comments.length })}
                   </div>
                   <div className="flex flex-col gap-3">
                     {data.comments.map((c, i) => (
                       <div key={i} className="rounded-md border border-hair bg-bg px-3 py-2">
-                        <div className="mb-1 text-[10.5px] font-bold text-fg">{c.author || 'Someone'}</div>
+                        <div className="mb-1 text-[10.5px] font-bold text-fg">{c.author || t('launcher.details.someone')}</div>
                         <div className="md-light text-[12px]"><Markdown>{c.body}</Markdown></div>
                       </div>
                     ))}
@@ -882,15 +891,16 @@ function ProvisionRow({ label, children }) {
 }
 
 function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt }) {
+  const t = useT();
   const color = nextPaletteColor(sessions, config);
   return (
     <div className="flex w-full shrink-0 flex-col bg-panel p-[16px_18px] md:w-[332px]">
       <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-        Selected ticket
+        {t('launcher.plan.selectedTicket')}
       </div>
       {!ticket ? (
         <div className="flex-1 pt-2 text-xs leading-relaxed text-fgdim">
-          Pick a ticket — or paste a Linear URL / ID — to see the spin-up plan.
+          {t('launcher.plan.pickHint')}
         </div>
       ) : (
         <>
@@ -903,42 +913,42 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
             )}
           </div>
           <div className="mb-2 text-sm leading-snug text-fg">
-            {ticket.title || 'Pasted ticket — Host will pull the details.'}
+            {ticket.title || t('launcher.plan.pastedTitle')}
           </div>
           <button
             type="button"
             onClick={() => onViewDetails(ticket.id)}
             className="mb-3 cursor-pointer self-start rounded-[7px] border border-border bg-bg px-2.5 py-1 text-[11px] font-bold text-fg hover:border-ink"
           >
-            View full details
+            {t('launcher.plan.viewDetails')}
           </button>
           <div className="mb-3.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
-            <span className="text-fgdim">Assignee</span>
-            <span className="text-fgdim">{ticket.assignee || 'you'}</span>
+            <span className="text-fgdim">{t('launcher.meta.assignee')}</span>
+            <span className="text-fgdim">{ticket.assignee || t('launcher.plan.you')}</span>
             {ticket.priority != null && (
               <>
-                <span className="text-fgdim">Priority</span>
+                <span className="text-fgdim">{t('launcher.meta.priority')}</span>
                 <span className="text-fgdim">
-                  {{ 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' }[ticket.priority] ||
+                  {{ 1: t('launcher.priority.urgent'), 2: t('launcher.priority.high'), 3: t('launcher.priority.medium'), 4: t('launcher.priority.low') }[ticket.priority] ||
                     String(ticket.priority)}
                 </span>
               </>
             )}
             {ticket.project && (
               <>
-                <span className="text-fgdim">Project</span>
+                <span className="text-fgdim">{t('launcher.meta.project')}</span>
                 <span className="text-fgdim">{ticket.project}</span>
               </>
             )}
             {ticket.labels?.length > 0 && (
               <>
-                <span className="text-fgdim">Labels</span>
+                <span className="text-fgdim">{t('launcher.meta.labels')}</span>
                 <span className="text-fgdim">{ticket.labels.join(', ')}</span>
               </>
             )}
           </div>
           <div className="border-t border-dashed border-border pt-3">
-            <div className="mb-2.5 text-[13px] font-bold">Host will provision</div>
+            <div className="mb-2.5 text-[13px] font-bold">{t('launcher.plan.provision')}</div>
             <div className="flex flex-col gap-2">
               <ProvisionRow label="Worktree">app-worktrees/{ticket.id.toLowerCase()}</ProvisionRow>
               <ProvisionRow label="Branch">
@@ -949,7 +959,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
               </ProvisionRow>
               <div className="flex items-center gap-[9px] text-[11.5px]">
                 <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
-                <span className="text-fgdim">Session colour</span>
+                <span className="text-fgdim">{t('launcher.plan.sessionColour')}</span>
                 <span className="ml-auto flex items-center gap-[5px]">
                   <Dot color={color} />
                   <span className="font-mono text-[10px] text-fgdim">auto</span>
@@ -964,7 +974,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
         {ticket && (
           <div className="flex flex-col gap-1">
             <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-              Starting prompt
+              {t('launcher.plan.startingPrompt')}
             </span>
             <textarea
               value={prompt}
@@ -977,14 +987,14 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
         )}
         <div className="flex items-center gap-2">
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-            Permissions
+            {t('launcher.plan.permissions')}
           </span>
           <select
             value={mode}
             onChange={(e) => onMode(e.target.value)}
             className="min-w-0 flex-1 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[10.5px] outline-none focus:border-ink"
           >
-            <option value="default">default — ask in chat</option>
+            <option value="default">{t('launcher.plan.permDefault')}</option>
             <option value="acceptEdits">acceptEdits</option>
             <option value="plan">plan</option>
             <option value="bypassPermissions">bypassPermissions</option>
@@ -995,7 +1005,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
           disabled={!ticket || busy}
           onClick={onCreate}
         >
-          {busy ? 'Creating…' : 'Create session →'}
+          {busy ? t('launcher.plan.creating') : t('launcher.plan.createSession')}
         </YellowButton>
         <button
           type="button"
@@ -1003,14 +1013,14 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
           disabled={!ticket || busy}
           className="cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:opacity-40"
         >
-          Do it later — add to Pending
+          {t('launcher.plan.doItLater')}
         </button>
         <button
           type="button"
           onClick={onEmptyInstead}
           className="cursor-pointer p-1 text-xs text-fgdim hover:text-fg"
         >
-          Start an empty session instead
+          {t('launcher.plan.emptyInstead')}
         </button>
       </div>
     </div>
@@ -1018,6 +1028,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
 }
 
 function EmptyForm({ config, sessions, onCreated }) {
+  const t = useT();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState(config?.defaultCwd || '');
   const [mode, setMode] = useState('bypassPermissions');
@@ -1059,7 +1070,7 @@ function EmptyForm({ config, sessions, onCreated }) {
   const later = async () => {
     if (busy) return; // guard against double-submit
     if (!prompt.trim()) {
-      setError('A starting prompt is required to defer an empty session.');
+      setError(t('launcher.empty.deferRequired'));
       return;
     }
     setBusy(true);
@@ -1083,29 +1094,29 @@ function EmptyForm({ config, sessions, onCreated }) {
     <div className="flex min-w-0 flex-1 justify-center overflow-y-auto">
       <div className="w-full max-w-[440px] px-6 py-7">
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          Session name
+          {t('launcher.empty.sessionName')}
         </div>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && create()}
-          placeholder="Name this session…"
+          placeholder={t('launcher.empty.namePlaceholder')}
           autoFocus
           className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
         />
         <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-fgdim">
-          <span>Leave blank →</span>
+          <span>{t('launcher.empty.leaveBlank')}</span>
           <span className="rounded-[5px] border border-border bg-panel px-1.5 py-px font-mono text-[10.5px] text-fgdim">
             {scratchN}
           </span>
-          <span>— renamed by</span>
+          <span>{t('launcher.empty.renamedBy')}</span>
           <span className="rounded-[5px] border border-[#ecd9a0] bg-chip px-1.5 py-px font-mono text-[10px] text-fg">
             host.set_title()
           </span>
         </div>
 
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          Working directory
+          {t('launcher.empty.workingDir')}
         </div>
         <input
           value={cwd}
@@ -1115,7 +1126,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         />
 
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          Permission mode
+          {t('launcher.empty.permMode')}
         </div>
         <select
           value={mode}
@@ -1129,29 +1140,29 @@ function EmptyForm({ config, sessions, onCreated }) {
         </select>
 
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          Starting prompt{' '}
-          <span className="text-fgdim/70 normal-case">(optional to start · required to defer)</span>
+          {t('launcher.plan.startingPrompt')}{' '}
+          <span className="text-fgdim/70 normal-case">{t('launcher.empty.startingPromptHint')}</span>
         </div>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={4}
-          placeholder="First message to send the session on start. Required if you “Do it later”."
+          placeholder={t('launcher.empty.promptPlaceholder')}
           className="mb-5 w-full resize-y rounded-[9px] border-[1.5px] border-border px-3 py-[9px] text-[11.5px] leading-snug outline-none placeholder:text-fgdim focus:border-ink"
         />
 
         {error && <div className="mb-3 text-[11px] text-danger">{error}</div>}
         <YellowButton className="w-full rounded-[9px] py-2.5" disabled={busy} onClick={create}>
-          {busy ? 'Creating…' : 'Create empty session →'}
+          {busy ? t('launcher.plan.creating') : t('launcher.empty.createEmpty')}
         </YellowButton>
         <button
           type="button"
           onClick={later}
           disabled={busy || !prompt.trim()}
-          title={prompt.trim() ? 'Add to Pending' : 'A starting prompt is required to defer'}
+          title={prompt.trim() ? t('launcher.empty.addToPending') : t('launcher.empty.deferTitle')}
           className="mt-2 w-full cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:cursor-default disabled:opacity-40"
         >
-          Do it later — add to Pending
+          {t('launcher.plan.doItLater')}
         </button>
       </div>
     </div>
@@ -1162,9 +1173,15 @@ function EmptyForm({ config, sessions, onCreated }) {
 
 function filterSummary(f) {
   const s = sanitizeFilters(f);
-  const parts = [s.assignee === 'any' ? 'Anyone' : 'Me'];
-  if (s.state) parts.push(STATE_OPTS.find(([v]) => v === s.state)?.[1] || s.state);
-  if (s.priority) parts.push(PRIORITY_OPTS.find(([v]) => v === s.priority)?.[1] || s.priority);
+  const parts = [s.assignee === 'any' ? t('launcher.filter.anyone') : t('launcher.filter.me')];
+  if (s.state) {
+    const k = STATE_OPTS.find(([v]) => v === s.state)?.[1];
+    parts.push(k ? t(k) : s.state);
+  }
+  if (s.priority) {
+    const k = PRIORITY_OPTS.find(([v]) => v === s.priority)?.[1];
+    parts.push(k ? t(k) : s.priority);
+  }
   if (s.labels.length) parts.push(s.labels.join(s.labelOp === 'and' ? ' & ' : ' / '));
   if (s.query) parts.push(`“${s.query}”`);
   return parts.join(' · ');
@@ -1176,14 +1193,15 @@ const fmtClock = (ts) =>
 const fmtAgo = (ts) => {
   if (!ts) return '—';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  return `${Math.floor(s / 3600)}h ago`;
+  if (s < 60) return t('launcher.time.secondsAgo', { n: s });
+  if (s < 3600) return t('launcher.time.minutesAgo', { n: Math.floor(s / 60) });
+  return t('launcher.time.hoursAgo', { n: Math.floor(s / 3600) });
 };
 
 // Service modal for a trigger — polls GET /__api/triggers/:id every 1.5s for the
 // live detail + activity log (mirrors the listener details modal).
 function TriggerLogModal({ triggerId, onClose }) {
+  const t = useT();
   const [detail, setDetail] = useState(null);
   const logRef = useRef(null);
   useEffect(() => {
@@ -1222,9 +1240,9 @@ function TriggerLogModal({ triggerId, onClose }) {
       >
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none"><Icon icon={faBolt} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || 'Trigger'}</span>
+          <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || t('launcher.trigger.defaultName')}</span>
           <span className="font-mono text-[10.5px] text-fgdim">
-            {detail?.enabled ? 'polling' : 'disabled'}
+            {detail?.enabled ? t('launcher.trigger.polling') : t('launcher.trigger.disabled')}
           </span>
           <button
             type="button"
@@ -1235,18 +1253,18 @@ function TriggerLogModal({ triggerId, onClose }) {
           </button>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-hair px-4 py-2.5 font-mono text-[10px] text-fgdim">
-          <span>filter: <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
-          <span>poll: <span className="text-fg">every 60s</span></span>
-          <span>last poll: <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
-          <span>spawned: <span className="text-fg">{detail?.createdSessions?.length || 0}</span></span>
-          <span>seen: <span className="text-fg">{detail?.seen?.length || 0} ticket(s)</span></span>
-          <span>primed: <span className="text-fg">{detail?.primed ? 'yes' : 'no'}</span></span>
+          <span>{t('launcher.trigger.metaFilter')} <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
+          <span>{t('launcher.trigger.metaPoll')} <span className="text-fg">{t('launcher.trigger.every60s')}</span></span>
+          <span>{t('launcher.trigger.metaLastPoll')} <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
+          <span>{t('launcher.trigger.metaSpawned')} <span className="text-fg">{detail?.createdSessions?.length || 0}</span></span>
+          <span>{t('launcher.trigger.metaSeen')} <span className="text-fg">{t('launcher.trigger.ticketsSeen', { n: detail?.seen?.length || 0 })}</span></span>
+          <span>{t('launcher.trigger.metaPrimed')} <span className="text-fg">{detail?.primed ? t('launcher.common.yes') : t('launcher.common.no')}</span></span>
           {detail?.lastError && (
-            <span className="col-span-2 text-danger">last error: {detail.lastError}</span>
+            <span className="col-span-2 text-danger">{t('launcher.trigger.metaLastError')} {detail.lastError}</span>
           )}
         </div>
         <div className="border-b border-hair px-4 py-1.5 font-mono text-[9.5px] tracking-wide text-fgdim uppercase">
-          activity
+          {t('launcher.trigger.activity')}
         </div>
         <pre
           ref={logRef}
@@ -1254,9 +1272,9 @@ function TriggerLogModal({ triggerId, onClose }) {
           className="thin-scroll min-h-0 flex-1 overflow-auto bg-term px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
         >
           {detail == null ? (
-            <span className="text-[#888]">loading…</span>
+            <span className="text-[#888]">{t('launcher.trigger.loadingLog')}</span>
           ) : log.length === 0 ? (
-            <span className="text-[#888]">No activity yet — waiting for the next poll (every 60s).</span>
+            <span className="text-[#888]">{t('launcher.trigger.noActivity')}</span>
           ) : (
             log.map((e, i) => (
               <div key={i}>
@@ -1273,6 +1291,7 @@ function TriggerLogModal({ triggerId, onClose }) {
 
 // Shown when enabling autonomous mode on a trigger — spells out the blast radius.
 function AutonomyWarningModal({ onConfirm, onCancel }) {
+  const t = useT();
   const [dontShow, setDontShow] = useState(false);
   return (
     <div
@@ -1285,23 +1304,21 @@ function AutonomyWarningModal({ onConfirm, onCancel }) {
       >
         <div className="mb-2 flex items-center gap-2">
           <span className="text-[18px]"><Icon icon={faTriangleExclamation} /></span>
-          <span className="text-[14px] font-bold">Run sessions without supervision?</span>
+          <span className="text-[14px] font-bold">{t('launcher.autonomy.title')}</span>
         </div>
         <div className="mb-4 text-[12px] leading-relaxed text-fgdim">
-          Sessions this trigger starts will run in <b>autonomous mode</b>:
+          {t('launcher.autonomy.intro')} <b>{t('launcher.autonomy.autonomousMode')}</b>:
           <ul className="mt-2 list-disc space-y-1 pl-4">
             <li>
-              Every permission prompt is <b>auto-approved</b> — the agent can run any command,
-              edit or delete files, and push code with no confirmation.
+              {t('launcher.autonomy.li1a')} <b>{t('launcher.autonomy.autoApproved')}</b>{t('launcher.autonomy.li1b')}
             </li>
             <li>
-              It <b>won't stop for review</b> — it proceeds all the way to completion (including
-              shipping) on its own.
+              {t('launcher.autonomy.li2a')} <b>{t('launcher.autonomy.wontStop')}</b>{t('launcher.autonomy.li2b')}
             </li>
-            <li>It won't ask you questions; it decides for itself.</li>
+            <li>{t('launcher.autonomy.li3')}</li>
           </ul>
           <div className="mt-2">
-            Only enable this for triggers you trust, on an isolated / unattended machine (e.g. EC2).
+            {t('launcher.autonomy.warn')}
           </div>
         </div>
         <label className="mb-4 flex cursor-pointer items-center gap-2 text-[11.5px] text-fgdim">
@@ -1311,7 +1328,7 @@ function AutonomyWarningModal({ onConfirm, onCancel }) {
             onChange={(e) => setDontShow(e.target.checked)}
             className="cursor-pointer"
           />
-          Don&rsquo;t show this again
+          {t('launcher.autonomy.dontShow')}
         </label>
         <div className="flex justify-end gap-2">
           <button
@@ -1319,14 +1336,14 @@ function AutonomyWarningModal({ onConfirm, onCancel }) {
             onClick={onCancel}
             className="cursor-pointer rounded-[8px] border border-border px-3 py-1.5 text-[12px] text-fg hover:border-ink"
           >
-            Cancel
+            {t('launcher.common.cancel')}
           </button>
           <button
             type="button"
             onClick={() => onConfirm(dontShow)}
             className="cursor-pointer rounded-[8px] border-[1.5px] border-danger bg-danger px-3 py-1.5 text-[12px] font-bold text-white"
           >
-            Enable autonomous
+            {t('launcher.autonomy.enable')}
           </button>
         </div>
       </div>
@@ -1338,6 +1355,7 @@ function AutonomyWarningModal({ onConfirm, onCancel }) {
 // standing triggers. Creating a trigger arms-and-primes it server-side; it then
 // drops matching tickets into the Pending queue. No session is born here.
 function TriggerTab() {
+  const t = useT();
   const { triggers } = useStore();
   const prefs = usePrefs();
   const [logId, setLogId] = useState(null);
@@ -1370,7 +1388,7 @@ function TriggerTab() {
     setError(null);
     try {
       await api.post('/triggers', {
-        name: name.trim() || 'Untitled trigger',
+        name: name.trim() || t('launcher.trigger.untitled'),
         filters,
         autonomous,
         injectPrompt,
@@ -1389,12 +1407,12 @@ function TriggerTab() {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="border-b border-hair px-[18px] pt-4 pb-3">
         <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-          New trigger
+          {t('launcher.trigger.newTrigger')}
         </div>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Trigger name (e.g. My bugs)…"
+          placeholder={t('launcher.trigger.namePlaceholder')}
           className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
         />
         {showConnect && <ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} />}
@@ -1412,7 +1430,7 @@ function TriggerTab() {
         <textarea
           value={injectPrompt}
           onChange={(e) => setInjectPrompt(e.target.value)}
-          placeholder="Optional: extra instructions injected into each started task (e.g. “Prioritise a fix over a refactor; add a test.”)"
+          placeholder={t('launcher.trigger.injectPlaceholder')}
           rows={2}
           className="mt-2 w-full resize-y rounded-[9px] border border-border bg-panel px-3 py-2 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
         />
@@ -1429,97 +1447,86 @@ function TriggerTab() {
             {autonomous && (
               <span
                 className="mr-1 cursor-help"
-                title={
-                  'Sessions run unattended:\n' +
-                  '• permission prompts auto-approved (any command, file edits/deletes, pushes)\n' +
-                  '• no review gate — proceeds to completion on its own\n' +
-                  '• never asks you questions'
-                }
+                title={t('launcher.trigger.autonomousTip')}
               >
                 <Icon icon={faTriangleExclamation} />
               </span>
             )}
-            Autonomous — skip all questions, run unattended (bypass permissions, no review gate).
+            {t('launcher.trigger.autonomousLabel')}
           </span>
         </label>
 
         {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
         <div className="mt-2 flex items-center gap-3">
           <span className="text-[11px] leading-snug text-fgdim">
-            Fires on tickets that enter this filter <em>after</em> you create it — into the
-            Pending&nbsp;tasks queue.
+            {t('launcher.trigger.firesBefore')} <em>{t('launcher.trigger.after')}</em> {t('launcher.trigger.firesAfter')}
           </span>
           <YellowButton
             className="ml-auto shrink-0 rounded-[9px] px-3.5 py-1.5 text-[11.5px]"
             disabled={busy || showConnect}
             onClick={create}
           >
-            {busy ? 'Creating…' : 'Create trigger →'}
+            {busy ? t('launcher.plan.creating') : t('launcher.trigger.createTrigger')}
           </YellowButton>
         </div>
       </div>
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
         <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-          Triggers · {triggers.length}
+          {t('launcher.trigger.listHeading', { n: triggers.length })}
         </div>
         {triggers.length === 0 && (
           <div className="py-4 text-xs text-fgdim">
-            No triggers yet. Create one above to watch a Linear filter.
+            {t('launcher.trigger.emptyList')}
           </div>
         )}
-        {triggers.map((t) => (
+        {triggers.map((trg) => (
           <div
-            key={t.id}
+            key={trg.id}
             className="mb-2 flex items-center gap-2 rounded-[9px] border border-border px-3 py-2"
           >
             <span
               className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: t.enabled ? '#3C9A4E' : '#d2d2d2' }}
-              title={t.enabled ? 'Enabled — polling' : 'Disabled'}
+              style={{ background: trg.enabled ? '#3C9A4E' : '#d2d2d2' }}
+              title={trg.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}
             />
-            {t.autonomous && (
+            {trg.autonomous && (
               <span
                 className="shrink-0 cursor-help text-[13px]"
-                title={
-                  'Autonomous trigger — sessions run unattended:\n' +
-                  '• permission prompts auto-approved (any command, file edits/deletes, pushes)\n' +
-                  '• no review gate — proceeds to completion on its own\n' +
-                  '• never asks you questions'
-                }
+                title={t('launcher.trigger.autonomousBadgeTip')}
               >
                 <Icon icon={faTriangleExclamation} />
               </span>
             )}
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12.5px] font-bold">{t.name}</span>
+              <span className="block truncate text-[12.5px] font-bold">{trg.name}</span>
               <span className="block truncate text-[10.5px] text-fgdim">
-                {filterSummary(t.filters)}
-                {t.lastError ? <> · <Icon icon={faTriangleExclamation} /> {t.lastError}</> : ''}
+                {filterSummary(trg.filters)}
+                {trg.lastError ? <> · <Icon icon={faTriangleExclamation} /> {trg.lastError}</> : ''}
               </span>
             </span>
-            <span className="shrink-0 font-mono text-[10px] text-fgdim" title="Sessions spawned">
-              {t.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[8px]" />
+            <span className="shrink-0 font-mono text-[10px] text-fgdim" title={t('launcher.trigger.spawnedTitle')}>
+              {trg.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[8px]" />
             </span>
             <button
               type="button"
-              onClick={() => setLogId(t.id)}
-              title="Open activity log"
+              onClick={() => setLogId(trg.id)}
+              title={t('launcher.trigger.openLog')}
               className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
             >
-              <Icon icon={faBolt} /> logs
+              <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
             </button>
             <button
               type="button"
-              onClick={() => api.patch(`/triggers/${t.id}`, { enabled: !t.enabled }).catch(() => {})}
-              title={t.enabled ? 'Disable (stop polling)' : 'Enable'}
+              onClick={() => api.patch(`/triggers/${trg.id}`, { enabled: !trg.enabled }).catch(() => {})}
+              title={trg.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
               className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
             >
-              {t.enabled ? 'On' : 'Off'}
+              {trg.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
             </button>
             <button
               type="button"
-              onClick={() => api.del(`/triggers/${t.id}`).catch(() => {})}
-              title="Delete trigger"
+              onClick={() => api.del(`/triggers/${trg.id}`).catch(() => {})}
+              title={t('launcher.trigger.deleteTitle')}
               className="shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
             >
               <Icon icon={faXmark} />
@@ -1545,6 +1552,7 @@ function TriggerTab() {
 /* ---------- the launcher ----------------------------------------------------- */
 
 export default function Launcher({ config, sessions, onClose, onCreated, onNeedsSetup, initialMode }) {
+  const t = useT();
   const [mode, setMode] = useState(initialMode || 'ticket');
   const [selected, setSelected] = useState(null);
   const [permMode, setPermMode] = useState('bypassPermissions');
@@ -1645,10 +1653,9 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
       {gated && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-[420px] rounded-[12px] border-[1.5px] border-ink bg-panel p-5 shadow-xl">
-            <div className="text-[14px] font-bold text-fg">No workspace is ready</div>
+            <div className="text-[14px] font-bold text-fg">{t('launcher.gate.title')}</div>
             <p className="mt-1.5 text-[12px] leading-relaxed text-fgdim">
-              This session needs a provisioned repo (cloned + installed) before it can
-              run. Set one up first — visually, or let an agent walk you through it in chat.
+              {t('launcher.gate.body')}
             </p>
             <div className="mt-4 flex flex-col gap-2">
               <button
@@ -1657,21 +1664,21 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
                 onClick={startChatOnboarding}
                 className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12px] font-bold text-fg disabled:opacity-50"
               >
-                {busy ? 'Starting…' : 'Set up in chat →'}
+                {busy ? t('launcher.gate.starting') : t('launcher.gate.setupChat')}
               </button>
               <button
                 type="button"
                 onClick={() => { setGated(false); onNeedsSetup?.(); }}
                 className="cursor-pointer rounded-[8px] border border-border bg-bg px-3 py-2 text-[12px] font-semibold text-fg hover:border-ink"
               >
-                Open Setup panel
+                {t('launcher.gate.openSetup')}
               </button>
               <button
                 type="button"
                 onClick={() => setGated(false)}
                 className="cursor-pointer px-3 py-1 text-[11px] text-fgdim hover:text-fg"
               >
-                Cancel
+                {t('launcher.common.cancel')}
               </button>
             </div>
           </div>
@@ -1680,7 +1687,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
       {/* header */}
       <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
         <Wave />
-        <span className="text-sm font-bold">Start a session</span>
+        <span className="text-sm font-bold">{t('launcher.header.title')}</span>
         <span className="ml-3.5 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
           <button
             type="button"
@@ -1689,7 +1696,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
               mode === 'ticket' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
             }`}
           >
-            From a ticket
+            {t('launcher.header.fromTicket')}
           </button>
           <button
             type="button"
@@ -1698,7 +1705,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
               mode === 'empty' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
             }`}
           >
-            Empty session
+            {t('launcher.header.emptySession')}
           </button>
           <button
             type="button"
@@ -1707,14 +1714,14 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
               mode === 'trigger' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
             }`}
           >
-            From trigger
+            {t('launcher.header.fromTrigger')}
           </button>
         </span>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            title="Close launcher (esc)"
+            title={t('launcher.header.closeTitle')}
             className="ml-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
           >
             <Icon icon={faXmark} />

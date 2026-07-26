@@ -5,6 +5,8 @@ import { Wave } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 import { LOGOS, LOGO_IDS, DEFAULT_ACCENT } from '../lib/logos.js';
+import { useT } from '../lib/i18n.js';
+import { LANGS, LANG_IDS } from '../lib/langs.js';
 
 function Toggle({ on, onChange, disabled }) {
   return (
@@ -40,6 +42,7 @@ const LINK_BTN =
   'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand';
 
 function CopyRow({ url }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-center gap-2 border-b border-hair py-3">
@@ -51,7 +54,7 @@ function CopyRow({ url }) {
         onClick={() => { navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
         className={LINK_BTN}
       >
-        {copied ? 'copied' : 'copy'}
+        {copied ? t('chrome.copy.copied') : t('chrome.copy.copy')}
       </button>
     </div>
   );
@@ -61,12 +64,13 @@ function CopyRow({ url }) {
 // never a public URL. The direct tailnet URL works as soon as Tailscale is up;
 // HTTPS serve is an optional upgrade (needs HTTPS Certificates on the tailnet).
 function RemoteAccess() {
+  const t = useT();
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   const load = () =>
-    api.get('/remote').then(setSt).catch(() => setSt({ available: false, reason: 'Could not reach the host.' }));
+    api.get('/remote').then(setSt).catch(() => setSt({ available: false, reason: t('chrome.remote.unreachable') }));
   useEffect(() => { load(); }, []);
 
   const toggle = async (on) => {
@@ -85,36 +89,36 @@ function RemoteAccess() {
   return (
     <>
       <div className="mt-6 mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-        Remote access
+        {t('chrome.remote.section')}
       </div>
       {!st ? (
-        <div className="py-4 font-mono text-[11px] text-fgdim">checking Tailscale…</div>
+        <div className="py-4 font-mono text-[11px] text-fgdim">{t('chrome.remote.checking')}</div>
       ) : !st.available ? (
-        <Field label="Tailscale" hint="Not installed. Install Tailscale to reach the cockpit from your phone — private to your devices, no public URL.">
+        <Field label="Tailscale" hint={t('chrome.remote.notInstalled')}>
           <a href="https://tailscale.com/download" target="_blank" rel="noreferrer" className={LINK_BTN}>
-            Get Tailscale ↗
+            {t('chrome.remote.get')}
           </a>
         </Field>
       ) : !st.loggedIn ? (
-        <Field label="Tailscale" hint={st.reason || 'Open the Tailscale app and sign in, then recheck.'}>
-          <button type="button" onClick={load} className={LINK_BTN}>Recheck</button>
+        <Field label="Tailscale" hint={st.reason || t('chrome.remote.signInHint')}>
+          <button type="button" onClick={load} className={LINK_BTN}>{t('chrome.remote.recheck')}</button>
         </Field>
       ) : (
         <>
           <div className="border-b border-hair py-4">
-            <div className="text-[13px] font-bold text-fg">Open on your phone</div>
+            <div className="text-[13px] font-bold text-fg">{t('chrome.remote.openOnPhone')}</div>
             <div className="mt-0.5 text-[11.5px] text-fgdim">
-              With Tailscale running on both devices. Encrypted over your tailnet — chat works now.
+              {t('chrome.remote.openOnPhone.hint')}
             </div>
           </div>
           {st.directUrl && <CopyRow url={st.directUrl} />}
 
           <Field
-            label="HTTPS (cleaner URL + embedded app tabs)"
+            label={t('chrome.remote.https')}
             hint={
               st.serving
-                ? 'On — the https:// URL below also works.'
-                : 'Optional. Serve over https://<host>/ — needs HTTPS Certificates enabled for your tailnet.'
+                ? t('chrome.remote.https.on')
+                : t('chrome.remote.https.off')
             }
           >
             <Toggle on={!!st.serving} disabled={busy} onChange={toggle} />
@@ -124,7 +128,7 @@ function RemoteAccess() {
             <div className="py-2 text-[11px] leading-snug text-danger">
               {err}{' '}
               <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noreferrer" className="underline">
-                open admin console ↗
+                {t('chrome.remote.adminConsole')}
               </a>
             </div>
           )}
@@ -169,6 +173,7 @@ function Field({ label, hint, children }) {
 // been granted mic permission once — until then we offer a one-tap "Allow" that
 // requests access and re-enumerates, then lists the real device names.
 function MicPicker({ value, onChange }) {
+  const t = useT();
   const [devices, setDevices] = useState([]);
   const [needsPerm, setNeedsPerm] = useState(false);
 
@@ -208,7 +213,7 @@ function MicPicker({ value, onChange }) {
         onClick={grant}
         className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a]"
       >
-        Allow mic to list devices
+        {t('chrome.voice.mic.allow')}
       </button>
     );
   }
@@ -219,10 +224,10 @@ function MicPicker({ value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       className="max-w-[220px] cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] text-fg outline-none focus:border-brand"
     >
-      <option value="">System default</option>
+      <option value="">{t('chrome.voice.mic.systemDefault')}</option>
       {devices.map((d, i) => (
         <option key={d.deviceId || i} value={d.deviceId}>
-          {d.label || `Microphone ${i + 1}`}
+          {d.label || t('chrome.voice.mic.fallback', { n: i + 1 })}
         </option>
       ))}
     </select>
@@ -231,6 +236,7 @@ function MicPicker({ value, onChange }) {
 
 export default function Settings({ onClose }) {
   const prefs = usePrefs();
+  const t = useT();
   const [fontMin, fontMax] = PREF_LIMITS.font;
   const [recordingHotkey, setRecordingHotkey] = useState(false);
 
@@ -270,11 +276,11 @@ export default function Settings({ onClose }) {
     <div className="flex min-h-0 flex-1 flex-col bg-panel">
       <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
         <Wave />
-        <span className="text-sm font-bold text-fg">Settings</span>
+        <span className="text-sm font-bold text-fg">{t('settings.title')}</span>
         <button
           type="button"
           onClick={onClose}
-          title="Close settings (esc)"
+          title={t('chrome.settings.closeTitle')}
           className="ml-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
         >
           <Icon icon={faXmark} />
@@ -284,19 +290,33 @@ export default function Settings({ onClose }) {
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[560px] px-7 py-6">
           <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-            Appearance
+            {t('settings.appearance')}
           </div>
-          <Field label="Theme" hint="Light or dark host chrome.">
+          <Field label={t('settings.theme')} hint={t('settings.theme.hint')}>
             <Segmented
               value={prefs.theme}
               onChange={(v) => setPrefs({ theme: v })}
               options={[
-                { value: 'light', label: 'Light' },
-                { value: 'dark', label: 'Dark' },
+                { value: 'light', label: t('common.light') },
+                { value: 'dark', label: t('common.dark') },
               ]}
             />
           </Field>
-          <Field label="Accent color" hint="Brand color for buttons, links, highlights, and the logo.">
+          <Field label={t('settings.language')} hint={t('settings.language.hint')}>
+            <select
+              value={prefs.language}
+              onChange={(e) => setPrefs({ language: e.target.value })}
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg"
+            >
+              <option value="auto">{t('settings.language.auto')}</option>
+              {LANG_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {LANGS[id].label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
             <span className="flex items-center gap-2">
               <label className="relative flex h-[26px] w-[38px] cursor-pointer items-center justify-center overflow-hidden rounded-lg border-[1.5px] border-ink">
                 <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
@@ -305,7 +325,7 @@ export default function Settings({ onClose }) {
                   value={prefs.accent || DEFAULT_ACCENT}
                   onChange={(e) => setPrefs({ accent: e.target.value })}
                   className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label="Accent color"
+                  aria-label={t('settings.accent')}
                 />
               </label>
               <code className="font-mono text-[11px] text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
@@ -315,12 +335,12 @@ export default function Settings({ onClose }) {
                   onClick={() => setPrefs({ accent: '' })}
                   className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[10.5px] text-fgdim hover:border-ink hover:text-fg"
                 >
-                  Reset
+                  {t('common.reset')}
                 </button>
               ) : null}
             </span>
           </Field>
-          <Field label="Logo" hint="Origami mark shown in the browser tab.">
+          <Field label={t('settings.logo')} hint={t('settings.logo.hint')}>
             <span className="flex items-center gap-1.5">
               {LOGO_IDS.map((id) => (
                 <button
@@ -337,9 +357,9 @@ export default function Settings({ onClose }) {
           </Field>
 
           <div className="mt-6 mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-            Terminal
+            {t('settings.terminal')}
           </div>
-          <Field label="Font size" hint={`Chat output text size (${fontMin}–${fontMax}px).`}>
+          <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: fontMin, max: fontMax })}>
             <span className="flex items-center overflow-hidden rounded-lg border-[1.5px] border-ink">
               <button
                 type="button"
@@ -362,60 +382,60 @@ export default function Settings({ onClose }) {
               </button>
             </span>
           </Field>
-          <Field label="Terminal theme" hint="Default light/dark for the chat terminal. Each terminal has its own 🌙/☀ toggle in its header.">
+          <Field label={t('settings.termTheme')} hint={t('settings.termTheme.hint')}>
             <Segmented
               value={prefs.termTheme}
               onChange={(v) => setPrefs({ termTheme: v })}
               options={[
-                { value: 'light', label: 'Light' },
-                { value: 'dark', label: 'Dark' },
+                { value: 'light', label: t('common.light') },
+                { value: 'dark', label: t('common.dark') },
               ]}
             />
           </Field>
-          <Field label="Text direction" hint="Default chat direction — Auto detects per message. Each terminal has its own dir toggle in its header.">
+          <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
             <Segmented
               value={prefs.termDir}
               onChange={(v) => setPrefs({ termDir: v })}
               options={[
-                { value: 'auto', label: 'Auto' },
-                { value: 'ltr', label: 'LTR' },
-                { value: 'rtl', label: 'RTL' },
+                { value: 'auto', label: t('common.auto') },
+                { value: 'ltr', label: t('common.ltr') },
+                { value: 'rtl', label: t('common.rtl') },
               ]}
             />
           </Field>
 
           <div className="mt-6 mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-            Voice control
+            {t('chrome.voice.section')}
           </div>
-          <Field label="Mode" hint="Hold to talk: record only while the hotkey is held. Press to toggle: tap once to start, tap again (or Stop) to end.">
+          <Field label={t('chrome.voice.mode')} hint={t('chrome.voice.mode.hint')}>
             <Segmented
               value={prefs.voiceMode}
               onChange={(v) => setPrefs({ voiceMode: v })}
               options={[
-                { value: 'hold', label: 'Hold to talk' },
-                { value: 'toggle', label: 'Press to toggle' },
+                { value: 'hold', label: t('chrome.voice.mode.hold') },
+                { value: 'toggle', label: t('chrome.voice.mode.toggle') },
               ]}
             />
           </Field>
-          <Field label="Microphone" hint="Which input device to record from.">
+          <Field label={t('chrome.voice.mic')} hint={t('chrome.voice.mic.hint')}>
             <MicPicker value={prefs.voiceMicId} onChange={(v) => setPrefs({ voiceMicId: v })} />
           </Field>
-          <Field label="Language" hint="STT recognition language. Auto lets Whisper detect (good for Hebrew/English code-switching).">
+          <Field label={t('settings.language')} hint={t('chrome.voice.language.hint')}>
             <Segmented
               value={prefs.voiceLanguage}
               onChange={(v) => setPrefs({ voiceLanguage: v })}
               options={[
-                { value: 'auto', label: 'Auto' },
-                { value: 'en', label: 'English' },
-                { value: 'he', label: 'Hebrew' },
+                { value: 'auto', label: t('common.auto') },
+                { value: 'en', label: t('chrome.voice.language.en') },
+                { value: 'he', label: t('chrome.voice.language.he') },
               ]}
             />
           </Field>
-          <Field label="Record hotkey" hint="Keyboard shortcut to record. Click Record, then press the keys.">
+          <Field label={t('chrome.voice.hotkey')} hint={t('chrome.voice.hotkey.hint')}>
             <span className="flex items-center gap-2">
               <input
                 type="text"
-                value={recordingHotkey ? 'Press keys…' : prefs.voiceHotkey}
+                value={recordingHotkey ? t('chrome.voice.hotkey.pressKeys') : prefs.voiceHotkey}
                 readOnly
                 placeholder="Cmd+Shift+V"
                 className="w-[140px] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-center font-mono text-[11.5px] text-fg outline-none disabled:opacity-60"
@@ -429,11 +449,11 @@ export default function Settings({ onClose }) {
                     : 'border-ink bg-panel text-fg hover:bg-brand hover:text-[#1a1a1a]'
                 }`}
               >
-                {recordingHotkey ? 'Listening…' : 'Record'}
+                {recordingHotkey ? t('chrome.voice.hotkey.listening') : t('chrome.voice.hotkey.record')}
               </button>
             </span>
           </Field>
-          <Field label="Auto-send prompts" hint="Automatically send voice-injected prompts without asking for confirmation.">
+          <Field label={t('chrome.voice.autoSend')} hint={t('chrome.voice.autoSend.hint')}>
             <Toggle
               on={prefs.voiceAutoSend}
               onChange={(v) => setPrefs({ voiceAutoSend: v })}

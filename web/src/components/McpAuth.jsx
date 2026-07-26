@@ -13,6 +13,7 @@ import { api } from '../lib/api.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { restartSession } from '../lib/store.js';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faRotateRight } from '@fortawesome/free-solid-svg-icons';
 
 const DOT = {
@@ -29,6 +30,7 @@ const DOT = {
 const RECONNECTABLE = new Set(['degraded', 'needs-reconnect', 'failed', 'error']);
 
 export default function McpAuth({ session, sessionServers, cwd }) {
+  const t = useT();
   const [fetched, setFetched] = useState(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -129,9 +131,9 @@ export default function McpAuth({ session, sessionServers, cwd }) {
 
   const logout = async (name) => {
     const ok = await confirmDialog({
-      title: `Sign out of "${name}"?`,
-      body: 'Its OAuth credentials are cleared.',
-      confirmLabel: 'Sign out',
+      title: t('launcher.mcp.signoutTitle', { name }),
+      body: t('launcher.mcp.signoutBody'),
+      confirmLabel: t('launcher.mcp.signout'),
       danger: true,
     });
     if (!ok) return;
@@ -147,7 +149,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
     }
   };
 
-  if (!servers) return <p className="text-[12px] text-fgdim">Loading MCP servers…</p>;
+  if (!servers) return <p className="text-[12px] text-fgdim">{t('launcher.mcp.loading')}</p>;
 
   return (
     <div className="flex flex-col gap-2">
@@ -161,7 +163,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
         // restart in flight beats everything — every connection is being
         // re-established right now.
         const status = restarting ? 'pending' : active && flow.state === 'done' ? 'connected' : s.status;
-        const statusText = restarting ? 'reconnecting…' : active && flow.state === 'done' ? 'connected' : s.statusText;
+        const statusText = restarting ? t('launcher.mcp.reconnecting') : active && flow.state === 'done' ? t('launcher.mcp.connected') : s.statusText;
         return (
           <div key={s.name} className="rounded-md border border-hair bg-bg px-3 py-2">
             <div className="flex items-center gap-2.5">
@@ -177,7 +179,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   onClick={() => restartSession(session)}
                   className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
                 >
-                  <Icon icon={faRotateRight} /> Reconnect
+                  <Icon icon={faRotateRight} /> {t('launcher.mcp.reconnect')}
                 </button>
               )}
               {status !== 'connected' && !RECONNECTABLE.has(status) && !restarting && (
@@ -187,7 +189,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   onClick={() => login(s.name)}
                   className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
                 >
-                  🔓 Authenticate
+                  {t('launcher.mcp.authenticate')}
                 </button>
               )}
               {status === 'connected' && (
@@ -197,25 +199,25 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   onClick={() => logout(s.name)}
                   className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-[#B23B30] hover:text-[#B23B30] disabled:opacity-40"
                 >
-                  Sign out
+                  {t('launcher.mcp.signout')}
                 </button>
               )}
             </div>
             {active && (flow.state === 'starting' || flow.state === 'awaiting') && (
               <div className="mt-2 pl-5 text-[10.5px] text-fgdim">
-                Opening your browser to authorize… complete it there.
+                {t('launcher.mcp.opening')}
                 {flow.url && (
                   <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-[#2C6BD6] underline">
-                    open link ↗
+                    {t('launcher.mcp.openLink')}
                   </a>
                 )}
               </div>
             )}
             {active && flow.state === 'error' && (
-              <div className="mt-2 pl-5 text-[10.5px] text-[#B23B30]">{flow.error || 'login failed'}</div>
+              <div className="mt-2 pl-5 text-[10.5px] text-[#B23B30]">{flow.error || t('launcher.mcp.loginFailed')}</div>
             )}
             {active && flow.state === 'done' && (
-              <div className="mt-2 pl-5 text-[10.5px] text-[#3C9A4E]">Authorized.</div>
+              <div className="mt-2 pl-5 text-[10.5px] text-[#3C9A4E]">{t('launcher.mcp.authorized')}</div>
             )}
           </div>
         );
@@ -227,11 +229,10 @@ export default function McpAuth({ session, sessionServers, cwd }) {
           onClick={() => { load(true); check(true); }}
           className="rounded-md border border-border px-2.5 py-1 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
         >
-          <Icon icon={faRotateRight} /> {checking ? 'Checking…' : 'Check now'}
+          <Icon icon={faRotateRight} /> {checking ? t('launcher.mcp.checking') : t('launcher.mcp.checkNow')}
         </button>
         <span className="text-[10px] text-fgdim">
-          Status is re-checked live (per-server health check on this session's account).
-          Reconnect restarts the session's claude process to re-establish dropped servers.
+          {t('launcher.mcp.statusHint')}
         </span>
       </div>
     </div>

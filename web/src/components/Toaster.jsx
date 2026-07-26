@@ -1,4 +1,5 @@
 import { useToasts, dismissToast } from '../lib/toast.js';
+import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -17,8 +18,10 @@ const DOT = {
 };
 
 export default function Toaster() {
+  const tr = useT();
   const toasts = useToasts();
   if (!toasts.length) return null;
+  const dismissLabel = tr('dialogs.dismiss');
   return (
     <div
       className="fixed bottom-4 left-4 z-[80] flex w-[320px] max-w-[92vw] flex-col gap-2"
@@ -50,8 +53,8 @@ export default function Toaster() {
           )}
           <button
             type="button"
-            aria-label="Dismiss"
-            title="Dismiss"
+            aria-label={dismissLabel}
+            title={dismissLabel}
             onClick={() => dismissToast(t.id)}
             className="shrink-0 text-[13px] leading-none text-fgdim hover:text-fg"
           >

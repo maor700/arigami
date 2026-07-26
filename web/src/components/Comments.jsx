@@ -4,18 +4,20 @@
 // comments that can be accepted (→ a normal pending comment) or rejected (deleted).
 import { useState } from 'react';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faCheck, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 const ACTION_BTN = 'cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-fg';
 
 function Reply({ reply, onEdit, onDelete }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
       <CommentComposer
         initial={reply.body}
-        submitLabel="Save"
-        placeholder="Edit reply…"
+        submitLabel={t('chat.save')}
+        placeholder={t('chat.editReply')}
         autoFocus
         onSubmit={(t) => { onEdit(reply.id, t); setEditing(false); }}
         onCancel={() => setEditing(false)}
@@ -25,9 +27,9 @@ function Reply({ reply, onEdit, onDelete }) {
   return (
     <div className="rounded-md border border-hair/70 bg-bg/60 px-2.5 py-1.5">
       <div className="mb-0.5 flex items-center gap-1.5">
-        <span className="font-mono text-[8.5px] font-bold tracking-wide text-fgdim uppercase">↳ reply</span>
+        <span className="font-mono text-[8.5px] font-bold tracking-wide text-fgdim uppercase">↳ {t('chat.reply')}</span>
         <div className="ml-auto flex items-center gap-2">
-          {onEdit && <button type="button" onClick={() => setEditing(true)} className={ACTION_BTN}>edit</button>}
+          {onEdit && <button type="button" onClick={() => setEditing(true)} className={ACTION_BTN}>{t('chat.edit')}</button>}
           {onDelete && <button type="button" onClick={() => onDelete(reply.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
         </div>
       </div>
@@ -37,6 +39,7 @@ function Reply({ reply, onEdit, onDelete }) {
 }
 
 export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onAccept, onReject, onEditReply, onDeleteReply }) {
+  const t = useT();
   const resolved = !!comment.resolved;
   const suggested = !!comment.suggested;
   const [editing, setEditing] = useState(false);
@@ -53,31 +56,31 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
     <div className={`rounded-md border px-2.5 py-1.5 ${border}`}>
       <div className="mb-0.5 flex items-center gap-1.5">
         <span className={`font-mono text-[9px] font-bold tracking-wide uppercase ${suggested ? 'text-[#8a6d1f]' : 'text-fgdim'}`}>
-          {suggested ? <><Icon icon={faWandMagicSparkles} /> suggestion</> : 'you'}
+          {suggested ? <><Icon icon={faWandMagicSparkles} /> {t('chat.suggestion')}</> : t('chat.you')}
         </span>
         {resolved && (
           <span className="rounded-full bg-[#3C9A4E]/15 px-1.5 font-mono text-[8.5px] font-bold tracking-wide text-[#3C9A4E] uppercase">
-            <Icon icon={faCheck} /> resolved
+            <Icon icon={faCheck} /> {t('chat.resolved')}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
           {/* edit + reply are available on every comment, suggestion or not */}
-          {onEdit && !editing && <button type="button" onClick={() => setEditing(true)} className={ACTION_BTN}>edit</button>}
-          {onReply && <button type="button" onClick={() => setReplying((v) => !v)} className={ACTION_BTN}>reply</button>}
+          {onEdit && !editing && <button type="button" onClick={() => setEditing(true)} className={ACTION_BTN}>{t('chat.edit')}</button>}
+          {onReply && <button type="button" onClick={() => setReplying((v) => !v)} className={ACTION_BTN}>{t('chat.reply')}</button>}
           {suggested ? (
             // a suggestion additionally offers accept (→ real comment) / reject (discard)
             <>
-              {onAccept && <button type="button" onClick={() => onAccept(comment.id)} title="Accept — keep as a review comment" className="cursor-pointer font-mono text-[9.5px] font-bold text-[#3C9A4E] hover:underline">accept</button>}
-              {onReject && <button type="button" onClick={() => onReject(comment.id)} title="Reject — discard this suggestion" className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-danger">reject</button>}
+              {onAccept && <button type="button" onClick={() => onAccept(comment.id)} title={t('chat.acceptTitle')} className="cursor-pointer font-mono text-[9.5px] font-bold text-[#3C9A4E] hover:underline">{t('chat.accept')}</button>}
+              {onReject && <button type="button" onClick={() => onReject(comment.id)} title={t('chat.rejectTitle')} className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-danger">{t('chat.reject')}</button>}
             </>
           ) : (
             <>
               {onResolve && (
-                <button type="button" onClick={() => onResolve(comment.id, !resolved)} title={resolved ? 'reopen comment' : 'resolve comment'} className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-[#3C9A4E]">
-                  {resolved ? 'reopen' : 'resolve'}
+                <button type="button" onClick={() => onResolve(comment.id, !resolved)} title={resolved ? t('chat.reopenTitle') : t('chat.resolveTitle')} className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-[#3C9A4E]">
+                  {resolved ? t('chat.reopen') : t('chat.resolve')}
                 </button>
               )}
-              {onDelete && <button type="button" onClick={() => onDelete(comment.id)} title="delete comment" className="cursor-pointer text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
+              {onDelete && <button type="button" onClick={() => onDelete(comment.id)} title={t('chat.deleteComment')} className="cursor-pointer text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
             </>
           )}
         </div>
@@ -86,8 +89,8 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
       {editing ? (
         <CommentComposer
           initial={comment.body}
-          submitLabel="Save"
-          placeholder="Edit comment…"
+          submitLabel={t('chat.save')}
+          placeholder={t('chat.editComment')}
           autoFocus
           onSubmit={(t) => { onEdit(comment.id, t); setEditing(false); }}
           onCancel={() => setEditing(false)}
@@ -110,8 +113,8 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
           ))}
           {replying && (
             <CommentComposer
-              placeholder="Reply…"
-              submitLabel="Reply"
+              placeholder={t('chat.replyPlaceholder')}
+              submitLabel={t('chat.replySubmit')}
               autoFocus
               onSubmit={(t) => { onReply(comment.id, t); setReplying(false); }}
               onCancel={() => setReplying(false)}
@@ -123,7 +126,10 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
   );
 }
 
-export function CommentComposer({ onSubmit, onCancel, placeholder = 'Leave a comment…', autoFocus, initial = '', submitLabel = 'Comment' }) {
+export function CommentComposer({ onSubmit, onCancel, placeholder, autoFocus, initial = '', submitLabel }) {
+  const t = useT();
+  const ph = placeholder ?? t('chat.leaveComment');
+  const label = submitLabel ?? t('chat.comment');
   const [text, setText] = useState(initial);
   const submit = () => {
     const t = text.trim();
@@ -143,7 +149,7 @@ export function CommentComposer({ onSubmit, onCancel, placeholder = 'Leave a com
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
           else if (e.key === 'Escape' && onCancel) { e.preventDefault(); onCancel(); }
         }}
-        placeholder={placeholder}
+        placeholder={ph}
         className="w-full resize-none bg-transparent text-[11.5px] leading-snug outline-none placeholder:text-fgdim"
       />
       <div className="mt-1 flex items-center gap-2">
@@ -153,7 +159,7 @@ export function CommentComposer({ onSubmit, onCancel, placeholder = 'Leave a com
           disabled={!text.trim()}
           className="cursor-pointer rounded-md border-[1.5px] border-ink bg-brand px-2.5 py-0.5 text-[10.5px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
         >
-          {submitLabel}
+          {label}
         </button>
         {onCancel && (
           <button
@@ -161,10 +167,10 @@ export function CommentComposer({ onSubmit, onCancel, placeholder = 'Leave a com
             onClick={onCancel}
             className="cursor-pointer rounded-md border border-hair px-2 py-0.5 text-[10.5px] text-fgdim hover:text-fg"
           >
-            Cancel
+            {t('chat.cancel')}
           </button>
         )}
-        <span className="ml-auto font-mono text-[9px] text-fgdim">⌘↵ to save</span>
+        <span className="ml-auto font-mono text-[9px] text-fgdim">{t('chat.saveHint')}</span>
       </div>
     </div>
   );

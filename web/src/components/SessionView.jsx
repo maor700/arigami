@@ -9,6 +9,7 @@ import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
 import { Dot, TriggerTag } from './ui.jsx';
+import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
@@ -32,14 +33,14 @@ export const ORCH_TAB_ID = '__orchestration';
 export function resolveTabs(session, hasChildren = false) {
   const base = session.tabs?.length
     ? session.tabs
-    : [{ id: '__session', type: 'session', title: 'Session' }];
-  const hasChanges = base.some((t) => t.type === 'changes' || t.id === CHANGES_TAB_ID);
-  const sessionIdx = base.findIndex((t) => t.type === 'session');
+    : [{ id: '__session', type: 'session', title: t('rail.tabSession') }];
+  const hasChanges = base.some((tb) => tb.type === 'changes' || tb.id === CHANGES_TAB_ID);
+  const sessionIdx = base.findIndex((tb) => tb.type === 'session');
   const inserts = [];
   if (!hasChanges)
-    inserts.push({ id: CHANGES_TAB_ID, type: 'changes', title: 'Changes', builtIn: true });
+    inserts.push({ id: CHANGES_TAB_ID, type: 'changes', title: t('rail.tabChanges'), builtIn: true });
   if (hasChildren)
-    inserts.push({ id: ORCH_TAB_ID, type: 'orchestration', title: 'Orchestration', builtIn: true });
+    inserts.push({ id: ORCH_TAB_ID, type: 'orchestration', title: t('rail.tabOrchestration'), builtIn: true });
   if (!inserts.length) return base;
   if (sessionIdx === -1) return [...base, ...inserts];
   return [...base.slice(0, sessionIdx + 1), ...inserts, ...base.slice(sessionIdx + 1)];
@@ -48,11 +49,12 @@ export function resolveTabs(session, hasChildren = false) {
 /* ---------- terminal header strip ---------------------------------------- */
 
 function StatusChip({ session }) {
+  const t = useT();
   const cState = session.claude?.state;
   // A restart in flight beats the free-form status — it's the live signal the
   // user is waiting on (upsertSession toasts when it completes).
   const restarting = cState === 'restarting';
-  const status = restarting ? 'restarting…' : session.status || cState || 'idle';
+  const status = restarting ? t('rail.statusRestartingDots') : session.status || cState || t('rail.statusIdle');
   const awaiting = !restarting && (/review/i.test(session.status || '') || cState === 'awaiting-input');
   const dotColor = awaiting
     ? '#F9D312'
@@ -63,7 +65,7 @@ function StatusChip({ session }) {
         : '#c4c4c4';
   return (
     <span
-      className={`ml-auto flex shrink-0 items-center gap-[7px] rounded-full border-[1.5px] px-[11px] py-[3px] whitespace-nowrap ${
+      className={`ms-auto flex shrink-0 items-center gap-[7px] rounded-full border-[1.5px] px-[11px] py-[3px] whitespace-nowrap ${
         awaiting ? 'border-ink bg-chip' : 'border-border bg-panel'
       }`}
     >
@@ -88,16 +90,17 @@ function StatusChip({ session }) {
 // the active account if unpinned) so switching accounts is VISIBLE per session —
 // otherwise a switch looks like it did nothing.
 function AccountChip({ session }) {
+  const t = useT();
   const { accounts } = useStore();
   const list = accounts?.accounts || [];
   const pinned = session.claude?.accountId;
   const acc = (pinned && list.find((a) => a.id === pinned)) || list.find((a) => a.active) || null;
   if (!acc) return null;
-  const name = acc.email || acc.label || 'account';
+  const name = acc.email || acc.label || t('rail.accountFallback');
   return (
     <span
       className="hidden items-center gap-1 font-mono text-[10px] text-fgdim sm:flex"
-      title={`This session runs on: ${name}${acc.active ? ' · active account' : ''}`}
+      title={t('rail.runsOn', { name }) + (acc.active ? t('rail.activeAccountSuffix') : '')}
       onClick={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}
       style={{ cursor: 'pointer' }}
     >
@@ -110,6 +113,7 @@ function AccountChip({ session }) {
 // Mobile stand-in for the full listeners row: one "👀 N" chip in the terminal
 // header that opens the same ListenersPanel. The chips row itself is desktop-only.
 function ListenersChipCompact({ session }) {
+  const t = useT();
   const store = useStore();
   const listeners = listenersForSession(store, session.id);
   const [open, setOpen] = useState(false);
@@ -120,7 +124,7 @@ function ListenersChipCompact({ session }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title={`${listeners.length} listener${listeners.length > 1 ? 's' : ''} watching`}
+        title={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
         className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] sm:hidden ${
           errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-white text-[#555]'
         }`}
@@ -136,9 +140,10 @@ function ListenersChipCompact({ session }) {
 // Auto (follow the conversation) | English segmented control, reused in the
 // summary popover's empty state (pre-choice) and footer (post-generation).
 function LangToggle({ value, onChange, disabled }) {
+  const t = useT();
   return (
-    <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title="Summary language">
-      {[['auto', 'Auto'], ['en', 'English']].map(([key, label], i) => (
+    <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title={t('rail.summaryLanguage')}>
+      {[['auto', t('rail.auto')], ['en', t('rail.english')]].map(([key, label], i) => (
         <button
           key={key}
           type="button"
@@ -159,6 +164,7 @@ function LangToggle({ value, onChange, disabled }) {
 // clicking opens a popover with the summary + controls. A cheap headless run
 // generates it server-side (folding only the transcript delta on auto-update).
 function SummaryChip({ session }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -178,11 +184,11 @@ function SummaryChip({ session }) {
   const [pendingLang, setPendingLang] = useState('auto');
 
   const enable = () => api.post(`/sessions/${sid}/summary`, { autoUpdate: summary?.autoUpdate ?? false, lang: pendingLang })
-    .catch((e) => toastError(`Summary failed: ${e.message || e}`));
+    .catch((e) => toastError(t('rail.summaryFailed', { msg: e.message || e })));
   const updateNow = () => api.post(`/sessions/${sid}/summary/update`)
-    .catch((e) => toastError(`Update failed: ${e.message || e}`));
+    .catch((e) => toastError(t('rail.updateFailed', { msg: e.message || e })));
   const toggleAuto = () => api.patch(`/sessions/${sid}/summary`, { autoUpdate: !summary?.autoUpdate }).catch(() => {});
-  const setLang = (lang) => api.patch(`/sessions/${sid}/summary`, { lang }).catch((e) => toastError(`Update failed: ${e.message || e}`));
+  const setLang = (lang) => api.patch(`/sessions/${sid}/summary`, { lang }).catch((e) => toastError(t('rail.updateFailed', { msg: e.message || e })));
   const turnOff = () => { api.del(`/sessions/${sid}/summary`).catch(() => {}); setOpen(false); };
   const lang = summary?.lang || 'auto';
 
@@ -191,26 +197,26 @@ function SummaryChip({ session }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Status summary"
+        title={t('rail.statusSummary')}
         className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${
           on ? 'border-ink bg-chip text-fg' : 'border-hair bg-white text-[#555]'
         }`}
       >
         {busy ? <span className="host-spinner h-2.5 w-2.5" /> : <Icon icon={faListCheck} />}
-        <span className="hidden font-mono sm:inline">Summary</span>
+        <span className="hidden font-mono sm:inline">{t('rail.summary')}</span>
       </button>
       {open && (
-        <div className="absolute top-[28px] right-0 z-30 w-[340px] max-w-[86vw] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+        <div className="absolute top-[28px] end-0 z-30 w-[340px] max-w-[86vw] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
           <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
-            <span className="font-mono text-[11px] font-bold text-fg">Status summary</span>
-            <span className="ml-auto flex items-center gap-1.5">
+            <span className="font-mono text-[11px] font-bold text-fg">{t('rail.statusSummary')}</span>
+            <span className="ms-auto flex items-center gap-1.5">
               {on && (
-                <button type="button" onClick={updateNow} disabled={busy} title="Update now"
+                <button type="button" onClick={updateNow} disabled={busy} title={t('rail.updateNow')}
                   className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg disabled:opacity-40">
                   <Icon icon={faRotateRight} className={busy ? 'animate-spin' : ''} />
                 </button>
               )}
-              <button type="button" onClick={() => setOpen(false)} title="Close"
+              <button type="button" onClick={() => setOpen(false)} title={t('rail.close')}
                 className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg">
                 <Icon icon={faXmark} />
               </button>
@@ -219,18 +225,18 @@ function SummaryChip({ session }) {
           <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
             {!on ? (
               <div className="text-[12px] text-fgdim">
-                <p className="mb-2.5">A running brief of this session — the task, what's done, the current state, and what to do next. Summarizes the whole conversation, even from mid-session.</p>
+                <p className="mb-2.5">{t('rail.summaryIntro')}</p>
                 <div className="mb-2.5 flex items-center gap-2">
-                  <span>Language</span>
+                  <span>{t('rail.language')}</span>
                   <LangToggle value={pendingLang} onChange={setPendingLang} />
                 </div>
                 <button type="button" onClick={enable}
                   className="cursor-pointer rounded-md border-2 border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] active:translate-x-[1px] active:translate-y-[1px]">
-                  Summarize this conversation
+                  {t('rail.summarizeConversation')}
                 </button>
               </div>
             ) : busy && !summary.text ? (
-              <div className="flex items-center gap-2 text-[12px] text-fgdim"><span className="host-spinner h-3 w-3" /> generating…</div>
+              <div className="flex items-center gap-2 text-[12px] text-fgdim"><span className="host-spinner h-3 w-3" /> {t('rail.generating')}</div>
             ) : (
               <div className="md text-[12.5px]" dir="auto">
                 <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
@@ -241,17 +247,17 @@ function SummaryChip({ session }) {
             <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[10.5px] text-fgdim">
               <label className="flex cursor-pointer items-center gap-1.5">
                 <input type="checkbox" className="accent-brand" checked={!!summary.autoUpdate} onChange={toggleAuto} />
-                Auto-update each turn
+                {t('rail.autoUpdateEachTurn')}
               </label>
               {/* Output language: Auto (follow the conversation) | English */}
-              <span className="ml-auto">
+              <span className="ms-auto">
                 <LangToggle value={lang} onChange={setLang} disabled={busy} />
               </span>
             </div>
           )}
           {on && (
-            <div className="border-t border-hair px-3 py-1.5 text-right">
-              <button type="button" onClick={turnOff} className="cursor-pointer text-[10.5px] text-danger hover:underline">Turn off</button>
+            <div className="border-t border-hair px-3 py-1.5 text-end">
+              <button type="button" onClick={turnOff} className="cursor-pointer text-[10.5px] text-danger hover:underline">{t('rail.turnOff')}</button>
             </div>
           )}
         </div>
@@ -275,7 +281,7 @@ function TerminalHeader({ session }) {
           className="max-w-[160px] text-[10.5px]"
         />
       )}
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ms-auto flex shrink-0 items-center gap-2">
         <AccountChip session={session} />
         <ProcessChip session={session} onClick={() => setProcPanel(true)} />
         <ListenersChipCompact session={session} />
@@ -352,6 +358,7 @@ const fmtClock = (ts) =>
 const LOG_COLOR = { fire: '#7ee787', warn: '#e3b341', error: '#ff7b72', info: '#9aa0a6' };
 
 export function ListenerChips({ session }) {
+  const t = useT();
   const store = useStore();
   const listeners = listenersForSession(store, session.id);
   const [openId, setOpenId] = useState(null);
@@ -367,7 +374,7 @@ export function ListenerChips({ session }) {
   return (
     // Desktop-only: on phones this whole row folds into the header's 👀 chip.
     <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
-      <span className="font-mono text-[10px] tracking-wide text-[#999] uppercase">watching</span>
+      <span className="font-mono text-[10px] tracking-wide text-[#999] uppercase">{t('rail.watching')}</span>
       {listeners.map((l) => {
         const errored = l.status === 'errored';
         return (
@@ -375,7 +382,7 @@ export function ListenerChips({ session }) {
             key={l.id}
             type="button"
             onClick={() => setOpenId(l.id)}
-            title="Open listener details"
+            title={t('rail.openListenerDetails')}
             className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
               errored
                 ? 'border-danger/40 bg-danger/10 text-danger'
@@ -384,12 +391,12 @@ export function ListenerChips({ session }) {
           >
             <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
             <span className="font-medium">{l.label}</span>
-            {l.firedCount > 0 && !errored && <span className="text-[#999]">· fired {l.firedCount}</span>}
+            {l.firedCount > 0 && !errored && <span className="text-[#999]">{t('rail.firedCount', { n: l.firedCount })}</span>}
             <span
               role="button"
               tabIndex={0}
               onClick={(e) => cancel(l.id, e)}
-              title="Cancel listener"
+              title={t('rail.cancelListener')}
               className="ml-0.5 cursor-pointer text-[#bbb] hover:text-danger"
             >
               <Icon icon={faXmark} />
@@ -405,6 +412,7 @@ export function ListenerChips({ session }) {
 }
 
 function ListenersPanel({ session, initialId, onClose }) {
+  const t = useT();
   const store = useStore();
   const list = (store.listeners || []).filter((l) => l.sessionId === session.id);
   const [selId, setSelId] = useState(initialId || list[0]?.id || null);
@@ -463,12 +471,12 @@ function ListenersPanel({ session, initialId, onClose }) {
       >
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none"><Icon icon={faEye} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">Listeners</span>
-          <span className="font-mono text-[10.5px] text-fgdim">{list.length} watching</span>
+          <span className="font-mono text-[13px] font-bold text-fg">{t('rail.listeners')}</span>
+          <span className="font-mono text-[10.5px] text-fgdim">{t('rail.nWatching', { n: list.length })}</span>
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
+            className="ms-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
           >
             <Icon icon={faXmark} />
           </button>
@@ -482,22 +490,22 @@ function ListenersPanel({ session, initialId, onClose }) {
                 key={l.id}
                 type="button"
                 onClick={() => setSelId(l.id)}
-                className={`flex w-full flex-col gap-1 border-b border-hair px-3 py-2.5 text-left ${
+                className={`flex w-full flex-col gap-1 border-b border-hair px-3 py-2.5 text-start ${
                   l.id === sel?.id ? 'bg-chip' : 'hover:bg-panel'
                 }`}
               >
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor(l) }} />
                   <span className="font-mono text-[11px] font-bold text-fg">{l.label}</span>
-                  <span className="ml-auto font-mono text-[9.5px] text-fgdim">{l.status}</span>
+                  <span className="ms-auto font-mono text-[9.5px] text-fgdim">{l.status}</span>
                 </div>
                 <span className="font-mono text-[9.5px] text-fgdim">
-                  {l.type} · {l.firedCount || 0} fired
+                  {l.type} · {t('rail.nFired', { n: l.firedCount || 0 })}
                 </span>
               </button>
             ))}
             {!list.length && (
-              <div className="px-3 py-4 text-center text-[11px] text-fgdim">No listeners.</div>
+              <div className="px-3 py-4 text-center text-[11px] text-fgdim">{t('rail.noListeners')}</div>
             )}
           </div>
 
@@ -514,26 +522,26 @@ function ListenersPanel({ session, initialId, onClose }) {
                       <button
                         type="button"
                         onClick={() => cancel(sel.id)}
-                        className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
                       >
-                        <Icon icon={faStop} className="text-[9px]" /> cancel
+                        <Icon icon={faStop} className="text-[9px]" /> {t('rail.cancelLower')}
                       </button>
                     )}
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-[#9aa0a6]">
-                    <span>fires on: <span className="text-[#cfcfcf]">{(sel.fireOn || []).join(', ') || '—'}</span></span>
-                    <span>every: <span className="text-[#cfcfcf]">{sel.intervalSec}s</span></span>
-                    <span>last poll: <span className="text-[#cfcfcf]">{fmtAgo(detail?.lastPolledAt ?? sel.lastPolledAt)}</span></span>
-                    <span>next poll: <span className="text-[#cfcfcf]">{fmtIn(detail?.nextPollAt ?? sel.nextPollAt)}</span></span>
-                    <span>fired: <span className="text-[#cfcfcf]">{detail?.firedCount ?? sel.firedCount ?? 0}×</span></span>
-                    <span>expires: <span className="text-[#cfcfcf]">{fmtIn(sel.ttlAt)}</span></span>
+                    <span>{t('rail.firesOn')} <span className="text-[#cfcfcf]">{(sel.fireOn || []).join(', ') || '—'}</span></span>
+                    <span>{t('rail.every')} <span className="text-[#cfcfcf]">{sel.intervalSec}s</span></span>
+                    <span>{t('rail.lastPoll')} <span className="text-[#cfcfcf]">{fmtAgo(detail?.lastPolledAt ?? sel.lastPolledAt)}</span></span>
+                    <span>{t('rail.nextPoll')} <span className="text-[#cfcfcf]">{fmtIn(detail?.nextPollAt ?? sel.nextPollAt)}</span></span>
+                    <span>{t('rail.firedLabel')} <span className="text-[#cfcfcf]">{detail?.firedCount ?? sel.firedCount ?? 0}×</span></span>
+                    <span>{t('rail.expires')} <span className="text-[#cfcfcf]">{fmtIn(sel.ttlAt)}</span></span>
                     {(detail?.lastError ?? sel.lastError) && (
-                      <span className="col-span-2 text-danger">last error: {detail?.lastError ?? sel.lastError}</span>
+                      <span className="col-span-2 text-danger">{t('rail.lastError')} {detail?.lastError ?? sel.lastError}</span>
                     )}
                   </div>
                 </div>
                 <div className="border-b border-white/10 px-3.5 py-1.5 font-mono text-[9.5px] tracking-wide text-[#6a6a6a] uppercase">
-                  activity
+                  {t('rail.activity')}
                 </div>
                 <pre
                   ref={logRef}
@@ -541,9 +549,9 @@ function ListenersPanel({ session, initialId, onClose }) {
                   className="thin-scroll min-h-0 flex-1 overflow-auto px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
                 >
                   {detail == null ? (
-                    <span className="text-[#888]">loading…</span>
+                    <span className="text-[#888]">{t('rail.loading')}</span>
                   ) : log.length === 0 ? (
-                    <span className="text-[#888]">No activity yet — waiting for the next poll.</span>
+                    <span className="text-[#888]">{t('rail.noActivityYet')}</span>
                   ) : (
                     log.map((e, i) => (
                       <div key={i}>
@@ -556,7 +564,7 @@ function ListenersPanel({ session, initialId, onClose }) {
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center text-[12px] text-[#888]">
-                No active listeners.
+                {t('rail.noActiveListeners')}
               </div>
             )}
           </div>
@@ -577,6 +585,7 @@ function actionBtnClass(style) {
 }
 
 export function ActionBar({ session }) {
+  const t = useT();
   const action = session.action;
   const [busy, setBusy] = useState(false);
   if (!action || !Array.isArray(action.buttons)) return null;
@@ -597,10 +606,10 @@ export function ActionBar({ session }) {
       <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
         {action.prompt}{' '}
         <span className="font-mono text-[10px] text-[#8a7a2f]">
-          revealed by host.request_action()
+          {t('rail.revealedBy')}
         </span>
       </span>
-      <span className="ml-auto flex shrink-0 items-center gap-2">
+      <span className="ms-auto flex shrink-0 items-center gap-2">
         {action.buttons.map((b, i) => (
           <button
             key={i}
@@ -623,28 +632,29 @@ export function ActionBar({ session }) {
 // so the user can't type into a session that won't respond, with a one-click
 // restore.
 function ArchivedFooter({ session }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const restore = async () => {
     setBusy(true);
     try {
       await api.patch(`/sessions/${session.id}`, { archived: false });
     } catch (e) {
-      toastError(`Couldn't restore: ${e?.message || e}`);
+      toastError(t('rail.couldntRestore', { msg: e?.message || e }));
       setBusy(false);
     }
   };
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-hair bg-panel px-4 py-3">
       <span className="min-w-0 flex-1 basis-52 text-[12px] text-fgdim">
-        This session is archived — read-only. Restore it to send messages.
+        {t('rail.sessionArchivedReadonly')}
       </span>
       <button
         type="button"
         onClick={restore}
         disabled={busy}
-        className="ml-auto cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
+        className="ms-auto cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
       >
-        {busy ? 'Restoring…' : 'Restore session'}
+        {busy ? t('rail.restoring') : t('rail.restoreSession')}
       </button>
     </div>
   );
@@ -653,6 +663,7 @@ function ArchivedFooter({ session }) {
 /* ---------- pending prompts (queued while busy) ---------------------------- */
 
 function PendingPromptsPanel({ session }) {
+  const t = useT();
   const prompts = session.pendingPrompts || [];
   const autoPlay = !!session.promptAutoPlay;
   const [open, setOpen] = useState(false);
@@ -707,16 +718,16 @@ function PendingPromptsPanel({ session }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-bg px-2.5 py-1 text-[11px] text-fg hover:border-ink"
-          title={open ? 'Hide queued prompts' : 'Show queued prompts'}
+          title={open ? t('rail.hideQueuedPrompts') : t('rail.showQueuedPrompts')}
         >
           <span><Icon icon={faHourglassHalf} /></span>
           <span className="font-mono font-bold">{prompts.length}</span>
-          <span className="text-fgdim">queued</span>
+          <span className="text-fgdim">{t('rail.queued')}</span>
           <span className="text-[9px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretUp} /></span>
         </button>
         <label
           className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-fgdim"
-          title="Automatically play the next queued prompt when the current turn finishes (Claude may defer it if the conversation is mid-question)"
+          title={t('rail.autoPlayPromptHint')}
         >
           <span
             onClick={toggleAuto}
@@ -728,14 +739,14 @@ function PendingPromptsPanel({ session }) {
               style={{ left: autoPlay ? 10 : 1, border: `1px solid ${autoPlay ? '#2a2a2a' : '#999'}` }}
             />
           </span>
-          auto-play
+          {t('rail.autoPlay')}
         </label>
       </div>
       {/* floating list */}
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1 w-full max-w-[560px] rounded-[10px] border-[1.5px] border-ink bg-panel p-2 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+        <div className="absolute bottom-full start-0 z-30 mb-1 w-full max-w-[560px] rounded-[10px] border-[1.5px] border-ink bg-panel p-2 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
           <div className="mb-1.5 px-1 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
-            Queued prompts — drag to reorder, ▶ to start now
+            {t('rail.queuedPromptsHint')}
           </div>
           <div className="thin-scroll flex max-h-[38vh] flex-col gap-1 overflow-y-auto">
             {rows.map((p) => (
@@ -750,7 +761,7 @@ function PendingPromptsPanel({ session }) {
                   overId === p.id ? 'border-ink bg-chip/60' : 'border-hair bg-bg'
                 }`}
               >
-                <span className="cursor-grab pt-px text-[11px] text-fgdim select-none" title="Drag to reorder">
+                <span className="cursor-grab pt-px text-[11px] text-fgdim select-none" title={t('rail.dragToReorder')}>
                   <Icon icon={faGripVertical} />
                 </span>
                 <span dir="auto" className="min-w-0 flex-1 text-[11.5px] leading-snug break-words text-fg">
@@ -761,8 +772,8 @@ function PendingPromptsPanel({ session }) {
                   onClick={() => play(p.id)}
                   title={
                     session.claude?.state === 'working'
-                      ? 'Interrupt the current work and send this prompt now'
-                      : 'Send this prompt now'
+                      ? t('rail.interruptSendNow')
+                      : t('rail.sendPromptNow')
                   }
                   className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fg hover:border-ink"
                 >
@@ -771,7 +782,7 @@ function PendingPromptsPanel({ session }) {
                 <button
                   type="button"
                   onClick={() => del(p.id)}
-                  title="Remove from queue"
+                  title={t('rail.removeFromQueue')}
                   className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fgdim hover:border-danger hover:text-danger"
                 >
                   <Icon icon={faXmark} />
@@ -786,6 +797,7 @@ function PendingPromptsPanel({ session }) {
 }
 
 function ChatFooter({ session }) {
+  const t = useT();
   // Draft text/attachments are mirrored into the global store keyed by session
   // id, so they survive switching to another session and back — local state
   // alone doesn't, since ChatFooter unmounts when the active session changes.
@@ -1003,7 +1015,7 @@ function ChatFooter({ session }) {
       )}
       {dragging && (
         <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-[10px] border-2 border-dashed border-ink bg-chip/80 font-mono text-[12px] font-bold text-[#4a3f12]">
-          {dragging === 'session' ? 'Drop to reference that session' : 'Drop files to attach'}
+          {dragging === 'session' ? t('rail.dropReferenceSession') : t('rail.dropFilesToAttach')}
         </div>
       )}
 
@@ -1012,7 +1024,7 @@ function ChatFooter({ session }) {
       {attachments.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {attachments.map((a, i) => (
-            <div key={i} className="flex items-center gap-1.5 rounded-md border border-border bg-bg py-1 pr-1 pl-1.5">
+            <div key={i} className="flex items-center gap-1.5 rounded-md border border-border bg-bg py-1 pe-1 ps-1.5">
               {a.type.startsWith('image/') ? (
                 <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
               ) : (
@@ -1022,7 +1034,7 @@ function ChatFooter({ session }) {
               <button
                 type="button"
                 onClick={() => removeAttachment(i)}
-                title="remove"
+                title={t('rail.remove')}
                 className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[10px] text-fgdim hover:bg-hair hover:text-danger"
               >
                 <Icon icon={faXmark} />
@@ -1042,7 +1054,7 @@ function ChatFooter({ session }) {
         />
         <button
           type="button"
-          title="Attach files"
+          title={t('rail.attachFiles')}
           onClick={() => fileRef.current?.click()}
           className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[14px] text-fgdim hover:border-ink hover:text-fg"
         >
@@ -1052,7 +1064,7 @@ function ChatFooter({ session }) {
             the composer width it costs */}
         <button
           type="button"
-          title="Slash commands & capabilities"
+          title={t('rail.slashCommandsCapabilities')}
           onClick={() => setPanelTab('commands')}
           className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg font-mono text-[13px] text-fgdim hover:border-ink hover:text-fg sm:flex"
         >
@@ -1062,21 +1074,21 @@ function ChatFooter({ session }) {
           <textarea
             ref={taRef}
             rows={1}
-            dir="auto"
+            dir={dirOf(text)}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            placeholder={isDesktop ? 'Reply to Claude Code…  (type / for commands · drop or 📎 to attach)' : 'Reply to Claude Code…'}
+            placeholder={isDesktop ? t('rail.replyPlaceholder') : t('rail.replyPlaceholderShort')}
             className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
             style={{ fieldSizing: 'content' }}
           />
-          <span className="hidden shrink-0 pb-px font-mono text-[10px] text-[#ccc] sm:block" title="Enter sends · Shift+Enter inserts a newline">↵ send · ⇧↵ newline</span>
+          <span className="hidden shrink-0 pb-px font-mono text-[10px] text-[#ccc] sm:block" title={t('rail.enterSendsTitle')}>{t('rail.sendNewline')}</span>
         </div>
         {working && (
           <button
             type="button"
-            title="Interrupt Claude"
+            title={t('rail.interruptClaude')}
             onClick={interrupt}
             className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
           >
@@ -1086,7 +1098,7 @@ function ChatFooter({ session }) {
         {working && (
           <button
             type="button"
-            title="Queue as pending prompt — runs when the current turn is done (or via ▶)"
+            title={t('rail.queuePendingHint')}
             onClick={queue}
             disabled={!text.trim()}
             className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-[13px] text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
@@ -1097,7 +1109,7 @@ function ChatFooter({ session }) {
         <MicButton />
         <button
           type="button"
-          title="Send"
+          title={t('rail.send')}
           onClick={send}
           disabled={!text.trim() && !attachments.length}
           className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-sm text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
@@ -1112,12 +1124,13 @@ function ChatFooter({ session }) {
 // Always-visible voice trigger — voice used to hide inside the rail's profile
 // menu, unreachable on phones where the rail is a closed drawer.
 function MicButton() {
+  const t = useT();
   const { status } = useVoice();
   const rec = status === 'recording';
   return (
     <button
       type="button"
-      title="Voice control (tap to talk, tap again to stop)"
+      title={t('rail.voiceControlHint')}
       onClick={toggleRecording}
       className={`flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] text-[13px] ${
         rec
@@ -1132,12 +1145,14 @@ function MicButton() {
 
 /* ---------- url / content tabs --------------------------------------------- */
 
-function ComparePill({ on, onToggle, label = 'compare to prod' }) {
+function ComparePill({ on, onToggle, label }) {
+  const t = useT();
+  const lbl = label || t('rail.compareToProd');
   return (
     <button
       type="button"
       onClick={onToggle}
-      className={`ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-ink py-0.5 pr-2.5 pl-1.5 ${
+      className={`ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-ink py-0.5 pe-2.5 ps-1.5 ${
         on ? 'bg-chip' : 'bg-panel'
       }`}
     >
@@ -1154,13 +1169,14 @@ function ComparePill({ on, onToggle, label = 'compare to prod' }) {
         />
       </span>
       <span className={`text-[10.5px] ${on ? 'text-[#4a3f12]' : 'text-fgdim'}`}>
-        {label}
+        {lbl}
       </span>
     </button>
   );
 }
 
 function UrlTab({ tab, active }) {
+  const t = useT();
   // A session can open a tab already split in comparison mode (compare.open via
   // the open_tab MCP tool); otherwise it starts on the live view with the toggle.
   const compareProxied = !!tab.url && !tab.url.startsWith('/') && !tab.url.startsWith(HOST_ORIGIN);
@@ -1203,8 +1219,8 @@ function UrlTab({ tab, active }) {
   if (!tab.url) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 bg-bg text-center">
-        <div className="text-[13px] font-bold text-fg">No URL for this tab</div>
-        <div className="text-[11.5px] text-fgdim">This tab has no address to load.</div>
+        <div className="text-[13px] font-bold text-fg">{t('rail.noUrlForTab')}</div>
+        <div className="text-[11.5px] text-fgdim">{t('rail.noAddressToLoad')}</div>
       </div>
     );
   }
@@ -1219,8 +1235,8 @@ function UrlTab({ tab, active }) {
         <button
           type="button"
           onClick={() => { setLoading(true); setReloadKey((k) => k + 1); }}
-          title="Reload this preview"
-          aria-label="Reload preview"
+          title={t('rail.reloadPreview')}
+          aria-label={t('rail.reloadPreviewAria')}
           className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
         >
           <Icon icon={faRotateRight} />
@@ -1232,8 +1248,8 @@ function UrlTab({ tab, active }) {
           href={tabSrc(tab.url)}
           target="_blank"
           rel="noreferrer"
-          title="Open in a new browser tab"
-          aria-label="Open in a new browser tab"
+          title={t('rail.openInNewTab')}
+          aria-label={t('rail.openInNewTab')}
           className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
         >
           ↗
@@ -1242,19 +1258,19 @@ function UrlTab({ tab, active }) {
           <ComparePill
             on={compareOn}
             onToggle={() => { setLoading(true); setCompareOn((v) => !v); }}
-            label={tab.compare?.url ? 'compare' : isStorybook && compareTo ? 'vs main build' : 'compare to prod'}
+            label={tab.compare?.url ? t('rail.compare') : isStorybook && compareTo ? t('rail.vsMainBuild') : t('rail.compareToProd')}
           />
         )}
       </div>
       <div className="relative min-h-0 flex-1">
         {loading && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 bg-white/80 text-[11px] text-fgdim">
-            <span className="host-spinner h-3.5 w-3.5" /> loading preview…
+            <span className="host-spinner h-3.5 w-3.5" /> {t('rail.loadingPreview')}
           </div>
         )}
         <iframe
           key={reloadKey}
-          title={tab.title || 'tab'}
+          title={tab.title || t('rail.tabFallback')}
           src={src}
           onLoad={() => setLoading(false)}
           className="absolute inset-0 h-full w-full border-0 bg-white"
@@ -1265,10 +1281,11 @@ function UrlTab({ tab, active }) {
 }
 
 function ContentTab({ tab }) {
+  const t = useT();
   if (tab.format === 'html') {
     return (
       <iframe
-        title={tab.title || 'content'}
+        title={tab.title || t('rail.contentFallback')}
         sandbox="allow-scripts"
         srcDoc={tab.body || ''}
         className="min-h-0 w-full flex-1 border-0 bg-white"

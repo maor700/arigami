@@ -15,6 +15,7 @@ import {
 import { Truncate } from './Truncate.jsx';
 import { UsageMini } from './Usage.jsx';
 import { startRecording } from '../lib/voice.js';
+import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import {
   faBars,
@@ -70,6 +71,7 @@ function matches(s, q) {
 }
 
 function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, onClose }) {
+  const t = useT();
   const ref = useRef(null);
   useEffect(() => {
     const onDown = (e) => {
@@ -100,7 +102,7 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
         onClick={onEdit}
         className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
       >
-        <span className="text-[11px] text-fgdim"><Icon icon={faPen} /></span> Edit details
+        <span className="text-[11px] text-fgdim"><Icon icon={faPen} /></span> {t('rail.editDetails')}
       </button>
       {onRemoveFromFolder && (
         <button
@@ -108,7 +110,7 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
           onClick={onRemoveFromFolder}
           className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
         >
-          <span className="text-[11px] text-fgdim"><Icon icon={faFolder} /></span> Remove from folder
+          <span className="text-[11px] text-fgdim"><Icon icon={faFolder} /></span> {t('rail.removeFromFolder')}
         </button>
       )}
       {session.archived ? (
@@ -117,7 +119,7 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
           onClick={onRestore}
           className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
         >
-          <span className="text-[11px] text-fgdim"><Icon icon={faRotateLeft} /></span> Restore session
+          <span className="text-[11px] text-fgdim"><Icon icon={faRotateLeft} /></span> {t('rail.restoreSession')}
         </button>
       ) : (
         <>
@@ -126,14 +128,14 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
             onClick={onRestart}
             className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
           >
-            <span className="text-[11px] text-fgdim"><Icon icon={faRotateRight} /></span> Restart session
+            <span className="text-[11px] text-fgdim"><Icon icon={faRotateRight} /></span> {t('rail.restartSession')}
           </button>
           <button
             type="button"
             onClick={onArchive}
             className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
           >
-            <span className="text-[11px] text-fgdim"><Icon icon={faBoxArchive} /></span> Archive session
+            <span className="text-[11px] text-fgdim"><Icon icon={faBoxArchive} /></span> {t('rail.archiveSession')}
           </button>
         </>
       )}
@@ -142,7 +144,7 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
         onClick={onDelete}
         className="flex w-full cursor-pointer items-center gap-2 bg-panel px-3 py-2 text-left text-xs text-danger hover:bg-danger/10"
       >
-        <span className="text-[11px]"><Icon icon={faXmark} /></span> Delete permanently
+        <span className="text-[11px]"><Icon icon={faXmark} /></span> {t('rail.deletePermanently')}
       </button>
     </div>
   );
@@ -179,6 +181,7 @@ function useHoverTip(text) {
 }
 
 function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch }) {
+  const t = useT();
   const color = session.color || '#c4c4c4';
   const label = session.metadata?.ticket || session.title || session.id;
   const showTitle = session.title && session.title !== label;
@@ -213,10 +216,11 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               <span
                 title={
                   watch.errored
-                    ? 'A listener errored — open the session'
-                    : `Watching ${watch.count} source${watch.count > 1 ? 's' : ''}${
-                        watch.fired ? ` · fired ${watch.fired}×` : ''
-                      }`
+                    ? t('rail.listenerErrored')
+                    : (watch.count > 1
+                        ? t('rail.watchingSources', { n: watch.count })
+                        : t('rail.watchingSource', { n: watch.count })) +
+                      (watch.fired ? t('rail.firedSuffix', { n: watch.fired }) : '')
                 }
                 className={`flex items-center gap-0.5 font-mono text-[9px] leading-none ${
                   watch.errored ? 'pulse-yellow text-danger' : 'text-fgdim'
@@ -228,17 +232,17 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
             )}
             {attention ? (
               <span
-                title="Needs your input"
+                title={t('rail.needsYourInput')}
                 className="pulse-yellow flex h-[15px] w-[15px] items-center justify-center rounded-full border border-ink bg-brand font-mono text-[10px] font-bold text-[#1a1a1a]"
               >
                 ?
               </span>
             ) : working || restarting ? (
               <span
-                title={restarting ? 'Restarting…' : 'Working…'}
+                title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')}
                 className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]"
               >
-                <span className="host-spinner h-[11px] w-[11px]" /> {restarting ? 'restarting' : 'working'}
+                <span className="host-spinner h-[11px] w-[11px]" /> {restarting ? t('rail.restarting') : t('rail.working')}
               </span>
             ) : null}
           </span>
@@ -268,7 +272,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
       </span>
       <button
         type="button"
-        title="Session actions"
+        title={t('rail.sessionActions')}
         onClick={(e) => {
           e.stopPropagation();
           setMenuFor(menuOpen ? null : session.id);
@@ -376,6 +380,7 @@ function GroupHeader({ label, count }) {
 }
 
 function FolderMenu({ onRename, onMakeProject, onDelete, onClose }) {
+  const t = useT();
   const ref = useRef(null);
   useEffect(() => {
     const onDown = (e) => {
@@ -406,7 +411,7 @@ function FolderMenu({ onRename, onMakeProject, onDelete, onClose }) {
         onClick={onRename}
         className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
       >
-        <span className="text-[11px] text-fgdim"><Icon icon={faPen} /></span> Rename folder
+        <span className="text-[11px] text-fgdim"><Icon icon={faPen} /></span> {t('rail.renameFolder')}
       </button>
       {onMakeProject && (
         <button
@@ -414,7 +419,7 @@ function FolderMenu({ onRename, onMakeProject, onDelete, onClose }) {
           onClick={onMakeProject}
           className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
         >
-          <span className="text-[11px] text-fgdim"><Icon icon={faFolderTree} /></span> Make project folder
+          <span className="text-[11px] text-fgdim"><Icon icon={faFolderTree} /></span> {t('rail.makeProjectFolder')}
         </button>
       )}
       <button
@@ -422,7 +427,7 @@ function FolderMenu({ onRename, onMakeProject, onDelete, onClose }) {
         onClick={onDelete}
         className="flex w-full cursor-pointer items-center gap-2 bg-panel px-3 py-2 text-left text-xs text-danger hover:bg-danger/10"
       >
-        <span className="text-[11px]"><Icon icon={faXmark} /></span> Delete folder
+        <span className="text-[11px]"><Icon icon={faXmark} /></span> {t('rail.deleteFolder')}
       </button>
     </div>
   );
@@ -449,6 +454,7 @@ function FolderRow({
   onMakeProject,
   onDelete,
 }) {
+  const t = useT();
   const collapsed = !!folder.collapsed;
   const isProject = !!controller;
   const ctlSelected = isProject && controller.id === selectedId;
@@ -479,16 +485,16 @@ function FolderRow({
         .filter(Boolean)
         .join(' · ')
     : count
-      ? `${count} session${count === 1 ? '' : 's'}${
+      ? `${count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })}${
           newest ? ` · ${relTime(new Date(newest).toISOString())}` : ''
         }`
-      : 'Empty folder';
+      : t('rail.emptyFolder');
   const descLine = isProject
     ? controller.metadata?.description ||
-      `Project · manages ${count} session${count === 1 ? '' : 's'}`
+      (count === 1 ? t('rail.projectManagesOne', { n: count }) : t('rail.projectManagesN', { n: count }))
     : count
       ? kids.map(label).join(', ')
-      : 'Drop sessions here to group them';
+      : t('rail.dropToGroup');
 
   // A project folder's header IS the controller session — surface its tldr as
   // the same hover tip a normal session row gets.
@@ -516,7 +522,7 @@ function FolderRow({
       {tip.tip}
       <button
         type="button"
-        title={collapsed ? 'Expand folder' : 'Collapse folder'}
+        title={collapsed ? t('rail.expandFolder') : t('rail.collapseFolder')}
         onClick={(e) => {
           e.stopPropagation();
           onToggle();
@@ -527,7 +533,7 @@ function FolderRow({
       </button>
       <span
         className="mt-[2px] shrink-0 text-[12px] text-fgdim"
-        title={isProject ? 'Project folder — click the name to open its controller' : undefined}
+        title={isProject ? t('rail.projectFolderHint') : undefined}
       >
         <Icon icon={isProject ? faFolderTree : faFolder} />
       </span>
@@ -537,27 +543,27 @@ function FolderRow({
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {ctlAttention ? (
               <span
-                title="The project controller needs your input"
+                title={t('rail.controllerNeedsInput')}
                 className="pulse-yellow flex h-[15px] w-[15px] items-center justify-center rounded-full border border-ink bg-brand font-mono text-[10px] font-bold text-[#1a1a1a]"
               >
                 ?
               </span>
             ) : ctlWorking || ctlRestarting ? (
               <span
-                title={ctlRestarting ? 'Controller restarting…' : 'Controller working…'}
+                title={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}
                 className="host-spinner h-[11px] w-[11px]"
               />
             ) : null}
             {errored && (
               <span
-                title="A listener inside this folder errored"
+                title={t('rail.folderListenerErrored')}
                 className="text-[11px] text-danger opacity-80"
               >
                 <Icon icon={faTriangleExclamation} />
               </span>
             )}
             {!attention && working && (
-              <span title="A session inside is working" className="host-spinner h-[11px] w-[11px]" />
+              <span title={t('rail.folderSessionWorking')} className="host-spinner h-[11px] w-[11px]" />
             )}
             <button
               type="button"
@@ -567,8 +573,8 @@ function FolderRow({
               }}
               title={
                 attention
-                  ? `${count} session${count === 1 ? '' : 's'} · ${attention} need${attention === 1 ? 's' : ''} your input — click to open`
-                  : `${count} session${count === 1 ? '' : 's'}`
+                  ? `${count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })} · ${t('rail.needsInputClick', { n: attention })}`
+                  : count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })
               }
               className={`shrink-0 cursor-pointer rounded-full px-1.5 py-px font-mono text-[9px] leading-[14px] ${
                 attention
@@ -590,7 +596,7 @@ function FolderRow({
       </span>
       <button
         type="button"
-        title="Folder actions"
+        title={t('rail.folderActions')}
         onClick={(e) => {
           e.stopPropagation();
           setMenuFor(menuOpen ? null : folder.id);
@@ -630,6 +636,7 @@ function FolderRow({
 // ▶ starts it (create-from-ticket); ✕ dismisses (kept in the trigger's seen set).
 // Draggable — the queue order IS the autoplay execution order.
 function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDrop, over }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const start = async (e) => {
     e.stopPropagation();
@@ -646,19 +653,19 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       await api.del(`/pending/${item.id}`);
       // Dismiss is destructive (the ticket is also marked 'seen' so it won't
       // reappear) and the ✕ sits right beside ▶ — offer a one-click undo.
-      toast(`Dismissed ${item.ticket || 'empty session'}`, {
+      toast(t('rail.dismissedX', { x: item.ticket || t('rail.emptySessionName') }), {
         action: {
-          label: 'Undo',
+          label: t('rail.undo'),
           onClick: () => {
             const body = isEmpty
               ? { kind: 'empty', title: item.title, prompt: item.prompt, cwd: item.cwd, permissionMode: item.permissionMode }
               : { ticket: item.ticket, title: item.title, prompt: item.prompt };
-            api.post('/pending', body).catch((err) => toastError(`Couldn't restore: ${err?.message || err}`));
+            api.post('/pending', body).catch((err) => toastError(t('rail.couldntRestore', { msg: err?.message || err })));
           },
         },
       });
     } catch (err) {
-      toastError(`Couldn't dismiss: ${err?.message || err}`);
+      toastError(t('rail.couldntDismiss', { msg: err?.message || err }));
     }
   };
   const isEmpty = item.kind === 'empty';
@@ -670,13 +677,13 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       onDragOver={(e) => onDragOver(e, item.id)}
       onDrop={(e) => onDrop(e, item.id)}
       onClick={() => !isEmpty && onPreview(item.ticket)}
-      title={isEmpty ? 'Empty session — Play to start' : 'Click to preview the ticket'}
+      title={isEmpty ? t('rail.emptySessionPlay') : t('rail.clickPreviewTicket')}
       className={`group relative mb-0.5 flex items-center gap-1.5 rounded-[7px] border border-dashed border-border px-2 py-1.5 ${
         isEmpty ? '' : 'cursor-pointer hover:bg-chip'
       }`}
     >
       {over && <DropLine pos={over} />}
-      <span className="shrink-0 cursor-grab text-[10px] leading-none text-fgdim" title="Drag to reorder">
+      <span className="shrink-0 cursor-grab text-[10px] leading-none text-fgdim" title={t('rail.dragToReorder')}>
         <Icon icon={faGripVertical} />
       </span>
       <span className="shrink-0 font-mono text-[11px] font-bold text-fgdim">
@@ -684,7 +691,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       </span>
       <Truncate text={item.title} className="min-w-0 flex-1 text-[11.5px] text-fgdim" />
       <span
-        title={`From: ${item.triggerName}`}
+        title={t('rail.fromX', { x: item.triggerName })}
         className="max-w-[68px] shrink-0 truncate rounded-[4px] bg-chip px-1.5 py-px text-[9px] text-fgdim"
       >
         {item.triggerName}
@@ -693,7 +700,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
         type="button"
         onClick={start}
         disabled={busy}
-        title="Start now"
+        title={t('rail.startNow')}
         className="shrink-0 cursor-pointer rounded px-1 text-[12px] leading-none text-[#3C9A4E] hover:bg-chip disabled:opacity-40"
       >
         <Icon icon={faPlay} />
@@ -701,7 +708,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       <button
         type="button"
         onClick={dismiss}
-        title="Dismiss"
+        title={t('rail.dismiss')}
         className="shrink-0 cursor-pointer rounded px-1 text-[12px] leading-none text-fgdim hover:text-danger"
       >
         <Icon icon={faXmark} />
@@ -714,6 +721,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
 // autoplay control is always reachable. Collapsible; header carries the triggers
 // shortcut + autoplay ▶/⏸ + concurrency cap.
 function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
+  const t = useT();
   const [open, setOpen] = useState(true);
   const [order, setOrder] = useState(pending);
   const dragId = useRef(null);
@@ -761,7 +769,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
     const n = Math.min(10, Math.max(1, Number(maxDraft) || 1));
     setMaxDraft(String(n));
     if (n !== queue.maxConcurrent)
-      api.patch('/queue', { maxConcurrent: n }).catch((e) => toastError(`Couldn't set concurrency: ${e?.message || e}`));
+      api.patch('/queue', { maxConcurrent: n }).catch((e) => toastError(t('rail.couldntSetConcurrency', { msg: e?.message || e })));
   };
 
   return (
@@ -771,33 +779,33 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]"
-          title={open ? 'Collapse' : 'Expand'}
+          title={open ? t('rail.collapse') : t('rail.expand')}
         >
           <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-            Pending tasks
+            {t('rail.pendingTasks')}
           </span>
           <span className="font-mono text-[9.5px] text-fgdim">{pending.length}</span>
         </button>
         <button
           type="button"
           onClick={onOpenTriggers}
-          title="Manage triggers (open the From-trigger tab)"
+          title={t('rail.manageTriggers')}
           className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 py-[2px] text-[9.5px] text-fgdim hover:border-ink"
         >
-          <Icon icon={faBolt} /> triggers
+          <Icon icon={faBolt} /> {t('rail.triggers')}
         </button>
         <button
           type="button"
           onClick={toggleAutoplay}
-          title={queue.autoplay ? 'Autoplay on — pause draining' : 'Autoplay off — start draining'}
+          title={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}
           className={`flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[5px] border text-[10px] leading-none ${
             queue.autoplay ? 'border-ink bg-brand text-fg' : 'border-border bg-panel text-fgdim hover:border-ink'
           }`}
         >
           <Icon icon={queue.autoplay ? faPause : faPlay} />
         </button>
-        <span title="Max concurrent autoplay sessions" className="flex shrink-0 items-center gap-0.5 text-[9.5px] text-fgdim">
+        <span title={t('rail.maxConcurrent')} className="flex shrink-0 items-center gap-0.5 text-[9.5px] text-fgdim">
           <span>×</span>
           <input
             type="number"
@@ -817,8 +825,8 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
         <div className="thin-scroll max-h-[38vh] overflow-y-auto px-[7px] pb-2">
           {pending.length === 0 ? (
             <div className="px-2 py-2.5 text-center text-[11px] text-fgdim">
-              No pending tasks.{' '}
-              {queue.autoplay ? 'Autoplay is on.' : 'Autoplay is off.'}
+              {t('rail.noPendingTasks')}{' '}
+              {queue.autoplay ? t('rail.autoplayIsOn') : t('rail.autoplayIsOff')}
             </div>
           ) : (
             order.map((item) => (
@@ -844,18 +852,32 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
 // (voice / setup / skills / settings) plus the new Accounts entry behind one
 // menu, fronted by the account the host is currently running as.
 function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpenSettings }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [rect, setRect] = useState(null);
+  const ref = useRef(null); // trigger wrapper
+  const btnRef = useRef(null); // trigger button
+  const menuRef = useRef(null); // portaled menu
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    // The menu is portaled to <body>, so outside-click must accept clicks in
+    // either the trigger or the menu itself.
+    const onDoc = (e) => {
+      if (ref.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const label = active?.label || 'No account';
+  const toggle = () => {
+    if (!open && btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen((v) => !v);
+  };
+
+  const label = active?.label || t('rail.noAccount');
   const initial = (label.trim()[0] || '?').toUpperCase();
   const act = (fn) => () => { setOpen(false); fn?.(); };
 
@@ -870,34 +892,49 @@ function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpen
     </button>
   );
 
+  const MENU_W = 208; // w-52
+  const menu = open && rect
+    ? createPortal(
+        <div
+          ref={menuRef}
+          dir="auto"
+          className="fixed z-[70] w-52 overflow-hidden rounded-[8px] border border-border bg-panel py-1 text-fg shadow-lg"
+          style={{
+            bottom: Math.round(window.innerHeight - rect.top + 6),
+            left: Math.round(Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8))),
+          }}
+        >
+          <div className="border-b border-hair px-2.5 pb-1 pt-1 text-[9px] tracking-[0.08em] text-fgdim uppercase">
+            {t('rail.runningAs')}
+          </div>
+          <div className="flex items-center gap-2 border-b border-hair px-2.5 py-1.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-chip text-[11px] font-bold text-fg">{initial}</span>
+            <span className="min-w-0 truncate text-[12px] font-bold text-fg">{label}</span>
+          </div>
+          <Item icon={faUser} onClick={act(onOpenAccounts)}>{t('rail.accounts')}</Item>
+          <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
+          <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
+          <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
+          <Item icon={faMicrophone} onClick={act(() => startRecording())}>{t('rail.voiceControl')}</Item>
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
     <div ref={ref} className="relative ml-auto">
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        title="Profile & settings"
+        onClick={toggle}
+        title={t('rail.profileSettings')}
         className="flex items-center gap-1.5 rounded-[6px] border border-border px-1.5 py-1 text-fgdim hover:border-ink hover:text-fg"
       >
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-chip text-[10px] font-bold text-fg">{initial}</span>
         <span className="max-w-[84px] truncate text-[10.5px]">{label}</span>
         <span className="text-[9px]"><Icon icon={faCaretDown} /></span>
       </button>
-      {open && (
-        <div className="absolute right-0 bottom-full mb-1.5 w-52 overflow-hidden rounded-[8px] border border-border bg-panel py-1 text-fg shadow-lg">
-          <div className="border-b border-hair px-2.5 pb-1 pt-1 text-[9px] tracking-[0.08em] text-fgdim uppercase">
-            Running as
-          </div>
-          <div className="flex items-center gap-2 border-b border-hair px-2.5 py-1.5">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-chip text-[11px] font-bold text-fg">{initial}</span>
-            <span className="min-w-0 truncate text-[12px] font-bold text-fg">{label}</span>
-          </div>
-          <Item icon={faUser} onClick={act(onOpenAccounts)}>Accounts</Item>
-          <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>Skills</Item>
-          <Item icon={faToolbox} onClick={act(onOpenSetup)}>Setup</Item>
-          <Item icon={faGear} onClick={act(onOpenSettings)}>Settings</Item>
-          <Item icon={faMicrophone} onClick={act(() => startRecording())}>Voice control</Item>
-        </div>
-      )}
+      {menu}
     </div>
   );
 }
@@ -926,6 +963,7 @@ export default function Rail({
   onOpenTriggers,
   onOpenShortcuts,
 }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const [mode, setMode] = useState('flat'); // 'flat' | 'grouped'
   const [menuFor, setMenuFor] = useState(null);
@@ -953,13 +991,17 @@ export default function Rail({
     };
   };
 
-  // Drag the right edge to resize; clamp + persist to prefs.
+  // Drag the inner edge to resize; clamp + persist to prefs.
   const startDrag = useCallback((e) => {
     e.preventDefault();
     setDragging(true);
     const [lo, hi] = PREF_LIMITS.rail;
     const onMove = (ev) => {
-      const w = Math.min(hi, Math.max(lo, ev.clientX));
+      // RTL puts the rail on the right, so its width grows as the cursor moves
+      // left — measure from the correct edge based on the live document dir.
+      const rtl = document.documentElement.dir === 'rtl';
+      const x = rtl ? window.innerWidth - ev.clientX : ev.clientX;
+      const w = Math.min(hi, Math.max(lo, x));
       setPrefs({ railWidth: w });
     };
     const onUp = () => {
@@ -982,7 +1024,7 @@ export default function Rail({
   if (mode === 'grouped') {
     const byStatus = new Map();
     for (const s of active) {
-      const key = s.status || 'No status';
+      const key = s.status || t('rail.noStatus');
       if (!byStatus.has(key)) byStatus.set(key, []);
       byStatus.get(key).push(s);
     }
@@ -1293,25 +1335,26 @@ export default function Rail({
 
   const proxyUp = !!config;
   const serverCount = sessions.filter((s) => !s.archived).length;
+  const rtl = document.documentElement.dir === 'rtl';
 
   return (
     <div
-      className={`flex shrink-0 flex-col border-r border-border bg-rail transition-transform md:relative md:z-auto md:translate-x-0 ${
+      className={`flex shrink-0 flex-col border-e border-border bg-rail transition-transform md:relative md:z-auto md:translate-x-0 ${
         isDesktop
           ? 'relative'
           : `fixed inset-y-0 left-0 z-50 w-[82%] max-w-[320px] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
       }`}
       style={isDesktop ? { width: railWidth } : undefined}
     >
-      {/* drag handle on the right edge (desktop only) */}
+      {/* drag handle on the rail's inner edge (desktop only) */}
       {isDesktop && (
         <div
           onMouseDown={startDrag}
-          title="Drag to resize"
-          className={`absolute top-0 right-0 z-30 h-full w-1 cursor-col-resize ${
-            dragging ? 'bg-brand' : 'hover:bg-brand/60'
-          }`}
-          style={{ transform: 'translateX(2px)' }}
+          title={t('rail.dragToResize')}
+          className={`absolute top-0 z-30 h-full w-1 cursor-col-resize ${
+            rtl ? 'left-0' : 'right-0'
+          } ${dragging ? 'bg-brand' : 'hover:bg-brand/60'}`}
+          style={{ transform: rtl ? 'translateX(-2px)' : 'translateX(2px)' }}
         />
       )}
       {/* new session (+ mobile drawer close) + search */}
@@ -1320,15 +1363,15 @@ export default function Rail({
           <button
             type="button"
             onClick={onNew}
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg border-2 border-ink bg-brand px-2.5 py-2 text-[13px] font-bold shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a]"
+            className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-ink bg-brand px-2.5 py-2 text-[13px] font-bold shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a]"
           >
-            <span className="text-base leading-none">+</span> New session
+            <span className="text-base leading-none">+</span> {t('rail.newSession')}
           </button>
           {!isDesktop && (
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close sessions"
+              aria-label={t('rail.closeSessions')}
               className="flex w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border-[1.5px] border-border bg-panel text-[13px] text-fgdim"
             >
               <Icon icon={faXmark} />
@@ -1347,7 +1390,7 @@ export default function Rail({
                 e.currentTarget.blur();
               }
             }}
-            placeholder="Search sessions…"
+            placeholder={t('rail.searchSessions')}
             className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-fgdim"
           />
           <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[10px] text-fgdim">
@@ -1359,12 +1402,12 @@ export default function Rail({
       {/* header row + flat/grouped toggle */}
       <div className="flex items-center gap-2 px-[13px] pt-[9px] pb-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase">
-          {mode === 'grouped' ? 'Grouped by status' : `Active · ${active.length}`}
+          {mode === 'grouped' ? t('rail.groupedByStatus') : t('rail.activeCount', { n: active.length })}
         </span>
         {mode === 'flat' && (
           <button
             type="button"
-            title="New folder"
+            title={t('rail.newFolder')}
             onClick={() => setFolderDialog({ type: 'new' })}
             className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[7px] py-[3px] text-[11px] leading-none text-fgdim hover:border-ink hover:text-fg"
           >
@@ -1373,8 +1416,8 @@ export default function Rail({
         )}
         <span className="flex shrink-0 overflow-hidden rounded-md border border-border">
           {[
-            ['flat', faBars, 'Flat list'],
-            ['grouped', faTableCells, 'Group by status'],
+            ['flat', faBars, t('rail.flatList')],
+            ['grouped', faTableCells, t('rail.groupByStatus')],
           ].map(([key, glyph, title], i) => (
             <button
               key={key}
@@ -1505,7 +1548,7 @@ export default function Rail({
                       {kids.map((s) => sessionRowEl(s))}
                       {kids.length === 0 && (
                         <div className="px-2 py-1.5 text-[10px] text-fgdim italic">
-                          Empty folder — drop sessions here
+                          {t('rail.emptyFolderDrop')}
                         </div>
                       )}
                     </div>
@@ -1530,7 +1573,7 @@ export default function Rail({
         )}
         {active.length === 0 && (
           <div className="px-2 py-4 text-center text-[11px] text-fgdim">
-            {q ? 'No sessions match.' : 'No active sessions.'}
+            {q ? t('rail.noSessionsMatch') : t('rail.noActiveSessions')}
           </div>
         )}
 
@@ -1544,7 +1587,7 @@ export default function Rail({
             >
               <span className="text-[8px] text-fgdim"><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
               <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-                Archived
+                {t('rail.archived')}
               </span>
               <span className="font-mono text-[9.5px] text-fgdim">{archived.length}</span>
               <span className="h-px flex-1 bg-hair" />
@@ -1578,14 +1621,14 @@ export default function Rail({
           style={{ background: proxyUp ? '#3C9A4E' : conn === 'open' ? '#CE8324' : '#d2d2d2' }}
         />
         <span className="min-w-0 flex-1 truncate">
-          {proxyUp ? `proxy up · ${serverCount} servers` : 'proxy unreachable'}
+          {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
         </span>
         {onOpenShortcuts && (
           <button
             type="button"
             onClick={onOpenShortcuts}
-            title="Keyboard shortcuts (?)"
-            aria-label="Keyboard shortcuts"
+            title={t('rail.keyboardShortcutsTitle')}
+            aria-label={t('rail.keyboardShortcuts')}
             className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
           >
             ?

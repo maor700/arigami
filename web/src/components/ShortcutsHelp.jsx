@@ -1,39 +1,40 @@
 import { useEffect } from 'react';
+import { useT } from '../lib/i18n.js';
 
 // macOS uses ⌘; everything else shows Ctrl.
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
 const MOD = isMac ? '⌘' : 'Ctrl';
 
-const GROUPS = [
+const buildGroups = (t) => [
   {
-    title: 'Navigate',
+    title: t('dialogs.scNavigate'),
     rows: [
-      [[`${MOD}`, '1–9'], 'Jump to session 1–9'],
-      [[`${MOD}`, '⇧', '↑'], 'Previous session'],
-      [[`${MOD}`, '⇧', '↓'], 'Next session'],
-      [[`${MOD}`, 'K'], 'Command palette (search sessions + commands)'],
-      [['/'], 'Focus search'],
+      [[`${MOD}`, '1–9'], t('dialogs.scJumpToSession')],
+      [[`${MOD}`, '⇧', '↑'], t('dialogs.scPrevSession')],
+      [[`${MOD}`, '⇧', '↓'], t('dialogs.scNextSession')],
+      [[`${MOD}`, 'K'], t('dialogs.scCommandPalette')],
+      [['/'], t('dialogs.scFocusSearch')],
     ],
   },
   {
-    title: 'Act',
+    title: t('dialogs.scAct'),
     rows: [
-      [[`${MOD}`, '⇧', 'N'], 'New empty session (default settings)'],
-      [[`${MOD}`, '⇧', '↵'], 'Focus the message composer'],
-      [[`${MOD}`, 'T'], 'Add a tab to the session'],
-      [[`${MOD}`, '⇧', 'V'], 'Voice control (push-to-talk)'],
-      [['Esc'], 'Close overlay · else interrupt Claude'],
-      [['?'], 'Toggle this cheat-sheet'],
+      [[`${MOD}`, '⇧', 'N'], t('dialogs.scNewEmptySession')],
+      [[`${MOD}`, '⇧', '↵'], t('dialogs.scFocusComposer')],
+      [[`${MOD}`, 'T'], t('dialogs.scAddTab')],
+      [[`${MOD}`, '⇧', 'V'], t('dialogs.scVoiceControl')],
+      [['Esc'], t('dialogs.scCloseOverlay')],
+      [['?'], t('dialogs.scToggleCheatSheet')],
     ],
   },
   {
-    title: 'When Claude asks',
+    title: t('dialogs.scWhenClaudeAsks'),
     rows: [
-      [['↵', 'or', 'y'], 'Allow a permission request'],
-      [['Esc', 'or', 'n'], 'Deny a permission request'],
-      [['↑', '↓'], 'Move between question options'],
-      [['↵', 'or', '1–9'], 'Pick a question option'],
-      [['Esc', 'or', 's'], 'Skip a question'],
+      [['↵', 'or', 'y'], t('dialogs.scAllowPermission')],
+      [['Esc', 'or', 'n'], t('dialogs.scDenyPermission')],
+      [['↑', '↓'], t('dialogs.scMoveOptions')],
+      [['↵', 'or', '1–9'], t('dialogs.scPickOption')],
+      [['Esc', 'or', 's'], t('dialogs.scSkipQuestion')],
     ],
   },
 ];
@@ -54,6 +55,8 @@ function Keys({ keys }) {
 }
 
 export default function ShortcutsHelp({ onClose }) {
+  const t = useT();
+  const GROUPS = buildGroups(t);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); e.stopPropagation(); onClose(); }
@@ -72,7 +75,7 @@ export default function ShortcutsHelp({ onClose }) {
         className="w-[460px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
       >
         <div className="flex items-center justify-between border-b border-hair px-[18px] py-3">
-          <div className="text-[15px] font-bold">Keyboard shortcuts</div>
+          <div className="text-[15px] font-bold">{t('dialogs.keyboardShortcuts')}</div>
           <kbd className="font-mono text-[11px] text-fgdim">?</kbd>
         </div>
         <div className="grid grid-cols-1 gap-x-6 gap-y-4 px-[18px] py-4 sm:grid-cols-2">

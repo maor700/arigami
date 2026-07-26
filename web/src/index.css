@@ -42,9 +42,12 @@
   --color-fg: var(--hb-fg);
   --color-fgdim: var(--hb-fgdim);
   --color-border: var(--hb-border);
-  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Latin renders in Inter (first with Latin glyphs); Hebrew has no Inter
+     coverage so it falls through to Rubik Variable (Latin + Hebrew). Same idea
+     for mono: the monospace faces lack Hebrew, so Hebrew picks up Rubik. */
+  --font-sans: Inter, "Rubik Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
-    monospace;
+    "Rubik Variable", monospace;
 }
 
 html,

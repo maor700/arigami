@@ -1,0 +1,88 @@
+export const strings = {
+  // App — connection status
+  'chrome.conn.connecting': 'מתחבר למארח…',
+  'chrome.conn.offline': 'המארח לא זמין — מנסה שוב',
+
+  // App — top bar
+  'chrome.topbar.skills': 'Skills',
+  'chrome.topbar.setup': 'הגדרה',
+  'chrome.topbar.accounts': 'חשבונות',
+  'chrome.topbar.newSession': 'סשן חדש',
+  'chrome.topbar.openSessions': 'פתיחת סשנים',
+
+  // App — ticket preview
+  'chrome.ticket.pending': 'ממתין',
+  'chrome.ticket.startSession': 'התחלת סשן →',
+  'chrome.ticket.closePreview': 'סגירת תצוגה מקדימה',
+  'chrome.ticket.iframeTitle': 'כרטיס {id}',
+
+  // App — command palette
+  'chrome.palette.newEmpty': 'סשן ריק חדש',
+  'chrome.palette.newEmpty.kw': 'יצירה טיוטה ריק',
+  'chrome.palette.newTicket': 'סשן חדש מכרטיס…',
+  'chrome.palette.newTicket.kw': 'משגר Linear יצירה התחלה',
+  'chrome.palette.settings': 'פתיחת הגדרות',
+  'chrome.palette.settings.kw': 'העדפות ערכת נושא קול',
+  'chrome.palette.skills': 'פתיחת Skills',
+  'chrome.palette.skills.kw': 'skill חבילה',
+  'chrome.palette.accounts': 'פתיחת חשבונות',
+  'chrome.palette.accounts.kw': 'חשבון התחברות החלפה',
+  'chrome.palette.setup': 'פתיחת הגדרה / סביבת עבודה',
+  'chrome.palette.setup.kw': 'הצטרפות repos',
+  'chrome.palette.shortcuts': 'קיצורי מקלדת',
+  'chrome.palette.shortcuts.kw': 'עזרה מקשים דף עזר',
+  'chrome.palette.theme': 'החלפת ערכת נושא בהיר / כהה',
+  'chrome.palette.theme.kw': 'מראה מצב כהה',
+  'chrome.palette.changes': 'פתיחת שינויים (סשן נוכחי)',
+  'chrome.palette.changes.kw': 'diff git סקירה',
+  'chrome.palette.edit': 'עריכת פרטי הסשן',
+  'chrome.palette.edit.kw': 'שינוי שם כותרת סטטוס תיאור',
+  'chrome.palette.archive': 'העברת הסשן הנוכחי לארכיון',
+  'chrome.palette.archive.kw': 'סגירה הסתרה',
+  'chrome.palette.delete': 'מחיקת הסשן הנוכחי',
+  'chrome.palette.delete.kw': 'הסרה',
+
+  // Settings — dialog
+  'chrome.settings.closeTitle': 'סגירת הגדרות (esc)',
+
+  // Settings — voice control
+  'chrome.voice.section': 'בקרת קול',
+  'chrome.voice.mode': 'מצב',
+  'chrome.voice.mode.hint': 'החזק כדי לדבר: מקליט רק כל עוד מקש הקיצור לחוץ. לחץ להחלפה: הקש פעם אחת כדי להתחיל, הקש שוב (או עצור) כדי לסיים.',
+  'chrome.voice.mode.hold': 'החזק כדי לדבר',
+  'chrome.voice.mode.toggle': 'לחץ להחלפה',
+  'chrome.voice.mic': 'מיקרופון',
+  'chrome.voice.mic.hint': 'מאיזה התקן קלט להקליט.',
+  'chrome.voice.mic.allow': 'אפשר למיקרופון להציג התקנים',
+  'chrome.voice.mic.systemDefault': 'ברירת מחדל של המערכת',
+  'chrome.voice.mic.fallback': 'מיקרופון {n}',
+  'chrome.voice.language.hint': 'שפת זיהוי הדיבור. אוטומטי מאפשר ל-Whisper לזהות (מתאים למעבר בין עברית לאנגלית).',
+  'chrome.voice.language.en': 'אנגלית',
+  'chrome.voice.language.he': 'עברית',
+  'chrome.voice.hotkey': 'מקש קיצור להקלטה',
+  'chrome.voice.hotkey.hint': 'קיצור מקלדת להקלטה. לחץ על הקלטה, ואז הקש על המקשים.',
+  'chrome.voice.hotkey.pressKeys': 'הקש מקשים…',
+  'chrome.voice.hotkey.record': 'הקלטה',
+  'chrome.voice.hotkey.listening': 'מאזין…',
+  'chrome.voice.autoSend': 'שליחה אוטומטית של פרומפטים',
+  'chrome.voice.autoSend.hint': 'שולח אוטומטית פרומפטים שהוזרקו בקול ללא בקשת אישור.',
+
+  // Settings — remote access / Tailscale
+  'chrome.remote.section': 'גישה מרחוק',
+  'chrome.remote.checking': 'בודק את Tailscale…',
+  'chrome.remote.unreachable': 'לא ניתן היה להשיג את המארח.',
+  'chrome.remote.notInstalled': 'לא מותקן. התקן את Tailscale כדי להגיע לקוקפיט מהטלפון — פרטי למכשירים שלך, ללא כתובת ציבורית.',
+  'chrome.remote.get': 'התקנת Tailscale ↗',
+  'chrome.remote.signInHint': 'פתח את אפליקציית Tailscale והתחבר, ואז בדוק שוב.',
+  'chrome.remote.recheck': 'בדיקה חוזרת',
+  'chrome.remote.openOnPhone': 'פתיחה בטלפון',
+  'chrome.remote.openOnPhone.hint': 'כאשר Tailscale פועל בשני המכשירים. מוצפן דרך ה-tailnet שלך — הצ׳אט עובד עכשיו.',
+  'chrome.remote.https': 'HTTPS (כתובת נקייה יותר + לשוניות אפליקציה מוטמעות)',
+  'chrome.remote.https.on': 'מופעל — גם כתובת ה-https:// שלמטה עובדת.',
+  'chrome.remote.https.off': 'אופציונלי. הגשה דרך https://<host>/ — דורש הפעלת HTTPS Certificates ל-tailnet שלך.',
+  'chrome.remote.adminConsole': 'פתח את קונסולת הניהול ↗',
+
+  // Settings — copy row
+  'chrome.copy.copy': 'העתקה',
+  'chrome.copy.copied': 'הועתק',
+};

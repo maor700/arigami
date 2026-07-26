@@ -4,6 +4,7 @@ import { toastError, toastSuccess } from '../lib/toast.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { Truncate } from './Truncate.jsx';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faCheck, faFolderTree, faRotateRight, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 
 // Built-in Orchestration tab (decision 18). Renders GET /sessions/:id/orchestration
@@ -13,13 +14,13 @@ import { faCheck, faFolderTree, faRotateRight, faTriangleExclamation } from '@fo
 // link, the capped result, and per-node kill / retry controls.
 
 const STATE_STYLE = {
-  running: { label: 'Running', color: '#CE8324' },
-  ready: { label: 'Ready', color: '#2C6BD6' },
-  pending: { label: 'Pending', color: '#8a8a8a' },
-  blocked: { label: 'Blocked', color: '#B23B30' },
-  error: { label: 'Error', color: '#B23B30' },
-  done: { label: 'Done', color: '#3C9A4E' },
-  cancelled: { label: 'Cancelled', color: '#8a8a8a' },
+  running: { key: 'chat.stateRunning', color: '#CE8324' },
+  ready: { key: 'chat.stateReady', color: '#2C6BD6' },
+  pending: { key: 'chat.statePending', color: '#8a8a8a' },
+  blocked: { key: 'chat.stateBlocked', color: '#B23B30' },
+  error: { key: 'chat.stateError', color: '#B23B30' },
+  done: { key: 'chat.stateDone', color: '#3C9A4E' },
+  cancelled: { key: 'chat.stateCancelled', color: '#8a8a8a' },
 };
 // Group order top-to-bottom — what needs attention first.
 const GROUP_ORDER = ['blocked', 'error', 'running', 'ready', 'pending', 'done', 'cancelled'];
@@ -28,13 +29,15 @@ const jump = (id) =>
   window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id } }));
 
 function StatePill({ state }) {
-  const st = STATE_STYLE[state] || { label: state || '—', color: '#8a8a8a' };
+  const t = useT();
+  const st = STATE_STYLE[state] || { color: '#8a8a8a' };
+  const label = st.key ? t(st.key) : (state || '—');
   return (
     <span
       className="flex h-[18px] shrink-0 items-center rounded-[4px] border px-1.5 font-mono text-[10px] font-bold"
       style={{ color: st.color, borderColor: st.color }}
     >
-      {st.label.toLowerCase()}
+      {label.toLowerCase()}
     </span>
   );
 }
@@ -51,6 +54,7 @@ function Chip({ children, color }) {
 }
 
 function ClaudeDot({ state }) {
+  const t = useT();
   const color =
     state === 'working'
       ? '#3C9A4E'
@@ -61,7 +65,7 @@ function ClaudeDot({ state }) {
           : '#c4c4c4';
   return (
     <span
-      title={state || 'idle'}
+      title={state || t('chat.idle')}
       className={`h-[7px] w-[7px] shrink-0 rounded-full ${state === 'awaiting-input' ? 'pulse-yellow' : ''}`}
       style={{ background: color }}
     />
@@ -70,6 +74,7 @@ function ClaudeDot({ state }) {
 
 // One node card: plan node + (optionally) the worker session that owns it.
 function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
+  const t = useT();
   const result = worker?.result || null;
   return (
     <div className="rounded-[9px] border-[1.5px] border-border bg-panel px-3 py-2.5">
@@ -86,7 +91,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
 
       {!!(node.deps && node.deps.length) && (
         <div className="mt-2 flex flex-wrap items-center gap-1">
-          <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">deps</span>
+          <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('chat.deps')}</span>
           {node.deps.map((d) => (
             <Chip key={d} color={nodeStateById[d] === 'done' ? '#3C9A4E' : '#B23B30'}>
               {nodeStateById[d] === 'done' ? <><Icon icon={faCheck} />{' '}</> : ''}
@@ -102,7 +107,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
           <button
             type="button"
             onClick={() => jump(worker.id)}
-            title="Jump to this worker session"
+            title={t('chat.jumpToWorker')}
             className="cursor-pointer font-mono text-[10.5px] text-[#2C6BD6] hover:underline"
           >
             → {worker.id}
@@ -114,17 +119,17 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
               onClick={() => onKill(worker)}
               className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[10.5px] text-danger hover:border-danger"
             >
-              Kill
+              {t('chat.kill')}
             </button>
           )}
           <button
             type="button"
             onClick={() => onRetry(node)}
             disabled={!masterId}
-            title={masterId ? 'Ask the master to retry this node' : 'No master to notify'}
+            title={masterId ? t('chat.retryNode') : t('chat.noMaster')}
             className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
           >
-            Retry
+            {t('chat.retry')}
           </button>
         </div>
       )}
@@ -151,6 +156,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
 }
 
 export default function OrchestrationTab({ session, active }) {
+  const t = useT();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -160,7 +166,7 @@ export default function OrchestrationTab({ session, active }) {
       setData(d);
       setError(null);
     } catch (e) {
-      setError(e.message || 'failed to load orchestration');
+      setError(e.message || t('chat.failedLoadOrch'));
     }
   }, [session.id]);
 
@@ -174,18 +180,18 @@ export default function OrchestrationTab({ session, active }) {
 
   const kill = async (worker) => {
     const ok = await confirmDialog({
-      title: `Kill worker ${worker.id}?`,
-      body: 'Runs its cleanup — removes the worktree and deletes the branch.',
-      confirmLabel: 'Kill worker',
+      title: t('chat.killWorkerQ', { id: worker.id }),
+      body: t('chat.killWorkerCleanup'),
+      confirmLabel: t('chat.killWorkerConfirm'),
       danger: true,
     });
     if (!ok) return;
     try {
       await api.del(`/sessions/${worker.id}?runCleanup=true`);
-      toastSuccess(`Killed worker ${worker.id}`);
+      toastSuccess(t('chat.killedWorker', { id: worker.id }));
       load();
     } catch (e) {
-      toastError(`Kill failed: ${e.message}`);
+      toastError(t('chat.killFailed', { err: e.message }));
     }
   };
 
@@ -195,14 +201,14 @@ export default function OrchestrationTab({ session, active }) {
       await api.post(`/sessions/${session.id}/message`, {
         text: `Please retry orchestration node "${node.id}" — relaunch its worker (kill the old one with cleanup first if it's still around), per the dispatch protocol.`,
       });
-      toastSuccess(`Nudged master to retry "${node.id}"`);
+      toastSuccess(t('chat.nudgedRetry', { id: node.id }));
     } catch (e) {
-      toastError(`Retry nudge failed: ${e.message}`);
+      toastError(t('chat.retryNudgeFailed', { err: e.message }));
     }
   };
 
   if (!data && !error)
-    return <div className="p-6 text-[12px] text-fgdim">Loading orchestration…</div>;
+    return <div className="p-6 text-[12px] text-fgdim">{t('chat.loadingOrch')}</div>;
   if (error)
     return <div className="p-6 text-[12px] text-danger"><Icon icon={faTriangleExclamation} /> {error}</div>;
 
@@ -238,13 +244,13 @@ export default function OrchestrationTab({ session, active }) {
         <span className="text-[13px]"><Icon icon={faFolderTree} /></span>
         <div className="min-w-0 flex-1">
           <Truncate
-            text={plan?.task || session.title || 'Orchestration'}
+            text={plan?.task || session.title || t('chat.orchestration')}
             className="text-[12.5px] font-bold text-fg"
           />
           <div className="flex items-center gap-1.5 font-mono text-[10px] text-fgdim">
-            {plan?.base && <span>base {plan.base}</span>}
-            <span>· {(data.children || []).length} worker{(data.children || []).length === 1 ? '' : 's'}</span>
-            {plan && <span>· {nodes.length} node{nodes.length === 1 ? '' : 's'}</span>}
+            {plan?.base && <span>{t('chat.base')} {plan.base}</span>}
+            <span>· {t((data.children || []).length === 1 ? 'chat.workerCountOne' : 'chat.workerCountMany', { n: (data.children || []).length })}</span>
+            {plan && <span>· {t(nodes.length === 1 ? 'chat.nodeCountOne' : 'chat.nodeCountMany', { n: nodes.length })}</span>}
           </div>
         </div>
         <button
@@ -252,13 +258,13 @@ export default function OrchestrationTab({ session, active }) {
           onClick={load}
           className="cursor-pointer rounded-[6px] border border-border px-2 py-1 text-[11px] text-fgdim hover:border-ink hover:text-fg"
         >
-          <Icon icon={faRotateRight} /> Refresh
+          <Icon icon={faRotateRight} /> {t('chat.refreshCap')}
         </button>
       </div>
 
       {data.planError && (
         <div className="mx-4 mt-3 rounded-[8px] border border-[#e6d27a] bg-chip/60 px-3 py-2 text-[11.5px] text-fgdim">
-          {data.planError} — showing live workers below.
+          {data.planError} {t('chat.showingLiveWorkers')}
         </div>
       )}
 
@@ -270,7 +276,7 @@ export default function OrchestrationTab({ session, active }) {
                 className="font-mono text-[9.5px] font-bold tracking-[0.06em] uppercase"
                 style={{ color: STATE_STYLE[g].color }}
               >
-                {STATE_STYLE[g].label}
+                {t(STATE_STYLE[g].key)}
               </span>
               <span className="font-mono text-[9.5px] text-fgdim">{byGroup.get(g).length}</span>
               <span className="h-px flex-1 bg-hair" />
@@ -295,7 +301,7 @@ export default function OrchestrationTab({ session, active }) {
           <div>
             <div className="mb-1.5 flex items-center gap-[7px]">
               <span className="font-mono text-[9.5px] font-bold tracking-[0.06em] text-fgdim uppercase">
-                {plan ? 'Other workers' : 'Workers'}
+                {plan ? t('chat.otherWorkers') : t('chat.workers')}
               </span>
               <span className="font-mono text-[9.5px] text-fgdim">{orphans.length}</span>
               <span className="h-px flex-1 bg-hair" />
@@ -324,7 +330,7 @@ export default function OrchestrationTab({ session, active }) {
 
         {!nodes.length && !orphans.length && (
           <div className="py-8 text-center text-[12px] text-fgdim">
-            No workers yet. When this session dispatches workers they'll appear here.
+            {t('chat.noWorkers')}
           </div>
         )}
       </div>

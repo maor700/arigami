@@ -6,6 +6,7 @@ import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faArrowDown, faArrowUp, faCaretDown, faCaretUp, faCheck, faComment, faExpand, faRotateRight, faScaleBalanced, faWandMagicSparkles, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 // Single-letter status chip. Maps git porcelain-ish codes to M/A/D/??.
@@ -47,6 +48,7 @@ function ExplainCard({ label, title, body, dir = 'auto' }) {
 // the verdict actions. `target` defaults from the changes mode (uncommitted→local,
 // pr→remote) and follows mode changes until the user overrides it.
 function ReviewBar({ count, onSubmit, mode, desktop }) {
+  const t = useT();
   const defaultTarget = mode === 'pr' ? 'remote' : 'local';
   const [summary, setSummary] = useState('');
   const [open, setOpen] = useState(false);
@@ -58,7 +60,7 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
   const pickTarget = (t) => { touched.current = true; setTarget(t); };
   const submit = (verdict) => { onSubmit(verdict, summary.trim(), target); setSummary(''); setOpen(false); setExpanded(false); };
   const canComment = count > 0 || summary.trim();
-  const approveLabel = target === 'remote' ? 'Approve PR' : 'Approve';
+  const approveLabel = target === 'remote' ? t('chat.approvePr') : t('chat.approve');
   const full = desktop || expanded;
 
   // Mobile, collapsed: a slim one-line bar — pending count + a "Review" pill that
@@ -71,10 +73,10 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
         className="flex w-full shrink-0 items-center gap-2 border-t-2 border-ink bg-chip px-3.5 py-1.5 text-left"
       >
         <span className="font-mono text-[10.5px] text-fgdim">
-          {count} pending comment{count === 1 ? '' : 's'}
+          {t(count === 1 ? 'chat.pendingCommentOne' : 'chat.pendingCommentMany', { n: count })}
         </span>
         <span className="ml-auto flex items-center gap-1 rounded-md border-[1.5px] border-ink bg-[#3C9A4E] px-2.5 py-0.5 text-[11px] font-bold text-white">
-          Review <Icon icon={faCaretUp} />
+          {t('chat.review')} <Icon icon={faCaretUp} />
         </span>
       </button>
     );
@@ -88,7 +90,7 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
           rows={2}
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-          placeholder="Overall review summary (optional)…"
+          placeholder={t('chat.reviewSummaryPlaceholder')}
           className="mb-2 w-full resize-none rounded-md border-[1.5px] border-[#d8c870] bg-bg px-2 py-1 text-[11.5px] outline-none placeholder:text-fgdim"
         />
       )}
@@ -97,36 +99,36 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            title="Collapse"
+            title={t('chat.collapse')}
             className="cursor-pointer rounded-[6px] border border-border bg-panel px-1.5 py-0.5 font-mono text-[11px] leading-none text-fgdim hover:text-fg"
           >
             <Icon icon={faCaretDown} />
           </button>
         )}
         {/* where the submitted review goes: fix locally, or post to the GitHub PR */}
-        <span className="flex overflow-hidden rounded-[6px] border-[1.5px] border-ink" title="Where the review is sent on submit">
-          {['local', 'remote'].map((t) => (
+        <span className="flex overflow-hidden rounded-[6px] border-[1.5px] border-ink" title={t('chat.reviewSentTitle')}>
+          {['local', 'remote'].map((tg) => (
             <button
-              key={t}
+              key={tg}
               type="button"
-              onClick={() => pickTarget(t)}
+              onClick={() => pickTarget(tg)}
               className={`cursor-pointer px-2 py-0.5 font-mono text-[10px] ${
-                target === t ? 'bg-ink font-bold text-white' : 'bg-panel text-fgdim hover:text-fg'
+                target === tg ? 'bg-ink font-bold text-white' : 'bg-panel text-fgdim hover:text-fg'
               }`}
             >
-              {t === 'local' ? 'Local' : 'Remote PR'}
+              {tg === 'local' ? t('chat.local') : t('chat.remotePr')}
             </button>
           ))}
         </span>
         <span className="font-mono text-[10.5px] text-fgdim">
-          {count} pending comment{count === 1 ? '' : 's'}
+          {t(count === 1 ? 'chat.pendingCommentOne' : 'chat.pendingCommentMany', { n: count })}
         </span>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           className="cursor-pointer font-mono text-[10px] text-fgdim underline-offset-2 hover:underline"
         >
-          {open ? 'hide summary' : 'add summary'}
+          {open ? t('chat.hideSummary') : t('chat.addSummary')}
         </button>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -135,7 +137,7 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
             onClick={() => submit('request-changes')}
             className="cursor-pointer rounded-lg border-[1.5px] border-danger bg-panel px-3 py-[5px] text-[11.5px] font-bold text-danger hover:bg-danger/10 disabled:cursor-default disabled:opacity-40"
           >
-            Request changes
+            {t('chat.requestChanges')}
           </button>
           <button
             type="button"
@@ -143,12 +145,12 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
             onClick={() => submit('comment')}
             className="cursor-pointer rounded-lg border-[1.5px] border-[#cdbb66] bg-panel px-3 py-[5px] text-[11.5px] text-fgdim hover:bg-chip disabled:cursor-default disabled:opacity-40"
           >
-            Comment
+            {t('chat.comment')}
           </button>
           <button
             type="button"
             onClick={() => submit('approve')}
-            title={target === 'remote' ? 'Approve and post the review to the GitHub PR' : 'Approve the local changes'}
+            title={target === 'remote' ? t('chat.approvePrTitle') : t('chat.approveLocalTitle')}
             className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-[#3C9A4E] px-3.5 py-[5px] text-[11.5px] font-bold text-white shadow-[2px_2px_0_#2a2a2a]"
           >
             <Icon icon={faCheck} /> {approveLabel}
@@ -163,6 +165,7 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
 // view / refresh) into a single "⋯" dropdown so the narrow header stays clean.
 // VS Code is intentionally omitted here (irrelevant on a phone).
 function ChangesMenu({ noWorktree, expl, hasReview, explaining, reviewing, mode, setMode, onExplain, onReview, onRefresh, loading, filesCount, outdated }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -189,8 +192,8 @@ function ChangesMenu({ noWorktree, expl, hasReview, explaining, reviewing, mode,
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Changes actions"
-        aria-label="Changes actions"
+        title={t('chat.changesActions')}
+        aria-label={t('chat.changesActions')}
         className={`flex h-[24px] items-center rounded-[6px] border-[1.5px] px-2 text-[14px] leading-none text-fgdim hover:border-ink hover:text-fg ${open ? 'border-ink text-fg' : 'border-border bg-panel'}`}
       >
         ⋯
@@ -199,15 +202,15 @@ function ChangesMenu({ noWorktree, expl, hasReview, explaining, reviewing, mode,
       {open && (
         <div className="absolute top-[30px] right-0 z-30 w-[190px] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
           {outdated && (
-            <div className="flex items-center gap-1.5 bg-danger/10 px-3 py-1.5 font-mono text-[10px] font-bold text-danger" title="The worktree changed since this analysis — re-run to refresh.">
-              <Icon icon={faTriangleExclamation} /> Analysis outdated
+            <div className="flex items-center gap-1.5 bg-danger/10 px-3 py-1.5 font-mono text-[10px] font-bold text-danger" title={t('chat.analysisOutdatedTitle')}>
+              <Icon icon={faTriangleExclamation} /> {t('chat.analysisOutdated')}
             </div>
           )}
-          {!noWorktree && <Row label={explaining ? 'Explaining…' : expl ? <><Icon icon={faWandMagicSparkles} /> Re-explain</> : <><Icon icon={faWandMagicSparkles} /> Explain</>} disabled={explaining} onClick={onExplain} />}
-          {!noWorktree && <Row label={reviewing ? 'Reviewing…' : hasReview ? <><Icon icon={faScaleBalanced} /> Re-review</> : <><Icon icon={faScaleBalanced} /> Auto review</>} disabled={reviewing} onClick={onReview} />}
+          {!noWorktree && <Row label={explaining ? t('chat.explainingMenu') : expl ? <><Icon icon={faWandMagicSparkles} /> {t('chat.reExplainMenu')}</> : <><Icon icon={faWandMagicSparkles} /> {t('chat.explainMenu')}</>} disabled={explaining} onClick={onExplain} />}
+          {!noWorktree && <Row label={reviewing ? t('chat.reviewingMenu') : hasReview ? <><Icon icon={faScaleBalanced} /> {t('chat.reReviewMenu')}</> : <><Icon icon={faScaleBalanced} /> {t('chat.autoReviewMenu')}</>} disabled={reviewing} onClick={onReview} />}
           <span className="block h-px bg-hair" />
-          {filesCount > 0 && <Row label="Diff view" value={mode} keepOpen onClick={() => setMode(mode === 'split' ? 'inline' : 'split')} />}
-          <Row label={loading ? 'Refreshing…' : <><Icon icon={faRotateRight} /> Refresh</>} disabled={loading} onClick={onRefresh} />
+          {filesCount > 0 && <Row label={t('chat.diffView')} value={mode === 'split' ? t('chat.split') : t('chat.inline')} keepOpen onClick={() => setMode(mode === 'split' ? 'inline' : 'split')} />}
+          <Row label={loading ? t('chat.refreshingMenu') : <><Icon icon={faRotateRight} /> {t('chat.refreshCap')}</>} disabled={loading} onClick={onRefresh} />
         </div>
       )}
     </span>
@@ -215,6 +218,7 @@ function ChangesMenu({ noWorktree, expl, hasReview, explaining, reviewing, mode,
 }
 
 export default function ChangesTab({ session, active }) {
+  const t = useT();
   const desktop = useIsDesktop();
   const [data, setData] = useState(null); // {worktree,branch,files,error} | null
   const [loading, setLoading] = useState(false);
@@ -316,8 +320,8 @@ export default function ChangesTab({ session, active }) {
   const submitReview = (verdict, summary, target) =>
     api
       .post(`${R}/submit`, { verdict, summary, target })
-      .then(() => toastSuccess(target === 'remote' ? 'Review posted to the PR' : 'Review submitted'))
-      .catch((e) => toastError(`Couldn't submit review: ${e?.message || e}`));
+      .then(() => toastSuccess(target === 'remote' ? t('chat.reviewPosted') : t('chat.reviewSubmitted')))
+      .catch((e) => toastError(t('chat.couldntSubmitReview', { err: e?.message || e })));
   // Shared comment-thread handlers (edit/reply/resolve/delete + suggestion accept/reject).
   const threadProps = {
     onDelete: delComment,
@@ -360,8 +364,8 @@ export default function ChangesTab({ session, active }) {
   const openEditor = () => {
     setOpening(true);
     api.post(`/sessions/${session.id}/open-editor`, {})
-      .then((r) => { if (r?.error) toastError(`Could not open editor: ${r.error}`); })
-      .catch((e) => toastError(`Could not open editor: ${e?.message || e}`))
+      .then((r) => { if (r?.error) toastError(t('chat.couldntOpenEditor', { err: r.error })); })
+      .catch((e) => toastError(t('chat.couldntOpenEditor', { err: e?.message || e })))
       .finally(() => setTimeout(() => setOpening(false), 1200));
   };
 
@@ -402,8 +406,8 @@ export default function ChangesTab({ session, active }) {
     if (!active) return;
     const onKey = (e) => {
       if (!e.altKey || e.metaKey || e.ctrlKey) return;
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const el = e.target;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); go(1); }
     };
@@ -465,14 +469,14 @@ export default function ChangesTab({ session, active }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-hair bg-panel px-3.5 py-2 text-xs">
-        <span className="font-bold text-fg">Changes</span>
+        <span className="font-bold text-fg">{t('chat.changes')}</span>
         {!noWorktree && (history.length > 1) && (
-          <span className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border" title="Navigate viewed files/features (Alt+←/→)">
+          <span className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border" title={t('chat.navViewedFiles')}>
             <button
               type="button"
               onClick={() => go(-1)}
               disabled={!canBack}
-              title="Back (Alt+←)"
+              title={t('chat.back')}
               className="cursor-pointer px-1.5 py-0.5 font-mono text-[11px] text-fgdim hover:bg-chip hover:text-fg disabled:cursor-default disabled:opacity-30"
             >
               ←
@@ -481,7 +485,7 @@ export default function ChangesTab({ session, active }) {
               type="button"
               onClick={() => go(1)}
               disabled={!canFwd}
-              title="Forward (Alt+→)"
+              title={t('chat.forward')}
               className="cursor-pointer border-l border-border px-1.5 py-0.5 font-mono text-[11px] text-fgdim hover:bg-chip hover:text-fg disabled:cursor-default disabled:opacity-30"
             >
               →
@@ -495,12 +499,12 @@ export default function ChangesTab({ session, active }) {
               type="button"
               onClick={() => { setChangesMode(m); setFeatureIdx(null); setSelected(null); resetHistory(); }}
               disabled={m === 'pr' && !prAvailable}
-              title={m === 'pr' && !prAvailable ? 'PR mode not available' : `Compare ${m === 'uncommitted' ? 'against HEAD' : 'against main branch'}`}
+              title={m === 'pr' && !prAvailable ? t('chat.prNotAvailable') : (m === 'uncommitted' ? t('chat.compareHead') : t('chat.compareMain'))}
               className={`cursor-pointer px-2.5 py-0.5 font-mono text-[10px] ${
                 changesMode === m ? 'bg-chip font-bold text-fg' : 'bg-panel text-fgdim hover:text-fg'
               } ${m === 'pr' && !prAvailable ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
-              {m === 'uncommitted' ? 'Uncommitted' : 'PR'}
+              {m === 'uncommitted' ? t('chat.uncommitted') : 'PR'}
             </button>
           ))}
         </div>
@@ -508,21 +512,21 @@ export default function ChangesTab({ session, active }) {
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
         {desktop && data?.branch && <Truncate text={data.branch} className="max-w-[140px] font-mono text-[10.5px] text-fgdim" />}
-        {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{files.length} files</span>}
+        {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{t('chat.filesCount', { n: files.length })}</span>}
         {desktop && expl && (
           <span
-            title={`explained${expl.language ? ` in ${expl.language}` : ''}${expl.generatedAt ? ' · ' + new Date(expl.generatedAt).toLocaleString() : ''}`}
+            title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + new Date(expl.generatedAt).toLocaleString() : '')}
             className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] text-fgdim"
           >
-            <Icon icon={faWandMagicSparkles} /> explained{expl.language ? ` · ${expl.language}` : ''}
+            <Icon icon={faWandMagicSparkles} /> {t('chat.explained')}{expl.language ? ` · ${expl.language}` : ''}
           </span>
         )}
         {desktop && outdated && (
           <span
-            title="The worktree changed since this analysis was generated — re-run to refresh."
+            title={t('chat.outdatedTitle')}
             className="flex shrink-0 items-center gap-1 rounded-full border border-[#d98078] bg-danger/10 px-2 py-0.5 font-mono text-[9.5px] font-bold text-danger"
           >
-            <Icon icon={faTriangleExclamation} /> outdated
+            <Icon icon={faTriangleExclamation} /> {t('chat.outdated')}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -534,19 +538,19 @@ export default function ChangesTab({ session, active }) {
                 type="button"
                 onClick={runExplain}
                 disabled={explaining}
-                title="Explain these changes in plain language (read-only AI run, ~30–60s)"
+                title={t('chat.explainTitle')}
                 className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !explaining ? 'border-[#d98078] text-danger' : 'border-border bg-panel text-fgdim'}`}
               >
-                {explaining ? <><span className="host-spinner h-3 w-3" /> explaining…</> : expl ? <><Icon icon={faWandMagicSparkles} /> re-explain</> : <><Icon icon={faWandMagicSparkles} /> explain</>}
+                {explaining ? <><span className="host-spinner h-3 w-3" /> {t('chat.explaining')}</> : expl ? <><Icon icon={faWandMagicSparkles} /> {t('chat.reExplain')}</> : <><Icon icon={faWandMagicSparkles} /> {t('chat.explain')}</>}
               </button>
               <button
                 type="button"
                 onClick={runReview}
                 disabled={reviewing}
-                title="Auto-review these changes — posts suggested review comments (read-only AI run, ~30–60s)"
+                title={t('chat.reviewTitle')}
                 className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !reviewing ? 'border-[#d98078] text-danger' : 'border-border bg-panel text-fgdim'}`}
               >
-                {reviewing ? <><span className="host-spinner h-3 w-3" /> reviewing…</> : hasReview ? <><Icon icon={faScaleBalanced} /> re-review</> : <><Icon icon={faScaleBalanced} /> auto review</>}
+                {reviewing ? <><span className="host-spinner h-3 w-3" /> {t('chat.reviewing')}</> : hasReview ? <><Icon icon={faScaleBalanced} /> {t('chat.reReview')}</> : <><Icon icon={faScaleBalanced} /> {t('chat.autoReview')}</>}
               </button>
             </>
           )}
@@ -561,7 +565,7 @@ export default function ChangesTab({ session, active }) {
                     mode === m ? 'bg-chip font-bold text-fg' : 'bg-panel text-fgdim hover:text-fg'
                   }`}
                 >
-                  {m}
+                  {m === 'split' ? t('chat.split') : t('chat.inline')}
                 </button>
               ))}
             </div>
@@ -571,20 +575,20 @@ export default function ChangesTab({ session, active }) {
               type="button"
               onClick={openEditor}
               disabled={opening}
-              title="Open this worktree in VS Code"
+              title={t('chat.openInVsCode')}
               className="flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-60"
             >
-              {opening ? 'opening…' : '↗ VS Code'}
+              {opening ? t('chat.opening') : '↗ VS Code'}
             </button>
           )}
           <button
             type="button"
             onClick={load}
-            title="Refresh"
+            title={t('chat.refreshTitle')}
             disabled={loading}
             className="cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-50"
           >
-            {loading ? '…' : <><Icon icon={faRotateRight} /> refresh</>}
+            {loading ? '…' : <><Icon icon={faRotateRight} /> {t('chat.refresh')}</>}
           </button>
             </>
           ) : (
@@ -609,11 +613,11 @@ export default function ChangesTab({ session, active }) {
 
       {noWorktree ? (
         <div className="flex flex-1 items-center justify-center font-mono text-[11px] text-fgdim">
-          {data?.error ? String(data.error) : 'No worktree changes to show.'}
+          {data?.error ? String(data.error) : t('chat.noWorktreeChanges')}
         </div>
       ) : loading && files.length === 0 ? (
         <div className="flex flex-1 items-center justify-center gap-2 font-mono text-[11px] text-fgdim">
-          <span className="host-spinner h-3.5 w-3.5" /> reading worktree…
+          <span className="host-spinner h-3.5 w-3.5" /> {t('chat.readingWorktree')}
         </div>
       ) : (
         <>
@@ -627,8 +631,8 @@ export default function ChangesTab({ session, active }) {
                 onClick={() => setListOpen((o) => !o)}
                 className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-3 py-1.5 text-left font-mono text-[11px] text-fgdim"
               >
-                <span className="font-bold text-fg">Files · {files.length}</span>
-                {features.length > 0 && <span>· {features.length} features</span>}
+                <span className="font-bold text-fg">{t('chat.files')} · {files.length}</span>
+                {features.length > 0 && <span>· {t('chat.featuresCount', { n: features.length })}</span>}
                 <span className="ml-auto truncate text-fgdim">
                   {curFeature ? <><Icon icon={faWandMagicSparkles} /> {curFeature.title}</> : selected ? baseName(selected) : ''}
                 </span>
@@ -641,7 +645,7 @@ export default function ChangesTab({ session, active }) {
               {features.length > 0 && (
                 <>
                   <div className="sticky top-0 bg-bg px-3 py-1.5 font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-                    Features · {features.length}
+                    {t('chat.features')} · {features.length}
                   </div>
                   {features.map((ft, i) => (
                     <button
@@ -655,12 +659,12 @@ export default function ChangesTab({ session, active }) {
                       <span className="mt-px text-[10px]"><Icon icon={faWandMagicSparkles} /></span>
                       <span className="min-w-0 flex-1">
                         <span dir={ft.dir || 'auto'} className="block text-[11.5px] font-bold leading-snug text-fg">{ft.title}</span>
-                        <span className="font-mono text-[9px] text-fgdim">{(ft.files || []).length} files</span>
+                        <span className="font-mono text-[9px] text-fgdim">{t('chat.filesCount', { n: (ft.files || []).length })}</span>
                       </span>
                     </button>
                   ))}
                   <div className="px-3 py-1.5 font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-                    Files · {files.length}
+                    {t('chat.files')} · {files.length}
                   </div>
                 </>
               )}
@@ -677,10 +681,10 @@ export default function ChangesTab({ session, active }) {
                     }`}
                   >
                     <StatusChip status={f.status} />
-                    {f.staged && <span title="staged" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#3C9A4E]" />}
+                    {f.staged && <span title={t('chat.staged')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#3C9A4E]" />}
                     <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">{baseName(f.path)}</span>
-                    {cc > 0 && <span title={`${cc} comment(s)`} className="shrink-0 font-mono text-[9px] text-fgdim"><Icon icon={faComment} className="text-[8px]" />{cc}</span>}
-                    {fileExpl(f.path) && <span title="has explanation" className="shrink-0 text-[9px] text-[#c9a227]"><Icon icon={faWandMagicSparkles} /></span>}
+                    {cc > 0 && <span title={t('chat.commentsCount', { n: cc })} className="shrink-0 font-mono text-[9px] text-fgdim"><Icon icon={faComment} className="text-[8px]" />{cc}</span>}
+                    {fileExpl(f.path) && <span title={t('chat.hasExplanation')} className="shrink-0 text-[9px] text-[#c9a227]"><Icon icon={faWandMagicSparkles} /></span>}
                     <span className="shrink-0 font-mono text-[10px]">
                       {f.additions != null && <span style={{ color: '#5fb56a' }}>+{f.additions}</span>}
                       {f.deletions != null && <span className="ml-1" style={{ color: '#d98078' }}>−{f.deletions}</span>}
@@ -694,13 +698,13 @@ export default function ChangesTab({ session, active }) {
             <div className={`flex min-w-0 flex-col bg-bg ${fsActive ? 'fixed inset-0 z-40' : 'min-h-0 flex-1'}`}>
               {curFeature ? (
                 <div className="thin-scroll min-h-0 flex-1 overflow-auto">
-                  <ExplainCard label="Feature" title={curFeature.title} body={curFeature.summary} dir={curFeature.dir || 'auto'} />
+                  <ExplainCard label={t('chat.feature')} title={curFeature.title} body={curFeature.summary} dir={curFeature.dir || 'auto'} />
                   {curFeature.details && (
                     <div dir={curFeature.dir || 'auto'} className="mx-3 -mt-1 mb-3 text-[12px] leading-relaxed whitespace-pre-wrap text-fg">
                       {curFeature.details}
                     </div>
                   )}
-                  <div className="px-3 pb-2 font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">Files in this feature</div>
+                  <div className="px-3 pb-2 font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('chat.filesInFeature')}</div>
                   {(curFeature.files || []).map((p) => (
                     <button
                       key={p}
@@ -713,10 +717,10 @@ export default function ChangesTab({ session, active }) {
                     </button>
                   ))}
                   <div className="m-3 flex flex-col gap-1.5">
-                    <div className="font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">Comments</div>
+                    <div className="font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('chat.comments')}</div>
                     <CommentThread comments={featureComments} {...threadProps} />
                     <CommentComposer
-                      placeholder="Comment on this feature…"
+                      placeholder={t('chat.commentOnFeature')}
                       onSubmit={(body) => addComment({ kind: 'feature', key: curFeature.title, featureTitle: curFeature.title }, body)}
                     />
                   </div>
@@ -729,7 +733,7 @@ export default function ChangesTab({ session, active }) {
                         <button
                           type="button"
                           onClick={() => go(-1)}
-                          title={`Back to feature: ${fromFeature.title}`}
+                          title={t('chat.backToFeature', { title: fromFeature.title })}
                           className="flex shrink-0 cursor-pointer items-center gap-1 rounded-[6px] border border-[#e6d27a] bg-chip/50 px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:text-fg"
                         >
                           <span>←</span>
@@ -740,12 +744,12 @@ export default function ChangesTab({ session, active }) {
                       {diffLoading && <span className="host-spinner h-3 w-3 shrink-0" />}
                       <div className="ml-auto flex shrink-0 items-center gap-2">
                         {fileIdx >= 0 && files.length > 1 && (
-                          <span className="flex overflow-hidden rounded-[6px] border border-border" title="Previous / next changed file">
+                          <span className="flex overflow-hidden rounded-[6px] border border-border" title={t('chat.prevNextFile')}>
                             <button
                               type="button"
                               onClick={() => prevFile && navigate({ kind: 'file', path: prevFile.path })}
                               disabled={!prevFile}
-                              title={prevFile ? `Previous: ${baseName(prevFile.path)}` : 'No previous file'}
+                              title={prevFile ? t('chat.prevFile', { name: baseName(prevFile.path) }) : t('chat.noPrevFile')}
                               className="cursor-pointer px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:bg-chip hover:text-fg disabled:cursor-default disabled:opacity-30"
                             >
                               <Icon icon={faArrowUp} />
@@ -757,7 +761,7 @@ export default function ChangesTab({ session, active }) {
                               type="button"
                               onClick={() => nextFile && navigate({ kind: 'file', path: nextFile.path })}
                               disabled={!nextFile}
-                              title={nextFile ? `Next: ${baseName(nextFile.path)}` : 'No next file'}
+                              title={nextFile ? t('chat.nextFile', { name: baseName(nextFile.path) }) : t('chat.noNextFile')}
                               className="cursor-pointer px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:bg-chip hover:text-fg disabled:cursor-default disabled:opacity-30"
                             >
                               <Icon icon={faArrowDown} />
@@ -768,8 +772,8 @@ export default function ChangesTab({ session, active }) {
                           <button
                             type="button"
                             onClick={() => setFullscreen((f) => !f)}
-                            title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                            aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                            title={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
+                            aria-label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
                             className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-0.5 font-mono text-[12px] leading-none text-fgdim hover:border-ink hover:text-fg"
                           >
                             <Icon icon={fullscreen ? faXmark : faExpand} />
@@ -780,14 +784,14 @@ export default function ChangesTab({ session, active }) {
                           onClick={() => setFileComposer((o) => !o)}
                           className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-0.5 font-mono text-[10px] text-fgdim hover:border-ink hover:text-fg"
                         >
-                          <Icon icon={faComment} /> {desktop ? 'comment on file' : 'comment'}
+                          <Icon icon={faComment} /> {desktop ? t('chat.commentOnFileBtn') : t('chat.commentBtn')}
                         </button>
                       </div>
                     </div>
                   )}
                   <div className="thin-scroll min-h-0 flex-1 overflow-auto">
                     {selected && fileExpl(selected)?.summary && (
-                      <ExplainCard label="What changed" body={fileExpl(selected).summary} dir={fileExpl(selected).dir || 'auto'} />
+                      <ExplainCard label={t('chat.whatChanged')} body={fileExpl(selected).summary} dir={fileExpl(selected).dir || 'auto'} />
                     )}
                     {(fileComments.length > 0 || fileComposer) && (
                       <div className="m-3 flex flex-col gap-1.5">
@@ -795,7 +799,7 @@ export default function ChangesTab({ session, active }) {
                         {fileComposer && (
                           <CommentComposer
                             autoFocus
-                            placeholder="Comment on this file…"
+                            placeholder={t('chat.commentOnFile')}
                             onSubmit={(body) => { addComment({ kind: 'file', path: selected }, body); setFileComposer(false); }}
                             onCancel={() => setFileComposer(false)}
                           />

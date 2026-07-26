@@ -12,21 +12,23 @@ import { useStore, loadAccounts } from '../lib/store.js';
 import { UsageBar } from './Usage.jsx';
 import { untilTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faUser } from '@fortawesome/free-solid-svg-icons';
 
-const TYPE_LABEL = { keychain: 'macOS login', 'oauth-token': 'setup-token' };
+const TYPE_LABEL = { keychain: 'launcher.account.typeKeychain', 'oauth-token': 'launcher.account.typeToken' };
 
 function StateBadge({ account, usage }) {
+  const t = useT();
   const cooling = account.quarantineUntil && Date.parse(account.quarantineUntil) > Date.now();
   if (cooling) {
     return (
       <span className="rounded-full bg-[#B23B30]/15 px-2 py-0.5 text-[10px] font-bold text-[#B23B30]">
-        cooling down · resets in {untilTime(account.quarantineUntil)}
+        {t('launcher.account.coolingDown', { time: untilTime(account.quarantineUntil) })}
       </span>
     );
   }
   if (usage?.available && (usage.session?.pct ?? 0) >= 100) {
-    return <span className="rounded-full bg-[#B23B30]/15 px-2 py-0.5 text-[10px] font-bold text-[#B23B30]">at session limit</span>;
+    return <span className="rounded-full bg-[#B23B30]/15 px-2 py-0.5 text-[10px] font-bold text-[#B23B30]">{t('launcher.account.atSessionLimit')}</span>;
   }
   if (usage && !usage.available) {
     const dead = usage.reason === 'http-401';
@@ -38,19 +40,20 @@ function StateBadge({ account, usage }) {
     return (
       <span className="rounded-full bg-chip px-2 py-0.5 text-[10px] text-fgdim">
         {dead
-          ? 'token invalid — re-add'
+          ? t('launcher.account.tokenInvalid')
           : noScope
-            ? 'usage needs re-login (old token scope)'
+            ? t('launcher.account.usageNeedsRelogin')
             : usage.reason === 'no-credentials'
-              ? 'not signed in'
-              : 'unavailable'}
+              ? t('launcher.account.notSignedIn')
+              : t('launcher.account.unavailable')}
       </span>
     );
   }
-  return <span className="rounded-full bg-[#3C9A4E]/15 px-2 py-0.5 text-[10px] font-bold text-[#3C9A4E]">available</span>;
+  return <span className="rounded-full bg-[#3C9A4E]/15 px-2 py-0.5 text-[10px] font-bold text-[#3C9A4E]">{t('launcher.account.available')}</span>;
 }
 
 function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove }) {
+  const t = useT();
   const initial = ((account.label || '').trim()[0] || '?').toUpperCase();
   return (
     <div className={`rounded-[10px] border p-3.5 ${account.active ? 'border-ink bg-chip/40' : 'border-hair bg-panel'}`}>
@@ -62,10 +65,10 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[13.5px] font-bold text-fg">{account.label}</span>
             {account.active && (
-              <span className="rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold text-panel">active</span>
+              <span className="rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold text-panel">{t('launcher.account.active')}</span>
             )}
             <span className="rounded-full border border-hair px-2 py-0.5 text-[10px] text-fgdim">
-              {TYPE_LABEL[account.type] || account.type}
+              {TYPE_LABEL[account.type] ? t(TYPE_LABEL[account.type]) : account.type}
             </span>
             <StateBadge account={account} usage={usage} />
           </div>
@@ -75,7 +78,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
             </div>
           ) : account.type === 'oauth-token' ? (
             <div className="mt-0.5 text-[10.5px] text-fgdim">
-              browser token · identity not exposed by this token type
+              {t('launcher.account.browserToken')}
             </div>
           ) : null}
         </div>
@@ -83,15 +86,15 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
 
       {usage?.available && (usage.session || usage.week) ? (
         <div className="mt-2 pl-12">
-          <UsageBar label="Session (5h)" win={usage.session} sub />
-          <UsageBar label="Week (all models)" win={usage.week} sub />
+          <UsageBar label={t('launcher.account.usageSession')} win={usage.session} sub />
+          <UsageBar label={t('launcher.account.usageWeek')} win={usage.week} sub />
         </div>
       ) : usage && !usage.available && usage.reason === 'http-403' ? (
         <div className="mt-2 pl-12 font-mono text-[10.5px] text-fgdim">
-          usage hidden for this token — remove &amp; re-add the account to grant the new login scope
+          {t('launcher.account.usageHidden')}
         </div>
       ) : (
-        <div className="mt-2 pl-12 font-mono text-[10.5px] text-fgdim">checking usage…</div>
+        <div className="mt-2 pl-12 font-mono text-[10.5px] text-fgdim">{t('launcher.account.checkingUsage')}</div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2 pl-12">
@@ -102,7 +105,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
             onClick={() => onSetActive(account.id)}
             className="rounded-[6px] border border-border px-2.5 py-1 text-[11.5px] text-fg hover:border-ink disabled:opacity-50"
           >
-            Set active
+            {t('launcher.account.setActive')}
           </button>
         )}
         <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-fgdim">
@@ -112,7 +115,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
             disabled={busy}
             onChange={(e) => onSetPool(account.id, e.target.checked)}
           />
-          In auto-switch pool
+          {t('launcher.account.inPool')}
         </label>
         {account.type !== 'keychain' && (
           <button
@@ -121,7 +124,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
             onClick={() => onRemove(account)}
             className="ml-auto rounded-[6px] border border-border px-2.5 py-1 text-[11.5px] text-[#B23B30] hover:border-[#B23B30] disabled:opacity-50"
           >
-            Remove
+            {t('launcher.account.remove')}
           </button>
         )}
       </div>
@@ -130,6 +133,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
 }
 
 export default function AccountsView({ onClose, initialAdd = false }) {
+  const t = useT();
   const { accounts, accountUsage } = useStore();
   const list = accounts?.accounts || [];
   const [busy, setBusy] = useState(false);
@@ -167,15 +171,15 @@ export default function AccountsView({ onClose, initialAdd = false }) {
   const setPool = (id, pool) => run(() => api.post('/accounts/pool', { id, pool }));
   const remove = async (account) => {
     const ok = await confirmDialog({
-      title: `Remove "${account.label || 'this account'}"?`,
-      body: 'Sessions on it fall back to the active account on their next restart.',
-      confirmLabel: 'Remove account',
+      title: t('launcher.account.removeConfirmTitle', { name: account.label || t('launcher.account.thisAccount') }),
+      body: t('launcher.account.removeConfirmBody'),
+      confirmLabel: t('launcher.account.removeConfirm'),
       danger: true,
     });
     if (!ok) return;
     run(async () => {
       await api.post('/accounts/remove', { id: account.id });
-      toastSuccess('Account removed');
+      toastSuccess(t('launcher.account.removedToast'));
     });
   };
   const add = () =>
@@ -193,7 +197,7 @@ export default function AccountsView({ onClose, initialAdd = false }) {
     setErr('');
     try {
       const r = await api.post('/accounts/oauth/start', { label: label.trim() || undefined });
-      if (r?.state === 'error') throw new Error(r.error || 'could not start authentication');
+      if (r?.state === 'error') throw new Error(r.error || t('launcher.account.startAuthError'));
       setAuth(r); // { id, url, state: 'awaiting-code' }
       setAuthId(r.id);
       setCode('');
@@ -212,7 +216,7 @@ export default function AccountsView({ onClose, initialAdd = false }) {
     try {
       const r = await api.post('/accounts/oauth/code', { id: authId, code: code.trim() });
       if (!r?.ok) {
-        setAuth((a) => ({ ...(a || {}), state: 'error', error: r?.error || 'token exchange failed' }));
+        setAuth((a) => ({ ...(a || {}), state: 'error', error: r?.error || t('launcher.account.exchangeFailed') }));
         return;
       }
       setAuthId(null);
@@ -240,14 +244,14 @@ export default function AccountsView({ onClose, initialAdd = false }) {
     <div className="flex h-full flex-col bg-bg">
       <div className="flex items-center gap-2 border-b border-hair px-4 py-2.5">
         <span className="text-[14px]"><Icon icon={faUser} /></span>
-        <span className="text-[13.5px] font-bold text-fg">Accounts</span>
-        <span className="text-[11px] text-fgdim">· which Claude login the host runs sessions on</span>
+        <span className="text-[13.5px] font-bold text-fg">{t('launcher.account.title')}</span>
+        <span className="text-[11px] text-fgdim">{t('launcher.account.subtitle')}</span>
         <button
           type="button"
           onClick={onClose}
           className="ml-auto rounded-[6px] border border-border px-2.5 py-1 text-[11.5px] text-fgdim hover:border-ink hover:text-fg"
         >
-          Close
+          {t('launcher.account.close')}
         </button>
       </div>
 
@@ -273,7 +277,7 @@ export default function AccountsView({ onClose, initialAdd = false }) {
 
           {accounts && list.length === 0 && (
             <div className="rounded-[8px] border border-hair bg-panel px-3 py-4 text-center text-[12px] text-fgdim">
-              No accounts yet. Add one below.
+              {t('launcher.account.emptyList')}
             </div>
           )}
 
@@ -283,21 +287,20 @@ export default function AccountsView({ onClose, initialAdd = false }) {
               onClick={() => setAddMode('choose')}
               className="rounded-[10px] border border-dashed border-border px-3 py-3 text-[12px] text-fgdim hover:border-ink hover:text-fg"
             >
-              + Add account
+              {t('launcher.account.addAccount')}
             </button>
           )}
 
           {addMode === 'choose' && (
             <div className="rounded-[10px] border border-hair bg-panel p-3.5">
-              <div className="text-[12.5px] font-bold text-fg">Add an account</div>
+              <div className="text-[12.5px] font-bold text-fg">{t('launcher.account.addHeading')}</div>
               <p className="mt-1 text-[11px] leading-snug text-fgdim">
-                Sign in through your browser — the token is created and stored automatically. Make sure the browser is
-                logged into the Claude account you want to add.
+                {t('launcher.account.addBody')}
               </p>
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="Label (e.g. Work · Acme)"
+                placeholder={t('launcher.account.labelPlaceholder')}
                 className="mt-2.5 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink"
               />
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -307,21 +310,21 @@ export default function AccountsView({ onClose, initialAdd = false }) {
                   onClick={startAuth}
                   className="rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-bold text-panel hover:opacity-90 disabled:opacity-40"
                 >
-                  🔓 Authenticate with browser
+                  {t('launcher.account.authBrowser')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setAddMode('paste')}
                   className="rounded-[6px] border border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:border-ink hover:text-fg"
                 >
-                  Paste a token instead
+                  {t('launcher.account.pasteInstead')}
                 </button>
                 <button
                   type="button"
                   onClick={() => { setAddMode(null); setLabel(''); }}
                   className="ml-auto text-[11.5px] text-fgdim hover:text-fg"
                 >
-                  Cancel
+                  {t('launcher.account.cancel')}
                 </button>
               </div>
             </div>
@@ -329,33 +332,33 @@ export default function AccountsView({ onClose, initialAdd = false }) {
 
           {addMode === 'auth' && (
             <div className="rounded-[10px] border border-hair bg-panel p-3.5">
-              <div className="text-[12.5px] font-bold text-fg">Add account{label ? ` · ${label}` : ''}</div>
+              <div className="text-[12.5px] font-bold text-fg">{t('launcher.account.addAccountTitle')}{label ? ` · ${label}` : ''}</div>
               <ol className="mt-1.5 ml-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
                 <li>
-                  Approve in the browser
+                  {t('launcher.account.step1a')}
                   {auth?.url && (
                     <>
                       {' — '}
                       <a href={auth.url} target="_blank" rel="noreferrer" className="text-[#2C6BD6] underline">
-                        open the sign-in page ↗
+                        {t('launcher.account.openSignIn')}
                       </a>
                     </>
                   )}
-                  . Sign in as the account you want to add.
+                  {t('launcher.account.step1b')}
                 </li>
-                <li>Copy the code it shows you and paste it below.</li>
+                <li>{t('launcher.account.step2')}</li>
               </ol>
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && code.trim() && !busy) submitCode(); }}
-                placeholder="Paste the code (looks like abc123…#xyz)"
+                placeholder={t('launcher.account.codePlaceholder')}
                 spellCheck={false}
                 autoFocus
                 className="mt-2.5 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[11.5px] text-fg outline-none focus:border-ink"
               />
               {auth?.state === 'error' && (
-                <p className="mt-1.5 text-[11.5px] text-[#B23B30]">{auth.error || 'Token exchange failed — try again.'}</p>
+                <p className="mt-1.5 text-[11.5px] text-[#B23B30]">{auth.error || t('launcher.account.exchangeFailedRetry')}</p>
               )}
               <div className="mt-2.5 flex items-center gap-2">
                 <button
@@ -364,24 +367,24 @@ export default function AccountsView({ onClose, initialAdd = false }) {
                   onClick={submitCode}
                   className="rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-bold text-panel hover:opacity-90 disabled:opacity-40"
                 >
-                  {busy ? 'Finishing…' : 'Finish'}
+                  {busy ? t('launcher.account.finishing') : t('launcher.account.finish')}
                 </button>
-                <button type="button" onClick={cancelAuth} className="text-[11.5px] text-fgdim hover:text-fg">Cancel</button>
+                <button type="button" onClick={cancelAuth} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
               </div>
             </div>
           )}
 
           {addMode === 'paste' && (
             <div className="rounded-[10px] border border-hair bg-panel p-3.5">
-              <div className="text-[12.5px] font-bold text-fg">Paste a token</div>
+              <div className="text-[12.5px] font-bold text-fg">{t('launcher.account.pasteTitle')}</div>
               <p className="mt-1 text-[11px] leading-snug text-fgdim">
-                Run <code className="rounded bg-chip px-1 font-mono">claude setup-token</code> yourself and paste the{' '}
-                <code className="font-mono">sk-ant-oat…</code> token here.
+                {t('launcher.account.pasteBodyA')} <code className="rounded bg-chip px-1 font-mono">claude setup-token</code> {t('launcher.account.pasteBodyB')}{' '}
+                <code className="font-mono">sk-ant-oat…</code> {t('launcher.account.pasteBodyC')}
               </p>
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="Label (e.g. Work · Acme)"
+                placeholder={t('launcher.account.labelPlaceholder')}
                 className="mt-2.5 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink"
               />
               <input
@@ -392,15 +395,14 @@ export default function AccountsView({ onClose, initialAdd = false }) {
                 className="mt-2 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[11.5px] text-fg outline-none focus:border-ink"
               />
               <div className="mt-2.5 flex items-center gap-2">
-                <button type="button" disabled={busy || !token.trim()} onClick={add} className="rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-bold text-panel hover:opacity-90 disabled:opacity-40">Add account</button>
-                <button type="button" onClick={() => setAddMode('choose')} className="text-[11.5px] text-fgdim hover:text-fg">Back</button>
+                <button type="button" disabled={busy || !token.trim()} onClick={add} className="rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-bold text-panel hover:opacity-90 disabled:opacity-40">{t('launcher.account.addAccountBtn')}</button>
+                <button type="button" onClick={() => setAddMode('choose')} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.back')}</button>
               </div>
             </div>
           )}
 
           <p className="mt-1 px-1 text-[10.5px] leading-snug text-fgdim">
-            <b>Active</b> is the default account for new sessions. The <b>auto-switch pool</b> is the set of accounts a
-            session may rotate to when its account hits a limit. Switching an account never exposes its token.
+            <b>{t('launcher.account.footerActive')}</b> {t('launcher.account.footer1')} <b>{t('launcher.account.footerPool')}</b> {t('launcher.account.footer2')}
           </p>
         </div>
       </div>

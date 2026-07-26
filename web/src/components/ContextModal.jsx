@@ -1,14 +1,15 @@
 import { useEffect } from 'react';
 import { fmtTokens, contextColor } from './ui.jsx';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
+import { useT } from '../lib/i18n.js';
 
 // Context categories we can derive from the stream-json usage block. (Claude
 // Code's /context splits further — system prompt, tools, memory… — but the
 // stream doesn't expose those, so we show the honest token-level breakdown.)
 const CATS = [
-  { key: 'cacheRead', label: 'Cached context', color: '#6b8db5' },
-  { key: 'cacheCreation', label: 'Cache write', color: '#4aa3a3' },
-  { key: 'input', label: 'Fresh input', color: '#caa53d' },
+  { key: 'cacheRead', labelKey: 'dialogs.ctxCachedContext', color: '#6b8db5' },
+  { key: 'cacheCreation', labelKey: 'dialogs.ctxCacheWrite', color: '#4aa3a3' },
+  { key: 'input', labelKey: 'dialogs.ctxFreshInput', color: '#caa53d' },
 ];
 
 const COLS = 20;
@@ -18,6 +19,7 @@ const CELLS = COLS * ROWS; // each cell ≈ 1/200th of the window
 // A grid "context view" like /context: each cell is a slice of the window,
 // coloured by what occupies it; the rest is free space.
 export default function ContextModal({ usage, onClose }) {
+  const t = useT();
   const prefs = usePrefs();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
@@ -33,7 +35,7 @@ export default function ContextModal({ usage, onClose }) {
 
   const segs = CATS.map((c) => {
     const tokens = bd[c.key] || 0;
-    return { ...c, tokens, cells: Math.round((tokens / win) * CELLS), pct: Math.round((tokens / win) * 100) };
+    return { ...c, label: t(c.labelKey), tokens, cells: Math.round((tokens / win) * CELLS), pct: Math.round((tokens / win) * 100) };
   });
 
   // Lay the coloured cells out sequentially, then fill the remainder as free.
@@ -42,7 +44,7 @@ export default function ContextModal({ usage, onClose }) {
   while (cells.length < CELLS) cells.push(null);
 
   const rows = [...segs, {
-    key: 'free', label: 'Free space', color: 'var(--color-border)',
+    key: 'free', label: t('dialogs.ctxFreeSpace'), color: 'var(--color-border)',
     tokens: freeTokens, pct: Math.max(0, 100 - pct),
   }];
 
@@ -56,7 +58,7 @@ export default function ContextModal({ usage, onClose }) {
         className="w-[480px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
       >
         <div className="flex items-center justify-between border-b border-hair px-[18px] py-3">
-          <div className="text-[15px] font-bold">Context window</div>
+          <div className="text-[15px] font-bold">{t('dialogs.contextWindow')}</div>
           <div className="flex items-center gap-2 font-mono text-[11px] text-fgdim">
             <span className="font-bold" style={{ color: contextColor(pct) }}>{pct}%</span>
             <span>{fmtTokens(used)} / {fmtTokens(win)}</span>
@@ -94,7 +96,7 @@ export default function ContextModal({ usage, onClose }) {
               onChange={(e) => setPrefs({ autoCompact: e.target.checked })}
               className="h-[14px] w-[14px] shrink-0 cursor-pointer accent-[var(--color-ink)]"
             />
-            <span className="flex-1 text-fg">Auto-compact when context reaches</span>
+            <span className="flex-1 text-fg">{t('dialogs.autoCompactWhenReaches')}</span>
             <input
               type="number"
               min={50}
@@ -107,7 +109,7 @@ export default function ContextModal({ usage, onClose }) {
             <span className="font-mono text-[11px] text-fgdim">%</span>
           </label>
           <div className="mt-1.5 pl-[24px] text-[11px] text-fgdim">
-            Runs <span className="font-mono">/compact</span> once when this session is idle.
+            {t('dialogs.ctxRunsCompactBefore')} <span className="font-mono">/compact</span> {t('dialogs.ctxRunsCompactAfter')}
           </div>
         </div>
 
@@ -117,7 +119,7 @@ export default function ContextModal({ usage, onClose }) {
             onClick={onClose}
             className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
           >
-            Close
+            {t('dialogs.close')}
           </button>
         </div>
       </div>

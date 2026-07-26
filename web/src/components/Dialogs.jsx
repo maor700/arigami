@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
+import { useT } from '../lib/i18n.js';
 import { sessionLabel, Dot, YellowButton, GhostButton } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faFolder } from '@fortawesome/free-solid-svg-icons';
@@ -26,6 +27,7 @@ function Overlay({ onClose, children }) {
 }
 
 export function ArchiveDialog({ session, onClose }) {
+  const t = useT();
   const cleanup = session.metadata?.cleanup;
   const hasCleanup = Array.isArray(cleanup) && cleanup.length > 0;
   const [removeWorktree, setRemoveWorktree] = useState(true);
@@ -50,11 +52,10 @@ export function ArchiveDialog({ session, onClose }) {
     <Overlay onClose={onClose}>
       <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
         <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">Archive this session?</div>
+          <div className="text-[17px] leading-tight font-bold">{t('dialogs.archiveTitle')}</div>
           <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
             <span className="font-mono font-bold text-fg">{sessionLabel(session)}</span>{' '}
-            moves to <em>Archived</em>. The branch and PR stay on GitHub — you can restore it
-            anytime.
+            {t('dialogs.archiveBody')}
           </p>
         </div>
         {hasCleanup && (
@@ -70,7 +71,7 @@ export function ArchiveDialog({ session, onClose }) {
             </span>
             <span className="min-w-0">
               <span className="block text-[12.5px] font-bold text-fg">
-                Also remove the git worktree
+                {t('dialogs.alsoRemoveWorktree')}
               </span>
               {session.metadata?.worktree && (
                 <span className="mt-0.5 block font-mono text-[10.5px] text-fgdim">
@@ -85,16 +86,16 @@ export function ArchiveDialog({ session, onClose }) {
                 ))}
               </span>
               <span className="mt-1 block text-[11px] leading-snug text-fgdim">
-                Frees disk and stops the dev server. Uncommitted changes are lost.
+                {t('dialogs.worktreeFreesDisk')}
               </span>
             </span>
           </div>
         )}
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
           <YellowButton onClick={archive} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? 'Archiving…' : 'Archive'}
+            {busy ? t('dialogs.archiving') : t('dialogs.archive')}
           </YellowButton>
         </div>
       </div>
@@ -107,6 +108,7 @@ export function ArchiveDialog({ session, onClose }) {
 const STATUS_SUGGESTIONS = ['In Progress', 'In Review', 'Blocked', 'Verified', 'Done'];
 
 export function EditSessionDialog({ session, onClose }) {
+  const t = useT();
   const [title, setTitle] = useState(session.title || '');
   const [status, setStatus] = useState(session.status || '');
   const [description, setDescription] = useState(session.metadata?.description || '');
@@ -136,11 +138,11 @@ export function EditSessionDialog({ session, onClose }) {
     <Overlay onClose={onClose}>
       <div className="w-[420px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
         <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">Edit session</div>
+          <div className="text-[17px] leading-tight font-bold">{t('dialogs.editSession')}</div>
         </div>
         <div className="flex flex-col gap-3 px-[18px] pt-3.5">
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">Title</span>
+            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.title')}</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -150,7 +152,7 @@ export function EditSessionDialog({ session, onClose }) {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">Status</span>
+            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.status')}</span>
             <input
               value={status}
               onChange={(e) => setStatus(e.target.value)}
@@ -166,21 +168,21 @@ export function EditSessionDialog({ session, onClose }) {
             </datalist>
           </label>
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">Description</span>
+            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.description')}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="What is this session about? (shown in the rail)"
+              placeholder={t('dialogs.descriptionPlaceholder')}
               className={`${field} resize-none`}
             />
           </label>
         </div>
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
           <YellowButton onClick={save} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? 'Saving…' : 'Save'}
+            {busy ? t('dialogs.saving') : t('dialogs.save')}
           </YellowButton>
         </div>
       </div>
@@ -199,6 +201,7 @@ function suggestFolderName(a, b) {
 }
 
 function FolderNameShell({ title, children, name, setName, busy, error, submitLabel, onSubmit, onClose }) {
+  const t = useT();
   return (
     <Overlay onClose={onClose}>
       <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
@@ -209,7 +212,7 @@ function FolderNameShell({ title, children, name, setName, busy, error, submitLa
         <div className="px-[18px] pt-3.5">
           <label className="block">
             <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-              Folder name
+              {t('dialogs.folderName')}
             </span>
             <input
               value={name}
@@ -223,7 +226,7 @@ function FolderNameShell({ title, children, name, setName, busy, error, submitLa
         </div>
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
           <YellowButton onClick={onSubmit} disabled={busy} className="px-4 py-2 text-[12.5px]">
             {busy ? '…' : submitLabel}
           </YellowButton>
@@ -236,6 +239,7 @@ function FolderNameShell({ title, children, name, setName, busy, error, submitLa
 // Drop-session-on-session → group them. Cancel is a total no-op (no reorder
 // happened yet — the drop only opened this dialog).
 export function CreateFolderDialog({ target, dragged, onClose }) {
+  const t = useT();
   const [name, setName] = useState(suggestFolderName(target, dragged));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -265,12 +269,12 @@ export function CreateFolderDialog({ target, dragged, onClose }) {
 
   return (
     <FolderNameShell
-      title="Create folder?"
+      title={t('dialogs.createFolderTitle')}
       name={name}
       setName={setName}
       busy={busy}
       error={error}
-      submitLabel="Create folder"
+      submitLabel={t('dialogs.createFolder')}
       onSubmit={create}
       onClose={onClose}
     >
@@ -288,6 +292,7 @@ export function CreateFolderDialog({ target, dragged, onClose }) {
 
 // Manual creation (the + folder button) and rename share the name shell.
 export function FolderNameDialog({ folder, onClose }) {
+  const t = useT();
   const renaming = !!folder;
   const [name, setName] = useState(folder?.name || 'New folder');
   const [busy, setBusy] = useState(false);
@@ -308,12 +313,12 @@ export function FolderNameDialog({ folder, onClose }) {
 
   return (
     <FolderNameShell
-      title={renaming ? 'Rename folder' : 'New folder'}
+      title={renaming ? t('dialogs.renameFolder') : t('dialogs.newFolder')}
       name={name}
       setName={setName}
       busy={busy}
       error={error}
-      submitLabel={renaming ? 'Rename' : 'Create'}
+      submitLabel={renaming ? t('dialogs.rename') : t('dialogs.create')}
       onSubmit={submit}
       onClose={onClose}
     />
@@ -325,6 +330,7 @@ export function FolderNameDialog({ folder, onClose }) {
 // human keeps working with every child directly — the controller is an
 // additional bird's-eye authority, never a replacement.
 export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
+  const t = useT();
   const [cwd, setCwd] = useState(defaultCwd || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -348,35 +354,32 @@ export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
       <div className="w-[420px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
         <div className="px-[18px] pt-4">
           <div className="text-[17px] leading-tight font-bold">
-            Make “{folder.name}” a project folder?
+            {t('dialogs.makeProjectTitle', { name: folder.name })}
           </div>
           <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            Spawns a dedicated <strong>controller session</strong> that manages the
-            sessions in this folder — it can task them, create new ones and track
-            progress. You still work with every session directly and approve all
-            changes yourself.
+            {t('dialogs.makeProjectBody')}
           </p>
         </div>
         <div className="px-[18px] pt-3.5">
           <label className="block">
             <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
-              Controller working directory
+              {t('dialogs.controllerWorkingDir')}
             </span>
             <input
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && make()}
               autoFocus
-              placeholder="defaults to the members' most common repo"
+              placeholder={t('dialogs.controllerCwdPlaceholder')}
               className="w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-fgdim"
             />
           </label>
         </div>
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
           <YellowButton onClick={make} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? 'Creating…' : 'Create controller'}
+            {busy ? t('dialogs.creating') : t('dialogs.createController')}
           </YellowButton>
         </div>
       </div>
@@ -388,6 +391,7 @@ export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
 // Purge is the only place a folder action can destroy sessions — the server
 // runs cleanup only for sessions that own their worktree.
 export function DeleteFolderDialog({ folder, children: kids, onClose }) {
+  const t = useT();
   const [busy, setBusy] = useState(null); // 'ungroup' | 'purge'
   const [error, setError] = useState(null);
 
@@ -408,10 +412,12 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
       <div className="w-[400px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
         <div className="px-[18px] pt-4">
           <div className="flex items-center gap-2 text-[17px] leading-tight font-bold">
-            <Icon icon={faFolder} className="text-fgdim" /> Delete “{folder.name}”
+            <Icon icon={faFolder} className="text-fgdim" /> {t('dialogs.deleteFolderTitle', { name: folder.name })}
           </div>
           <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            {kids.length} session{kids.length === 1 ? '' : 's'} inside:
+            {kids.length === 1
+              ? t('dialogs.folderSessionCountOne', { count: kids.length })
+              : t('dialogs.folderSessionCountOther', { count: kids.length })}
           </p>
           <div className="mt-1.5 flex max-h-32 flex-col gap-1 overflow-y-auto text-[12px] text-fgdim">
             {kids.map((s) => (
@@ -425,7 +431,7 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex flex-col gap-2 p-[16px_18px]">
           <YellowButton onClick={() => run('ungroup')} disabled={!!busy} className="w-full px-4 py-2 text-[12.5px]">
-            {busy === 'ungroup' ? 'Deleting…' : 'Delete folder only — sessions move back to the sidebar'}
+            {busy === 'ungroup' ? t('dialogs.deleting') : t('dialogs.deleteFolderOnly')}
           </YellowButton>
           <button
             type="button"
@@ -434,10 +440,12 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
             className="w-full cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:opacity-50"
           >
             {busy === 'purge'
-              ? 'Deleting…'
-              : `Delete folder and all ${kids.length} session${kids.length === 1 ? '' : 's'}`}
+              ? t('dialogs.deleting')
+              : kids.length === 1
+                ? t('dialogs.deleteFolderAndSessionsOne', { count: kids.length })
+                : t('dialogs.deleteFolderAndSessionsOther', { count: kids.length })}
           </button>
-          <GhostButton onClick={onClose} className="w-full">Cancel</GhostButton>
+          <GhostButton onClick={onClose} className="w-full">{t('dialogs.cancel')}</GhostButton>
         </div>
       </div>
     </Overlay>
@@ -445,6 +453,7 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
 }
 
 export function DeleteDialog({ session, onClose, onDeleted }) {
+  const t = useT();
   const cleanup = session.metadata?.cleanup;
   const hasCleanup = Array.isArray(cleanup) && cleanup.length > 0;
   const [busy, setBusy] = useState(false);
@@ -468,13 +477,12 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
       <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-danger bg-panel text-fg shadow-[5px_6px_0_rgba(178,59,48,0.25)]">
         <div className="px-[18px] pt-4">
           <div className="text-[17px] leading-tight font-bold text-danger">
-            Delete permanently?
+            {t('dialogs.deletePermanentlyTitle')}
           </div>
           <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            This removes{' '}
+            {t('dialogs.deleteBodyBefore')}{' '}
             <span className="font-mono font-bold text-fg">{sessionLabel(session)}</span>{' '}
-            from Host for good — worktree, local branch and session history.{' '}
-            <strong>Can&rsquo;t be undone.</strong>
+            {t('dialogs.deleteBodyAfter')}
           </p>
         </div>
         {hasCleanup && (
@@ -488,14 +496,14 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
         )}
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>Cancel</GhostButton>
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
           <button
             type="button"
             onClick={del}
             disabled={busy}
             className="cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:opacity-50"
           >
-            {busy ? 'Deleting…' : 'Delete'}
+            {busy ? t('dialogs.deleting') : t('dialogs.delete')}
           </button>
         </div>
       </div>

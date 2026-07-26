@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { extractTicketId, buildTicketPayload } from './Launcher.jsx';
 import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
 import { faArrowUp } from '@fortawesome/free-solid-svg-icons';
 
 // No sessions yet → full-page launcher: big wave glyph + a single paste field.
 export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }) {
+  const t = useT();
   const [val, setVal] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -14,7 +16,7 @@ export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }
     if (busy) return; // guard: Enter can fire while a POST is already in flight
     const id = extractTicketId(val);
     if (!id) {
-      setError('Paste a Linear URL or an ID like ENG-16498.');
+      setError(t('launcher.firstRun.pasteError'));
       return;
     }
     setBusy(true);
@@ -26,7 +28,7 @@ export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }
       );
       onCreated(session);
     } catch (e) {
-      setError(`Couldn't create the session — ${String(e.message || e)}`);
+      setError(t('launcher.firstRun.createError', { msg: String(e.message || e) }));
       setBusy(false);
     }
   };
@@ -39,9 +41,9 @@ export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }
           <span key={i} className="inline-block w-1 bg-brand" style={{ height: h }} />
         ))}
       </span>
-      <div className="mb-1 text-[26px] leading-tight font-bold">What are we building?</div>
+      <div className="mb-1 text-[26px] leading-tight font-bold">{t('launcher.firstRun.heading')}</div>
       <div className="mb-3.5 text-[11.5px] text-fgdim">
-        Paste a Linear ticket to spin up your first session.
+        {t('launcher.firstRun.sub')}
       </div>
       <div className="flex w-[320px] max-w-[90%] items-center gap-[9px] rounded-[10px] border-[1.5px] border-ink px-[13px] py-2.5 focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
         <span
@@ -60,7 +62,7 @@ export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }
           type="button"
           onClick={submit}
           disabled={busy}
-          title="Create session"
+          title={t('launcher.firstRun.createTitle')}
           className="flex h-[26px] w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50"
         >
           {busy ? '…' : <Icon icon={faArrowUp} />}
@@ -72,7 +74,7 @@ export default function FirstRun({ config, sessions, onCreated, onOpenLauncher }
         onClick={onOpenLauncher}
         className="mt-5 cursor-pointer text-xs text-fgdim underline-offset-2 hover:underline"
       >
-        or browse tickets / start an empty session
+        {t('launcher.firstRun.browse')}
       </button>
     </div>
   );

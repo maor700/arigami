@@ -5,6 +5,7 @@ import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { startRecording, stopRecording, toggleRecording, setSelectedContext } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
+import { useT } from './lib/i18n.js';
 import { Icon } from './lib/icons.js';
 import {
   faBars,
@@ -132,6 +133,7 @@ function isTyping(e) {
 // /__ticket/<id> host page create-from-ticket opens as a tab, shown standalone
 // since there's no session yet. "Start session" promotes it via the queue.
 function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
+  const t = useT();
   // The pending item already carries a title from trigger time — pass it
   // through so the card can show *something* if the live Linear fetch fails
   // (e.g. no API key configured, or the ticket was never cached) instead of
@@ -144,26 +146,26 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
         <span className="font-mono text-[12.5px] font-bold">{ticket}</span>
         <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
-          pending
+          {t('chrome.ticket.pending')}
         </span>
         <button
           type="button"
           onClick={onStart}
           className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
         >
-          Start session →
+          {t('chrome.ticket.startSession')}
         </button>
         <button
           type="button"
           onClick={onClose}
-          title="Close preview"
+          title={t('chrome.ticket.closePreview')}
           className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
         >
           ×
         </button>
       </div>
       <iframe
-        title={`Ticket ${ticket}`}
+        title={t('chrome.ticket.iframeTitle', { id: ticket })}
         src={src}
         className="min-h-0 flex-1 border-0"
       />
@@ -172,6 +174,7 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
 }
 
 export default function App() {
+  const t = useT();
   const { sessions, chats, chatLoaded, conn, config, pending } = useStore();
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
@@ -614,23 +617,23 @@ export default function App() {
     );
   };
   const paletteActions = [
-    { id: 'new-empty', label: 'New empty session', keywords: 'create scratch blank', icon: faPlus, run: () => {
+    { id: 'new-empty', label: t('chrome.palette.newEmpty'), keywords: t('chrome.palette.newEmpty.kw'), icon: faPlus, run: () => {
       const cfg = getState().config;
       api.post('/sessions', { title: scratchName(getState().sessions), cwd: cfg?.reposDir || cfg?.defaultCwd || undefined })
         .then((s) => { if (s?.id) { setSelectedId(s.id); setLauncher(null); } }).catch(() => {});
     } },
-    { id: 'new-ticket', label: 'New session from a ticket…', keywords: 'launcher linear create start', icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
-    { id: 'settings', label: 'Open Settings', keywords: 'preferences theme voice', icon: faGear, run: () => setSettingsOpen(true) },
-    { id: 'skills', label: 'Open Skills', keywords: 'skill pack', icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
-    { id: 'accounts', label: 'Open Accounts', keywords: 'account login switch', icon: faCircleUser, run: () => setAccountsOpen(true) },
-    { id: 'setup', label: 'Open Setup / workspace', keywords: 'onboarding repos', icon: faHouse, run: () => setSetupOpen(true) },
-    { id: 'shortcuts', label: 'Keyboard shortcuts', keywords: 'help keys cheat sheet', icon: faQuestion, run: () => setShortcutsOpen(true) },
-    { id: 'theme', label: 'Toggle light / dark theme', keywords: 'appearance dark mode', icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
+    { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
+    { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: faGear, run: () => setSettingsOpen(true) },
+    { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
+    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => setAccountsOpen(true) },
+    { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: faHouse, run: () => setSetupOpen(true) },
+    { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: faQuestion, run: () => setShortcutsOpen(true) },
+    { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
     ...(selected ? [
-      { id: 'changes', label: 'Open Changes (current session)', keywords: 'diff git review', icon: faPlusMinus, run: goToChanges },
-      { id: 'edit', label: 'Edit session details', keywords: 'rename title status description', icon: faPen, run: () => setDialog({ type: 'edit', session: selected }) },
-      { id: 'archive', label: 'Archive current session', keywords: 'close hide', icon: faBoxArchive, run: () => setDialog({ type: 'archive', session: selected }) },
-      { id: 'delete', label: 'Delete current session', keywords: 'remove', icon: faTrash, run: () => setDialog({ type: 'delete', session: selected }) },
+      { id: 'changes', label: t('chrome.palette.changes'), keywords: t('chrome.palette.changes.kw'), icon: faPlusMinus, run: goToChanges },
+      { id: 'edit', label: t('chrome.palette.edit'), keywords: t('chrome.palette.edit.kw'), icon: faPen, run: () => setDialog({ type: 'edit', session: selected }) },
+      { id: 'archive', label: t('chrome.palette.archive'), keywords: t('chrome.palette.archive.kw'), icon: faBoxArchive, run: () => setDialog({ type: 'archive', session: selected }) },
+      { id: 'delete', label: t('chrome.palette.delete'), keywords: t('chrome.palette.delete.kw'), icon: faTrash, run: () => setDialog({ type: 'delete', session: selected }) },
     ] : []),
   ];
 
@@ -641,15 +644,15 @@ export default function App() {
     !!selected && !settingsOpen && !skillsOpen && !setupOpen && !accountsOpen && !launcher && !previewTicket;
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
-    ? 'Settings'
+    ? t('settings.title')
     : skillsOpen
-      ? 'Skills'
+      ? t('chrome.topbar.skills')
       : setupOpen
-        ? 'Setup'
+        ? t('chrome.topbar.setup')
         : accountsOpen
-          ? 'Accounts'
+          ? t('chrome.topbar.accounts')
           : launcher
-            ? 'New session'
+            ? t('chrome.topbar.newSession')
             : previewTicket || selected?.title || 'Arigami';
 
   let main;
@@ -763,7 +766,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setRailOpen(true)}
-              aria-label="Open sessions"
+              aria-label={t('chrome.topbar.openSessions')}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[15px] text-fg"
             >
               <Icon icon={faBars} />
@@ -775,7 +778,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => toggleRecording()}
-              aria-label="Voice control"
+              aria-label={t('chrome.voice.section')}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[13px] text-fg"
             >
               <Icon icon={faMicrophone} />
@@ -784,7 +787,7 @@ export default function App() {
         )}
         {conn !== 'open' && (
           <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
-            {conn === 'connecting' ? 'connecting to host…' : 'host offline — retrying'}
+            {conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
         {main}

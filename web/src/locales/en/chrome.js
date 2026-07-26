@@ -1,0 +1,88 @@
+export const strings = {
+  // App — connection status
+  'chrome.conn.connecting': 'connecting to host…',
+  'chrome.conn.offline': 'host offline — retrying',
+
+  // App — top bar
+  'chrome.topbar.skills': 'Skills',
+  'chrome.topbar.setup': 'Setup',
+  'chrome.topbar.accounts': 'Accounts',
+  'chrome.topbar.newSession': 'New session',
+  'chrome.topbar.openSessions': 'Open sessions',
+
+  // App — ticket preview
+  'chrome.ticket.pending': 'pending',
+  'chrome.ticket.startSession': 'Start session →',
+  'chrome.ticket.closePreview': 'Close preview',
+  'chrome.ticket.iframeTitle': 'Ticket {id}',
+
+  // App — command palette
+  'chrome.palette.newEmpty': 'New empty session',
+  'chrome.palette.newEmpty.kw': 'create scratch blank',
+  'chrome.palette.newTicket': 'New session from a ticket…',
+  'chrome.palette.newTicket.kw': 'launcher linear create start',
+  'chrome.palette.settings': 'Open Settings',
+  'chrome.palette.settings.kw': 'preferences theme voice',
+  'chrome.palette.skills': 'Open Skills',
+  'chrome.palette.skills.kw': 'skill pack',
+  'chrome.palette.accounts': 'Open Accounts',
+  'chrome.palette.accounts.kw': 'account login switch',
+  'chrome.palette.setup': 'Open Setup / workspace',
+  'chrome.palette.setup.kw': 'onboarding repos',
+  'chrome.palette.shortcuts': 'Keyboard shortcuts',
+  'chrome.palette.shortcuts.kw': 'help keys cheat sheet',
+  'chrome.palette.theme': 'Toggle light / dark theme',
+  'chrome.palette.theme.kw': 'appearance dark mode',
+  'chrome.palette.changes': 'Open Changes (current session)',
+  'chrome.palette.changes.kw': 'diff git review',
+  'chrome.palette.edit': 'Edit session details',
+  'chrome.palette.edit.kw': 'rename title status description',
+  'chrome.palette.archive': 'Archive current session',
+  'chrome.palette.archive.kw': 'close hide',
+  'chrome.palette.delete': 'Delete current session',
+  'chrome.palette.delete.kw': 'remove',
+
+  // Settings — dialog
+  'chrome.settings.closeTitle': 'Close settings (esc)',
+
+  // Settings — voice control
+  'chrome.voice.section': 'Voice control',
+  'chrome.voice.mode': 'Mode',
+  'chrome.voice.mode.hint': 'Hold to talk: record only while the hotkey is held. Press to toggle: tap once to start, tap again (or Stop) to end.',
+  'chrome.voice.mode.hold': 'Hold to talk',
+  'chrome.voice.mode.toggle': 'Press to toggle',
+  'chrome.voice.mic': 'Microphone',
+  'chrome.voice.mic.hint': 'Which input device to record from.',
+  'chrome.voice.mic.allow': 'Allow mic to list devices',
+  'chrome.voice.mic.systemDefault': 'System default',
+  'chrome.voice.mic.fallback': 'Microphone {n}',
+  'chrome.voice.language.hint': 'STT recognition language. Auto lets Whisper detect (good for Hebrew/English code-switching).',
+  'chrome.voice.language.en': 'English',
+  'chrome.voice.language.he': 'Hebrew',
+  'chrome.voice.hotkey': 'Record hotkey',
+  'chrome.voice.hotkey.hint': 'Keyboard shortcut to record. Click Record, then press the keys.',
+  'chrome.voice.hotkey.pressKeys': 'Press keys…',
+  'chrome.voice.hotkey.record': 'Record',
+  'chrome.voice.hotkey.listening': 'Listening…',
+  'chrome.voice.autoSend': 'Auto-send prompts',
+  'chrome.voice.autoSend.hint': 'Automatically send voice-injected prompts without asking for confirmation.',
+
+  // Settings — remote access / Tailscale
+  'chrome.remote.section': 'Remote access',
+  'chrome.remote.checking': 'checking Tailscale…',
+  'chrome.remote.unreachable': 'Could not reach the host.',
+  'chrome.remote.notInstalled': 'Not installed. Install Tailscale to reach the cockpit from your phone — private to your devices, no public URL.',
+  'chrome.remote.get': 'Get Tailscale ↗',
+  'chrome.remote.signInHint': 'Open the Tailscale app and sign in, then recheck.',
+  'chrome.remote.recheck': 'Recheck',
+  'chrome.remote.openOnPhone': 'Open on your phone',
+  'chrome.remote.openOnPhone.hint': 'With Tailscale running on both devices. Encrypted over your tailnet — chat works now.',
+  'chrome.remote.https': 'HTTPS (cleaner URL + embedded app tabs)',
+  'chrome.remote.https.on': 'On — the https:// URL below also works.',
+  'chrome.remote.https.off': 'Optional. Serve over https://<host>/ — needs HTTPS Certificates enabled for your tailnet.',
+  'chrome.remote.adminConsole': 'open admin console ↗',
+
+  // Settings — copy row
+  'chrome.copy.copy': 'copy',
+  'chrome.copy.copied': 'copied',
+};

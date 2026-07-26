@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
+import { useT, dirOf } from '../lib/i18n.js';
 import {
   faArrowDown,
   faCheck,
@@ -81,20 +82,25 @@ function prettyInput(input) {
 /* ---------- per-kind renderers ------------------------------------------- */
 
 function UserMsg({ event }) {
+  const t = useT();
   const atts = Array.isArray(event.attachments) ? event.attachments : [];
   const text = textOf(event);
+  const d = dirOf(text); // the bubble's side follows the prompt's own language
   useNow(30_000); // Event is memoized, so each stamp refreshes itself
   return (
-    <div className="my-2.5 flex flex-col items-end">
-      <span className="mr-1 mb-0.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-[0.12em] text-[var(--term-userborder)] uppercase">
-        <span className="h-[5px] w-[5px] rounded-full bg-brand" /> you
+    // Align the bubble to the side that matches its text — Hebrew/RTL → right,
+    // English/LTR → left — regardless of the app language. Setting the row's dir
+    // to the text direction makes `items-start` resolve to that physical side.
+    <div dir={d} className="my-2.5 flex flex-col items-start">
+      <span className="ms-1 mb-0.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-[0.12em] text-[var(--term-userborder)] uppercase">
+        <span className="h-[5px] w-[5px] rounded-full bg-brand" /> {t('chat.you')}
         {event.ts && (
           <span className="font-normal tracking-normal normal-case opacity-70">· {agoTime(event.ts)}</span>
         )}
       </span>
       <div
-        dir="auto"
-        className="max-w-[85%] rounded-[13px] rounded-tr-[4px] border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 font-mono text-[12px] leading-relaxed font-medium whitespace-pre-wrap text-[var(--term-userfg)] shadow-[0_1px_3px_rgba(0,0,0,0.12)]"
+        dir={d}
+        className={`max-w-[85%] rounded-[13px] border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 font-mono text-[12px] leading-relaxed font-medium whitespace-pre-wrap text-[var(--term-userfg)] shadow-[0_1px_3px_rgba(0,0,0,0.12)] ${d === 'rtl' ? 'rounded-tr-[4px]' : 'rounded-tl-[4px]'}`}
       >
         {text}
         {atts.length > 0 && (
@@ -125,6 +131,7 @@ function AssistantMsg({ event, recap }) {
 }
 
 function Thinking({ event }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <div className="my-1">
@@ -133,7 +140,7 @@ function Thinking({ event }) {
         onClick={() => setOpen((v) => !v)}
         className="cursor-pointer font-mono text-[10.5px] text-[var(--term-faint)] italic hover:text-[var(--term-dim)]"
       >
-        <Icon icon={faWandMagicSparkles} /> thinking{open ? '' : '…'}
+        <Icon icon={faWandMagicSparkles} /> {t('chat.thinking')}{open ? '' : '…'}
       </button>
       {open && (
         <div className="mt-1 border-l-2 border-[var(--term-border)] pl-2.5 text-[11.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)] italic">
@@ -225,6 +232,7 @@ function ToolUse({ event }) {
 }
 
 function ToolResult({ event }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const isError = event.isError ?? event.is_error ?? false;
   const text = textOf(event).trimEnd();
@@ -246,7 +254,7 @@ function ToolResult({ event }) {
           onClick={() => setOpen((v) => !v)}
           className="ml-1.5 cursor-pointer text-[var(--term-faint)] underline hover:text-[var(--term-dim)]"
         >
-          {open ? 'less' : 'more'}
+          {open ? t('chat.less') : t('chat.more')}
         </button>
       )}
     </div>
@@ -254,23 +262,24 @@ function ToolResult({ event }) {
 }
 
 function ResultLine({ event }) {
+  const t = useT();
   const isError = event.isError ?? event.is_error ?? event.subtype === 'error';
   // The success `result` just echoes the final assistant message (already shown
   // above) — render a subtle end-of-turn marker instead of duplicating it as
   // raw text. Errors still show their message.
   if (!isError) {
     const meta = [
-      event.numTurns != null ? `${event.numTurns} turn${event.numTurns === 1 ? '' : 's'}` : null,
+      event.numTurns != null ? t(event.numTurns === 1 ? 'chat.turnOne' : 'chat.turnMany', { n: event.numTurns }) : null,
       event.durationMs ? `${(event.durationMs / 1000).toFixed(1)}s` : null,
       event.costUsd ? `$${Number(event.costUsd).toFixed(3)}` : null,
     ].filter(Boolean).join(' · ');
     return (
       <div className="my-2 font-mono text-[10.5px] text-[var(--term-dim)]">
-        <span className="text-diffadd"><Icon icon={faCheck} /></span> done{meta ? ` · ${meta}` : ''}
+        <span className="text-diffadd"><Icon icon={faCheck} /></span> {t('chat.done')}{meta ? ` · ${meta}` : ''}
       </div>
     );
   }
-  const text = textOf(event) || 'Errored.';
+  const text = textOf(event) || t('chat.errored');
   return (
     <div dir="auto" className="my-2 font-mono text-[11.5px] whitespace-pre-wrap text-diffdel">
       <span className="text-diffdel"><Icon icon={faXmark} /></span> {text.length > 400 ? `${text.slice(0, 400)}…` : text}
@@ -287,6 +296,7 @@ function ErrorLine({ event }) {
 }
 
 function AskUserQuestion({ sessionId, event, live }) {
+  const t = useT();
   // The chosen label per question index — purely local, the answer is posted
   // as a normal chat message (same call ChatFooter uses).
   const [picked, setPicked] = useState({});
@@ -371,7 +381,7 @@ function AskUserQuestion({ sessionId, event, live }) {
     <div ref={cardRef} className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">Question for you</span>
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.questionForYou')}</span>
       </div>
       {questions.map((q, qi) => {
         const options = Array.isArray(q.options) ? q.options : [];
@@ -388,7 +398,7 @@ function AskUserQuestion({ sessionId, event, live }) {
               <div className="mb-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
             )}
             {wasSkipped ? (
-              <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> skipped</span>
+              <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
             ) : (
               <>
             <div className="flex flex-col gap-1.5">
@@ -439,7 +449,7 @@ function AskUserQuestion({ sessionId, event, live }) {
                 onClick={() => skip(qi)}
                 className="mt-1.5 cursor-pointer font-mono text-[10.5px] text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
               >
-                skip this question
+                {t('chat.skipThisQuestion')}
               </button>
             )}
               </>
@@ -452,6 +462,7 @@ function AskUserQuestion({ sessionId, event, live }) {
 }
 
 function PermissionRequest({ sessionId, event, live: isLive }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   // If the server already resolved this request (timeout, or the process
   // died) before we clicked, retrying would just 404 forever — treat any
@@ -494,7 +505,7 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
     <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">Permission request</span>
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.permissionRequest')}</span>
         <span className="text-[var(--term-accent-dim)]">{toolName}</span>
       </div>
       {event.input != null && (
@@ -505,12 +516,12 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
       <div className="mt-2.5 flex items-center gap-2">
         {answered ? (
           <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">
-            {answered === 'allow' ? <><Icon icon={faCheck} /> allowed</> : <><Icon icon={faXmark} /> denied</>}
+            {answered === 'allow' ? <><Icon icon={faCheck} /> {t('chat.allowed')}</> : <><Icon icon={faXmark} /> {t('chat.denied')}</>}
             {event.answeredMessage ? ` (${event.answeredMessage})` : ''}
           </span>
         ) : expired ? (
           <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">
-            <Icon icon={faXmark} /> no longer answerable — this request has expired
+            <Icon icon={faXmark} /> {t('chat.requestExpired')}
           </span>
         ) : (
           <>
@@ -519,19 +530,19 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
               type="button"
               disabled={busy}
               onClick={() => answer('allow')}
-              title="Allow (Enter / y)"
+              title={t('chat.allowHint')}
               className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] outline-none focus-visible:ring-2 focus-visible:ring-ink disabled:opacity-50"
             >
-              Allow
+              {t('chat.allow')}
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => answer('deny')}
-              title="Deny (Esc / n)"
+              title={t('chat.denyHint')}
               className="cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3.5 py-1.5 text-[11.5px] text-[var(--term-accent-dim)] hover:bg-[var(--term-accent-bg)] disabled:opacity-50"
             >
-              Deny
+              {t('chat.deny')}
             </button>
             <span className="ml-1 font-mono text-[10px] text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
           </>
@@ -544,6 +555,7 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
 // host.request_action — rendered inline in the transcript (not pinned under the
 // input). Buttons are human-click-only; the answer is delivered as a message.
 function ActionCard({ sessionId, action }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   if (!action || !Array.isArray(action.buttons)) return null;
   const answer = async (value) => {
@@ -567,13 +579,13 @@ function ActionCard({ sessionId, action }) {
     <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">Action needed</span>
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.actionNeeded')}</span>
         <button
           type="button"
           disabled={busy}
           onClick={dismiss}
-          title="Dismiss — none of these"
-          aria-label="Dismiss"
+          title={t('chat.dismissNoneTitle')}
+          aria-label={t('chat.dismiss')}
           className="ml-auto cursor-pointer rounded px-1.5 text-[13px] leading-none text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] disabled:opacity-40"
         >
           <Icon icon={faXmark} />
@@ -645,6 +657,7 @@ const WINDOW = 150;
 const REVEAL = 300;
 
 export default function ChatPane({ sessionId, events, working, action, loading, awaiting }) {
+  const t = useT();
   const scrollRef = useRef(null);
   const stickRef = useRef(true);
   // Scrolled away from the bottom → show the floating "jump to latest" button.
@@ -728,18 +741,18 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               onClick={revealEarlier}
               className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)]"
             >
-              <Icon icon={faChevronUp} /> show earlier ({hiddenCount} hidden)
+              <Icon icon={faChevronUp} /> {t('chat.showEarlier', { n: hiddenCount })}
             </button>
           </div>
         )}
         {events.length === 0 &&
           (loading ? (
             <div className="flex items-center justify-center gap-2 py-6 font-mono text-[11px] text-[var(--term-faint)]">
-              <span className="host-spinner h-3 w-3" /> loading transcript…
+              <span className="host-spinner h-3 w-3" /> {t('chat.loadingTranscript')}
             </div>
           ) : (
             <div className="py-6 text-center font-mono text-[11px] text-[var(--term-faint)]">
-              No messages yet — say something below.
+              {t('chat.noMessages')}
             </div>
           ))}
         {(() => {
@@ -795,7 +808,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
         {working && (
           <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">
             <span className="host-spinner h-3 w-3" />
-            working…
+            {t('chat.working')}
           </div>
         )}
       </div>
@@ -804,8 +817,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       <button
         type="button"
         onClick={jumpToBottom}
-        title="Jump to latest"
-        aria-label="Jump to latest"
+        title={t('chat.jumpToLatest')}
+        aria-label={t('chat.jumpToLatest')}
         className="absolute bottom-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full border-[1.5px] border-ink bg-panel text-[13px] text-fg shadow-[2px_2px_0_rgba(42,42,42,0.35)] hover:bg-chip"
       >
         <Icon icon={faArrowDown} />

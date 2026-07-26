@@ -9,6 +9,7 @@
 // commands the CLI keeps interactive (/mcp, /skills) and can't stream back.
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store.js';
+import { t, useT } from '../lib/i18n.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
 import { Icon } from '../lib/icons.js';
@@ -20,14 +21,14 @@ const openAccounts = (add) =>
 
 // Host-rendered "inspect" commands — NOT sent to claude; they open the panel.
 export const INSPECT_COMMANDS = [
-  { name: 'usage', desc: 'Account usage — session & weekly, per account', host: true, tab: 'usage' },
-  { name: 'status', desc: 'Account status — active account & this session', host: true, tab: 'usage' },
-  { name: 'mcp', desc: 'MCP servers, connection status & account auth', host: true, tab: 'mcp' },
-  { name: 'skills', desc: 'Available skills', host: true, tab: 'skills' },
-  { name: 'tools', desc: 'Available tools', host: true, tab: 'tools' },
-  { name: 'agents', desc: 'Available subagents', host: true, tab: 'agents' },
-  { name: 'commands', desc: 'Browse every slash command', host: true, tab: 'commands' },
-  { name: 'capabilities', desc: 'Model, version & permission mode', host: true, tab: 'info' },
+  { name: 'usage', descKey: 'dialogs.cmdUsageDesc', host: true, tab: 'usage' },
+  { name: 'status', descKey: 'dialogs.cmdStatusDesc', host: true, tab: 'usage' },
+  { name: 'mcp', descKey: 'dialogs.cmdMcpDesc', host: true, tab: 'mcp' },
+  { name: 'skills', descKey: 'dialogs.cmdSkillsDesc', host: true, tab: 'skills' },
+  { name: 'tools', descKey: 'dialogs.cmdToolsDesc', host: true, tab: 'tools' },
+  { name: 'agents', descKey: 'dialogs.cmdAgentsDesc', host: true, tab: 'agents' },
+  { name: 'commands', descKey: 'dialogs.cmdCommandsDesc', host: true, tab: 'commands' },
+  { name: 'capabilities', descKey: 'dialogs.cmdCapabilitiesDesc', host: true, tab: 'info' },
 ];
 
 // Build the filtered, ranked palette for a `/query`. `commands` are the rich
@@ -41,7 +42,8 @@ export function buildSlashItems(query, commands) {
     argumentHint: c.argumentHint,
     host: false,
   }));
-  const all = [...INSPECT_COMMANDS, ...claude];
+  const host = INSPECT_COMMANDS.map((c) => ({ ...c, desc: t(c.descKey) }));
+  const all = [...host, ...claude];
   const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
   filtered.sort((a, b) => {
     const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
@@ -66,11 +68,12 @@ function groupByNs(names) {
 /* ---------- the "/" autocomplete palette ---------------------------------- */
 
 export function SlashPalette({ items, active, onPick, onHover }) {
+  const t = useT();
   if (!items.length) return null;
   return (
     <div className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
       <div className="px-3 pt-1 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
-        Slash commands · ↑↓ navigate · ↵ select · esc dismiss
+        {t('dialogs.slashCommandsHint')}
       </div>
       {items.map((it, i) => (
         <button
@@ -110,13 +113,13 @@ const MCP_STATUS = {
 };
 
 const TABS = [
-  ['usage', 'Usage'],
-  ['mcp', 'MCP'],
-  ['skills', 'Skills'],
-  ['tools', 'Tools'],
-  ['agents', 'Agents'],
-  ['commands', 'Commands'],
-  ['info', 'Info'],
+  ['usage', 'dialogs.tabUsage'],
+  ['mcp', null], // MCP — product noun, not translated
+  ['skills', 'dialogs.tabSkills'],
+  ['tools', 'dialogs.tabTools'],
+  ['agents', 'dialogs.tabAgents'],
+  ['commands', 'dialogs.tabCommands'],
+  ['info', 'dialogs.tabInfo'],
 ];
 
 // The full usage object for an account: live per-account broadcast, else the
@@ -132,16 +135,17 @@ function accountUsageOf(a, accountUsage) {
 // `/usage` + `/status` tab: which account this session runs on, plus every
 // account's session/week meters. Reads the accounts store directly.
 function AccountsUsageTab({ session, accounts, accountUsage }) {
+  const t = useT();
   const list = accounts?.accounts || [];
   const activeId = accounts?.activeId;
   const sessAccId = session?.claude?.accountId || activeId;
-  const labelOf = (id) => list.find((a) => a.id === id)?.label || 'active account';
+  const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
   if (!list.length) return <Pending />;
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-md border border-hair bg-bg px-3 py-2 text-[11.5px] text-fgdim">
-        This session runs on <span className="font-bold text-fg">{labelOf(sessAccId)}</span>
-        {sessAccId === activeId ? ' · the active account' : ' · pinned'}
+        {t('dialogs.thisSessionRunsOn')} <span className="font-bold text-fg">{labelOf(sessAccId)}</span>
+        {sessAccId === activeId ? t('dialogs.activeAccountSuffix') : t('dialogs.pinnedSuffix')}
       </div>
       {list.map((a) => {
         const u = accountUsageOf(a, accountUsage);
@@ -149,18 +153,18 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
           <div key={a.id} className="rounded-md border border-hair bg-bg px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11.5px] font-bold text-fg">{a.label}</span>
-              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[9px] font-bold text-panel">active</span>}
+              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[9px] font-bold text-panel">{t('dialogs.active')}</span>}
               {(a.email || a.plan) && (
                 <span className="text-[10px] text-fgdim">{[a.email, a.plan].filter(Boolean).join(' · ')}</span>
               )}
             </div>
             {u?.available && (u.session || u.week) ? (
               <div className="mt-1">
-                <UsageBar label="Session (5h)" win={u.session} sub />
-                <UsageBar label="Week" win={u.week} sub />
+                <UsageBar label={t('dialogs.sessionWindow5h')} win={u.session} sub />
+                <UsageBar label={t('dialogs.week')} win={u.week} sub />
               </div>
             ) : (
-              <div className="mt-1 font-mono text-[10px] text-fgdim">usage unavailable</div>
+              <div className="mt-1 font-mono text-[10px] text-fgdim">{t('dialogs.usageUnavailableShort')}</div>
             )}
           </div>
         );
@@ -170,7 +174,7 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
         onClick={() => openAccounts(false)}
         className="self-start rounded-md border border-border px-2.5 py-1 text-[11px] text-fgdim hover:border-ink hover:text-fg"
       >
-        Manage accounts →
+        {t('dialogs.manageAccounts')} →
       </button>
     </div>
   );
@@ -258,7 +262,7 @@ function DescList({ items, onPick }) {
 
 const Pending = () => (
   <p className="text-[12px] text-fgdim">
-    Loads after Claude Code processes its first message in this session.
+    {t('dialogs.loadsAfterFirstMessage')}
   </p>
 );
 
@@ -270,6 +274,7 @@ export function CapabilitiesPanel({ capabilities, session, initialTab = 'command
 }
 
 function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
+  const t = useT();
   const [tab, setTab] = useState(initialTab);
   const { accounts, accountUsage } = useStore();
   useEffect(() => {
@@ -290,7 +295,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
-          <span className="font-mono text-[13px] font-bold text-fg">Claude Code capabilities</span>
+          <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.claudeCodeCapabilities')}</span>
           {caps.model && (
             <span className="rounded-full border border-hair px-2 py-0.5 font-mono text-[10px] text-fgdim">
               {caps.model}
@@ -306,7 +311,8 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         </div>
 
         <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-hair px-3 pt-2 [scrollbar-width:none]">
-          {TABS.map(([id, label]) => {
+          {TABS.map(([id, labelKey]) => {
+            const label = labelKey ? t(labelKey) : 'MCP';
             const count = {
               mcp: caps.mcpServers?.length,
               skills: caps.skills?.length,
@@ -335,7 +341,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 text-fg">
           {!started && (
             <p className="mb-3 text-[12px] text-fgdim">
-              Claude Code hasn't started for this session yet — send a message to start it.
+              {t('dialogs.claudeCodeNotStarted')}
             </p>
           )}
 
@@ -371,16 +377,16 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
           {tab === 'info' && (
             <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-[12px]">
               {[
-                ['Model', caps.model],
-                ['Version', caps.version],
-                ['Permission mode', caps.permissionMode],
-                ['Account', caps.account?.email],
-                ['Organization', caps.account?.organization],
-                ['Plan', caps.account?.subscriptionType],
-                ['MCP servers', caps.mcpServers?.length],
-                ['Tools', caps.tools?.length],
-                ['Skills', caps.skills?.length],
-                ['Commands', caps.commands?.length || caps.slashCommands?.length],
+                [t('dialogs.infoModel'), caps.model],
+                [t('dialogs.infoVersion'), caps.version],
+                [t('dialogs.infoPermissionMode'), caps.permissionMode],
+                [t('dialogs.infoAccount'), caps.account?.email],
+                [t('dialogs.infoOrganization'), caps.account?.organization],
+                [t('dialogs.infoPlan'), caps.account?.subscriptionType],
+                [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                [t('dialogs.infoTools'), caps.tools?.length],
+                [t('dialogs.infoSkills'), caps.skills?.length],
+                [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
               ].map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-fgdim">{k}</dt>
@@ -392,8 +398,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         </div>
 
         <div className="border-t border-hair px-4 py-2 text-[10px] text-fgdim">
-          Type <span className="font-mono text-fg">/</span> in the chat for autocomplete · click a
-          command to insert it
+          {t('dialogs.slashFooterBefore')} <span className="font-mono text-fg">/</span> {t('dialogs.slashFooterAfter')}
         </div>
       </div>
     </div>

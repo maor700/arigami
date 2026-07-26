@@ -3,6 +3,7 @@
 // Replaces blocking window.alert(), which freezes the page (and, in a proxied
 // tab, the extension). Subscribe via useToasts(); push via toast()/toastError().
 import { useSyncExternalStore } from 'react';
+import { t } from './i18n.js';
 
 let toasts = [];
 const listeners = new Set();
@@ -36,12 +37,12 @@ export const toastError = (message, opts) => toast(message, { ...opts, kind: 'er
 export const toastSuccess = (message, opts) => toast(message, { ...opts, kind: 'success' });
 
 // Copy text to the clipboard and confirm with a toast. Returns the promise.
-export async function copyWithToast(text, label = 'Copied') {
+export async function copyWithToast(text, label = t('dialogs.copied')) {
   try {
     await navigator.clipboard.writeText(String(text));
     toastSuccess(label);
   } catch {
-    toastError('Copy failed — clipboard unavailable');
+    toastError(t('dialogs.copyFailed'));
   }
 }
 
