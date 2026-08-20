@@ -28,6 +28,16 @@ export interface DispatcherConfig {
   stallTimeoutSec: number; // watchdog stall threshold (Phase 2)
 }
 
+// Global (not per-session) screen-share: one shared desktop, bridged from
+// /__vnc to a VNC server running on this host. `vncHost` should stay
+// loopback — the bridge is the only intended path to it, gated the same way
+// the rest of the host is (VPN reaching this server).
+export interface ScreenConfig {
+  enabled: boolean;
+  vncHost: string;
+  vncPort: number;
+}
+
 export interface Config {
   port: number;
   prodUrl: string;
@@ -48,6 +58,7 @@ export interface Config {
   palette: string[];
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
+  screen: ScreenConfig;
   launcherPrompt: string;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
@@ -97,6 +108,11 @@ export const DEFAULTS: Config = {
     maxChildren: 4,
     portRange: [3200, 3299],
     stallTimeoutSec: 600,
+  },
+  screen: {
+    enabled: true,
+    vncHost: '127.0.0.1',
+    vncPort: 5900,
   },
   launcherPrompt: '',
   defaultModel: null,
@@ -174,6 +190,13 @@ function envOverrides(): Partial<Config> {
       E.ARIGAMI_LINEAR_WORKSPACE || E.POC_LINEAR_WORKSPACE;
   if (E.GROQ_API_KEY) o.groqApiKey = E.GROQ_API_KEY;
   if (E.ARIGAMI_VOICE_LANG) o.voiceLang = E.ARIGAMI_VOICE_LANG;
+  if (E.ARIGAMI_SCREEN_ENABLED != null || E.ARIGAMI_VNC_HOST || E.ARIGAMI_VNC_PORT) {
+    o.screen = {
+      enabled: E.ARIGAMI_SCREEN_ENABLED != null ? E.ARIGAMI_SCREEN_ENABLED !== '0' : DEFAULTS.screen.enabled,
+      vncHost: E.ARIGAMI_VNC_HOST || DEFAULTS.screen.vncHost,
+      vncPort: E.ARIGAMI_VNC_PORT ? Number(E.ARIGAMI_VNC_PORT) : DEFAULTS.screen.vncPort,
+    };
+  }
   return o;
 }
 

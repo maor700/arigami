@@ -104,6 +104,20 @@ stop_pid() {
   return 0
 }
 
+# Kill anything the server recorded as a child and then outlived (server/lib/
+# children.ts owns the records and the pid-reuse guard — call into it rather than
+# reimplementing that check in shell). The server runs the same sweep at startup.
+sweep_children() {
+  [ -f "$DIR/children.json" ] || return 0
+  command -v bun >/dev/null 2>&1 || return 0
+  n="$(bun -e "const m = await import('$ROOT/server/lib/children.ts'); console.log(m.sweepOrphans())" 2>/dev/null | tail -1)"
+  case "$n" in
+    ''|0) : ;;
+    *) dl "  swept $n orphaned child process tree(s)" ;;
+  esac
+  return 0
+}
+
 stop() {
   # Unload the launchd agent first or KeepAlive instantly respawns what we kill.
   if launchd_loaded; then
@@ -113,6 +127,8 @@ stop() {
   pid="$(read_pid)"
   if stop_pid "$pid"; then
     rm -f "$PIDFILE"
+    # kill -TERM reaches the claude procs, not the tree under them; sweep the rest.
+    sweep_children
     echo "$(g "✓ stopped") (pid $pid)"
     return 0
   fi
@@ -121,9 +137,11 @@ stop() {
   if [ -n "$pids" ]; then
     for p in $pids; do stop_pid "$p"; done
     rm -f "$PIDFILE"
+    sweep_children
     echo "$(g "✓ stopped") (port :$PORT, pid $pids)"
     return 0
   fi
+  sweep_children
   yl "not running"
 }
 

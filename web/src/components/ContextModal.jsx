@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { fmtTokens, contextColor } from './ui.jsx';
-import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { useT } from '../lib/i18n.js';
+import { api } from '../lib/api.js';
 
 // Context categories we can derive from the stream-json usage block. (Claude
 // Code's /context splits further — system prompt, tools, memory… — but the
@@ -18,14 +18,35 @@ const CELLS = COLS * ROWS; // each cell ≈ 1/200th of the window
 
 // A grid "context view" like /context: each cell is a slice of the window,
 // coloured by what occupies it; the rest is free space.
-export default function ContextModal({ usage, onClose }) {
+export default function ContextModal({ session, usage, onClose }) {
   const t = useT();
-  const prefs = usePrefs();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
+
+  // Auto-compact is a real `claude --autocompact <tokens>` spawn flag now (not
+  // a message injected into the conversation), so it's per-session and a
+  // threshold change restarts the session — same trade-off as switching model.
+  const enabled = session.claude?.autoCompactPct != null;
+  const [autoCompactPct, setAutoCompactPct] = useState(session.claude?.autoCompactPct ?? 80);
+  useEffect(() => { setAutoCompactPct(session.claude?.autoCompactPct ?? 80); }, [session.claude?.autoCompactPct]);
+
+  const applyAutoCompact = (nextPct) => {
+    api.post(`/sessions/${session.id}/autocompact`, { pct: nextPct }).catch(() => {});
+  };
+
+  const [compacting, setCompacting] = useState(false);
+  const compactNow = async () => {
+    setCompacting(true);
+    try {
+      await api.post(`/sessions/${session.id}/message`, { text: '/compact' });
+    } catch {
+      /* swallow — chat shows the outcome */
+    }
+    setCompacting(false);
+  };
 
   const win = usage?.ctxWindow || 200000;
   const used = usage?.ctxTokens || 0;
@@ -92,8 +113,8 @@ export default function ContextModal({ usage, onClose }) {
           <label className="flex cursor-pointer items-center gap-2.5 text-[12px]">
             <input
               type="checkbox"
-              checked={prefs.autoCompact}
-              onChange={(e) => setPrefs({ autoCompact: e.target.checked })}
+              checked={enabled}
+              onChange={(e) => applyAutoCompact(e.target.checked ? autoCompactPct : null)}
               className="h-[14px] w-[14px] shrink-0 cursor-pointer accent-[var(--color-ink)]"
             />
             <span className="flex-1 text-fg">{t('dialogs.autoCompactWhenReaches')}</span>
@@ -101,19 +122,27 @@ export default function ContextModal({ usage, onClose }) {
               type="number"
               min={50}
               max={95}
-              value={prefs.autoCompactPct}
-              disabled={!prefs.autoCompact}
-              onChange={(e) => setPrefs({ autoCompactPct: Number(e.target.value) })}
+              value={autoCompactPct}
+              disabled={!enabled}
+              onChange={(e) => setAutoCompactPct(Number(e.target.value))}
+              onBlur={() => enabled && applyAutoCompact(autoCompactPct)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && enabled) applyAutoCompact(autoCompactPct); }}
               className="w-[48px] rounded-md border-[1.5px] border-border bg-panel px-1.5 py-1 text-right font-mono text-[11px] tabular-nums text-fg focus:border-ink focus:outline-none disabled:opacity-40"
             />
             <span className="font-mono text-[11px] text-fgdim">%</span>
           </label>
-          <div className="mt-1.5 pl-[24px] text-[11px] text-fgdim">
-            {t('dialogs.ctxRunsCompactBefore')} <span className="font-mono">/compact</span> {t('dialogs.ctxRunsCompactAfter')}
-          </div>
+          <div className="mt-1.5 pl-[24px] text-[11px] text-fgdim">{t('dialogs.ctxAutoCompactRestartNote')}</div>
         </div>
 
-        <div className="flex justify-end border-t border-hair px-[18px] py-2.5">
+        <div className="flex items-center justify-end gap-2 border-t border-hair px-[18px] py-2.5">
+          <button
+            type="button"
+            disabled={compacting}
+            onClick={compactNow}
+            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
+          >
+            {compacting ? t('dialogs.compacting') : t('dialogs.compactNow')}
+          </button>
           <button
             type="button"
             onClick={onClose}

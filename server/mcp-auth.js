@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ptyArgs } from './lib/platform.js';
+import { supervise, killTree } from './lib/children.js';
 import { broadcast } from './bus.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,10 +42,11 @@ export function runClaude(args, timeoutMs = 15000, cwd, env) {
       // this works from a thin-PATH launch context too; fall back to PATH.
       const bin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
       child = spawn(bin, args, { env: env || process.env, stdio: ['ignore', 'pipe', 'pipe'], cwd: cwd || undefined });
+      supervise(child, `mcp:${args[0] || 'claude'}`);
     } catch (e) {
       return resolve(`spawn failed: ${e.message}`);
     }
-    const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} resolve(out); }, timeoutMs);
+    const t = setTimeout(() => { killTree(child.pid); resolve(out); }, timeoutMs);
     if (t.unref) t.unref();
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -125,6 +127,9 @@ export function startLogin(name, cwd) {
     const claudeBin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
     const [bin, ...args] = ptyArgs(BRIDGE, [claudeBin, 'mcp', 'login', name]);
     child = spawn(bin, args, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'], cwd: cwd || undefined });
+    // The pty relay wraps the real `claude mcp login` — supervise the wrapper so
+    // the relay AND the claude under it go together.
+    supervise(child, `mcp-login:${name}`);
   } catch (e) {
     f.state = 'error';
     f.error = `could not start login: ${e.message}`;
@@ -167,7 +172,7 @@ export function startLogin(name, cwd) {
     }
     emitLogin(f);
   });
-  f.timer = setTimeout(() => { try { child.kill('SIGTERM'); } catch {} }, 5 * 60_000);
+  f.timer = setTimeout(() => killTree(child.pid), 5 * 60_000);
   if (f.timer.unref) f.timer.unref();
   return publicLogin(f);
 }

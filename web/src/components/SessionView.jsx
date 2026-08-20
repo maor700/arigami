@@ -268,12 +268,17 @@ function SummaryChip({ session }) {
 
 function TerminalHeader({ session }) {
   const [procPanel, setProcPanel] = useState(false);
+  // Same derivation the rail row uses (Rail.jsx Row) — the header had no
+  // session identifier at all when the rail (the only other place showing it)
+  // is collapsed behind the mobile hamburger.
+  const name = session.metadata?.ticket || session.title || session.id;
   const meta = [session.metadata?.ticket, session.metadata?.branch].filter(Boolean).join(' · ');
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
       <Dot color={session.color} size={9} />
       <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
-      {/* ticket · branch is already in the rail/tab title — desktop-only detail */}
+      <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
+      {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
       {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[10.5px] text-fgdim sm:block" />}
       {session.metadata?.fromTriggerName && (
         <TriggerTag
@@ -1083,7 +1088,6 @@ function ChatFooter({ session }) {
             className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
             style={{ fieldSizing: 'content' }}
           />
-          <span className="hidden shrink-0 pb-px font-mono text-[10px] text-[#ccc] sm:block" title={t('rail.enterSendsTitle')}>{t('rail.sendNewline')}</span>
         </div>
         {working && (
           <button
@@ -1304,6 +1308,7 @@ function ContentTab({ tab }) {
 /* ---------- the session view ------------------------------------------------ */
 
 export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen }) {
+  const isDesktop = useIsDesktop();
   const { sessions: allSessions } = useStore();
   const hasChildren = allSessions.some((s) => s.metadata?.master === session.id);
   const tabs = resolveTabs(session, hasChildren);
@@ -1331,14 +1336,16 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
   // on a session switch or when the user switches to that tab. All tabs stay
   // mounted (hidden via CSS), so this is driven by the active tab, not mount.
   // Defer while the session is awaiting an answer — the permission / question
-  // card grabs focus instead and hands it back here once answered.
+  // card grabs focus instead and hands it back here once answered. Desktop
+  // only: on mobile this pops the on-screen keyboard on every session switch,
+  // which is disruptive — mobile users focus the composer explicitly by tapping it.
   const chatTabId = tabs.find((t) => t.type === 'session')?.id;
   useEffect(() => {
-    if (activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
+    if (isDesktop && activeTabId === chatTabId && session.claude?.state !== 'awaiting-input') {
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, session.id]);
+  }, [activeTabId, session.id, isDesktop]);
 
   const onActivate = (tab) => {
     if (tab.id === CHANGES_TAB_ID || tab.id === ORCH_TAB_ID) {

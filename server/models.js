@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg } from './state.js';
+import { supervise } from './lib/children.js';
 
 const STORE = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'models.json');
 const TTL_MS = 24 * 60 * 60 * 1000; // once/day
@@ -44,6 +45,7 @@ function fetchFromCli() {
       ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--print', ''],
       { stdio: ['pipe', 'pipe', 'pipe'] }
     );
+    supervise(child, 'models-handshake');
     let settled = false;
     let buf = '';
     const timer = setTimeout(() => {

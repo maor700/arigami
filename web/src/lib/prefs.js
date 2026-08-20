@@ -21,9 +21,8 @@ const DEFAULTS = {
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
-  autoCompact: false, // run /compact automatically once a session's context fills
-  autoCompactPct: 80, // context % that triggers auto-compact (clamped 50–95)
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
+  usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: 'crane', // origami logo preset: 'crane' | 'fold' | 'plane' | 'boat'
   language: 'auto', // 'auto' (browser) | 'en' | 'he' — drives strings + text direction
@@ -105,9 +104,8 @@ function sanitize(raw) {
     voiceHotkey: typeof p.voiceHotkey === 'string' && p.voiceHotkey ? p.voiceHotkey : DEFAULTS.voiceHotkey,
     ticketPresets: sanitizePresets(p.ticketPresets),
     ticketDefaultPresetId: typeof p.ticketDefaultPresetId === 'string' ? p.ticketDefaultPresetId : '',
-    autoCompact: p.autoCompact === true,
-    autoCompactPct: clamp(p.autoCompactPct, 50, 95, DEFAULTS.autoCompactPct),
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
+    usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
     logo: isLogoId(p.logo) ? p.logo : 'crane',
     language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',

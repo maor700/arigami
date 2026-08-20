@@ -300,27 +300,9 @@ export default function App() {
     setSelectedContext(selectedId);
   }, [selectedId]);
 
-  // ---- auto-compact: when a session's live context % crosses the configured
-  // threshold, send "/compact" for it. Armed per-session and re-armed only after
-  // usage falls back below the threshold (hysteresis), so each crossing fires
-  // exactly once. Only fires for a started, idle session so we never interleave
-  // a turn. Toggle + threshold live in the per-session context modal (global pref).
-  const compactArmed = useRef({});
-  useEffect(() => {
-    if (!prefs.autoCompact) { compactArmed.current = {}; return; }
-    const thr = prefs.autoCompactPct;
-    for (const s of sessions) {
-      if (s.archived) continue;
-      const pct = s.claude?.usage?.ctxPct;
-      if (pct == null) continue;
-      if (pct < thr - 5) { compactArmed.current[s.id] = true; continue; } // re-arm
-      const armed = compactArmed.current[s.id] !== false; // default: armed
-      if (pct >= thr && armed && s.claude?.sessionId && s.claude?.state === 'idle') {
-        compactArmed.current[s.id] = false;
-        api.post(`/sessions/${s.id}/message`, { text: '/compact' }).catch(() => {});
-      }
-    }
-  }, [sessions, prefs.autoCompact, prefs.autoCompactPct]);
+  // Auto-compact is now a real `claude --autocompact <tokens>` spawn flag
+  // (server/claude.js setAutoCompact), applied per-session from the context
+  // modal — the CLI enforces it natively, so no client-side polling needed.
 
   // ---- command bus: the single action surface voice control drives ----------
   // Handlers are registered ONCE but read fresh state/setters from this ref, so

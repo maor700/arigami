@@ -14,7 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { ptyArgs } from './lib/platform.js';
+import { ptyArgs, isWin } from './lib/platform.js';
+import { supervise, killTree } from './lib/children.js';
 import { addTokenAccount } from './accounts.js';
 import { cfg } from './lib/config.js';
 import { broadcast } from './bus.js';
@@ -91,6 +92,9 @@ const flows = new Map();
 function killBridge(f) {
   if (!f.child || f.killed) return;
   f.killed = true;
+  // Windows has no signals for the bridge to relay: winpty would die and leave
+  // `claude setup-token` running underneath it, so take the tree instead.
+  if (isWin) { killTree(f.child.pid); return; }
   try { f.child.kill('SIGTERM'); } catch {}
   const t = setTimeout(() => { try { f.child.kill('SIGKILL'); } catch {} }, 1500);
   if (t.unref) t.unref();
@@ -121,6 +125,7 @@ export function startAuth({ label } = {}) {
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    supervise(child, 'setup-token');
   } catch (e) {
     const f = { id, state: 'error', error: `could not start the pty bridge: ${e.message}` };
     return publicView(f);

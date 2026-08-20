@@ -69,8 +69,9 @@ export const strings = {
   'dialogs.ctxFreeSpace': 'Free space',
   'dialogs.contextWindow': 'Context window',
   'dialogs.autoCompactWhenReaches': 'Auto-compact when context reaches',
-  'dialogs.ctxRunsCompactBefore': 'Runs',
-  'dialogs.ctxRunsCompactAfter': 'once when this session is idle.',
+  'dialogs.ctxAutoCompactRestartNote': 'Applied as a claude CLI flag — changing this restarts the session.',
+  'dialogs.compactNow': 'Compact now',
+  'dialogs.compacting': 'Compacting…',
 
   // keyboard shortcuts
   'dialogs.keyboardShortcuts': 'Keyboard shortcuts',

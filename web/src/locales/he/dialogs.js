@@ -69,8 +69,9 @@ export const strings = {
   'dialogs.ctxFreeSpace': 'שטח פנוי',
   'dialogs.contextWindow': 'חלון הקשר',
   'dialogs.autoCompactWhenReaches': 'דחיסה אוטומטית כשההקשר מגיע ל-',
-  'dialogs.ctxRunsCompactBefore': 'מריץ',
-  'dialogs.ctxRunsCompactAfter': 'פעם אחת כשהסשן במנוחה.',
+  'dialogs.ctxAutoCompactRestartNote': 'מיושם כדגל של claude CLI — שינוי הערך יפעיל מחדש את הסשן.',
+  'dialogs.compactNow': 'דחוס עכשיו',
+  'dialogs.compacting': 'דוחס…',
 
   // keyboard shortcuts
   'dialogs.keyboardShortcuts': 'קיצורי מקלדת',

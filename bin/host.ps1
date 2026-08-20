@@ -67,13 +67,59 @@ function Get-HostPid {
     $id = (Get-Content $PIDFILE -Raw).Trim()
     if ($id -and (Get-Process -Id $id -ErrorAction SilentlyContinue)) { return [int]$id }
   }
-  # No pidfile (Scheduled-Task-managed, or a stale file): resolve by port.
+  # No pidfile (Scheduled-Task-managed, or a stale file): resolve by port — but
+  # only to a pid that still EXISTS. A listener can outlive its owner here: the
+  # host's socket handle is inheritable, so a child that escaped (a session's MCP
+  # server) keeps :$PORT bound to a dead pid. Returning that pid made `status`
+  # report "alive but not responding" and `stop` say "not running" while the port
+  # stayed blocked. Get-StaleListenerPid reports that case honestly instead.
+  $listener = Get-ListenerPid
+  if ($listener -and (Get-Process -Id $listener -ErrorAction SilentlyContinue)) { return $listener }
+  return $null
+}
+
+function Get-ListenerPid {
   try {
     $conn = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue |
       Select-Object -First 1
     if ($conn) { return [int]$conn.OwningProcess }
   } catch { }
   return $null
+}
+
+# The pid holding :$PORT when that process no longer exists — i.e. an orphan is
+# pinning the port. $null when the port is free or genuinely owned.
+function Get-StaleListenerPid {
+  $listener = Get-ListenerPid
+  if ($listener -and -not (Get-Process -Id $listener -ErrorAction SilentlyContinue)) { return $listener }
+  return $null
+}
+
+# Kill whatever the server recorded as its children (server/lib/children.ts keeps
+# ~/.arigami/children.json up to date). This is the sweep that frees a port held
+# by an orphan; the server runs the same sweep on its next start.
+function Clear-OrphanChildren {
+  $file = Join-Path $DIR 'children.json'
+  if (-not (Test-Path $file)) { return 0 }
+  $killed = 0
+  try {
+    $records = Get-Content $file -Raw | ConvertFrom-Json
+    foreach ($r in @($records)) {
+      if (-not $r.pid) { continue }
+      $proc = Get-Process -Id $r.pid -ErrorAction SilentlyContinue
+      if (-not $proc) { continue }
+      # pid-reuse guard: a survivor started when we recorded it, a recycled pid
+      # belongs to something that started later.
+      if ($r.at -and $proc.StartTime) {
+        $recorded = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$r.at).LocalDateTime
+        if ($proc.StartTime -gt $recorded.AddMinutes(1)) { continue }
+      }
+      & taskkill.exe /PID $r.pid /T /F 2>&1 | Out-Null
+      $killed++
+    }
+  } catch { }
+  Remove-Item $file -ErrorAction SilentlyContinue
+  return $killed
 }
 
 function Get-HostTask {
@@ -95,9 +141,21 @@ function Start-Host {
   }
   New-Item -ItemType Directory -Force -Path $LOGDIR | Out-Null
 
+  # A stale listener (orphan holding the inherited socket) makes the bind below
+  # fail forever. Sweep it here so a restart heals itself instead of needing a
+  # reboot. The server runs the same sweep itself — this covers the task path too.
+  if (Get-StaleListenerPid) {
+    $swept = Clear-OrphanChildren
+    if ($swept) { Write-Dim "  swept $swept orphaned child process tree(s) holding :$PORT" }
+  }
+
   # Scheduled-Task install: start the task instead of forking our own process,
   # otherwise the task's restart policy and the pidfile copy fight over the port.
   if (Get-HostTask) {
+    # Stop-Host disables the task (so its restart policy can't respawn what we
+    # kill), so re-enable before starting or every start/restart after a stop
+    # dies with "The task is disabled".
+    Enable-ScheduledTask -TaskName $TASK -ErrorAction SilentlyContinue | Out-Null
     Start-ScheduledTask -TaskName $TASK
     if (Wait-Health) { Write-Ok "* host started (scheduled task) -> $URL"; return 0 }
     Write-Bad 'scheduled task started but health check failed - see: host.ps1 logs'
@@ -143,18 +201,41 @@ function Stop-Host {
     Write-Ok '* scheduled task disabled (host.ps1 install re-enables autostart)'
   }
   $procId = Get-HostPid
-  if (Stop-Tree $procId) {
-    Remove-Item $PIDFILE -ErrorAction SilentlyContinue
+  $stopped = Stop-Tree $procId
+  # Always sweep: /T only reaches children whose parent chain is still alive, so
+  # anything already orphaned (and still holding :$PORT) survives the kill above.
+  $swept = Clear-OrphanChildren
+  Remove-Item $PIDFILE -ErrorAction SilentlyContinue
+  if ($swept) { Write-Dim "  swept $swept orphaned child process tree(s)" }
+  if ($stopped) {
     Write-Ok "* stopped (pid $procId)"
     return 0
   }
-  Remove-Item $PIDFILE -ErrorAction SilentlyContinue
+  $stale = Get-StaleListenerPid
+  if ($stale) {
+    Write-Warn "o :$PORT was held by an orphan (owner pid $stale is gone)"
+    $still = Get-StaleListenerPid
+    if ($still) {
+      Write-Bad "  :$PORT is STILL bound - a process outside our records holds the inherited socket."
+      Write-Dim "  Inspect with: Get-NetTCPConnection -LocalPort $PORT"
+      Write-Dim '  If its owner pid no longer exists, only killing that holder (or a reboot) frees it.'
+      return 1
+    }
+    Write-Ok "* :$PORT released"
+    return 0
+  }
   Write-Warn 'not running'
   return 0
 }
 
 function Get-HostStatus {
   $procId = Get-HostPid
+  $stale = Get-StaleListenerPid
+  if ($stale -and -not $procId) {
+    Write-Bad "o not running - but :$PORT is held by a STALE listener (owner pid $stale no longer exists)"
+    Write-Dim '  An orphaned child still holds the socket it inherited. Free it with: host.ps1 stop'
+    return
+  }
   if (Test-Health) {
     $sessions = '?'
     try {

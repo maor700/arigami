@@ -14,8 +14,10 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { UsageMini } from './Usage.jsx';
+import ScreenModal from './ScreenModal.jsx';
 import { startRecording } from '../lib/voice.js';
 import { useT } from '../lib/i18n.js';
+import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import {
   faBars,
@@ -23,6 +25,8 @@ import {
   faBoxArchive,
   faCaretDown,
   faCaretRight,
+  faCircleInfo,
+  faDisplay,
   faEye,
   faFolder,
   faFolderPlus,
@@ -152,24 +156,44 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
 
 // Styled hover tooltip, portaled to <body> so the rail's transform/overflow
 // (which makes a containing block for position:fixed) can't clip or offset it.
-// Small open delay so sweeping across rows doesn't flash tips.
+// Small open delay so sweeping across rows doesn't flash tips. `toggle()` is
+// the tap-driven alternative (mobile has no hover) — dismisses on the next
+// tap anywhere outside the anchor. Position flips to the anchor's left in
+// RTL (previously hardcoded to open rightward, which reads wrong in Hebrew).
 function useHoverTip(text) {
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
   const timer = useRef(null);
+  const measure = () => {
+    const r = ref.current.getBoundingClientRect();
+    return { top: Math.max(8, r.top), left: r.left, right: r.right };
+  };
   const show = () => {
     if (!text || !ref.current) return;
     clearTimeout(timer.current);
-    const r = ref.current.getBoundingClientRect();
-    timer.current = setTimeout(() => setPos({ top: Math.max(8, r.top), left: r.right + 8 }), 140);
+    timer.current = setTimeout(() => setPos(measure()), 140);
   };
   const hide = () => { clearTimeout(timer.current); setPos(null); };
+  const toggle = () => {
+    if (!text || !ref.current) return;
+    clearTimeout(timer.current);
+    setPos((p) => (p ? null : measure())); // no open delay — this is an explicit tap
+  };
   useEffect(() => () => clearTimeout(timer.current), []);
+  // Tap-to-open mode: the next tap anywhere else closes it.
+  useEffect(() => {
+    if (!pos) return;
+    const onDocDown = (e) => { if (!ref.current?.contains(e.target)) hide(); };
+    document.addEventListener('pointerdown', onDocDown, true);
+    return () => document.removeEventListener('pointerdown', onDocDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pos]);
+  const rtl = typeof document !== 'undefined' && document.documentElement.dir === 'rtl';
   const tip = pos && text
     ? createPortal(
         <div
           className="pointer-events-none fixed z-[70] max-w-[300px] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-2 text-[11.5px] leading-snug whitespace-pre-wrap text-fg shadow-[3px_3px_0_rgba(42,42,42,0.22)]"
-          style={{ top: pos.top, left: pos.left }}
+          style={rtl ? { top: pos.top, right: window.innerWidth - pos.left + 8 } : { top: pos.top, left: pos.right + 8 }}
           dir="auto"
         >
           {text}
@@ -177,7 +201,7 @@ function useHoverTip(text) {
         document.body
       )
     : null;
-  return { ref, show, hide, tip };
+  return { ref, show, hide, toggle, tip };
 }
 
 function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch }) {
@@ -189,13 +213,16 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   const attention = needsAttention(session) && !selected;
   const working = session.claude?.state === 'working';
   const restarting = session.claude?.state === 'restarting';
-  // The status-summary tldr (if the feature is on) shows as a styled hover tip.
+  const isDesktop = useIsDesktop();
+  // The status-summary tldr (if the feature is on) shows as a styled tip —
+  // hover on desktop; on mobile (no hover) a dedicated tap target below
+  // toggles it instead, so it doesn't fight the row's own tap-to-select.
   const tip = useHoverTip(session.statusSummary?.tldr);
+  const hoverProps = isDesktop ? { onMouseEnter: tip.show, onMouseLeave: tip.hide } : {};
   return (
     <div
       ref={tip.ref}
-      onMouseEnter={tip.show}
-      onMouseLeave={tip.hide}
+      {...hoverProps}
       onClick={() => onSelect(session.id)}
       className="group relative mb-0.5 flex cursor-pointer items-start gap-[9px] rounded-[7px] p-2"
       style={{
@@ -229,6 +256,16 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                 <span className="text-[11px]"><Icon icon={watch.errored ? faTriangleExclamation : faEye} /></span>
                 {watch.count}
               </span>
+            )}
+            {!isDesktop && session.statusSummary?.tldr && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); tip.toggle(); }}
+                title={t('rail.summary')}
+                className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-[11px] text-fgdim"
+              >
+                <Icon icon={faCircleInfo} />
+              </button>
             )}
             {attention ? (
               <span
@@ -722,7 +759,10 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
 // shortcut + autoplay ▶/⏸ + concurrency cap.
 function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
   const t = useT();
-  const [open, setOpen] = useState(true);
+  const isDesktop = useIsDesktop();
+  // Desktop keeps the historical default-open; mobile starts collapsed so it
+  // doesn't eat screen space on first load (still toggleable either way).
+  const [open, setOpen] = useState(isDesktop);
   const [order, setOrder] = useState(pending);
   const dragId = useRef(null);
   const [over, setOver] = useState(null); // {id, zone: 'before'|'after'}
@@ -969,6 +1009,18 @@ export default function Rail({
   const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
+  const [screenAvailable, setScreenAvailable] = useState(false);
+  const [screenOpen, setScreenOpen] = useState(false);
+  // Global (not per-session) screen-share — poll availability so the icon
+  // hides itself cleanly instead of showing a button that fails on click
+  // (e.g. before VNC setup runs on a machine, or if the service stops).
+  useEffect(() => {
+    let stop = false;
+    const tick = () => api.get('/screen/status').then((r) => { if (!stop) setScreenAvailable(!!r?.available); }).catch(() => { if (!stop) setScreenAvailable(false); });
+    tick();
+    const iv = setInterval(tick, 15_000);
+    return () => { stop = true; clearInterval(iv); };
+  }, []);
   const { railWidth } = usePrefs();
   const { usage, listeners, pending, queue, accounts, accountUsage, folders } = useStore();
   // The header reflects the ACTIVE account. Derive it from the per-account map so
@@ -1363,7 +1415,7 @@ export default function Rail({
           <button
             type="button"
             onClick={onNew}
-            className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-ink bg-brand px-2.5 py-2 text-[13px] font-bold shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a]"
+            className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-ink bg-brand px-2.5 py-2 text-[13px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a]"
           >
             <span className="text-base leading-none">+</span> {t('rail.newSession')}
           </button>
@@ -1623,6 +1675,17 @@ export default function Rail({
         <span className="min-w-0 flex-1 truncate">
           {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
         </span>
+        {screenAvailable && (
+          <button
+            type="button"
+            onClick={() => setScreenOpen(true)}
+            title={t('rail.screen')}
+            aria-label={t('rail.screen')}
+            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+          >
+            <Icon icon={faDisplay} />
+          </button>
+        )}
         {onOpenShortcuts && (
           <button
             type="button"
@@ -1642,6 +1705,8 @@ export default function Rail({
           onOpenSettings={onOpenSettings}
         />
       </div>
+
+      {screenOpen && <ScreenModal onClose={() => setScreenOpen(false)} />}
 
       {/* folder dialogs */}
       {folderDialog?.type === 'create' && (

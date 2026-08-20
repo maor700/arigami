@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { cfg } from './state.js';
+import { supervise, killTree } from './lib/children.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS_DIR = path.join(ROOT, 'skills');
@@ -217,11 +218,13 @@ export function analyze(): Promise<any> {
       ['-p', ANALYZE_PROMPT, '--permission-mode', 'bypassPermissions', '--model', 'sonnet', '--output-format', 'json'],
       { cwd: ROOT, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] }
     );
+    supervise(child, 'skills-analyze');
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-    const guard = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 4 * 60 * 1000);
+    // killTree, not child.kill: this claude run has its own MCP/tool children.
+    const guard = setTimeout(() => killTree(child.pid), 4 * 60 * 1000);
     child.on('error', (e) => { clearTimeout(guard); reject(e); });
     child.on('close', (code) => {
       clearTimeout(guard);

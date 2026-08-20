@@ -117,6 +117,19 @@ export async function restartSession(session) {
   if (ok) await api.post(`/sessions/${session.id}/restart`).catch((e) => toastError(`Restart failed: ${e.message || e}`));
 }
 
+// Confirm-then-clear: drops the claude conversation and starts fresh in the
+// SAME tab (worktree/metadata/chat log survive — only the model's memory of
+// the conversation resets, same as this tab becoming a brand new session).
+export async function clearSessionConversation(session) {
+  if (!session?.id) return;
+  const ok = await confirmDialog({
+    title: 'Clear this conversation?',
+    body: `Starts a brand new claude conversation for "${sessionLabel(session)}" — the worktree, chat log and metadata are kept, but the model loses all memory of what was discussed so far. Anything it is doing right now is aborted.`,
+    confirmLabel: 'Clear',
+  });
+  if (ok) await api.post(`/sessions/${session.id}/clear`).catch((e) => toastError(`Clear failed: ${e.message || e}`));
+}
+
 export async function interruptSession(sessionId) {
   if (!sessionId) return;
   await api.post(`/sessions/${sessionId}/interrupt`).catch(() => {});
@@ -219,6 +232,18 @@ function appendChat(sessionId, event) {
     if (idx !== -1 && cur[idx].answered == null) {
       const next = [...cur];
       next[idx] = { ...next[idx], answered: event.behavior, answeredMessage: event.message };
+      setState({ chats: { ...state.chats, [sessionId]: next } });
+    }
+    return;
+  }
+  // Same in-place-patch pattern as permission-answer, for request_screen
+  // cards — this is also what tears down the live VNC connection (the card
+  // stops rendering ScreenView once `answered` is set).
+  if (event.kind === 'screen-request-answer') {
+    const idx = cur.findIndex((e) => e.kind === 'screen-request' && e.requestId === event.requestId);
+    if (idx !== -1 && cur[idx].answered == null) {
+      const next = [...cur];
+      next[idx] = { ...next[idx], answered: true, note: event.note };
       setState({ chats: { ...state.chats, [sessionId]: next } });
     }
     return;
@@ -338,6 +363,26 @@ export async function answerPermission(sessionId, requestId, behavior, message) 
       [sessionId]: cur.map((e) =>
         e.kind === 'permission-request' && e.requestId === requestId
           ? { ...e, answered: behavior }
+          : e,
+      ),
+    },
+  });
+}
+
+export async function answerScreenRequest(sessionId, requestId, note) {
+  await api.post(`/sessions/${sessionId}/screen-request/answer`, {
+    requestId,
+    ...(note ? { note } : {}),
+  });
+  // Mark the inline card answered locally (the request itself isn't echoed
+  // back) — this is what tears down the card's live VNC connection.
+  const cur = state.chats[sessionId] || [];
+  setState({
+    chats: {
+      ...state.chats,
+      [sessionId]: cur.map((e) =>
+        e.kind === 'screen-request' && e.requestId === requestId
+          ? { ...e, answered: true, note }
           : e,
       ),
     },

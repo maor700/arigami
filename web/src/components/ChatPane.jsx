@@ -1,18 +1,21 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission } from '../lib/store.js';
+import { answerPermission, answerScreenRequest } from '../lib/store.js';
 import { api } from '../lib/api.js';
+import ScreenView from './ScreenView.jsx';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import {
   faArrowDown,
+  faArrowRotateRight,
   faCheck,
   faChevronDown,
   faChevronUp,
   faCircle,
+  faCopy,
   faFile,
   faImage,
   faWandMagicSparkles,
@@ -81,6 +84,34 @@ function prettyInput(input) {
 
 /* ---------- per-kind renderers ------------------------------------------- */
 
+// Small hover-revealed copy button — shown outright on touch devices (no
+// hover there). Parent must set `group` for the hover reveal to work.
+function CopyButton({ text, className = '' }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const onCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard permission denied — no-op */
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title={copied ? t('chat.copied') : t('chat.copy')}
+      aria-label={t('chat.copy')}
+      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:opacity-100 ${className}`}
+    >
+      <Icon icon={copied ? faCheck : faCopy} />
+    </button>
+  );
+}
+
 function UserMsg({ event }) {
   const t = useT();
   const atts = Array.isArray(event.attachments) ? event.attachments : [];
@@ -91,12 +122,13 @@ function UserMsg({ event }) {
     // Align the bubble to the side that matches its text — Hebrew/RTL → right,
     // English/LTR → left — regardless of the app language. Setting the row's dir
     // to the text direction makes `items-start` resolve to that physical side.
-    <div dir={d} className="my-2.5 flex flex-col items-start">
+    <div dir={d} className="group my-2.5 flex flex-col items-start">
       <span className="ms-1 mb-0.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-[0.12em] text-[var(--term-userborder)] uppercase">
         <span className="h-[5px] w-[5px] rounded-full bg-brand" /> {t('chat.you')}
         {event.ts && (
           <span className="font-normal tracking-normal normal-case opacity-70">· {agoTime(event.ts)}</span>
         )}
+        <CopyButton text={text} className="text-[10px]" />
       </span>
       <div
         dir={d}
@@ -123,9 +155,17 @@ function UserMsg({ event }) {
 function AssistantMsg({ event, recap }) {
   // The turn's final message gets a faint tint only — no border — so it reads
   // as gently set apart without shouting. Content is unchanged.
+  const text = textOf(event);
+  useNow(30_000); // Event is memoized, so each stamp refreshes itself
   return (
-    <div className={`md my-1.5${recap ? ' rounded-[6px] bg-brand/[0.03] px-2 py-1' : ''}`}>
-      <Markdown remarkPlugins={[remarkGfm]}>{textOf(event)}</Markdown>
+    <div className={`group md my-1.5${recap ? ' rounded-[6px] bg-brand/[0.03] px-2 py-1' : ''}`}>
+      <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      {event.ts && (
+        <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[9.5px] text-[var(--term-faint)]">
+          <span className="opacity-70">{agoTime(event.ts)}</span>
+          <CopyButton text={text} />
+        </div>
+      )}
     </div>
   );
 }
@@ -295,6 +335,17 @@ function ErrorLine({ event }) {
   );
 }
 
+// Info-styled line for host-generated notices (session restarted, conversation
+// cleared, account auto-switched…) — distinct from ErrorLine so these read as
+// neutral status, not alarms.
+function SystemLine({ event }) {
+  return (
+    <div className="my-1.5 font-mono text-[11px] whitespace-pre-wrap text-[var(--term-dim)]">
+      <Icon icon={faArrowRotateRight} /> {textOf(event)}
+    </div>
+  );
+}
+
 function AskUserQuestion({ sessionId, event, live }) {
   const t = useT();
   // The chosen label per question index — purely local, the answer is posted
@@ -304,33 +355,49 @@ function AskUserQuestion({ sessionId, event, live }) {
   const [busy, setBusy] = useState(false);
   const questions = Array.isArray(event.input?.questions) ? event.input.questions : [];
 
-  const choose = async (qi, label) => {
-    if (busy || picked[qi] != null || skipped[qi]) return;
+  // Answer the whole AskUserQuestion tool_use with ONE tool_result, once every
+  // question has a pick (or is skipped). A tool_result resumes the blocked turn
+  // immediately; a plain chat message would be queued by the CLI until the
+  // question times out (~60s) — the old "stuck on working" stall.
+  const allAnswered = (p, sk) => questions.every((_q, qi) => p[qi] != null || sk[qi]);
+
+  const submit = async (finalPicked, finalSkipped) => {
     setBusy(true);
+    const content = questions
+      .map((q, qi) => {
+        const label = q.question || q.header || `Question ${qi + 1}`;
+        const a = finalPicked[qi] != null ? finalPicked[qi] : '(no answer)';
+        return `${label}: ${a}`;
+      })
+      .join('\n');
     try {
-      await api.post(`/sessions/${sessionId}/message`, { text: label });
-      setPicked((p) => ({ ...p, [qi]: label }));
+      if (event.toolUseId) {
+        await api.post(`/sessions/${sessionId}/question/answer`, { toolUseId: event.toolUseId, content });
+      } else {
+        // Fallback for events without a tool_use id: deliver as a message.
+        await api.post(`/sessions/${sessionId}/message`, { text: content });
+      }
       window.dispatchEvent(new CustomEvent('host:focus-input')); // back to the composer
     } catch {
-      /* leave un-picked so the user can retry */
+      /* leave state so the user can retry the last pick */
     }
     setBusy(false);
   };
 
-  // Escape hatch for a stuck question: exit without forcing a matching
-  // option pick — e.g. none of the options fit, or the turn behind this
-  // question already died and answering does nothing anyway.
-  const skip = async (qi) => {
+  const choose = (qi, label) => {
     if (busy || picked[qi] != null || skipped[qi]) return;
-    setBusy(true);
-    try {
-      await api.post(`/sessions/${sessionId}/message`, { text: '(skipped this question)' });
-    } catch {
-      /* exit the stuck card locally even if the message failed to send */
-    }
-    setSkipped((p) => ({ ...p, [qi]: true }));
-    window.dispatchEvent(new CustomEvent('host:focus-input')); // back to the composer
-    setBusy(false);
+    const np = { ...picked, [qi]: label };
+    setPicked(np);
+    if (allAnswered(np, skipped)) submit(np, skipped);
+  };
+
+  // Escape hatch: leave this question unanswered ('(no answer)' in the result) —
+  // e.g. none of the options fit, or the turn behind it already died.
+  const skip = (qi) => {
+    if (busy || picked[qi] != null || skipped[qi]) return;
+    const ns = { ...skipped, [qi]: true };
+    setSkipped(ns);
+    if (allAnswered(picked, ns)) submit(picked, ns);
   };
 
   // Keyboard: answer the first unanswered question with number keys (1–9),
@@ -552,6 +619,69 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
   );
 }
 
+// host.request_screen — the agent asks the human to look at / drive the
+// shared desktop (manual login, CAPTCHA, interactive installer…). Blocking,
+// same underlying mechanism as PermissionRequest (server holds the MCP tool
+// call open until answered). While unanswered, embeds a LIVE ScreenView —
+// once answered, the card freezes to a static line and the connection tears
+// down (ScreenView unmounts), so old resolved cards in history don't hold
+// open VNC connections.
+function ScreenRequestCard({ sessionId, event }) {
+  const t = useT();
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const answered = event.answered;
+
+  const done = async () => {
+    setBusy(true);
+    try {
+      await answerScreenRequest(sessionId, event.requestId, note.trim());
+      window.dispatchEvent(new CustomEvent('host:focus-input'));
+    } catch {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
+      <div className="flex items-center gap-2 font-mono text-[11px]">
+        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest')}</span>
+      </div>
+      {event.prompt && (
+        <div className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
+      )}
+      {answered ? (
+        <div className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">
+          <Icon icon={faCheck} /> {t('chat.screenRequestDone')}
+          {event.note ? ` — ${event.note}` : ''}
+        </div>
+      ) : (
+        <>
+          <ScreenView className="mt-2.5 h-[320px] w-full rounded-lg" />
+          <div className="mt-2.5 flex items-center gap-2">
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !busy && done()}
+              placeholder={t('chat.screenRequestNotePlaceholder')}
+              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2.5 py-1.5 text-[11.5px] text-[var(--term-accent-fg)] outline-none placeholder:text-[var(--term-accent-dim)]"
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={done}
+              className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
+            >
+              {t('chat.screenRequestDone')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // host.request_action — rendered inline in the transcript (not pinned under the
 // input). Buttons are human-click-only; the answer is delivered as a message.
 function ActionCard({ sessionId, action }) {
@@ -635,6 +765,8 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <ResultLine event={event} />;
     case 'error':
       return <ErrorLine event={event} />;
+    case 'system':
+      return <SystemLine event={event} />;
     case 'permission-request': {
       // AskUserQuestion is auto-approved server-side and answered through the
       // "Question for you" card, so its permission bubble is redundant — never
@@ -643,6 +775,8 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       if (tn === 'AskUserQuestion') return null;
       return <PermissionRequest sessionId={sessionId} event={event} live={live} />;
     }
+    case 'screen-request':
+      return <ScreenRequestCard sessionId={sessionId} event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }

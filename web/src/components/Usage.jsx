@@ -5,6 +5,9 @@
 // server/usage.js. We frame each bar as "tokens left" = 100 − utilization.
 import { untilTime } from '../lib/time.js';
 import { useT } from '../lib/i18n.js';
+import { usePrefs, setPrefs } from '../lib/prefs.js';
+import { Icon } from '../lib/icons.js';
+import { faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
 // tight, red when nearly exhausted. `left` is a 0–100 percentage.
@@ -95,15 +98,26 @@ function MiniBar({ title, win }) {
 }
 
 // Compact session + week charts for the rail (above the footer). Collapses to
-// nothing when usage isn't available so the rail stays clean.
+// nothing when usage isn't available so the rail stays clean. Collapsible:
+// collapsed (default) shows only the 5h session line; expanded adds the 7d
+// week window too. State persists across sessions via prefs.
 export function UsageMini({ usage }) {
   const t = useT();
+  const prefs = usePrefs();
   if (!usage?.available || (!usage.session && !usage.week)) return null;
+  const expanded = prefs.usageExpanded;
   return (
     <div className="flex flex-col gap-2 border-t border-hair px-[13px] py-2.5">
-      <div className="font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.usageSpent')}</div>
+      <button
+        type="button"
+        onClick={() => setPrefs({ usageExpanded: !expanded })}
+        className="flex cursor-pointer items-center gap-1.5 font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase hover:text-fg"
+      >
+        <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
+        <Icon icon={expanded ? faChevronUp : faChevronDown} />
+      </button>
       <MiniBar title={t('dialogs.sessionWindow5h')} win={usage.session} />
-      <MiniBar title={t('dialogs.weekWindow7d')} win={usage.week} />
+      {expanded && <MiniBar title={t('dialogs.weekWindow7d')} win={usage.week} />}
     </div>
   );
 }

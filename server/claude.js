@@ -9,10 +9,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { isWin, which, extraBinDirs, pidAlive, HOME } from './lib/platform.js';
+import { supervise, killTree } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
 import { broadcast } from './bus.js';
-import { expirePendingPermissions } from './api.js';
-import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive } from './accounts.js';
+import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
+import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
+import { refreshOne } from './oauth-login.js';
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
 // stripped: the host chooses the auth per session from the accounts store, so a
@@ -316,6 +318,8 @@ function spawnProc(s, resume) {
     // Model is opt-in: only pass --model when the user picked one (an alias like
     // 'opus'/'sonnet'/'haiku' or a full id). Otherwise let Claude Code's default win.
     ...(s.claude?.modelChoice ? ['--model', s.claude.modelChoice] : []),
+    ...(s.claude?.effort ? ['--effort', s.claude.effort] : []),
+    ...(s.claude?.autoCompactTokens ? ['--autocompact', String(s.claude.autoCompactTokens)] : []),
     '--mcp-config', MCP_CONFIG,
     '--permission-prompt-tool', 'mcp__arigami__permission_prompt',
     // Register the bundled skill pack (skills/) as a plugin so sessions can
@@ -338,6 +342,10 @@ function spawnProc(s, resume) {
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  // A session's claude spawns its own tree (MCP servers, tool shells). Put it
+  // under supervision so that tree dies with the host instead of outliving it
+  // holding the inherited listen socket.
+  supervise(child, `session:${s.id}`);
   const p = {
     child,
     resume,
@@ -630,7 +638,10 @@ function tryAutoSwitch(id, text) {
   const cur = getAccount(curId);
   const lastMsg = [...(record(id)?.sent || [])].pop();
   appendChat(id, {
-    kind: 'result',
+    // NB: was 'result' — ResultLine ignores event.text for non-error results
+    // and always renders a generic "✓ Done", so this message was never
+    // actually visible. 'system' is a plain info-styled line that shows it.
+    kind: 'system',
     text: `⤷ ${cur?.label || 'account'} hit its limit — switched to “${next.label}” and retrying…`,
   });
   // Make the working account the new default so subsequent NEW sessions don't
@@ -647,6 +658,50 @@ function tryAutoSwitch(id, text) {
     try { if (lastMsg) sendMessage(id, lastMsg); } catch {} finally { switchingSessions.delete(id); }
   }, 900);
   if (t.unref) t.unref();
+}
+
+// ---- auto-recover on an expired/revoked auth token --------------------------
+// A session's `claude` child gets its OAuth access token baked into its env
+// ONCE, at spawn (accountEnv → tokenForSession). The background refresher in
+// oauth-login.js keeps the STORED token fresh, but can never reach an
+// already-running child — env vars are immutable post-spawn. A session that
+// outlives one token lifetime starts failing auth on every turn until
+// something respawns it. Detected the same way tryAutoSwitch detects a
+// subscription-limit hit: from the structured `result` event's error text.
+const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again/i;
+const authRecovering = new Set(); // guards against re-entrant recovery per session
+
+async function tryAuthRecover(id, text) {
+  if (authRecovering.has(id)) return;
+  const s = getSession(id);
+  const accountId = s?.claude?.accountId || getActiveId();
+  if (!resolveRefreshToken(accountId)) {
+    appendChat(id, {
+      kind: 'error',
+      text: 'Authentication error, and this account has no refresh token to recover automatically — please re-authenticate it.',
+    });
+    return;
+  }
+  authRecovering.add(id);
+  const lastMsg = [...(record(id)?.sent || [])].pop();
+  try {
+    const ok = await refreshOne(accountId);
+    if (!ok) {
+      appendChat(id, { kind: 'error', text: 'Authentication error — token refresh failed. Please re-authenticate this account.' });
+      return;
+    }
+    appendChat(id, { kind: 'system', text: '⟳ authentication expired — refreshed the token and restarted the session' });
+    restart(id, { silent: true }); // respawns, re-reading the just-refreshed token
+    // Replay the failed turn once the resumed proc is up.
+    const t = setTimeout(() => {
+      try { if (lastMsg) sendMessage(id, lastMsg); } catch {}
+    }, 900);
+    if (t.unref) t.unref();
+  } finally {
+    // Small cooldown so a token that fails again immediately after refresh
+    // doesn't spin this in a tight loop.
+    setTimeout(() => authRecovering.delete(id), 5000);
+  }
 }
 
 function handleEvent(id, j) {
@@ -797,6 +852,8 @@ function handleEvent(id, j) {
         });
         // Subscription limit hit → quarantine this account and retry on another.
         if (j.is_error && LIMIT_RE.test(text)) tryAutoSwitch(id, text);
+        // Auth token expired/revoked → refresh it and respawn on the same account.
+        else if (j.is_error && AUTH_RE.test(text)) tryAuthRecover(id, text);
         // Queued prompts: with auto-play on, a finished turn plays the next one.
         if (!j.is_error) scheduleAutoPlay(id);
         // Auto status-summary: fold the just-finished turn into the brief (cheap
@@ -865,6 +922,33 @@ export function sendMessage(id, text, attachments = []) {
   setClaude(id, { state: 'working' });
   writeUserMessage(p, text, saved);
   p.sent.push(text);
+  return true;
+}
+
+// Answer a client-side tool_use (e.g. AskUserQuestion) with a tool_result so the
+// blocked turn resumes on the SAME turn, immediately. AskUserQuestion emits a
+// tool_use and blocks awaiting a tool_result for that id (default timeout ~60s);
+// a plain user message written meanwhile is queued by the CLI until that timeout
+// — the "stuck on working" stall. The tool_result envelope is the standard
+// Messages-API shape the CLI already accepts on stdin.
+export function answerToolResult(id, toolUseId, content, isError = false) {
+  if (!toolUseId) return false;
+  const wasRunning = isRunning(id);
+  const p = ensureRunning(id); // respawns with --resume after an exit
+  if (!wasRunning) {
+    // The proc that owned this tool_use already exited (its own ~60s block
+    // timeout, or the user was slow) — a tool_result keyed to a toolUseId the
+    // fresh --resume never asked for is silently dropped, leaving 'working'
+    // stuck forever (the state reconciler only fixes 'working' when the proc
+    // ISN'T running, which isn't the case right after a respawn). Deliver the
+    // answer as a normal turn instead — also makes it replay-safe under the
+    // early-death retry below, which only replays sendMessage's p.sent log.
+    return sendMessage(id, content);
+  }
+  const block = { type: 'tool_result', tool_use_id: toolUseId, content: String(content ?? '') };
+  if (isError) block.is_error = true;
+  p.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [block] } }) + '\n');
+  setClaude(id, { state: 'working' });
   return true;
 }
 
@@ -971,6 +1055,7 @@ function runHeadless(s, prompt, onExit) {
       stdio: ['ignore', 'ignore', 'pipe'],
     }
   );
+  supervise(child, 'headless');
   headless.add(child);
   let err = '';
   child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
@@ -1135,10 +1220,19 @@ export function interrupt(id) {
 // Allow/Deny cards live for 10 minutes and bg shells shown as running).
 function reapSessionOnExit(id, reason) {
   expirePendingPermissions(id, reason);
+  expirePendingScreenRequests(id, reason);
   const sess = getSession(id);
   if (sess && (sess.bg || []).some((b) => b.status === 'running')) {
     setBg(id, sess.bg.map((b) => (b.status === 'running' ? { ...b, status: 'exited', endedAt: Date.now() } : b)));
   }
+}
+
+// Stop a claude child AND everything it spawned. A bare child.kill() is a
+// decapitation on Windows: TerminateProcess takes claude.exe and leaves its MCP
+// servers running — orphaned, out of reach of taskkill /T (which only walks live
+// parent links), and still holding the listen socket they inherited from us.
+function stopChild(child) {
+  if (child) killTree(child.pid);
 }
 
 export function kill(id) {
@@ -1146,7 +1240,7 @@ export function kill(id) {
   if (!p) return false;
   p.expectKill = true;
   try { p.child.stdin.end(); } catch {}
-  try { p.child.kill('SIGTERM'); } catch {}
+  stopChild(p.child);
   procs.delete(id);
   reapSessionOnExit(id, 'session stopped');
   setClaude(id, { state: 'idle' });
@@ -1166,7 +1260,7 @@ function restartWith(id, patch) {
     if (p) {
       p.expectKill = true; // don't surface this stop as an error / dead state
       try { p.child.stdin.end(); } catch {}
-      try { p.child.kill('SIGTERM'); } catch {}
+      stopChild(p.child);
       procs.delete(id);
       // The old proc's pending permission requests can't be answered anymore;
       // deny them now so they don't linger against the soon-to-be-new proc.
@@ -1196,6 +1290,28 @@ export function setModel(id, model) {
   return restartWith(id, { modelChoice: choice });
 }
 
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+// `effort` maps 1:1 to `claude --effort <level>`. '' or 'default' clears it
+// back to the CLI's own default (no --effort flag).
+export function setEffort(id, effort) {
+  const level = !effort || effort === 'default' ? null : String(effort);
+  if (level && !EFFORT_LEVELS.includes(level)) throw new Error(`invalid effort level: ${level}`);
+  return restartWith(id, { effort: level });
+}
+
+// Auto-compact threshold as a % of the session's current model context window,
+// applied as a real `claude --autocompact <tokens>` spawn flag (not a message
+// injected into the conversation, which the CLI may or may not treat as a real
+// slash command over stream-json stdin). null/0 disables it.
+export function setAutoCompact(id, pct) {
+  const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
+  if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
+  const s = getSession(id);
+  const tokens = Math.round(ctxWindowFor(s?.claude?.model) * (p / 100));
+  return restartWith(id, { autoCompactPct: p, autoCompactTokens: tokens });
+}
+
 // Switch which account a session runs on. Restarts the session with --resume, so
 // the conversation survives — only the auth token changes. `accountId` null =
 // use the active account. Used by the manual switcher and by auto-switch.
@@ -1213,10 +1329,14 @@ export function setAccount(id, accountId) {
 // chat and tabs all survive. Main use: re-establish MCP server connections
 // (Linear/Notion/Figma) that dropped mid-session. Unlike restartWith this also
 // spawns when no proc is live (idle/dead), so it doubles as a manual revive.
-export function restart(id) {
+export function restart(id, { silent = false } = {}) {
   const s = getSession(id);
   if (!s) throw new Error(`no such session: ${id}`);
   if (s.archived) throw new Error(`session ${id} is archived`);
+  // Visible in the transcript so a restart is never silently invisible to the
+  // user. Callers that already append a more specific message (e.g.
+  // tryAuthRecover) pass silent:true to avoid a redundant second line.
+  if (!silent) appendChat(id, { kind: 'system', text: '⟳ session restarted' });
   if (isRunning(id)) restartWith(id, {});
   else spawnProc(s, !!s.claude?.sessionId); // --resume if we have a session id
   // Progress signal for the cockpit: 'restarting' until the new proc's eager
@@ -1226,7 +1346,34 @@ export function restart(id) {
   return getSession(id)?.claude;
 }
 
+// Drop the conversation and start fresh in the SAME session slot: stop the
+// live proc (if any) and respawn WITHOUT --resume, so spawnProc pins a brand
+// new claude session id. Worktree, branch, metadata, chat log and tabs all
+// survive — only the claude conversation itself resets. This is the real
+// mechanism behind "/clear": spawning fresh already does exactly that, no CLI
+// flag or message-injection needed.
+export function clearConversation(id) {
+  const s = getSession(id);
+  if (!s) throw new Error(`no such session: ${id}`);
+  if (s.archived) throw new Error(`session ${id} is archived`);
+  appendChat(id, { kind: 'system', text: '⟳ conversation cleared — starting fresh' });
+  setClaude(id, { sessionId: null }); // drop the --resume pointer
+  if (isRunning(id)) {
+    const p = record(id);
+    if (p) {
+      p.expectKill = true; // don't surface this stop as an error / dead state
+      try { p.child.stdin.end(); } catch {}
+      stopChild(p.child);
+      procs.delete(id);
+      reapSessionOnExit(id, 'conversation cleared');
+    }
+  }
+  spawnProc(getSession(id), false); // fresh session id, no --resume
+  setClaude(id, { state: 'restarting' });
+  return getSession(id)?.claude;
+}
+
 export function killAll() {
   for (const id of [...procs.keys()]) kill(id);
-  for (const c of [...headless]) { try { c.kill('SIGTERM'); } catch { /* ignore */ } }
+  for (const c of [...headless]) stopChild(c);
 }

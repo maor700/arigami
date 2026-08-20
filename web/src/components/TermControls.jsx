@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { restartSession } from '../lib/store.js';
+import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import { t, useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faGear, faRotateRight } from '@fortawesome/free-solid-svg-icons';
+import { faGear, faRotateRight, faBroom } from '@fortawesome/free-solid-svg-icons';
 
 // Permission modes mirror server/claude.js PERMISSION_MODES.
 const PERMISSION_OPTIONS = [
@@ -17,6 +17,17 @@ const PERMISSION_OPTIONS = [
   { value: 'bypassPermissions', label: t('rail.permBypass'), desc: t('rail.permBypassDesc'), danger: true },
 ];
 const PERMISSION_LABEL = Object.fromEntries(PERMISSION_OPTIONS.map((o) => [o.value, o.label]));
+
+// Effort levels mirror `claude --effort <level>` exactly (verified via `claude --help`).
+const EFFORT_OPTIONS = [
+  { value: 'default', label: t('rail.effortDefault') },
+  { value: 'low', label: t('rail.effortLow') },
+  { value: 'medium', label: t('rail.effortMedium') },
+  { value: 'high', label: t('rail.effortHigh') },
+  { value: 'xhigh', label: t('rail.effortXhigh') },
+  { value: 'max', label: t('rail.effortMax') },
+];
+const EFFORT_LABEL = Object.fromEntries(EFFORT_OPTIONS.map((o) => [o.value, o.label]));
 
 // Model options come from useModels() (web/src/lib/models.js) — the server's
 // cache of the `claude` CLI's own model list, refreshed once/day + on manual
@@ -256,6 +267,70 @@ function ModelModal({ session, onClose }) {
   );
 }
 
+/* ---------- effort picker (same stop-and-resume UX as model) -------------- */
+
+function EffortModal({ session, onClose }) {
+  const t = useT();
+  const current = session.claude?.effort || 'default';
+  const working = session.claude?.state === 'working';
+  const [pending, setPending] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const apply = async (effort) => {
+    setBusy(true);
+    try {
+      await api.post(`/sessions/${session.id}/effort`, { effort });
+    } catch {
+      /* swallow — state reconciles via WS */
+    }
+    onClose();
+  };
+
+  const pick = (effort) => {
+    if (effort === current) return onClose();
+    if (working) return setPending(effort);
+    apply(effort);
+  };
+
+  const confirmFooter = pending && (
+    <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
+      <div className="text-[12.5px] text-[#4a3f12]">
+        {t('rail.switchEffortWarnBefore')}<b>{EFFORT_LABEL[pending] || pending}</b>{t('rail.switchEffortWarnAfter')}
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onClose}
+          className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
+        >
+          {t('rail.cancelBtn')}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => apply(pending)}
+          className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
+        >
+          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <OptionsModal
+      title={t('rail.effort')}
+      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      options={EFFORT_OPTIONS}
+      value={current}
+      onSelect={pick}
+      onClose={onClose}
+      footer={confirmFooter}
+    />
+  );
+}
+
 /* ---------- the dropdown menu --------------------------------------------- */
 
 function MenuRow({ label, value, danger, onClick }) {
@@ -288,9 +363,10 @@ export default function TermControls({ session }) {
     modelChoice !== 'default'
       ? modelOptions.find((o) => o.value === modelChoice)?.label || modelChoice
       : prettyModel(reportedModel) || t('rail.permDefault');
+  const effortValue = EFFORT_LABEL[session.claude?.effort || 'default'];
   const restarting = session.claude?.state === 'restarting';
   const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission'
+  const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'effort'
   const ref = useRef(null);
 
   useEffect(() => {
@@ -344,16 +420,23 @@ export default function TermControls({ session }) {
             onClick={() => openModal('permission')}
           />
           <MenuRow label={t('rail.model')} value={modelValue} onClick={() => openModal('model')} />
+          <MenuRow label={t('rail.effort')} value={effortValue} onClick={() => openModal('effort')} />
           <span className="block h-px bg-hair" />
           <MenuRow
             label={restarting ? t('rail.restartingEllipsis') : t('rail.restartSession')}
             value={<Icon icon={faRotateRight} />}
             onClick={() => { setOpen(false); if (!restarting) restartSession(session); }}
           />
+          <MenuRow
+            label={t('rail.clearConversation')}
+            value={<Icon icon={faBroom} />}
+            danger
+            onClick={() => { setOpen(false); if (!restarting) clearSessionConversation(session); }}
+          />
         </div>
       )}
 
-      {modal === 'context' && <ContextModal usage={ctx} onClose={() => setModal(null)} />}
+      {modal === 'context' && <ContextModal session={session} usage={ctx} onClose={() => setModal(null)} />}
       {modal === 'dir' && (
         <OptionsModal
           title={t('rail.terminalDirection')}
@@ -376,6 +459,7 @@ export default function TermControls({ session }) {
       )}
       {modal === 'permission' && <PermissionModal session={session} onClose={() => setModal(null)} />}
       {modal === 'model' && <ModelModal session={session} onClose={() => setModal(null)} />}
+      {modal === 'effort' && <EffortModal session={session} onClose={() => setModal(null)} />}
     </span>
   );
 }

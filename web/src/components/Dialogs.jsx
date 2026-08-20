@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { sessionLabel, Dot, YellowButton, GhostButton } from './ui.jsx';
@@ -16,13 +17,18 @@ function Overlay({ onClose, children }) {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-  return (
+  // Portaled to <body>: mounted from Rail.jsx, whose transform/overflow makes
+  // a containing block for position:fixed descendants — without this, the
+  // overlay is clipped to the rail's own box instead of covering the viewport
+  // (same issue Rail.jsx's useHoverTip already works around the same way).
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,22,0.45)] p-5"
       onClick={onClose}
     >
       <div onClick={(e) => e.stopPropagation()}>{children}</div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

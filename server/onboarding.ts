@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
+import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
 import { hasCredentials } from './accounts.js';
 
@@ -421,6 +422,7 @@ function startJob(key: string, cmd: string, cwd?: string): ActionResult {
   try {
     const [sh, ...shArgs] = shellArgs(cmd);
     child = spawn(sh, shArgs, { cwd, env: process.env });
+    supervise(child, `onboarding:${key}`); // clone/install runs must not outlive us
   } catch (e) {
     // No POSIX shell on this machine — surface it as a failed job rather than
     // throwing out of a status/auto-fix request.

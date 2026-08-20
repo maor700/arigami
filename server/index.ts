@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
+import * as vnc from './vnc.js';
 import { killAll } from './claude.js';
+import { sweepOrphans } from './lib/children.js';
 import { flush as flushTriggers } from './triggers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -159,6 +161,7 @@ server.on(
     try {
       const pathname = (req.url || '').split('?')[0];
       if (pathname === '/__ws') return bus.handleUpgrade(req, socket, head);
+      if (pathname === '/__vnc') return vnc.handleUpgrade(req, socket, head);
       if (proxy?.handleUpgrade) return proxy.handleUpgrade(req, socket, head);
       socket.destroy();
     } catch (e) {
@@ -170,6 +173,32 @@ server.on(
     }
   }
 );
+
+// BEFORE listen: a child left over from a previous run may still hold the
+// listening socket it inherited from us (Windows), which keeps the port bound to
+// a pid that no longer exists — every subsequent start would fail to bind until
+// a reboot. Sweeping first turns that into a self-healing restart.
+try {
+  const swept = sweepOrphans();
+  if (swept) console.log(`[host] swept ${swept} orphaned process tree(s) from a previous run`);
+} catch (e) {
+  console.error('[host] orphan sweep failed:', (e as Error)?.message);
+}
+
+// A bind failure is the single most confusing way for the host to die — say what
+// it actually means, including the "owner is already dead" case.
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e?.code === 'EADDRINUSE' || e?.code === 'EACCES') {
+    console.error(
+      `[host] cannot bind :${cfg.port} (${e.code}). Something already holds it — ` +
+        `if the owning pid no longer exists, an orphaned child is still holding the ` +
+        `socket it inherited: run \`bin/host.ps1 stop\` (Windows) or \`bin/host stop\` to sweep, ` +
+        `or set a different port in ~/.arigami/config.json.`
+    );
+    process.exit(1);
+  }
+  console.error('[host] server error:', e?.message || e);
+});
 
 server.listen(cfg.port, () => {
   console.log(
@@ -208,3 +237,8 @@ function shutdown(): void {
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+// Windows delivers SIGBREAK (Ctrl+Break / taskkill without /F) rather than
+// SIGTERM; SIGHUP is the console-closed case. Neither fires on `taskkill /F` —
+// that's what the job object in lib/children.ts is for.
+process.on('SIGBREAK', shutdown);
+process.on('SIGHUP', shutdown);

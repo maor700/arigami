@@ -14,8 +14,12 @@ import {
   addWorktree,
 } from './git.js';
 import fs from 'node:fs';
+import net from 'node:net';
 
 const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
+// Longer than a permission decision — a request_screen ask is typically a
+// manual login/2FA/CAPTCHA flow the human has to actually walk through.
+const SCREEN_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
 interface PendingPermission {
   resolve: (value: PermissionResult | PromiseLike<PermissionResult>) => void;
@@ -23,6 +27,17 @@ interface PendingPermission {
   sessionId: string;
   toolName: string;
   input: unknown;
+}
+
+interface ScreenRequestResult {
+  ok: boolean;
+  note?: string;
+}
+
+interface PendingScreenRequest {
+  resolve: (value: ScreenRequestResult | PromiseLike<ScreenRequestResult>) => void;
+  timer: NodeJS.Timeout;
+  sessionId: string;
 }
 
 interface CleanupPlanResult {
@@ -40,6 +55,7 @@ interface CleanupResult {
 }
 
 const pendingPermissions = new Map<string, PendingPermission>();
+const pendingScreenRequests = new Map<string, PendingScreenRequest>();
 
 function json(
   res: ServerResponse,
@@ -198,6 +214,67 @@ function answerPermission(
           message: data.message || 'Denied by user',
         }
   );
+  return { ok: true };
+}
+
+// request_screen: the agent asks the human to look at / drive the shared
+// desktop (manual login, CAPTCHA, interactive installer…), shown as a live
+// embedded view in the chat. Blocking, same shape as handlePermissionRequest.
+async function handleScreenRequest(
+  res: ServerResponse,
+  body: Record<string, unknown>
+): Promise<void> {
+  const sessionId = body.session_id as string | undefined;
+  const s = sessionId && state.getSession(sessionId);
+  if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
+  const requestId = 'scrn_' + nano();
+  const prompt = String(body.prompt || '');
+  const result = await new Promise<ScreenRequestResult>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingScreenRequests.delete(requestId);
+      state.setClaude(sessionId, { state: 'working' });
+      const note = '(timed out — the human did not respond)';
+      claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
+      resolve({ ok: true, note });
+    }, SCREEN_REQUEST_TIMEOUT_MS);
+    pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
+    state.setClaude(sessionId, { state: 'awaiting-input' });
+    claude.appendChat(sessionId, { kind: 'screen-request', requestId, prompt });
+  });
+  json(res, result);
+}
+
+// Force-resolve any screen request left pending for a session — e.g. its
+// `claude` process just died — instead of leaving the chat card showing a
+// live embedded view for up to SCREEN_REQUEST_TIMEOUT_MS with nothing behind it.
+export function expirePendingScreenRequests(
+  sessionId: string,
+  message: string = 'session ended'
+): void {
+  for (const [requestId, entry] of pendingScreenRequests) {
+    if (entry.sessionId !== sessionId) continue;
+    clearTimeout(entry.timer);
+    pendingScreenRequests.delete(requestId);
+    claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
+    entry.resolve({ ok: true, note: message });
+  }
+}
+
+function answerScreenRequest(
+  sessionId: string,
+  data: { requestId: string; note?: string }
+): { ok: boolean } | null {
+  const entry = pendingScreenRequests.get(data.requestId);
+  if (!entry || entry.sessionId !== sessionId) return null;
+  clearTimeout(entry.timer);
+  pendingScreenRequests.delete(data.requestId);
+  state.setClaude(sessionId, { state: 'working' });
+  claude.appendChat(sessionId, {
+    kind: 'screen-request-answer',
+    requestId: data.requestId,
+    ...(data.note ? { note: data.note } : {}),
+  });
+  entry.resolve({ ok: true, ...(data.note ? { note: data.note } : {}) });
   return { ok: true };
 }
 
@@ -778,6 +855,22 @@ function capResult(body: any): {
   return { state: st, summary, artifacts, note, reportedAt: new Date().toISOString() };
 }
 
+// Quick reachability probe for the configured VNC server — lets the client
+// hide the screen-share icon cleanly on a machine where setup hasn't run yet,
+// instead of showing a button that fails on click.
+function probeVnc(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host, port, timeout: 800 });
+    const done = (ok: boolean) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+    sock.once('timeout', () => done(false));
+  });
+}
+
 export async function handle(
   req: IncomingMessage,
   res: ServerResponse
@@ -789,12 +882,22 @@ export async function handle(
     if (p === '/__mcp/permission' && m === 'POST') {
       return await handlePermissionRequest(res, await readBody(req));
     }
+    if (p === '/__mcp/screen-request' && m === 'POST') {
+      return await handleScreenRequest(res, await readBody(req));
+    }
     if (p === '/__api/config' && m === 'GET') {
       const { groqApiKey, ...pub } = cfg as any;
       return json(res, {
         ...pub,
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
+    }
+    // Global (not per-session) screen-share availability — the sidebar icon
+    // hides itself when this is false instead of showing a broken button.
+    if (p === '/__api/screen/status' && m === 'GET') {
+      const available =
+        !!cfg.screen?.enabled && (await probeVnc(cfg.screen.vncHost, cfg.screen.vncPort));
+      return json(res, { available });
     }
     // ---- Onboarding & workspace provisioning (see docs/ONBOARDING.md) ----
     if (p === '/__api/onboarding/status' && m === 'GET') {
@@ -1636,6 +1739,23 @@ export async function handle(
       }
       return json(res, { ok: true });
     }
+    // Answer a client-side tool_use (AskUserQuestion) with a tool_result so the
+    // blocked turn resumes immediately instead of stalling until the ~60s
+    // question timeout (a plain message would be queued by the CLI meanwhile).
+    if (sub === 'question/answer' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const toolUseId = typeof body.toolUseId === 'string' ? body.toolUseId : '';
+      const content = typeof body.content === 'string' ? body.content : '';
+      if (!toolUseId || !content.trim())
+        return badRequest(res, 'toolUseId and content required');
+      try {
+        claude.answerToolResult(id, toolUseId, content);
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: error.message }, 500);
+      }
+      return json(res, { ok: true });
+    }
     // ---- pending prompts (queued while the session is busy) ----
     if (sub === 'prompts' && m === 'POST') {
       const body = (await readBody(req)) as any;
@@ -1711,6 +1831,14 @@ export async function handle(
         ? json(res, out)
         : notFound(res, `no pending permission request: ${body.requestId}`);
     }
+    if (sub === 'screen-request/answer' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body.requestId) return badRequest(res, 'requestId required');
+      const out = answerScreenRequest(id, body);
+      return out
+        ? json(res, out)
+        : notFound(res, `no pending screen request: ${body.requestId}`);
+    }
     if (sub === 'interrupt' && m === 'POST') {
       return json(res, { ok: claude.interrupt(id) });
     }
@@ -1753,6 +1881,38 @@ export async function handle(
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         return badRequest(res, error.message);
+      }
+    }
+    if (sub === 'effort' && m === 'POST') {
+      const { effort } = (await readBody(req)) as any;
+      try {
+        return json(res, (claude as any).setEffort(id, effort));
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return badRequest(res, error.message);
+      }
+    }
+    // Context-window auto-compact threshold, expressed as a % of the session's
+    // current model window (null/0 disables it). Applied as a real `claude
+    // --autocompact <tokens>` spawn flag, not a message-injection guess.
+    if (sub === 'autocompact' && m === 'POST') {
+      const { pct } = (await readBody(req)) as any;
+      try {
+        return json(res, (claude as any).setAutoCompact(id, pct));
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return badRequest(res, error.message);
+      }
+    }
+    // Drop the conversation and start fresh in the same tab: respawns the
+    // claude proc WITHOUT --resume (worktree/branch/metadata/tabs survive —
+    // only the conversation itself resets).
+    if (sub === 'clear' && m === 'POST') {
+      try {
+        return json(res, { ok: true, claude: (claude as any).clearConversation(id) });
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: error.message }, 500);
       }
     }
     if (sub === 'account' && m === 'POST') {

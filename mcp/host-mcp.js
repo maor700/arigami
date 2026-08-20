@@ -393,6 +393,12 @@ const TOOLS = [
     run: (a) => api('DELETE', `/__api/sessions/${sid(a)}/listeners/${a.listener_id}`),
   },
   {
+    name: 'request_screen',
+    description: 'Ask the human to look at / interact with the shared desktop (e.g. a manual login, CAPTCHA, interactive installer) — shown as a live embedded view in the chat. Blocks until they click Done; the response may include a short note about what happened.',
+    inputSchema: obj({ prompt: { type: 'string' }, ...SID_PROP }, ['prompt']),
+    run: (a) => api('POST', '/__mcp/screen-request', { session_id: sid(a), prompt: a.prompt }),
+  },
+  {
     name: 'permission_prompt',
     description: 'Internal: permission bridge for --permission-prompt-tool. Blocks until the human answers in the host UI.',
     inputSchema: {

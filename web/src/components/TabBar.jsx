@@ -202,7 +202,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                 active
                   ? 'border-brand font-bold text-fg'
                   : 'border-transparent text-fgdim hover:text-fg'
-              } ${isSession ? 'min-w-0 flex-[0_1_auto]' : 'shrink-0'}`}
+              } ${isSession ? 'min-w-[64px] flex-[0_1_auto]' : 'shrink-0'}`}
             >
               {isSession ? (
                 <>
