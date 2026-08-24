@@ -29,6 +29,7 @@ import FirstRun from './components/FirstRun.jsx';
 import Settings from './components/Settings.jsx';
 import SkillsView from './components/SkillsView.jsx';
 import AccountsView from './components/AccountsView.jsx';
+import IntegrationsView from './components/IntegrationsView.jsx';
 import Setup from './components/Setup.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
 import QuickSwitcher from './components/QuickSwitcher.jsx';
@@ -75,6 +76,7 @@ function parseHash(hash) {
     case 'skills': return { view: 'skills' };
     case 'setup': return { view: 'setup' };
     case 'accounts': return { view: 'accounts', add: seg[1] === 'add' };
+    case 'integrations': return { view: 'integrations' };
     case 'new':
     case 'launcher': return { view: 'launcher', mode: ['ticket', 'empty', 'trigger'].includes(seg[1]) ? seg[1] : 'ticket' };
     case 'ticket': return seg[1] ? { view: 'ticket', id: decodeURIComponent(seg[1]) } : { view: 'home' };
@@ -88,6 +90,7 @@ function routeFromState(s) {
   if (s.skillsOpen) return '#/skills';
   if (s.setupOpen) return '#/setup';
   if (s.accountsOpen) return s.accountsAddIntent ? '#/accounts/add' : '#/accounts';
+  if (s.integrationsOpen) return '#/integrations';
   if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
   if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
   if (s.selectedId) return `#/session/${encodeURIComponent(s.selectedId)}`;
@@ -187,6 +190,7 @@ export default function App() {
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
   const [accountsOpen, setAccountsOpen] = useState(initial.view === 'accounts');
+  const [integrationsOpen, setIntegrationsOpen] = useState(initial.view === 'integrations');
   const [accountsAddIntent, setAccountsAddIntent] = useState(initial.view === 'accounts' && !!initial.add);
   const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
   const [addTabOpen, setAddTabOpen] = useState(false);
@@ -210,6 +214,7 @@ export default function App() {
     setSkillsOpen(r.view === 'skills');
     setSetupOpen(r.view === 'setup');
     setAccountsOpen(r.view === 'accounts');
+    setIntegrationsOpen(r.view === 'integrations');
     setAccountsAddIntent(r.view === 'accounts' && !!r.add);
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
@@ -225,9 +230,9 @@ export default function App() {
   //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
   //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
   const firstSync = useRef(true);
-  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
+  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
   useEffect(() => {
-    const want = routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
+    const want = routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
     const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
     // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
     // `#/session/<id>` — leave it alone so the active tab survives a refresh.
@@ -242,7 +247,7 @@ export default function App() {
     }
     firstSync.current = false;
     lastRoute.current = want;
-  }, [settingsOpen, skillsOpen, setupOpen, accountsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
+  }, [settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
 
   useEffect(() => {
     const onHash = () => {
@@ -562,6 +567,41 @@ export default function App() {
     return () => window.removeEventListener('host:select-session', onJump);
   }, [sessions]);
 
+  // Push notification click → navigate to the right session and scroll to event.
+  useEffect(() => {
+    const onMessage = (e) => {
+      if (e.data?.type === 'navigate-session' && e.data.sessionId) {
+        setSelectedId(e.data.sessionId);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setSetupOpen(false);
+        setAccountsOpen(false);
+        const eventId = e.data.eventId;
+        // Wait for React to render, then scroll to the target event or bottom
+        const tryScroll = (attempt = 0) => {
+          requestAnimationFrame(() => {
+            if (eventId) {
+              const target = document.querySelector(`[data-event-id="${CSS.escape(eventId)}"]`);
+              if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.style.outline = '2px solid var(--color-brand, #12A594)';
+                setTimeout(() => { target.style.outline = ''; }, 2000);
+                return;
+              }
+            }
+            // Fallback: scroll to bottom
+            const el = document.querySelector('.term.thin-scroll');
+            if (el) el.scrollTop = el.scrollHeight;
+            else if (attempt < 5) setTimeout(() => tryScroll(attempt + 1), 200);
+          });
+        };
+        tryScroll();
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
+  }, []);
+
   // Open the rail drawer from anywhere (e.g. the TabBar's mobile hamburger —
   // the session view has no top bar of its own, the tab bar hosts the button).
   useEffect(() => {
@@ -623,7 +663,7 @@ export default function App() {
   // the extra top bar would only duplicate the title — skip it there and keep
   // the pixels for the chat. Every other view still gets it for drawer access.
   const sessionIsMain =
-    !!selected && !settingsOpen && !skillsOpen && !setupOpen && !accountsOpen && !launcher && !previewTicket;
+    !!selected && !settingsOpen && !skillsOpen && !setupOpen && !accountsOpen && !integrationsOpen && !launcher && !previewTicket;
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
     ? t('settings.title')
@@ -633,15 +673,19 @@ export default function App() {
         ? t('chrome.topbar.setup')
         : accountsOpen
           ? t('chrome.topbar.accounts')
-          : launcher
-            ? t('chrome.topbar.newSession')
-            : previewTicket || selected?.title || 'Arigami';
+          : integrationsOpen
+            ? t('integrations.title')
+            : launcher
+              ? t('chrome.topbar.newSession')
+              : previewTicket || selected?.title || 'Arigami';
 
   let main;
   if (settingsOpen) {
     main = <Settings onClose={() => setSettingsOpen(false)} />;
   } else if (skillsOpen) {
     main = <SkillsView session={selected} onClose={() => setSkillsOpen(false)} />;
+  } else if (integrationsOpen) {
+    main = <IntegrationsView onClose={() => setIntegrationsOpen(false)} />;
   } else if (setupOpen) {
     main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} />;
   } else if (accountsOpen) {
@@ -725,7 +769,8 @@ export default function App() {
         }}
         onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
         onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
+        onOpenIntegrations={() => { setIntegrationsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
         onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setSettingsOpen(false); setAccountsOpen(false); setLauncher(null); setRailOpen(false); }}
         onOpenAccounts={() => { setAccountsAddIntent(false); setAccountsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false); }}
         onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}

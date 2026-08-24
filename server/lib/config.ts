@@ -50,6 +50,7 @@ export interface Config {
   chatDir: string;
   linearWorkspace: string;
   groqApiKey: string;
+  composioApiKey: string;
   sttModel: string;
   voiceRouterProvider: string;
   voiceRouterModel: string;
@@ -86,6 +87,7 @@ export const DEFAULTS: Config = {
   chatDir: '~/.arigami/chat',
   linearWorkspace: '',
   groqApiKey: '',
+  composioApiKey: '',
   sttModel: 'whisper-large-v3-turbo',
   voiceRouterProvider: 'groq',
   voiceRouterModel: 'llama-3.3-70b-versatile',
@@ -189,6 +191,7 @@ function envOverrides(): Partial<Config> {
     o.linearWorkspace =
       E.ARIGAMI_LINEAR_WORKSPACE || E.POC_LINEAR_WORKSPACE;
   if (E.GROQ_API_KEY) o.groqApiKey = E.GROQ_API_KEY;
+  if (E.COMPOSIO_API_KEY) o.composioApiKey = E.COMPOSIO_API_KEY;
   if (E.ARIGAMI_VOICE_LANG) o.voiceLang = E.ARIGAMI_VOICE_LANG;
   if (E.ARIGAMI_SCREEN_ENABLED != null || E.ARIGAMI_VNC_HOST || E.ARIGAMI_VNC_PORT) {
     o.screen = {

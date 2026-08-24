@@ -45,6 +45,7 @@ import {
   faTriangleExclamation,
   faUser,
   faXmark,
+  faLink,
 } from '@fortawesome/free-solid-svg-icons';
 
 const STATUS_ORDER = ['Booting', 'In Progress', 'In Review', 'Blocked', 'Completed'];
@@ -891,7 +892,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
 // Footer profile dropdown — consolidates the former standalone footer buttons
 // (voice / setup / skills / settings) plus the new Accounts entry behind one
 // menu, fronted by the account the host is currently running as.
-function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpenSettings }) {
+function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpenSettings, onOpenIntegrations }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
@@ -952,6 +953,7 @@ function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpen
             <span className="min-w-0 truncate text-[12px] font-bold text-fg">{label}</span>
           </div>
           <Item icon={faUser} onClick={act(onOpenAccounts)}>{t('rail.accounts')}</Item>
+          <Item icon={faLink} onClick={act(onOpenIntegrations)}>{t('rail.integrations')}</Item>
           <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
           <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
           <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
@@ -988,6 +990,7 @@ export default function Rail({
   onOpenSkills,
   onOpenSetup,
   onOpenAccounts,
+  onOpenIntegrations,
   searchRef,
   onArchive,
   onRestore,
@@ -1700,6 +1703,7 @@ export default function Rail({
         <ProfileMenu
           active={(accounts?.accounts || []).find((a) => a.active) || null}
           onOpenAccounts={onOpenAccounts}
+          onOpenIntegrations={onOpenIntegrations}
           onOpenSkills={onOpenSkills}
           onOpenSetup={onOpenSetup}
           onOpenSettings={onOpenSettings}

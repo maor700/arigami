@@ -8,3 +8,7 @@ bin/.appicon.png
 # Docker secrets — never commit
 .env
 docker/.env
+
+# debug logs
+mcp-logs.txt
+wa-logs.txt

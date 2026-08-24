@@ -35,6 +35,32 @@ export const en = {
   'settings.textDir.hint':
     'Default chat direction — Auto detects per message. Each terminal has its own toggle in its header.',
 
+  // rail
+  'rail.integrations': 'Integrations',
+
+  // integrations view
+  'integrations.title': 'Integrations',
+  'integrations.connectedCount': 'connected',
+  'integrations.refresh': 'Refresh',
+  'integrations.categories': 'Categories',
+  'integrations.all': 'All',
+  'integrations.connectedFilter': 'Connected',
+  'integrations.search': 'Search integrations…',
+  'integrations.connected': 'Connected',
+  'integrations.connect': 'Connect',
+  'integrations.connecting': 'Connecting…',
+  'integrations.disconnect': 'Disconnect',
+  'integrations.oauthOpened': 'Authorization page opened in a new tab. Refresh after connecting.',
+  'integrations.disconnected': '{name} disconnected.',
+  'integrations.notFound': 'Connection not found.',
+  'integrations.empty': 'No integrations found.',
+  'integrations.noKey.title': 'Connect to Composio',
+  'integrations.noKey.body': 'Sign in to access 1,000+ app integrations — Gmail, Linear, WhatsApp, and more.',
+  'integrations.oauth.button': 'Sign in with Composio',
+  'integrations.oauth.starting': 'Opening…',
+  'integrations.oauth.waiting': 'Waiting for browser sign-in…',
+  'integrations.oauth.cancel': 'Cancel',
+
   // Compact relative-time units — appended to a number (e.g. "5m", "4d 18h").
   'time.m': 'm',
   'time.h': 'h',

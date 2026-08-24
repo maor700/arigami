@@ -20,6 +20,7 @@ import {
   patchListener,
   getSession,
   addListener,
+  removeListener as stateRemoveListener,
   cfg,
 } from './state.js';
 import {
@@ -43,6 +44,21 @@ import {
   type SlackWatermark,
   type SlackDiff,
 } from './listeners-slack.js';
+import {
+  fetchWhatsappMessages,
+  diffWhatsapp,
+  addGroupSubscription,
+  removeGroupSubscription,
+  resolveActiveJid,
+  type WhatsAppWatermark,
+  DEFAULT_DB_PATH as WA_DEFAULT_DB_PATH,
+} from './listeners-whatsapp.js';
+import {
+  startBridge,
+  isBridgeRunning,
+  isPaired,
+  WA_DB_PATH,
+} from './whatsapp-bridge.js';
 import { evaluateWorker, type WorkerWatermark } from './watchdog.js';
 import * as claude from './claude.js';
 import * as linear from './linear-mcp.js';
@@ -390,10 +406,30 @@ function tryDeliver(sessionId: string): void {
   if (s.claude?.state !== 'idle') return; // hold; onSessionIdle will retry
 
   const text = [...mine.map(([, p]) => p.text), ...myAdhoc.map(([, p]) => p.text)].join('\n\n');
+  // Collect labels for the push notification
+  const labels = mine.map(([lid]) => getListener(lid)?.label).filter(Boolean);
   try {
     claude.sendMessage(sessionId, text);
   } catch {
     return; // session not spawnable right now — keep pending, retry on next idle/poll
+  }
+  // Send push notification with the eventId of the just-appended chat event
+  if (mine.length) {
+    import('./push.js')
+      .then((push) => {
+        if (!push.hasSubscriptions()) return;
+        // The chat event was just appended — read the latest to get its id
+        const latest = claude.getChat(sessionId, 0);
+        const lastEvent = Array.isArray(latest) ? latest[latest.length - 1] : null;
+        push.sendPush({
+          title: labels[0] || 'Arigami',
+          body: text.slice(0, 200),
+          tag: mine[0]?.[0] || 'listener',
+          sessionId,
+          eventId: lastEvent?.id,
+        });
+      })
+      .catch(() => {});
   }
   for (const [k] of myAdhoc) adhoc.delete(k);
   for (const [lid, p] of mine) {
@@ -426,6 +462,47 @@ async function pollOne(l: Listener): Promise<void> {
   }
 
   if (l.type === 'worker') return pollWorker(l, now);
+
+  // ---- whatsapp poller (synchronous SQLite read, no network) -----------------
+  if (l.type === 'whatsapp') {
+    const { dbPath, groupJid } = l.params as { dbPath: string; groupJid?: string | null };
+    const wm = l.watermark as unknown as WhatsAppWatermark;
+    const nextSince = new Date(now).toISOString();
+    const { messages, error } = fetchWhatsappMessages(dbPath, wm.since, groupJid);
+    if (error) {
+      const level = l.backoffLevel + 1;
+      const wait = Math.min(BASE_BACKOFF_MS * 2 ** (level - 1), MAX_BACKOFF_MS);
+      llog(l.id, 'warn', `whatsapp db error — backing off ${Math.round(wait / 1000)}s: ${error.slice(0, 120)}`);
+      patchListener(l.id, { backoffLevel: level, nextPollAt: now + wait, lastPolledAt: now, lastError: error.slice(0, 300) });
+      return;
+    }
+    const diff = diffWhatsapp(messages, nextSince);
+    if (diff.shouldFire) {
+      llog(l.id, 'fire', `${messages.length} new WhatsApp message(s)`);
+      enqueue(l, diff.summary, diff.nextWatermark, false);
+    } else {
+      patchListener(l.id, { lastPolledAt: now, nextPollAt: now + l.intervalSec * 1000, backoffLevel: 0 });
+    }
+    return;
+  }
+
+  if (l.type === 'sms') {
+    const sms = await import('./sms.js');
+    const wm = l.watermark as { since: string };
+    const fromFilter = (l.params as any)?.fromFilter || null;
+    const nextSince = new Date(now).toISOString();
+    let msgs = sms.getSmsAfter(wm.since);
+    if (fromFilter) msgs = msgs.filter((m: any) => m.from.includes(fromFilter));
+    if (msgs.length) {
+      const lines = msgs.map((m: any) => `📱 SMS from ${m.from}: ${m.body}`);
+      const summary = `🔔 ${msgs.length} new SMS:\n${lines.join('\n')}`;
+      llog(l.id, 'fire', `${msgs.length} new SMS`);
+      enqueue(l, summary, { since: nextSince }, false);
+    } else {
+      patchListener(l.id, { lastPolledAt: now, nextPollAt: now + l.intervalSec * 1000, backoffLevel: 0 });
+    }
+    return;
+  }
 
   let outcome: PollOutcome;
   try {
@@ -547,6 +624,14 @@ export function startListenerScheduler(): void {
   tick();
   timer = setInterval(tick, TICK_MS);
   if (timer.unref) timer.unref();
+
+  // Auto-start bridge if a WhatsApp listener is already registered
+  const waListeners = listListeners().filter((l) => l.type === 'whatsapp' && l.status === 'watching');
+  if (waListeners.length > 0 && !isBridgeRunning()) {
+    const l = waListeners[0];
+    llog('whatsapp-bridge', 'info', 'auto-starting bridge for existing WhatsApp listener');
+    startBridge(l.sessionId, enqueueWake).catch(console.error);
+  }
 }
 
 // ---- registration -----------------------------------------------------------
@@ -764,6 +849,112 @@ export async function registerSlackListener(
   });
   llog(listener.id, 'info', `armed — watching ${label} for ${fireOn.join(', ')} (every ${intervalSec}s, baseline captured)`);
   return listener;
+}
+
+export async function registerWhatsappListener(
+  sessionId: string,
+  args: { db_path?: string; ttl_days?: number; interval_sec?: number; group_jid?: string }
+): Promise<Listener> {
+  const s = getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+  const dbPath = args.db_path || WA_DB_PATH;
+  // Resolve phone-number JIDs to their active LID equivalent if one exists.
+  const rawJid = args.group_jid || null;
+  const groupJid = rawJid ? resolveActiveJid(dbPath, rawJid) : null;
+
+  // Ensure the bridge process is running. If not paired, startBridge will
+  // open a QR code in the browser AND wake the session with scan instructions.
+  if (!isBridgeRunning()) {
+    const paired = isPaired();
+    llog('whatsapp-bridge', 'info', paired ? 'starting bridge (already paired)' : 'starting bridge — QR scan required');
+    await startBridge(sessionId, enqueueWake);
+    if (!paired) {
+      enqueueWake(
+        sessionId,
+        '📱 WhatsApp is not yet paired. A browser window will open with a QR code — scan it with your phone to connect.',
+        `wa:setup:${sessionId}`
+      );
+    }
+  }
+
+  // If tracking a group, add it to the subscription table so the bridge starts storing its messages.
+  if (groupJid) {
+    addGroupSubscription(dbPath, groupJid);
+    llog('whatsapp-bridge', 'info', `subscribed to group: ${groupJid}`);
+  }
+
+  // Baseline watermark: "now" so we don't replay history.
+  const since = new Date().toISOString();
+  const now = Date.now();
+  const intervalSec = Number(args.interval_sec) > 0 ? Number(args.interval_sec) : 10;
+  const ttlDays = Number(args.ttl_days) > 0 ? Number(args.ttl_days) : DEFAULT_TTL_DAYS;
+
+  const isGroup = groupJid?.endsWith('@g.us') ?? false;
+  const label = groupJid
+    ? isGroup ? `WhatsApp group ${groupJid}` : `WhatsApp DM ${groupJid}`
+    : 'WhatsApp messages';
+  const listener = addListener({
+    sessionId,
+    type: 'whatsapp',
+    label,
+    params: { dbPath, groupJid },
+    fireOn: ['new_message'],
+    watermark: { since } as Record<string, unknown>,
+    ttlAt: now + ttlDays * 86_400_000,
+    intervalSec,
+    nextPollAt: now + intervalSec * 1000,
+  });
+  llog(listener.id, 'info', `armed — polling WhatsApp DB every ${intervalSec}s${groupJid ? ` (group: ${groupJid})` : ''} (bridge running: ${isBridgeRunning()})`);
+  return listener;
+}
+
+// ---- SMS webhook listener ---------------------------------------------------
+
+export function registerSmsListener(sessionId: string, args: Record<string, any>) {
+  const s = getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+
+  const since = new Date().toISOString();
+  const now = Date.now();
+  const intervalSec = Number(args.interval_sec) > 0 ? Number(args.interval_sec) : 5;
+  const ttlDays = Number(args.ttl_days) > 0 ? Number(args.ttl_days) : DEFAULT_TTL_DAYS;
+  const fromFilter = args.from_filter || null; // optional: only SMS from this number
+
+  const label = fromFilter ? `SMS from ${fromFilter}` : 'SMS messages';
+  const listener = addListener({
+    sessionId,
+    type: 'sms',
+    label,
+    params: { fromFilter },
+    fireOn: ['new_sms'],
+    watermark: { since } as Record<string, unknown>,
+    ttlAt: now + ttlDays * 86_400_000,
+    intervalSec,
+    nextPollAt: now + intervalSec * 1000,
+  });
+  llog(listener.id, 'info', `armed — polling SMS inbox every ${intervalSec}s${fromFilter ? ` (from: ${fromFilter})` : ''}`);
+  return listener;
+}
+
+// Clean up group subscription when a whatsapp listener is removed.
+export function removeWhatsappListener(id: string): boolean {
+  const l = getListener(id);
+  if (!l) return false;
+  if (l.type === 'whatsapp') {
+    const { dbPath, groupJid } = l.params as { dbPath: string; groupJid?: string | null };
+    if (groupJid) {
+      // Only remove subscription if no other active listener is watching this group
+      const others = listListeners().filter(
+        (o) => o.id !== id && o.type === 'whatsapp' &&
+          (o.params as any)?.groupJid === groupJid && o.status === 'watching'
+      );
+      if (others.length === 0) {
+        removeGroupSubscription(dbPath, groupJid);
+        llog('whatsapp-bridge', 'info', `unsubscribed from group: ${groupJid}`);
+      }
+    }
+  }
+  return stateRemoveListener(id);
 }
 
 // Auto-armed by the host when a master spawns a worker (decision 15). Watches the

@@ -250,9 +250,14 @@ function tail(id) {
   return t;
 }
 
+let _evSeqGlobal = 0;
+function shortId() {
+  return Date.now().toString(36) + (++_evSeqGlobal).toString(36);
+}
+
 export function appendChat(id, ev) {
   const t = tail(id);
-  ev = { seq: ++t.seq, ts: Date.now(), ...ev };
+  ev = { id: ev.id || shortId(), seq: ++t.seq, ts: Date.now(), ...ev };
   t.events.push(ev);
   if (t.events.length > TAIL_MAX) t.events.shift();
   try {
@@ -280,6 +285,58 @@ export function getChat(id, since = 0) {
     } catch {}
   }
   return t.events.filter((e) => e.seq > since);
+}
+
+// Read the last N lines from a JSONL file efficiently (reads from end of file).
+function readTailLines(filePath, maxLines) {
+  const CHUNK = 64 * 1024;
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size === 0) return [];
+    const lines = [];
+    let partial = '';
+    let pos = size;
+    while (pos > 0 && lines.length < maxLines) {
+      const readSize = Math.min(CHUNK, pos);
+      pos -= readSize;
+      const buf = Buffer.alloc(readSize);
+      fs.readSync(fd, buf, 0, readSize, pos);
+      const chunk = buf.toString('utf8') + partial;
+      const parts = chunk.split('\n');
+      partial = parts[0]; // may be incomplete line
+      for (let i = parts.length - 1; i >= 1; i--) {
+        if (parts[i]) lines.unshift(parts[i]);
+        if (lines.length >= maxLines) break;
+      }
+    }
+    // If we reached the start and there's leftover, it's the first line
+    if (partial && lines.length < maxLines) lines.unshift(partial);
+    return lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+  finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+}
+
+// Paginated: return the last `limit` events before `beforeSeq`.
+// Returns { events, hasMore, oldestSeq }.
+export function getChatPage(id, { limit = 100, beforeSeq = Infinity } = {}) {
+  const t = tail(id);
+  // If the tail buffer covers what we need, use it (fast path)
+  if (beforeSeq >= Infinity && t.events.length >= limit) {
+    const page = t.events.slice(-limit);
+    return { events: page, hasMore: t.events.length > limit || t.seq > t.events.length, oldestSeq: page[0]?.seq ?? 0 };
+  }
+  // Read only what we need from disk (from the end)
+  const needed = beforeSeq < Infinity ? limit + 500 : limit + 1; // overshoot for filtering
+  const raw = readTailLines(chatFile(id), needed);
+  const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
+  const page = filtered.slice(-limit);
+  return {
+    events: page,
+    hasMore: filtered.length > limit || (raw.length >= needed),
+    oldestSeq: page[0]?.seq ?? 0,
+  };
 }
 
 // ---- process lifecycle -----------------------------------------------------

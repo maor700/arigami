@@ -886,14 +886,179 @@ export async function handle(
       return await handleScreenRequest(res, await readBody(req));
     }
     if (p === '/__api/config' && m === 'GET') {
-      const { groqApiKey, ...pub } = cfg as any;
+      const { groqApiKey, composioApiKey, ...pub } = cfg as any;
       return json(res, {
         ...pub,
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
     }
+    // ---- Composio integrations -------------------------------------------------
+    // OAuth login via Composio CLI session API (no API key required upfront)
+    if (p === '/__api/composio/auth/start' && m === 'POST') {
+      try {
+        const sessionRes = await fetch('https://backend.composio.dev/api/v3.1/cli/create-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (!sessionRes.ok) return json(res, { error: `Composio session error: ${sessionRes.status}` });
+        const session = await sessionRes.json() as { id: string; code: string };
+        const loginUrl = `https://dashboard.composio.dev/?cliKey=${session.id}`;
+        return json(res, { loginUrl, sessionId: session.id });
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: err.message });
+      }
+    }
+    if (p === '/__api/composio/auth/status' && m === 'GET') {
+      const sessionId = u.searchParams.get('sessionId') || '';
+      if (!sessionId) return json(res, { authenticated: false });
+      try {
+        const pollRes = await fetch(`https://backend.composio.dev/api/v3.1/cli/get-session?id=${encodeURIComponent(sessionId)}`);
+        if (!pollRes.ok) return json(res, { authenticated: false });
+        const pollData = await pollRes.json() as { api_key?: string | null };
+        if (pollData.api_key) {
+          // Persist into arigami config + live cfg
+          const configPath = (cfg as any).configFile as string;
+          let configData: Record<string, unknown> = {};
+          try { configData = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
+          configData.composioApiKey = pollData.api_key;
+          fs.writeFileSync(configPath, JSON.stringify(configData, null, 2) + '\n');
+          (cfg as any).composioApiKey = pollData.api_key;
+          return json(res, { authenticated: true });
+        }
+        return json(res, { authenticated: false });
+      } catch {
+        return json(res, { authenticated: false });
+      }
+    }
+    const COMPOSIO_BASE = 'https://backend.composio.dev';
+    const composioKey = (): string => cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
+    const composioFetch = async (path: string, opts: RequestInit = {}) => {
+      const key = composioKey();
+      if (!key) throw new Error('COMPOSIO_API_KEY not configured');
+      const r = await fetch(`${COMPOSIO_BASE}${path}`, {
+        ...opts,
+        headers: { 'x-api-key': key, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      });
+      const text = await r.text();
+      let body: any;
+      try { body = JSON.parse(text); } catch { body = { error: text }; }
+      if (r.status === 401) throw Object.assign(new Error(body?.error?.message || 'Invalid API key'), { status: 401 });
+      if (!r.ok) throw new Error(body?.error?.message || `Composio ${r.status}`);
+      return body;
+    };
+    if (p === '/__api/composio/toolkits' && m === 'GET') {
+      try {
+        const category = u.searchParams.get('category') || '';
+        const qs = `limit=200${category ? `&category=${encodeURIComponent(category)}` : ''}`;
+        const [toolkitsRes, connectionsRes] = await Promise.all([
+          composioFetch(`/api/v3.1/toolkits?${qs}`),
+          composioFetch('/api/v3.1/connected_accounts?limit=200'),
+        ]);
+        const connectedSlugs = new Set(
+          (connectionsRes.items || [])
+            .filter((c: any) => c.status === 'ACTIVE')
+            .map((c: any) => c.toolkit?.slug).filter(Boolean)
+        );
+        const toolkits = (toolkitsRes.items || []).map((t: any) => ({
+          slug: t.slug,
+          name: t.name,
+          logo: `https://logos.composio.dev/api/${t.slug}`,
+          description: t.description,
+          categories: t.categories || [],
+          connected: connectedSlugs.has(t.slug),
+        }));
+        return json(res, { toolkits, hasKey: !!composioKey() });
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        const isAuthError = (err as any).status === 401;
+        return json(res, { error: err.message, hasKey: isAuthError ? false : !!composioKey() }, 200);
+      }
+    }
+    if (p === '/__api/composio/connections' && m === 'GET') {
+      try {
+        const data = await composioFetch('/api/v3.1/connected_accounts?limit=200');
+        return json(res, { connections: data.items || [] });
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: err.message }, 200);
+      }
+    }
+    if (p === '/__api/composio/connect' && m === 'POST') {
+      try {
+        const body = await readBody(req);
+        const { toolkitSlug } = body as any;
+        if (!toolkitSlug) return badRequest(res, 'toolkitSlug required');
+        // Step 1: create (or reuse) a Composio-managed auth config for this toolkit
+        const authConfigRes = await composioFetch('/api/v3.1/auth_configs', {
+          method: 'POST',
+          body: JSON.stringify({ toolkit: { slug: toolkitSlug }, type: 'use_composio_managed_auth' }),
+        });
+        const authConfigId = authConfigRes?.auth_config?.id;
+        if (!authConfigId) throw new Error('Failed to get auth config id from Composio');
+        // Step 2: get an OAuth redirect link (v3 endpoint for managed auth)
+        const key = composioKey();
+        const linkRes = await fetch(`${COMPOSIO_BASE}/api/v3/connected_accounts/link`, {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_config_id: authConfigId, user_id: 'default', redirect_url: `${COMPOSIO_BASE}` }),
+        });
+        const linkData = await linkRes.json() as any;
+        if (!linkRes.ok) throw new Error(linkData?.error?.message || `Composio ${linkRes.status}`);
+        return json(res, { redirectUrl: linkData.redirect_url, id: linkData.connected_account_id });
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: err.message }, 200);
+      }
+    }
+    if (p.startsWith('/__api/composio/connections/') && m === 'DELETE') {
+      const connId = p.split('/')[4];
+      if (!connId) return badRequest(res, 'connection id required');
+      try {
+        await composioFetch(`/api/v3.1/connected_accounts/${connId}`, { method: 'DELETE' });
+        return json(res, { ok: true });
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: err.message }, 200);
+      }
+    }
     // Global (not per-session) screen-share availability — the sidebar icon
     // hides itself when this is false instead of showing a broken button.
+    // ---- SMS inbound webhook -------------------------------------------------
+    if (p.startsWith('/__api/sms/inbound') && (m === 'POST' || m === 'GET')) {
+      const sms = await import('./sms.js');
+      const from = u.searchParams.get('from') || u.searchParams.get('sender') || '';
+      const text = u.searchParams.get('body') || u.searchParams.get('message') || '';
+      if (m === 'POST' && !from && !text) {
+        const b = (await readBody(req)) as any;
+        const msg = sms.receiveSms(b.from || b.sender || '', b.body || b.message || b.text || '', b.timestamp);
+        return json(res, { ok: true, id: msg.id });
+      }
+      if (!text) return badRequest(res, 'missing body/message');
+      const msg = sms.receiveSms(from, text);
+      return json(res, { ok: true, id: msg.id });
+    }
+
+    // ---- Push notifications (PWA) -------------------------------------------
+    if (p === '/__api/push/vapid-public-key' && m === 'GET') {
+      const push = await import('./push.js');
+      return json(res, { publicKey: push.getVapidPublicKey() });
+    }
+    if (p === '/__api/push/subscribe' && m === 'POST') {
+      const push = await import('./push.js');
+      const body = (await readBody(req)) as any;
+      if (!body?.endpoint) return badRequest(res, 'missing subscription');
+      push.addSubscription(body);
+      return json(res, { ok: true });
+    }
+    if (p === '/__api/push/unsubscribe' && m === 'POST') {
+      const push = await import('./push.js');
+      const body = (await readBody(req)) as any;
+      push.removeSubscription(body?.endpoint || '');
+      return json(res, { ok: true });
+    }
+
     if (p === '/__api/screen/status' && m === 'GET') {
       const available =
         !!cfg.screen?.enabled && (await probeVnc(cfg.screen.vncHost, cfg.screen.vncPort));
@@ -1282,6 +1447,23 @@ export async function handle(
       s.disconnect();
       return json(res, { ok: true });
     }
+    if (p === '/__api/whatsapp/status' && m === 'GET') {
+      const wb = await import('./whatsapp-bridge.js');
+      return json(res, wb.getBridgeStatus());
+    }
+    if (p === '/__api/whatsapp/connect' && m === 'POST') {
+      const wb = await import('./whatsapp-bridge.js');
+      const { enqueueWake } = await import('./listeners.js');
+      const sessionId = req.headers['x-session-id'] as string || 'ui';
+      // Fire and forget — UI polls /status every 3s for updates
+      wb.startBridge(sessionId, enqueueWake).catch(console.error);
+      return json(res, wb.getBridgeStatus());
+    }
+    if (p === '/__api/whatsapp/disconnect' && m === 'POST') {
+      const wb = await import('./whatsapp-bridge.js');
+      wb.stopBridge();
+      return json(res, { ok: true });
+    }
     if (p === '/__api/linear/oauth/callback' && m === 'GET') {
       const mcp = await import('./linear-mcp.js');
       const code = u.searchParams.get('code');
@@ -1660,7 +1842,7 @@ export async function handle(
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const type = body.type || 'github-pr';
-      if (type !== 'github-pr' && type !== 'linear-issue' && type !== 'slack')
+      if (type !== 'github-pr' && type !== 'linear-issue' && type !== 'slack' && type !== 'whatsapp' && type !== 'sms')
         return badRequest(res, `unsupported listener type: ${type}`);
       try {
         const listeners = await import('./listeners.js');
@@ -1669,7 +1851,11 @@ export async function handle(
             ? await listeners.registerLinearIssueListener(id, body)
             : type === 'slack'
               ? await listeners.registerSlackListener(id, body)
-              : await listeners.registerGithubPrListener(id, body);
+              : type === 'whatsapp'
+                ? await listeners.registerWhatsappListener(id, body)
+                : type === 'sms'
+                  ? listeners.registerSmsListener(id, body)
+                  : await listeners.registerGithubPrListener(id, body);
         return json(res, l, 201);
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
@@ -1684,7 +1870,10 @@ export async function handle(
         const listeners = await import('./listeners.js');
         return json(res, { ...l, log: listeners.getListenerLog(lid) });
       }
-      if (m === 'DELETE') return json(res, { ok: state.removeListener(lid) });
+      if (m === 'DELETE') {
+        const listeners = await import('./listeners.js');
+        return json(res, { ok: listeners.removeWhatsappListener(lid) });
+      }
       return notFound(res);
     }
     // Controller → child command channel (task_session). Authority is the
@@ -1925,6 +2114,12 @@ export async function handle(
       }
     }
     if (sub === 'chat' && m === 'GET') {
+      // Paginated mode: ?limit=N&before=SEQ → { events, hasMore, oldestSeq }
+      const limit = Number(u.searchParams.get('limit'));
+      if (limit > 0) {
+        const beforeSeq = Number(u.searchParams.get('before')) || Infinity;
+        return json(res, (claude as any).getChatPage(id, { limit, beforeSeq }));
+      }
       return json(
         res,
         claude.getChat(id, Number(u.searchParams.get('since')) || 0)

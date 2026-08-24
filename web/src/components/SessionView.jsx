@@ -11,7 +11,7 @@ import { useVoice, toggleRecording } from '../lib/voice.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
@@ -812,6 +812,7 @@ function ChatFooter({ session }) {
   const [panelTab, setPanelTab] = useState(null); // null = closed; else a tab id
   const [attachments, setAttachmentsLocal] = useState(() => getDraft(session.id).attachments);
   const [dragging, setDragging] = useState(false);
+  const [quoted, setQuoted] = useState(null); // { kind, text, ts }
   const isDesktop = useIsDesktop();
   const taRef = useRef(null);
   const fileRef = useRef(null);
@@ -860,6 +861,20 @@ function ChatFooter({ session }) {
     const onFocus = () => focusInput();
     window.addEventListener('host:focus-input', onFocus);
     return () => window.removeEventListener('host:focus-input', onFocus);
+  }, []);
+
+  // Quote: ChatPane fires 'host:quote' when the user clicks ↩ on a message.
+  useEffect(() => {
+    const onQuote = (e) => {
+      const ev = e.detail?.event;
+      if (!ev) return;
+      const txt = ev.text ?? ev.content ?? ev.message ?? ev.output ?? '';
+      const text = typeof txt === 'string' ? txt : Array.isArray(txt) ? txt.map(p => typeof p === 'string' ? p : p?.text ?? '').join('\n') : String(txt);
+      setQuoted({ kind: ev.kind, text, ts: ev.ts });
+      focusInput();
+    };
+    window.addEventListener('host:quote', onQuote);
+    return () => window.removeEventListener('host:quote', onQuote);
   }, []);
 
 
@@ -912,10 +927,16 @@ function ChatFooter({ session }) {
     if (!t && !attachments.length) return;
     sendingRef.current = true;
     const sentAttachments = attachments;
-    const payload = { text: t, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
-    setLastSent(session.id, { text: t, attachments: sentAttachments });
+    // Prepend the quoted message as a blockquote so the model sees context.
+    const quotedPrefix = quoted
+      ? `> ${quoted.text.split('\n').join('\n> ')}\n\n`
+      : '';
+    const fullText = quotedPrefix + t;
+    const payload = { text: fullText, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
+    setLastSent(session.id, { text: fullText, attachments: sentAttachments });
     setText('');
     setAttachments([]);
+    setQuoted(null);
     try {
       await api.post(`/sessions/${session.id}/message`, payload);
     } catch {
@@ -1075,7 +1096,23 @@ function ChatFooter({ session }) {
         >
           /
         </button>
-        <div className="flex min-w-0 flex-1 items-end gap-2 rounded-[10px] border-[1.5px] border-border px-3 py-2 focus-within:border-[#9a9a9a]">
+        <div className="flex min-w-0 flex-1 flex-col rounded-[10px] border-[1.5px] border-border focus-within:border-[#9a9a9a]">
+          {quoted && (
+            <div className="flex items-start gap-2 border-b border-border bg-[var(--term-hover,#f5f5f5)] px-3 py-1.5">
+              <Icon icon={faReply} className="mt-0.5 text-[10px] text-brand opacity-70" />
+              <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fgdim">
+                {quoted.text.length > 120 ? quoted.text.slice(0, 120) + '…' : quoted.text}
+              </span>
+              <button
+                type="button"
+                onClick={() => setQuoted(null)}
+                className="shrink-0 cursor-pointer text-[10px] text-fgdim hover:text-fg"
+              >
+                <Icon icon={faXmark} />
+              </button>
+            </div>
+          )}
+          <div className="flex items-end gap-2 px-3 py-2">
           <textarea
             ref={taRef}
             rows={1}
@@ -1088,6 +1125,7 @@ function ChatFooter({ session }) {
             className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
             style={{ fieldSizing: 'content' }}
           />
+          </div>
         </div>
         {working && (
           <button

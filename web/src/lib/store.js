@@ -269,7 +269,15 @@ function appendChat(sessionId, event) {
 export async function loadSessions() {
   try {
     const list = await api.get('/sessions?archived=true');
-    mergeSnapshot(Array.isArray(list) ? list : list?.sessions);
+    const sessions = Array.isArray(list) ? list : list?.sessions;
+    mergeSnapshot(sessions);
+    // Prefetch chat for the first active session so it's ready when selected
+    if (sessions?.length) {
+      const first = sessions
+        .filter((s) => !s.archived)
+        .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9))[0];
+      if (first?.id && !state.chatLoaded[first.id]) loadChat(first.id);
+    }
   } catch {
     /* host not running — first-run state renders fine on empty */
   }
@@ -313,21 +321,51 @@ export async function loadUsage() {
   }
 }
 
+const INITIAL_PAGE = 150;
+
 export async function loadChat(sessionId) {
   if (!sessionId || state.chatLoaded[sessionId]) return;
   setState({ chatLoaded: { ...state.chatLoaded, [sessionId]: true } });
   try {
-    const res = await api.get(`/sessions/${sessionId}/chat?since=0`);
+    const res = await api.get(`/sessions/${sessionId}/chat?limit=${INITIAL_PAGE}`);
     const events = Array.isArray(res) ? res : res?.events;
     if (Array.isArray(events)) {
       const live = state.chats[sessionId] || [];
-      setState({ chats: { ...state.chats, [sessionId]: mergeChatEvents(live, events) } });
+      setState({
+        chats: { ...state.chats, [sessionId]: mergeChatEvents(live, events) },
+        chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
+        chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
+      });
     }
   } catch {
-    // Roll back the loaded flag so a transient failure doesn't permanently
-    // block rehydration — re-selecting the session will retry.
     setState({ chatLoaded: { ...state.chatLoaded, [sessionId]: false } });
   }
+}
+
+const OLDER_PAGE = 200;
+
+export async function loadOlderChat(sessionId) {
+  if (!sessionId) return false;
+  const oldest = (state.chatOldestSeq || {})[sessionId];
+  if (oldest == null || oldest <= 1) return false;
+  try {
+    const res = await api.get(`/sessions/${sessionId}/chat?limit=${OLDER_PAGE}&before=${oldest}`);
+    const events = Array.isArray(res) ? res : res?.events;
+    if (Array.isArray(events) && events.length) {
+      const live = state.chats[sessionId] || [];
+      setState({
+        chats: { ...state.chats, [sessionId]: mergeChatEvents(events, live) },
+        chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
+        chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
+      });
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+export function chatHasMore(sessionId) {
+  return !!(state.chatHasMore || {})[sessionId];
 }
 
 // After a WS reconnect, chat events emitted while the socket was down were never
@@ -336,8 +374,11 @@ export async function loadChat(sessionId) {
 function refetchLoadedChats() {
   for (const sid of Object.keys(state.chatLoaded)) {
     if (!state.chatLoaded[sid]) continue;
+    // Only fetch events newer than what we already have (gap fill)
+    const existing = state.chats[sid] || [];
+    const lastSeq = existing.length ? existing[existing.length - 1].seq || 0 : 0;
     api
-      .get(`/sessions/${sid}/chat?since=0`)
+      .get(`/sessions/${sid}/chat?since=${lastSeq}`)
       .then((res) => {
         const events = Array.isArray(res) ? res : res?.events;
         if (Array.isArray(events) && events.length) {

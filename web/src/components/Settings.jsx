@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
+import { subscribePush, unsubscribePush, isPushSubscribed } from '../lib/push.js';
 import { Wave } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -234,6 +235,126 @@ function MicPicker({ value, onChange }) {
   );
 }
 
+function WhatsAppBridge() {
+  const t = useT();
+  const [status, setStatus] = useState(null); // null = loading
+  const [busy, setBusy] = useState(false);
+  const pollRef = useRef(null);
+
+  const [error, setError] = useState(null);
+
+  const load = () =>
+    api.get('/whatsapp/status').then(setStatus).catch(() => setStatus({ status: 'disconnected', qrUrl: null, user: null }));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  // Poll whenever bridge is in a transient state
+  useEffect(() => {
+    clearInterval(pollRef.current);
+    if (status?.status === 'qr' || status?.status === 'starting') {
+      pollRef.current = setInterval(load, 3000);
+    }
+    return () => clearInterval(pollRef.current);
+  }, [status?.status]);
+
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await api.post('/whatsapp/connect', {}));
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true);
+    setError(null);
+    try { await api.post('/whatsapp/disconnect', {}); } catch {}
+    finally { setBusy(false); load(); }
+  };
+
+  const s = status?.status ?? 'disconnected';
+  const dot =
+    s === 'connected' ? 'bg-[#2f9c82]' :
+    s === 'qr' || s === 'starting' ? 'bg-amber-400 animate-pulse' :
+    'bg-fgdim';
+
+  return (
+    <>
+      <div className="mt-6 mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        WhatsApp
+      </div>
+
+      <div className="rounded-xl border border-hair bg-panel p-3">
+        {/* Status row */}
+        <div className="flex items-center gap-2.5">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dot}`} />
+          <span className="flex-1 text-[12px] text-fg">
+            {s === 'connected'
+              ? `Connected${status?.user ? ` · ${status.user}` : ''}`
+              : s === 'qr'
+              ? 'Waiting for QR scan…'
+              : s === 'starting'
+              ? 'Starting…'
+              : 'Disconnected'}
+          </span>
+          {s === 'connected' ? (
+            <button
+              type="button"
+              onClick={disconnect}
+              disabled={busy}
+              className="cursor-pointer rounded-lg border border-hair bg-white px-2.5 py-1 text-[10.5px] text-[#9c3b33] hover:bg-[#FBECEA] disabled:opacity-50"
+            >
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={busy || s === 'starting' || s === 'qr'}
+              className="cursor-pointer rounded-lg border border-ink bg-brand px-2.5 py-1 text-[10.5px] font-bold text-fg hover:opacity-90 disabled:opacity-50"
+            >
+              {s === 'starting' ? 'Starting…' : s === 'qr' ? 'Scan QR' : 'Connect'}
+            </button>
+          )}
+        </div>
+
+        {/* QR code */}
+        {s === 'qr' && status?.qrUrl && (
+          <div className="mt-3 flex flex-col items-center gap-2 border-t border-hair pt-3">
+            <p className="text-[11px] text-fgdim">Scan with WhatsApp on your phone</p>
+            <img
+              src={status.qrUrl}
+              alt="WhatsApp QR code"
+              className="h-[220px] w-[220px] rounded-lg border border-hair bg-white p-1"
+            />
+          </div>
+        )}
+
+        {/* QR pending but no URL yet */}
+        {s === 'qr' && !status?.qrUrl && (
+          <div className="mt-3 flex items-center justify-center gap-2 border-t border-hair pt-3 text-[11px] text-fgdim">
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-fgdim border-t-transparent" />
+            Generating QR…
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mt-2 rounded-lg border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[11px] text-[#9c3b33]">
+            {error}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function Settings({ onClose }) {
   const prefs = usePrefs();
   const t = useT();
@@ -461,8 +582,40 @@ export default function Settings({ onClose }) {
           </Field>
 
           <RemoteAccess />
+          <WhatsAppBridge />
+          <PushNotifications />
         </div>
       </div>
     </div>
+  );
+}
+
+function PushNotifications() {
+  const t = useT();
+  const [on, setOn] = useState(false);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { isPushSubscribed().then(setOn).finally(() => setLoading(false)); }, []);
+  const toggle = async (v) => {
+    setLoading(true);
+    try {
+      if (v) await subscribePush();
+      else await unsubscribePush();
+      setOn(v);
+    } catch (e) {
+      console.error('Push toggle error:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  if (!('PushManager' in window)) return null;
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('settings.pushTitle') || 'Push Notifications'}
+      </h3>
+      <Field label={t('settings.pushEnable') || 'Enable push notifications'} hint={t('settings.pushHint') || 'Get notified on your phone when listeners fire or Claude needs input'}>
+        <Toggle on={on} onChange={toggle} disabled={loading} />
+      </Field>
+    </>
   );
 }

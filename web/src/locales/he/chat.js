@@ -7,6 +7,7 @@ export const strings = {
   'chat.done': 'בוצע',
   'chat.copy': 'העתקה',
   'chat.copied': 'הועתק',
+  'chat.quote': 'ציטוט',
   'chat.turnOne': 'תור {n}',
   'chat.turnMany': '{n} תורים',
   'chat.errored': 'אירעה שגיאה.',

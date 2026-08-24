@@ -7,6 +7,7 @@ export const strings = {
   'chat.done': 'done',
   'chat.copy': 'Copy',
   'chat.copied': 'Copied',
+  'chat.quote': 'Quote',
   'chat.turnOne': '{n} turn',
   'chat.turnMany': '{n} turns',
   'chat.errored': 'Errored.',

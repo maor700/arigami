@@ -359,9 +359,15 @@ const TOOLS = [
       'type "slack" — watches a Slack channel/DM (or a single thread) and wakes this session on new messages. ' +
       'Slack target: pass channel_id (a channel/DM id like C0123ABCD / D0123ABCD), optionally thread_ts to watch one thread, or a Slack message url. Requires a Slack user token connected in the host settings. ' +
       'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored. ' +
+      'type "whatsapp" — watches the local WhatsApp DB (written by the whatsapp-mcp Baileys process) and wakes this session when new incoming messages arrive. No target required. ' +
+      'For personal chats (default): omit group_jid — only direct messages are tracked. ' +
+      'For a specific group: pass group_jid (e.g. "120363412808577334@g.us") — tracking starts immediately and stops when the listener is cancelled. Group messages are NOT stored unless explicitly subscribed. ' +
+      'Optionally pass db_path to override the default DB location. ' +
+      'type "sms" — watches for inbound SMS messages forwarded by the phone\'s SMS Gateway app via webhook. ' +
+      'Optionally pass from_filter to only match SMS from a specific number (partial match). ' +
       'It auto-stops on the terminal event (merge/close, or completed/canceled), after ttl_days (default 7), or when this session is archived. Returns the listener {id, label, ...}.',
     inputSchema: obj({
-      type: { type: 'string', enum: ['github-pr', 'linear-issue', 'slack'], description: 'Listener type (default github-pr)' },
+      type: { type: 'string', enum: ['github-pr', 'linear-issue', 'slack', 'whatsapp', 'sms'], description: 'Listener type (default github-pr)' },
       url: { type: 'string', description: 'GitHub PR url, or a Slack message url (for type slack)' },
       owner: { type: 'string' },
       repo: { type: 'string' },
@@ -369,15 +375,19 @@ const TOOLS = [
       issue_id: { type: 'string', description: 'Linear issue identifier (ENG-1234) or UUID — for type linear-issue' },
       channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
       thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
-      fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply'] } },
+      fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms'] } },
+      group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363412808577334@g.us") — for type whatsapp. Omit for personal messages only.' },
+      db_path: { type: 'string', description: 'Override WhatsApp DB path (for type whatsapp, default: /home/arigami/.local/lib/whatsapp-mcp/data/whatsapp.db)' },
+      from_filter: { type: 'string', description: 'SMS sender filter — partial match on phone number (for type sms)' },
       ttl_days: { type: 'number', description: 'Auto-stop after this many days (default 7)' },
-      interval_sec: { type: 'number', description: 'Poll interval seconds (default 30)' },
+      interval_sec: { type: 'number', description: 'Poll interval seconds (default 10 for whatsapp, 30 for others)' },
       ...SID_PROP,
     }),
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/listeners`, {
       type: a.type || 'github-pr', url: a.url, owner: a.owner, repo: a.repo, number: a.number,
       issue_id: a.issue_id, channel_id: a.channel_id, thread_ts: a.thread_ts,
       fire_on: a.fire_on, ttl_days: a.ttl_days, interval_sec: a.interval_sec,
+      group_jid: a.group_jid, db_path: a.db_path, from_filter: a.from_filter,
     }),
   },
   {

@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, answerScreenRequest } from '../lib/store.js';
+import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
@@ -18,6 +18,7 @@ import {
   faCopy,
   faFile,
   faImage,
+  faReply,
   faWandMagicSparkles,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
@@ -84,6 +85,27 @@ function prettyInput(input) {
 
 /* ---------- per-kind renderers ------------------------------------------- */
 
+// Fires a custom event that ChatFooter listens for to populate the quote
+// preview above the composer. Decoupled: ChatPane doesn't import ChatFooter.
+function QuoteButton({ event, className = '' }) {
+  const t = useT();
+  const onClick = (e) => {
+    e.stopPropagation();
+    window.dispatchEvent(new CustomEvent('host:quote', { detail: { event } }));
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={t('chat.quote') || 'Quote'}
+      aria-label={t('chat.quote') || 'Quote'}
+      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:opacity-100 ${className}`}
+    >
+      <Icon icon={faReply} />
+    </button>
+  );
+}
+
 // Small hover-revealed copy button — shown outright on touch devices (no
 // hover there). Parent must set `group` for the hover reveal to work.
 function CopyButton({ text, className = '' }) {
@@ -129,6 +151,7 @@ function UserMsg({ event }) {
           <span className="font-normal tracking-normal normal-case opacity-70">· {agoTime(event.ts)}</span>
         )}
         <CopyButton text={text} className="text-[10px]" />
+        <QuoteButton event={event} className="text-[10px]" />
       </span>
       <div
         dir={d}
@@ -164,6 +187,7 @@ function AssistantMsg({ event, recap }) {
         <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[9.5px] text-[var(--term-faint)]">
           <span className="opacity-70">{agoTime(event.ts)}</span>
           <CopyButton text={text} />
+          <QuoteButton event={event} />
         </div>
       )}
     </div>
@@ -840,11 +864,22 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   }, [sessionId]);
 
   const hiddenCount = Math.max(0, events.length - shown);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const serverHasMore = chatHasMore(sessionId);
 
-  const revealEarlier = () => {
+  const revealEarlier = async () => {
     const el = scrollRef.current;
     anchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
-    setShown((n) => n + REVEAL);
+    if (hiddenCount > 0) {
+      // Reveal already-loaded events first
+      setShown((n) => n + REVEAL);
+    } else if (serverHasMore) {
+      // Fetch older page from server
+      setLoadingOlder(true);
+      await loadOlderChat(sessionId);
+      setShown((n) => n + REVEAL);
+      setLoadingOlder(false);
+    }
   };
 
   // Re-anchor after the earlier rows mount, before the browser paints.
@@ -868,14 +903,18 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       className={`term ${view.theme === 'light' ? 'term-light' : ''} thin-scroll h-full overflow-y-auto bg-[var(--term-bg)] px-4 py-3.5`}
     >
       <div className="term-events" style={scale === 1 ? undefined : { zoom: scale }}>
-        {hiddenCount > 0 && (
+        {(hiddenCount > 0 || serverHasMore) && (
           <div className="pb-2 text-center">
             <button
               type="button"
               onClick={revealEarlier}
-              className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)]"
+              disabled={loadingOlder}
+              className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] disabled:opacity-50"
             >
-              <Icon icon={faChevronUp} /> {t('chat.showEarlier', { n: hiddenCount })}
+              {loadingOlder
+                ? <><span className="host-spinner inline-block h-3 w-3" /> {t('chat.loadingTranscript')}</>
+                : <><Icon icon={faChevronUp} /> {hiddenCount > 0 ? t('chat.showEarlier', { n: hiddenCount }) : t('chat.loadEarlier') || 'Load earlier messages'}</>
+              }
             </button>
           </div>
         )}
@@ -935,7 +974,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           return events.slice(hiddenCount).map((e, j) => {
             const i = hiddenCount + j;
             const live = !!awaiting && ((isAsk(e) && i === lastAskIdx) || (isPerm(e) && i === lastPermIdx));
-            return <Event key={keys[i]} sessionId={sessionId} event={e} live={live} recap={recap.has(i)} />;
+            return <div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} recap={recap.has(i)} /></div>;
           });
         })()}
         {action && <ActionCard sessionId={sessionId} action={action} />}
