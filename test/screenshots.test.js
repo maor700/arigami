@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { encodePng, downscaleRgba } from '../server/lib/png.ts';
+import { encodePng, downscaleRgba, frameDiffRatio } from '../server/lib/png.ts';
 import { runInChild } from './_child.js';
 
 test('encodePng writes a valid RGBA8 PNG', () => {
@@ -37,6 +37,35 @@ test('downscaleRgba halves dimensions with nearest-neighbour sampling', () => {
   expect(d.width).toBe(2); expect(d.height).toBe(2);
   expect(d.rgba.length).toBe(16);
   expect(d.rgba[0]).toBe(7); expect(d.rgba[3]).toBe(0xff);
+});
+
+// T9: change detection behind auto-snapshot throttling and capture_screen dedup.
+test('frameDiffRatio: identical → 0, cursor-sized change → tiny, half repaint → ~0.5, size mismatch → 1', () => {
+  const w = 100, h = 100;
+  const a = Buffer.alloc(w * h * 4, 0x40);
+  expect(frameDiffRatio(a, a, w, h)).toBe(0);
+  const b = Buffer.from(a);
+  for (let i = 0; i < 16 * 16; i++) b[i * 4] = 0xff; // a 16x16 cursor-ish blob
+  expect(frameDiffRatio(a, b, w, h)).toBeLessThan(0.03);
+  const c = Buffer.from(a);
+  c.fill(0xc0, 0, (w * h * 4) / 2); // top half repainted
+  const r = frameDiffRatio(a, c, w, h);
+  expect(r).toBeGreaterThan(0.45); expect(r).toBeLessThan(0.55);
+  expect(frameDiffRatio(a, Buffer.alloc(10), w, h)).toBe(1);
+  // sub-tolerance noise (compression jitter) does not count
+  const d = Buffer.from(a); for (let i = 0; i < d.length; i += 4) d[i] += 3;
+  expect(frameDiffRatio(a, d, w, h)).toBe(0);
+});
+
+test('judgeFrame: below threshold → duplicate; above but too soon → throttled (auto only); else record', () => {
+  const r = runInChild(
+    "const {judgeFrame}=await import('./server/screenshots.ts');" +
+      "const P={threshold:0.03,minIntervalMs:30000};" +
+      'emit({dup:judgeFrame(0.01,60000,P,true),thr:judgeFrame(0.2,5000,P,true),rec:judgeFrame(0.2,60000,P,true),manualSoon:judgeFrame(0.2,5000,P,false),manualDup:judgeFrame(0.0,5000,P,false)});',
+    { ARIGAMI_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-judge-')) }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0]).toEqual({ dup: 'duplicate', thr: 'throttled', rec: 'record', manualSoon: 'record', manualDup: 'duplicate' });
 });
 
 // screenshots.ts imports state.js (side effects) → isolate in a child.
