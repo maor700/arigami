@@ -710,7 +710,7 @@ function ScreenRequestCard({ sessionId, event }) {
         </div>
       ) : (
         <>
-          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly className="mt-2.5 h-[240px] w-full rounded-lg" />
+          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly sessionId={sessionId} className="mt-2.5 h-[240px] w-full rounded-lg" />
           <div className="mt-2.5 flex items-center justify-end gap-2">
             <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
               {t('screen.cancelRequest')}

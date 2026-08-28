@@ -99,7 +99,7 @@ export default function ScreenSidePanel({ session }) {
 
       {/* 16:10-ish box; the view scales the desktop to fit. Always view-only. */}
       <div className="px-3 pt-2">
-        <ScreenView priority={SCREEN_PRIORITY.panel} viewOnly onStatusChange={onStatusChange} className="aspect-[16/10] w-full rounded-lg" />
+        <ScreenView priority={SCREEN_PRIORITY.panel} viewOnly sessionId={session?.id} onStatusChange={onStatusChange} className="aspect-[16/10] w-full rounded-lg" />
       </div>
 
       {req && (

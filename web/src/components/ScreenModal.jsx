@@ -143,7 +143,7 @@ export default function ScreenModal({ context, onClose }) {
           </div>
         )}
 
-        <ScreenView priority={SCREEN_PRIORITY.modal} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
+        <ScreenView priority={SCREEN_PRIORITY.modal} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
         {req && (
           <div className="flex items-center gap-2 border-t border-hair px-4 py-2.5">
