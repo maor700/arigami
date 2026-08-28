@@ -7,6 +7,7 @@ import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig } from './lib/config.js';
+import * as screens from './screenshots.js';
 import {
   changesFor,
   changeDiff,
@@ -291,6 +292,7 @@ async function handleScreenRequest(
   const result = await new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
+      screens.stopAutoSnapshots(requestId);
       state.setClaude(sessionId, { state: 'working' });
       const note = '(timed out — the human did not respond)';
       claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
@@ -305,6 +307,9 @@ async function handleScreenRequest(
       ...(reason ? { reason } : {}),
       ...(hint ? { hint } : {}),
     });
+    // Watch-mode timeline: periodic snapshots grouped under this card until
+    // the human takes over (mode → control) or answers.
+    screens.startAutoSnapshots(sessionId, requestId);
     pushIntervention(
       sessionId,
       'screen',
@@ -326,6 +331,7 @@ export function expirePendingScreenRequests(
     if (entry.sessionId !== sessionId) continue;
     clearTimeout(entry.timer);
     pendingScreenRequests.delete(requestId);
+    screens.stopAutoSnapshots(requestId);
     claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
     entry.resolve({ ok: true, takenOver: false, note: message });
   }
@@ -339,6 +345,7 @@ function answerScreenRequest(
   if (!entry || entry.sessionId !== sessionId) return null;
   clearTimeout(entry.timer);
   pendingScreenRequests.delete(data.requestId);
+  screens.stopAutoSnapshots(data.requestId);
   state.setClaude(sessionId, { state: 'working' });
   const takenOver = data.takenOver === true;
   claude.appendChat(sessionId, {
@@ -2190,6 +2197,35 @@ export async function handle(
       return out
         ? json(res, out)
         : notFound(res, `no pending screen request: ${body.requestId}`);
+    }
+    // The card tells us whether the human is watching or driving: snapshots
+    // only run in Watch (privacy — nothing is recorded while they type).
+    if (sub === 'screen-request/mode' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body.requestId) return badRequest(res, 'requestId required');
+      const mode = body.mode === 'control' ? 'control' : 'watch';
+      const entry = pendingScreenRequests.get(String(body.requestId));
+      if (!entry || entry.sessionId !== id) return notFound(res, `no pending screen request: ${body.requestId}`);
+      return json(res, { ok: true, mode, tracking: screens.setAutoSnapshotMode(String(body.requestId), mode) });
+    }
+    // capture_screen: one frame of the shared desktop → screenshot chat event.
+    if (sub === 'screenshot' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const caption = body.caption ? String(body.caption).slice(0, 300) : undefined;
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled' }, 503);
+      try {
+        const ev = await screens.takeScreenshot(id, { caption });
+        return json(res, { ok: true, url: ev!.url, ts: ev!.ts, width: ev!.width, height: ev!.height });
+      } catch (e) {
+        return json(res, { ok: false, error: `screenshot failed: ${(e as Error).message}` }, 503);
+      }
+    }
+    if (parts[3] === 'screens' && parts[4] && !parts[5] && m === 'GET') {
+      const file = screens.screenFilePath(id, parts[4]);
+      if (!file || !fs.existsSync(file)) return notFound(res, 'no such screenshot');
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=31536000, immutable' });
+      fs.createReadStream(file).pipe(res);
+      return;
     }
     if (sub === 'interrupt' && m === 'POST') {
       return json(res, { ok: claude.interrupt(id) });
