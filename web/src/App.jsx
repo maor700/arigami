@@ -864,8 +864,10 @@ export default function App() {
           }}
         />
       )}
-      {/* The one interactive desktop modal — rail icon (global) or Take over
-          on a request_screen card. Closing never answers the request. */}
+      {/* The one interactive desktop modal — rail icon (global desktop), a
+          session's side-panel "enlarge" (that session's own machine), or
+          Take over on a request_screen card (same, plus the request
+          context). Closing never answers the request. */}
       {storeState.screen.modal && <ScreenModal context={storeState.screen.modal} onClose={closeScreenTakeover} />}
       <ConfirmHost />
       <Toaster />

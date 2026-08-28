@@ -189,13 +189,21 @@ canvas, the rest paint a mirror. `ScreenView`/`ScreenSidePanel`/
 - **Chat card** (`ScreenRequestCard`, ChatPane.jsx) — small, view-only live
   view + reason chip + prompt/hint + **Cancel** / **Take over**.
 - **Side panel** (`ScreenSidePanel.jsx`, desktop) — same content, view-only,
-  same two buttons; its "enlarge" is a Take over while a request is open.
+  scoped to `session.id` (T8: that session's own desktop, not the global
+  one). Its "enlarge" is a Take over while a request is open, otherwise
+  `setScreenModal({sessionId: session.id})` — the same session's machine,
+  just full-size (T8c: NOT the global one — only the rail footer icon opens
+  that).
 - **ScreenModal** (`ScreenModal.jsx`) — the ONE interactive view, mounted
-  once in App.jsx from `store.screen.modal`. Opened from the rail icon
-  (plain global view, `modal = {}`) or by Take over
-  (`modal = {sessionId, requestId}`), in which case it shows the request's
-  reason/prompt/hint, a "you are in control" banner and a footer with an
-  optional note, **Cancel** and **Done**.
+  once in App.jsx from `store.screen.modal`. Three shapes: `modal = true`
+  (rail icon → normalized to `{}`, the genuinely global desktop — no
+  sessionId), `modal = {sessionId}` (side panel enlarge — that session's
+  machine, plain interactive view, no Done/Cancel footer since there's no
+  request to answer), or `modal = {sessionId, requestId}` (Take over — same
+  as `{sessionId}` plus the request's reason/prompt/hint, a "you are in
+  control" banner and a footer with an optional note, **Cancel** and
+  **Done**). `context?.sessionId` (undefined for the plain `{}` global case)
+  is threaded straight to `ScreenView`/`useScreenConnection`.
 `store.screen.controlRequestId` marks the request currently taken over.
 
 **request_screen flow** (`POST /__mcp/screen-request`, blocking like the
