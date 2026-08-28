@@ -137,15 +137,24 @@ export function readSkill(name: string) {
   return { ...readSkillMeta(name), content, supporting: files };
 }
 
-// PUT /__api/skills/:name — validated write of SKILL.md (edit-only).
-// Returns { error } on a validation failure (caller maps to 400).
-export function writeSkill(name: string, content: string): { ok: true; skill: SkillSummary } | { error: string } {
-  if (!NAME_RE.test(name) || !isSkillDir(name)) return { error: `no such skill: ${name}` };
+// PUT /__api/skills/:name — validated write of SKILL.md. Edit-only by default
+// (the skill must already exist) — that's the human editor's UI path. Creation
+// of a brand-new skill is only allowed with opts.allowCreate:true, which only
+// the skill-proposals apply path (server/skill-proposals.ts) sets — never the
+// human-editor route, so PUT still can't be used to smuggle a new skill in.
+export function writeSkill(
+  name: string,
+  content: string,
+  opts: { allowCreate?: boolean } = {}
+): { ok: true; skill: SkillSummary } | { error: string } {
+  if (!NAME_RE.test(name)) return { error: `invalid skill name: ${name}` };
+  if (!isSkillDir(name) && !opts.allowCreate) return { error: `no such skill: ${name}` };
   if (typeof content !== 'string' || !content.trim()) return { error: 'empty content' };
   const fm = content.match(/^---\n([\s\S]*?)\n---/);
   if (!fm) return { error: 'missing YAML frontmatter (--- … ---) at the top of the file' };
   const parsed = parseFrontmatter(content);
   if (!parsed.description) return { error: 'frontmatter must include a non-empty "description"' };
+  fs.mkdirSync(path.join(SKILLS_DIR, name), { recursive: true });
   fs.writeFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), content);
   return { ok: true, skill: readSkillMeta(name) };
 }

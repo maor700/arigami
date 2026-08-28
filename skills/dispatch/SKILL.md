@@ -159,6 +159,18 @@ context thin is the whole point.
 
 ---
 
+## Retro (before you finish, either role)
+
+When your part of the tree reaches a terminal state (root master: whole job
+done; worker: right before `report_to_master`), pause for one question: did
+you learn something a *future* dispatch run should know — a decomposition
+that turned out wrong, a node that needed a dependency you didn't see
+upfront, an integration step this skill's instructions don't cover? If yes,
+call `skill_propose({name: "dispatch", rationale, evidence?})` describing the
+concrete change. Not every run produces one — most won't. Never a background
+habit, never speculative. If you're a worker and filed a proposal, pass its
+id as `report_to_master`'s `skill_proposal_id` so your master sees it.
+
 ## Notes
 
 - Caps are global across the whole tree (`config.json` → `dispatcher.maxMutating` /

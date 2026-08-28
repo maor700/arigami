@@ -143,6 +143,15 @@ Final chat message, short:
 Take one last `capture_screen({caption: "Final state"})` (required moment #4). If a review is
 needed, `request_review` with that summary.
 
+### 6. Reflect (retro)
+Before you finish: did you hit something a future run of this skill should
+know — a selector that only works with an extra wait, a site that needs a
+specific hand-over hint, a step order that avoided a dead end? If yes, call
+`skill_propose({name: "machine-work", rationale, evidence?})` with a small,
+concrete change (don't propose speculatively, and don't do this every run —
+only when you actually learned something). This is a proposal, not a write —
+a human reviews the diff before it touches the live skill.
+
 ## Anti-patterns
 - Calling `request_screen` with only a prompt and no hint ("please help").
 - Using `request_action` for "I'm on the login page" — that's status, not a decision.
