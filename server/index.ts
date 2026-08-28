@@ -11,7 +11,9 @@ import * as api from './api.js';
 import * as bus from './bus.js';
 import * as vnc from './vnc.js';
 import { killAll } from './claude.js';
-import { sweepOrphans } from './lib/children.js';
+import { sweepOrphans, HOST_ID } from './lib/children.js';
+import { claimHost, releaseHost } from './lib/hostlock.js';
+import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -174,10 +176,23 @@ server.on(
   }
 );
 
+// FIRST, before anything destructive: refuse to boot if this identity
+// (ARIGAMI_DIR + port) is already being served. A second copy of a live host
+// must never reach sweepOrphans() — that sweep kills every session of the
+// running host (T5). Nothing below runs unless we own this identity.
+try {
+  await claimHost(cfg.port);
+  console.log(`[host] instance ${HOST_ID}${IS_DEFAULT_INSTANCE ? ' (default)' : ' (isolated: ' + ARIGAMI_DIR + ')'}`);
+} catch (e) {
+  console.error('[host] refusing to start: ' + ((e as Error)?.message || e));
+  process.exit(2);
+}
+
 // BEFORE listen: a child left over from a previous run may still hold the
 // listening socket it inherited from us (Windows), which keeps the port bound to
 // a pid that no longer exists — every subsequent start would fail to bind until
-// a reboot. Sweeping first turns that into a self-healing restart.
+// a reboot. Sweeping first turns that into a self-healing restart. Only records
+// carrying OUR hostId are candidates (see lib/children.ts planSweep).
 try {
   const swept = sweepOrphans();
   if (swept) console.log(`[host] swept ${swept} orphaned process tree(s) from a previous run`);
@@ -193,7 +208,7 @@ server.on('error', (e: NodeJS.ErrnoException) => {
       `[host] cannot bind :${cfg.port} (${e.code}). Something already holds it — ` +
         `if the owning pid no longer exists, an orphaned child is still holding the ` +
         `socket it inherited: run \`bin/host.ps1 stop\` (Windows) or \`bin/host stop\` to sweep, ` +
-        `or set a different port in ~/.arigami/config.json.`
+        `or set a different port in ${cfg.configFile}.`
     );
     process.exit(1);
   }
@@ -231,10 +246,12 @@ function shutdown(): void {
     flushTriggers();
   } catch {}
   killAll();
+  releaseHost();
   server.close();
   process.exit(0);
 }
 
+process.on('exit', () => { try { releaseHost(); } catch {} });
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 // Windows delivers SIGBREAK (Ctrl+Break / taskkill without /F) rather than

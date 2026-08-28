@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 # host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor
-# Pidfile + logs under ~/.arigami/; health check = GET /__api/config.
+# Pidfile + logs under $ARIGAMI_DIR (default ~/.arigami); health check = GET /__api/config.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DIR="$HOME/.arigami"
+DIR="${ARIGAMI_DIR:-$HOME/.arigami}"
 LOGDIR="$DIR/logs"
 PIDFILE="$DIR/host.pid"
 LOG="$LOGDIR/host.log"
 ERRLOG="$LOGDIR/host.err.log"
 CONFIG="$DIR/config.json"
 
-# port from config.json when present, else 3099
+# port: ARIGAMI_PORT env > config.json > default (3099; a non-default
+# ARIGAMI_DIR defaults to 4099 — the server shifts every range by +1000, T5)
 PORT=3099
+[ "$DIR" != "$HOME/.arigami" ] && PORT=4099
 if [ -f "$CONFIG" ]; then
   p="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG" | head -1)"
   [ -n "$p" ] && PORT="$p"
 fi
+[ -n "${ARIGAMI_PORT:-}" ] && PORT="$ARIGAMI_PORT"
 URL="http://localhost:$PORT"
 
 # Local login service (prod build of the login repo) — gives the app a
