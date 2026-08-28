@@ -31,8 +31,11 @@ export default function ScreenSidePanel({ session }) {
 
   const takeOver = () => req && openScreenTakeover(session.id, req.requestId);
   // Enlarge while a request is open IS a takeover (the modal is interactive,
-  // so snapshots must pause) — otherwise just the plain global view.
-  const enlarge = () => (req ? takeOver() : setScreenModal(true));
+  // so snapshots must pause) — otherwise the same session's machine, just
+  // full-size (T8c: NOT the global desktop — this panel is already showing
+  // THIS session's own machine, `setScreenModal(true)` with no sessionId is
+  // only for the rail icon's genuinely-global view).
+  const enlarge = () => (req ? takeOver() : setScreenModal({ sessionId: session.id }));
   const cancel = async () => {
     if (!req) return;
     setBusy(true);

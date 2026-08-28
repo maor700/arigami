@@ -1,10 +1,15 @@
-// The ONE interactive view of the shared host desktop. Opened two ways:
-//   - the rail footer icon (global, no request context) — plain enlarge/drive
-//   - "Take over" on a request_screen card / side panel — the modal opens
-//     with that request's context (reason chip, prompt/hint) and grows a
-//     footer: optional note, "Cancel request" and "Done". Closing it (X /
-//     Esc / backdrop) keeps the request open — the card stays, "Take over"
-//     brings the modal back — and resumes the Watch-mode snapshots.
+// The ONE interactive view of the shared host desktop. Opened three ways:
+//   - the rail footer icon — the genuinely GLOBAL desktop, no sessionId
+//     (`modal = true` → `{}`) — plain enlarge/drive.
+//   - "enlarge" on the session side panel (no open request) — that
+//     session's OWN machine (T8c), plain enlarge/drive (`modal =
+//     {sessionId}`).
+//   - "Take over" on a request_screen card / side panel — that session's
+//     machine PLUS the request's context (reason chip, prompt/hint) and a
+//     footer: optional note, "Cancel request" and "Done" (`modal =
+//     {sessionId, requestId}`). Closing it (X / Esc / backdrop) keeps the
+//     request open — the card stays, "Take over" brings the modal back —
+//     and resumes the Watch-mode snapshots.
 // Control never happens inside the chat card: this is the only place input
 // reaches the machine (the shared RFB in useScreenConnection.js gives the
 // highest-priority visible consumer — us — the real canvas; the card and the
@@ -21,8 +26,9 @@ import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
 
-// `context` — store.screen.modal: {} for the global view, {sessionId,
-// requestId} when opened by Take over. `onClose` closes WITHOUT answering.
+// `context` — store.screen.modal: {} for the global view, {sessionId} for a
+// session's own machine (no open request), {sessionId, requestId} when
+// opened by Take over. `onClose` closes WITHOUT answering.
 export default function ScreenModal({ context, onClose }) {
   const t = useT();
   const s = useStore();

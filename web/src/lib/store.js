@@ -467,7 +467,11 @@ export function setScreenPanel(open) {
   setState({ screen: { ...state.screen, panel: open } });
 }
 
-// `open`: false/true (plain global view) or {sessionId, requestId} (takeover).
+// `open`: false, or true (plain GLOBAL view — rail icon only, no sessionId
+// means the shared :99/5900 desktop), or {sessionId} (a session's own
+// machine — side panel "enlarge", no open request), or {sessionId,
+// requestId} (Take over, same as {sessionId} plus the request context/
+// Done/Cancel footer — see ScreenModal.jsx).
 export function setScreenModal(open) {
   const modal = open && typeof open === 'object' ? open : open ? {} : false;
   setState({ screen: { ...state.screen, modal } });
