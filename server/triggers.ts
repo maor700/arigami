@@ -1,12 +1,17 @@
 // Triggers + the Pending-tasks queue. See docs/TRIGGERS.md.
 //
-// A trigger is a PURE PRODUCER: it polls a source (v1: a Linear filter) and drops
-// matching tickets into the Pending queue. All automation POLICY lives on the
-// queue — a single autoplay switch + a global maxConcurrent cap. Starting a
-// pending item spins up an ordinary ticket session (via the same
-// startTicketSession the launcher uses), so a triggered session is identical to a
-// hand-launched one — including which skill/model/effort it runs with, which the
-// trigger captured at creation time since no human is present when it fires.
+// Two trigger kinds share one poll loop + persisted registry:
+// - 'linear-filter' — a PURE PRODUCER: polls a Linear filter and drops matching
+//   tickets into the Pending queue. All automation POLICY lives on the queue —
+//   a single autoplay switch + a global maxConcurrent cap. Starting a pending
+//   item spins up an ordinary ticket session (via the same startTicketSession
+//   the launcher uses), so a triggered session is identical to a hand-launched
+//   one — including which skill/model/effort it runs with, which the trigger
+//   captured at creation time since no human is present when it fires.
+// - 'cron' — a general-purpose, agent-callable schedule (cron expr/interval/
+//   one-shot). Fires an isolated session or delivers into an existing one,
+//   sharing the Pending queue's maxConcurrent budget rather than a parallel
+//   one. See docs/TRIGGERS.md "Cron".
 //
 // Persistence: ~/.arigami/triggers.json (debounced), independent of state.json.
 import fs from 'node:fs';
@@ -14,6 +19,8 @@ import path from 'node:path';
 import { broadcast } from './bus.js';
 import { cfg, nano } from './state.js';
 import * as state from './state.js';
+import * as cronSchedule from './cron-schedule.js';
+import type { Schedule } from './cron-schedule.js';
 
 const STORE = path.join(
   cfg.configDir!,
@@ -24,7 +31,7 @@ const POLL_MS = 60_000; // global poll cadence (decision: not per-trigger in v1)
 const DRAIN_MS = 15_000; // autoplay drain check (local-only, cheap)
 const FETCH_LIMIT = 100; // higher than the picker's 50 so reconcile rarely truncates
 
-export interface Trigger {
+export interface LinearFilterTrigger {
   id: string;
   type: 'linear-filter';
   name: string;
@@ -42,6 +49,42 @@ export interface Trigger {
   lastPolledAt?: number;
   lastError?: string | null;
 }
+
+// A general-purpose, agent-callable schedule (see docs/TRIGGERS.md "Cron").
+// `sessionMode: 'isolated'` spawns a fresh session per run (closed/archived on
+// a terminal report_to_master); `'existing:<sessionId>'` delivers the prompt
+// into a running session via the same idle/busy channel task_session uses.
+export interface CronDeliver {
+  push?: boolean; // web-push on completion (default true — decision: push is the default channel)
+  whatsapp?: string; // JID to notify — schema-only in v1, see docs/TRIGGERS.md
+  master?: string; // session id to wake with a thin pointer, like report_to_master
+}
+
+export interface CronRun {
+  at: string; // ISO
+  sessionId: string | null;
+  state: 'started' | 'done' | 'blocked' | 'error' | 'milestone' | 'held';
+  summary?: string;
+}
+
+export interface CronTrigger {
+  id: string;
+  type: 'cron';
+  name: string;
+  enabled: boolean;
+  schedule: Schedule;
+  prompt: string;
+  sessionMode: string; // 'isolated' | 'existing:<sessionId>'
+  deliver: CronDeliver;
+  autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
+  createdAt: string;
+  createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
+  lastRun: number | null; // ms epoch of the last fire attempt
+  lastError?: string | null;
+  runs: CronRun[]; // bounded run history (see MAX_CRON_RUNS)
+}
+
+export type Trigger = LinearFilterTrigger | CronTrigger;
 
 export interface PendingItem {
   id: string;
@@ -82,7 +125,9 @@ const db: {
 // trigger, its `seen` watermark (→ mass re-firing), and the pending queue.
 // Gate writes on having actually loaded first.
 let loaded = false;
-function load(): void {
+// Exported for tests only (see test/cron-trigger.test.js) — startTriggerScheduler()
+// also starts the poll/drain intervals, which would hang a one-shot test process.
+export function load(): void {
   loaded = true;
   try {
     const j = JSON.parse(fs.readFileSync(STORE, 'utf8')) as {
@@ -91,9 +136,17 @@ function load(): void {
       settings?: Partial<QueueSettings>;
     };
     for (const t of j.triggers || []) {
-      // Back-compat: records created before autonomous/injectPrompt existed.
       if (typeof t.autonomous !== 'boolean') t.autonomous = false;
-      if (typeof t.injectPrompt !== 'string') t.injectPrompt = '';
+      if (t.type === 'cron') {
+        const c = t as CronTrigger;
+        if (!Array.isArray(c.runs)) c.runs = [];
+        if (typeof c.lastRun !== 'number') c.lastRun = null;
+        if (typeof c.lastError !== 'string') c.lastError = null;
+        if (!c.deliver || typeof c.deliver !== 'object') c.deliver = { push: true };
+      } else {
+        // Back-compat: records created before injectPrompt existed.
+        if (typeof (t as LinearFilterTrigger).injectPrompt !== 'string') (t as LinearFilterTrigger).injectPrompt = '';
+      }
       db.triggers.set(t.id, t);
     }
     db.pending = (Array.isArray(j.pending) ? j.pending : []).map((p) => ({
@@ -234,10 +287,11 @@ export function dismissPending(id: string): boolean {
   if (!item) return false;
   db.pending = db.pending.filter((p) => p.id !== id);
   // Keep the ticket in its trigger's `seen` so it won't reappear next poll.
+  // (Only linear-filter triggers ever populate the pending queue.)
   if (item.triggerId && item.ticket) {
     const t = db.triggers.get(item.triggerId);
     const up = item.ticket.toUpperCase();
-    if (t && !t.seen.includes(up)) t.seen.push(up);
+    if (t && t.type === 'linear-filter' && !t.seen.includes(up)) t.seen.push(up);
   }
   persist();
   emitPending();
@@ -344,7 +398,9 @@ export async function startPending(
   }
 
   const ticket = item.ticket!;
-  const t = item.triggerId ? db.triggers.get(item.triggerId) : null;
+  // Only linear-filter triggers ever produce ticket pending items.
+  const t0 = item.triggerId ? db.triggers.get(item.triggerId) : null;
+  const t = t0 && t0.type === 'linear-filter' ? t0 : null;
 
   // Trigger-readiness gate: never fire a ticket session into an unprovisioned
   // workspace (it would dead-end on the missing workspace). The item stays
@@ -434,8 +490,8 @@ export async function createTrigger(input: {
   skill?: string;
   model?: string;
   effort?: string;
-}): Promise<Trigger> {
-  const t: Trigger = {
+}): Promise<LinearFilterTrigger> {
+  const t: LinearFilterTrigger = {
     id: 'trig_' + nano(),
     type: 'linear-filter',
     name: (input.name || '').trim() || 'Untitled trigger',
@@ -476,20 +532,41 @@ export async function createTrigger(input: {
   return t;
 }
 
-export function patchTrigger(id: string, patch: Partial<Trigger>): Trigger | null {
+// Patch shared + type-specific fields. Cron's `schedule` is re-validated
+// (throws — the API route turns that into a 400) so a typo'd cron expression
+// fails loudly instead of silently never firing again.
+export function patchTrigger(id: string, patch: Record<string, unknown>): Trigger | null {
   const t = db.triggers.get(id);
   if (!t) return null;
   if (typeof patch.name === 'string' && patch.name.trim()) t.name = patch.name.trim();
   if (typeof patch.enabled === 'boolean') t.enabled = patch.enabled;
   if (typeof patch.autonomous === 'boolean') t.autonomous = patch.autonomous;
-  if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
-  if (typeof patch.skill === 'string') t.skill = patch.skill;
-  if (typeof patch.model === 'string') t.model = patch.model;
-  if (typeof patch.effort === 'string') t.effort = patch.effort;
-  if (patch.filters && typeof patch.filters === 'object') {
-    t.filters = patch.filters;
-    // Filter changed → re-prime so old matches under the new filter don't all fire.
-    t.primed = false;
+  if (t.type === 'linear-filter') {
+    if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
+    if (typeof patch.skill === 'string') t.skill = patch.skill;
+    if (typeof patch.model === 'string') t.model = patch.model;
+    if (typeof patch.effort === 'string') t.effort = patch.effort;
+    if (patch.filters && typeof patch.filters === 'object') {
+      t.filters = patch.filters as Record<string, unknown>;
+      // Filter changed → re-prime so old matches under the new filter don't all fire.
+      t.primed = false;
+    }
+  } else {
+    if (typeof patch.prompt === 'string' && patch.prompt.trim()) t.prompt = patch.prompt.trim();
+    if (typeof patch.sessionMode === 'string') {
+      const sm = patch.sessionMode;
+      if (sm !== 'isolated' && !(sm.startsWith('existing:') && sm.length > 'existing:'.length))
+        throw new Error(`invalid sessionMode: "${sm}" (expected "isolated" or "existing:<sessionId>")`);
+      t.sessionMode = sm;
+    }
+    if (patch.deliver && typeof patch.deliver === 'object')
+      t.deliver = { ...t.deliver, ...(patch.deliver as CronDeliver) };
+    if (patch.schedule && typeof patch.schedule === 'object') {
+      const s = patch.schedule as { kind?: string; value?: string };
+      const schedule = { kind: s.kind, value: String(s.value ?? '') } as Schedule;
+      cronSchedule.validateSchedule(schedule, Date.parse(t.createdAt)); // throws on bad input
+      t.schedule = schedule;
+    }
   }
   persist();
   emitTriggers();
@@ -508,8 +585,257 @@ export function deleteTrigger(id: string): boolean {
   return true;
 }
 
-// ---- poll runner ----------------------------------------------------------
-async function pollTrigger(t: Trigger): Promise<void> {
+// ---- cron trigger CRUD ------------------------------------------------------
+const MAX_CRON_RUNS = 20;
+
+// Agreed interface with M1 (server/memory.ts, built in parallel): an isolated
+// cron run gets the same USER.md/MEMORY.md snapshot a hand-launched session
+// would. Dynamic import + a soft fallback so this branch works standalone
+// whether or not M1 has landed yet.
+async function memoryBootstrap(): Promise<string> {
+  try {
+    // @ts-ignore — './memory.js' is M1's module (built in parallel); it may not
+    // exist yet on this branch. Soft dependency: missing module → caught below.
+    const memory = await import('./memory.js');
+    if (typeof (memory as any).getMemoryBootstrap === 'function') {
+      const snippet = await (memory as any).getMemoryBootstrap();
+      return snippet ? `\n\n${snippet}` : '';
+    }
+  } catch {}
+  return '';
+}
+
+function recordCronRun(t: CronTrigger, run: CronRun): void {
+  t.runs.push(run);
+  if (t.runs.length > MAX_CRON_RUNS) t.runs.splice(0, t.runs.length - MAX_CRON_RUNS);
+}
+
+// Where a cron fire's outcome is announced. Isolated runs call this from the
+// /report handler (api.ts, on report_to_master); pre-flight failures (bad
+// target, thrown exception) call it directly from fireCron. Reuses push.ts
+// (a 4th trigger in its table, see docs/SPEC.md) and listeners.ts' wake
+// channel — no new delivery transport.
+async function deliverCronResult(
+  triggerName: string,
+  cronId: string | undefined,
+  deliver: CronDeliver,
+  result: { state: string; summary?: string; note?: string }
+): Promise<void> {
+  const isFailure = result.state === 'error' || result.state === 'blocked';
+  const rawText = (result.summary || result.note || '(no summary)').trim();
+  // [SILENT] suppresses a SUCCESS announcement only — failures always report.
+  if (!isFailure && /^\[SILENT\]/i.test(rawText)) return;
+  const text = rawText.replace(/^\[SILENT\]\s*/i, '');
+  const title = `${triggerName}${isFailure ? ` — ${result.state}` : ''}`;
+  if (deliver.push) {
+    try {
+      const push = await import('./push.js');
+      if (push.hasSubscriptions())
+        await push.sendPush({ title: title.slice(0, 80), body: text.slice(0, 200), tag: `cron:${cronId || triggerName}` });
+    } catch {}
+  }
+  if (deliver.whatsapp && cronId) {
+    // v1: no server-side WhatsApp send path exists yet — the live paired
+    // bridge connection (whatsapp-bridge.ts) only monitors status, it doesn't
+    // expose a send channel, and starting a second Baileys connection would
+    // replace (log out) the live one. Schema-only for now; see docs/TRIGGERS.md.
+    tlog(cronId, 'warn', `WhatsApp delivery to ${deliver.whatsapp} skipped — not implemented in v1 (see docs/TRIGGERS.md)`);
+  }
+  if (deliver.master) {
+    try {
+      const listeners = await import('./listeners.js');
+      listeners.enqueueWake(
+        deliver.master,
+        `cron "${triggerName}" ${result.state}${text ? `: ${text}` : ''}`,
+        `cron:${cronId || triggerName}:${Date.now()}`
+      );
+    } catch {}
+  }
+}
+
+// Sessions started from a cron fire share the SAME maxConcurrent budget as
+// the Pending queue (decision, SPEC-ARIGAMI-BRAIN.md M2.1) — tag them
+// `fromQueue` so the existing countQueueSessions() counts them without a
+// parallel accounting mechanism.
+const cronFiring = new Set<string>(); // in-memory lock against a double-fire within one poll tick
+
+async function fireCron(
+  t: CronTrigger,
+  opts: { manual?: boolean } = {}
+): Promise<{ ok: true; sessionId?: string } | { ok: false; reason: string }> {
+  if (cronFiring.has(t.id)) return { ok: false, reason: 'already-firing' };
+  cronFiring.add(t.id);
+  try {
+    if (!opts.manual && countQueueSessions() >= db.settings.maxConcurrent) {
+      tlog(t.id, 'warn', `held — maxConcurrent (${db.settings.maxConcurrent}) reached; will retry next poll`);
+      return { ok: false, reason: 'at-capacity' };
+    }
+    t.lastRun = Date.now();
+    const at = new Date(t.lastRun).toISOString();
+    const api = await import('./api.js');
+
+    if (t.sessionMode === 'isolated') {
+      let prompt = `${t.prompt}${await memoryBootstrap()}\n\n${api.CRON_REPORT_DIRECTIVE}`;
+      if (t.autonomous) prompt += `\n\n${api.AUTONOMY_DIRECTIVE}`;
+      const { id: sessionId } = api.startEmptySession({
+        title: t.name,
+        prompt,
+        permissionMode: t.autonomous ? 'bypassPermissions' : undefined,
+        metadata: {
+          fromQueue: true,
+          fromCronTrigger: t.id, // guard: sessions spawned by cron can't create more cron jobs
+          cronTriggerId: t.id,
+          cronTriggerName: t.name,
+          cronDeliver: t.deliver,
+        },
+      });
+      recordCronRun(t, { at, sessionId, state: 'started' });
+      tlog(t.id, 'fire', `started isolated session ${sessionId}${opts.manual ? ' (run now)' : ''}`);
+      return { ok: true, sessionId };
+    }
+
+    // 'existing:<sessionId>' — deliver like task_session: idle → now, busy → queued.
+    const targetId = t.sessionMode.slice('existing:'.length);
+    const target = state.getSession(targetId);
+    if (!target) {
+      recordCronRun(t, { at, sessionId: null, state: 'error', summary: `target session ${targetId} not found` });
+      tlog(t.id, 'error', `target session ${targetId} not found`);
+      await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: `target session ${targetId} not found` });
+      return { ok: false, reason: 'target-not-found' };
+    }
+    const delivered = api.deliverToSession(targetId, `[Cron: ${t.name}]\n\n${t.prompt}`);
+    recordCronRun(t, { at, sessionId: targetId, state: 'started', summary: `delivered (${delivered.delivered})` });
+    tlog(t.id, 'fire', `delivered to existing session ${targetId} (${delivered.delivered}${opts.manual ? ', run now' : ''})`);
+    return { ok: true, sessionId: targetId };
+  } catch (e) {
+    const msg = (e as Error).message;
+    recordCronRun(t, { at: new Date().toISOString(), sessionId: null, state: 'error', summary: msg });
+    tlog(t.id, 'error', `fire failed: ${msg}`);
+    await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: msg });
+    return { ok: false, reason: msg };
+  } finally {
+    cronFiring.delete(t.id);
+    persist();
+    emitTriggers();
+  }
+}
+
+export async function createCronTrigger(input: {
+  name?: string;
+  prompt?: string;
+  schedule?: { kind?: string; value?: string };
+  sessionMode?: string;
+  deliver?: CronDeliver;
+  autonomous?: boolean;
+  createdBySessionId?: string;
+}): Promise<CronTrigger> {
+  // Guard against runaway scheduling loops (lesson from OpenClaw #21775 /
+  // Hermes allow_agent_scheduling:false): a session spawned BY a cron fire
+  // can't itself create new cron jobs.
+  if (input.createdBySessionId) {
+    const creator = state.getSession(input.createdBySessionId);
+    if (creator?.metadata?.fromCronTrigger)
+      throw new Error('a session spawned by a cron job cannot create new cron jobs (guard against runaway scheduling loops)');
+  }
+  const prompt = String(input.prompt || '').trim();
+  if (!prompt) throw new Error('prompt is required');
+  const kind = input.schedule?.kind;
+  if (kind !== 'cron' && kind !== 'interval' && kind !== 'at')
+    throw new Error(`invalid schedule.kind: "${kind}" (expected "cron" | "interval" | "at")`);
+  const schedule: Schedule = { kind, value: String(input.schedule?.value ?? '') };
+  const sessionMode = String(input.sessionMode || 'isolated');
+  if (sessionMode !== 'isolated' && !(sessionMode.startsWith('existing:') && sessionMode.length > 'existing:'.length))
+    throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  const createdAt = new Date().toISOString();
+  // Fail the create on a bad expression instead of discovering it only when
+  // the poll loop silently never fires.
+  const nextRun = cronSchedule.validateSchedule(schedule, Date.parse(createdAt));
+  const t: CronTrigger = {
+    id: 'trig_' + nano(),
+    type: 'cron',
+    name: (input.name || '').trim() || 'Untitled cron',
+    enabled: true,
+    schedule,
+    prompt,
+    sessionMode,
+    deliver: {
+      push: input.deliver?.push !== false, // decision: push is the default delivery channel
+      whatsapp: input.deliver?.whatsapp || undefined,
+      master: input.deliver?.master || undefined,
+    },
+    autonomous: !!input.autonomous,
+    createdAt,
+    createdBySessionId: input.createdBySessionId || null,
+    lastRun: null,
+    lastError: null,
+    runs: [],
+  };
+  db.triggers.set(t.id, t);
+  tlog(t.id, 'info', `armed — next run ${new Date(nextRun).toISOString()}`);
+  persist();
+  emitTriggers();
+  return t;
+}
+
+// Fire immediately, bypassing both the schedule and the maxConcurrent gate
+// (an explicit one-off action — UI "run now" / cronjob action:'run').
+export async function runCronNow(id: string): Promise<{ ok: boolean; sessionId?: string; reason?: string }> {
+  const t = db.triggers.get(id);
+  if (!t || t.type !== 'cron') return { ok: false, reason: 'no such cron trigger' };
+  const r = await fireCron(t, { manual: true });
+  return r.ok ? { ok: true, sessionId: r.sessionId } : { ok: false, reason: r.reason };
+}
+
+// Called from the /report handler (api.ts) when a session with
+// metadata.cronTriggerId calls report_to_master — records the run + delivers
+// + tells the caller whether to auto-archive the session.
+export async function onCronReport(
+  sessionId: string,
+  result: { state: string; summary?: string; note?: string; reportedAt?: string }
+): Promise<{ archive: boolean }> {
+  const s = state.getSession(sessionId) as any;
+  const cronId = s?.metadata?.cronTriggerId as string | undefined;
+  const triggerName = (s?.metadata?.cronTriggerName as string) || 'Cron';
+  const deliver = (s?.metadata?.cronDeliver as CronDeliver) || {};
+  const t = cronId ? db.triggers.get(cronId) : null;
+  if (t && t.type === 'cron') {
+    recordCronRun(t, {
+      at: result.reportedAt || new Date().toISOString(),
+      sessionId,
+      state: (result.state as CronRun['state']) || 'milestone',
+      summary: result.summary || result.note,
+    });
+    tlog(t.id, result.state === 'error' ? 'error' : 'fire', `session ${sessionId} reported ${result.state}${result.summary ? `: ${result.summary.slice(0, 140)}` : ''}`);
+    persist();
+    emitTriggers();
+  }
+  await deliverCronResult(triggerName, cronId, deliver, result);
+  return { archive: result.state === 'done' || result.state === 'error' };
+}
+
+export function nextRunFor(t: CronTrigger): number | null {
+  try {
+    return cronSchedule.computeNextRun(t.schedule, { createdAt: Date.parse(t.createdAt), lastRun: t.lastRun });
+  } catch {
+    return null;
+  }
+}
+
+async function pollCronTrigger(t: CronTrigger): Promise<void> {
+  let next: number | null;
+  try {
+    next = cronSchedule.computeNextRun(t.schedule, { createdAt: Date.parse(t.createdAt), lastRun: t.lastRun });
+  } catch (e) {
+    t.lastError = (e as Error).message;
+    return;
+  }
+  t.lastError = null;
+  if (next == null || next > Date.now()) return;
+  await fireCron(t);
+}
+
+// ---- poll runner (linear-filter) -------------------------------------------
+async function pollTrigger(t: LinearFilterTrigger): Promise<void> {
   let matches: any[];
   try {
     matches = await fetchMatches(t.filters);
@@ -577,7 +903,8 @@ async function pollAll(): Promise<void> {
   const enabled = [...db.triggers.values()].filter((t) => t.enabled);
   for (const t of enabled) {
     try {
-      await pollTrigger(t);
+      if (t.type === 'linear-filter') await pollTrigger(t);
+      else await pollCronTrigger(t);
     } catch (e) {
       t.lastError = (e as Error).message;
     }
