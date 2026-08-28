@@ -134,6 +134,8 @@ request_action({prompt, buttons:[{label,value,style?}], session_id?})
 request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
    // reason: 'login'|'2fa'|'captcha'|'payment'|'other' (unknown → 'other')
    // hint: what exactly the human should complete. See "Screen share" below.
+capture_screen({caption?, session_id?}) → {ok, url, ts, width?, height?} | {ok:false, error}
+   // one frame of the shared desktop → `screenshot` chat card. See "Screenshots" below.
 request_review({summary?, session_id?})   // sugar: status='In Review' +
    action {prompt: summary||'Claude finished — review the changes',
            buttons:[{label:'Request changes',value:'request-changes'},
@@ -187,6 +189,41 @@ This endpoint sits behind the same trust boundary as `/__vnc` itself.
 
 Other endpoints: `GET /__api/screen/status → {available}` (config enabled +
 TCP probe of the VNC port; drives the sidebar icon).
+
+## Screenshots (server/screenshots.ts, server/vnc.ts captureScreen, ScreenshotCard.jsx)
+
+A timeline of what the agent did on the machine, as `screenshot` chat events
+`{url, caption?, ts, width?, height?, auto?, requestId?, via}`.
+
+**Capture.** `captureScreen()` opens a throwaway RFB 3.8 connection to the same
+VNC server the bridge proxies (None / VNC-auth with `screen.vncPassword`),
+requests one full Raw 32bpp framebuffer update and encodes it to PNG in-process
+(`server/lib/png.ts`, no image deps). If that fails and `screen.display` is set
+(`ARIGAMI_SCREEN_DISPLAY` / `$DISPLAY`), it falls back to `scrot` / ImageMagick
+`import` on that X display. Files: `~/.arigami/uploads/screens/<session>/<ts>.png`,
+served by `GET /__api/sessions/:id/screens/<file>`.
+
+**Agent-driven.** `capture_screen({caption?})` → `POST /__api/sessions/:id/screenshot
+{caption?}` → `{ok, url, ts}`; 503 `{ok:false, error}` when no screen is
+available (the tool returns that instead of throwing, so the machine-work
+skill can carry on without screenshots).
+
+**Automatic (Watch mode).** While a `request_screen` card is pending, the
+server snapshots every `screen.snapshotIntervalMs` (default 10s; first one
+immediately), tagged `auto:true, requestId`, skipping frames identical to the
+previous one and downscaled 2× to save disk. The card reports **Take over** via
+`POST /__api/sessions/:id/screen-request/mode {requestId, mode:'control'}` and
+the loop pauses — **nothing is recorded while the human drives** (privacy,
+same rule as Operator). Answer / timeout / session death stop the loop.
+
+**UI.** `ScreenshotCard` renders one screenshot as thumbnail + caption + time
+(click → lightbox with ←/→). ChatPane folds a run of consecutive `screenshot`
+events into one card: a collapsed strip ("12 screenshots") that expands to the
+full grid.
+
+**Retention.** `screen.screenshotRetentionDays` (7) and `screen.screenshotMaxMb`
+(200): files past the age are deleted, then oldest-first until under the size
+cap. Swept ~5s after each capture and hourly.
 
 ### Human intervention → push notification
 
@@ -280,7 +317,8 @@ start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
 
 { port: 3099, defaultCwd: '~/Desktop/repos', prodUrl, reposDir, linearWorkspace,
   palette, devServerPorts: [3020..3030],
-  screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword? } }
+  screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword?,
+            display?, snapshotIntervalMs: 10000, screenshotRetentionDays: 7, screenshotMaxMb: 200 } }
 `screen.*` is overridable via ARIGAMI_SCREEN_ENABLED / ARIGAMI_VNC_HOST /
 ARIGAMI_VNC_PORT / ARIGAMI_VNC_PASSWORD; `screen.vncPassword` is the only
 config key the UI writes back (Settings → Screen share).

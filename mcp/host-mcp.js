@@ -441,6 +441,22 @@ const TOOLS = [
       }),
   },
   {
+    name: 'capture_screen',
+    description:
+      'Take a screenshot of the shared desktop (the machine the human can watch) and post it in the chat as a screenshot card — a timeline of what you did. ' +
+      'Call it after every SIGNIFICANT step when driving a browser / the machine (navigation to a new page, form submitted, click with side effects, an error screen, the final state) — not after every scroll. ' +
+      'Best practice (see the machine-work skill): a short factual `caption` ("Login page loaded", "Order form filled, not submitted"), one capture right before request_screen, and one right after it returns to verify. ' +
+      'Returns {ok, url, ts} (or {ok:false, error} if no screen is available — then continue without screenshots, do not improvise your own).',
+    inputSchema: obj({ caption: { type: 'string', description: 'What this screenshot shows (short, factual).' }, ...SID_PROP }),
+    run: async (a) => {
+      try {
+        return await api('POST', `/__api/sessions/${sid(a)}/screenshot`, { ...(a.caption ? { caption: a.caption } : {}) });
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    },
+  },
+  {
     name: 'permission_prompt',
     description: 'Internal: permission bridge for --permission-prompt-tool. Blocks until the human answers in the host UI.',
     inputSchema: {

@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore, setScreenControl, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
+import ScreenshotCard from './ScreenshotCard.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -673,6 +674,13 @@ function ScreenRequestCard({ sessionId, event }) {
     }
   };
 
+  // Control = the human is typing on the machine: tell the server so the
+  // Watch-mode auto-snapshots (T3) pause — nothing is recorded while they drive.
+  const takeOver = () => {
+    setMode('control');
+    api.post(`/sessions/${sessionId}/screen-request/mode`, { requestId: event.requestId, mode: 'control' }).catch(() => {});
+  };
+
   const reasonLabel = event.reason ? t(`chat.screenReason.${event.reason}`) : '';
   const btnPrimary =
     'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
@@ -739,7 +747,7 @@ function ScreenRequestCard({ sessionId, event }) {
                 <button type="button" disabled={busy} onClick={done} className={btnSecondary}>
                   {t('chat.screenRequestDone')}
                 </button>
-                <button type="button" disabled={busy} onClick={() => setMode('control')} className={btnPrimary}>
+                <button type="button" disabled={busy} onClick={takeOver} className={btnPrimary}>
                   {t('chat.screenTakeOver')}
                 </button>
               </>
@@ -846,6 +854,10 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     }
     case 'screen-request':
       return <ScreenRequestCard sessionId={sessionId} event={event} />;
+    case 'screenshot':
+      // Consecutive screenshots are folded into the first one's row (see the
+      // grouping in ChatPane below); `shots` carries the whole run.
+      return <ScreenshotCard shots={event.shots || [event]} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }
@@ -1016,11 +1028,27 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
             }
             return k;
           });
-          return events.slice(hiddenCount).map((e, j) => {
+          // Screenshot timeline: a run of consecutive `screenshot` events
+          // (e.g. the Watch-mode auto-snapshots) renders as ONE strip card on
+          // the first row; the rest of the run is skipped. Grouped over the
+          // visible slice only — the run object is rebuilt per render, so the
+          // memoized Event re-renders when the run grows.
+          const out = [];
+          const visible = events.slice(hiddenCount);
+          for (let j = 0; j < visible.length; j++) {
+            const e = visible[j];
             const i = hiddenCount + j;
+            if (e.kind === 'screenshot') {
+              const shots = [e];
+              while (visible[j + 1]?.kind === 'screenshot') shots.push(visible[++j]);
+              const ev = shots.length > 1 ? { ...e, shots } : e;
+              out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={ev} /></div>);
+              continue;
+            }
             const live = !!awaiting && ((isAsk(e) && i === lastAskIdx) || (isPerm(e) && i === lastPermIdx));
-            return <div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} recap={recap.has(i)} /></div>;
-          });
+            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} recap={recap.has(i)} /></div>);
+          }
+          return out;
         })()}
         {action && <ActionCard sessionId={sessionId} action={action} />}
         {working && (

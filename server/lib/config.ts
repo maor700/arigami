@@ -38,6 +38,14 @@ export interface ScreenConfig {
   // Optional VNC-auth password, handed to noVNC (client-side RFB auth) via
   // GET /__api/screen/credentials. Empty/undefined = server has no auth.
   vncPassword?: string;
+  // Screenshots (T3): X display for the scrot/import fallback when the RFB
+  // capture fails (e.g. ":99"); empty = no fallback. Watch-mode auto-snapshot
+  // cadence, and retention for ~/.arigami/uploads/screens (age OR total size,
+  // whichever trips first).
+  display?: string;
+  snapshotIntervalMs: number;
+  screenshotRetentionDays: number;
+  screenshotMaxMb: number;
 }
 
 export interface Config {
@@ -116,6 +124,9 @@ export const DEFAULTS: Config = {
     enabled: true,
     vncHost: '127.0.0.1',
     vncPort: 5900,
+    snapshotIntervalMs: 10_000,
+    screenshotRetentionDays: 7,
+    screenshotMaxMb: 200,
   },
   defaultModel: null,
 };
@@ -195,6 +206,7 @@ function envOverrides(): Partial<Config> {
   if (E.ARIGAMI_VOICE_LANG) o.voiceLang = E.ARIGAMI_VOICE_LANG;
   if (E.ARIGAMI_SCREEN_ENABLED != null || E.ARIGAMI_VNC_HOST || E.ARIGAMI_VNC_PORT) {
     o.screen = {
+      ...DEFAULTS.screen,
       enabled: E.ARIGAMI_SCREEN_ENABLED != null ? E.ARIGAMI_SCREEN_ENABLED !== '0' : DEFAULTS.screen.enabled,
       vncHost: E.ARIGAMI_VNC_HOST || DEFAULTS.screen.vncHost,
       vncPort: E.ARIGAMI_VNC_PORT ? Number(E.ARIGAMI_VNC_PORT) : DEFAULTS.screen.vncPort,
@@ -203,6 +215,15 @@ function envOverrides(): Partial<Config> {
   if (E.ARIGAMI_VNC_PASSWORD) {
     o.screen = { ...(o.screen || DEFAULTS.screen), vncPassword: E.ARIGAMI_VNC_PASSWORD };
   }
+  // Screenshot knobs (T3). Each one alone is enough to materialize o.screen —
+  // deepMerge fills the rest from the file/defaults.
+  const num = (v: string | undefined) => (v && Number(v) > 0 ? Number(v) : undefined);
+  const shot: Partial<ScreenConfig> = {};
+  if (E.ARIGAMI_SCREEN_DISPLAY || E.DISPLAY) shot.display = E.ARIGAMI_SCREEN_DISPLAY || E.DISPLAY;
+  if (num(E.ARIGAMI_SNAPSHOT_INTERVAL_MS)) shot.snapshotIntervalMs = num(E.ARIGAMI_SNAPSHOT_INTERVAL_MS)!;
+  if (num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)) shot.screenshotRetentionDays = num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)!;
+  if (num(E.ARIGAMI_SCREENSHOT_MAX_MB)) shot.screenshotMaxMb = num(E.ARIGAMI_SCREENSHOT_MAX_MB)!;
+  if (Object.keys(shot).length) o.screen = { ...(o.screen || DEFAULTS.screen), ...shot };
   return o;
 }
 
