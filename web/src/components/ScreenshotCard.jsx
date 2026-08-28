@@ -2,7 +2,8 @@
 // Watch-mode auto-snapshots taken while a request_screen card is open.
 // ChatPane groups consecutive screenshot events into one card — a single
 // image shows thumbnail + caption + time; a run collapses to a strip with a
-// count ("12 screenshots") that expands on click. Clicking any thumbnail
+// count ("12 screenshots") that expands on click. Auto-snapshots look the
+// same as agent captures (no "recording" badge, by design). Clicking any thumbnail
 // opens it full size in a lightbox (portaled, like ScreenModal).
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -86,7 +87,6 @@ export default function ScreenshotCard({ shots }) {
   const [expanded, setExpanded] = useState(false);
   if (!shots?.length) return null;
   const last = shots[shots.length - 1];
-  const auto = shots.every((s) => s.auto);
   const step = (d) => setOpen((i) => Math.min(shots.length - 1, Math.max(0, i + d)));
 
   const header = (
@@ -95,11 +95,6 @@ export default function ScreenshotCard({ shots }) {
       <span className="font-bold text-[var(--term-fg)]">
         {shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
       </span>
-      {auto && (
-        <span className="rounded-full border border-[var(--term-border)] px-1.5 text-[9.5px] uppercase tracking-wide text-[var(--term-dim)]">
-          {t('chat.screenshotAuto')} · {t('chat.screenshotWatching')}
-        </span>
-      )}
       <span className="ms-auto text-[10px] text-[var(--term-faint)]">
         {shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}
       </span>
