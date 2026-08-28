@@ -4,6 +4,7 @@ export const strings = {
   'chrome.conn.offline': 'המארח לא זמין — מנסה שוב',
 
   // App — top bar
+  'chrome.topbar.brain': 'מוח',
   'chrome.topbar.skills': 'Skills',
   'chrome.topbar.setup': 'הגדרה',
   'chrome.topbar.accounts': 'חשבונות',
@@ -25,6 +26,8 @@ export const strings = {
   'chrome.palette.settings.kw': 'העדפות ערכת נושא קול',
   'chrome.palette.skills': 'פתיחת Skills',
   'chrome.palette.skills.kw': 'skill חבילה',
+  'chrome.palette.brain': 'פתיחת המוח',
+  'chrome.palette.brain.kw': 'זיכרון memory מוח שני cron heartbeat',
   'chrome.palette.accounts': 'פתיחת חשבונות',
   'chrome.palette.accounts.kw': 'חשבון התחברות החלפה',
   'chrome.palette.setup': 'פתיחת הגדרה / סביבת עבודה',

@@ -73,6 +73,15 @@ export interface ScreenConfig {
   keepProfiles: boolean;
 }
 
+// The brain session's heartbeat (spec M4.3): off by default. When on, a
+// backing CronTrigger (server/brain.ts) wakes the singleton brain session
+// every `heartbeatEvery` to self-check whether anything needs Dana's
+// attention — see server/brain.ts for the trigger it drives.
+export interface BrainConfig {
+  heartbeatEnabled: boolean;
+  heartbeatEvery: string; // interval value, e.g. "30m" (cron-schedule.ts parseIntervalMs format)
+}
+
 export interface Config {
   port: number;
   prodUrl: string;
@@ -95,6 +104,7 @@ export interface Config {
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
+  brain: BrainConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -158,6 +168,10 @@ export const DEFAULTS: Config = {
     portRange: [5901 + PORT_SHIFT, 5950 + PORT_SHIFT],
     displayBase: IS_DEFAULT_INSTANCE ? 100 : 200,
     keepProfiles: false,
+  },
+  brain: {
+    heartbeatEnabled: false,
+    heartbeatEvery: '30m',
   },
   defaultModel: null,
 };
@@ -319,5 +333,18 @@ export function updateScreenConfig(patch: Partial<ScreenConfig>): ScreenConfig {
   if (!patch.vncPassword && 'vncPassword' in patch) delete out.screen.vncPassword;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
   cfg.screen = next;
+  return next;
+}
+
+// Persist a partial brain config (heartbeat on/off + interval). Same merge
+// pattern as updateScreenConfig — unrelated keys survive, live `cfg` patches
+// immediately so the change takes effect without a restart.
+export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: BrainConfig = { ...cfg.brain, ...patch };
+  const out = { ...file, brain: next } as any;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  cfg.brain = next;
   return next;
 }

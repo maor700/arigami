@@ -691,6 +691,14 @@ async function fireCron(
       await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: `target session ${targetId} not found` });
       return { ok: false, reason: 'target-not-found' };
     }
+    // Tag the (pre-existing) target so a later report_to_master call from it
+    // correlates back to this trigger — same fields the isolated branch sets
+    // at creation time. onCronReport below only archives for sessionMode
+    // 'isolated', so this never causes a persistent session (e.g. the brain
+    // singleton, spec M4.2/M4.3) to get archived out from under itself.
+    state.patchSession(targetId, {
+      metadata: { cronTriggerId: t.id, cronTriggerName: t.name, cronDeliver: t.deliver },
+    });
     const delivered = api.deliverToSession(targetId, `[Cron: ${t.name}]\n\n${t.prompt}`);
     recordCronRun(t, { at, sessionId: targetId, state: 'started', summary: `delivered (${delivered.delivered})` });
     tlog(t.id, 'fire', `delivered to existing session ${targetId} (${delivered.delivered}${opts.manual ? ', run now' : ''})`);
@@ -798,7 +806,12 @@ export async function onCronReport(
     emitTriggers();
   }
   await deliverCronResult(triggerName, cronId, deliver, result);
-  return { archive: result.state === 'done' || result.state === 'error' };
+  // Only auto-archive a session this cron itself spawned (sessionMode
+  // 'isolated') — an 'existing' delivery target (e.g. the M4 brain singleton)
+  // pre-existed the fire and must never be archived out from under itself
+  // just because it reported a terminal state.
+  const archive = t?.type === 'cron' && t.sessionMode === 'isolated' && (result.state === 'done' || result.state === 'error');
+  return { archive };
 }
 
 export function nextRunFor(t: CronTrigger): number | null {

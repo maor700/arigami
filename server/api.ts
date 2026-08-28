@@ -1931,6 +1931,30 @@ export async function handle(
       return notFound(res);
     }
 
+    // ---- Brain (M4: server/brain.ts — the singleton `metadata.kind:'brain'`
+    // session + its optional heartbeat cron). A thin layer over M1-M3's APIs. --
+    if (p === '/__api/brain' && m === 'GET') {
+      const brain = await import('./brain.js');
+      const s = brain.findBrainSession();
+      return json(res, { sessionId: s && !s.archived ? s.id : null, heartbeat: brain.getHeartbeatStatus() });
+    }
+    if (p === '/__api/brain/session' && m === 'POST') {
+      const brain = await import('./brain.js');
+      const r = await brain.ensureBrainSession();
+      return json(res, r);
+    }
+    if (p === '/__api/brain/heartbeat' && m === 'PUT') {
+      const brain = await import('./brain.js');
+      const body = (await readBody(req)) as any;
+      try {
+        const r = await brain.setHeartbeat(!!body.enabled, typeof body.every === 'string' ? body.every : undefined);
+        return json(res, r);
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return badRequest(res, error.message);
+      }
+    }
+
     // ---- rail folders --------------------------------------------------------
     if (p === '/__api/folders' && m === 'GET') return json(res, state.listFolders());
     if (p === '/__api/folders' && m === 'POST') {

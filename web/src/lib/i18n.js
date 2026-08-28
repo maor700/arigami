@@ -16,11 +16,13 @@ import { strings as chatEn } from '../locales/en/chat.js';
 import { strings as chatHe } from '../locales/he/chat.js';
 import { strings as dialogsEn } from '../locales/en/dialogs.js';
 import { strings as dialogsHe } from '../locales/he/dialogs.js';
+import { strings as brainEn } from '../locales/en/brain.js';
+import { strings as brainHe } from '../locales/he/brain.js';
 
 // Core (settings/common) + per-module fragments. Fragments are authored per
 // area so localization work never collides on one file.
-const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn };
-const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe };
+const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn };
+const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe };
 
 const DICTS = { en, he };
 
