@@ -1,14 +1,17 @@
 // Screen-share bridge (/__vnc): terminates the browser's WebSocket connection
-// and pipes its binary frames to/from a raw TCP connection to the VNC server
-// configured in cfg.screen — the same role `websockify` plays for noVNC, done
-// in-process with the `ws` package already used by bus.js (no new server
-// dependency). Global (not per-session): one shared desktop, reachable
-// regardless of which session tab is open. See docs on cfg.screen for the
-// trust model — the VNC server itself is loopback-only; this bridge is the
-// only path to it, gated the same way the rest of the host is (VPN).
+// and pipes its binary frames to/from a raw TCP connection to a VNC server —
+// the same role `websockify` plays for noVNC, done in-process with the `ws`
+// package already used by bus.js (no new server dependency). Per-session
+// (T8): `?session=<id>` picks that session's own desktop
+// (`server/lib/desktops.ts`); no query (or a session with none allocated)
+// falls back to the global :99/5900 desktop, same as before T8. See docs on
+// cfg.screen for the trust model — the VNC server itself is loopback-only;
+// this bridge is the only path to it, gated the same way the rest of the
+// host is (VPN).
 import net from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
 import { cfg } from './state.js';
+import { screenTarget } from './lib/desktops.js';
 
 // noVNC's RFB class opens the socket with `new WebSocket(url, ['binary'])`
 // and expects the server to select that subprotocol back — without it some
@@ -18,8 +21,9 @@ const wss = new WebSocketServer({
   handleProtocols: (protocols: Set<string>) => (protocols.has('binary') ? 'binary' : false),
 });
 
-wss.on('connection', (ws: WebSocket) => {
-  const { vncHost, vncPort } = cfg.screen;
+wss.on('connection', (ws: WebSocket, req: any) => {
+  const sessionId = new URL(req.url || '/', 'http://localhost').searchParams.get('session');
+  const { vncHost, vncPort } = screenTarget(sessionId);
   const tcp = net.connect(vncPort, vncHost);
 
   tcp.on('connect', () => {
@@ -105,8 +109,15 @@ function reader(sock: net.Socket) {
     });
 }
 
-export function captureFrame(timeoutMs = 8000): Promise<Frame> {
-  const { vncHost, vncPort, vncPassword } = cfg.screen;
+export interface ScreenTarget {
+  vncHost: string;
+  vncPort: number;
+  display?: string;
+}
+
+export function captureFrame(target: ScreenTarget, timeoutMs = 8000): Promise<Frame> {
+  const { vncHost, vncPort } = target;
+  const vncPassword = cfg.screen.vncPassword; // shared across the global + every per-session x11vnc
   return new Promise<Frame>((resolve, reject) => {
     const sock = net.connect(vncPort, vncHost);
     const timer = setTimeout(() => { fail(new Error('vnc: capture timed out')); }, timeoutMs);
@@ -242,16 +253,16 @@ export interface Capture {
 }
 
 // RFB first, x11 tool second. Throws if neither works.
-export async function captureScreen(): Promise<Capture> {
+export async function captureScreen(target: ScreenTarget): Promise<Capture> {
   if (!cfg.screen?.enabled) throw new Error('screen share disabled');
   let rfbErr: Error | null = null;
   try {
-    const frame = await captureFrame();
+    const frame = await captureFrame(target);
     return { png: encodePng(frame.rgba, frame.width, frame.height), width: frame.width, height: frame.height, frame, via: 'rfb' };
   } catch (e) {
     rfbErr = e instanceof Error ? e : new Error(String(e));
   }
-  const png = captureWithX11Tool(cfg.screen.display);
+  const png = captureWithX11Tool(target.display ?? cfg.screen.display);
   if (png) return { png, via: 'x11' };
   throw rfbErr;
 }

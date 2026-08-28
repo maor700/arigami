@@ -8,6 +8,8 @@ import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig } from './lib/config.js';
 import * as screens from './screenshots.js';
+import * as desktops from './lib/desktops.js';
+import * as chrome from './lib/chrome.js';
 import {
   changesFor,
   changeDiff,
@@ -289,6 +291,11 @@ async function handleScreenRequest(
       : 'other'
     : undefined;
   const hint = body.hint ? String(body.hint) : undefined;
+  // Lazy per-session desktop (T8): by the time the card/panel mount and
+  // connect, metadata.screen should already point at this session's own
+  // machine, not the global one. A failed allocation (binary missing, ports
+  // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
+  try { await desktops.ensureDesktop(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
   const result = await new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
@@ -352,6 +359,11 @@ function answerScreenRequest(
   screens.stopAutoSnapshots(data.requestId);
   state.setClaude(sessionId, { state: 'working', screenRequest: null });
   const takenOver = data.takenOver === true;
+  // The human may have just logged in / entered a 2FA code / paid — fold
+  // whatever landed in this session's Chrome profile back into chrome-base
+  // (T8 §4) so the NEXT session starts already logged in. Fire-and-forget:
+  // never block the answer on it.
+  if (takenOver) chrome.syncProfileToBase(sessionId).catch(() => {});
   claude.appendChat(sessionId, {
     kind: 'screen-request-answer',
     requestId: data.requestId,
@@ -1196,9 +1208,12 @@ export async function handle(
     }
 
     if (p === '/__api/screen/status' && m === 'GET') {
-      const available =
-        !!cfg.screen?.enabled && (await probeVnc(cfg.screen.vncHost, cfg.screen.vncPort));
-      return json(res, { available });
+      // Global (no ?session=) or a session's own machine, if it has one —
+      // whichever the sidebar icon / side panel is asking about.
+      const sessionId = u.searchParams.get('session') || undefined;
+      const target = desktops.screenTarget(sessionId);
+      const available = !!cfg.screen?.enabled && (await probeVnc(target.vncHost, target.vncPort));
+      return json(res, { available, ...(sessionId ? { display: target.display } : {}) });
     }
     // Settings → screen: the VNC-auth password. Never echoed back — the UI
     // only learns whether one is set. Empty string clears it.
@@ -1894,6 +1909,14 @@ export async function handle(
         model: body.model,
         effort: body.effort,
       });
+      // needs_screen (T8): allocate the desktop BEFORE the first spawn so
+      // claude.js picks up metadata.screen.display and injects DISPLAY into
+      // the session's env from the start. Not fatal — a failed allocation
+      // just leaves the session on the lazy path (first request_screen/
+      // capture_screen/browser-open allocates it instead).
+      if (body.needsScreen) {
+        try { await desktops.ensureDesktop(s.id); } catch (e) { console.error('[desktop] needs_screen alloc failed:', (e as Error).message); }
+      }
       spawnSafe(s.id);
       // Only build a skill/ticket-fallback prompt when the caller gave us
       // something to build from — leaves the dispatch/worker path (which
@@ -1952,6 +1975,11 @@ export async function handle(
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
           state.stopListenersForSession(id); // listeners die with their session
+          // Desktop dies with the session's activity (T8) — the Chrome profile
+          // copy is kept (only removed on DELETE) so unarchiving picks up where
+          // it left off.
+          chrome.closeChrome(id);
+          desktops.releaseDesktop(id);
 
           if (u.searchParams.get('runCleanup') === 'true') {
             const cleanup = await runCleanup(s);
@@ -1963,6 +1991,12 @@ export async function handle(
       }
       if (m === 'DELETE') {
         claude.kill(id);
+        chrome.closeChrome(id);
+        // Fold this session's logins back into chrome-base on every close
+        // (T8 §4) — independent of whether the profile copy itself survives.
+        await chrome.syncProfileToBase(id).catch(() => {});
+        if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
+        desktops.releaseDesktop(id);
         const cleanup =
           u.searchParams.get('runCleanup') === 'true'
             ? await runCleanup(s)
@@ -2223,6 +2257,24 @@ export async function handle(
       } catch (e) {
         return json(res, { ok: false, error: `screenshot failed: ${(e as Error).message}` }, 503);
       }
+    }
+    // Chrome helper (T8 §3): opens (or reports already-open) this session's
+    // browser on its own desktop + profile copy. Used by skills/_lib/chrome.sh.
+    if (sub === 'browser' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      try {
+        const r = await chrome.openChrome(id, body?.url ? String(body.url) : undefined);
+        return json(res, { ok: true, ...r });
+      } catch (e) {
+        return json(res, { ok: false, error: `browser open failed: ${(e as Error).message}` }, 503);
+      }
+    }
+    // save_browser_logins(): sync this session's cookies/Login Data/Local
+    // Storage back to chrome-base on demand (T8 §4) — same op the takeover
+    // and delete flows trigger automatically.
+    if (sub === 'browser/sync-logins' && m === 'POST') {
+      const r = await chrome.syncProfileToBase(id);
+      return json(res, r);
     }
     if (parts[3] === 'screens' && parts[4] && !parts[5] && m === 'GET') {
       const file = screens.screenFilePath(id, parts[4]);

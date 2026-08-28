@@ -66,12 +66,14 @@ const TOOLS = [
       subtask: { type: 'string', description: 'ORCHESTRATION.json node id this worker owns (names its branch/worktree)' },
       base: { type: 'string', description: 'Mutating only: branch/ref to fork the worktree off (default = your current branch)' },
       needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
+      needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
     }),
     run: async (a) => {
       const body = {
         title: a.title, cwd: a.cwd, prompt: a.prompt, skill: a.skill, model: a.model, effort: a.effort,
         permissionMode: a.permission_mode, metadata: a.metadata,
       };
+      if (a.needs_screen) body.needsScreen = true;
       // Dispatch: forward the caller as the worker's master + the worker spec.
       if (a.kind) {
         body.master = a.session_id || process.env.ARIGAMI_SESSION_ID;
@@ -455,6 +457,15 @@ const TOOLS = [
         return { ok: false, error: String(e?.message || e) };
       }
     },
+  },
+  {
+    name: 'save_browser_logins',
+    description:
+      'Sync this session\'s Chrome profile (cookies, saved logins, local storage — not passwords/autofill) back to the shared base profile, so future sessions\' browsers start already logged in. ' +
+      'Happens automatically after a request_screen resolves with the human taking over, and at session end — call this yourself only if you want it synced sooner (e.g. right after completing a login flow without a takeover). ' +
+      'Safe to call anytime; a no-op if this session never opened a browser (see the machine-work skill\'s Chrome helper).',
+    inputSchema: obj({ ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, {}),
   },
   {
     name: 'permission_prompt',

@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { cfg } from './state.js';
 import * as claude from './claude.js';
 import { captureScreen } from './vnc.js';
+import { ensureDesktop, screenTarget } from './lib/desktops.js';
 import { encodePng, downscaleRgba } from './lib/png.js';
 
 export const SCREENS_DIR = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'uploads', 'screens');
@@ -46,7 +47,11 @@ export async function takeScreenshot(
   sessionId: string,
   opts: { caption?: string; auto?: boolean; requestId?: string; skipUnchanged?: boolean } = {}
 ): Promise<ScreenshotEvent | null> {
-  const cap = await captureScreen();
+  // Lazy per-session desktop (T8): the session's own machine if it has (or
+  // can get) one, otherwise the global desktop — ensureDesktop() throwing
+  // (binary missing, ports exhausted) is not fatal here, just no upgrade.
+  try { await ensureDesktop(sessionId); } catch {}
+  const cap = await captureScreen(screenTarget(sessionId));
   let png = cap.png;
   let width = cap.width, height = cap.height;
   if (cap.frame) {

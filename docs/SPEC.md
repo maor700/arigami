@@ -123,7 +123,9 @@ Session-scoped tools resolve the session from ARIGAMI_SESSION_ID env; tools
 taking explicit session_id work from anywhere (any Claude instance).
 
 ```
-create_session({title?, cwd?, prompt?, permission_mode?, metadata?}) → {id, url}
+create_session({title?, cwd?, prompt?, permission_mode?, metadata?, needs_screen?}) → {id, url}
+   // needs_screen: allocate this session's own desktop (Xvfb+VNC) up front
+   // instead of lazily on the first request_screen/capture_screen/browser open.
 list_sessions() → summaries
 set_title({title, session_id?})       set_color({color, session_id?})
 set_status({status, session_id?})     set_metadata({patch, session_id?})  // merge
@@ -144,6 +146,10 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
    // reason: login|2fa|captcha|payment|other. BLOCKS until the human clicks
    // Done in the live screen card (or 30 min timeout → note explains).
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
+save_browser_logins({session_id?}) → {ok, synced}
+   // sync this session's Chrome cookies/Login Data/Local Storage back to
+   // ~/.arigami/chrome-base (T8). Automatic after a request_screen takeover
+   // and at session delete — call directly to sync sooner.
 permission_prompt(…)                  // internal: permission bridge (hidden from listing if possible)
 ```
 
@@ -151,12 +157,33 @@ Action-bar answers come ONLY from a human click in the UI.
 
 ## Screen share (server/vnc.ts, useScreenConnection.js, ScreenView.jsx, ScreenModal.jsx)
 
-One shared host desktop (not per-session), bridged in-process from
-`ws(s)://<host>/__vnc` to a local VNC server (`config.screen.{vncHost,vncPort}`).
-The browser side is noVNC behind ONE app-wide RFB connection
-(`useScreenConnection.js`): every place that shows the desktop registers as a
-consumer with a priority (modal > card > panel); the highest-priority visible
-one hosts the real canvas, the rest paint a mirror.
+Two kinds of desktop, same wiring:
+- **Global** (`config.screen.{vncHost,vncPort}`, default :99/5900) — set up
+  outside this repo, always on; backs the rail footer icon and the WhatsApp
+  bridge. Never allocated/killed by this server.
+- **Per-session** (T8, `server/lib/desktops.ts`) — an `Xvfb`+`x11vnc` pair
+  this server spawns for a session on first use (`request_screen`/
+  `capture_screen`/opening a browser, or up front via `create_session`'s
+  `needs_screen:true`), so two sessions driving a browser at once each see
+  only their own window. Recorded in `session.metadata.screen = {display,
+  vncPort}` — that IS the allocation table, a free port is just "not claimed
+  by any live session's metadata.screen.vncPort" in `config.screen.portRange`
+  (default 5901–5950; X display = `:100 + (port − portRange[0])`). Killed at
+  archive/delete (`releaseDesktop`); delete also removes the Chrome profile
+  copy (see "Chrome profiles" below). A failed allocation (binary missing,
+  pool exhausted) isn't fatal — everything downstream falls back to the
+  global desktop.
+
+`ws(s)://<host>/__vnc?session=<id>` bridges to that session's own desktop if
+it has one, else the global one (`server/lib/desktops.ts`'s `screenTarget()`);
+`/__vnc` with no query is always the global desktop. The browser side is
+noVNC behind one RFB connection **per desktop**
+(`useScreenConnection.js`, keyed by sessionId — see its header comment): every
+place that shows a GIVEN desktop registers as a consumer with a priority
+(modal > card > panel); the highest-priority visible one hosts the real
+canvas, the rest paint a mirror. `ScreenView`/`ScreenSidePanel`/
+`ScreenRequestCard` pass their session's id; `ScreenModal` passes
+`context.sessionId` (unset for the rail icon's plain global view).
 
 **Three surfaces, one rule — input only ever happens in the modal:**
 - **Chat card** (`ScreenRequestCard`, ChatPane.jsx) — small, view-only live
@@ -207,8 +234,37 @@ VNC-auth client-side, so on `credentialsrequired` the viewer fetches
 `GET /__api/screen/credentials` → `{password}` and calls `sendCredentials`.
 This endpoint sits behind the same trust boundary as `/__vnc` itself.
 
-Other endpoints: `GET /__api/screen/status → {available}` (config enabled +
-TCP probe of the VNC port; drives the sidebar icon).
+Other endpoints: `GET /__api/screen/status[?session=<id>] → {available, display?}`
+(config enabled + TCP probe of that desktop's VNC port — the session's own if
+allocated, else the global one; the sidebar icon calls it with no `session`).
+
+## Chrome profiles (server/lib/chrome.ts, skills/_lib/chrome.sh)
+
+A shared Chrome profile can't work across concurrent sessions (Chrome locks
+`--user-data-dir`), but shared LOGIN STATE should. `~/.arigami/chrome-base/`
+is the source of truth; `POST /__api/sessions/:id/browser {url?}` clones it
+into `~/.arigami/chrome-sessions/<id>/` on first use (later calls reuse the
+existing copy) and launches `google-chrome --user-data-dir=<copy>
+--password-store=basic --no-first-run --start-maximized [url]` on that
+session's `DISPLAY` (ensuring its desktop first) — supervised like any other
+child (`server/lib/children.ts`), never killed by `pkill`. Agents use
+`skills/_lib/chrome.sh [url]` rather than calling the endpoint directly.
+
+**Sync back**, `Default/{Cookies,Login Data,Local Storage}` only (not
+`Session Storage`, not saved passwords/autofill beyond what's in those two
+SQLite files) copied from a session's profile copy over the base copy —
+last-writer-wins, under a directory-mkdir lock
+(`~/.arigami/chrome-base/.sync.lock`, non-blocking retry, stale after 10s) so
+two sessions closing at once can't interleave writes. Triggered by: a
+`request_screen` answer with `takenOver:true` (`answerScreenRequest` in
+server/api.ts), session `DELETE` (before the profile copy is removed), and
+on demand via the `save_browser_logins` MCP tool /
+`POST /__api/sessions/:id/browser/sync-logins`.
+
+**Cleanup.** `DELETE /__api/sessions/:id`: closes the session's Chrome, syncs
+its profile back, then removes the copy — unless `config.screen.keepProfiles`
+(default false) is set. Archive only kills the desktop; the profile copy
+survives so unarchiving picks up where it left off.
 
 ## Screenshots (server/screenshots.ts, server/vnc.ts captureScreen, ScreenshotCard.jsx)
 
@@ -340,7 +396,8 @@ start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
 { port: 3099, defaultCwd: '~/Desktop/repos', prodUrl, reposDir, linearWorkspace,
   palette, devServerPorts: [3020..3030],
   screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword?,
-            display?, snapshotIntervalMs: 10000, screenshotRetentionDays: 7, screenshotMaxMb: 200 } }
+            display?, snapshotIntervalMs: 10000, screenshotRetentionDays: 7, screenshotMaxMb: 200,
+            portRange: [5901, 5950], keepProfiles: false } }
 `screen.*` is overridable via ARIGAMI_SCREEN_ENABLED / ARIGAMI_VNC_HOST /
 ARIGAMI_VNC_PORT / ARIGAMI_VNC_PASSWORD; `screen.vncPassword` is the only
 config key the UI writes back (Settings → Screen share).

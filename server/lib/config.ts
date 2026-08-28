@@ -46,6 +46,15 @@ export interface ScreenConfig {
   snapshotIntervalMs: number;
   screenshotRetentionDays: number;
   screenshotMaxMb: number;
+  // Per-session desktops (T8): pool of VNC ports handed to `server/lib/desktops.ts`
+  // when it lazily spawns an `Xvfb`+`x11vnc` pair for a session. The X display
+  // number is derived from the port's offset into this range (port 5901 → :100,
+  // 5902 → :101, …), so the two never need separate bookkeeping.
+  portRange: [number, number];
+  // Keep a session's `~/.arigami/chrome-sessions/<id>` profile copy (and skip
+  // the delete-time login sync) instead of removing it — for debugging a
+  // session's browser state after the fact.
+  keepProfiles: boolean;
 }
 
 export interface Config {
@@ -127,6 +136,8 @@ export const DEFAULTS: Config = {
     snapshotIntervalMs: 10_000,
     screenshotRetentionDays: 7,
     screenshotMaxMb: 200,
+    portRange: [5901, 5950],
+    keepProfiles: false,
   },
   defaultModel: null,
 };

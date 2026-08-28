@@ -13,11 +13,14 @@ import { useScreenConnection, SCREEN_PRIORITY } from '../lib/useScreenConnection
 // `viewOnly` — Watch: noVNC drops all keyboard/mouse input (the human can
 // look but not touch). The card and the side panel always pass it; only the
 // modal is interactive. `priority` — which instance hosts the real canvas
-// when several are visible (modal > card > panel).
+// when several are visible (modal > card > panel). `sessionId` — that
+// session's own desktop (T8); omitted = the global one (rail icon's plain
+// view).
 export default function ScreenView({
   className = '',
   viewOnly = false,
   priority = SCREEN_PRIORITY.card,
+  sessionId = null,
   onStatusChange,
 }) {
   const t = useT();
@@ -28,6 +31,7 @@ export default function ScreenView({
     mirrorRef,
     priority,
     viewOnly,
+    sessionId,
   });
 
   const detail = errorKind === 'needs-password' ? t('rail.screenNeedsPassword') : errorDetail;

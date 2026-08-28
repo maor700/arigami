@@ -19,11 +19,45 @@ over**, complete it, click **Done**, and you continue.
 | `capture_screen({caption?})` | after every significant step — a screenshot card appears in the chat timeline |
 | `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
+| `save_browser_logins()` | sync this session's Chrome cookies/logins back to the shared base profile — usually automatic (see "Your own machine" below), call directly if you want it sooner |
 | `set_status_summary` / `set_progress` | running status — do NOT use request_action for status |
 
 `capture_screen` is provided by the host MCP (`arigami`). If it is missing in
 this session, say so once and continue without screenshots — do not improvise
 your own screenshot pipeline.
+
+## Your own machine
+
+Each session gets its own desktop (its own `Xvfb`+VNC, not the shared one)
+and its own Chrome profile, allocated the first time you touch any of this —
+`request_screen`, `capture_screen`, or opening a browser. Logins carry over
+between sessions (a shared base profile each session's Chrome clones from and
+syncs back to), but the *desktop* and the open windows on it are yours alone.
+
+**Opening a browser:** use the helper, never launch `google-chrome` yourself:
+```
+skills/_lib/chrome.sh "https://example.com"
+```
+It ensures your desktop exists, clones your Chrome profile from the shared
+base on first use, and opens the URL there. Run it again (no URL, or a new
+one) to reuse the same running Chrome — it won't spawn a second instance.
+
+**Never `pkill chrome`** (or `pkill -f chrome`, or any blanket chrome kill).
+Every session runs its own Chrome on its own profile — killing "chrome"
+system-wide would take down other sessions' browsers along with yours. You
+don't need to kill your own either; the host tears it down when the session
+is archived or deleted.
+
+**`$DISPLAY`** is set for you automatically once your desktop exists (from
+the session's first request_screen/capture_screen/browser open onward — a
+respawn is enough if it was allocated after your process started). If you're
+driving X directly instead of through the Chrome helper, use `$DISPLAY`, not
+a hardcoded `:99` (that's the *global* desktop, not yours).
+
+**Saving logins:** after you complete a login/2FA/payment flow yourself (no
+`request_screen` involved), call `save_browser_logins()` so the next session
+starts already signed in. If the human did it via `request_screen` Take
+over → Done, this happens automatically — no need to call it yourself.
 
 ## The convention
 

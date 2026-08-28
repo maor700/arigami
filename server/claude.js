@@ -396,6 +396,13 @@ function spawnProc(s, resume) {
       // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
       // its dev server binds the slot the host reserved (metadata.port).
       ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
+      // Per-session desktop (T8): set only if allocated before this spawn
+      // (needs_screen:true at create_session, or a respawn after a lazy
+      // allocation from an earlier request_screen/capture_screen/browser-open
+      // in this session). A desktop allocated while this process is already
+      // running only takes effect on its next spawn — env can't be changed
+      // on a live child.
+      ...(s.metadata?.screen?.display ? { DISPLAY: s.metadata.screen.display } : {}),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
