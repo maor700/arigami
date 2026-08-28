@@ -1,7 +1,7 @@
 // Tiny shared primitives for the host chrome.
 import { t } from '../lib/i18n.js';
 
-// The Acme "wave" brand glyph — 4 ascending yellow bars.
+// The "wave" brand glyph — 4 ascending yellow bars.
 export function Wave({ scale = 1 }) {
   const heights = [8, 13, 10, 15];
   return (

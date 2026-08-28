@@ -42,6 +42,10 @@ export const strings = {
   'launcher.presets.title': 'Presets',
   'launcher.presets.setDefault': 'Set as default',
   'launcher.presets.unsetDefault': 'Default — click to unset',
+  'launcher.presets.setGlobalDefault': 'Set as global default (all tabs)',
+  'launcher.presets.unsetGlobalDefault': 'Global default — click to unset',
+  'launcher.presets.setTabDefault': 'Set as default for this tab only',
+  'launcher.presets.unsetTabDefault': 'Default for this tab — click to unset',
   'launcher.presets.delete': 'Delete preset',
   'launcher.presets.namePlaceholder': 'Preset name…',
   'launcher.presets.saveCurrent': '+ Save current',
@@ -92,12 +96,18 @@ export const strings = {
   'launcher.plan.provision': 'Host will provision',
   'launcher.plan.sessionColour': 'Session colour',
   'launcher.plan.startingPrompt': 'Starting prompt',
+  'launcher.plan.extraInstructions': 'Extra instructions (optional)',
+  'launcher.plan.extraInstructionsPlaceholder': 'Merged in after the skill’s own instructions, if any.',
   'launcher.plan.permissions': 'Permissions',
   'launcher.plan.permDefault': 'default — ask in chat',
   'launcher.plan.creating': 'Creating…',
   'launcher.plan.createSession': 'Create session →',
   'launcher.plan.doItLater': 'Do it later — add to Pending',
   'launcher.plan.emptyInstead': 'Start an empty session instead',
+
+  // session options (skill / model / effort)
+  'launcher.options.title': 'Skill, model & effort',
+  'launcher.options.noSkill': 'No skill — blank chat',
 
   // empty session form
   'launcher.empty.sessionName': 'Session name',
@@ -106,13 +116,13 @@ export const strings = {
   'launcher.empty.renamedBy': '— renamed by',
   'launcher.empty.workingDir': 'Working directory',
   'launcher.empty.permMode': 'Permission mode',
-  'launcher.empty.startingPromptHint': '(optional to start · required to defer)',
+  'launcher.empty.startingPromptHint': '(optional to start · required to defer, unless a skill is picked)',
   'launcher.empty.promptPlaceholder':
-    'First message to send the session on start. Required if you “Do it later”.',
-  'launcher.empty.deferRequired': 'A starting prompt is required to defer an empty session.',
+    'First message to send the session on start. Required to “Do it later” unless a skill is picked.',
+  'launcher.empty.deferRequired': 'A starting prompt or a chosen skill is required to defer an empty session.',
   'launcher.empty.createEmpty': 'Create empty session →',
   'launcher.empty.addToPending': 'Add to Pending',
-  'launcher.empty.deferTitle': 'A starting prompt is required to defer',
+  'launcher.empty.deferTitle': 'A starting prompt or a chosen skill is required to defer',
 
   // relative time
   'launcher.time.secondsAgo': '{n}s ago',
@@ -289,7 +299,7 @@ export const strings = {
   'launcher.account.addHeading': 'Add an account',
   'launcher.account.addBody':
     'Sign in through your browser — the token is created and stored automatically. Make sure the browser is logged into the Claude account you want to add.',
-  'launcher.account.labelPlaceholder': 'Label (e.g. Work · Acme)',
+  'launcher.account.labelPlaceholder': 'Label (e.g. Work · Personal)',
   'launcher.account.authBrowser': '🔓 Authenticate with browser',
   'launcher.account.pasteInstead': 'Paste a token instead',
   'launcher.account.cancel': 'Cancel',

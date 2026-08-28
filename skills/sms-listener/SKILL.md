@@ -14,11 +14,14 @@ Receive incoming SMS messages from the user's Android phone in real time.
 3. Arigami stores the SMS and the listener polls for new messages
 4. Session is woken with the SMS content + push notification to phone
 
-## Setup (already done)
+## Setup
 
 - **Phone app**: Macrodroid (free) with an SMS Received trigger → HTTP GET action
-- **Webhook URL**: `https://host.tail0000.ts.net/__api/sms/inbound?from={sms_number}&body={sms_message}`
-- **Tailscale**: Phone and VPS on same tailnet — endpoint is VPN-only, not public
+- **Webhook URL**: `https://<your-tailnet-hostname>/__api/sms/inbound?from={sms_number}&body={sms_message}`
+  — get `<your-tailnet-hostname>` from `GET /__api/remote`, or from the
+  cockpit's Settings → Remote access panel, once Tailscale Serve is enabled
+  for this host.
+- **Tailscale**: Phone and host on the same tailnet — endpoint is VPN-only, not public
 
 ## Registering a listener
 

@@ -48,15 +48,18 @@ const TOOLS = [
       'its master, and the host places it in your project folder (auto-created on first spawn). Kinds: ' +
       '"mutating" = thin worker with a host-made `dispatch/<subtask>` worktree+branch off `base`; ' +
       '"readonly" = thin worker in your repo, no worktree; ' +
-      '"full" = a REGULAR session (project-folder child) — no thinning, it provisions itself (e.g. tell it in ' +
-      '`prompt` to run create-from-ticket) and the human works with it like any session. ' +
+      '"full" = a REGULAR session (project-folder child) — no thinning, it provisions itself (pass `skill` to have ' +
+      'it run a specific bundled skill, e.g. from a ticket) and the human works with it like any session. ' +
       'Global caps apply across the whole tree — if at capacity you get `{deferred:true, reason:"at-capacity"}` and ' +
       'NO session is created (leave the node ready and retry next wake). Children report back via report_to_master; ' +
       'task a RUNNING child later with task_session.',
     inputSchema: obj({
       title: { type: 'string' },
       cwd: { type: 'string' },
-      prompt: { type: 'string', description: 'First message to send to the new session' },
+      prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
+      skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
+      model: { type: 'string', description: '`claude --model` value (alias or full id); omit for the CLI default' },
+      effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: '`claude --effort` value; omit for the CLI default' },
       permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
       metadata: { type: 'object' },
       kind: { type: 'string', enum: ['mutating', 'readonly', 'full'], description: 'Spawn as your child: thin dispatch worker (mutating/readonly) or full regular session (full)' },
@@ -66,7 +69,8 @@ const TOOLS = [
     }),
     run: async (a) => {
       const body = {
-        title: a.title, cwd: a.cwd, prompt: a.prompt, permissionMode: a.permission_mode, metadata: a.metadata,
+        title: a.title, cwd: a.cwd, prompt: a.prompt, skill: a.skill, model: a.model, effort: a.effort,
+        permissionMode: a.permission_mode, metadata: a.metadata,
       };
       // Dispatch: forward the caller as the worker's master + the worker spec.
       if (a.kind) {

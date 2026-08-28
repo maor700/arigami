@@ -6,7 +6,12 @@
 //
 // Cached to disk once/day; a manual refresh (UI button) bypasses the TTL.
 // Persistence: ~/.arigami/models.json, independent of state.json.
-import { spawn } from 'node:child_process';
+//
+// The cache is also keyed on the `claude` CLI version: the model list ships
+// with the CLI, so an upgrade is exactly when it goes stale. Without that key a
+// day-old cache keeps advertising the previous release's models (and hides new
+// ones) until the TTL lapses or someone hits refresh.
+import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg } from './state.js';
@@ -15,9 +20,31 @@ import { supervise } from './lib/children.js';
 const STORE = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'models.json');
 const TTL_MS = 24 * 60 * 60 * 1000; // once/day
 const HANDSHAKE_TIMEOUT_MS = 15_000;
+const VERSION_TIMEOUT_MS = 5_000;
+const VERSION_TTL_MS = 60_000; // re-probe at most once a minute
+const CLAUDE_BIN = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
 
-let cache = { models: [], fetchedAt: 0 };
+let cache = { models: [], fetchedAt: 0, cliVersion: null };
 let inflight = null;
+let verCache = { value: null, at: 0 };
+
+// `claude --version` → "2.1.241 (Claude Code)" → "2.1.241". ~120ms, memoised for
+// a minute. Resolves null (never rejects) if the probe fails, which callers read
+// as "can't tell" — the cache is then left alone rather than thrown away.
+function cliVersion() {
+  if (verCache.value && Date.now() - verCache.at < VERSION_TTL_MS) return Promise.resolve(verCache.value);
+  return new Promise((resolve) => {
+    execFile(CLAUDE_BIN, ['--version'], { timeout: VERSION_TIMEOUT_MS }, (err, stdout) => {
+      if (err) {
+        console.error('[models] version probe failed:', err.message);
+        return resolve(null);
+      }
+      const v = String(stdout).trim().split(/\s+/)[0] || null;
+      verCache = { value: v, at: Date.now() };
+      resolve(v);
+    });
+  });
+}
 
 (function load() {
   try {
@@ -93,14 +120,21 @@ function fetchFromCli() {
   });
 }
 
-// Cached model list (refreshed once/day unless `force`). Never throws — falls
-// back to the last known-good cache on fetch failure.
+// Cached model list. Refetched when `force`, when the 24h TTL lapses, or when
+// the `claude` CLI version no longer matches the one the cache was built from
+// (including a pre-versioning cache, which has no `cliVersion` at all). Never
+// throws — falls back to the last known-good cache on fetch failure.
 export async function getModels(force = false) {
-  if (!force && cache.models.length && Date.now() - cache.fetchedAt < TTL_MS) return cache;
+  if (!force && cache.models.length && Date.now() - cache.fetchedAt < TTL_MS) {
+    const ver = await cliVersion();
+    // ver === null → probe failed, so we can't prove staleness; serve the cache.
+    if (!ver || ver === cache.cliVersion) return cache;
+    console.log(`[models] claude ${cache.cliVersion || '(unknown)'} → ${ver}, refetching model list`);
+  }
   if (inflight) return inflight;
   inflight = fetchFromCli()
-    .then((models) => {
-      cache = { models, fetchedAt: Date.now() };
+    .then(async (models) => {
+      cache = { models, fetchedAt: Date.now(), cliVersion: await cliVersion() };
       persist();
       return cache;
     })

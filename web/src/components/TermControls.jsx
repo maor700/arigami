@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
+import { EFFORT_OPTIONS, EFFORT_LABEL } from '../lib/effort.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
@@ -17,17 +18,6 @@ const PERMISSION_OPTIONS = [
   { value: 'bypassPermissions', label: t('rail.permBypass'), desc: t('rail.permBypassDesc'), danger: true },
 ];
 const PERMISSION_LABEL = Object.fromEntries(PERMISSION_OPTIONS.map((o) => [o.value, o.label]));
-
-// Effort levels mirror `claude --effort <level>` exactly (verified via `claude --help`).
-const EFFORT_OPTIONS = [
-  { value: 'default', label: t('rail.effortDefault') },
-  { value: 'low', label: t('rail.effortLow') },
-  { value: 'medium', label: t('rail.effortMedium') },
-  { value: 'high', label: t('rail.effortHigh') },
-  { value: 'xhigh', label: t('rail.effortXhigh') },
-  { value: 'max', label: t('rail.effortMax') },
-];
-const EFFORT_LABEL = Object.fromEntries(EFFORT_OPTIONS.map((o) => [o.value, o.label]));
 
 // Model options come from useModels() (web/src/lib/models.js) — the server's
 // cache of the `claude` CLI's own model list, refreshed once/day + on manual

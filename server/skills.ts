@@ -13,10 +13,10 @@ import { cfg } from './state.js';
 import { supervise, killTree } from './lib/children.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SKILLS_DIR = path.join(ROOT, 'skills');
+export const SKILLS_DIR = path.join(ROOT, 'skills');
 const GRAPH_CACHE = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'skills-graph.json');
 
-const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 const TEXT_EXT = new Set(['.md', '.sh', '.js', '.ts', '.json', '.txt', '.yml', '.yaml', '.mjs']);
 const MAX_FILE = 200_000;
 
@@ -29,21 +29,17 @@ export interface Surface {
   desc: string;
 }
 const SURFACES: Surface[] = [
-  { id: 'surface:ticket', label: 'Ticket Launcher', desc: 'Starts a session from a Linear ticket' },
+  { id: 'surface:ticket', label: 'Ticket Launcher', desc: 'Starts a session from a Linear ticket — the human picks which skill runs' },
   { id: 'surface:changes', label: 'Changes Tab', desc: 'Read-only headless runs over the worktree diff' },
   { id: 'surface:session', label: 'In-Session Chat', desc: 'Skills the agent runs inside a live session' },
   { id: 'surface:mcp', label: 'Host MCP', desc: 'arigami tools skills call back into' },
 ];
 
-// from = surface id, to = skill dir name.
+// from = surface id, to = skill dir name. The ticket/empty launcher no longer
+// pins a fixed skill (the user picks one per session), so there's no
+// correct-by-construction edge for it — only genuinely fixed wiring lives here.
 const BACKBONE: { from: string; to: string; label: string }[] = [
-  { from: 'surface:ticket', to: 'create-from-ticket', label: 'launcher prompt runs it' },
   { from: 'surface:changes', to: 'explain-changes', label: 'summarizes the diff' },
-  { from: 'surface:session', to: 'ship-it', label: 'after the Verified gate' },
-  { from: 'surface:session', to: 'feedback-loop', label: 'visual verify loop' },
-  { from: 'surface:session', to: 'login', label: 'app login flow' },
-  { from: 'surface:session', to: 'local-env', label: 'spin up local env' },
-  { from: 'surface:mcp', to: 'ship-it', label: 'request_action / review' },
   { from: 'surface:mcp', to: 'explain-changes', label: 'set_changes_explanation' },
 ];
 
@@ -59,7 +55,7 @@ function parseFrontmatter(content: string): Record<string, string> {
   return out;
 }
 
-function isSkillDir(dir: string): boolean {
+export function isSkillDir(dir: string): boolean {
   try {
     return fs.statSync(path.join(SKILLS_DIR, dir)).isDirectory() &&
       fs.existsSync(path.join(SKILLS_DIR, dir, 'SKILL.md'));

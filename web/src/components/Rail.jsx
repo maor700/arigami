@@ -671,7 +671,7 @@ function FolderRow({
 }
 
 // A queued, not-yet-a-session item. Click → ticket preview (no session yet);
-// ▶ starts it (create-from-ticket); ✕ dismisses (kept in the trigger's seen set).
+// ▶ starts it (via startPending); ✕ dismisses (kept in the trigger's seen set).
 // Draggable — the queue order IS the autoplay execution order.
 function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDrop, over }) {
   const t = useT();

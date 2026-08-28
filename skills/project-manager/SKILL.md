@@ -1,5 +1,5 @@
 ---
-description: Project-folder controller ("PM") — bird's-eye orchestration of the FULL sessions inside your project folder. You decompose the project, spawn full children (each runs create-from-ticket like any regular session), task running children, track progress from bounded signals, and keep the human as the sole approver. Loaded by the controller session a make-project action spawns, or by any session that controls a project folder.
+description: Project-folder controller ("PM") — bird's-eye orchestration of the FULL sessions inside your project folder. You decompose the project, spawn full children (each provisions itself and runs whatever skill you pick, like any regular session), task running children, track progress from bounded signals, and keep the human as the sole approver. Loaded by the controller session a make-project action spawns, or by any session that controls a project folder.
 argument-hint: [project goal, if not obvious from the folder members]
 ---
 
@@ -10,7 +10,7 @@ your team. You are a *bird's-eye project manager* — an **additional** authorit
 over those sessions, never a replacement for the human:
 
 > **The human works with every child directly and approves ALL changes.** Each
-> child requests review from the human (its own create-from-ticket flow does
+> child requests review from the human (whatever skill it's running should do
 > this); you never review code, never approve, never merge on anyone's behalf.
 > Your job is decomposition, sequencing, and keeping the project moving.
 
@@ -32,13 +32,16 @@ in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
 
 ## Children are FULL sessions
 
-Spawn children with `create_session({ kind: "full", prompt, title, subtask? })`:
+Spawn children with `create_session({ kind: "full", skill, prompt, metadata, title, subtask? })`:
 
-- A full child is a **regular session**: it provisions itself. Your `prompt`
-  tells it what to run — for ticket work that is always:
-  `Use the create-from-ticket skill to set up and work <TICKET>. …then your
-  project-specific instructions…` The child gets its own worktree, ports, dev
-  server and cockpit exactly like a hand-launched session.
+- A full child is a **regular session**: it provisions itself. Pass `skill`
+  (a name from `GET /__api/skills`) to have it run a specific bundled skill —
+  for ticket work, that's whatever skill your workspace uses to set up and
+  work a ticket; pass `metadata: { ticket: "<TICKET>" }` alongside it so the
+  skill's own instructions get `$ARGUMENTS=<TICKET>`. Use `prompt` for your
+  project-specific instructions; they're merged in after the skill's own
+  instructions. The child gets its own worktree, ports, dev server and
+  cockpit exactly like a hand-launched session.
 - End every child prompt with the reporting contract: *"You are part of a
   project; when you finish, hit a blocker, or reach a milestone, call
   report_to_master."*

@@ -30,6 +30,10 @@ const STORE = path.join(
 
 interface Store {
   clientInformation?: OAuthClientInformationMixed;
+  // The origin clientInformation.redirect_uris was registered for — Linear
+  // rejects an authorize request whose redirect_uri wasn't in that set, so a
+  // change of origin (e.g. localhost → tailnet) must re-register, not reuse.
+  registeredOrigin?: string;
   tokens?: OAuthTokens;
   codeVerifier?: string;
   state?: string;
@@ -54,9 +58,17 @@ function save(s: Store): void {
 // ---- OAuth provider (file-backed, redirect captured for the UI) ------------
 let pendingAuthUrl: string | null = null;
 
+// The origin (scheme://host[:port]) the browser used to reach the cockpit for
+// THIS auth attempt — set by startAuth() from the request that kicked it off.
+// Linear's OAuth callback must land back on whatever origin actually reached
+// us, not a fixed localhost: over Tailscale/LAN that's a different device
+// than the one running this server, so a hardcoded localhost redirect just
+// dead-ends there. Falls back to localhost for CLI/non-request callers.
+let currentOrigin = `http://localhost:${cfg.port}`;
+
 const provider: OAuthClientProvider = {
   get redirectUrl() {
-    return `http://localhost:${cfg.port}/__api/linear/oauth/callback`;
+    return `${currentOrigin}/__api/linear/oauth/callback`;
   },
   get clientMetadata(): OAuthClientMetadata {
     return {
@@ -82,6 +94,7 @@ const provider: OAuthClientProvider = {
   saveClientInformation(info) {
     const s = load();
     s.clientInformation = info;
+    s.registeredOrigin = currentOrigin;
     save(s);
   },
   tokens() {
@@ -159,9 +172,24 @@ export function status(): { connected: boolean; needsAuth: boolean; authUrl: str
   return { connected: !!load().tokens, needsAuth: false, authUrl: null };
 }
 
-// Kick off (or confirm) the OAuth flow. Returns an authUrl when consent is
-// needed, or { connected: true } when tokens already work.
-export async function startAuth(): Promise<{ connected: boolean; authUrl?: string }> {
+// Kick off (or confirm) the OAuth flow. `origin` is the scheme://host[:port]
+// the browser used to reach the cockpit for this attempt — the OAuth redirect
+// must land back there, not on a fixed localhost (see `currentOrigin` above).
+// Returns an authUrl when consent is needed, or { connected: true } when
+// tokens already work.
+export async function startAuth(
+  origin?: string
+): Promise<{ connected: boolean; authUrl?: string }> {
+  currentOrigin = origin || `http://localhost:${cfg.port}`;
+  // The previously-DCR'd client was registered with a different origin's
+  // redirect_uri — Linear will reject an authorize request quoting a
+  // redirect_uri outside that set, so force fresh registration instead of
+  // reusing it. Also covers clients registered before `registeredOrigin`
+  // existed (undefined !== currentOrigin) — those were always localhost-only.
+  const s = load();
+  if (s.clientInformation && s.registeredOrigin !== currentOrigin) {
+    provider.invalidateCredentials?.('client');
+  }
   try {
     await connect();
     return { connected: true };

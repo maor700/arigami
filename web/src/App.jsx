@@ -133,7 +133,7 @@ function isTyping(e) {
 }
 
 // Full-pane preview of a pending (not-yet-a-session) ticket — the same
-// /__ticket/<id> host page create-from-ticket opens as a tab, shown standalone
+// /__ticket/<id> host page a ticket session opens as a tab, shown standalone
 // since there's no session yet. "Start session" promotes it via the queue.
 function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
   const t = useT();

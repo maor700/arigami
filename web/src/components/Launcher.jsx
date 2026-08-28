@@ -9,6 +9,7 @@ import {
   faBolt,
   faCaretDown,
   faStar,
+  faThumbtack,
   faTriangleExclamation,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
@@ -20,7 +21,13 @@ import {
   saveTicketPreset,
   deleteTicketPreset,
   setDefaultTicketPreset,
+  saveSessionPreset,
+  deleteSessionPreset,
+  setDefaultSessionPreset,
+  setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
+import { useModels } from '../lib/models.js';
+import { EFFORT_OPTIONS } from '../lib/effort.js';
 import { Wave, Dot, YellowButton, tint } from './ui.jsx';
 import { t, useT } from '../lib/i18n.js';
 
@@ -71,27 +78,22 @@ function slug(title) {
     .replace(/-+$/, '');
 }
 
-// The default first prompt for a ticket session, from config (or a sane fallback).
-export function defaultTicketPrompt(id, config) {
-  const tpl =
-    config?.launcherPrompt || config?.ticketPrompt || config?.prompts?.ticket || null;
-  return tpl
-    ? tpl.includes('{ticket}')
-      ? tpl.replaceAll('{ticket}', id)
-      : `${tpl} ${id}`
-    : `Use the create-from-ticket skill to set up and work ${id}.`;
-}
-
-export function buildTicketPayload(ticket, config, sessions, permissionMode, promptOverride) {
+// The session's first message is built server-side from `skill` (+ ticket id)
+// so the absolute $SKILL_DIR path never has to be known client-side — see
+// server/api.ts's buildFirstPrompt. `prompt` here is just the optional extra
+// instructions merged in after the skill's own prompt (or used verbatim if no
+// skill is picked).
+export function buildTicketPayload(ticket, config, sessions, permissionMode, promptOverride, sessionOpts) {
   const id = ticket.id;
-  const prompt =
-    promptOverride && promptOverride.trim() ? promptOverride : defaultTicketPrompt(id, config);
   return {
     title: ticket.title && ticket.title !== id ? ticket.title : id,
     cwd: config?.reposDir || config?.defaultCwd || undefined,
     metadata: { ticket: id },
     ...(permissionMode ? { permissionMode } : {}),
-    prompt,
+    ...(promptOverride && promptOverride.trim() ? { prompt: promptOverride.trim() } : {}),
+    skill: sessionOpts?.skill || undefined,
+    model: sessionOpts?.model || undefined,
+    effort: sessionOpts?.effort || undefined,
   };
 }
 
@@ -440,6 +442,143 @@ function PresetBar({ presets, defaultId, current, onApply }) {
               <Icon icon={faXmark} />
             </button>
           )}
+        </span>
+      ))}
+      {naming ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
+          }}
+          placeholder={t('launcher.presets.namePlaceholder')}
+          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[10.5px] outline-none placeholder:text-fgdim"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setNaming(true)}
+          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[10.5px] font-bold text-fg hover:border-ink"
+        >
+          {t('launcher.presets.saveCurrent')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function sessionOptionsEqual(a, b) {
+  return (a?.skill || '') === (b?.skill || '') && (a?.model || '') === (b?.model || '') && (a?.effort || '') === (b?.effort || '');
+}
+
+// This launcher tab's ('ticket' | 'empty' | 'trigger') own default wins over
+// the any-tab default (more specific); neither set → blank, same as picking
+// nothing.
+function defaultSessionOptions(prefs, mode) {
+  const id = prefs.sessionDefaultPresetByMode[mode] || prefs.sessionDefaultPresetId;
+  const d = prefs.sessionPresets.find((p) => p.id === id);
+  return { skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
+}
+
+// Which skill (from GET /skills — whatever's actually bundled, no fixed
+// default), which model, which effort a new session starts with.
+function SessionOptionsPicker({ options, onChange }) {
+  const t = useT();
+  const [skills, setSkills] = useState([]);
+  useEffect(() => {
+    api.get('/skills').then((r) => setSkills(r?.skills || [])).catch(() => {});
+  }, []);
+  const { models } = useModels();
+  const set = (patch) => onChange({ ...options, ...patch });
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pb-2">
+      <select
+        value={options.skill || ''}
+        onChange={(e) => set({ skill: e.target.value })}
+        className={selCls}
+        title={skills.find((s) => s.name === options.skill)?.description || ''}
+      >
+        <option value="">{t('launcher.options.noSkill')}</option>
+        {skills.map((s) => (
+          <option key={s.name} value={s.name}>{s.name}</option>
+        ))}
+      </select>
+      <select
+        value={options.model || 'default'}
+        onChange={(e) => set({ model: e.target.value === 'default' ? '' : e.target.value })}
+        className={selCls}
+      >
+        {models.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <select
+        value={options.effort || 'default'}
+        onChange={(e) => set({ effort: e.target.value === 'default' ? '' : e.target.value })}
+        className={selCls}
+      >
+        {EFFORT_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// Saved skill/model/effort presets — same interaction as PresetBar (chip,
+// star = default, × = delete, + = save current).
+function SessionPresetBar({ presets, defaultId, defaultByMode, mode, current, onApply }) {
+  const t = useT();
+  const tabDefaultId = defaultByMode[mode];
+  const activeId = presets.find((p) => sessionOptionsEqual(p, current))?.id || null;
+  const [naming, setNaming] = useState(false);
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    const name = draft.trim();
+    if (name) saveSessionPreset(name, current);
+    setDraft('');
+    setNaming(false);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pb-2.5">
+      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
+      {presets.map((p) => (
+        <span
+          key={p.id}
+          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10.5px] ${
+            activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setDefaultSessionPreset(p.id)}
+            title={defaultId === p.id ? t('launcher.presets.unsetGlobalDefault') : t('launcher.presets.setGlobalDefault')}
+            className={`cursor-pointer ${defaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
+          >
+            <Icon icon={faStar} className={defaultId === p.id ? undefined : 'opacity-30'} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setModeDefaultSessionPreset(mode, p.id)}
+            title={tabDefaultId === p.id ? t('launcher.presets.unsetTabDefault') : t('launcher.presets.setTabDefault')}
+            className={`cursor-pointer ${tabDefaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
+          >
+            <Icon icon={faThumbtack} className={tabDefaultId === p.id ? undefined : 'opacity-30'} />
+          </button>
+          <button type="button" onClick={() => onApply(p)} className="cursor-pointer">
+            {p.name}
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteSessionPreset(p.id)}
+            title={t('launcher.presets.delete')}
+            className="cursor-pointer text-fgdim hover:text-danger"
+          >
+            <Icon icon={faXmark} />
+          </button>
         </span>
       ))}
       {naming ? (
@@ -890,8 +1029,9 @@ function ProvisionRow({ label, children }) {
   );
 }
 
-function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt }) {
+function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt, options, onOptions }) {
   const t = useT();
+  const prefs = usePrefs();
   const color = nextPaletteColor(sessions, config);
   return (
     <div className="flex w-full shrink-0 flex-col bg-panel p-[16px_18px] md:w-[332px]">
@@ -972,18 +1112,30 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
       {error && <div className="mt-3 text-[11px] text-danger">{error}</div>}
       <div className="mt-auto flex flex-col gap-2 pt-3.5">
         {ticket && (
-          <div className="flex flex-col gap-1">
-            <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-              {t('launcher.plan.startingPrompt')}
-            </span>
-            <textarea
-              value={prompt}
-              onChange={(e) => onPrompt(e.target.value)}
-              rows={5}
-              spellCheck={false}
-              className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[10.5px] leading-snug outline-none focus:border-ink"
+          <>
+            <SessionOptionsPicker options={options} onChange={onOptions} />
+            <SessionPresetBar
+              presets={prefs.sessionPresets}
+              defaultId={prefs.sessionDefaultPresetId}
+              defaultByMode={prefs.sessionDefaultPresetByMode}
+              mode="ticket"
+              current={options}
+              onApply={onOptions}
             />
-          </div>
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+                {t('launcher.plan.extraInstructions')}
+              </span>
+              <textarea
+                value={prompt}
+                onChange={(e) => onPrompt(e.target.value)}
+                rows={4}
+                spellCheck={false}
+                placeholder={t('launcher.plan.extraInstructionsPlaceholder')}
+                className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[10.5px] leading-snug outline-none focus:border-ink"
+              />
+            </div>
+          </>
         )}
         <div className="flex items-center gap-2">
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
@@ -1029,10 +1181,12 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
 
 function EmptyForm({ config, sessions, onCreated }) {
   const t = useT();
+  const prefs = usePrefs();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState(config?.defaultCwd || '');
   const [mode, setMode] = useState('bypassPermissions');
   const [prompt, setPrompt] = useState('');
+  const [options, setOptions] = useState(() => defaultSessionOptions(prefs, 'empty'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -1056,6 +1210,9 @@ function EmptyForm({ config, sessions, onCreated }) {
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
+        skill: options.skill || undefined,
+        model: options.model || undefined,
+        effort: options.effort || undefined,
       });
       onCreated(session);
     } catch (e) {
@@ -1065,11 +1222,12 @@ function EmptyForm({ config, sessions, onCreated }) {
   };
 
   // Defer an empty session into the Pending queue instead of starting it now.
-  // A starting prompt is required — a queued blank session with no prompt would
-  // have nothing to do when it's later started (incl. by autoplay).
+  // A starting prompt or a chosen skill is required — a queued blank session
+  // with neither would have nothing to do when it's later started (incl. by
+  // autoplay).
   const later = async () => {
     if (busy) return; // guard against double-submit
-    if (!prompt.trim()) {
+    if (!prompt.trim() && !options.skill) {
       setError(t('launcher.empty.deferRequired'));
       return;
     }
@@ -1082,6 +1240,9 @@ function EmptyForm({ config, sessions, onCreated }) {
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
+        skill: options.skill || undefined,
+        model: options.model || undefined,
+        effort: options.effort || undefined,
       });
       setName('');
     } catch (e) {
@@ -1140,6 +1301,19 @@ function EmptyForm({ config, sessions, onCreated }) {
         </select>
 
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          {t('launcher.options.title')}
+        </div>
+        <SessionOptionsPicker options={options} onChange={setOptions} />
+        <SessionPresetBar
+          presets={prefs.sessionPresets}
+          defaultId={prefs.sessionDefaultPresetId}
+          defaultByMode={prefs.sessionDefaultPresetByMode}
+          mode="empty"
+          current={options}
+          onApply={setOptions}
+        />
+
+        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.plan.startingPrompt')}{' '}
           <span className="text-fgdim/70 normal-case">{t('launcher.empty.startingPromptHint')}</span>
         </div>
@@ -1158,8 +1332,8 @@ function EmptyForm({ config, sessions, onCreated }) {
         <button
           type="button"
           onClick={later}
-          disabled={busy || !prompt.trim()}
-          title={prompt.trim() ? t('launcher.empty.addToPending') : t('launcher.empty.deferTitle')}
+          disabled={busy || (!prompt.trim() && !options.skill)}
+          title={prompt.trim() || options.skill ? t('launcher.empty.addToPending') : t('launcher.empty.deferTitle')}
           className="mt-2 w-full cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:cursor-default disabled:opacity-40"
         >
           {t('launcher.plan.doItLater')}
@@ -1362,6 +1536,11 @@ function TriggerTab() {
   const [autonomous, setAutonomous] = useState(false);
   const [injectPrompt, setInjectPrompt] = useState('');
   const [warnOpen, setWarnOpen] = useState(false);
+  // A trigger fires unattended, so its skill/model/effort are fixed at
+  // creation time and copied onto the trigger record itself — but the picker
+  // + presets are the same widget as the ticket/empty forms, seeded from the
+  // same default preset, for a consistent starting point.
+  const [options, setOptions] = useState(() => defaultSessionOptions(prefs, 'trigger'));
 
   const onToggleAutonomous = (checked) => {
     if (!checked) return setAutonomous(false);
@@ -1392,11 +1571,15 @@ function TriggerTab() {
         filters,
         autonomous,
         injectPrompt,
+        skill: options.skill || undefined,
+        model: options.model || undefined,
+        effort: options.effort || undefined,
       });
       setName('');
       setFilters(sanitizeFilters(EMPTY_TICKET_FILTERS));
       setAutonomous(false);
       setInjectPrompt('');
+      setOptions(defaultSessionOptions(prefs, 'trigger'));
     } catch (e) {
       setError(String(e.message || e));
     }
@@ -1424,6 +1607,16 @@ function TriggerTab() {
           disabled={showConnect}
           showSearch={false}
           showHideOpen={false}
+        />
+
+        <SessionOptionsPicker options={options} onChange={setOptions} />
+        <SessionPresetBar
+          presets={prefs.sessionPresets}
+          defaultId={prefs.sessionDefaultPresetId}
+          defaultByMode={prefs.sessionDefaultPresetByMode}
+          mode="trigger"
+          current={options}
+          onApply={setOptions}
         />
 
         {/* extra instructions injected into the task prompt on start */}
@@ -1553,6 +1746,7 @@ function TriggerTab() {
 
 export default function Launcher({ config, sessions, onClose, onCreated, onNeedsSetup, initialMode }) {
   const t = useT();
+  const prefs = usePrefs();
   const [mode, setMode] = useState(initialMode || 'ticket');
   const [selected, setSelected] = useState(null);
   const [permMode, setPermMode] = useState('bypassPermissions');
@@ -1560,12 +1754,16 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
   const [error, setError] = useState(null);
   const [detailsId, setDetailsId] = useState(null);
   const [gated, setGated] = useState(false); // no ready repo → offer Setup / chat
-  // Editable starting prompt — defaults to the create-from-ticket prompt for the
-  // selected ticket, re-derived whenever the selection changes.
+  // Which skill/model/effort a new session starts with — feeds PlanPanel
+  // (the ticket tab), seeded from that tab's own default preset if set, else
+  // the any-tab default, editable per-launch, savable.
+  const [sessionOpts, setSessionOpts] = useState(() => defaultSessionOptions(prefs, 'ticket'));
+  // Editable extra instructions, merged after the chosen skill's own prompt (or
+  // used verbatim if no skill is picked) — reset per ticket, unlike sessionOpts.
   const [ticketPrompt, setTicketPrompt] = useState('');
   useEffect(() => {
-    setTicketPrompt(selected ? defaultTicketPrompt(selected.id, config) : '');
-  }, [selected?.id, config]);
+    setTicketPrompt('');
+  }, [selected?.id]);
 
   const createFromTicket = async () => {
     if (!selected) return;
@@ -1573,7 +1771,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     setError(null);
     // Launcher gating: the ticket flow needs a provisioned workspace. If no repo
     // is ready, route to Setup instead of creating a session that dead-ends on a
-    // missing workspace ("paste ticket details / set ACME_WORKSPACE_ROOT").
+    // missing workspace.
     try {
       const st = await api.get('/onboarding/status');
       const steps = st?.steps || [];
@@ -1599,7 +1797,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     try {
       const session = await api.post(
         '/sessions',
-        buildTicketPayload(selected, config, sessions, permMode, ticketPrompt),
+        buildTicketPayload(selected, config, sessions, permMode, ticketPrompt, sessionOpts),
       );
       onCreated(session);
     } catch (e) {
@@ -1639,6 +1837,9 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         ticket: selected.id,
         title: selected.title || selected.id,
         ...(ticketPrompt.trim() ? { prompt: ticketPrompt } : {}),
+        skill: sessionOpts.skill || undefined,
+        model: sessionOpts.model || undefined,
+        effort: sessionOpts.effort || undefined,
       });
       setSelected(null);
     } catch (e) {
@@ -1747,6 +1948,8 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
               onViewDetails={setDetailsId}
               prompt={ticketPrompt}
               onPrompt={setTicketPrompt}
+              options={sessionOpts}
+              onOptions={setSessionOpts}
             />
           </>
         ) : mode === 'trigger' ? (

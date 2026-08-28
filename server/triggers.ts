@@ -3,9 +3,10 @@
 // A trigger is a PURE PRODUCER: it polls a source (v1: a Linear filter) and drops
 // matching tickets into the Pending queue. All automation POLICY lives on the
 // queue — a single autoplay switch + a global maxConcurrent cap. Starting a
-// pending item spins up an ordinary create-from-ticket session (via the same
+// pending item spins up an ordinary ticket session (via the same
 // startTicketSession the launcher uses), so a triggered session is identical to a
-// hand-launched one.
+// hand-launched one — including which skill/model/effort it runs with, which the
+// trigger captured at creation time since no human is present when it fires.
 //
 // Persistence: ~/.arigami/triggers.json (debounced), independent of state.json.
 import fs from 'node:fs';
@@ -30,6 +31,9 @@ export interface Trigger {
   enabled: boolean;
   autonomous: boolean; // skip ALL questions — run unattended (bypass perms + no-pause directive)
   injectPrompt: string; // extra instructions appended to the task prompt on start
+  skill?: string; // skill dir name to run (e.g. 'onboarding'); '' = plain ticket prompt
+  model?: string; // `claude --model` value; '' = CLI default
+  effort?: string; // `claude --effort` value; '' = CLI default
   filters: Record<string, unknown>; // FilterBar facet shape (assignee/state/labels/labelOp/…)
   seen: string[]; // high-water mark; dismissed items stay here
   primed: boolean; // false until the first successful fetch seeds `seen`
@@ -41,7 +45,7 @@ export interface Trigger {
 
 export interface PendingItem {
   id: string;
-  kind: 'ticket' | 'empty'; // ticket → create-from-ticket; empty → plain session
+  kind: 'ticket' | 'empty'; // ticket → ticket session; empty → plain session
   title: string;
   triggerId: string | null; // null = manually deferred (no trigger)
   triggerName: string;
@@ -50,6 +54,9 @@ export interface PendingItem {
   cwd?: string; // kind 'empty'
   permissionMode?: string; // kind 'empty'
   prompt?: string; // custom starting prompt (overrides the default on start)
+  skill?: string; // skill dir name to run; '' = plain prompt
+  model?: string; // `claude --model` value; '' = CLI default
+  effort?: string; // `claude --effort` value; '' = CLI default
 }
 
 interface QueueSettings {
@@ -256,23 +263,41 @@ export function reorderPending(orderedIds: string[]): boolean {
 }
 
 // Add a manually-deferred ticket (no trigger) to the queue.
-export function deferTicket(ticket: string, title?: string, prompt?: string): PendingItem | null {
+export function deferTicket(
+  ticket: string,
+  title?: string,
+  prompt?: string,
+  opts?: { skill?: string; model?: string; effort?: string }
+): PendingItem | null {
   const up = String(ticket || '').toUpperCase();
   if (!up) return null;
   if (pendingHas(up, null) || liveTicketSession(up)) return null;
-  enqueue({ kind: 'ticket', ticket: up, title: title || up, prompt, triggerId: null, triggerName: 'Manual' });
+  enqueue({
+    kind: 'ticket',
+    ticket: up,
+    title: title || up,
+    prompt,
+    triggerId: null,
+    triggerName: 'Manual',
+    skill: opts?.skill,
+    model: opts?.model,
+    effort: opts?.effort,
+  });
   persist();
   emitPending();
   return db.pending[db.pending.length - 1];
 }
 
 // Add a manually-deferred EMPTY (plain) session to the queue. No ticket — start
-// spins up a blank session with these params instead of create-from-ticket.
+// spins up a blank session with these params instead of a ticket workflow.
 export function deferEmpty(opts: {
   title?: string;
   cwd?: string;
   permissionMode?: string;
   prompt?: string;
+  skill?: string;
+  model?: string;
+  effort?: string;
 }): PendingItem {
   enqueue({
     kind: 'empty',
@@ -280,6 +305,9 @@ export function deferEmpty(opts: {
     cwd: opts.cwd,
     permissionMode: opts.permissionMode,
     prompt: opts.prompt,
+    skill: opts.skill,
+    model: opts.model,
+    effort: opts.effort,
     triggerId: null,
     triggerName: 'Manual',
   });
@@ -288,7 +316,7 @@ export function deferEmpty(opts: {
   return db.pending[db.pending.length - 1];
 }
 
-// Start a pending item → create-from-ticket session, remove the row (+ any
+// Start a pending item → a session, remove the row (+ any
 // duplicate rows for the same ticket from other triggers).
 export async function startPending(
   id: string
@@ -304,6 +332,9 @@ export async function startPending(
       cwd: item.cwd,
       permissionMode: item.permissionMode,
       prompt: item.prompt,
+      skill: item.skill,
+      model: item.model,
+      effort: item.effort,
       metadata: { fromQueue: true },
     });
     db.pending = db.pending.filter((p) => p.id !== id);
@@ -333,6 +364,9 @@ export async function startPending(
     ticket,
     title: item.title,
     ...(item.prompt ? { prompt: item.prompt } : {}),
+    skill: item.skill ?? t?.skill,
+    model: item.model ?? t?.model,
+    effort: item.effort ?? t?.effort,
     metadata: {
       fromQueue: true,
       ...(item.triggerId
@@ -397,6 +431,9 @@ export async function createTrigger(input: {
   filters?: Record<string, unknown>;
   autonomous?: boolean;
   injectPrompt?: string;
+  skill?: string;
+  model?: string;
+  effort?: string;
 }): Promise<Trigger> {
   const t: Trigger = {
     id: 'trig_' + nano(),
@@ -405,6 +442,9 @@ export async function createTrigger(input: {
     enabled: true,
     autonomous: !!input.autonomous,
     injectPrompt: typeof input.injectPrompt === 'string' ? input.injectPrompt : '',
+    skill: typeof input.skill === 'string' ? input.skill : '',
+    model: typeof input.model === 'string' ? input.model : '',
+    effort: typeof input.effort === 'string' ? input.effort : '',
     filters: input.filters && typeof input.filters === 'object' ? input.filters : {},
     seen: [],
     primed: false,
@@ -443,6 +483,9 @@ export function patchTrigger(id: string, patch: Partial<Trigger>): Trigger | nul
   if (typeof patch.enabled === 'boolean') t.enabled = patch.enabled;
   if (typeof patch.autonomous === 'boolean') t.autonomous = patch.autonomous;
   if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
+  if (typeof patch.skill === 'string') t.skill = patch.skill;
+  if (typeof patch.model === 'string') t.model = patch.model;
+  if (typeof patch.effort === 'string') t.effort = patch.effort;
   if (patch.filters && typeof patch.filters === 'object') {
     t.filters = patch.filters;
     // Filter changed → re-prime so old matches under the new filter don't all fire.

@@ -42,6 +42,10 @@ export const strings = {
   'launcher.presets.title': 'הגדרות מוכנות',
   'launcher.presets.setDefault': 'קביעה כברירת מחדל',
   'launcher.presets.unsetDefault': 'ברירת מחדל — לחצו לביטול',
+  'launcher.presets.setGlobalDefault': 'קביעה כברירת מחדל גלובלית (כל הטאבים)',
+  'launcher.presets.unsetGlobalDefault': 'ברירת מחדל גלובלית — לחצו לביטול',
+  'launcher.presets.setTabDefault': 'קביעה כברירת מחדל לטאב הזה בלבד',
+  'launcher.presets.unsetTabDefault': 'ברירת מחדל לטאב הזה — לחצו לביטול',
   'launcher.presets.delete': 'מחיקת הגדרה מוכנה',
   'launcher.presets.namePlaceholder': 'שם ההגדרה המוכנה…',
   'launcher.presets.saveCurrent': '+ שמירת הנוכחי',
@@ -92,12 +96,18 @@ export const strings = {
   'launcher.plan.provision': 'ה-host יקצה',
   'launcher.plan.sessionColour': 'צבע סשן',
   'launcher.plan.startingPrompt': 'פרומפט התחלה',
+  'launcher.plan.extraInstructions': 'הוראות נוספות (רשות)',
+  'launcher.plan.extraInstructionsPlaceholder': 'ימוזגו אחרי ההוראות של המיומנות עצמה, אם נבחרה.',
   'launcher.plan.permissions': 'הרשאות',
   'launcher.plan.permDefault': 'default — לשאול בצ׳אט',
   'launcher.plan.creating': 'יוצר…',
   'launcher.plan.createSession': 'יצירת סשן ←',
   'launcher.plan.doItLater': 'מאוחר יותר — הוספה ל-Pending',
   'launcher.plan.emptyInstead': 'התחלת סשן ריק במקום',
+
+  // session options (skill / model / effort)
+  'launcher.options.title': 'מיומנות, מודל ומאמץ',
+  'launcher.options.noSkill': 'בלי מיומנות — צ׳אט ריק',
 
   // empty session form
   'launcher.empty.sessionName': 'שם הסשן',
@@ -106,13 +116,13 @@ export const strings = {
   'launcher.empty.renamedBy': '— ישונה על ידי',
   'launcher.empty.workingDir': 'תיקיית עבודה',
   'launcher.empty.permMode': 'מצב הרשאות',
-  'launcher.empty.startingPromptHint': '(רשות להתחלה · חובה לדחייה)',
+  'launcher.empty.startingPromptHint': '(רשות להתחלה · חובה לדחייה, אלא אם נבחרה מיומנות)',
   'launcher.empty.promptPlaceholder':
-    'ההודעה הראשונה שתישלח לסשן בהתחלה. חובה אם בוחרים ב״מאוחר יותר״.',
-  'launcher.empty.deferRequired': 'נדרש פרומפט התחלה כדי לדחות סשן ריק.',
+    'ההודעה הראשונה שתישלח לסשן בהתחלה. חובה ל״מאוחר יותר״ אלא אם נבחרה מיומנות.',
+  'launcher.empty.deferRequired': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות סשן ריק.',
   'launcher.empty.createEmpty': 'יצירת סשן ריק ←',
   'launcher.empty.addToPending': 'הוספה ל-Pending',
-  'launcher.empty.deferTitle': 'נדרש פרומפט התחלה כדי לדחות',
+  'launcher.empty.deferTitle': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות',
 
   // relative time
   'launcher.time.secondsAgo': 'לפני {n} שנ׳',
@@ -289,7 +299,7 @@ export const strings = {
   'launcher.account.addHeading': 'הוספת חשבון',
   'launcher.account.addBody':
     'היכנסו דרך הדפדפן — הטוקן נוצר ונשמר אוטומטית. ודאו שהדפדפן מחובר לחשבון Claude שאתם רוצים להוסיף.',
-  'launcher.account.labelPlaceholder': 'תווית (לדוגמה: Work · Acme)',
+  'launcher.account.labelPlaceholder': 'תווית (לדוגמה: עבודה · אישי)',
   'launcher.account.authBrowser': '🔓 אימות דרך הדפדפן',
   'launcher.account.pasteInstead': 'הדבקת טוקן במקום',
   'launcher.account.cancel': 'ביטול',

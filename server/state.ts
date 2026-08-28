@@ -42,6 +42,7 @@ interface ClaudeState {
   state: string;
   permissionMode: string;
   modelChoice?: string | null; // user-picked `claude --model` arg (null = default)
+  effort?: string | null; // user-picked `claude --effort` arg (null = default)
   accountId?: string | null; // account this session runs on (null = active account)
   model?: string; // model id reported by the running session (init event)
   capabilities?: Record<string, unknown>;
@@ -325,11 +326,15 @@ export function createSession({
   cwd,
   permissionMode,
   metadata,
+  model,
+  effort,
 }: {
   title?: string;
   cwd?: string;
   permissionMode?: string;
   metadata?: Record<string, unknown>;
+  model?: string | null;
+  effort?: string | null;
 } = {}): Session {
   const now = new Date().toISOString();
   const firstTab: Tab = {
@@ -362,10 +367,11 @@ export function createSession({
       // Picks the active account, or the next available one if active is
       // rate-limited/quarantined, so a new session doesn't start dead-on-arrival.
       accountId: pickSessionAccount() || null,
-      // Seed the session's model from the configured default (cfg.defaultModel);
-      // null means "no --model flag", so the CLI picks. The per-session dropdown
-      // overrides this later.
-      modelChoice: cfg.defaultModel || null,
+      // Seed the session's model from the caller's pick, falling back to the
+      // configured default (cfg.defaultModel); null means "no --model flag",
+      // so the CLI picks. The per-session dropdown can still override later.
+      modelChoice: model || cfg.defaultModel || null,
+      effort: effort || null,
     },
     bg: [],
   };

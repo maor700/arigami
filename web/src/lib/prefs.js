@@ -21,6 +21,9 @@ const DEFAULTS = {
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
+  sessionPresets: [], // [{ id, name, skill, model, effort }] — saved launcher session options
+  sessionDefaultPresetId: '', // id of the preset applied when the launcher opens, any tab
+  sessionDefaultPresetByMode: { ticket: '', empty: '', trigger: '' }, // per-launcher-tab override
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
@@ -68,6 +71,31 @@ function sanitizePresets(arr) {
     .map((p) => ({ id: String(p.id), name: String(p.name).slice(0, 40), filters: sanitizeFilters(p.filters) }));
 }
 
+function sanitizeSessionOptions(o) {
+  const p = o && typeof o === 'object' ? o : {};
+  return {
+    skill: typeof p.skill === 'string' ? p.skill : '',
+    model: typeof p.model === 'string' ? p.model : '',
+    effort: typeof p.effort === 'string' ? p.effort : '',
+  };
+}
+
+function sanitizeSessionPresets(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((p) => p && typeof p === 'object' && p.id && p.name)
+    .slice(0, 50)
+    .map((p) => ({ id: String(p.id), name: String(p.name).slice(0, 40), ...sanitizeSessionOptions(p) }));
+}
+
+const LAUNCHER_MODES = ['ticket', 'empty', 'trigger'];
+function sanitizeByMode(o) {
+  const p = o && typeof o === 'object' ? o : {};
+  const out = {};
+  for (const mode of LAUNCHER_MODES) out[mode] = typeof p[mode] === 'string' ? p[mode] : '';
+  return out;
+}
+
 function clamp(n, lo, hi, fallback) {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
@@ -104,6 +132,9 @@ function sanitize(raw) {
     voiceHotkey: typeof p.voiceHotkey === 'string' && p.voiceHotkey ? p.voiceHotkey : DEFAULTS.voiceHotkey,
     ticketPresets: sanitizePresets(p.ticketPresets),
     ticketDefaultPresetId: typeof p.ticketDefaultPresetId === 'string' ? p.ticketDefaultPresetId : '',
+    sessionPresets: sanitizeSessionPresets(p.sessionPresets),
+    sessionDefaultPresetId: typeof p.sessionDefaultPresetId === 'string' ? p.sessionDefaultPresetId : '',
+    sessionDefaultPresetByMode: sanitizeByMode(p.sessionDefaultPresetByMode),
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
     usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
@@ -212,4 +243,39 @@ export function deleteTicketPreset(id) {
 
 export function setDefaultTicketPreset(id) {
   setPrefs({ ticketDefaultPresetId: state.ticketDefaultPresetId === id ? '' : id });
+}
+
+// ---- launcher session-options (skill/model/effort) presets -----------------
+// Save a named preset (new), return its id. makeDefault marks it the default.
+export function saveSessionPreset(name, options, makeDefault = false) {
+  const id = newId();
+  const preset = { id, name, ...sanitizeSessionOptions(options) };
+  const patch = { sessionPresets: [...state.sessionPresets, preset] };
+  if (makeDefault) patch.sessionDefaultPresetId = id;
+  setPrefs(patch);
+  return id;
+}
+
+export function deleteSessionPreset(id) {
+  const byMode = { ...state.sessionDefaultPresetByMode };
+  for (const mode of LAUNCHER_MODES) if (byMode[mode] === id) byMode[mode] = '';
+  setPrefs({
+    sessionPresets: state.sessionPresets.filter((p) => p.id !== id),
+    ...(state.sessionDefaultPresetId === id ? { sessionDefaultPresetId: '' } : {}),
+    sessionDefaultPresetByMode: byMode,
+  });
+}
+
+export function setDefaultSessionPreset(id) {
+  setPrefs({ sessionDefaultPresetId: state.sessionDefaultPresetId === id ? '' : id });
+}
+
+// Per-launcher-tab default (ticket / empty / trigger) — overrides the
+// any-tab default above when set for that specific tab.
+export function setModeDefaultSessionPreset(mode, id) {
+  if (!LAUNCHER_MODES.includes(mode)) return;
+  const cur = state.sessionDefaultPresetByMode[mode];
+  setPrefs({
+    sessionDefaultPresetByMode: { ...state.sessionDefaultPresetByMode, [mode]: cur === id ? '' : id },
+  });
 }

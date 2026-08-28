@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 // Side-effecting: defines process.env.HOME on Windows. Must precede the HOME
 // read below — and, since nearly everything imports config, it also covers the
 // entrypoints (tests, the MCP server) that don't go through server/index.ts.
@@ -60,7 +59,6 @@ export interface Config {
   devServerPorts: number[];
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
-  launcherPrompt: string;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -116,7 +114,6 @@ export const DEFAULTS: Config = {
     vncHost: '127.0.0.1',
     vncPort: 5900,
   },
-  launcherPrompt: '',
   defaultModel: null,
 };
 
@@ -209,14 +206,6 @@ const merged = deepMerge(
 ) as unknown as Config;
 
 const ticketsDir = tilde(merged.ticketsDir);
-const REPO_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../..'
-);
-const SKILL_DIR = path.join(REPO_ROOT, 'skills', 'create-from-ticket');
-const defaultLauncherPrompt =
-  `Read ${SKILL_DIR}/SKILL.md in full and follow it exactly, ` +
-  `with $ARGUMENTS={ticket} and $SKILL_DIR=${SKILL_DIR}.`;
 
 export const cfg: Config = {
   ...merged,
@@ -233,7 +222,6 @@ export const cfg: Config = {
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   hostBase: `http://localhost:${merged.port || 3099}`,
-  launcherPrompt: merged.launcherPrompt || defaultLauncherPrompt,
 };
 
 export function ensureConfigFile(): void {

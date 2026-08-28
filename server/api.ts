@@ -5,6 +5,7 @@ import * as state from './state.js';
 import * as claude from './claude.js';
 import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
+import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import {
   changesFor,
   changeDiff,
@@ -278,6 +279,26 @@ function answerScreenRequest(
   return { ok: true };
 }
 
+// The origin an OAuth redirect_uri should use to land back on THIS request's
+// device — needed so a flow like Linear connect doesn't hardcode localhost
+// and dead-end when the cockpit's opened over Tailscale/LAN from a different
+// device. Host comes off the Host header (proxies/tunnels preserve it).
+//
+// Scheme is NOT copied from the request — it's forced: OAuth providers (Linear
+// included) reject a plaintext-HTTP redirect_uri for any non-loopback host,
+// no exception for a private tailnet (RFC 8252 §7.3 — "native apps", which is
+// what a DCR public client is treated as). So loopback gets http; anything
+// else gets https on the default port — i.e. it assumes `tailscale serve`
+// (real HTTPS cert) is fronting this host, not the plain-HTTP direct tailnet
+// URL, which physically cannot satisfy this rule for a spec-compliant
+// provider. Port is dropped for the https case for the same reason.
+function browserOrigin(req: IncomingMessage): string {
+  const host = req.headers.host || `localhost:${cfg.port}`;
+  const hostname = host.split(':')[0];
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  return isLoopback ? `http://${host}` : `https://${hostname}`;
+}
+
 function spawnSafe(id: string): void {
   try {
     claude.ensureRunning(id);
@@ -291,7 +312,7 @@ function spawnSafe(id: string): void {
   }
 }
 
-// Spin up a create-from-ticket session. Shared by the launcher's POST /sessions
+// Spin up a session for a ticket. Shared by the launcher's POST /sessions
 // ticket path and the trigger/pending queue, so a triggered session is identical
 // to a hand-launched one. Mirrors the web buildTicketPayload default prompt.
 // Injected when a trigger runs in autonomous mode (unattended, e.g. on EC2).
@@ -299,13 +320,43 @@ const AUTONOMY_DIRECTIVE =
   'AUTONOMOUS MODE — you are running unattended; no human is watching this session. ' +
   'Do NOT ask the human any questions and do NOT pause for review or approval at any ' +
   'step. Make reasonable decisions yourself. If a workflow step says to request review ' +
-  'or wait for the human (e.g. the create-from-ticket review gate), treat it as ' +
-  'auto-approved and proceed all the way to completion. Never block waiting for input.';
+  'or wait for the human, treat it as auto-approved and proceed all the way to ' +
+  'completion. Never block waiting for input.';
+
+// The first prompt for a session that's set to run a specific skill — the
+// user (or a saved trigger/preset) picked `skill` from GET /__api/skills.
+export function buildSkillPrompt(skill: string, ticket?: string): string | null {
+  if (!skill || !SKILL_NAME_RE.test(skill) || !isSkillDir(skill)) return null;
+  const dir = path.join(SKILLS_DIR, skill);
+  return (
+    `Read ${dir}/SKILL.md in full and follow it exactly` +
+    (ticket ? `, with $ARGUMENTS=${ticket} and $SKILL_DIR=${dir}.` : `, with $SKILL_DIR=${dir}.`)
+  );
+}
+
+// A new session's first message: an explicit `skill` wins (its instructions,
+// plus `prompt` merged in after as "Additional instructions" if both are
+// given); otherwise `prompt` verbatim; otherwise a plain ticket stub;
+// otherwise null (blank session — mirrors today's empty-launcher behavior).
+// The absolute $SKILL_DIR path is only knowable server-side, so this is the
+// single place that builds it — the browser-launched, triggered/pending, and
+// generic POST /sessions paths all funnel through it.
+export function buildFirstPrompt(opts: { skill?: string; prompt?: string; ticket?: string }): string | null {
+  const skillPrompt = opts.skill ? buildSkillPrompt(opts.skill, opts.ticket) : null;
+  const extra = opts.prompt && opts.prompt.trim() ? opts.prompt.trim() : null;
+  if (skillPrompt && extra) return `${skillPrompt}\n\n## Additional instructions\n${extra}`;
+  if (skillPrompt) return skillPrompt;
+  if (extra) return extra;
+  return opts.ticket ? `Work on ${opts.ticket}.` : null;
+}
 
 export function startTicketSession(opts: {
   ticket: string;
   title?: string;
   prompt?: string;
+  skill?: string;
+  model?: string;
+  effort?: string;
   metadata?: Record<string, unknown>;
   permissionMode?: string;
   cwd?: string;
@@ -313,15 +364,7 @@ export function startTicketSession(opts: {
   injectPrompt?: string;
 }): { id: string } {
   const id = opts.ticket;
-  const tpl =
-    (cfg as any).launcherPrompt || (cfg as any).ticketPrompt || null;
-  let prompt =
-    opts.prompt ||
-    (tpl
-      ? tpl.includes('{ticket}')
-        ? tpl.replaceAll('{ticket}', id)
-        : `${tpl} ${id}`
-      : `Use the create-from-ticket skill to set up and work ${id}.`);
+  let prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt, ticket: id })!;
   if (opts.autonomous) prompt += `\n\n${AUTONOMY_DIRECTIVE}`;
   if (opts.injectPrompt && opts.injectPrompt.trim())
     prompt += `\n\n## Additional instructions\n${opts.injectPrompt.trim()}`;
@@ -331,6 +374,8 @@ export function startTicketSession(opts: {
     // Autonomous runs must never hit a permission prompt (nobody to answer it).
     permissionMode: opts.autonomous ? 'bypassPermissions' : opts.permissionMode || 'bypassPermissions',
     metadata: { ticket: id, ...(opts.metadata || {}) },
+    model: opts.model,
+    effort: opts.effort,
   });
   spawnSafe(s.id);
   try {
@@ -340,24 +385,30 @@ export function startTicketSession(opts: {
 }
 
 // Spin up a plain (empty) session — shared by the launcher's empty form and the
-// pending queue's empty items. No first prompt, like the empty launcher path.
+// pending queue's empty items. No first prompt unless a skill/prompt was given.
 export function startEmptySession(opts: {
   title?: string;
   cwd?: string;
   permissionMode?: string;
   prompt?: string;
+  skill?: string;
+  model?: string;
+  effort?: string;
   metadata?: Record<string, unknown>;
 }): { id: string } {
+  const prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt });
   const s = state.createSession({
     title: opts.title,
     cwd: opts.cwd,
     permissionMode: opts.permissionMode || 'bypassPermissions',
+    model: opts.model,
+    effort: opts.effort,
     metadata: opts.metadata || {},
   });
   spawnSafe(s.id);
-  if (opts.prompt && opts.prompt.trim()) {
+  if (prompt && prompt.trim()) {
     try {
-      claude.sendMessage(s.id, opts.prompt);
+      claude.sendMessage(s.id, prompt);
     } catch {}
   }
   return { id: s.id };
@@ -738,10 +789,10 @@ async function wireWorker(
 }
 
 // FULL children (project folders): regular sessions under a controller — no
-// worker thinning, no dispatch branch policy. The child is expected to run the
-// normal flows itself (e.g. create-from-ticket provisions its own worktree);
-// the host only wires identity (role/master) + optional port, and caps the
-// fleet (a dev server per child is the expensive part).
+// worker thinning, no dispatch branch policy. The child is expected to run its
+// own skill and provision itself (e.g. a ticket-workflow skill sets up its own
+// worktree); the host only wires identity (role/master) + optional port, and
+// caps the fleet (a dev server per child is the expensive part).
 function countFullChildren(): number {
   return state
     .listSessions()
@@ -1150,6 +1201,9 @@ export async function handle(
         filters: body.filters,
         autonomous: body.autonomous,
         injectPrompt: body.injectPrompt,
+        skill: body.skill,
+        model: body.model,
+        effort: body.effort,
       });
       return json(res, trigger, 201);
     }
@@ -1175,8 +1229,7 @@ export async function handle(
       return json(res, t.snapshot());
     }
     if (p === '/__api/pending' && m === 'POST') {
-      // Manually defer into the queue — a ticket (create-from-ticket) or an
-      // empty (plain) session.
+      // Manually defer into the queue — a ticket or an empty (plain) session.
       const t = await import('./triggers.js');
       const body = (await readBody(req)) as any;
       if (body.kind === 'empty') {
@@ -1185,11 +1238,18 @@ export async function handle(
           cwd: body.cwd,
           permissionMode: body.permissionMode,
           prompt: body.prompt,
+          skill: body.skill,
+          model: body.model,
+          effort: body.effort,
         });
         return json(res, item, 201);
       }
       if (!body.ticket) return badRequest(res, 'ticket or kind:"empty" required');
-      const item = t.deferTicket(String(body.ticket), body.title, body.prompt);
+      const item = t.deferTicket(String(body.ticket), body.title, body.prompt, {
+        skill: body.skill,
+        model: body.model,
+        effort: body.effort,
+      });
       return item ? json(res, item, 201) : badRequest(res, 'already queued or has a live session');
     }
     if (p === '/__api/pending/reorder' && m === 'POST') {
@@ -1416,7 +1476,7 @@ export async function handle(
     if (p === '/__api/linear/connect' && m === 'POST') {
       const mcp = await import('./linear-mcp.js');
       try {
-        return json(res, await mcp.startAuth());
+        return json(res, await mcp.startAuth(browserOrigin(req)));
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         return json(res, { error: error.message }, 502);
@@ -1708,7 +1768,7 @@ export async function handle(
       // Dispatch path: a master spawning a child. `mutating`/`readonly` = thin
       // dispatch workers (host does ALL wiring: parent, role, worktree, branch,
       // cleanup, caps). `full` = a regular session under a project controller —
-      // no thinning, the child provisions itself (create-from-ticket etc.).
+      // no thinning, the child provisions itself (runs whatever skill it's told).
       const kind =
         body.kind === 'mutating' || body.kind === 'readonly' || body.kind === 'full'
           ? body.kind
@@ -1728,11 +1788,21 @@ export async function handle(
         cwd: body.cwd,
         permissionMode: body.permissionMode,
         metadata: body.metadata,
+        model: body.model,
+        effort: body.effort,
       });
       spawnSafe(s.id);
-      if (body.prompt) {
+      // Only build a skill/ticket-fallback prompt when the caller gave us
+      // something to build from — leaves the dispatch/worker path (which
+      // always sends its own explicit task prompt) untouched.
+      const ticketId = body.metadata?.ticket ? String(body.metadata.ticket) : undefined;
+      const prompt =
+        body.skill || body.prompt || ticketId
+          ? buildFirstPrompt({ skill: body.skill, prompt: body.prompt, ticket: ticketId })
+          : null;
+      if (prompt) {
         try {
-          claude.sendMessage(s.id, String(body.prompt));
+          claude.sendMessage(s.id, prompt);
         } catch {}
       }
       if (body.master && kind) {

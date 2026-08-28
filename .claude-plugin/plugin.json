@@ -1,6 +1,6 @@
 {
   "name": "arigami",
-  "description": "Arigami bundled skills — drive the cockpit through the host MCP: create-from-ticket, ship-it, feedback-loop, login, local-env, explain-changes, dispatch (master/worker orchestration)",
+  "description": "Arigami bundled skills — drive the cockpit through the host MCP: onboarding, explain-changes, dispatch (master/worker orchestration), project-manager, sms-listener",
   "version": "0.1.0",
   "author": { "name": "Arigami" }
 }
