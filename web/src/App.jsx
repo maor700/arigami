@@ -3,6 +3,7 @@ import { api } from './lib/api.js';
 import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
+import { isVncInputTarget } from './lib/useScreenConnection.js';
 import { startRecording, stopRecording, toggleRecording, setSelectedContext } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
 import { useT } from './lib/i18n.js';
@@ -130,7 +131,11 @@ function beep() {
 function isTyping(e) {
   const el = e.target;
   const tag = el?.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable;
+  // Also true while the user is driving the shared VNC canvas in Control
+  // mode — otherwise global hotkeys ("/", "?", Esc-to-interrupt, the voice
+  // hotkey…) hijack keystrokes meant for the remote machine, since a
+  // <canvas> is neither an input nor contentEditable.
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable || isVncInputTarget(el);
 }
 
 // Full-pane preview of a pending (not-yet-a-session) ticket — the same

@@ -5,7 +5,7 @@ import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore, setS
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
-import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
+import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
@@ -440,7 +440,7 @@ function AskUserQuestion({ sessionId, event, live }) {
     cardRef.current?.querySelector('button[data-opt]')?.focus();
     const onKey = (e) => {
       const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button'));
+      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       const opts = Array.isArray(questions[activeQi]?.options) ? questions[activeQi].options : [];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -585,7 +585,7 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
     allowRef.current?.focus();
     const onKey = (e) => {
       const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button'));
+      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') { e.preventDefault(); e.stopPropagation(); answer('allow'); }
       else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') { e.preventDefault(); e.stopPropagation(); answer('deny'); }
@@ -660,6 +660,17 @@ function ScreenRequestCard({ sessionId, event }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const { screen } = useStore();
+  // The events list is scaled via CSS `zoom` to honor termFontSize (see the
+  // `.term-events` wrapper below). `zoom` compounds on nested elements rather
+  // than resetting, and noVNC's scaleViewport measures its container with
+  // getBoundingClientRect() (which reports the already-zoomed size) then
+  // re-expresses that scale as the canvas's own CSS size — which then gets
+  // zoomed AGAIN by the same ancestor. The result: every click lands off by
+  // exactly the zoom factor. Canceling with the reciprocal zoom here keeps
+  // the live canvas at native 1:1 scale so noVNC's own math stays correct,
+  // regardless of the user's chat font size.
+  const { termFontSize } = usePrefs();
+  const zoomFix = 12 / (termFontSize || 12);
   const answered = event.answered;
   const control = !answered && screen.controlRequestId === event.requestId;
   const setMode = (m) => setScreenControl(m === 'control' ? event.requestId : null);
@@ -725,11 +736,13 @@ function ScreenRequestCard({ sessionId, event }) {
               {t('chat.screenControlBanner')}
             </div>
           )}
-          <ScreenView
-            priority={SCREEN_PRIORITY.card}
-            viewOnly={!control}
-            className={`mt-2.5 h-[320px] w-full rounded-lg ${control ? 'ring-2 ring-red-500/60' : ''}`}
-          />
+          <div style={zoomFix === 1 ? undefined : { zoom: zoomFix }}>
+            <ScreenView
+              priority={SCREEN_PRIORITY.card}
+              viewOnly={!control}
+              className={`mt-2.5 h-[320px] w-full rounded-lg ${control ? 'ring-2 ring-red-500/60' : ''}`}
+            />
+          </div>
           <div className="mt-2.5 flex items-center gap-2">
             <input
               value={note}

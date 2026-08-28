@@ -106,7 +106,22 @@ function assign() {
     emit();
   }
   rfb.viewOnly = best ? !!best.viewOnly : true;
+  // Flag the live canvas while it's actually accepting input, so app-wide
+  // keyboard shortcuts (App.jsx, ChatPane.jsx) can tell "typing into the
+  // remote machine" apart from "nothing focused" and back off instead of
+  // hijacking the keystroke (e.g. "/" jumping to search mid-password).
+  const canvas = rfbCanvas();
+  if (canvas) {
+    if (rfb.viewOnly) canvas.removeAttribute('data-vnc-input');
+    else canvas.setAttribute('data-vnc-input', 'true');
+  }
   scheduleMirrors();
+}
+
+// App-wide keydown handlers use this to exclude the live VNC canvas from
+// their own hotkeys while it's the one receiving keyboard input.
+export function isVncInputTarget(el) {
+  return !!el && el.dataset?.vncInput === 'true';
 }
 
 // Mirrors: repaint every non-owner consumer's canvas from the RFB canvas.
