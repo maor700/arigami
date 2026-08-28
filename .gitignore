@@ -12,3 +12,5 @@ docker/.env
 # debug logs
 mcp-logs.txt
 wa-logs.txt
+node_modules
+web/node_modules

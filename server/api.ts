@@ -291,13 +291,16 @@ async function handleScreenRequest(
   const result = await new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
-      state.setClaude(sessionId, { state: 'working' });
+      state.setClaude(sessionId, { state: 'working', screenRequest: null });
       const note = '(timed out — the human did not respond)';
       claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
       resolve({ ok: true, takenOver: false, note });
     }, SCREEN_REQUEST_TIMEOUT_MS);
     pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
-    state.setClaude(sessionId, { state: 'awaiting-input' });
+    state.setClaude(sessionId, {
+      state: 'awaiting-input',
+      screenRequest: { requestId, ...(reason ? { reason } : {}) },
+    });
     claude.appendChat(sessionId, {
       kind: 'screen-request',
       requestId,
@@ -326,6 +329,7 @@ export function expirePendingScreenRequests(
     if (entry.sessionId !== sessionId) continue;
     clearTimeout(entry.timer);
     pendingScreenRequests.delete(requestId);
+    state.setClaude(sessionId, { screenRequest: null });
     claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
     entry.resolve({ ok: true, takenOver: false, note: message });
   }
@@ -339,7 +343,7 @@ function answerScreenRequest(
   if (!entry || entry.sessionId !== sessionId) return null;
   clearTimeout(entry.timer);
   pendingScreenRequests.delete(data.requestId);
-  state.setClaude(sessionId, { state: 'working' });
+  state.setClaude(sessionId, { state: 'working', screenRequest: null });
   const takenOver = data.takenOver === true;
   claude.appendChat(sessionId, {
     kind: 'screen-request-answer',

@@ -56,6 +56,10 @@ interface ClaudeState {
     ctxPct: number;
     breakdown: { cacheRead: number; cacheCreation: number; input: number; output: number };
   } | null;
+  // The request_screen call currently blocking this session (see api.ts
+  // handleScreenRequest). Lives on the session (not only in the chat log) so
+  // the rail can badge "needs you" on sessions whose chat isn't loaded.
+  screenRequest?: { requestId: string; reason?: string } | null;
 }
 
 interface ReviewTarget {
