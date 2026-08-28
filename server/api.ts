@@ -1992,12 +1992,10 @@ export async function handle(
       if (m === 'DELETE') {
         claude.kill(id);
         chrome.closeChrome(id);
-        // Fold this session's logins back into chrome-base before the copy
-        // that holds them is gone for good (T8 §4/§6).
-        if (!cfg.screen?.keepProfiles) {
-          await chrome.syncProfileToBase(id).catch(() => {});
-          chrome.removeSessionProfile(id);
-        }
+        // Fold this session's logins back into chrome-base on every close
+        // (T8 §4) — independent of whether the profile copy itself survives.
+        await chrome.syncProfileToBase(id).catch(() => {});
+        if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
         desktops.releaseDesktop(id);
         const cleanup =
           u.searchParams.get('runCleanup') === 'true'
