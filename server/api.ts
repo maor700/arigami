@@ -337,6 +337,7 @@ export function expirePendingScreenRequests(
   sessionId: string,
   message: string = 'session ended'
 ): void {
+  screens.forgetSession(sessionId); // drop the dedup comparison frame
   for (const [requestId, entry] of pendingScreenRequests) {
     if (entry.sessionId !== sessionId) continue;
     clearTimeout(entry.timer);
@@ -2252,8 +2253,13 @@ export async function handle(
       const caption = body.caption ? String(body.caption).slice(0, 300) : undefined;
       if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled' }, 503);
       try {
-        const ev = await screens.takeScreenshot(id, { caption });
-        return json(res, { ok: true, url: ev!.url, ts: ev!.ts, width: ev!.width, height: ev!.height });
+        const r = await screens.takeScreenshot(id, { caption });
+        // Same screen as the previous screenshot → no new card (T9); the
+        // agent gets the existing url so it can still reference it.
+        if (r.status === 'duplicate') return json(res, { ok: true, duplicate: true, url: r.url, ts: r.ts });
+        if (r.status === 'throttled') return json(res, { ok: true, throttled: true });
+        const ev = r.event;
+        return json(res, { ok: true, url: ev.url, ts: ev.ts, width: ev.width, height: ev.height });
       } catch (e) {
         return json(res, { ok: false, error: `screenshot failed: ${(e as Error).message}` }, 503);
       }
