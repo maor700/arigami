@@ -36,6 +36,9 @@ export interface ScreenConfig {
   enabled: boolean;
   vncHost: string;
   vncPort: number;
+  // Optional VNC-auth password, handed to noVNC (client-side RFB auth) via
+  // GET /__api/screen/credentials. Empty/undefined = server has no auth.
+  vncPassword?: string;
 }
 
 export interface Config {
@@ -200,6 +203,9 @@ function envOverrides(): Partial<Config> {
       vncPort: E.ARIGAMI_VNC_PORT ? Number(E.ARIGAMI_VNC_PORT) : DEFAULTS.screen.vncPort,
     };
   }
+  if (E.ARIGAMI_VNC_PASSWORD) {
+    o.screen = { ...(o.screen || DEFAULTS.screen), vncPassword: E.ARIGAMI_VNC_PASSWORD };
+  }
   return o;
 }
 
@@ -243,4 +249,19 @@ export function ensureConfigFile(): void {
       fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULTS, null, 2) + '\n');
     }
   } catch {}
+}
+
+// Persist a partial screen-share config (Settings → screen). Merges into the
+// on-disk file (so unrelated keys survive) and patches the live `cfg` so the
+// change takes effect without a restart. Env overrides still win at next boot.
+export function updateScreenConfig(patch: Partial<ScreenConfig>): ScreenConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: ScreenConfig = { ...cfg.screen, ...patch };
+  if (!next.vncPassword) delete next.vncPassword;
+  const out = { ...file, screen: { ...(file.screen || {}), ...patch } } as any;
+  if (!patch.vncPassword && 'vncPassword' in patch) delete out.screen.vncPassword;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  cfg.screen = next;
+  return next;
 }

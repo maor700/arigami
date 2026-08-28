@@ -404,9 +404,23 @@ const TOOLS = [
   },
   {
     name: 'request_screen',
-    description: 'Ask the human to look at / interact with the shared desktop (e.g. a manual login, CAPTCHA, interactive installer) — shown as a live embedded view in the chat. Blocks until they click Done; the response may include a short note about what happened.',
-    inputSchema: obj({ prompt: { type: 'string' }, ...SID_PROP }, ['prompt']),
-    run: (a) => api('POST', '/__mcp/screen-request', { session_id: sid(a), prompt: a.prompt }),
+    description: 'Ask the human to look at / take over the shared desktop (manual login, 2FA, CAPTCHA, payment…) — shown as a live embedded view in the chat. Opens in Watch (view-only) mode; the human can click "Take over" to drive the machine, then "Done". Blocks until Done. Returns {takenOver: boolean, note?: string} — takenOver=true means the human actually intervened. Optional `reason` (login|2fa|captcha|payment|other) and `hint` (what exactly to complete) are displayed on the card.',
+    inputSchema: obj(
+      {
+        prompt: { type: 'string' },
+        reason: { type: 'string', enum: ['login', '2fa', 'captcha', 'payment', 'other'] },
+        hint: { type: 'string' },
+        ...SID_PROP,
+      },
+      ['prompt']
+    ),
+    run: (a) =>
+      api('POST', '/__mcp/screen-request', {
+        session_id: sid(a),
+        prompt: a.prompt,
+        ...(a.reason ? { reason: a.reason } : {}),
+        ...(a.hint ? { hint: a.hint } : {}),
+      }),
   },
   {
     name: 'permission_prompt',
