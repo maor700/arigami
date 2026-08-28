@@ -135,10 +135,42 @@ request_review({summary?, session_id?})   // sugar: status='In Review' +
    action {prompt: summary||'Claude finished — review the changes',
            buttons:[{label:'Request changes',value:'request-changes'},
                     {label:'✓ Verified',value:'verified',style:'primary'}]}
+request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
+   // reason: login|2fa|captcha|payment|other. BLOCKS until the human clicks
+   // Done in the live screen card (or 30 min timeout → note explains).
+capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
 permission_prompt(…)                  // internal: permission bridge (hidden from listing if possible)
 ```
 
 Action-bar answers come ONLY from a human click in the UI.
+
+### Human intervention → push notification
+
+Three paths mean "the agent is stuck until a human acts", and each fires a
+web-push (`server/push.ts`, `sendPush`) to every subscribed device, in
+addition to the in-app card — same mechanism `listeners.ts` uses to wake a
+session from an external event:
+
+| Trigger | Where | Push title | Body |
+|---|---|---|---|
+| `request_screen` | `POST /__mcp/screen-request` → `handleScreenRequest` | `<session title> — <reason label>` (e.g. "login needed", "2FA code needed") | `prompt` (+ `hint` on a new line) |
+| `request_action` / `request_review` | `POST /__api/sessions/:id/action` | `<session title> — waiting for your answer` | `prompt` |
+| `report_to_master` with `state:'blocked'` | `POST /__api/sessions/:id/report` | `<session title> — blocked` | `note` or `summary` |
+
+Rules (`pushIntervention` in `server/api.ts`):
+- `tag` = `<kind>:<sessionId>` — the OS collapses repeats for the same session
+  into one notification; `url` deep-links to the session and the service
+  worker's `notificationclick` navigates there.
+- Per session + kind cooldown of 15 s: a burst (e.g. an agent retrying
+  `request_action`) does not buzz the phone repeatedly.
+- Best-effort, fire-and-forget: no subscriptions or a push failure never fails
+  the underlying request. `title` ≤ 80 chars, `body` ≤ 200.
+- Status changes (`set_status`, `set_progress`, milestones) never push.
+
+Agent-side convention for browser / desktop work — opening line, `capture_screen`
+after each significant step, `request_screen` with `reason`+`hint` when blocked,
+verify after Done, summary at the end — lives in `skills/machine-work/SKILL.md`.
+Every skill that drives a browser should point to it.
 
 ## Proxy (server/proxy.js — ported from iframe-host-poc/server.js)
 

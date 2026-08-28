@@ -21,6 +21,14 @@ const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
 // Longer than a permission decision — a request_screen ask is typically a
 // manual login/2FA/CAPTCHA flow the human has to actually walk through.
 const SCREEN_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+// Push-title suffix per request_screen `reason` (agreed names, see T1/T4 spec).
+const SCREEN_REASON_LABEL: Record<string, string> = {
+  login: 'login needed',
+  '2fa': '2FA code needed',
+  captcha: 'CAPTCHA needed',
+  payment: 'payment step needs you',
+  other: 'needs you on the machine',
+};
 
 interface PendingPermission {
   resolve: (value: PermissionResult | PromiseLike<PermissionResult>) => void;
@@ -218,6 +226,41 @@ function answerPermission(
   return { ok: true };
 }
 
+// ---- push for human intervention -------------------------------------------
+// request_screen / request_action / report_to_master(blocked) all mean "the
+// agent is stuck until a human acts". Mirror listeners.ts: one push per event,
+// tagged by session so the OS collapses repeats into a single notification.
+// Best-effort and fire-and-forget — push is never allowed to fail the request.
+const INTERVENTION_PUSH_COOLDOWN_MS = 15 * 1000;
+const lastInterventionPush = new Map<string, number>(); // `${sessionId}:${kind}` → ts
+function pushIntervention(
+  sessionId: string,
+  kind: 'screen' | 'action' | 'blocked',
+  body: string,
+  titleSuffix?: string
+): void {
+  const key = `${sessionId}:${kind}`;
+  const now = Date.now();
+  // Same session, same kind, within the cooldown → the previous push is still
+  // on the lock screen; don't buzz the phone again.
+  if (now - (lastInterventionPush.get(key) || 0) < INTERVENTION_PUSH_COOLDOWN_MS) return;
+  lastInterventionPush.set(key, now);
+  const s = state.getSession(sessionId);
+  const title = `${s?.title || 'Arigami'}${titleSuffix ? ` — ${titleSuffix}` : ''}`;
+  import('./push.js')
+    .then((push) => {
+      if (!push.hasSubscriptions()) return;
+      return push.sendPush({
+        title: title.slice(0, 80),
+        body: body.slice(0, 200),
+        tag: `${kind}:${sessionId}`,
+        sessionId,
+        url: `/__host/#/session/${encodeURIComponent(sessionId)}`,
+      });
+    })
+    .catch(() => {});
+}
+
 // request_screen: the agent asks the human to look at / drive the shared
 // desktop (manual login, CAPTCHA, interactive installer…), shown as a live
 // embedded view in the chat. Blocking, same shape as handlePermissionRequest.
@@ -241,6 +284,14 @@ async function handleScreenRequest(
     pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
     state.setClaude(sessionId, { state: 'awaiting-input' });
     claude.appendChat(sessionId, { kind: 'screen-request', requestId, prompt });
+    const reason = typeof body.reason === 'string' ? body.reason : '';
+    const hint = typeof body.hint === 'string' ? body.hint : '';
+    pushIntervention(
+      sessionId,
+      'screen',
+      hint ? `${prompt}\n${hint}` : prompt,
+      SCREEN_REASON_LABEL[reason] || 'needs you on the machine'
+    );
   });
   json(res, result);
 }
@@ -2053,6 +2104,7 @@ export async function handle(
         return badRequest(res, 'prompt and buttons required');
       const action = { id: 'act_' + nano(), prompt, buttons };
       state.patchSession(id, { action });
+      pushIntervention(id, 'action', String(prompt), 'waiting for your answer');
       return json(res, action, 201);
     }
     if (sub === 'action/answer' && m === 'POST') {
@@ -2223,6 +2275,10 @@ export async function handle(
       };
       if (statusMap[result.state] && statusMap[result.state] !== s.status)
         state.patchSession(id, { status: statusMap[result.state] });
+      // A blocked worker needs a human even when its master is woken — the
+      // master can't log in / pay / solve a CAPTCHA on its behalf.
+      if (result.state === 'blocked')
+        pushIntervention(id, 'blocked', result.note || result.summary || 'worker is blocked', 'blocked');
       if (!master)
         return json(res, {
           ok: true,

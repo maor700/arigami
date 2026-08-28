@@ -323,7 +323,11 @@ const TOOLS = [
   },
   {
     name: 'request_action',
-    description: 'Show an action bar with buttons in the session UI. Answers come ONLY from a human click (delivered as a user message).',
+    description:
+      'Show an action bar with buttons in the session UI. Answers come ONLY from a human click (delivered as a user message). ' +
+      'Sends a push notification to the human\'s phone, so use it for real decisions, not status updates (use set_status_summary / set_progress for those). ' +
+      'Best practice: one short question in `prompt` (what you need decided and why, ≤200 chars — that is the notification body), 2–4 buttons with clear labels, ' +
+      'and stop working until the answer arrives. Do NOT use it for things the human has to DO on the machine (login, 2FA, CAPTCHA, payment) — that is request_screen.',
     inputSchema: obj({
       prompt: { type: 'string' },
       buttons: {
@@ -408,9 +412,32 @@ const TOOLS = [
   },
   {
     name: 'request_screen',
-    description: 'Ask the human to look at / interact with the shared desktop (e.g. a manual login, CAPTCHA, interactive installer) — shown as a live embedded view in the chat. Blocks until they click Done; the response may include a short note about what happened.',
-    inputSchema: obj({ prompt: { type: 'string' }, ...SID_PROP }, ['prompt']),
-    run: (a) => api('POST', '/__mcp/screen-request', { session_id: sid(a), prompt: a.prompt }),
+    description:
+      'Hand the shared desktop over to the human for a step only they can do — manual login, 2FA / OTP code, CAPTCHA, payment, an interactive installer. ' +
+      'Shows a live embedded view in the chat with a "Take over" / "Done" control and pushes a notification to the human\'s phone. ' +
+      'BLOCKS until they click Done (or ~30 min timeout); the response may include a short note about what they did. ' +
+      'Best practice (see the machine-work skill): (1) call capture_screen right before, so the human sees where you are; ' +
+      '(2) `prompt` = one sentence on what you were trying to do and where you got stuck; (3) set `reason` to the closest category — it drives the notification title; ' +
+      '(4) `hint` = exactly what the human should do and what "done" looks like (e.g. "enter the SMS code and wait for the dashboard, then click Done"); ' +
+      '(5) after it returns, verify the state yourself (re-read the page / capture_screen) before continuing — do not assume it worked; ' +
+      '(6) never ask for passwords or codes in chat — let the human type them on the machine. ' +
+      'Do not call it for questions or decisions — use request_action for those.',
+    inputSchema: obj(
+      {
+        prompt: { type: 'string', description: 'What you were doing and why you need the human (shown in the card and the push).' },
+        reason: { type: 'string', enum: ['login', '2fa', 'captcha', 'payment', 'other'], description: 'Why the human is needed. Drives the card label and push title.' },
+        hint: { type: 'string', description: 'Exactly what to do and what "done" looks like.' },
+        ...SID_PROP,
+      },
+      ['prompt']
+    ),
+    run: (a) =>
+      api('POST', '/__mcp/screen-request', {
+        session_id: sid(a),
+        prompt: a.prompt,
+        ...(a.reason ? { reason: a.reason } : {}),
+        ...(a.hint ? { hint: a.hint } : {}),
+      }),
   },
   {
     name: 'permission_prompt',
