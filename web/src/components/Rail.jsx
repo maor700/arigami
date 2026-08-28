@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { relTime } from '../lib/time.js';
-import { needsAttention, useStore } from '../lib/store.js';
+import { hasOpenScreenRequest, needsAttention, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
@@ -212,6 +212,9 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   const showTitle = session.title && session.title !== label;
   const port = session.metadata?.port;
   const attention = needsAttention(session) && !selected;
+  // request_screen pending — "needs you" (shown even on the selected row: the
+  // machine is waiting on a human, not just on a click).
+  const screenReq = hasOpenScreenRequest(session);
   const working = session.claude?.state === 'working';
   const restarting = session.claude?.state === 'restarting';
   const isDesktop = useIsDesktop();
@@ -268,7 +271,14 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                 <Icon icon={faCircleInfo} />
               </button>
             )}
-            {attention ? (
+            {screenReq ? (
+              <span
+                title={t('rail.screenNeedsYou')}
+                className="pulse-yellow flex h-[15px] shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-mono text-[9px] font-bold text-[#1a1a1a]"
+              >
+                <Icon icon={faDisplay} /> {t('rail.screenNeedsYouShort')}
+              </span>
+            ) : attention ? (
               <span
                 title={t('rail.needsYourInput')}
                 className="pulse-yellow flex h-[15px] w-[15px] items-center justify-center rounded-full border border-ink bg-brand font-mono text-[10px] font-bold text-[#1a1a1a]"
