@@ -43,7 +43,14 @@ export interface ScreenConfig {
   // cadence, and retention for ~/.arigami/uploads/screens (age OR total size,
   // whichever trips first).
   display?: string;
+  // Watch-mode auto-snapshots (T9): off by default. When on, the loop polls
+  // every snapshotIntervalMs but only records a frame that changed by more
+  // than snapshotChangeThreshold (fraction of sampled pixels) since the last
+  // recorded one, and never more often than snapshotMinIntervalMs.
+  autoSnapshots: boolean;
   snapshotIntervalMs: number;
+  snapshotMinIntervalMs: number;
+  snapshotChangeThreshold: number;
   screenshotRetentionDays: number;
   screenshotMaxMb: number;
   // Per-session desktops (T8): pool of VNC ports handed to `server/lib/desktops.ts`
@@ -133,7 +140,10 @@ export const DEFAULTS: Config = {
     enabled: true,
     vncHost: '127.0.0.1',
     vncPort: 5900,
+    autoSnapshots: false,
     snapshotIntervalMs: 10_000,
+    snapshotMinIntervalMs: 30_000,
+    snapshotChangeThreshold: 0.03,
     screenshotRetentionDays: 7,
     screenshotMaxMb: 200,
     portRange: [5901, 5950],
@@ -231,7 +241,10 @@ function envOverrides(): Partial<Config> {
   const num = (v: string | undefined) => (v && Number(v) > 0 ? Number(v) : undefined);
   const shot: Partial<ScreenConfig> = {};
   if (E.ARIGAMI_SCREEN_DISPLAY || E.DISPLAY) shot.display = E.ARIGAMI_SCREEN_DISPLAY || E.DISPLAY;
+  if (E.ARIGAMI_AUTO_SNAPSHOTS != null) shot.autoSnapshots = E.ARIGAMI_AUTO_SNAPSHOTS !== '0' && E.ARIGAMI_AUTO_SNAPSHOTS !== 'false';
   if (num(E.ARIGAMI_SNAPSHOT_INTERVAL_MS)) shot.snapshotIntervalMs = num(E.ARIGAMI_SNAPSHOT_INTERVAL_MS)!;
+  if (num(E.ARIGAMI_SNAPSHOT_MIN_INTERVAL_MS)) shot.snapshotMinIntervalMs = num(E.ARIGAMI_SNAPSHOT_MIN_INTERVAL_MS)!;
+  if (num(E.ARIGAMI_SNAPSHOT_CHANGE_THRESHOLD)) shot.snapshotChangeThreshold = num(E.ARIGAMI_SNAPSHOT_CHANGE_THRESHOLD)!;
   if (num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)) shot.screenshotRetentionDays = num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)!;
   if (num(E.ARIGAMI_SCREENSHOT_MAX_MB)) shot.screenshotMaxMb = num(E.ARIGAMI_SCREENSHOT_MAX_MB)!;
   if (Object.keys(shot).length) o.screen = { ...(o.screen || DEFAULTS.screen), ...shot };

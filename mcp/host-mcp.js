@@ -445,10 +445,11 @@ const TOOLS = [
   {
     name: 'capture_screen',
     description:
-      'Take a screenshot of the shared desktop (the machine the human can watch) and post it in the chat as a screenshot card — a timeline of what you did. ' +
-      'Call it after every SIGNIFICANT step when driving a browser / the machine (navigation to a new page, form submitted, click with side effects, an error screen, the final state) — not after every scroll. ' +
-      'Best practice (see the machine-work skill): a short factual `caption` ("Login page loaded", "Order form filled, not submitted"), one capture right before request_screen, and one right after it returns to verify. ' +
-      'Returns {ok, url, ts} (or {ok:false, error} if no screen is available — then continue without screenshots, do not improvise your own).',
+      'Take a screenshot of the session\'s desktop and post it in the chat as a screenshot card. Screenshots are for the HUMAN\'s timeline, not a log — fewer, meaningful ones. ' +
+      'Required moments only (machine-work skill): (a) once the first page has loaded, (b) right before request_screen, (c) right after it returns, to verify the human\'s step, (d) the final state or a failure. ' +
+      'Any other capture only when YOU need to see the screen to decide what to do next — then it is a viewing tool, not documentation. Never after every click/scroll/form field. ' +
+      'Frames that look the same as the previous screenshot are deduped server-side: you get {ok, duplicate:true, url:<previous>} and no new card — do not retry. ' +
+      'Give a short factual `caption` ("Login page loaded", "Order confirmed #123"). Returns {ok, url, ts}; {ok:false, error} if no screen is available — then continue without screenshots, do not improvise your own.',
     inputSchema: obj({ caption: { type: 'string', description: 'What this screenshot shows (short, factual).' }, ...SID_PROP }),
     run: async (a) => {
       try {

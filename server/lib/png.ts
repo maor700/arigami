@@ -71,3 +71,23 @@ export function downscaleRgba(rgba: Buffer, width: number, height: number, facto
   }
   return { rgba: out, width: w, height: h };
 }
+
+// Fraction (0..1) of sampled pixels that differ noticeably between two RGBA
+// frames of the same size — the "did the screen actually change?" test behind
+// auto-snapshot throttling and capture_screen dedup (T9). Samples a grid of
+// ~`samples` pixels rather than every one (a 1280x800 frame is 1M pixels; the
+// cursor moving or a blinking caret shouldn't count, a page navigation
+// should). Returns 1 when the sizes differ.
+export function frameDiffRatio(a: Buffer, b: Buffer, width: number, height: number, samples = 20_000, tolerance = 24): number {
+  if (a.length !== b.length || a.length < width * height * 4) return 1;
+  const total = width * height;
+  const step = Math.max(1, Math.floor(total / samples));
+  let n = 0, changed = 0;
+  for (let p = 0; p < total; p += step) {
+    const o = p * 4;
+    const d = Math.abs(a[o] - b[o]) + Math.abs(a[o + 1] - b[o + 1]) + Math.abs(a[o + 2] - b[o + 2]);
+    if (d > tolerance) changed++;
+    n++;
+  }
+  return n ? changed / n : 0;
+}

@@ -1,5 +1,5 @@
 ---
-description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot each significant step, hand over to the human at login / 2FA / CAPTCHA / payment via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
+description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot only at the few required moments (first page, before/after a hand-over, the end), hand over to the human at login / 2FA / CAPTCHA / payment via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
 ---
 
 # Machine work — narrate, capture, hand over, verify
@@ -16,7 +16,7 @@ over**, complete it, click **Done**, and you continue.
 
 | Tool | When |
 |---|---|
-| `capture_screen({caption?})` | after every significant step — a screenshot card appears in the chat timeline |
+| `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
 | `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
 | `save_browser_logins()` | sync this session's Chrome cookies/logins back to the shared base profile — usually automatic (see "Your own machine" below), call directly if you want it sooner |
@@ -69,18 +69,31 @@ Before touching the machine, post one line in chat:
 (English is fine if the human writes English; match their language.)
 Set `set_progress` with those steps.
 
-### 2. Capture after each significant step
-A "significant step" = navigation to a new page, submitting a form, clicking
-something with side effects, an error/unexpected screen, and the final state.
-Call `capture_screen({caption: "<what this shows>"})` — short, factual
-captions: "Login page loaded", "Order form filled, not submitted yet",
-"Error: card declined". Not every scroll or hover. Rule of thumb: if the human
-would want to *see* it when reviewing the timeline later, capture it.
+### 2. Capture only at the required moments
+Screenshots are for the human's timeline, not a log. Too many bury the ones
+that matter (and cost disk). Call `capture_screen({caption})` at exactly these
+points:
+
+1. **First page loaded** — once, after the site/app is actually up ("Login page loaded").
+2. **Right before `request_screen`** — so the hand-over card shows where you are.
+3. **Right after `request_screen` returns** — to verify what the human did ("After human login — dashboard").
+4. **The end** — final state, or the failure screen if you stopped.
+
+Anything else only if *you* need to see the screen to decide what to do next
+(a page you can't read otherwise, an unexpected dialog). That is a viewing
+tool, not documentation — don't caption it as a milestone.
+
+Not: after every click, scroll, form field or navigation in between. If the
+screen hasn't changed since the last capture the server returns
+`{duplicate:true, url}` and adds no card — don't retry, move on.
+
+Captions: short and factual — "Login page loaded", "Order form filled, not
+submitted yet", "Error: card declined".
 
 ### 3. Blocked → hand over with `request_screen`
 When you reach a step only the human can do:
 
-1. `capture_screen` first (so the card shows where you are).
+1. `capture_screen` first (required moment #2 — the card shows where you are).
 2. Post one short line in chat: what you were doing and why you stopped.
 3. Call:
    ```
@@ -108,7 +121,7 @@ human agreed to forward), prefer that and mention it — but fall back to
 `request_screen` returns `{ok, note?}`. The note is what the human says
 happened — trust it but verify:
 
-- Re-read the page / `capture_screen({caption: "After human login"})`.
+- `capture_screen({caption: "After human login"})` (required moment #3) and re-read the page.
 - Check the concrete end state you asked for (logged-in header, dashboard URL,
   payment confirmation).
 - If it's not there: say what you see, and either fix it yourself or call
@@ -127,7 +140,7 @@ Final chat message, short:
 - anything left in an unusual state on the machine (open tabs, logged-in
   sessions, unsaved forms) — and whether you cleaned it up.
 
-Take one last `capture_screen({caption: "Final state"})`. If a review is
+Take one last `capture_screen({caption: "Final state"})` (required moment #4). If a review is
 needed, `request_review` with that summary.
 
 ## Anti-patterns
@@ -135,5 +148,5 @@ needed, `request_review` with that summary.
 - Using `request_action` for "I'm on the login page" — that's status, not a decision.
 - Asking the human to paste a code into chat.
 - Continuing after Done without checking the page.
-- Screenshotting every micro-action (noise buries the moments that matter).
+- Screenshotting every step "for the record" — only the four required moments plus what you need to see yourself.
 - Sending several `request_screen` in a row — each one is a push to their phone.
