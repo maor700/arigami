@@ -151,9 +151,81 @@ save_browser_logins({session_id?}) → {ok, synced}
    // ~/.arigami/chrome-base (T8). Automatic after a request_screen takeover
    // and at session delete — call directly to sync sooner.
 permission_prompt(…)                  // internal: permission bridge (hidden from listing if possible)
+memory_write({target:'user'|'memory'|'journal', action:'add'|'replace'|'remove', content?, old_text?, session_id?})
+   // Arigami's own memory ($ARIGAMI_DIR/memory/) — shared by every session/worker
+   // on this instance, NOT Claude Code's per-project auto-memory. See "Memory" below.
+memory_search({query, scope?:'user'|'memory'|'journal'|'episode', limit?}) → {hits:[{path,scope,snippet,updatedAt}]}
+memory_get({path}) → {path, content} | {error}
 ```
 
 Action-bar answers come ONLY from a human click in the UI.
+
+## Memory (server/memory.ts — $ARIGAMI_DIR/memory/)
+
+Arigami's own memory, owned by the host — separate from Claude Code's
+per-project auto-memory (untouched). Scoped **per-instance** (`$ARIGAMI_DIR`,
+T5), not per-cwd/worktree: every session and every dispatch worker on this
+instance reads and writes the same store, so a worker spawned into a fresh
+`git worktree` still sees what the master already knows.
+
+Two layers, same shape as the Hermes/OpenClaw comparison in
+`RESEARCH-ARIGAMI-BRAIN.md`:
+- **Capped snapshot** — `USER.md` (facts about the human, ~600 token cap),
+  `MEMORY.md` (standing facts/decisions, ~900 token cap). `getMemoryBootstrap()`
+  is injected once, as a frozen `<system-reminder>` block, into a session's
+  very FIRST turn only (`server/claude.js`'s `writeUserMessage`, gated on
+  `!p.resume && !p.sent.length`) — never mid-conversation, to keep the
+  prompt-cache prefix stable. A `--resume`d proc already has it in history.
+- **Unbounded on-demand search** — `journal/YYYY-MM-DD.md` (append-only,
+  what happened today) and `episodes/*.md` (session summaries), all indexed
+  with FTS5 (`bun:sqlite`, file-granularity rows). Zero token cost until
+  `memory_search` is actually called; snippets capped ~700 chars.
+
+**Gate** (spec "סגור-תחילה" — start closed): every write to
+USER.md/MEMORY.md/journal is (1) `sanitize()`d against credential-shaped
+strings, prompt-injection phrasing, and exfiltration patterns — refused
+outright, not stored; (2) deduped against existing lines (normalized,
+case/whitespace-insensitive); (3) capped — `add`/`replace` are refused if the
+result would exceed the target's token budget; (4) logged append-only to
+`memory/.log.jsonl` with a full before/after snapshot, undoable via
+`POST /__api/memory/log/:seq/undo`. journal is append-only (`add` only).
+
+A live agent's own `memory_write` calls land **immediately** (still gated +
+logged) — spec decision: direct writes from an in-conversation agent are
+trusted the same as any other tool call. **Autonomous** extraction is
+different: `runEpisodeHook(sessionId, trigger, transcript)` (fired
+fire-and-forget from `report_to_master` and session-archive in
+`server/api.ts`, 2-minute cooldown per session so the two don't double-fire)
+runs one `claude -p` headless call — same pattern as `skills.ts`'s
+`analyze()` — over a bounded chat transcript excerpt, writes an `episodes/*.md`
+summary directly (harmless, additive, never touches USER/MEMORY), and
+`proposeFacts()`s up to 3 candidate facts into `memory/pending.json` as
+`status:"pending"`. Nothing an autonomous hook proposes reaches
+USER.md/MEMORY.md until a human calls
+`POST /__api/memory/pending/:id/approve` (`reject` discards it).
+
+```
+GET  /__api/memory                         → {files:[{path,scope,tokens,updatedAt}], bootstrap:{userMd,memoryMd}}
+POST /__api/memory/write                   {target,action,content?,old_text?,source?,sessionId?}
+GET  /__api/memory/search?query=&scope=&limit=
+GET  /__api/memory/get?path=
+GET  /__api/memory/log?limit=
+POST /__api/memory/log/:seq/undo
+GET  /__api/memory/pending
+POST /__api/memory/pending/:id/approve
+POST /__api/memory/pending/:id/reject
+```
+
+**Migration** (one-time, manual, spec M1.6): `bun scripts/migrate-claude-memory.ts`
+reads Claude Code's own auto-memory files for the general "repos" workspace
+project (`~/.claude/projects/-home-arigami-repos/memory/*.md`, predates this
+store) and proposes each one's `description` as a `pending` fact via
+`proposeFacts()` — it never writes USER.md/MEMORY.md directly, same gate as
+the episode hook.
+
+**M2 contract:** `getMemoryBootstrap()` is the agreed hook M2's cron
+(`server/triggers.ts`, isolated-session runs) calls to load the same snapshot
+into a scheduled session — memory.ts doesn't know about cron at all.
 
 ## Screen share (server/vnc.ts, useScreenConnection.js, ScreenView.jsx, ScreenModal.jsx)
 

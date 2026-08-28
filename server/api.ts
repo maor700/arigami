@@ -1002,6 +1002,32 @@ function capResult(body: any): {
   return { state: st, summary, artifacts, note, reportedAt: new Date().toISOString() };
 }
 
+// Memory M1.4a: on report_to_master / session close, run the same one-shot
+// `claude -p` pattern as skills.ts's analyze() over a bounded transcript
+// excerpt to produce an episode + up to 3 `pending` facts. Best-effort,
+// fire-and-forget — never blocks or fails the caller's request.
+function buildTranscriptExcerpt(id: string): string {
+  const { events } = (claude as any).getChatPage(id, { limit: 150 });
+  const lines: string[] = [];
+  for (const e of events as any[]) {
+    if (e.kind === 'user' && e.text) lines.push(`User: ${String(e.text).slice(0, 800)}`);
+    else if (e.kind === 'assistant-text' && e.text) lines.push(`Assistant: ${String(e.text).slice(0, 800)}`);
+  }
+  return lines.join('\n').slice(-12000);
+}
+
+function triggerMemoryEpisode(id: string, trigger: string): void {
+  (async () => {
+    try {
+      const memory = await import('./memory.js');
+      const transcript = buildTranscriptExcerpt(id);
+      await memory.runEpisodeHook(id, trigger, transcript);
+    } catch (e) {
+      console.error(`[memory] episode hook (${trigger}) failed:`, (e as Error).message);
+    }
+  })();
+}
+
 // Quick reachability probe for the configured VNC server — lets the client
 // hide the screen-share icon cleanly on a machine where setup hasn't run yet,
 // instead of showing a button that fails on click.
@@ -1734,6 +1760,68 @@ export async function handle(
       }
     }
 
+    // ---- Memory (M1: server/memory.ts — $ARIGAMI_DIR/memory/, shared by every
+    // session/worker on this instance) ------------------------------------------
+    if (p === '/__api/memory' && m === 'GET') {
+      const memory = await import('./memory.js');
+      return json(res, { files: memory.listMemory(), bootstrap: memory.getMemoryBootstrap() });
+    }
+    if (p === '/__api/memory/write' && m === 'POST') {
+      const memory = await import('./memory.js');
+      const body = (await readBody(req)) as any;
+      const r = memory.writeMemory({
+        target: body.target,
+        action: body.action,
+        content: body.content,
+        old_text: body.old_text,
+        source: body.source || 'agent',
+        sessionId: body.sessionId,
+      });
+      return r.ok ? json(res, r) : badRequest(res, r.error || 'invalid memory write');
+    }
+    if (p === '/__api/memory/search' && m === 'GET') {
+      const memory = await import('./memory.js');
+      return json(res, {
+        hits: memory.searchMemory({
+          query: u.searchParams.get('query') || '',
+          scope: u.searchParams.get('scope') || undefined,
+          limit: Number(u.searchParams.get('limit')) || undefined,
+        }),
+      });
+    }
+    if (p === '/__api/memory/get' && m === 'GET') {
+      const memory = await import('./memory.js');
+      const r = memory.getMemoryFile(u.searchParams.get('path') || '');
+      return 'error' in r ? notFound(res, r.error) : json(res, r);
+    }
+    if (p === '/__api/memory/log' && m === 'GET') {
+      const memory = await import('./memory.js');
+      return json(res, memory.getLog(Number(u.searchParams.get('limit')) || 100));
+    }
+    if (p.startsWith('/__api/memory/log/') && p.endsWith('/undo') && m === 'POST') {
+      const memory = await import('./memory.js');
+      const seq = Number(p.slice('/__api/memory/log/'.length, -'/undo'.length));
+      const r = memory.undoLog(seq);
+      return r.ok ? json(res, r) : badRequest(res, r.error || 'undo failed');
+    }
+    if (p === '/__api/memory/pending' && m === 'GET') {
+      const memory = await import('./memory.js');
+      return json(res, memory.listPending());
+    }
+    if (p.startsWith('/__api/memory/pending/')) {
+      const rest = p.slice('/__api/memory/pending/'.length);
+      const memory = await import('./memory.js');
+      if (rest.endsWith('/approve') && m === 'POST') {
+        const r = memory.approvePending(rest.slice(0, -'/approve'.length));
+        return r.ok ? json(res, r) : badRequest(res, r.error || 'approve failed');
+      }
+      if (rest.endsWith('/reject') && m === 'POST') {
+        const r = memory.rejectPending(rest.slice(0, -'/reject'.length));
+        return r.ok ? json(res, r) : notFound(res, 'no such pending fact');
+      }
+      return notFound(res);
+    }
+
     // ---- rail folders --------------------------------------------------------
     if (p === '/__api/folders' && m === 'GET') return json(res, state.listFolders());
     if (p === '/__api/folders' && m === 'POST') {
@@ -1981,6 +2069,7 @@ export async function handle(
           // it left off.
           chrome.closeChrome(id);
           desktops.releaseDesktop(id);
+          triggerMemoryEpisode(id, 'archive');
 
           if (u.searchParams.get('runCleanup') === 'true') {
             const cleanup = await runCleanup(s);
@@ -2418,6 +2507,7 @@ export async function handle(
       // master can't log in / pay / solve a CAPTCHA on its behalf.
       if (result.state === 'blocked')
         pushIntervention(id, 'blocked', result.note || result.summary || 'worker is blocked', 'blocked');
+      triggerMemoryEpisode(id, 'report');
       if (!master)
         return json(res, {
           ok: true,
