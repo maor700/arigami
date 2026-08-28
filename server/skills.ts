@@ -7,10 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { cfg } from './state.js';
-import { supervise, killTree } from './lib/children.js';
+import { runClaudeOneShot } from './lib/oneshot.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SKILLS_DIR = path.join(ROOT, 'skills');
@@ -208,50 +207,24 @@ let running: Promise<any> | null = null;
 // cache the result, return it. Coalesces concurrent callers onto one run.
 export function analyze(): Promise<any> {
   if (running) return running;
-  running = new Promise((resolve, reject) => {
-    const child = spawn(
-      process.env.ARIGAMI_CLAUDE_BIN || 'claude',
-      ['-p', ANALYZE_PROMPT, '--permission-mode', 'bypassPermissions', '--model', 'sonnet', '--output-format', 'json'],
-      { cwd: ROOT, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-    supervise(child, 'skills-analyze');
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-    // killTree, not child.kill: this claude run has its own MCP/tool children.
-    const guard = setTimeout(() => killTree(child.pid), 4 * 60 * 1000);
-    child.on('error', (e) => { clearTimeout(guard); reject(e); });
-    child.on('close', (code) => {
-      clearTimeout(guard);
-      try {
-        if (code) throw new Error(`claude exited ${code}${err ? ': ' + err.trim().slice(0, 200) : ''}`);
-        // --output-format json wraps the run; the final text is in .result.
-        let text = out;
-        try {
-          const env = JSON.parse(out);
-          if (env && typeof env.result === 'string') text = env.result;
-        } catch { /* not the envelope — treat stdout as the text */ }
-        const parsed = extractJson(text);
-        const record = {
-          summaries: parsed.summaries && typeof parsed.summaries === 'object' ? parsed.summaries : {},
-          edges: Array.isArray(parsed.edges)
-            ? parsed.edges
-                .filter((e: any) => e && e.from && e.to)
-                .map((e: any) => ({ from: String(e.from), to: String(e.to), label: String(e.label || ''), kind: 'ai' }))
-            : [],
-          hash: packHash(),
-          generatedAt: new Date().toISOString(),
-        };
-        try {
-          fs.mkdirSync(path.dirname(GRAPH_CACHE), { recursive: true });
-          fs.writeFileSync(GRAPH_CACHE, JSON.stringify(record, null, 2));
-        } catch { /* cache write best-effort */ }
-        resolve({ analysis: record, hash: record.hash, stale: false });
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }).finally(() => { running = null; });
+  running = (async () => {
+    const text = await runClaudeOneShot(ANALYZE_PROMPT, { cwd: ROOT, timeoutMs: 4 * 60 * 1000, tag: 'skills-analyze' });
+    const parsed = extractJson(text);
+    const record = {
+      summaries: parsed.summaries && typeof parsed.summaries === 'object' ? parsed.summaries : {},
+      edges: Array.isArray(parsed.edges)
+        ? parsed.edges
+            .filter((e: any) => e && e.from && e.to)
+            .map((e: any) => ({ from: String(e.from), to: String(e.to), label: String(e.label || ''), kind: 'ai' }))
+        : [],
+      hash: packHash(),
+      generatedAt: new Date().toISOString(),
+    };
+    try {
+      fs.mkdirSync(path.dirname(GRAPH_CACHE), { recursive: true });
+      fs.writeFileSync(GRAPH_CACHE, JSON.stringify(record, null, 2));
+    } catch { /* cache write best-effort */ }
+    return { analysis: record, hash: record.hash, stale: false };
+  })().finally(() => { running = null; });
   return running;
 }
