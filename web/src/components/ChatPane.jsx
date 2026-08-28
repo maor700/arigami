@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore, setScreenControl, useStore } from '../lib/store.js';
+import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
@@ -648,48 +648,26 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
 // host.request_screen — the agent asks the human to look at / drive the
 // shared desktop (manual login, 2FA, CAPTCHA, payment…). Blocking, same
 // underlying mechanism as PermissionRequest (server holds the MCP tool call
-// open until answered). While unanswered, embeds a LIVE ScreenView that opens
-// in Watch (view-only) mode; "Take over" flips it to Control (input enabled)
-// with a banner, and "Done" answers with {takenOver} — the card then freezes
-// to a static line and the connection tears down (ScreenView unmounts), so
-// old resolved cards in history don't hold open VNC connections.
-// Watch/Control lives in the store (screen.controlRequestId) so the session
-// side panel (ScreenSidePanel.jsx) shows the same mode and its Done is our Done.
+// open until answered). While unanswered the card is a small WATCH view
+// (view-only, never accepts input) + reason/hint + two buttons:
+//   Take over — opens the interactive ScreenModal (the same modal the rail
+//     icon opens) with this request's context; Done/Cancel live there.
+//   Cancel — ends the request with takenOver:false, note "cancelled by user".
+// Once answered the card freezes to a static line and unmounts the viewer,
+// so old resolved cards in history don't hold open VNC connections.
 function ScreenRequestCard({ sessionId, event }) {
   const t = useT();
-  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const { screen } = useStore();
-  // The events list is scaled via CSS `zoom` to honor termFontSize (see the
-  // `.term-events` wrapper below). `zoom` compounds on nested elements rather
-  // than resetting, and noVNC's scaleViewport measures its container with
-  // getBoundingClientRect() (which reports the already-zoomed size) then
-  // re-expresses that scale as the canvas's own CSS size — which then gets
-  // zoomed AGAIN by the same ancestor. The result: every click lands off by
-  // exactly the zoom factor. Canceling with the reciprocal zoom here keeps
-  // the live canvas at native 1:1 scale so noVNC's own math stays correct,
-  // regardless of the user's chat font size.
-  const { termFontSize } = usePrefs();
-  const zoomFix = 12 / (termFontSize || 12);
   const answered = event.answered;
-  const control = !answered && screen.controlRequestId === event.requestId;
-  const setMode = (m) => setScreenControl(m === 'control' ? event.requestId : null);
 
-  const done = async () => {
+  const cancel = async () => {
     setBusy(true);
     try {
-      await answerScreenRequest(sessionId, event.requestId, note.trim(), control);
+      await cancelScreenRequest(sessionId, event.requestId);
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     } catch {
       setBusy(false);
     }
-  };
-
-  // Control = the human is typing on the machine: tell the server so the
-  // Watch-mode auto-snapshots (T3) pause — nothing is recorded while they drive.
-  const takeOver = () => {
-    setMode('control');
-    api.post(`/sessions/${sessionId}/screen-request/mode`, { requestId: event.requestId, mode: 'control' }).catch(() => {});
   };
 
   const reasonLabel = event.reason ? t(`chat.screenReason.${event.reason}`) : '';
@@ -697,11 +675,16 @@ function ScreenRequestCard({ sessionId, event }) {
     'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
   const btnSecondary =
     'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
+  const answeredLabel = event.takenOver
+    ? t('chat.screenRequestTakenOverDone')
+    : event.note === SCREEN_CANCEL_NOTE
+      ? t('chat.screenRequestCancelled')
+      : t('chat.screenRequestDone');
 
   return (
     <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className={`h-[7px] w-[7px] rounded-full ${control && !answered ? 'bg-red-500' : 'pulse-yellow bg-brand'}`} />
+        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
         <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest')}</span>
         {reasonLabel && (
           <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
@@ -709,62 +692,38 @@ function ScreenRequestCard({ sessionId, event }) {
           </span>
         )}
         {!answered && (
-          <span className="ms-auto text-[10px] text-[var(--term-accent-dim)]">
-            {control ? t('chat.screenModeControl') : t('chat.screenModeWatch')}
-          </span>
+          <span className="ms-auto text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>
         )}
       </div>
       {event.prompt && (
-        <div className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
+        <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
       )}
       {event.hint && (
-        <div className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
+        <div dir="auto" className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
           <span className="font-bold">{t('chat.screenHint')}:</span> {event.hint}
         </div>
       )}
       {answered ? (
         <div className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">
-          <Icon icon={faCheck} />{' '}
-          {event.takenOver ? t('chat.screenRequestTakenOverDone') : t('chat.screenRequestDone')}
-          {event.note ? ` — ${event.note}` : ''}
+          <Icon icon={faCheck} /> {answeredLabel}
+          {event.note && event.note !== SCREEN_CANCEL_NOTE ? ` — ${event.note}` : ''}
         </div>
       ) : (
         <>
-          {control && (
-            <div className="mt-2.5 flex items-center gap-2 rounded-[7px] border border-red-500/50 bg-red-500/10 px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)]">
-              <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-red-500" />
-              {t('chat.screenControlBanner')}
-            </div>
-          )}
-          <div style={zoomFix === 1 ? undefined : { zoom: zoomFix }}>
-            <ScreenView
-              priority={SCREEN_PRIORITY.card}
-              viewOnly={!control}
-              className={`mt-2.5 h-[320px] w-full rounded-lg ${control ? 'ring-2 ring-red-500/60' : ''}`}
-            />
-          </div>
-          <div className="mt-2.5 flex items-center gap-2">
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !busy && done()}
-              placeholder={t('chat.screenRequestNotePlaceholder')}
-              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2.5 py-1.5 text-[11.5px] text-[var(--term-accent-fg)] outline-none placeholder:text-[var(--term-accent-dim)]"
-            />
-            {control ? (
-              <button type="button" disabled={busy} onClick={done} className={btnPrimary}>
-                {t('chat.screenRequestDone')}
-              </button>
-            ) : (
-              <>
-                <button type="button" disabled={busy} onClick={done} className={btnSecondary}>
-                  {t('chat.screenRequestDone')}
-                </button>
-                <button type="button" disabled={busy} onClick={takeOver} className={btnPrimary}>
-                  {t('chat.screenTakeOver')}
-                </button>
-              </>
-            )}
+          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly className="mt-2.5 h-[240px] w-full rounded-lg" />
+          <div className="mt-2.5 flex items-center justify-end gap-2">
+            <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
+              {t('screen.cancelRequest')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => openScreenTakeover(sessionId, event.requestId)}
+              title={t('screen.takeOverHint')}
+              className={btnPrimary}
+            >
+              {t('chat.screenTakeOver')}
+            </button>
           </div>
         </>
       )}

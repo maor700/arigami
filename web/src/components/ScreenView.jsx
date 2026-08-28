@@ -10,10 +10,10 @@ import { useEffect, useRef } from 'react';
 import { useT } from '../lib/i18n.js';
 import { useScreenConnection, SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 
-// `viewOnly` — Watch mode: noVNC drops all keyboard/mouse input (the human
-// can look but not touch). Toggled live (no reconnect) when the user clicks
-// "Take over". `priority` — which instance gets the interactive canvas when
-// several are visible (modal > card > panel).
+// `viewOnly` — Watch: noVNC drops all keyboard/mouse input (the human can
+// look but not touch). The card and the side panel always pass it; only the
+// modal is interactive. `priority` — which instance hosts the real canvas
+// when several are visible (modal > card > panel).
 export default function ScreenView({
   className = '',
   viewOnly = false,
