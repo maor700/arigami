@@ -191,14 +191,65 @@ export function undoLog(seq: number): WriteResult {
 
 let _db: Database | null = null;
 
+// M1b fix: unicode61 (the FTS5 default) tokenizes on word boundaries, so it
+// only ever matches whole tokens. Hebrew attaches single-letter prefixes
+// (ה/ו/ב/ל/מ/ש/כ — "the/and/in/to/from/that/as") directly onto the next word
+// with no boundary ("הסודי" is ONE token) — a query for "סודי" can never match
+// "הסודי" that way, and neither would naive prefix (`term*`) search, since the
+// extra letter is prepended, not appended. `trigram` indexes every 3-character
+// substring instead of whole tokens, so "סודי" matches inside "הסודי" (and
+// inside "וסודי", "בסודי", …) the same way it would for any other substring —
+// no hand-maintained list of Hebrew prefix letters needed, and it degrades
+// gracefully for English/mixed content too. Trade-off: queries under 3 chars
+// can't match anything (inherent to trigram, not worth working around here).
 function db(): Database {
   if (_db) return _db;
   ensureDirs();
-  _db = new Database(DB_FILE, { create: true });
-  _db.run(
-    `CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(scope, path, updated_at UNINDEXED, content)`
+  const conn = new Database(DB_FILE, { create: true });
+  const existing = conn
+    .query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_fts'`)
+    .get() as { sql: string } | undefined;
+  // A DB created before this fix has memory_fts on the unicode61 default —
+  // migrate it in place (once, on first use after upgrade) instead of leaving
+  // old installs permanently stuck with the Hebrew-prefix bug.
+  const stale = !!existing && !/tokenize\s*=\s*['"]trigram['"]/i.test(existing.sql);
+  if (stale) conn.run(`DROP TABLE memory_fts`);
+  conn.run(
+    `CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(scope, path, updated_at UNINDEXED, content, tokenize='trigram')`
   );
+  _db = conn; // set before rebuildIndexFromDisk() — it calls back into db()
+  if (stale) rebuildIndexFromDisk();
   return _db;
+}
+
+// Full re-scan of every memory file on disk into a freshly (re)created index —
+// used only when migrating an old unicode61 table to trigram (see db() above).
+function rebuildIndexFromDisk(): void {
+  const flat: Array<[string, string, 'user' | 'memory']> = [
+    ['USER.md', USER_MD, 'user'],
+    ['MEMORY.md', MEMORY_MD, 'memory'],
+  ];
+  for (const [rel, full, scope] of flat) {
+    const content = readFileSafe(full);
+    if (content.trim()) reindexPath(scope, rel, content);
+  }
+  for (const [dir, scope] of [
+    [JOURNAL_DIR, 'journal'],
+    [EPISODES_DIR, 'episode'],
+  ] as const) {
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+    } catch { /* not created yet */ }
+    for (const f of names) {
+      const full = path.join(dir, f);
+      const content = readFileSafe(full);
+      if (content.trim()) reindexPath(scope, path.relative(MEMORY_DIR, full), content);
+    }
+  }
+  // stderr, not stdout: some callers (tests, `claude -p` headless runs) treat
+  // stdout as a single structured payload — this is a side-channel notice.
+  console.error('[memory] FTS5 index rebuilt with the trigram tokenizer (Hebrew-prefix search fix)');
 }
 
 // One row per file (v1: the whole store is a handful of small KB — file-level
@@ -241,17 +292,26 @@ export function searchMemory(opts: { query: string; scope?: string; limit?: numb
   const match = ftsQuery(query);
   if (!match) return [];
   const limit = Math.max(1, Math.min(50, opts.limit || 8));
-  let sql = `SELECT scope, path, updated_at, snippet(memory_fts, 3, '[', ']', '…', 12) AS snip FROM memory_fts WHERE memory_fts MATCH ?`;
+  // Overfetch on bm25 rank, then re-rank in JS so a hit containing the whole
+  // query as one contiguous (case-insensitive) run — the closest thing to an
+  // "exact match" once every term is a substring match — sorts before hits
+  // that only satisfy each term separately, scattered across the content.
+  const overfetch = Math.min(50, limit * 4);
+  let sql = `SELECT scope, path, updated_at, content, snippet(memory_fts, 3, '[', ']', '…', 12) AS snip FROM memory_fts WHERE memory_fts MATCH ?`;
   const params: (string | number)[] = [match];
   if (opts.scope) {
     sql += ` AND scope = ?`;
     params.push(opts.scope);
   }
   sql += ` ORDER BY rank LIMIT ?`;
-  params.push(limit);
+  params.push(overfetch);
   try {
     const rows = db().query(sql).all(...params) as any[];
-    return rows.map((r) => ({
+    const needle = query.toLowerCase();
+    const ranked = rows
+      .map((r, i) => ({ r, i, exact: String(r.content || '').toLowerCase().includes(needle) ? 0 : 1 }))
+      .sort((a, b) => a.exact - b.exact || a.i - b.i); // exact contiguous match first; bm25 order preserved within each group
+    return ranked.slice(0, limit).map(({ r }) => ({
       path: r.path,
       scope: r.scope,
       snippet: String(r.snip || '').slice(0, 700),
