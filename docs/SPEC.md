@@ -290,22 +290,36 @@ served by `GET /__api/sessions/:id/screens/<file>`.
 **Agent-driven.** `capture_screen({caption?})` → `POST /__api/sessions/:id/screenshot
 {caption?}` → `{ok, url, ts}`; 503 `{ok:false, error}` when no screen is
 available (the tool returns that instead of throwing, so the machine-work
-skill can carry on without screenshots).
+skill can carry on without screenshots). **When** (T9, machine-work skill):
+only the required moments — first page loaded, right before `request_screen`,
+right after it returns (verify), and the end / a failure — plus any frame the
+agent itself needs to see to decide. Not after every step.
 
-**Automatic (Watch mode).** While a `request_screen` is pending, the server
-snapshots every `screen.snapshotIntervalMs` (default 10s; first one
-immediately), tagged `auto:true, requestId`, skipping frames identical to the
-previous one and downscaled 2× to save disk. Take over posts
-`POST /__api/sessions/:id/screen-request/mode {requestId, mode:'control'}` and
-the loop pauses — **nothing is recorded while the human drives** (privacy,
+**Dedup (T9).** The server keeps the last recorded frame per session. A
+capture whose sampled-pixel diff vs. that frame is ≤ `screen.snapshotChangeThreshold`
+(0.03) is not written and adds no card: the tool gets
+`{ok, duplicate:true, url:<previous>, ts}`. (x11 fallback path: byte-identical
+PNG.) `frameDiffRatio()` in `server/lib/png.ts`, `judgeFrame()` in
+`server/screenshots.ts`.
+
+**Automatic (Watch mode).** **Off by default** — `screen.autoSnapshots`
+(`ARIGAMI_AUTO_SNAPSHOTS=1`). When on, while a `request_screen` is pending the
+server looks at the screen every `screen.snapshotIntervalMs` (10s) but records
+a frame only if it changed materially (same threshold as dedup) **and** at
+least `screen.snapshotMinIntervalMs` (30s) passed since the last recorded one;
+recorded frames are tagged `auto:true, requestId` and downscaled 2×. Take over
+posts `POST /__api/sessions/:id/screen-request/mode {requestId, mode:'control'}`
+and the loop pauses — **nothing is recorded while the human drives** (privacy,
 same rule as Operator); closing the modal without Done posts `mode:'watch'`
-and it resumes. Answer / timeout / session death stop the loop. The chat shows
-no "recording" indicator: auto-snapshots render like any other screenshot.
+and it resumes. Answer / timeout / session death stop the loop.
 
 **UI.** `ScreenshotCard` renders one screenshot as thumbnail + caption + time
 (click → lightbox with ←/→). ChatPane folds a run of consecutive `screenshot`
-events into one card: a collapsed strip ("12 screenshots") that expands to the
-full grid.
+events — auto or manual, with nothing but the `capture_screen` tool rows in
+between — into one card: a collapsed strip ("12 screenshots") that expands to
+the full grid. The `capture_screen` tool-use/tool-result rows themselves are
+hidden (the card is the tool's visible output); a failed call still shows its
+tool-result.
 
 **Retention.** `screen.screenshotRetentionDays` (7) and `screen.screenshotMaxMb`
 (200): files past the age are deleted, then oldest-first until under the size
@@ -404,7 +418,8 @@ start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
 { port: 3099, defaultCwd: '~/Desktop/repos', prodUrl, reposDir, linearWorkspace,
   palette, devServerPorts: [3020..3030],
   screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword?,
-            display?, snapshotIntervalMs: 10000, screenshotRetentionDays: 7, screenshotMaxMb: 200,
+            display?, autoSnapshots: false, snapshotIntervalMs: 10000, snapshotMinIntervalMs: 30000,
+            snapshotChangeThreshold: 0.03, screenshotRetentionDays: 7, screenshotMaxMb: 200,
             portRange: [5901, 5950], keepProfiles: false } }
 `screen.*` is overridable via ARIGAMI_SCREEN_ENABLED / ARIGAMI_VNC_HOST /
 ARIGAMI_VNC_PORT / ARIGAMI_VNC_PASSWORD; `screen.vncPassword` is the only
