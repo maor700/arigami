@@ -78,6 +78,7 @@ export const strings = {
   'rail.profileSettings': 'Profile & settings',
   'rail.runningAs': 'Running as',
   'rail.accounts': 'Accounts',
+  'rail.brain': 'Brain',
   'rail.skills': 'Skills',
   'rail.setup': 'Setup',
   'rail.settings': 'Settings',

@@ -22,6 +22,7 @@ import {
   faBars,
   faBolt,
   faBoxArchive,
+  faBrain,
   faCaretDown,
   faCaretRight,
   faCircleInfo,
@@ -901,7 +902,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
 // Footer profile dropdown — consolidates the former standalone footer buttons
 // (voice / setup / skills / settings) plus the new Accounts entry behind one
 // menu, fronted by the account the host is currently running as.
-function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpenSettings, onOpenIntegrations }) {
+function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSettings, onOpenIntegrations }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
@@ -964,6 +965,7 @@ function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenSetup, onOpen
           <Item icon={faUser} onClick={act(onOpenAccounts)}>{t('rail.accounts')}</Item>
           <Item icon={faLink} onClick={act(onOpenIntegrations)}>{t('rail.integrations')}</Item>
           <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
+          <Item icon={faBrain} onClick={act(onOpenBrain)}>{t('rail.brain')}</Item>
           <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
           <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
           <Item icon={faMicrophone} onClick={act(() => startRecording())}>{t('rail.voiceControl')}</Item>
@@ -997,6 +999,7 @@ export default function Rail({
   onNew,
   onOpenSettings,
   onOpenSkills,
+  onOpenBrain,
   onOpenSetup,
   onOpenAccounts,
   onOpenIntegrations,
@@ -1713,6 +1716,7 @@ export default function Rail({
           onOpenAccounts={onOpenAccounts}
           onOpenIntegrations={onOpenIntegrations}
           onOpenSkills={onOpenSkills}
+          onOpenBrain={onOpenBrain}
           onOpenSetup={onOpenSetup}
           onOpenSettings={onOpenSettings}
         />

@@ -585,6 +585,7 @@ export default function Settings({ onClose }) {
           <WhatsAppBridge />
           <ScreenShare />
           <PushNotifications />
+          <BrainHeartbeat />
         </div>
       </div>
     </div>
@@ -652,6 +653,62 @@ function ScreenShare() {
             {savedTick ? t('settings.vncPassword.saved') : hasPassword ? t('settings.vncPassword.set') : t('settings.vncPassword.unset')}
           </span>
         </div>
+      </Field>
+    </>
+  );
+}
+
+// Settings → Brain heartbeat (M4.3): off by default. Toggling creates/removes
+// the backing CronTrigger server-side (server/brain.ts setHeartbeat) — this
+// component only reflects/drives that, it holds no state of its own beyond
+// what GET /__api/brain returns.
+function BrainHeartbeat() {
+  const t = useT();
+  const [status, setStatus] = useState(null); // null = loading
+  const [every, setEvery] = useState('30m');
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api
+      .get('/brain')
+      .then((r) => {
+        setStatus(r.heartbeat);
+        setEvery(r.heartbeat.every);
+      })
+      .catch(() => setStatus({ enabled: false, every: '30m' }));
+  useEffect(load, []);
+
+  const toggle = async (enabled) => {
+    setBusy(true);
+    try {
+      const r = await api.put('/brain/heartbeat', { enabled, every });
+      setStatus(r);
+    } catch (e) {
+      console.error('Brain heartbeat toggle error:', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (status === null) return null;
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('brain.heartbeatTitle')}
+      </h3>
+      <Field label={t('brain.heartbeatTitle')} hint={t('brain.heartbeatHint')}>
+        <Toggle on={status.enabled} onChange={toggle} disabled={busy} />
+      </Field>
+      <Field label={t('brain.heartbeatEvery')} hint={t('brain.heartbeatEveryHint')}>
+        <input
+          type="text"
+          value={every}
+          disabled={busy}
+          onChange={(e) => setEvery(e.target.value)}
+          onBlur={() => status.enabled && every.trim() && every !== status.every && toggle(true)}
+          placeholder="30m"
+          className="w-[100px] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-center font-mono text-[11.5px] text-fg outline-none disabled:opacity-60"
+        />
       </Field>
     </>
   );

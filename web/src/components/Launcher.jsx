@@ -1538,7 +1538,10 @@ function scheduleSummary(schedule, t) {
 // Minimal M2 UI: standing cron jobs (durable, agent-callable — see docs/TRIGGERS.md
 // "Cron"), sharing the trigger registry + the same activity-log modal (TriggerLogModal)
 // used for Linear-filter triggers' history.
-function CronSubPanel() {
+// Exported so BrainView.jsx (M4) can embed the same cron list+form under the
+// Brain tab — spec says "link/wrap the existing Cron tab, don't duplicate"
+// (SPEC-ARIGAMI-BRAIN.md M4.1).
+export function CronSubPanel() {
   const t = useT();
   const { triggers } = useStore();
   const cronJobs = triggers.filter((x) => x.type === 'cron');

@@ -631,7 +631,10 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
   );
 }
 
-function ProposalsPane({ desktop }) {
+// Exported so BrainView.jsx (M4) can embed the same pending-proposals queue
+// under the Brain tab — spec says "link/wrap the existing tab, don't
+// duplicate" (SPEC-ARIGAMI-BRAIN.md M4.1).
+export function ProposalsPane({ desktop }) {
   const t = useT();
   const [proposals, setProposals] = useState(null);
   const [selected, setSelected] = useState(null);

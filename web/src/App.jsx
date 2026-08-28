@@ -11,6 +11,7 @@ import { Icon } from './lib/icons.js';
 import {
   faBars,
   faBoxArchive,
+  faBrain,
   faCircleHalfStroke,
   faCircleUser,
   faGear,
@@ -31,6 +32,7 @@ import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
 import Settings from './components/Settings.jsx';
 import SkillsView from './components/SkillsView.jsx';
+import BrainView from './components/BrainView.jsx';
 import AccountsView from './components/AccountsView.jsx';
 import IntegrationsView from './components/IntegrationsView.jsx';
 import Setup from './components/Setup.jsx';
@@ -77,6 +79,7 @@ function parseHash(hash) {
   switch (seg[0]) {
     case 'settings': return { view: 'settings' };
     case 'skills': return { view: 'skills' };
+    case 'brain': return { view: 'brain' };
     case 'setup': return { view: 'setup' };
     case 'accounts': return { view: 'accounts', add: seg[1] === 'add' };
     case 'integrations': return { view: 'integrations' };
@@ -91,6 +94,7 @@ function parseHash(hash) {
 function routeFromState(s) {
   if (s.settingsOpen) return '#/settings';
   if (s.skillsOpen) return '#/skills';
+  if (s.brainOpen) return '#/brain';
   if (s.setupOpen) return '#/setup';
   if (s.accountsOpen) return s.accountsAddIntent ? '#/accounts/add' : '#/accounts';
   if (s.integrationsOpen) return '#/integrations';
@@ -196,6 +200,7 @@ export default function App() {
   const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
   const [settingsOpen, setSettingsOpen] = useState(initial.view === 'settings');
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
+  const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
   const [accountsOpen, setAccountsOpen] = useState(initial.view === 'accounts');
   const [integrationsOpen, setIntegrationsOpen] = useState(initial.view === 'integrations');
@@ -220,6 +225,7 @@ export default function App() {
   const applyRoute = (r) => {
     setSettingsOpen(r.view === 'settings');
     setSkillsOpen(r.view === 'skills');
+    setBrainOpen(r.view === 'brain');
     setSetupOpen(r.view === 'setup');
     setAccountsOpen(r.view === 'accounts');
     setIntegrationsOpen(r.view === 'integrations');
@@ -238,9 +244,9 @@ export default function App() {
   //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
   //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
   const firstSync = useRef(true);
-  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
+  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
   useEffect(() => {
-    const want = routeFromState({ settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
+    const want = routeFromState({ settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
     const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
     // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
     // `#/session/<id>` — leave it alone so the active tab survives a refresh.
@@ -255,7 +261,7 @@ export default function App() {
     }
     firstSync.current = false;
     lastRoute.current = want;
-  }, [settingsOpen, skillsOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
+  }, [settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
 
   useEffect(() => {
     const onHash = () => {
@@ -567,6 +573,7 @@ export default function App() {
         setLauncher(null);
         setSettingsOpen(false);
         setSkillsOpen(false);
+        setBrainOpen(false);
         setSetupOpen(false);
         setAccountsOpen(false);
       }
@@ -582,6 +589,7 @@ export default function App() {
         setSelectedId(e.data.sessionId);
         setSettingsOpen(false);
         setSkillsOpen(false);
+        setBrainOpen(false);
         setSetupOpen(false);
         setAccountsOpen(false);
         const eventId = e.data.eventId;
@@ -625,6 +633,7 @@ export default function App() {
       setAccountsOpen(true);
       setSettingsOpen(false);
       setSkillsOpen(false);
+      setBrainOpen(false);
       setSetupOpen(false);
       setLauncher(null);
     };
@@ -655,6 +664,7 @@ export default function App() {
     { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
     { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: faGear, run: () => setSettingsOpen(true) },
     { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
+    { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: faBrain, run: () => setBrainOpen(true) },
     { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => setAccountsOpen(true) },
     { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: faHouse, run: () => setSetupOpen(true) },
     { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: faQuestion, run: () => setShortcutsOpen(true) },
@@ -671,27 +681,31 @@ export default function App() {
   // the extra top bar would only duplicate the title — skip it there and keep
   // the pixels for the chat. Every other view still gets it for drawer access.
   const sessionIsMain =
-    !!selected && !settingsOpen && !skillsOpen && !setupOpen && !accountsOpen && !integrationsOpen && !launcher && !previewTicket;
+    !!selected && !settingsOpen && !skillsOpen && !brainOpen && !setupOpen && !accountsOpen && !integrationsOpen && !launcher && !previewTicket;
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
     ? t('settings.title')
     : skillsOpen
       ? t('chrome.topbar.skills')
-      : setupOpen
-        ? t('chrome.topbar.setup')
-        : accountsOpen
-          ? t('chrome.topbar.accounts')
-          : integrationsOpen
-            ? t('integrations.title')
-            : launcher
-              ? t('chrome.topbar.newSession')
-              : previewTicket || selected?.title || 'Arigami';
+      : brainOpen
+        ? t('chrome.topbar.brain')
+        : setupOpen
+          ? t('chrome.topbar.setup')
+          : accountsOpen
+            ? t('chrome.topbar.accounts')
+            : integrationsOpen
+              ? t('integrations.title')
+              : launcher
+                ? t('chrome.topbar.newSession')
+                : previewTicket || selected?.title || 'Arigami';
 
   let main;
   if (settingsOpen) {
     main = <Settings onClose={() => setSettingsOpen(false)} />;
   } else if (skillsOpen) {
     main = <SkillsView session={selected} onClose={() => setSkillsOpen(false)} />;
+  } else if (brainOpen) {
+    main = <BrainView onClose={() => setBrainOpen(false)} />;
   } else if (integrationsOpen) {
     main = <IntegrationsView onClose={() => setIntegrationsOpen(false)} />;
   } else if (setupOpen) {
@@ -778,19 +792,21 @@ export default function App() {
           setPreviewTicket(null);
           setSettingsOpen(false);
           setSkillsOpen(false);
+          setBrainOpen(false);
           setSetupOpen(false);
           setAccountsOpen(false);
           setAddTabOpen(false);
           setRailOpen(false);
         }}
-        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
-        onOpenIntegrations={() => { setIntegrationsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setSettingsOpen(false); setAccountsOpen(false); setLauncher(null); setRailOpen(false); }}
-        onOpenAccounts={() => { setAccountsAddIntent(false); setAccountsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false); }}
-        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
+        onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
+        onOpenIntegrations={() => { setIntegrationsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setSettingsOpen(false); setAccountsOpen(false); setLauncher(null); setRailOpen(false); }}
+        onOpenAccounts={() => { setAccountsAddIntent(false); setAccountsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false); }}
+        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         searchRef={searchRef}
         onArchive={(s) => setDialog({ type: 'archive', session: s })}

@@ -318,6 +318,63 @@ POST /__api/skill-proposals/:id/reject     {reason?}
 POST /__api/skill-proposals/:id/quarantine {reason?}
 ```
 
+## Brain (server/brain.ts — the singleton "second brain" session + heartbeat)
+
+Spec M4. A thin layer over M1–M3 (memory, cron, skill proposals) — no new
+subsystem, no new storage. Two pieces:
+
+**1. The singleton session.** One `metadata.kind:'brain'` session per
+instance (`findBrainSession()`/`ensureBrainSession()`), created on first use
+via the same `startEmptySession()` every ordinary session goes through — it
+just gets a fixed first prompt (`BRAIN_SYSTEM_DIRECTIVE`) that establishes its
+identity and toolset (`memory_search`/`get`/`write`, `cronjob`,
+`create_session`, `list_sessions` — all shipped in M1–M3, nothing new). Since
+it's an ordinary session, USER.md/MEMORY.md are already prepended to that same
+first turn by `claude.js` (M1.3) — the directive doesn't repeat that content.
+If the found session is archived, `ensureBrainSession()` un-archives it rather
+than creating a second one. `POST /__api/brain/session` (find-or-create) backs
+the Brain tab's "Ask the brain →" button, which just jumps to the session like
+any other (`host:select-session`) — no embedded chat engine.
+
+**2. The heartbeat** (`brain.heartbeatEnabled`/`heartbeatEvery` in config,
+default `{false, '30m'}`). Toggling it on/off creates/removes a single
+`type:'cron'` trigger named `"Brain heartbeat"` (`sessionMode:
+'existing:<brainSessionId>'`, `schedule:{kind:'interval', value:every}`,
+`deliver:{push:true}`) via the same `triggers.ts` API a session could call
+itself — `setHeartbeat()` finds-or-creates that one trigger idempotently
+rather than stacking duplicates. The prompt (`HEARTBEAT_PROMPT`) tells the
+brain session to check memory/journal/cron for anything worth surfacing and
+always call `report_to_master`: a real summary if something needs attention,
+or `summary:'[SILENT] NO_REPLY'` if not — reusing `deliverCronResult`'s
+existing `[SILENT]`-suppression (M2) so a quiet heartbeat never pushes.
+
+This required one correctness fix to `triggers.ts`'s `'existing'` session
+mode, which previously had no report-back path at all: `fireCron` now tags
+the delivery target with `metadata.cronTriggerId`/`cronTriggerName`/
+`cronDeliver` (same fields the `'isolated'` branch already set at spawn time)
+so a later `report_to_master` call from it correlates back to the trigger; and
+`onCronReport`'s archive decision now checks `sessionMode === 'isolated'`
+before ever archiving — an `'existing'` target **pre-existed** the fire (it's
+not something the cron spawned), so it must never be archived out from under
+itself just because it reported a terminal state. This also fixes the same
+latent bug for any other `'existing'`-mode cron a session sets up by hand.
+
+```
+GET  /__api/brain                → { sessionId, heartbeat: {enabled, every, triggerId} }
+POST /__api/brain/session         (find-or-create) → { id, created }
+PUT  /__api/brain/heartbeat       {enabled, every?} → {enabled, every, triggerId}
+```
+
+**UI** (`BrainView.jsx`, a sidebar tab next to Skills/Triggers): Memory tab
+(inline bullet-level edit of USER.md/MEMORY.md via `memory_write`
+add/replace/remove, search, journal, episodes, and the change log with
+per-entry undo), Pending tab (approve/reject queued facts, badged), Cron tab
+(embeds `Launcher.jsx`'s exported `CronSubPanel` — not duplicated), Proposals
+tab (embeds `SkillsView.jsx`'s exported `ProposalsPane` — not duplicated). The
+heartbeat on/off + interval toggle lives in Settings (`BrainHeartbeat`,
+mirroring the `ScreenShare`/`PushNotifications` toggle pattern), not in the
+Brain tab itself.
+
 ## Screen share (server/vnc.ts, useScreenConnection.js, ScreenView.jsx, ScreenModal.jsx)
 
 Two kinds of desktop, same wiring:

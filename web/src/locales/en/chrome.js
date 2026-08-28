@@ -4,6 +4,7 @@ export const strings = {
   'chrome.conn.offline': 'host offline — retrying',
 
   // App — top bar
+  'chrome.topbar.brain': 'Brain',
   'chrome.topbar.skills': 'Skills',
   'chrome.topbar.setup': 'Setup',
   'chrome.topbar.accounts': 'Accounts',
@@ -25,6 +26,8 @@ export const strings = {
   'chrome.palette.settings.kw': 'preferences theme voice',
   'chrome.palette.skills': 'Open Skills',
   'chrome.palette.skills.kw': 'skill pack',
+  'chrome.palette.brain': 'Open Brain',
+  'chrome.palette.brain.kw': 'memory cron heartbeat second brain',
   'chrome.palette.accounts': 'Open Accounts',
   'chrome.palette.accounts.kw': 'account login switch',
   'chrome.palette.setup': 'Open Setup / workspace',
