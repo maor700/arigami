@@ -469,6 +469,51 @@ const TOOLS = [
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, {}),
   },
   {
+    name: 'memory_write',
+    description:
+      "Write to Arigami's own long-term memory (owned by the host, shared by EVERY session/worker on this instance — not Claude Code's per-project auto-memory, and not scoped to your cwd/worktree). " +
+      'target "user" = facts about the human (preferences, people, ~600 token cap), "memory" = standing facts/decisions/context (~900 token cap), "journal" = append-only log of what happened today (no cap, action must be "add"). ' +
+      'action "add" appends a new bullet (silently deduped if an equivalent line already exists); "replace" needs old_text (the existing line to match) + content (its replacement); "remove" needs old_text (or content) to delete a line — "user"/"memory" only, not journal. ' +
+      'Refused if the content looks like a credential/secret or a prompt-injection/exfiltration attempt, or would exceed the target\'s token cap — trim or replace an existing line first. Every write is logged (before/after) and undoable from the host UI/API.',
+    inputSchema: obj(
+      {
+        target: { type: 'string', enum: ['user', 'memory', 'journal'] },
+        action: { type: 'string', enum: ['add', 'replace', 'remove'] },
+        content: { type: 'string', description: 'New/replacement text (required for add/replace; usable as the remove needle if old_text is omitted)' },
+        old_text: { type: 'string', description: 'Existing line to match, for replace/remove' },
+        ...SID_PROP,
+      },
+      ['target', 'action']
+    ),
+    run: (a) =>
+      api('POST', '/__api/memory/write', {
+        target: a.target,
+        action: a.action,
+        content: a.content,
+        old_text: a.old_text,
+        source: 'agent',
+        sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
+      }),
+  },
+  {
+    name: 'memory_search',
+    description:
+      "Full-text search over Arigami's own memory (USER.md, MEMORY.md, journal/*.md, episodes/*.md) — the on-demand half of the two-layer memory model (USER.md+MEMORY.md are already injected once at session start; use this for anything older/deeper). " +
+      'Zero token cost until called. Returns short ranked snippets (~700 chars each), not full files — follow up with memory_get for the whole file. scope optionally narrows to one of "user" | "memory" | "journal" | "episode".',
+    inputSchema: obj({
+      query: { type: 'string' },
+      scope: { type: 'string', enum: ['user', 'memory', 'journal', 'episode'] },
+      limit: { type: 'number', description: 'Max results (default 8, max 50)' },
+    }, ['query']),
+    run: (a) => api('GET', `/__api/memory/search?query=${encodeURIComponent(a.query)}${a.scope ? `&scope=${encodeURIComponent(a.scope)}` : ''}${a.limit ? `&limit=${a.limit}` : ''}`),
+  },
+  {
+    name: 'memory_get',
+    description: 'Read one memory file in full by its path (as returned by memory_search, e.g. "USER.md", "journal/2026-08-28.md", "episodes/<id>.md").',
+    inputSchema: obj({ path: { type: 'string' } }, ['path']),
+    run: (a) => api('GET', `/__api/memory/get?path=${encodeURIComponent(a.path)}`),
+  },
+  {
     name: 'permission_prompt',
     description: 'Internal: permission bridge for --permission-prompt-tool. Blocks until the human answers in the host UI.',
     inputSchema: {

@@ -15,6 +15,7 @@ import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
+import { getMemoryBootstrap } from './memory.js';
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
 // stripped: the host chooses the auth per session from the accounts store, so a
@@ -960,9 +961,24 @@ function saveAttachments(id, attachments) {
   return out;
 }
 
+// Memory M1.3: inject the USER.md+MEMORY.md snapshot into a session's very
+// first turn only (fresh claude session, nothing sent yet on this proc) — never
+// mid-conversation, so the prompt-cache prefix stays stable. A --resume proc
+// already has this in its history from the original spawn.
+function memoryBootstrapPrefix() {
+  const { userMd, memoryMd } = getMemoryBootstrap();
+  if (!userMd.trim() && !memoryMd.trim()) return '';
+  let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not Claude Code's per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
+  if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
+  if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
+  block += '</system-reminder>\n\n';
+  return block;
+}
+
 function writeUserMessage(p, text, attachments = []) {
   const content = [];
   let txt = text || '';
+  if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix() + txt;
   if (attachments.length) {
     const list = attachments.map((a) => `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`).join('\n');
     txt += (txt ? '\n\n' : '') + `📎 Attached ${attachments.length} file(s) — read them as needed:\n${list}`;
