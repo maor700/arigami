@@ -1005,14 +1005,30 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           // the first row; the rest of the run is skipped. Grouped over the
           // visible slice only — the run object is rebuilt per render, so the
           // memoized Event re-renders when the run grows.
+          // The agent's capture_screen calls also leave tool-use / tool-result
+          // rows around each screenshot (use → screenshot → result). Those
+          // rows are hidden — the card IS the tool's visible output — and are
+          // transparent to grouping, so consecutive manual captures fold into
+          // one strip too. A failed call keeps its (error) tool-result.
+          const isCapUse = (e) => e.kind === 'tool-use' && /(^|__)capture_screen$/.test(String(e.name ?? e.tool ?? e.toolName ?? ''));
+          const capIds = new Set();
+          events.forEach((e) => { if (isCapUse(e) && e.toolUseId) capIds.add(e.toolUseId); });
+          const isCapRow = (e) =>
+            isCapUse(e) || (e.kind === 'tool-result' && capIds.has(e.toolUseId) && !(e.isError ?? e.is_error));
           const out = [];
           const visible = events.slice(hiddenCount);
           for (let j = 0; j < visible.length; j++) {
             const e = visible[j];
             const i = hiddenCount + j;
+            if (isCapRow(e)) continue;
             if (e.kind === 'screenshot') {
               const shots = [e];
-              while (visible[j + 1]?.kind === 'screenshot') shots.push(visible[++j]);
+              for (let k = j + 1; k < visible.length; k++) {
+                if (isCapRow(visible[k])) continue;
+                if (visible[k].kind !== 'screenshot') break;
+                shots.push(visible[k]);
+                j = k;
+              }
               const ev = shots.length > 1 ? { ...e, shots } : e;
               out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={ev} /></div>);
               continue;
