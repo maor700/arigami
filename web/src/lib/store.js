@@ -23,6 +23,17 @@ let state = {
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
+  // Shared desktop UI state — one source of truth for the chat card, the
+  // session side panel and the enlarge modal (they all show the SAME VNC
+  // connection, see useScreenConnection.js):
+  //   controlRequestId — the screen-request the human "took over" (Control
+  //     mode); null = Watch (view-only). Keyed by request so a stale Control
+  //     never leaks into the next request.
+  //   panel — side-panel visibility: null = auto (open while the selected
+  //     session has an open screen-request), true/false = user override.
+  //     Reset to auto whenever a new screen-request arrives.
+  //   modal — the enlarged ScreenModal is open.
+  screen: { controlRequestId: null, panel: null, modal: false },
 };
 
 const listeners = new Set();
@@ -241,12 +252,18 @@ function appendChat(sessionId, event) {
   // stops rendering ScreenView once `answered` is set).
   if (event.kind === 'screen-request-answer') {
     const idx = cur.findIndex((e) => e.kind === 'screen-request' && e.requestId === event.requestId);
+    const screen = state.screen.controlRequestId === event.requestId ? { ...state.screen, controlRequestId: null } : state.screen;
     if (idx !== -1 && cur[idx].answered == null) {
       const next = [...cur];
       next[idx] = { ...next[idx], answered: true, note: event.note, takenOver: !!event.takenOver };
-      setState({ chats: { ...state.chats, [sessionId]: next } });
-    }
+      setState({ chats: { ...state.chats, [sessionId]: next }, screen });
+    } else if (screen !== state.screen) setState({ screen });
     return;
+  }
+  // A fresh screen-request re-arms the side panel's auto-open (a manual close
+  // applies to the request that was open at the time, not forever).
+  if (event.kind === 'screen-request' && state.screen.panel !== null) {
+    setState({ screen: { ...state.screen, panel: null } });
   }
   const last = cur[cur.length - 1];
   let next;
@@ -410,12 +427,54 @@ export async function answerPermission(sessionId, requestId, behavior, message) 
   });
 }
 
+/* ---------------- shared desktop (screen) UI state ------------------------ */
+
+// The open (unanswered) screen-request of a session, or null. Prefers the chat
+// event (has prompt/hint) and falls back to the server's session-level marker
+// for sessions whose chat isn't loaded (rail badges).
+export function openScreenRequest(s, sessionId) {
+  if (!sessionId) return null;
+  const events = s.chats[sessionId];
+  if (events) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e.kind === 'screen-request') return e.answered ? null : e;
+    }
+  }
+  const session = s.sessions.find((x) => x.id === sessionId);
+  const marker = session?.claude?.screenRequest;
+  return marker?.requestId ? { kind: 'screen-request', ...marker } : null;
+}
+
+export function hasOpenScreenRequest(session) {
+  return !!session?.claude?.screenRequest?.requestId;
+}
+
+// Whether the side panel should be showing for `sessionId` (auto or override).
+export function screenPanelOpen(s, sessionId) {
+  if (s.screen.panel !== null) return s.screen.panel;
+  return !!openScreenRequest(s, sessionId);
+}
+
+export function setScreenControl(requestId) {
+  setState({ screen: { ...state.screen, controlRequestId: requestId || null } });
+}
+
+export function setScreenPanel(open) {
+  setState({ screen: { ...state.screen, panel: open } });
+}
+
+export function setScreenModal(open) {
+  setState({ screen: { ...state.screen, modal: !!open } });
+}
+
 export async function answerScreenRequest(sessionId, requestId, note, takenOver = false) {
   await api.post(`/sessions/${sessionId}/screen-request/answer`, {
     requestId,
     takenOver,
     ...(note ? { note } : {}),
   });
+  if (state.screen.controlRequestId === requestId) setScreenControl(null);
   // Mark the inline card answered locally (the request itself isn't echoed
   // back) — this is what tears down the card's live VNC connection.
   const cur = state.chats[sessionId] || [];

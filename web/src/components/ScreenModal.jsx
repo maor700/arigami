@@ -3,11 +3,14 @@
 // Listeners modal shell (SessionView.jsx) for sizing/chrome, but adds a real
 // Fullscreen API toggle — the canvas benefits from true fullscreen (and, in
 // supporting browsers, pointer lock) in a way the CSS-only overlay used
-// elsewhere (ChangesTab.jsx) isn't built for. The actual RFB connection lives
-// in ScreenView.jsx, shared with the chat-embedded request card.
+// elsewhere (ChangesTab.jsx) isn't built for. The actual RFB connection is
+// the app-wide shared one (useScreenConnection.js) — opening this modal over
+// the request card / side panel takes over their canvas, they show a mirror.
+// Opened from the rail footer (global) and from ScreenSidePanel ("enlarge").
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
+import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
@@ -76,7 +79,7 @@ export default function ScreenModal({ onClose }) {
             <Icon icon={faXmark} />
           </button>
         </div>
-        <ScreenView className="min-h-0 flex-1" onStatusChange={onStatusChange} />
+        <ScreenView priority={SCREEN_PRIORITY.modal} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
       </div>
     </div>,
     document.body

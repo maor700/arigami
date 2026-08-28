@@ -4,14 +4,14 @@ import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
-import { useStore, listenersForSession, getDraft, setDraft, setLastSent, interruptSession } from '../lib/store.js';
+import { useStore, listenersForSession, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
@@ -266,6 +266,35 @@ function SummaryChip({ session }) {
   );
 }
 
+// 🖥 "Machine" — toggles the session side panel with the live shared desktop
+// (ScreenSidePanel.jsx). Highlighted while a request_screen is waiting on you.
+function MachineChip({ session }) {
+  const t = useT();
+  const s = useStore();
+  if (!s.config?.screen?.enabled) return null;
+  const open = screenPanelOpen(s, session.id);
+  const pending = !!openScreenRequest(s, session.id);
+  return (
+    <button
+      type="button"
+      onClick={() => setScreenPanel(!open)}
+      title={open ? t('screen.hidePanel') : t('screen.showPanel')}
+      aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
+      aria-pressed={open}
+      className={`hidden h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 font-mono text-[10.5px] md:flex ${
+        pending
+          ? 'pulse-yellow border-ink bg-brand font-bold text-[#1a1a1a]'
+          : open
+            ? 'border-ink bg-bg text-fg'
+            : 'border-hair text-fgdim hover:border-ink hover:text-fg'
+      }`}
+    >
+      <Icon icon={faDisplay} />
+      <span>{t('screen.panelTitle')}</span>
+    </button>
+  );
+}
+
 function TerminalHeader({ session }) {
   const [procPanel, setProcPanel] = useState(false);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
@@ -291,6 +320,7 @@ function TerminalHeader({ session }) {
         <ProcessChip session={session} onClick={() => setProcPanel(true)} />
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
+        <MachineChip session={session} />
         <TermControls session={session} />
         <StatusChip session={session} />
       </div>

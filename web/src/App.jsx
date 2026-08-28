@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './lib/api.js';
-import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState } from './lib/store.js';
+import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { startRecording, stopRecording, toggleRecording, setSelectedContext } from './lib/voice.js';
@@ -24,6 +24,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
+import ScreenSidePanel from './components/ScreenSidePanel.jsx';
 import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
 import Settings from './components/Settings.jsx';
@@ -178,7 +179,8 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
 
 export default function App() {
   const t = useT();
-  const { sessions, chats, chatLoaded, conn, config, pending } = useStore();
+  const storeState = useStore();
+  const { sessions, chats, chatLoaded, conn, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
   // right page. The two sync effects below keep hash ↔ state aligned thereafter.
@@ -721,14 +723,22 @@ export default function App() {
     );
   } else if (selected) {
     // archived sessions render the same view (read-only peek; restore via ⋯ menu)
+    // The machine side panel docks to the right of the session (desktop only);
+    // it auto-opens while this session has an open request_screen, or via the
+    // header's 🖥 chip. See ScreenSidePanel.jsx.
     main = (
-      <SessionView
-        session={selected}
-        events={chats[selected.id] || []}
-        chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
-        addTabOpen={addTabOpen}
-        setAddTabOpen={setAddTabOpen}
-      />
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <SessionView
+            session={selected}
+            events={chats[selected.id] || []}
+            chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
+            addTabOpen={addTabOpen}
+            setAddTabOpen={setAddTabOpen}
+          />
+        </div>
+        {screenPanelOpen(storeState, selected.id) && <ScreenSidePanel session={selected} />}
+      </div>
     );
   } else {
     main = (

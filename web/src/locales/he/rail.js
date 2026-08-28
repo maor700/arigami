@@ -13,6 +13,8 @@ export const strings = {
   'rail.screenConnecting': 'מתחבר…',
   'rail.screenDisconnected': 'מנותק',
   'rail.screenError': 'ההתחברות נכשלה',
+  'rail.screenNeedsYou': 'המכונה ממתינה לך — פתחו את הסשן',
+  'rail.screenNeedsYouShort': 'נדרש אתה',
   'rail.screenNeedsPassword': 'שרת ה-VNC דורש סיסמה — הגדר אותה בהגדרות ← שיתוף מסך.',
   'rail.listenerErrored': 'מאזין נכשל — פתחו את הסשן',
   'rail.watchingSource': 'צופה ב-{n} מקור',

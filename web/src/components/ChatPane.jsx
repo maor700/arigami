@@ -1,9 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore } from '../lib/store.js';
+import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore, setScreenControl, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
+import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
@@ -651,13 +652,16 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
 // with a banner, and "Done" answers with {takenOver} — the card then freezes
 // to a static line and the connection tears down (ScreenView unmounts), so
 // old resolved cards in history don't hold open VNC connections.
+// Watch/Control lives in the store (screen.controlRequestId) so the session
+// side panel (ScreenSidePanel.jsx) shows the same mode and its Done is our Done.
 function ScreenRequestCard({ sessionId, event }) {
   const t = useT();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState('watch'); // watch | control
+  const { screen } = useStore();
   const answered = event.answered;
-  const control = mode === 'control';
+  const control = !answered && screen.controlRequestId === event.requestId;
+  const setMode = (m) => setScreenControl(m === 'control' ? event.requestId : null);
 
   const done = async () => {
     setBusy(true);
@@ -714,6 +718,7 @@ function ScreenRequestCard({ sessionId, event }) {
             </div>
           )}
           <ScreenView
+            priority={SCREEN_PRIORITY.card}
             viewOnly={!control}
             className={`mt-2.5 h-[320px] w-full rounded-lg ${control ? 'ring-2 ring-red-500/60' : ''}`}
           />
