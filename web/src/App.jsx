@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './lib/api.js';
-import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen } from './lib/store.js';
+import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
@@ -26,6 +26,7 @@ import {
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
 import ScreenSidePanel from './components/ScreenSidePanel.jsx';
+import ScreenModal from './components/ScreenModal.jsx';
 import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
 import Settings from './components/Settings.jsx';
@@ -863,6 +864,9 @@ export default function App() {
           }}
         />
       )}
+      {/* The one interactive desktop modal — rail icon (global) or Take over
+          on a request_screen card. Closing never answers the request. */}
+      {storeState.screen.modal && <ScreenModal context={storeState.screen.modal} onClose={closeScreenTakeover} />}
       <ConfirmHost />
       <Toaster />
     </div>

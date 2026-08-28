@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { relTime } from '../lib/time.js';
-import { hasOpenScreenRequest, needsAttention, useStore } from '../lib/store.js';
+import { hasOpenScreenRequest, needsAttention, setScreenModal, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
@@ -14,7 +14,6 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { UsageMini } from './Usage.jsx';
-import ScreenModal from './ScreenModal.jsx';
 import { startRecording } from '../lib/voice.js';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
@@ -1023,7 +1022,6 @@ export default function Rail({
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
   const [screenAvailable, setScreenAvailable] = useState(false);
-  const [screenOpen, setScreenOpen] = useState(false);
   // Global (not per-session) screen-share — poll availability so the icon
   // hides itself cleanly instead of showing a button that fails on click
   // (e.g. before VNC setup runs on a machine, or if the service stops).
@@ -1691,7 +1689,7 @@ export default function Rail({
         {screenAvailable && (
           <button
             type="button"
-            onClick={() => setScreenOpen(true)}
+            onClick={() => setScreenModal(true)}
             title={t('rail.screen')}
             aria-label={t('rail.screen')}
             className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
@@ -1719,8 +1717,6 @@ export default function Rail({
           onOpenSettings={onOpenSettings}
         />
       </div>
-
-      {screenOpen && <ScreenModal onClose={() => setScreenOpen(false)} />}
 
       {/* folder dialogs */}
       {folderDialog?.type === 'create' && (

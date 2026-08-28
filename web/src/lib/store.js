@@ -26,13 +26,16 @@ let state = {
   // Shared desktop UI state — one source of truth for the chat card, the
   // session side panel and the enlarge modal (they all show the SAME VNC
   // connection, see useScreenConnection.js):
-  //   controlRequestId — the screen-request the human "took over" (Control
-  //     mode); null = Watch (view-only). Keyed by request so a stale Control
-  //     never leaks into the next request.
+  //   controlRequestId — the screen-request the human "took over" (the
+  //     interactive modal is open for it, auto-snapshots paused); null = no
+  //     takeover in progress. Keyed by request so a stale takeover never
+  //     leaks into the next request.
   //   panel — side-panel visibility: null = auto (open while the selected
   //     session has an open screen-request), true/false = user override.
   //     Reset to auto whenever a new screen-request arrives.
-  //   modal — the enlarged ScreenModal is open.
+  //   modal — the interactive ScreenModal: false = closed; {} = the plain
+  //     global view (rail icon); {sessionId, requestId} = opened by "Take
+  //     over" on a request_screen card, so the modal shows Done / Cancel.
   screen: { controlRequestId: null, panel: null, modal: false },
 };
 
@@ -252,7 +255,11 @@ function appendChat(sessionId, event) {
   // stops rendering ScreenView once `answered` is set).
   if (event.kind === 'screen-request-answer') {
     const idx = cur.findIndex((e) => e.kind === 'screen-request' && e.requestId === event.requestId);
-    const screen = state.screen.controlRequestId === event.requestId ? { ...state.screen, controlRequestId: null } : state.screen;
+    let screen = state.screen;
+    if (screen.controlRequestId === event.requestId) screen = { ...screen, controlRequestId: null };
+    // Answered elsewhere (timeout, session died, another tab): the takeover
+    // modal for this request loses its context — close it.
+    if (screen.modal && screen.modal.requestId === event.requestId) screen = { ...screen, modal: false };
     if (idx !== -1 && cur[idx].answered == null) {
       const next = [...cur];
       next[idx] = { ...next[idx], answered: true, note: event.note, takenOver: !!event.takenOver };
@@ -456,16 +463,41 @@ export function screenPanelOpen(s, sessionId) {
   return !!openScreenRequest(s, sessionId);
 }
 
-export function setScreenControl(requestId) {
-  setState({ screen: { ...state.screen, controlRequestId: requestId || null } });
-}
-
 export function setScreenPanel(open) {
   setState({ screen: { ...state.screen, panel: open } });
 }
 
+// `open`: false/true (plain global view) or {sessionId, requestId} (takeover).
 export function setScreenModal(open) {
-  setState({ screen: { ...state.screen, modal: !!open } });
+  const modal = open && typeof open === 'object' ? open : open ? {} : false;
+  setState({ screen: { ...state.screen, modal } });
+}
+
+// "Take over" on a request_screen card / side panel: the human drives the
+// machine in the SAME interactive modal the rail icon opens (ScreenModal),
+// not inside the chat. Tell the server so the Watch-mode auto-snapshots
+// pause — nothing is recorded while they type (privacy).
+export function openScreenTakeover(sessionId, requestId) {
+  setState({ screen: { ...state.screen, controlRequestId: requestId, modal: { sessionId, requestId } } });
+  api.post(`/sessions/${sessionId}/screen-request/mode`, { requestId, mode: 'control' }).catch(() => {});
+}
+
+// Close the takeover modal WITHOUT answering: the request stays open (the
+// card is still there, "Take over" reopens it) and snapshots resume.
+export function closeScreenTakeover() {
+  const m = state.screen.modal;
+  setState({ screen: { ...state.screen, controlRequestId: null, modal: false } });
+  if (m && m.requestId) {
+    api.post(`/sessions/${m.sessionId}/screen-request/mode`, { requestId: m.requestId, mode: 'watch' }).catch(() => {});
+  }
+}
+
+export const SCREEN_CANCEL_NOTE = 'cancelled by user';
+
+// Cancel the request itself: resolves the tool call with takenOver:false and
+// a fixed note so the agent knows the human declined rather than finished.
+export function cancelScreenRequest(sessionId, requestId) {
+  return answerScreenRequest(sessionId, requestId, SCREEN_CANCEL_NOTE, false);
 }
 
 export async function answerScreenRequest(sessionId, requestId, note, takenOver = false) {
@@ -474,7 +506,15 @@ export async function answerScreenRequest(sessionId, requestId, note, takenOver 
     takenOver,
     ...(note ? { note } : {}),
   });
-  if (state.screen.controlRequestId === requestId) setScreenControl(null);
+  if (state.screen.controlRequestId === requestId || state.screen.modal?.requestId === requestId) {
+    setState({
+      screen: {
+        ...state.screen,
+        controlRequestId: state.screen.controlRequestId === requestId ? null : state.screen.controlRequestId,
+        modal: state.screen.modal?.requestId === requestId ? false : state.screen.modal,
+      },
+    });
+  }
   // Mark the inline card answered locally (the request itself isn't echoed
   // back) — this is what tears down the card's live VNC connection.
   const cur = state.chats[sessionId] || [];
