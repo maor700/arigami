@@ -131,6 +131,9 @@ set_progress({steps, session_id?})    // null/[] clears
 open_tab({type:'url'|'content', title, url?, format?, body?, compare_url?, badge?, session_id?}) → {tab_id}
 update_tab({tab_id, …same fields…})   close_tab({tab_id})   activate_tab({tab_id})
 request_action({prompt, buttons:[{label,value,style?}], session_id?})
+request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
+   // reason: 'login'|'2fa'|'captcha'|'payment'|'other' (unknown → 'other')
+   // hint: what exactly the human should complete. See "Screen share" below.
 request_review({summary?, session_id?})   // sugar: status='In Review' +
    action {prompt: summary||'Claude finished — review the changes',
            buttons:[{label:'Request changes',value:'request-changes'},
@@ -139,6 +142,47 @@ permission_prompt(…)                  // internal: permission bridge (hidden f
 ```
 
 Action-bar answers come ONLY from a human click in the UI.
+
+## Screen share (server/vnc.ts, ScreenView.jsx, ScreenRequestCard)
+
+One shared host desktop (not per-session), bridged in-process from
+`ws(s)://<host>/__vnc` to a local VNC server (`config.screen.{vncHost,vncPort}`).
+The browser side is noVNC (`ScreenView.jsx`), used by the global sidebar modal
+(`ScreenModal.jsx`) and by the chat-embedded `request_screen` card.
+
+**Modes.** `ScreenView` has two modes, switched live without reconnecting:
+- **Watch** — view-only (`rfb.viewOnly = true`): the human sees the desktop,
+  all keyboard/mouse input is dropped.
+- **Control** — interactive; the human drives the machine.
+
+**request_screen flow** (`POST /__mcp/screen-request`, blocking like the
+permission bridge; `SCREEN_REQUEST_TIMEOUT_MS`):
+1. Agent calls `request_screen({prompt, reason?, hint?})`. Server appends a
+   `screen-request` chat event `{requestId, prompt, reason?, hint?}` and sets
+   the session to `awaiting-input`.
+2. The card opens in **Watch** with the reason chip + hint, a secondary
+   **Done** and the primary **Take over**.
+3. **Take over** → **Control**: red banner "you are in control — the agent is
+   waiting", input enabled. Nothing is sent to the server at this point.
+4. **Done** → `POST /__api/sessions/:id/screen-request/answer
+   {requestId, takenOver, note?}`. Server appends `screen-request-answer`
+   `{requestId, takenOver, note?}`, sets the session back to `working` and
+   resolves the tool call with `{ok:true, takenOver, note?}`.
+   `takenOver` is true only if the human went through Control. Timeouts and
+   session death resolve with `takenOver:false` and an explanatory note.
+5. Once answered, the card freezes to a static line and unmounts the viewer
+   (no lingering VNC connections in history).
+
+**VNC password.** `config.screen.vncPassword` (or `ARIGAMI_VNC_PASSWORD`),
+edited in Settings → Screen share. The UI writes it via
+`PUT /__api/screen/settings {vncPassword}` (empty string clears) and only ever
+reads `{hasVncPassword}`; `/__api/config` never returns it. noVNC does RFB
+VNC-auth client-side, so on `credentialsrequired` the viewer fetches
+`GET /__api/screen/credentials` → `{password}` and calls `sendCredentials`.
+This endpoint sits behind the same trust boundary as `/__vnc` itself.
+
+Other endpoints: `GET /__api/screen/status → {available}` (config enabled +
+TCP probe of the VNC port; drives the sidebar icon).
 
 ## Proxy (server/proxy.js — ported from iframe-host-poc/server.js)
 
@@ -203,7 +247,11 @@ start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
 ## Config (~/.arigami/config.json — extend PoC lib/config.js)
 
 { port: 3099, defaultCwd: '~/Desktop/repos', prodUrl, reposDir, linearWorkspace,
-  palette, devServerPorts: [3020..3030] }
+  palette, devServerPorts: [3020..3030],
+  screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword? } }
+`screen.*` is overridable via ARIGAMI_SCREEN_ENABLED / ARIGAMI_VNC_HOST /
+ARIGAMI_VNC_PORT / ARIGAMI_VNC_PASSWORD; `screen.vncPassword` is the only
+config key the UI writes back (Settings → Screen share).
 Secrets via existing lib/secrets.js (Keychain → secrets.env → env).
 
 ## Skills (skills/ — adapted from repos/.claude/skills.disabled + your-plugin plugin)
