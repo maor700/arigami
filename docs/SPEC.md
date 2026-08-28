@@ -149,34 +149,54 @@ permission_prompt(…)                  // internal: permission bridge (hidden f
 
 Action-bar answers come ONLY from a human click in the UI.
 
-## Screen share (server/vnc.ts, ScreenView.jsx, ScreenRequestCard)
+## Screen share (server/vnc.ts, useScreenConnection.js, ScreenView.jsx, ScreenModal.jsx)
 
 One shared host desktop (not per-session), bridged in-process from
 `ws(s)://<host>/__vnc` to a local VNC server (`config.screen.{vncHost,vncPort}`).
-The browser side is noVNC (`ScreenView.jsx`), used by the global sidebar modal
-(`ScreenModal.jsx`) and by the chat-embedded `request_screen` card.
+The browser side is noVNC behind ONE app-wide RFB connection
+(`useScreenConnection.js`): every place that shows the desktop registers as a
+consumer with a priority (modal > card > panel); the highest-priority visible
+one hosts the real canvas, the rest paint a mirror.
 
-**Modes.** `ScreenView` has two modes, switched live without reconnecting:
-- **Watch** — view-only (`rfb.viewOnly = true`): the human sees the desktop,
-  all keyboard/mouse input is dropped.
-- **Control** — interactive; the human drives the machine.
+**Three surfaces, one rule — input only ever happens in the modal:**
+- **Chat card** (`ScreenRequestCard`, ChatPane.jsx) — small, view-only live
+  view + reason chip + prompt/hint + **Cancel** / **Take over**.
+- **Side panel** (`ScreenSidePanel.jsx`, desktop) — same content, view-only,
+  same two buttons; its "enlarge" is a Take over while a request is open.
+- **ScreenModal** (`ScreenModal.jsx`) — the ONE interactive view, mounted
+  once in App.jsx from `store.screen.modal`. Opened from the rail icon
+  (plain global view, `modal = {}`) or by Take over
+  (`modal = {sessionId, requestId}`), in which case it shows the request's
+  reason/prompt/hint, a "you are in control" banner and a footer with an
+  optional note, **Cancel** and **Done**.
+`store.screen.controlRequestId` marks the request currently taken over.
 
 **request_screen flow** (`POST /__mcp/screen-request`, blocking like the
 permission bridge; `SCREEN_REQUEST_TIMEOUT_MS`):
 1. Agent calls `request_screen({prompt, reason?, hint?})`. Server appends a
-   `screen-request` chat event `{requestId, prompt, reason?, hint?}` and sets
-   the session to `awaiting-input`.
-2. The card opens in **Watch** with the reason chip + hint, a secondary
-   **Done** and the primary **Take over**.
-3. **Take over** → **Control**: red banner "you are in control — the agent is
-   waiting", input enabled. Nothing is sent to the server at this point.
-4. **Done** → `POST /__api/sessions/:id/screen-request/answer
-   {requestId, takenOver, note?}`. Server appends `screen-request-answer`
+   `screen-request` chat event `{requestId, prompt, reason?, hint?}`, sets the
+   session to `awaiting-input` and starts the Watch-mode auto-snapshots.
+2. The card (and side panel) show a **Watch** view — view-only, no input.
+3. **Take over** → `openScreenTakeover()`: opens ScreenModal with the request
+   context (fully interactive, the human drives the machine) and posts
+   `POST /__api/sessions/:id/screen-request/mode {requestId, mode:'control'}`
+   so the snapshot loop pauses — nothing is recorded while they type.
+4. Inside the modal:
+   - **Done** → `POST /__api/sessions/:id/screen-request/answer
+     {requestId, takenOver:true, note?}`.
+   - **Cancel** → same endpoint with `{takenOver:false, note:"cancelled by
+     user"}` (the card shows "Cancelled"). Also available on the card / panel
+     without opening the modal.
+   - **Close** (X / Esc / backdrop) → `closeScreenTakeover()`: the modal
+     closes, the request stays open (card still there, Take over reopens
+     it) and `mode:'watch'` is posted so snapshots resume.
+5. On answer the server appends `screen-request-answer`
    `{requestId, takenOver, note?}`, sets the session back to `working` and
-   resolves the tool call with `{ok:true, takenOver, note?}`.
-   `takenOver` is true only if the human went through Control. Timeouts and
-   session death resolve with `takenOver:false` and an explanatory note.
-5. Once answered, the card freezes to a static line and unmounts the viewer
+   resolves the tool call with `{ok:true, takenOver, note?}`. `takenOver` is
+   true only via the modal's Done. Timeouts and session death resolve with
+   `takenOver:false` and an explanatory note; either also closes a takeover
+   modal that was open for that request.
+6. Once answered, the card freezes to a static line and unmounts the viewer
    (no lingering VNC connections in history).
 
 **VNC password.** `config.screen.vncPassword` (or `ARIGAMI_VNC_PASSWORD`),
@@ -208,13 +228,15 @@ served by `GET /__api/sessions/:id/screens/<file>`.
 available (the tool returns that instead of throwing, so the machine-work
 skill can carry on without screenshots).
 
-**Automatic (Watch mode).** While a `request_screen` card is pending, the
-server snapshots every `screen.snapshotIntervalMs` (default 10s; first one
+**Automatic (Watch mode).** While a `request_screen` is pending, the server
+snapshots every `screen.snapshotIntervalMs` (default 10s; first one
 immediately), tagged `auto:true, requestId`, skipping frames identical to the
-previous one and downscaled 2× to save disk. The card reports **Take over** via
+previous one and downscaled 2× to save disk. Take over posts
 `POST /__api/sessions/:id/screen-request/mode {requestId, mode:'control'}` and
 the loop pauses — **nothing is recorded while the human drives** (privacy,
-same rule as Operator). Answer / timeout / session death stop the loop.
+same rule as Operator); closing the modal without Done posts `mode:'watch'`
+and it resumes. Answer / timeout / session death stop the loop. The chat shows
+no "recording" indicator: auto-snapshots render like any other screenshot.
 
 **UI.** `ScreenshotCard` renders one screenshot as thumbnail + caption + time
 (click → lightbox with ←/→). ChatPane folds a run of consecutive `screenshot`
