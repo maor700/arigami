@@ -412,12 +412,23 @@ function spawnSafe(id: string): void {
 // ticket path and the trigger/pending queue, so a triggered session is identical
 // to a hand-launched one. Mirrors the web buildTicketPayload default prompt.
 // Injected when a trigger runs in autonomous mode (unattended, e.g. on EC2).
-const AUTONOMY_DIRECTIVE =
+export const AUTONOMY_DIRECTIVE =
   'AUTONOMOUS MODE — you are running unattended; no human is watching this session. ' +
   'Do NOT ask the human any questions and do NOT pause for review or approval at any ' +
   'step. Make reasonable decisions yourself. If a workflow step says to request review ' +
   'or wait for the human, treat it as auto-approved and proceed all the way to ' +
   'completion. Never block waiting for input.';
+
+// Appended to every isolated cron run's first prompt (server/triggers.ts
+// fireCron) — the session only gets delivered/archived once it reports, so it
+// needs to know that channel exists (report_to_master isn't obviously the
+// right tool to call for a plain scheduled task otherwise).
+export const CRON_REPORT_DIRECTIVE =
+  'When you finish this scheduled task (or hit an error/blocker), call report_to_master with ' +
+  "state:'done'|'error'|'blocked' and a short summary — that is how the result gets delivered " +
+  '(push/WhatsApp/master session, per this schedule\'s config) and this session gets closed out. ' +
+  "If the result isn't worth notifying anyone about, prefix summary with \"[SILENT]\" — failures " +
+  'are always reported regardless.';
 
 // The first prompt for a session that's set to run a specific skill — the
 // user (or a saved trigger/preset) picked `skill` from GET /__api/skills.
@@ -508,6 +519,22 @@ export function startEmptySession(opts: {
     } catch {}
   }
   return { id: s.id };
+}
+
+// Shared idle/busy delivery semantics: never interrupts a running turn — idle
+// sessions get the message now, busy ones get it queued with auto-play so it
+// plays as soon as the current turn ends. Used by the task_session channel
+// (controller → child) and by cron's 'existing:<sessionId>' sessionMode.
+export function deliverToSession(id: string, text: string): { delivered: 'now' | 'queued' } {
+  const s = state.getSession(id);
+  if (!s) throw new Error(`unknown session: ${id}`);
+  if (s.claude?.state === 'idle') {
+    claude.sendMessage(id, text);
+    return { delivered: 'now' };
+  }
+  state.addPendingPrompt(id, text);
+  state.setPromptAutoPlay(id, true);
+  return { delivered: 'queued' };
 }
 
 const shq = (v: string | number): string =>
@@ -1336,35 +1363,65 @@ export async function handle(
     // ---- Triggers + the Pending-tasks queue (see docs/TRIGGERS.md) ----
     if (p === '/__api/triggers' && m === 'GET') {
       const t = await import('./triggers.js');
-      return json(res, t.listTriggers());
+      return json(
+        res,
+        t.listTriggers().map((x: any) => (x.type === 'cron' ? { ...x, nextRunAt: t.nextRunFor(x) } : x))
+      );
     }
     if (p === '/__api/triggers' && m === 'POST') {
       const t = await import('./triggers.js');
       const body = (await readBody(req)) as any;
-      const trigger = await t.createTrigger({
-        name: body.name,
-        filters: body.filters,
-        autonomous: body.autonomous,
-        injectPrompt: body.injectPrompt,
-        skill: body.skill,
-        model: body.model,
-        effort: body.effort,
-      });
-      return json(res, trigger, 201);
+      try {
+        if (body.type === 'cron') {
+          const trigger = await t.createCronTrigger({
+            name: body.name,
+            prompt: body.prompt,
+            schedule: body.schedule,
+            sessionMode: body.sessionMode,
+            deliver: body.deliver,
+            autonomous: body.autonomous,
+            createdBySessionId: body.createdBySessionId,
+          });
+          return json(res, trigger, 201);
+        }
+        const trigger = await t.createTrigger({
+          name: body.name,
+          filters: body.filters,
+          autonomous: body.autonomous,
+          injectPrompt: body.injectPrompt,
+          skill: body.skill,
+          model: body.model,
+          effort: body.effort,
+        });
+        return json(res, trigger, 201);
+      } catch (e) {
+        return badRequest(res, (e as Error).message);
+      }
     }
     if (p.startsWith('/__api/triggers/')) {
-      const tid = p.slice('/__api/triggers/'.length);
+      const rest = p.slice('/__api/triggers/'.length).split('/');
+      const tid = rest[0];
       const t = await import('./triggers.js');
+      // POST /__api/triggers/:id/run — fire a cron trigger now (UI "run now" / cronjob action:'run').
+      if (rest[1] === 'run' && m === 'POST') {
+        const r = await t.runCronNow(tid);
+        return r.ok ? json(res, r) : badRequest(res, r.reason || 'run failed');
+      }
+      if (rest.length > 1) return notFound(res);
       if (m === 'GET') {
         const trigger = t.listTriggers().find((x: any) => x.id === tid);
-        return trigger
-          ? json(res, { ...trigger, log: t.getTriggerLog(tid) })
-          : notFound(res, `no such trigger: ${tid}`);
+        if (!trigger) return notFound(res, `no such trigger: ${tid}`);
+        const nextRunAt = trigger.type === 'cron' ? t.nextRunFor(trigger) : undefined;
+        return json(res, { ...trigger, ...(nextRunAt !== undefined ? { nextRunAt } : {}), log: t.getTriggerLog(tid) });
       }
       if (m === 'PATCH') {
         const body = (await readBody(req)) as any;
-        const updated = t.patchTrigger(tid, body);
-        return updated ? json(res, updated) : notFound(res, `no such trigger: ${tid}`);
+        try {
+          const updated = t.patchTrigger(tid, body);
+          return updated ? json(res, updated) : notFound(res, `no such trigger: ${tid}`);
+        } catch (e) {
+          return badRequest(res, (e as Error).message);
+        }
       }
       if (m === 'DELETE') return json(res, { ok: t.deleteTrigger(tid) });
       return notFound(res);
@@ -2508,6 +2565,15 @@ export async function handle(
       if (result.state === 'blocked')
         pushIntervention(id, 'blocked', result.note || result.summary || 'worker is blocked', 'blocked');
       triggerMemoryEpisode(id, 'report');
+      // An isolated cron run (M2): deliver via its own push/whatsapp/master
+      // config (not the dispatch master-wake below) and auto-archive once
+      // terminal — the session was spun up fresh for this one run.
+      if (s.metadata?.cronTriggerId) {
+        const triggers = await import('./triggers.js');
+        const { archive } = await triggers.onCronReport(id, result);
+        if (archive) state.patchSession(id, { archived: true });
+        return json(res, { ok: true, cron: true, archived: archive });
+      }
       if (!master)
         return json(res, {
           ok: true,

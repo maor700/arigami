@@ -1525,13 +1525,293 @@ function AutonomyWarningModal({ onConfirm, onCancel }) {
   );
 }
 
+const CRON_RUN_COLOR = { started: '#9aa0a6', done: '#7ee787', blocked: '#e3b341', error: '#ff7b72', milestone: '#9aa0a6', held: '#e3b341' };
+
+function scheduleSummary(schedule, t) {
+  if (!schedule) return '—';
+  if (schedule.kind === 'cron') return `${t('launcher.cron.kindCron')} "${schedule.value}"`;
+  if (schedule.kind === 'interval') return `${t('launcher.cron.kindInterval')} ${schedule.value}`;
+  if (schedule.kind === 'at') return `${t('launcher.cron.kindAt')} ${new Date(schedule.value).toLocaleString()}`;
+  return schedule.value;
+}
+
+// Minimal M2 UI: standing cron jobs (durable, agent-callable — see docs/TRIGGERS.md
+// "Cron"), sharing the trigger registry + the same activity-log modal (TriggerLogModal)
+// used for Linear-filter triggers' history.
+function CronSubPanel() {
+  const t = useT();
+  const { triggers } = useStore();
+  const cronJobs = triggers.filter((x) => x.type === 'cron');
+  const [logId, setLogId] = useState(null);
+  const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [scheduleKind, setScheduleKind] = useState('cron');
+  const [scheduleValue, setScheduleValue] = useState('0 9 * * *');
+  const [sessionMode, setSessionMode] = useState('isolated');
+  const [targetSessionId, setTargetSessionId] = useState('');
+  const [deliverPush, setDeliverPush] = useState(true);
+  const [deliverMaster, setDeliverMaster] = useState('');
+  const [deliverWhatsapp, setDeliverWhatsapp] = useState('');
+  const [autonomous, setAutonomous] = useState(false);
+  const [warnOpen, setWarnOpen] = useState(false);
+  const prefs = usePrefs();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const onToggleAutonomous = (checked) => {
+    if (!checked) return setAutonomous(false);
+    if (prefs.autonomyWarningDismissed) return setAutonomous(true);
+    setWarnOpen(true);
+  };
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/triggers', {
+        type: 'cron',
+        name: name.trim() || undefined,
+        prompt,
+        schedule: { kind: scheduleKind, value: scheduleValue.trim() },
+        sessionMode: sessionMode === 'existing' ? `existing:${targetSessionId.trim()}` : 'isolated',
+        deliver: { push: deliverPush, master: deliverMaster.trim() || undefined, whatsapp: deliverWhatsapp.trim() || undefined },
+        autonomous,
+      });
+      setName('');
+      setPrompt('');
+      setTargetSessionId('');
+      setDeliverMaster('');
+      setDeliverWhatsapp('');
+      setAutonomous(false);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="border-b border-hair px-[18px] pt-4 pb-3">
+        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+          {t('launcher.cron.newJob')}
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t('launcher.cron.namePlaceholder')}
+          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+        />
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder={t('launcher.cron.promptPlaceholder')}
+          rows={2}
+          className="mb-2 w-full resize-y rounded-[9px] border border-border bg-panel px-3 py-2 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+        />
+        <div className="mb-2 flex items-center gap-2">
+          <select
+            value={scheduleKind}
+            onChange={(e) => setScheduleKind(e.target.value)}
+            className="rounded-[8px] border border-border bg-panel px-2 py-1.5 text-[11.5px] outline-none focus:border-ink"
+          >
+            <option value="cron">{t('launcher.cron.kindCron')}</option>
+            <option value="interval">{t('launcher.cron.kindInterval')}</option>
+            <option value="at">{t('launcher.cron.kindAt')}</option>
+          </select>
+          <input
+            value={scheduleValue}
+            onChange={(e) => setScheduleValue(e.target.value)}
+            placeholder={
+              scheduleKind === 'cron' ? '0 9 * * 1-5' : scheduleKind === 'interval' ? '30m' : '2026-09-01T09:00:00'
+            }
+            className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+          />
+        </div>
+        <div className="mb-2 flex items-center gap-2">
+          <select
+            value={sessionMode}
+            onChange={(e) => setSessionMode(e.target.value)}
+            className="rounded-[8px] border border-border bg-panel px-2 py-1.5 text-[11.5px] outline-none focus:border-ink"
+          >
+            <option value="isolated">{t('launcher.cron.modeIsolated')}</option>
+            <option value="existing">{t('launcher.cron.modeExisting')}</option>
+          </select>
+          {sessionMode === 'existing' && (
+            <input
+              value={targetSessionId}
+              onChange={(e) => setTargetSessionId(e.target.value)}
+              placeholder={t('launcher.cron.targetSessionPlaceholder')}
+              className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
+            />
+          )}
+        </div>
+        <div className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border p-2">
+          <span className="font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('launcher.cron.deliver')}</span>
+          <label className="flex cursor-pointer items-center gap-2 text-[11.5px]">
+            <input type="checkbox" checked={deliverPush} onChange={(e) => setDeliverPush(e.target.checked)} className="cursor-pointer" />
+            {t('launcher.cron.deliverPush')}
+          </label>
+          <input
+            value={deliverMaster}
+            onChange={(e) => setDeliverMaster(e.target.value)}
+            placeholder={t('launcher.cron.deliverMasterPlaceholder')}
+            className="w-full rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
+          />
+          <input
+            value={deliverWhatsapp}
+            onChange={(e) => setDeliverWhatsapp(e.target.value)}
+            placeholder={t('launcher.cron.deliverWhatsappPlaceholder')}
+            title={t('launcher.cron.deliverWhatsappTip')}
+            className="w-full rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
+          />
+        </div>
+        <label className="mb-2 flex cursor-pointer items-start gap-2 text-[11.5px]">
+          <input type="checkbox" checked={autonomous} onChange={(e) => onToggleAutonomous(e.target.checked)} className="mt-0.5 cursor-pointer" />
+          <span className={autonomous ? 'text-danger' : 'text-fgdim'}>
+            {autonomous && (
+              <span className="mr-1 cursor-help" title={t('launcher.trigger.autonomousTip')}>
+                <Icon icon={faTriangleExclamation} />
+              </span>
+            )}
+            {t('launcher.trigger.autonomousLabel')}
+          </span>
+        </label>
+        {error && <div className="mb-1 text-[11px] text-danger">{error}</div>}
+        <div className="flex justify-end">
+          <YellowButton
+            className="shrink-0 rounded-[9px] px-3.5 py-1.5 text-[11.5px]"
+            disabled={busy || !prompt.trim() || !scheduleValue.trim() || (sessionMode === 'existing' && !targetSessionId.trim())}
+            onClick={create}
+          >
+            {busy ? t('launcher.plan.creating') : t('launcher.cron.createJob')}
+          </YellowButton>
+        </div>
+      </div>
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
+        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+          {t('launcher.cron.listHeading', { n: cronJobs.length })}
+        </div>
+        {cronJobs.length === 0 && <div className="py-4 text-xs text-fgdim">{t('launcher.cron.emptyList')}</div>}
+        {cronJobs.map((cj) => {
+          const lastRunState = cj.runs?.length ? cj.runs[cj.runs.length - 1].state : null;
+          return (
+            <div key={cj.id} className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: cj.enabled ? '#3C9A4E' : '#d2d2d2' }}
+                  title={cj.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}
+                />
+                {cj.autonomous && (
+                  <span className="shrink-0 cursor-help text-[13px]" title={t('launcher.trigger.autonomousBadgeTip')}>
+                    <Icon icon={faTriangleExclamation} />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12.5px] font-bold">{cj.name}</span>
+                  <span className="block truncate text-[10.5px] text-fgdim">{scheduleSummary(cj.schedule, t)}</span>
+                </span>
+                {lastRunState && (
+                  <span
+                    className="shrink-0 rounded-full px-1.5 py-[1px] text-[9.5px] font-bold text-white"
+                    style={{ background: CRON_RUN_COLOR[lastRunState] || '#9aa0a6' }}
+                  >
+                    {lastRunState}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-fgdim">
+                <span>{t('launcher.cron.metaLastRun')} {fmtAgo(cj.lastRun)}</span>
+                <span>·</span>
+                <span>{t('launcher.cron.metaNextRun')} {cj.nextRunAt ? new Date(cj.nextRunAt).toLocaleString() : '—'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => api.post(`/triggers/${cj.id}/run`).catch(() => {})}
+                  title={t('launcher.cron.runNowTitle')}
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                >
+                  {t('launcher.cron.runNow')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogId(cj.id)}
+                  title={t('launcher.trigger.openLog')}
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                >
+                  <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }).catch(() => {})}
+                  title={cj.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                >
+                  {cj.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => api.del(`/triggers/${cj.id}`).catch(() => {})}
+                  title={t('launcher.trigger.deleteTitle')}
+                  className="ml-auto shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
+                >
+                  <Icon icon={faXmark} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {logId && <TriggerLogModal triggerId={logId} onClose={() => setLogId(null)} />}
+      {warnOpen && (
+        <AutonomyWarningModal
+          onCancel={() => setWarnOpen(false)}
+          onConfirm={(dontShow) => {
+            if (dontShow) setPrefs({ autonomyWarningDismissed: true });
+            setAutonomous(true);
+            setWarnOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 // The "From trigger" tab: a new-trigger form (reusing FilterBar) + the list of
 // standing triggers. Creating a trigger arms-and-primes it server-side; it then
 // drops matching tickets into the Pending queue. No session is born here.
+// Sub-mode switch shared by both trigger kinds — Linear-filter (M0) and cron
+// (M2, docs/TRIGGERS.md "Cron"). Same registry + activity-log modal, different forms.
+function TriggerKindSwitch({ subMode, onChange }) {
+  const t = useT();
+  return (
+    <div className="flex gap-1.5 border-b border-hair px-[18px] pt-3 pb-2">
+      {[
+        ['linear', 'launcher.cron.subTabLinear'],
+        ['cron', 'launcher.cron.subTabCron'],
+      ].map(([mode, key]) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => onChange(mode)}
+          className={`cursor-pointer rounded-[7px] px-2.5 py-1 text-[11px] font-bold ${
+            subMode === mode ? 'bg-brand text-ink' : 'bg-panel text-fgdim hover:text-fg'
+          }`}
+        >
+          {t(key)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TriggerTab() {
   const t = useT();
-  const { triggers } = useStore();
+  const { triggers: allTriggers } = useStore();
+  const triggers = allTriggers.filter((x) => x.type !== 'cron'); // cron jobs render in CronSubPanel
   const prefs = usePrefs();
+  const [subMode, setSubMode] = useState('linear');
   const [logId, setLogId] = useState(null);
   const [autonomous, setAutonomous] = useState(false);
   const [injectPrompt, setInjectPrompt] = useState('');
@@ -1586,8 +1866,18 @@ function TriggerTab() {
     setBusy(false);
   };
 
+  if (subMode === 'cron') {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TriggerKindSwitch subMode={subMode} onChange={setSubMode} />
+        <CronSubPanel />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <TriggerKindSwitch subMode={subMode} onChange={setSubMode} />
       <div className="border-b border-hair px-[18px] pt-4 pb-3">
         <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
           {t('launcher.trigger.newTrigger')}

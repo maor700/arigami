@@ -134,6 +134,81 @@ const TOOLS = [
       }),
   },
   {
+    name: 'cronjob',
+    description:
+      'Schedule a durable, host-owned job (survives restart — unlike Claude Code\'s own CronCreate, which is ' +
+      'session-local and lost on close). action "create": schedule_kind "cron" (5-field expr, e.g. "0 9 * * 1-5"), ' +
+      '"interval" (e.g. "30m"/"2h"/"1d", repeats from the last run), or "at" (ISO timestamp, fires once). ' +
+      'session_mode "isolated" (default) spawns a fresh session per run with `prompt` as its first message + the host\'s ' +
+      'memory bootstrap, and closes/archives it once it calls report_to_master — set autonomous:true so it runs ' +
+      'unattended (bypassPermissions, no pausing for questions/review). session_mode "existing" delivers the prompt into ' +
+      'target_session_id instead (like task_session: now if idle, queued if busy) — nothing is auto-archived for that mode. ' +
+      'deliver controls what happens with the result of an isolated run: deliver_push (default true) sends a web-push to ' +
+      'the human\'s phone; deliver_master wakes another session with a thin pointer (like report_to_master); ' +
+      'deliver_whatsapp is accepted but not yet wired to an outbound channel in this version — do not rely on it. ' +
+      'A run\'s summary/note starting with "[SILENT]" suppresses a SUCCESS delivery only — failures always deliver. ' +
+      'GUARD: a session that was itself spawned by a cron job cannot create new ones (loop protection) — action ' +
+      '"create" from such a session fails. Other actions: "list" (your jobs + recent runs), "pause"/"resume" (toggle ' +
+      '`enabled`, id required), "run" (fire now, bypassing the schedule and the shared maxConcurrent gate, id required), ' +
+      '"remove" (id required).',
+    inputSchema: obj({
+      action: { type: 'string', enum: ['create', 'list', 'pause', 'resume', 'run', 'remove'] },
+      id: { type: 'string', description: 'Cron job id — required for pause/resume/run/remove' },
+      name: { type: 'string', description: 'create: short label shown in the Triggers UI' },
+      prompt: { type: 'string', description: 'create: the message the job sends (first message for isolated, task text for existing)' },
+      schedule_kind: { type: 'string', enum: ['cron', 'interval', 'at'], description: 'create: required' },
+      schedule_value: { type: 'string', description: 'create: e.g. "0 9 * * 1-5" (cron), "30m" (interval), or an ISO timestamp (at). Required.' },
+      session_mode: { type: 'string', enum: ['isolated', 'existing'], description: 'create: default "isolated"' },
+      target_session_id: { type: 'string', description: 'create: required when session_mode is "existing"' },
+      deliver_push: { type: 'boolean', description: 'create: default true' },
+      deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
+      deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
+      autonomous: { type: 'boolean', description: 'create: isolated runs only — bypassPermissions + no-questions directive' },
+      ...SID_PROP,
+    }, ['action']),
+    run: async (a) => {
+      if (a.action === 'create') {
+        if (!a.prompt) throw new Error('prompt is required');
+        if (!a.schedule_kind || !a.schedule_value) throw new Error('schedule_kind and schedule_value are required');
+        const sessionMode = a.session_mode === 'existing' ? `existing:${a.target_session_id || ''}` : 'isolated';
+        if (sessionMode === 'existing:') throw new Error('target_session_id is required when session_mode is "existing"');
+        return api('POST', '/__api/triggers', {
+          type: 'cron',
+          name: a.name,
+          prompt: a.prompt,
+          schedule: { kind: a.schedule_kind, value: a.schedule_value },
+          sessionMode,
+          deliver: { push: a.deliver_push, whatsapp: a.deliver_whatsapp, master: a.deliver_master },
+          autonomous: a.autonomous,
+          createdBySessionId: sid(a),
+        });
+      }
+      if (a.action === 'list') {
+        const all = await api('GET', '/__api/triggers');
+        return all
+          .filter((t) => t.type === 'cron')
+          .map((t) => ({
+            id: t.id, name: t.name, enabled: t.enabled, schedule: t.schedule, prompt: t.prompt,
+            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous,
+            lastRun: t.lastRun, nextRunAt: t.nextRunAt, recentRuns: (t.runs || []).slice(-5),
+          }));
+      }
+      if (a.action === 'pause' || a.action === 'resume') {
+        if (!a.id) throw new Error('id is required');
+        return api('PATCH', `/__api/triggers/${a.id}`, { enabled: a.action === 'resume' });
+      }
+      if (a.action === 'run') {
+        if (!a.id) throw new Error('id is required');
+        return api('POST', `/__api/triggers/${a.id}/run`);
+      }
+      if (a.action === 'remove') {
+        if (!a.id) throw new Error('id is required');
+        return api('DELETE', `/__api/triggers/${a.id}`);
+      }
+      throw new Error(`unknown action: ${a.action}`);
+    },
+  },
+  {
     name: 'list_sessions',
     description: 'List host sessions (summaries).',
     inputSchema: obj({}),

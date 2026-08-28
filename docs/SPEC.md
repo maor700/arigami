@@ -410,16 +410,21 @@ session from an external event:
 | `request_screen` | `POST /__mcp/screen-request` → `handleScreenRequest` | `<session title> — <reason label>` (e.g. "login needed", "2FA code needed") | `prompt` (+ `hint` on a new line) |
 | `request_action` / `request_review` | `POST /__api/sessions/:id/action` | `<session title> — waiting for your answer` | `prompt` |
 | `report_to_master` with `state:'blocked'` | `POST /__api/sessions/:id/report` | `<session title> — blocked` | `note` or `summary` |
+| a cron trigger's isolated run reports (M2, `deliver.push`) | `POST /__api/sessions/:id/report` → `triggers.onCronReport` → `deliverCronResult` | `<cron job name>` (+ ` — <state>` on blocked/error) | the run's `summary`/`note`, `[SILENT]` prefix stripped |
 
-Rules (`pushIntervention` in `server/api.ts`):
+Rules (`pushIntervention` in `server/api.ts`; cron's own `deliverCronResult` in
+`server/triggers.ts` follows the same shape but isn't gated by the 15s cooldown
+— a cron job fires far less often than a stuck agent retries):
 - `tag` = `<kind>:<sessionId>` — the OS collapses repeats for the same session
   into one notification; `url` deep-links to the session and the service
-  worker's `notificationclick` navigates there.
+  worker's `notificationclick` navigates there. Cron's tag is `cron:<jobId>`.
 - Per session + kind cooldown of 15 s: a burst (e.g. an agent retrying
   `request_action`) does not buzz the phone repeatedly.
 - Best-effort, fire-and-forget: no subscriptions or a push failure never fails
   the underlying request. `title` ≤ 80 chars, `body` ≤ 200.
 - Status changes (`set_status`, `set_progress`, milestones) never push.
+- Cron's SUCCESS push is suppressed when the reporting run's `summary`/`note`
+  starts with `[SILENT]` — failures (`error`/`blocked`) always push regardless.
 
 Agent-side convention for browser / desktop work — opening line, `capture_screen`
 after each significant step, `request_screen` with `reason`+`hint` when blocked,

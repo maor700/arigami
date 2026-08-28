@@ -140,12 +140,159 @@ and `reconciled` lines. `GET /__api/triggers/:id` returns the trigger + `log`; t
 From-trigger tab's **⚡ logs** button opens a service modal that tails it every 1.5s
 (mirrors the listener details modal).
 
+## Cron (M2 — durable, agent-callable schedules)
+
+A second trigger kind, `type:'cron'`, sharing the same registry/persistence
+(`~/.arigami/triggers.json`) and poll loop (60s) as `linear-filter` — see
+`server/triggers.ts`'s `CronTrigger` interface. Unlike Claude Code's own
+`CronCreate` (session-local, in-memory, gone when the session closes, expires
+after 7 days), a cron trigger is host-owned and durable, and — the actual gap
+this closes — **a session can create one itself** via the `cronjob` MCP tool,
+not only a human through the UI.
+
+```js
+cronTrigger = {
+  id: 'trig_<nano>',
+  type: 'cron',
+  name: 'Nightly summary',
+  enabled: true,
+  schedule: { kind: 'cron' | 'interval' | 'at', value: '0 22 * * *' },
+  prompt: 'Summarize today and write it to the journal.',
+  sessionMode: 'isolated' | 'existing:<sessionId>',
+  deliver: { push: true, whatsapp: '<jid>', master: '<sessionId>' },
+  autonomous: true,
+  createdAt, createdBySessionId,
+  lastRun: 1735689600000,          // ms epoch, null until first fire
+  lastError: null,
+  runs: [{ at, sessionId, state, summary }],   // bounded to the last 20
+}
+```
+
+### Schedule (`server/cron-schedule.ts` — pure, unit-tested, no dependency)
+
+- `'cron'` — a standard 5-field expression (`minute hour dom month dow`),
+  minute resolution, evaluated in server-local time. Supports `*`, `*/n`,
+  `a-b`, `a-b/n`, comma lists, and the standard dom/dow OR-rule (when BOTH are
+  restricted, a day matches if either matches); `7` is accepted as a Sunday
+  alias for `0`. No external cron library — a small bounded forward search
+  (jumps to the next month/day/hour/minute boundary, not a minute-by-minute
+  crawl) computes the next run.
+- `'interval'` — a duration (`"30s"`/`"5m"`/`"2h"`/`"1d"`, or a plain
+  millisecond count). Repeats from `lastRun` (or `createdAt` if it has never
+  fired) + the interval — so the first fire is `createdAt + interval`, not
+  immediate.
+- `'at'` — an ISO timestamp. Fires once; `computeNextRun` returns `null` once
+  `lastRun` is set, so the poll loop never refires it.
+
+A bad expression/duration/timestamp throws at **create or patch time**
+(`validateSchedule`) — never discovered later as "the poll loop silently never
+fires this job."
+
+### Running
+
+- `sessionMode: 'isolated'` — `fireCron` spawns a fresh session
+  (`api.startEmptySession`) with `prompt` as its first message, prefixed with
+  the host's memory bootstrap (M1's `getMemoryBootstrap()`, soft-imported —
+  falls back to nothing if M1 hasn't landed on this branch) and suffixed with
+  a directive telling the agent to call `report_to_master` when it finishes
+  (that's the only way delivery + auto-archive fire). `autonomous: true` also
+  appends the same `AUTONOMY_DIRECTIVE` used by autonomous Linear triggers and
+  forces `bypassPermissions`. The session is tagged
+  `metadata.{fromCronTrigger, cronTriggerId, cronTriggerName, cronDeliver}` —
+  `fromCronTrigger` is both the accounting tag (see maxConcurrent below) and
+  the create-guard flag (see Guard below). On a terminal
+  `report_to_master(state:'done'|'error')`, `server/api.ts`'s `/report`
+  handler calls `triggers.onCronReport()` (records the run, delivers the
+  result) and archives the session. `state:'blocked'` delivers but does NOT
+  archive — a human still needs to look at it (same `pushIntervention`
+  'blocked' push as any worker uses).
+- `sessionMode: 'existing:<sessionId>'` — delivers `prompt` into that session
+  through the exact same idle/busy channel `task_session` uses (idle → now,
+  busy → the pending-prompt queue with autoplay). No result-delivery/archive
+  step applies here — the target session isn't cron's to close.
+- **maxConcurrent**: isolated runs are tagged `metadata.fromQueue = true`, so
+  they're counted by the SAME `countQueueSessions()` the Pending queue's
+  `maxConcurrent` already gates — no parallel accounting mechanism. A fire
+  that would exceed the budget is held (logged, retried next poll); manual
+  "run now" (`runCronNow`, UI button / `cronjob action:'run'`) bypasses the
+  gate — it's an explicit one-off action.
+- **Double-fire lock**: an in-memory `Set` (`cronFiring`) guards each trigger
+  id for the duration of its own fire — not persisted (doesn't need to be; a
+  restart can't have two pollers running at once).
+
+### Delivery (`deliverCronResult`, `server/triggers.ts`)
+
+Reuses existing channels — no new transport:
+- `deliver.push` (default **true** — decision) — a 4th row in the push table,
+  `docs/SPEC.md` "Human intervention → push notification". Title = job name
+  (+ ` — <state>` on error/blocked); body = the run's `summary`/`note`.
+- `deliver.master` — wakes that session id with a thin pointer via
+  `listeners.enqueueWake`, same mechanism `report_to_master` uses for a
+  dispatch parent — but cron doesn't set `metadata.master` on the spawned
+  session (which would piggyback on the dispatch-flavored generic pointer
+  wording); it calls `enqueueWake` directly so `[SILENT]` can gate it too.
+- `deliver.whatsapp` — **schema-only in v1, does not send.** The live paired
+  WhatsApp bridge (`server/whatsapp-bridge.ts`) only monitors a status file
+  written by an external process (`whatsapp-mcp`, outside this repo); it
+  exposes no send channel, and starting a second Baileys connection to send
+  one message would replace (log out) the live one —
+  `connectionReplaced` in that bridge's exit handler is exactly this failure
+  mode. A safe implementation needs an outbox the live bridge process drains
+  with its own connection, which lives in that external lib, not here. Until
+  that's built, configuring `deliver.whatsapp` logs a `tlog` warning and is a
+  no-op — don't rely on it.
+- **`[SILENT]`** — a run's `summary`/`note` starting with `[SILENT]`
+  suppresses a SUCCESS delivery only (push + master); the prefix is stripped
+  before display. Failures (`error`/`blocked`) always deliver regardless.
+
+### Guard against runaway scheduling loops
+
+A session spawned BY a cron fire (`metadata.fromCronTrigger` set) cannot
+create a new cron trigger — `createCronTrigger` throws if
+`createdBySessionId` resolves to such a session. Lesson from OpenClaw
+issue #21775 / Hermes's `allow_agent_scheduling:false`: nothing else stops a
+job whose own prompt says "schedule another job like this one" from spawning
+an unbounded tree. Only **create** is guarded — pause/resume/run/remove from
+a cron-spawned session are fine (they don't grow the tree).
+
+### `cronjob` MCP tool (`mcp/host-mcp.js`)
+
+`cronjob({action: create|list|pause|resume|run|remove, ...})` — thin fetches
+to the REST endpoints below, so a session (a PM, a brain chat — M4) can
+schedule itself. `action:'create'` passes the caller's own session id as
+`createdBySessionId` for the guard check above.
+
+### REST
+
+```
+GET    /__api/triggers            → both kinds; cron entries carry a live-computed `nextRunAt`
+POST   /__api/triggers            {type:'cron', name, prompt, schedule, sessionMode, deliver, autonomous, createdBySessionId?}
+GET    /__api/triggers/:id        → + `log` (tlog) + `nextRunAt` for cron
+PATCH  /__api/triggers/:id        {name?|enabled?|prompt?|schedule?|sessionMode?|deliver?|autonomous?} — schedule re-validates, 400 on a bad expression
+DELETE /__api/triggers/:id
+POST   /__api/triggers/:id/run    → fire now (bypasses schedule + maxConcurrent)
+```
+
+### UI
+
+A sub-tab switch (`TriggerKindSwitch`) inside the existing "From trigger" tab
+— "Linear filter" (unchanged) / "Cron" (`CronSubPanel`, `Launcher.jsx`):
+new-job form (name, prompt, schedule kind+value, session mode, deliver,
+autonomous) + a list (enabled dot, schedule summary, last/next run, Run now,
+Logs — **reuses** `TriggerLogModal`'s tlog activity view for run history
+rather than a separate `runs[]` UI, Pause/Resume, Delete).
+
 ## Touch list
 
 New:
-- `server/triggers.ts` — registry (load/save/CRUD) + poll runner.
+- `server/triggers.ts` — registry (load/save/CRUD) + poll runner. **M2:**
+  `CronTrigger` type, `createCronTrigger`/`patchTrigger`/`runCronNow`/
+  `onCronReport`/`nextRunFor`, the guard, `deliverCronResult`.
+- `server/cron-schedule.ts` (M2) — pure schedule math (cron/interval/at →
+  next run), no dependency. Unit-tested in `test/cron-schedule.test.js`.
 - `web/src/components/Triggers.jsx` (or a section in `Launcher.jsx`) — the third
-  tab: trigger list + new-trigger form reusing `FilterBar`.
+  tab: trigger list + new-trigger form reusing `FilterBar`. **M2:** the Cron
+  sub-tab (`TriggerKindSwitch`, `CronSubPanel`).
 - Pending-queue state + `Rail.jsx` "Pending tasks" section + `/__ticket` preview
   pane mode in `App.jsx`.
 
@@ -153,12 +300,21 @@ Changed:
 - `server/state.ts` — pending queue + autoplay/`maxConcurrent` settings +
   `sortOrder` on sessions; persistence.
 - `server/api.ts` — `/__api/triggers*`, `/__api/pending*`, autoplay settings,
-  `labels[]`+`labelOp` on `/__api/linear/tickets`.
+  `labels[]`+`labelOp` on `/__api/linear/tickets`. **M2:**
+  `POST /__api/triggers` dispatches on `type`; `POST /__api/triggers/:id/run`;
+  the `/report` handler detects `metadata.cronTriggerId` and delegates to
+  `triggers.onCronReport`; `AUTONOMY_DIRECTIVE`/`CRON_REPORT_DIRECTIVE`
+  exported; `deliverToSession` helper (shared idle/busy delivery semantics).
 - `server/linear-mcp.ts` — `listIssuesByFacets` (multi-label fan-out/merge).
+- `server/push.ts` — reused as-is; cron is a 4th row in the push table
+  (`docs/SPEC.md`), no code change.
+- `mcp/host-mcp.js` — **M2:** the `cronjob` tool.
 - `web/src/components/Launcher.jsx` — third tab + multi-select `FilterBar`.
+  **M2:** the Cron sub-tab.
 - `web/src/lib/prefs.js` — `sanitizeFilters`/`EMPTY_TICKET_FILTERS` + preset
   migration for `labels[]`/`labelOp`.
 
 Reused as-is: `POST /sessions`, create-from-ticket, the `/__ticket/<id>` page,
-the Linear OAuth client.
+the Linear OAuth client, `report_to_master` (cron's own completion channel),
+`push.ts`, `listeners.enqueueWake`.
 ```
