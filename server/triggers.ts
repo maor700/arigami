@@ -588,23 +588,6 @@ export function deleteTrigger(id: string): boolean {
 // ---- cron trigger CRUD ------------------------------------------------------
 const MAX_CRON_RUNS = 20;
 
-// Agreed interface with M1 (server/memory.ts, built in parallel): an isolated
-// cron run gets the same USER.md/MEMORY.md snapshot a hand-launched session
-// would. Dynamic import + a soft fallback so this branch works standalone
-// whether or not M1 has landed yet.
-async function memoryBootstrap(): Promise<string> {
-  try {
-    // @ts-ignore — './memory.js' is M1's module (built in parallel); it may not
-    // exist yet on this branch. Soft dependency: missing module → caught below.
-    const memory = await import('./memory.js');
-    if (typeof (memory as any).getMemoryBootstrap === 'function') {
-      const snippet = await (memory as any).getMemoryBootstrap();
-      return snippet ? `\n\n${snippet}` : '';
-    }
-  } catch {}
-  return '';
-}
-
 function recordCronRun(t: CronTrigger, run: CronRun): void {
   t.runs.push(run);
   if (t.runs.length > MAX_CRON_RUNS) t.runs.splice(0, t.runs.length - MAX_CRON_RUNS);
@@ -675,7 +658,12 @@ async function fireCron(
     const api = await import('./api.js');
 
     if (t.sessionMode === 'isolated') {
-      let prompt = `${t.prompt}${await memoryBootstrap()}\n\n${api.CRON_REPORT_DIRECTIVE}`;
+      // No explicit memory-bootstrap call here: claude.js's writeUserMessage
+      // already prepends the USER.md/MEMORY.md snapshot to a fresh (non-resumed)
+      // session's first message unconditionally (M1.3) — startEmptySession below
+      // routes through claude.sendMessage like any other new session, so this
+      // isolated run gets it for free. Doing it again here would double-inject.
+      let prompt = `${t.prompt}\n\n${api.CRON_REPORT_DIRECTIVE}`;
       if (t.autonomous) prompt += `\n\n${api.AUTONOMY_DIRECTIVE}`;
       const { id: sessionId } = api.startEmptySession({
         title: t.name,
