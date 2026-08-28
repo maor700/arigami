@@ -191,11 +191,14 @@ fires this job."
 ### Running
 
 - `sessionMode: 'isolated'` — `fireCron` spawns a fresh session
-  (`api.startEmptySession`) with `prompt` as its first message, prefixed with
-  the host's memory bootstrap (M1's `getMemoryBootstrap()`, soft-imported —
-  falls back to nothing if M1 hasn't landed on this branch) and suffixed with
+  (`api.startEmptySession`) with `prompt` as its first message, suffixed with
   a directive telling the agent to call `report_to_master` when it finishes
-  (that's the only way delivery + auto-archive fire). `autonomous: true` also
+  (that's the only way delivery + auto-archive fire). No explicit memory-
+  bootstrap call is needed here: `claude.js`'s `writeUserMessage` already
+  prepends the USER.md/MEMORY.md snapshot to any fresh (non-resumed)
+  session's first message unconditionally (M1.3) — `startEmptySession` routes
+  through the same `claude.sendMessage` as every other new session, so an
+  isolated cron run gets it for free. `autonomous: true` also
   appends the same `AUTONOMY_DIRECTIVE` used by autonomous Linear triggers and
   forces `bypassPermissions`. The session is tagged
   `metadata.{fromCronTrigger, cronTriggerId, cronTriggerName, cronDeliver}` —
