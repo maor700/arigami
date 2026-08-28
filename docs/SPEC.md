@@ -178,8 +178,20 @@ Two layers, same shape as the Hermes/OpenClaw comparison in
   prompt-cache prefix stable. A `--resume`d proc already has it in history.
 - **Unbounded on-demand search** — `journal/YYYY-MM-DD.md` (append-only,
   what happened today) and `episodes/*.md` (session summaries), all indexed
-  with FTS5 (`bun:sqlite`, file-granularity rows). Zero token cost until
-  `memory_search` is actually called; snippets capped ~700 chars.
+  with FTS5 (`bun:sqlite`, file-granularity rows, `tokenize='trigram'`).
+  Trigram (substring, not whole-token) indexing is deliberate: Hebrew glues
+  single-letter prefixes (ה/ו/ב/ל/מ/ש/כ) directly onto the next word with no
+  boundary, so the FTS5 default (`unicode61`, whole-token) tokenizes "הסודי"
+  as one token a query for "סודי" alone can never match — trigram matches it
+  as a substring like any other language, no hand-maintained prefix-letter
+  list needed (M1b). A DB created before this fix self-heals in place (drop +
+  full re-scan from disk) the first time `memory.ts`'s `db()` runs after
+  upgrade — detected via `sqlite_master`, not a separate migration step.
+  Ranking: FTS5 `rank` (bm25) first, then a hit containing the whole query as
+  one contiguous run is promoted above hits that only satisfy each term
+  scattered separately. Zero token cost until `memory_search` is actually
+  called; snippets capped ~700 chars. Trade-off: queries under 3 characters
+  can't match anything (inherent to trigram).
 
 **Gate** (spec "סגור-תחילה" — start closed): every write to
 USER.md/MEMORY.md/journal is (1) `sanitize()`d against credential-shaped

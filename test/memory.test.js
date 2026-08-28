@@ -169,6 +169,93 @@ test('FTS5 search finds written content by keyword, scoped and ranked', () => {
   expect(o.none).toEqual([]);
 });
 
+// M1b: Hebrew attaches single-letter prefixes (ה/ו/ב/ל/מ/ש/כ) directly onto
+// the next word with no boundary — unicode61 (whole-token) FTS tokenized
+// "הסודי" as ONE token, so a query for "סודי" alone never matched it even
+// though "הסודי" (the full prefixed word) and English terms did. trigram
+// (substring) indexing fixes this without a hand-maintained prefix-letter list.
+test('Hebrew: a bare word matches inside its prefixed form, and multi-word queries find scattered prefixed terms', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const m=await import('./server/memory.ts');" +
+      "m.writeMemory({target:'memory',action:'add',content:'הקוד הסודי של דנה הוא ARIGAMI'});" +
+      "const bareWord=m.searchMemory({query:'סודי'});" + // was the reported bug: 0 hits before this fix
+      "const prefixedWord=m.searchMemory({query:'הסודי'});" + // already worked before (exact token)
+      "const english=m.searchMemory({query:'ARIGAMI'});" + // already worked before
+      "const twoWord=m.searchMemory({query:'קוד סודי'});" + // the exact repro from the bug report
+      "const name=m.searchMemory({query:'דנה'});" +
+      "const miss=m.searchMemory({query:'זיכרון'});" +
+      'emit({bareWord:bareWord.length,prefixedWord:prefixedWord.length,english:english.length,twoWord:twoWord.length,name:name.length,miss:miss.length});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.bareWord).toBe(1);
+  expect(o.prefixedWord).toBe(1);
+  expect(o.english).toBe(1);
+  expect(o.twoWord).toBe(1);
+  expect(o.name).toBe(1);
+  expect(o.miss).toBe(0);
+});
+
+test('ranking: a hit containing the query as one contiguous run outranks a hit where the terms are merely scattered', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const m=await import('./server/memory.ts');" +
+      "m.writeMemory({target:'memory',action:'add',content:'רשימת קניות: חלב, ביצים'});" + // 'קוד' + 'סודי' scattered nowhere near each other
+      "m.writeMemory({target:'memory',action:'replace',old_text:'רשימת קניות: חלב, ביצים',content:'הערה: יש קוד באתר, ובנפרד יש גם עניין סודי לגמרי אחר'});" +
+      "m.writeMemory({target:'user',action:'add',content:'הקוד הסודי נמצא בכספת'});" + // contiguous phrase
+      "const hits=m.searchMemory({query:'קוד סודי'});" +
+      'emit({paths:hits.map(h=>h.path)});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.paths[0]).toBe('USER.md'); // the contiguous "קוד...סודי" phrase ranks first
+  expect(o.paths).toContain('MEMORY.md');
+});
+
+test('a query under 3 characters returns no results gracefully (trigram floor) instead of throwing', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const m=await import('./server/memory.ts');" +
+      "m.writeMemory({target:'memory',action:'add',content:'עם חברים בבית קפה'});" +
+      "const one=m.searchMemory({query:'a'});" +
+      "const two=m.searchMemory({query:'עם'});" +
+      'emit({one,two});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].one).toEqual([]);
+  expect(r.out[0].two).toEqual([]);
+});
+
+test('an index built before this fix (unicode61) self-heals to trigram on first use, without losing data', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const path=require('node:path');const fs=require('node:fs');" +
+      "const {Database}=require('bun:sqlite');" +
+      "const memDir=path.join(process.env.ARIGAMI_DIR,'memory');" +
+      "fs.mkdirSync(memDir,{recursive:true});" +
+      "const content='- הקוד הסודי של דנה\\n';" +
+      "fs.writeFileSync(path.join(memDir,'MEMORY.md'),content);" +
+      // Simulate the pre-fix schema: fts5 with no tokenize= option (unicode61 default).
+      "const old=new Database(path.join(memDir,'memory.sqlite'),{create:true});" +
+      "old.run(\"CREATE VIRTUAL TABLE memory_fts USING fts5(scope, path, updated_at UNINDEXED, content)\");" +
+      "old.run('INSERT INTO memory_fts (scope,path,updated_at,content) VALUES (?,?,?,?)',['memory','MEMORY.md',new Date().toISOString(),content]);" +
+      "old.close();" +
+      "const m=await import('./server/memory.ts');" +
+      "const bareWord=m.searchMemory({query:'סודי'});" + // would have been 0 hits pre-migration
+      "const boot=m.getMemoryBootstrap();" +
+      'emit({bareWordCount:bareWord.length,memoryMd:boot.memoryMd});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.bareWordCount).toBe(1);
+  expect(o.memoryMd).toBe('- הקוד הסודי של דנה\n'); // the source file itself was never touched
+});
+
 test('proposeFacts caps at 3, sanitizes, dedupes vs live file and vs already-pending, and never writes directly', () => {
   const dir = tmp();
   const r = runInChild(
