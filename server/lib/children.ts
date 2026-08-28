@@ -26,15 +26,27 @@
 //      (a host from before this fix, the assign race below, a breakaway proc).
 import fs from 'node:fs';
 import path from 'node:path';
-import { isWin, HOME, pidAlive } from './platform.js';
+import { isWin, pidAlive } from './platform.js';
+import { ARIGAMI_DIR, HOST_PID_FILE, makeHostId } from './instance.js';
+import { cfg } from './config.js';
 
-const DIR = path.join(HOME, '.arigami');
+// Instance isolation (T5): the pid list lives under THIS instance's dir, and
+// every record names the host that spawned it. The sweep only ever kills a
+// record that (a) carries our own hostId and (b) whose host is no longer
+// running. A second instance sharing the machine therefore can't reach our
+// children even if it somehow read our file — and we can't reach its.
+const DIR = ARIGAMI_DIR;
 const CHILDREN_FILE = path.join(DIR, 'children.json');
 
-interface ChildRecord {
+export const HOST_ID: string = makeHostId(ARIGAMI_DIR, cfg.port);
+export const HOST_PID: number = process.pid;
+
+export interface ChildRecord {
   pid: number;
   tag: string;
   at: number; // host clock at spawn — the pid-reuse guard for the sweep
+  hostId?: string; // absent only on records written before T5
+  hostPid?: number;
 }
 
 // --- Windows job object ------------------------------------------------------
@@ -126,7 +138,7 @@ function writeRecords(records: ChildRecord[]): void {
 
 function remember(pid: number, tag: string): void {
   const records = readRecords().filter((r) => r.pid !== pid);
-  records.push({ pid, tag, at: Date.now() });
+  records.push({ pid, tag, at: Date.now(), hostId: HOST_ID, hostPid: HOST_PID });
   writeRecords(records);
 }
 
@@ -265,21 +277,77 @@ function startTimes(pids: number[]): Map<number, number> {
 // belongs to a process that started later, after the original died.
 const REUSE_TOLERANCE_MS = 60_000;
 
+export interface SweepPlan {
+  kill: ChildRecord[]; // ours, host dead, pid verified → kill
+  keep: ChildRecord[]; // records to write back untouched (other hosts, live hosts)
+}
+
 /**
- * Kill anything left over from a previous host run. Call BEFORE binding the
- * port: an orphan holding the inherited listen socket is exactly what keeps the
- * port bound to a dead pid, so sweeping first is what makes the next start
- * succeed instead of failing with EADDRINUSE forever.
+ * Pure: decide which records the sweep may kill. Exported for tests.
  *
- * Returns the number of process trees killed.
+ *  - `hostId` differs from ours → NOT ours. Never touched, kept in the file
+ *    (it belongs to whoever wrote it, dead or alive).
+ *  - `hostId` is ours but `hostPid` is a live process that isn't us → a host
+ *    with our identity is still running. Left alone (startup should have
+ *    refused to boot in that case; this is the belt to that suspender).
+ *  - no `hostId` (pre-T5 record) → treated as ours ONLY if `legacyHostAlive`
+ *    is false, i.e. the pidfile from before the upgrade points at a dead pid.
+ *  - otherwise: ours and orphaned → killable, subject to the pid-reuse check
+ *    the caller does with real start times.
+ */
+export function planSweep(
+  records: ChildRecord[],
+  me: { hostId: string; hostPid: number },
+  isAlive: (pid: number) => boolean,
+  legacyHostAlive: boolean
+): SweepPlan {
+  const plan: SweepPlan = { kill: [], keep: [] };
+  for (const r of records) {
+    if (r.hostId === undefined) {
+      if (legacyHostAlive) plan.keep.push(r);
+      else if (isAlive(r.pid)) plan.kill.push(r);
+      continue;
+    }
+    if (r.hostId !== me.hostId) {
+      plan.keep.push(r);
+      continue;
+    }
+    if (r.hostPid && r.hostPid !== me.hostPid && isAlive(r.hostPid)) {
+      plan.keep.push(r);
+      continue;
+    }
+    if (isAlive(r.pid)) plan.kill.push(r);
+    // dead + ours → dropped from the file
+  }
+  return plan;
+}
+
+/** The pid in a pre-T5 pidfile (plain integer), if it names a live process. */
+function legacyHostAlive(): boolean {
+  try {
+    const pid = Number(fs.readFileSync(HOST_PID_FILE, 'utf8').trim());
+    return Number.isFinite(pid) && pid > 0 && pid !== process.pid && pidAlive(pid);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kill anything left over from a previous run OF THIS HOST IDENTITY. Call
+ * BEFORE binding the port: an orphan holding the inherited listen socket is
+ * exactly what keeps the port bound to a dead pid, so sweeping first is what
+ * makes the next start succeed instead of failing with EADDRINUSE forever.
+ *
+ * Records of other hosts (a different ARIGAMI_DIR/port) are never touched and
+ * are written back as-is. Returns the number of process trees killed.
  */
 export function sweepOrphans(): number {
   const records = readRecords();
   if (!records.length) return 0;
-  const alive = records.filter((r) => pidAlive(r.pid));
-  const started = startTimes(alive.map((r) => r.pid));
+  const plan = planSweep(records, { hostId: HOST_ID, hostPid: HOST_PID }, pidAlive, legacyHostAlive());
+  const started = startTimes(plan.kill.map((r) => r.pid));
   let killed = 0;
-  for (const r of alive) {
+  for (const r of plan.kill) {
     const t = started.get(r.pid);
     if (t === undefined) continue; // couldn't verify identity — leave it alone
     if (t > r.at + REUSE_TOLERANCE_MS) continue; // pid was recycled; not ours
@@ -287,6 +355,6 @@ export function sweepOrphans(): number {
     killTree(r.pid);
     killed++;
   }
-  writeRecords([]);
+  writeRecords(plan.keep);
   return killed;
 }

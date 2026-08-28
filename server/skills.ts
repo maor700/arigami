@@ -14,7 +14,7 @@ import { supervise, killTree } from './lib/children.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SKILLS_DIR = path.join(ROOT, 'skills');
-const GRAPH_CACHE = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'skills-graph.json');
+const GRAPH_CACHE = path.join(cfg.configDir!, 'skills-graph.json');
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 const TEXT_EXT = new Set(['.md', '.sh', '.js', '.ts', '.json', '.txt', '.yml', '.yaml', '.mjs']);

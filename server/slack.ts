@@ -15,7 +15,7 @@ import { cfg } from './state.js';
 
 const API = 'https://slack.com/api';
 const STORE = path.join(
-  cfg.configDir || path.join(process.env.HOME || '.', '.arigami'),
+  cfg.configDir!,
   'slack-token.json'
 );
 

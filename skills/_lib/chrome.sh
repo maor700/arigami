@@ -3,8 +3,8 @@
 #
 # Why not just launch google-chrome yourself: every session gets its own
 # Xvfb+VNC desktop, allocated lazily on first use, and its own
-# ~/.arigami/chrome-sessions/<id> profile cloned from the shared
-# ~/.arigami/chrome-base/ (a shared --user-data-dir can't work — Chrome locks
+# <ARIGAMI_DIR>/chrome-sessions/<id> profile cloned from the shared
+# <ARIGAMI_DIR>/chrome-base/ (ARIGAMI_DIR defaults to ~/.arigami) (a shared --user-data-dir can't work — Chrome locks
 # the profile, so two sessions running Chrome at once would collide). This
 # helper asks the host to do both, then hands back the DISPLAY it ran on.
 #

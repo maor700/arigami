@@ -19,6 +19,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cfg } from './config.js';
 import { supervise, killTree } from './children.js';
+import { portFree } from './hostlock.js';
 import * as state from '../state.js';
 
 export interface DesktopInfo {
@@ -43,15 +44,47 @@ function usedPorts(): Set<number> {
   return used;
 }
 
-// Pure (no I/O) so it's unit-testable without spawning anything real — the
-// port→display mapping is the part with actual bugs to catch.
-export function allocatePort(used: Set<number>): { display: string; vncPort: number } {
-  const [lo, hi] = cfg.screen.portRange;
+export interface AllocOpts {
+  range?: [number, number];
+  displayBase?: number;
+  // Real-world occupancy (T5 §3): our own bookkeeping only knows what WE
+  // allocated; another instance (or a stray Xvfb) may hold the display or the
+  // port. Both default to the /tmp/.X<n>-lock probe and "not busy".
+  displayBusy?: (displayNum: number) => boolean;
+  portBusy?: (port: number) => boolean;
+}
+
+/** `:107` is taken if X left a lock or a socket for it — regardless of who owns it. */
+export function displayLocked(displayNum: number): boolean {
+  return fs.existsSync(`/tmp/.X${displayNum}-lock`) || fs.existsSync(`/tmp/.X11-unix/X${displayNum}`);
+}
+
+// Pure (no I/O unless a probe is passed) so it's unit-testable without
+// spawning anything real — the port→display mapping is the part with actual
+// bugs to catch. `used` = ports already claimed by this instance's sessions.
+export function allocatePort(used: Set<number>, opts: AllocOpts = {}): { display: string; vncPort: number } {
+  const [lo, hi] = opts.range || cfg.screen.portRange;
+  const base = opts.displayBase ?? cfg.screen.displayBase ?? 100;
+  const displayBusy = opts.displayBusy || displayLocked;
+  const portBusy = opts.portBusy || (() => false);
   for (let p = lo; p <= hi; p++) {
     if (used.has(p)) continue;
-    return { display: `:${100 + (p - lo)}`, vncPort: p };
+    const n = base + (p - lo);
+    if (displayBusy(n) || portBusy(p)) continue;
+    return { display: `:${n}`, vncPort: p };
   }
-  throw new Error(`screen.portRange [${lo},${hi}] exhausted — no free per-session VNC port`);
+  throw new Error(`screen.portRange [${lo},${hi}] exhausted — no free per-session VNC port/display`);
+}
+
+// Async wrapper: the sync allocator skips displays with an X lock; ports are
+// then verified with a real bind, and a busy one is retried as "used".
+async function allocateFree(): Promise<{ display: string; vncPort: number }> {
+  const used = usedPorts();
+  for (;;) {
+    const pick = allocatePort(used);
+    if (await portFree(pick.vncPort, '127.0.0.1')) return pick;
+    used.add(pick.vncPort);
+  }
 }
 
 function waitForFile(p: string, timeoutMs: number): Promise<void> {
@@ -83,7 +116,7 @@ function waitForPort(port: number, host: string, timeoutMs: number): Promise<voi
 }
 
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
-  const { display, vncPort } = allocatePort(usedPorts());
+  const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
 
   const xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], {

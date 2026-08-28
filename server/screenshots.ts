@@ -16,7 +16,7 @@ import { captureScreen } from './vnc.js';
 import { ensureDesktop, screenTarget } from './lib/desktops.js';
 import { encodePng, downscaleRgba, frameDiffRatio } from './lib/png.js';
 
-export const SCREENS_DIR = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'uploads', 'screens');
+export const SCREENS_DIR = path.join(cfg.configDir!, 'uploads', 'screens');
 
 export interface ScreenshotEvent {
   kind: 'screenshot';

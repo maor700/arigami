@@ -24,7 +24,7 @@ import { cfg } from './state.js';
 
 const SERVER_URL = 'https://mcp.linear.app/mcp';
 const STORE = path.join(
-  cfg.configDir || path.join(process.env.HOME || '.', '.arigami'),
+  cfg.configDir!,
   'linear-oauth.json'
 );
 

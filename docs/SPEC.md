@@ -168,7 +168,8 @@ Two kinds of desktop, same wiring:
   only their own window. Recorded in `session.metadata.screen = {display,
   vncPort}` — that IS the allocation table, a free port is just "not claimed
   by any live session's metadata.screen.vncPort" in `config.screen.portRange`
-  (default 5901–5950; X display = `:100 + (port − portRange[0])`). Killed at
+  (default 5901–5950; X display = `:displayBase + (port − portRange[0])`,
+  skipping displays/ports something else already holds — see "Instances"). Killed at
   archive/delete (`releaseDesktop`); delete also removes the Chrome profile
   copy (see "Chrome profiles" below). A failed allocation (binary missing,
   pool exhausted) isn't fatal — everything downstream falls back to the
@@ -249,9 +250,9 @@ allocated, else the global one; the sidebar icon calls it with no `session`).
 ## Chrome profiles (server/lib/chrome.ts, skills/_lib/chrome.sh)
 
 A shared Chrome profile can't work across concurrent sessions (Chrome locks
-`--user-data-dir`), but shared LOGIN STATE should. `~/.arigami/chrome-base/`
+`--user-data-dir`), but shared LOGIN STATE should. `$ARIGAMI_DIR/chrome-base/`
 is the source of truth; `POST /__api/sessions/:id/browser {url?}` clones it
-into `~/.arigami/chrome-sessions/<id>/` on first use (later calls reuse the
+into `$ARIGAMI_DIR/chrome-sessions/<id>/` on first use (later calls reuse the
 existing copy) and launches `google-chrome --user-data-dir=<copy>
 --password-store=basic --no-first-run --start-maximized [url]` on that
 session's `DISPLAY` (ensuring its desktop first) — supervised like any other
@@ -408,19 +409,60 @@ text. Layout per wireframe (IDE shell):
 - **First-run**: no sessions → full-page launcher ("What are we building?" + paste field).
 - Keyboard: `/` focus search, `cmd+1..9` switch sessions, `cmd+t` new tab popover.
 
+## Instances (T5 — server/lib/instance.ts, hostlock.ts, children.ts)
+
+One host == one **identity** = `ARIGAMI_DIR` (default `~/.arigami`) + port.
+Every file, child process, port and X display the host creates or kills
+belongs to that identity and nothing else — a second instance on the same
+machine can't affect the first.
+
+- **Single path root.** `server/lib/instance.ts` exports `ARIGAMI_DIR`;
+  config.json, state.json, chat/, uploads/ (attachments + screens), children.json,
+  run/host.{pid,json}, chrome-base/, chrome-sessions/, vapid-keys.json,
+  sms.jsonl, secrets.env, *.json stores all live under it. Nothing in `server/`
+  or `mcp/` spells out `~/.arigami` except `instance.ts` (enforced by a test).
+  A config.json copied from the default instance whose `stateFile`/`chatDir`
+  point into `~/.arigami` is remapped into the instance's own dir, with a warning.
+- **Shifted defaults.** A non-default `ARIGAMI_DIR` shifts every default range
+  by +1000 ports / +100 displays: port 4099, `devServerPorts` 4020–4030,
+  `dispatcher.portRange` 4200–4299, `screen.portRange` 6901–6950 with
+  `screen.displayBase` 200. Explicit config/env still wins.
+- **Real occupancy.** `desktops.allocatePort` skips any display with a
+  `/tmp/.X<n>-lock` or `/tmp/.X11-unix/X<n>` socket and any VNC port that
+  fails a real bind probe — so two instances that were (mis)configured with the
+  same range still never collide.
+- **Global desktop** (`screen.vncPort`, `:99/5900`) is the default instance's.
+  No instance ever spawns or kills an Xvfb/x11vnc it didn't allocate; an
+  isolated instance whose global VNC is unreachable just reports
+  `/__api/screen/status → available:false`.
+- **Host lock.** Before anything destructive, startup calls `claimHost(port)`:
+  (1) `run/host.json` naming a live pid on the same port → exit 2 ("same
+  instance twice"); (2) the port is already bound (pm2/systemd hosts write no
+  pidfile) → exit 2 without touching anything. Then it writes `run/host.json`
+  `{pid, port, hostId, dir, startedAt}` + `run/host.pid`, removed on shutdown.
+- **Safe sweep.** Every `children.json` record carries `hostId`
+  (`<ARIGAMI_DIR>#<port>`) and `hostPid`. `sweepOrphans()` (`planSweep`, pure)
+  kills only records with OUR hostId whose host is no longer alive; records of
+  another host are never touched and are written back verbatim; a record whose
+  hostPid is still alive is left alone. Pre-T5 records (no hostId) count as ours
+  only if the legacy `run/host.pid` names a dead pid.
+- **Running a second instance:** `ARIGAMI_DIR=/tmp/arigami-2 ARIGAMI_PORT=4099
+  bun server/index.ts` (or `ARIGAMI_DIR=… bin/host start`). Out of scope: two
+  hosts on one `ARIGAMI_DIR` (warned, unsupported), sharing sessions across instances.
+
 ## bin/host CLI
 
 start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
-(background, health check on /__api/config, pidfile in ~/.arigami/).
+(background, health check on /__api/config, pidfile in $ARIGAMI_DIR; honours ARIGAMI_DIR/ARIGAMI_PORT).
 
-## Config (~/.arigami/config.json — extend PoC lib/config.js)
+## Config ($ARIGAMI_DIR/config.json, default ~/.arigami — extend PoC lib/config.js)
 
 { port: 3099, defaultCwd: '~/Desktop/repos', prodUrl, reposDir, linearWorkspace,
   palette, devServerPorts: [3020..3030],
   screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword?,
             display?, autoSnapshots: false, snapshotIntervalMs: 10000, snapshotMinIntervalMs: 30000,
             snapshotChangeThreshold: 0.03, screenshotRetentionDays: 7, screenshotMaxMb: 200,
-            portRange: [5901, 5950], keepProfiles: false } }
+            portRange: [5901, 5950], displayBase: 100, keepProfiles: false } }
 `screen.*` is overridable via ARIGAMI_SCREEN_ENABLED / ARIGAMI_VNC_HOST /
 ARIGAMI_VNC_PORT / ARIGAMI_VNC_PASSWORD; `screen.vncPassword` is the only
 config key the UI writes back (Settings → Screen share).

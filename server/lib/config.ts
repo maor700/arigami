@@ -4,13 +4,18 @@ import path from 'node:path';
 // read below — and, since nearly everything imports config, it also covers the
 // entrypoints (tests, the MCP server) that don't go through server/index.ts.
 import { HOME } from './platform.js';
+import { ARIGAMI_DIR, DEFAULT_ARIGAMI_DIR, IS_DEFAULT_INSTANCE, PORT_SHIFT } from './instance.js';
 export const tilde = (p: string | undefined): string => {
   return p && p.startsWith('~')
     ? path.join(HOME, p.slice(1))
     : p || '';
 };
 
-const CONFIG_DIR = tilde(process.env.ARIGAMI_DIR || '~/.arigami');
+// Instance root (T5): everything lives under here. A non-default ARIGAMI_DIR
+// also shifts every default port range (+1000) so a second instance started
+// with no config at all doesn't fight the first one for ports.
+const CONFIG_DIR = ARIGAMI_DIR;
+const DEFAULT_DIR_TOKEN = IS_DEFAULT_INSTANCE ? '~/.arigami' : ARIGAMI_DIR;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const range = (a: number, b: number): number[] =>
@@ -58,7 +63,11 @@ export interface ScreenConfig {
   // number is derived from the port's offset into this range (port 5901 → :100,
   // 5902 → :101, …), so the two never need separate bookkeeping.
   portRange: [number, number];
-  // Keep a session's `~/.arigami/chrome-sessions/<id>` profile copy (and skip
+  // X display number for the FIRST port of portRange (5901 → :100 by default;
+  // a non-default instance defaults to :200 so it never races the default
+  // instance for /tmp/.X<n>-lock). See server/lib/desktops.ts.
+  displayBase: number;
+  // Keep a session's `<ARIGAMI_DIR>/chrome-sessions/<id>` profile copy (and skip
   // the delete-time login sync) instead of removing it — for debugging a
   // session's browser state after the fact.
   keepProfiles: boolean;
@@ -101,15 +110,15 @@ export interface Config {
 }
 
 export const DEFAULTS: Config = {
-  port: 3099,
+  port: 3099 + PORT_SHIFT,
   prodUrl: '',
   storybookCompareUrl: '',
   upstreamCookies: {},
   defaultCwd: '~/Desktop/repos',
   reposDir: '~/Desktop/repos',
   ticketsDir: '~/.arigami-tickets',
-  stateFile: '~/.arigami/state.json',
-  chatDir: '~/.arigami/chat',
+  stateFile: `${DEFAULT_DIR_TOKEN}/state.json`,
+  chatDir: `${DEFAULT_DIR_TOKEN}/chat`,
   linearWorkspace: '',
   groqApiKey: '',
   composioApiKey: '',
@@ -128,12 +137,12 @@ export const DEFAULTS: Config = {
     '#C2459E',
     '#5B62D6',
   ],
-  devServerPorts: range(3020, 3030),
+  devServerPorts: range(3020 + PORT_SHIFT, 3030 + PORT_SHIFT),
   dispatcher: {
     maxMutating: 3,
     maxReadOnly: 6,
     maxChildren: 4,
-    portRange: [3200, 3299],
+    portRange: [3200 + PORT_SHIFT, 3299 + PORT_SHIFT],
     stallTimeoutSec: 600,
   },
   screen: {
@@ -146,7 +155,8 @@ export const DEFAULTS: Config = {
     snapshotChangeThreshold: 0.03,
     screenshotRetentionDays: 7,
     screenshotMaxMb: 200,
-    portRange: [5901, 5950],
+    portRange: [5901 + PORT_SHIFT, 5950 + PORT_SHIFT],
+    displayBase: IS_DEFAULT_INSTANCE ? 100 : 200,
     keepProfiles: false,
   },
   defaultModel: null,
@@ -258,6 +268,19 @@ const merged = deepMerge(
 
 const ticketsDir = tilde(merged.ticketsDir);
 
+// A non-default instance must never read/write the default instance's state —
+// a config.json copied over from ~/.arigami still says `~/.arigami/state.json`.
+// Remap those into our own dir, loudly.
+function ownPath(key: 'stateFile' | 'chatDir', fallback: string): string {
+  const p = tilde(merged[key]);
+  if (IS_DEFAULT_INSTANCE || !p) return p;
+  const rel = path.relative(DEFAULT_ARIGAMI_DIR, path.resolve(p));
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return p;
+  const own = path.join(ARIGAMI_DIR, fallback);
+  console.warn(`[config] ${key}=${p} points into the default instance dir; this instance (${ARIGAMI_DIR}) uses ${own} instead`);
+  return own;
+}
+
 export const cfg: Config = {
   ...merged,
   configDir: CONFIG_DIR,
@@ -266,13 +289,13 @@ export const cfg: Config = {
   reposDir: tilde(merged.reposDir),
   ticketsDir,
   imgDir: path.join(ticketsDir, 'img'),
-  stateFile: tilde(merged.stateFile),
-  chatDir: tilde(merged.chatDir),
+  stateFile: ownPath('stateFile', 'state.json'),
+  chatDir: ownPath('chatDir', 'chat'),
   stateDir: CONFIG_DIR,
   logsDir: path.join(CONFIG_DIR, 'logs'),
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
-  hostBase: `http://localhost:${merged.port || 3099}`,
+  hostBase: `http://localhost:${merged.port || DEFAULTS.port}`,
 };
 
 export function ensureConfigFile(): void {
