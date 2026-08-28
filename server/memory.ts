@@ -21,10 +21,9 @@
 // human approving it via /__api/memory/pending/:id/approve.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { Database } from 'bun:sqlite';
 import { ARIGAMI_DIR } from './lib/instance.js';
-import { supervise, killTree } from './lib/children.js';
+import { runClaudeOneShot } from './lib/oneshot.js';
 
 export const MEMORY_DIR = path.join(ARIGAMI_DIR, 'memory');
 export const USER_MD = path.join(MEMORY_DIR, 'USER.md');
@@ -538,10 +537,11 @@ export function rejectPending(id: string): { ok: boolean } {
 }
 
 // ---- autonomous episode + pending-fact extraction ------------------------------
-// Same one-shot `claude -p` pattern as skills.ts's analyze(): read-only-ish,
-// headless, --output-format json, coalesced by caller. Runs off the report_to_master
-// and session-archive hooks (server/api.ts) with a transcript excerpt the caller
-// builds (kept out of this module to avoid a claude.js <-> memory.ts import cycle).
+// Uses the shared one-shot runner (lib/oneshot.ts — same one skills.ts's
+// analyze() uses) for the actual `claude -p` call, incl. its auth. Runs off
+// the report_to_master and session-archive hooks (server/api.ts) with a
+// transcript excerpt the caller builds (kept out of this module to avoid a
+// claude.js <-> memory.ts import cycle).
 
 const EPISODE_TIMEOUT_MS = 3 * 60 * 1000;
 const EPISODE_COOLDOWN_MS = 2 * 60 * 1000; // report_to_master immediately followed by archive shouldn't double-run
@@ -573,33 +573,7 @@ export async function runEpisodeHook(sessionId: string, trigger: string, transcr
     `credentials, or tokens. Omit anything session-specific/ephemeral.\n\n` +
     `--- transcript ---\n${transcript}\n--- end transcript ---`;
 
-  const bin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
-  const out = await new Promise<string>((resolve, reject) => {
-    const child = spawn(
-      bin,
-      ['-p', prompt, '--permission-mode', 'bypassPermissions', '--model', 'sonnet', '--output-format', 'json'],
-      { cwd: ARIGAMI_DIR, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-    supervise(child, 'memory-episode-hook');
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-    const guard = setTimeout(() => killTree(child.pid), EPISODE_TIMEOUT_MS);
-    child.on('error', (e) => { clearTimeout(guard); reject(e); });
-    child.on('close', (code) => {
-      clearTimeout(guard);
-      if (code) return reject(new Error(`claude exited ${code}${stderr ? ': ' + stderr.trim().slice(0, 200) : ''}`));
-      resolve(stdout);
-    });
-  });
-
-  let text = out;
-  try {
-    const env = JSON.parse(out);
-    if (env && typeof env.result === 'string') text = env.result;
-  } catch { /* not the envelope — treat stdout as the text */ }
-
+  const text = await runClaudeOneShot(prompt, { cwd: ARIGAMI_DIR, timeoutMs: EPISODE_TIMEOUT_MS, tag: 'memory-episode-hook' });
   const parsed = extractJson(text);
   if (parsed.episode && typeof parsed.episode === 'string') appendEpisode(sessionId, { body: parsed.episode, trigger });
   if (Array.isArray(parsed.facts) && parsed.facts.length)
