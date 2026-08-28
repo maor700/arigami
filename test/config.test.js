@@ -14,7 +14,9 @@ function withConfig(contents) {
   return runInChild(
     "const {cfg,DEFAULTS}=await import('./server/lib/config.js');" +
       'emit({port:cfg.port,defaultPort:DEFAULTS.port,hasConfigDir:typeof cfg.configDir});',
-    { ARIGAMI_DIR: dir }
+    // ARIGAMI_PORT may be set in the outer env (a host session) — it must not
+    // leak into "what does a config-less instance default to".
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
   );
 }
 
