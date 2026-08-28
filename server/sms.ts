@@ -1,15 +1,12 @@
 // SMS inbound store — receives webhooks from a phone-side SMS gateway app,
-// persists to ~/.arigami/sms.jsonl, and exposes a polling query for the
+// persists to <ARIGAMI_DIR>/sms.jsonl, and exposes a polling query for the
 // listener scheduler.
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { ARIGAMI_DIR } from './lib/instance.js';
 
-const SMS_FILE = path.join(
-  process.env.HOME || '/home/arigami',
-  '.arigami',
-  'sms.jsonl'
-);
+const SMS_FILE = path.join(ARIGAMI_DIR, 'sms.jsonl');
 
 export interface SmsMessage {
   id: string;

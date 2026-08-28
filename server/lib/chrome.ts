@@ -1,5 +1,5 @@
 // Per-session Chrome (T8 §3-4): every session that opens a browser gets its
-// own `--user-data-dir`, cloned from `~/.arigami/chrome-base/` on first use —
+// own `--user-data-dir`, cloned from `<ARIGAMI_DIR>/chrome-base/` on first use —
 // a shared profile can't work (Chrome locks it), but a shared LOGIN STATE
 // should. So each session works on its own copy, and cookies/saved
 // logins/local storage sync back to the base copy (a) right after a
@@ -14,12 +14,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { HOME } from './platform.js';
+import { ARIGAMI_DIR } from './instance.js';
 import { supervise, killTree } from './children.js';
 import * as state from '../state.js';
 import { ensureDesktop } from './desktops.js';
 
-const ARIGAMI_DIR = path.join(HOME, '.arigami');
 export const CHROME_BASE_DIR = path.join(ARIGAMI_DIR, 'chrome-base');
 export const CHROME_SESSIONS_DIR = path.join(ARIGAMI_DIR, 'chrome-sessions');
 

@@ -17,7 +17,7 @@ import path from 'node:path';
 import { cfg } from './state.js';
 import { supervise } from './lib/children.js';
 
-const STORE = path.join(cfg.configDir || path.join(process.env.HOME || '.', '.arigami'), 'models.json');
+const STORE = path.join(cfg.configDir, 'models.json');
 const TTL_MS = 24 * 60 * 60 * 1000; // once/day
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const VERSION_TIMEOUT_MS = 5_000;

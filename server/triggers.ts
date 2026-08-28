@@ -16,7 +16,7 @@ import { cfg, nano } from './state.js';
 import * as state from './state.js';
 
 const STORE = path.join(
-  cfg.configDir || path.join(process.env.HOME || '.', '.arigami'),
+  cfg.configDir!,
   'triggers.json'
 );
 

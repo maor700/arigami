@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { HOME } from './platform.js';
+import { ARIGAMI_DIR } from './instance.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const STATE_DIR = process.env.ARIGAMI_DIR || path.join(HOME, '.arigami');
+const STATE_DIR = ARIGAMI_DIR;
 export const SECRETS_ENV = path.join(STATE_DIR, 'secrets.env');
 export const LOCAL_ENV = path.join(__dirname, '..', '..', '.local.env');
 export const KEYCHAIN_PREFIX = 'arigami:';

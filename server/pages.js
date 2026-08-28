@@ -40,7 +40,7 @@ const linearKey = () => (_linearKey === undefined ? (_linearKey = secret('LINEAR
 // the file — pages.js must not import linear-mcp/state) so both paths use one
 // identity. Linear's GraphQL API accepts an OAuth token as `Bearer <token>`.
 const LINEAR_OAUTH_FILE = path.join(
-  cfg.configDir || path.join(process.env.HOME || '.', '.arigami'),
+  cfg.configDir,
   'linear-oauth.json'
 );
 function linearOAuthToken() {

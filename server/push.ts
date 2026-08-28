@@ -5,12 +5,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import webpush from 'web-push';
+import { ARIGAMI_DIR } from './lib/instance.js';
 
-const KEYS_FILE = path.join(
-  process.env.HOME || '/home/arigami',
-  '.arigami',
-  'vapid-keys.json'
-);
+const KEYS_FILE = path.join(ARIGAMI_DIR, 'vapid-keys.json');
 
 interface VapidKeys {
   publicKey: string;
