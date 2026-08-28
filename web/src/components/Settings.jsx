@@ -583,10 +583,77 @@ export default function Settings({ onClose }) {
 
           <RemoteAccess />
           <WhatsAppBridge />
+          <ScreenShare />
           <PushNotifications />
         </div>
       </div>
     </div>
+  );
+}
+
+// Settings → Screen share: the VNC-auth password handed to the embedded
+// noVNC viewer (ScreenView.jsx) on `credentialsrequired`. Write-only from the
+// UI's point of view — the server only reports whether one is set.
+function ScreenShare() {
+  const t = useT();
+  const [hasPassword, setHasPassword] = useState(null); // null = loading
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [savedTick, setSavedTick] = useState(false);
+  useEffect(() => {
+    api.get('/screen/settings')
+      .then((r) => setHasPassword(!!r?.hasVncPassword))
+      .catch(() => setHasPassword(false));
+  }, []);
+  const submit = async (pw) => {
+    setBusy(true);
+    try {
+      const r = await api.put('/screen/settings', { vncPassword: pw });
+      setHasPassword(!!r?.hasVncPassword);
+      setValue('');
+      setSavedTick(true);
+      setTimeout(() => setSavedTick(false), 1500);
+    } catch (e) {
+      console.error('VNC password save error:', e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (hasPassword === null) return null;
+  const btn = 'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:opacity-50';
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('settings.screenTitle')}
+      </h3>
+      <Field label={t('settings.vncPassword')} hint={t('settings.vncPassword.hint')}>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="flex items-center gap-2">
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={value}
+              disabled={busy}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && value && !busy && submit(value)}
+              placeholder={t('settings.vncPassword.placeholder')}
+              className="w-[160px] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 font-mono text-[11.5px] text-fg outline-none disabled:opacity-60"
+            />
+            <button type="button" disabled={busy || !value} onClick={() => submit(value)} className={btn}>
+              {t('settings.vncPassword.save')}
+            </button>
+            {hasPassword && (
+              <button type="button" disabled={busy} onClick={() => submit('')} className={btn}>
+                {t('settings.vncPassword.clear')}
+              </button>
+            )}
+          </span>
+          <span className="font-mono text-[10.5px] text-fgdim">
+            {savedTick ? t('settings.vncPassword.saved') : hasPassword ? t('settings.vncPassword.set') : t('settings.vncPassword.unset')}
+          </span>
+        </div>
+      </Field>
+    </>
   );
 }
 

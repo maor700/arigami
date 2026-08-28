@@ -243,7 +243,7 @@ function appendChat(sessionId, event) {
     const idx = cur.findIndex((e) => e.kind === 'screen-request' && e.requestId === event.requestId);
     if (idx !== -1 && cur[idx].answered == null) {
       const next = [...cur];
-      next[idx] = { ...next[idx], answered: true, note: event.note };
+      next[idx] = { ...next[idx], answered: true, note: event.note, takenOver: !!event.takenOver };
       setState({ chats: { ...state.chats, [sessionId]: next } });
     }
     return;
@@ -410,9 +410,10 @@ export async function answerPermission(sessionId, requestId, behavior, message) 
   });
 }
 
-export async function answerScreenRequest(sessionId, requestId, note) {
+export async function answerScreenRequest(sessionId, requestId, note, takenOver = false) {
   await api.post(`/sessions/${sessionId}/screen-request/answer`, {
     requestId,
+    takenOver,
     ...(note ? { note } : {}),
   });
   // Mark the inline card answered locally (the request itself isn't echoed
@@ -423,7 +424,7 @@ export async function answerScreenRequest(sessionId, requestId, note) {
       ...state.chats,
       [sessionId]: cur.map((e) =>
         e.kind === 'screen-request' && e.requestId === requestId
-          ? { ...e, answered: true, note }
+          ? { ...e, answered: true, note, takenOver }
           : e,
       ),
     },

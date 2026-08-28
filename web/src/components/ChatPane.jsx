@@ -644,45 +644,79 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
 }
 
 // host.request_screen — the agent asks the human to look at / drive the
-// shared desktop (manual login, CAPTCHA, interactive installer…). Blocking,
-// same underlying mechanism as PermissionRequest (server holds the MCP tool
-// call open until answered). While unanswered, embeds a LIVE ScreenView —
-// once answered, the card freezes to a static line and the connection tears
-// down (ScreenView unmounts), so old resolved cards in history don't hold
-// open VNC connections.
+// shared desktop (manual login, 2FA, CAPTCHA, payment…). Blocking, same
+// underlying mechanism as PermissionRequest (server holds the MCP tool call
+// open until answered). While unanswered, embeds a LIVE ScreenView that opens
+// in Watch (view-only) mode; "Take over" flips it to Control (input enabled)
+// with a banner, and "Done" answers with {takenOver} — the card then freezes
+// to a static line and the connection tears down (ScreenView unmounts), so
+// old resolved cards in history don't hold open VNC connections.
 function ScreenRequestCard({ sessionId, event }) {
   const t = useT();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState('watch'); // watch | control
   const answered = event.answered;
+  const control = mode === 'control';
 
   const done = async () => {
     setBusy(true);
     try {
-      await answerScreenRequest(sessionId, event.requestId, note.trim());
+      await answerScreenRequest(sessionId, event.requestId, note.trim(), control);
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     } catch {
       setBusy(false);
     }
   };
 
+  const reasonLabel = event.reason ? t(`chat.screenReason.${event.reason}`) : '';
+  const btnPrimary =
+    'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
+  const btnSecondary =
+    'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
+
   return (
     <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
+        <span className={`h-[7px] w-[7px] rounded-full ${control && !answered ? 'bg-red-500' : 'pulse-yellow bg-brand'}`} />
         <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest')}</span>
+        {reasonLabel && (
+          <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
+            {reasonLabel}
+          </span>
+        )}
+        {!answered && (
+          <span className="ms-auto text-[10px] text-[var(--term-accent-dim)]">
+            {control ? t('chat.screenModeControl') : t('chat.screenModeWatch')}
+          </span>
+        )}
       </div>
       {event.prompt && (
         <div className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
       )}
+      {event.hint && (
+        <div className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
+          <span className="font-bold">{t('chat.screenHint')}:</span> {event.hint}
+        </div>
+      )}
       {answered ? (
         <div className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">
-          <Icon icon={faCheck} /> {t('chat.screenRequestDone')}
+          <Icon icon={faCheck} />{' '}
+          {event.takenOver ? t('chat.screenRequestTakenOverDone') : t('chat.screenRequestDone')}
           {event.note ? ` — ${event.note}` : ''}
         </div>
       ) : (
         <>
-          <ScreenView className="mt-2.5 h-[320px] w-full rounded-lg" />
+          {control && (
+            <div className="mt-2.5 flex items-center gap-2 rounded-[7px] border border-red-500/50 bg-red-500/10 px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)]">
+              <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-red-500" />
+              {t('chat.screenControlBanner')}
+            </div>
+          )}
+          <ScreenView
+            viewOnly={!control}
+            className={`mt-2.5 h-[320px] w-full rounded-lg ${control ? 'ring-2 ring-red-500/60' : ''}`}
+          />
           <div className="mt-2.5 flex items-center gap-2">
             <input
               value={note}
@@ -691,14 +725,20 @@ function ScreenRequestCard({ sessionId, event }) {
               placeholder={t('chat.screenRequestNotePlaceholder')}
               className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2.5 py-1.5 text-[11.5px] text-[var(--term-accent-fg)] outline-none placeholder:text-[var(--term-accent-dim)]"
             />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={done}
-              className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
-            >
-              {t('chat.screenRequestDone')}
-            </button>
+            {control ? (
+              <button type="button" disabled={busy} onClick={done} className={btnPrimary}>
+                {t('chat.screenRequestDone')}
+              </button>
+            ) : (
+              <>
+                <button type="button" disabled={busy} onClick={done} className={btnSecondary}>
+                  {t('chat.screenRequestDone')}
+                </button>
+                <button type="button" disabled={busy} onClick={() => setMode('control')} className={btnPrimary}>
+                  {t('chat.screenTakeOver')}
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

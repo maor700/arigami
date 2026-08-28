@@ -11,6 +11,15 @@ export const en = {
 
   // settings — chrome
   'settings.title': 'Settings',
+  'settings.screenTitle': 'Screen share',
+  'settings.vncPassword': 'VNC password',
+  'settings.vncPassword.hint': 'Sent to the embedded viewer when the VNC server asks for VNC-auth. Leave empty if the server has no password.',
+  'settings.vncPassword.set': 'A password is set',
+  'settings.vncPassword.unset': 'No password set',
+  'settings.vncPassword.placeholder': 'New password…',
+  'settings.vncPassword.save': 'Save',
+  'settings.vncPassword.clear': 'Clear',
+  'settings.vncPassword.saved': 'Saved',
 
   // settings — appearance
   'settings.appearance': 'Appearance',

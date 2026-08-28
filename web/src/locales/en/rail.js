@@ -13,7 +13,7 @@ export const strings = {
   'rail.screenConnecting': 'Connecting…',
   'rail.screenDisconnected': 'Disconnected',
   'rail.screenError': 'Connection failed',
-  'rail.screenNeedsPassword': 'This VNC server requires a password — not yet supported here.',
+  'rail.screenNeedsPassword': 'This VNC server requires a password — set it in Settings → Screen share.',
   'rail.listenerErrored': 'A listener errored — open the session',
   'rail.watchingSource': 'Watching {n} source',
   'rail.watchingSources': 'Watching {n} sources',
