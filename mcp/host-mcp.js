@@ -421,6 +421,7 @@ const TOOLS = [
       '(4) `hint` = exactly what the human should do and what "done" looks like (e.g. "enter the SMS code and wait for the dashboard, then click Done"); ' +
       '(5) after it returns, verify the state yourself (re-read the page / capture_screen) before continuing — do not assume it worked; ' +
       '(6) never ask for passwords or codes in chat — let the human type them on the machine. ' +
+      'Opens in Watch (view-only) mode; the human can click "Take over" to drive the machine, then "Done". Returns {takenOver: boolean, note?: string} — takenOver=true means the human actually intervened. ' +
       'Do not call it for questions or decisions — use request_action for those.',
     inputSchema: obj(
       {

@@ -6,6 +6,7 @@ import * as claude from './claude.js';
 import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
+import { updateScreenConfig } from './lib/config.js';
 import {
   changesFor,
   changeDiff,
@@ -40,8 +41,14 @@ interface PendingPermission {
 
 interface ScreenRequestResult {
   ok: boolean;
+  // true iff the human clicked "Take over" and drove the desktop before Done;
+  // false when they just acknowledged (or the request timed out / expired).
+  takenOver: boolean;
   note?: string;
 }
+
+const SCREEN_REQUEST_REASONS = ['login', '2fa', 'captcha', 'payment', 'other'] as const;
+type ScreenRequestReason = (typeof SCREEN_REQUEST_REASONS)[number];
 
 interface PendingScreenRequest {
   resolve: (value: ScreenRequestResult | PromiseLike<ScreenRequestResult>) => void;
@@ -273,24 +280,36 @@ async function handleScreenRequest(
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
   const requestId = 'scrn_' + nano();
   const prompt = String(body.prompt || '');
+  // Optional context shown on the card: why the agent is blocked and what
+  // exactly the human should complete. Unknown reasons collapse to 'other'.
+  const reason: ScreenRequestReason | undefined = body.reason
+    ? (SCREEN_REQUEST_REASONS as readonly string[]).includes(String(body.reason))
+      ? (String(body.reason) as ScreenRequestReason)
+      : 'other'
+    : undefined;
+  const hint = body.hint ? String(body.hint) : undefined;
   const result = await new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
       state.setClaude(sessionId, { state: 'working' });
       const note = '(timed out — the human did not respond)';
       claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note });
-      resolve({ ok: true, note });
+      resolve({ ok: true, takenOver: false, note });
     }, SCREEN_REQUEST_TIMEOUT_MS);
     pendingScreenRequests.set(requestId, { resolve, timer, sessionId });
     state.setClaude(sessionId, { state: 'awaiting-input' });
-    claude.appendChat(sessionId, { kind: 'screen-request', requestId, prompt });
-    const reason = typeof body.reason === 'string' ? body.reason : '';
-    const hint = typeof body.hint === 'string' ? body.hint : '';
+    claude.appendChat(sessionId, {
+      kind: 'screen-request',
+      requestId,
+      prompt,
+      ...(reason ? { reason } : {}),
+      ...(hint ? { hint } : {}),
+    });
     pushIntervention(
       sessionId,
       'screen',
       hint ? `${prompt}\n${hint}` : prompt,
-      SCREEN_REASON_LABEL[reason] || 'needs you on the machine'
+      SCREEN_REASON_LABEL[reason ?? ''] || 'needs you on the machine'
     );
   });
   json(res, result);
@@ -308,25 +327,27 @@ export function expirePendingScreenRequests(
     clearTimeout(entry.timer);
     pendingScreenRequests.delete(requestId);
     claude.appendChat(sessionId, { kind: 'screen-request-answer', requestId, note: message });
-    entry.resolve({ ok: true, note: message });
+    entry.resolve({ ok: true, takenOver: false, note: message });
   }
 }
 
 function answerScreenRequest(
   sessionId: string,
-  data: { requestId: string; note?: string }
+  data: { requestId: string; note?: string; takenOver?: boolean }
 ): { ok: boolean } | null {
   const entry = pendingScreenRequests.get(data.requestId);
   if (!entry || entry.sessionId !== sessionId) return null;
   clearTimeout(entry.timer);
   pendingScreenRequests.delete(data.requestId);
   state.setClaude(sessionId, { state: 'working' });
+  const takenOver = data.takenOver === true;
   claude.appendChat(sessionId, {
     kind: 'screen-request-answer',
     requestId: data.requestId,
+    takenOver,
     ...(data.note ? { note: data.note } : {}),
   });
-  entry.resolve({ ok: true, ...(data.note ? { note: data.note } : {}) });
+  entry.resolve({ ok: true, takenOver, ...(data.note ? { note: data.note } : {}) });
   return { ok: true };
 }
 
@@ -988,9 +1009,11 @@ export async function handle(
       return await handleScreenRequest(res, await readBody(req));
     }
     if (p === '/__api/config' && m === 'GET') {
-      const { groqApiKey, composioApiKey, ...pub } = cfg as any;
+      const { groqApiKey, composioApiKey, screen, ...pub } = cfg as any;
+      const { vncPassword, ...screenPub } = screen || {};
       return json(res, {
         ...pub,
+        screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
     }
@@ -1165,6 +1188,24 @@ export async function handle(
       const available =
         !!cfg.screen?.enabled && (await probeVnc(cfg.screen.vncHost, cfg.screen.vncPort));
       return json(res, { available });
+    }
+    // Settings → screen: the VNC-auth password. Never echoed back — the UI
+    // only learns whether one is set. Empty string clears it.
+    if (p === '/__api/screen/settings' && m === 'GET') {
+      return json(res, { hasVncPassword: !!cfg.screen?.vncPassword });
+    }
+    if (p === '/__api/screen/settings' && m === 'PUT') {
+      const body = (await readBody(req)) as { vncPassword?: unknown };
+      if (body.vncPassword != null && typeof body.vncPassword !== 'string')
+        return badRequest(res, 'vncPassword must be a string');
+      const next = updateScreenConfig({ vncPassword: (body.vncPassword as string) || '' });
+      return json(res, { ok: true, hasVncPassword: !!next.vncPassword });
+    }
+    // noVNC authenticates client-side (RFB VNC-auth), so the password has to
+    // reach the browser. Same trust boundary as /__vnc itself: anyone who can
+    // reach this endpoint can already open the bridge.
+    if (p === '/__api/screen/credentials' && m === 'GET') {
+      return json(res, { password: cfg.screen?.vncPassword || '' });
     }
     // ---- Onboarding & workspace provisioning (see docs/ONBOARDING.md) ----
     if (p === '/__api/onboarding/status' && m === 'GET') {

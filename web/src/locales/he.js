@@ -10,6 +10,15 @@ export const he = {
 
   // settings — chrome
   'settings.title': 'הגדרות',
+  'settings.screenTitle': 'שיתוף מסך',
+  'settings.vncPassword': 'סיסמת VNC',
+  'settings.vncPassword.hint': 'נשלחת לתצוגה המוטמעת כששרת ה-VNC דורש אימות. השאר ריק אם לשרת אין סיסמה.',
+  'settings.vncPassword.set': 'סיסמה מוגדרת',
+  'settings.vncPassword.unset': 'לא הוגדרה סיסמה',
+  'settings.vncPassword.placeholder': 'סיסמה חדשה…',
+  'settings.vncPassword.save': 'שמור',
+  'settings.vncPassword.clear': 'נקה',
+  'settings.vncPassword.saved': 'נשמר',
 
   // settings — appearance
   'settings.appearance': 'מראה',
