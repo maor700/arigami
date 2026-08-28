@@ -5,7 +5,7 @@ import { answerPermission, answerScreenRequest, loadOlderChat, chatHasMore, setS
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
-import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
+import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
@@ -440,7 +440,7 @@ function AskUserQuestion({ sessionId, event, live }) {
     cardRef.current?.querySelector('button[data-opt]')?.focus();
     const onKey = (e) => {
       const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button'));
+      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       const opts = Array.isArray(questions[activeQi]?.options) ? questions[activeQi].options : [];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -585,7 +585,7 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
     allowRef.current?.focus();
     const onKey = (e) => {
       const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button'));
+      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') { e.preventDefault(); e.stopPropagation(); answer('allow'); }
       else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') { e.preventDefault(); e.stopPropagation(); answer('deny'); }
