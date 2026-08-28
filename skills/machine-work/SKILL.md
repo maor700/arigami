@@ -1,0 +1,105 @@
+---
+description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot each significant step, hand over to the human at login / 2FA / CAPTCHA / payment via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
+---
+
+# Machine work — narrate, capture, hand over, verify
+
+You are operating a machine the human can watch live (the shared desktop shown
+in the chat, and mirrored to their phone via push notifications). The human is
+not reading your reasoning — they see the chat and the screen. This skill makes
+what you do legible, and makes the moments where only they can act painless.
+
+Target pattern: you work, the human watches, at a blocking step they **take
+over**, complete it, click **Done**, and you continue.
+
+## Tools you use
+
+| Tool | When |
+|---|---|
+| `capture_screen({caption?})` | after every significant step — a screenshot card appears in the chat timeline |
+| `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
+| `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
+| `set_status_summary` / `set_progress` | running status — do NOT use request_action for status |
+
+`capture_screen` is provided by the host MCP (`arigami`). If it is missing in
+this session, say so once and continue without screenshots — do not improvise
+your own screenshot pipeline.
+
+## The convention
+
+### 1. Opening message
+Before touching the machine, post one line in chat:
+
+> עובד על המכונה: **<goal>** — <2–4 steps you expect> · אתקע רק ב-login/2FA/CAPTCHA/תשלום, ואז אבקש שתשתלט.
+
+(English is fine if the human writes English; match their language.)
+Set `set_progress` with those steps.
+
+### 2. Capture after each significant step
+A "significant step" = navigation to a new page, submitting a form, clicking
+something with side effects, an error/unexpected screen, and the final state.
+Call `capture_screen({caption: "<what this shows>"})` — short, factual
+captions: "Login page loaded", "Order form filled, not submitted yet",
+"Error: card declined". Not every scroll or hover. Rule of thumb: if the human
+would want to *see* it when reviewing the timeline later, capture it.
+
+### 3. Blocked → hand over with `request_screen`
+When you reach a step only the human can do:
+
+1. `capture_screen` first (so the card shows where you are).
+2. Post one short line in chat: what you were doing and why you stopped.
+3. Call:
+   ```
+   request_screen({
+     prompt: "Logging in to <site> to <goal> — it's asking for the SMS code.",
+     reason: "2fa",              // login | 2fa | captcha | payment | other
+     hint:   "Enter the code from your phone, wait until the dashboard loads, then click Done."
+   })
+   ```
+   - `prompt` ≤ 200 chars — it is the body of the push notification.
+   - `reason` — pick the closest; it drives the card label and the push title.
+   - `hint` — exactly what to do and what "done" looks like. Always include the
+     end state, so the human doesn't click Done one screen too early.
+4. Do nothing else while it blocks. Don't retry, don't poll, don't open other
+   tabs on the machine — the human is driving it.
+
+Never ask for passwords, codes or card numbers in chat. The human types them
+on the machine; you never see them.
+
+If a listener can do it without the human (e.g. `sms-listener` for an OTP the
+human agreed to forward), prefer that and mention it — but fall back to
+`request_screen` if it doesn't arrive within a minute or two.
+
+### 4. After Done → verify, then continue
+`request_screen` returns `{ok, note?}`. The note is what the human says
+happened — trust it but verify:
+
+- Re-read the page / `capture_screen({caption: "After human login"})`.
+- Check the concrete end state you asked for (logged-in header, dashboard URL,
+  payment confirmation).
+- If it's not there: say what you see, and either fix it yourself or call
+  `request_screen` again with a **more specific** hint. Don't loop silently —
+  a second request without explanation reads as the first one being ignored.
+- If it timed out (`note` says so): stop, `report_to_master`/`request_action`
+  with what's pending; do not keep the machine busy.
+
+Then post one line ("✓ מחובר, ממשיך ל-<next step>") and update `set_progress`.
+
+### 5. Summary at the end
+Final chat message, short:
+
+- what was achieved (and what wasn't),
+- where the human intervened and why,
+- anything left in an unusual state on the machine (open tabs, logged-in
+  sessions, unsaved forms) — and whether you cleaned it up.
+
+Take one last `capture_screen({caption: "Final state"})`. If a review is
+needed, `request_review` with that summary.
+
+## Anti-patterns
+- Calling `request_screen` with only a prompt and no hint ("please help").
+- Using `request_action` for "I'm on the login page" — that's status, not a decision.
+- Asking the human to paste a code into chat.
+- Continuing after Done without checking the page.
+- Screenshotting every micro-action (noise buries the moments that matter).
+- Sending several `request_screen` in a row — each one is a push to their phone.
