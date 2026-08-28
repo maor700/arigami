@@ -74,7 +74,14 @@ function connect(c, sessionId) {
   if (c.rfb) return;
   c.host = document.createElement('div');
   c.host.style.cssText = 'position:absolute;inset:0;';
-  const r = new RFB(c.host, vncWsUrl(sessionId), { wsProtocols: ['binary'] });
+  const url = vncWsUrl(sessionId);
+  // Cheap diagnostic (T8b): a tab that's been open since before a deploy
+  // keeps running its old bundle indefinitely — no HTTP caching involved, so
+  // no cache fix would touch it — which looks IDENTICAL from the outside to
+  // an actual per-session-scope regression. This line makes the two instantly
+  // distinguishable from the console without re-deriving the whole call chain.
+  console.info('[screen] connecting to', sessionId ? `session ${sessionId}` : 'the global desktop', url);
+  const r = new RFB(c.host, url, { wsProtocols: ['binary'] });
   c.rfb = r;
   r.scaleViewport = true;
   r.viewOnly = true;
