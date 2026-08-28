@@ -97,3 +97,12 @@ pointers to branches/files — never pasted file contents.
   not yours).
 - Interrupt a child mid-turn; the queue exists so you don't have to.
 - Delete the folder or your own session; teardown is the human's call.
+
+## Retro (when the project wraps up)
+
+Once every child is terminal and you're closing out the project, ask: did
+running this project surface something a future project-manager run should
+know — a sequencing mistake, a communication pattern that worked well, a gap
+in this skill's protocol? If so, call `skill_propose({name: "project-manager",
+rationale, evidence?})` with a concrete change. This is occasional, not
+per-wake — most projects won't produce one.

@@ -1018,6 +1018,7 @@ function capResult(body: any): {
   artifacts: unknown[];
   note: string;
   reportedAt: string;
+  skillProposalId?: string;
 } {
   const validStates = ['done', 'blocked', 'error', 'milestone'];
   const st = validStates.includes(body.state) ? body.state : 'milestone';
@@ -1026,7 +1027,13 @@ function capResult(body: any): {
     ? body.artifacts.slice(0, MAX_ARTIFACTS)
     : [];
   const note = String(body.note ?? '').slice(0, 280);
-  return { state: st, summary, artifacts, note, reportedAt: new Date().toISOString() };
+  // M3: a worker's retro step (dispatch/project-manager/machine-work skills)
+  // can point its master at a skill_propose it filed while doing this task —
+  // purely informational, never validated against skill-proposals.ts here.
+  const skillProposalId = typeof body.skillProposalId === 'string' && body.skillProposalId.trim()
+    ? body.skillProposalId.trim().slice(0, 64)
+    : undefined;
+  return { state: st, summary, artifacts, note, reportedAt: new Date().toISOString(), ...(skillProposalId ? { skillProposalId } : {}) };
 }
 
 // Memory M1.4a: on report_to_master / session close, run the same one-shot
@@ -1812,6 +1819,51 @@ export async function handle(
         if (m === 'PUT') {
           const body = (await readBody(req)) as any;
           const r = skills.writeSkill(sm[1], String(body?.content ?? ''));
+          return 'error' in r ? badRequest(res, r.error) : json(res, r);
+        }
+      }
+    }
+
+    // ---- Skill proposals (M3: server/skill-proposals.ts — staged under
+    // $ARIGAMI_DIR/skill-proposals/, never written into skills/ except via apply) --
+    if (p === '/__api/skill-proposals' && m === 'GET') {
+      const sp = await import('./skill-proposals.js');
+      return json(res, sp.listProposals());
+    }
+    if (p === '/__api/skill-proposals' && m === 'POST') {
+      const sp = await import('./skill-proposals.js');
+      const body = (await readBody(req)) as any;
+      const r = sp.proposeSkill({
+        name: body.name,
+        content: body.content,
+        patch: body.patch,
+        rationale: body.rationale,
+        evidence: body.evidence,
+        sessionId: body.sessionId,
+      });
+      return 'error' in r ? badRequest(res, r.error) : json(res, r.proposal);
+    }
+    {
+      const spm = p.match(/^\/__api\/skill-proposals\/(skp_[a-z0-9]+)(?:\/(apply|reject|quarantine))?$/);
+      if (spm) {
+        const [, id, action] = spm;
+        const sp = await import('./skill-proposals.js');
+        if (!action && m === 'GET') {
+          const r = sp.getProposal(id);
+          return 'error' in r ? notFound(res, r.error) : json(res, r);
+        }
+        if (action === 'apply' && m === 'POST') {
+          const r = sp.applyProposal(id);
+          return 'error' in r ? badRequest(res, r.error) : json(res, r);
+        }
+        if (action === 'reject' && m === 'POST') {
+          const body = (await readBody(req)) as any;
+          const r = sp.rejectProposal(id, body?.reason);
+          return 'error' in r ? badRequest(res, r.error) : json(res, r);
+        }
+        if (action === 'quarantine' && m === 'POST') {
+          const body = (await readBody(req)) as any;
+          const r = sp.quarantineProposal(id, body?.reason);
           return 'error' in r ? badRequest(res, r.error) : json(res, r);
         }
       }

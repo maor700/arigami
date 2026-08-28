@@ -156,6 +156,10 @@ memory_write({target:'user'|'memory'|'journal', action:'add'|'replace'|'remove',
    // on this instance, NOT Claude Code's per-project auto-memory. See "Memory" below.
 memory_search({query, scope?:'user'|'memory'|'journal'|'episode', limit?}) → {hits:[{path,scope,snippet,updatedAt}]}
 memory_get({path}) → {path, content} | {error}
+skill_propose({name, content?, patch?, rationale, evidence?, session_id?}) → proposal | {error}
+   // Stages a skill change/creation for human review — NEVER writes skills/ directly.
+   // See "Skill proposals" below. report_to_master accepts an optional
+   // skill_proposal_id to point the master at a proposal filed this task.
 ```
 
 Action-bar answers come ONLY from a human click in the UI.
@@ -238,6 +242,81 @@ the episode hook.
 **M2 contract:** `getMemoryBootstrap()` is the agreed hook M2's cron
 (`server/triggers.ts`, isolated-session runs) calls to load the same snapshot
 into a scheduled session — memory.ts doesn't know about cron at all.
+
+## Skill proposals (server/skill-proposals.ts — $ARIGAMI_DIR/skill-proposals/)
+
+Spec M3. Skills (`skills/*/SKILL.md`) are git-tracked and shared by **every**
+session on this instance — a bad autonomous edit here hurts everyone, not
+just the agent that made it (higher blast radius than memory, per
+`RESEARCH-ARIGAMI-BRAIN.md` §1.3/M3). So unlike memory's "direct writes land
+immediately, gated" model, skills get **no direct-write path at all**: the
+`skill_propose` MCP tool can only stage a proposal; only a human
+apply/reject/quarantine decision ever touches `skills/`. This follows
+OpenClaw's Skill Workshop staging pattern, not Hermes's open-by-default
+`write_approval:false` — and specifically fixes the failure mode
+Hermes issue #70128 documented (a skill changed with no diff shown, nothing
+to review or revert): `getProposal()` always recomputes the diff against the
+skill's **current** content, so a human reviewing later — even if the live
+skill moved since the proposal was filed (`stale:true`) — sees an accurate
+before/after, never a stale one.
+
+**Storage**, one directory per proposal (id `skp_<...>`):
+```
+$ARIGAMI_DIR/skill-proposals/<id>/
+  meta.json     — status/flags/rationale/evidence/etc (source of truth)
+  PROPOSAL.md   — the same thing, human-readable
+  base.md       — snapshot of the target's SKILL.md when proposed ('' if new)
+  content.md    — the full proposed SKILL.md text (what apply() writes verbatim)
+  diff          — unified diff, base.md → content.md, as computed at propose time
+$ARIGAMI_DIR/skill-proposals/.audit.jsonl   — append-only: propose/apply/reject/quarantine
+```
+
+**Diffing** is hand-rolled (no external dep) — an O(n·m) LCS over lines,
+emitted as a single unified-diff hunk (skill files are small; a pathological
+size falls back to a whole-file replace rather than spending seconds on the
+DP table). `applyUnifiedDiff()` is the inverse, for `skill_propose`'s `patch`
+form — it validates every context/deleted line actually matches before
+applying, refusing (not silently corrupting) on a mismatch.
+
+**Flow:**
+1. `skill_propose({name, content?, patch?, rationale, evidence?})` — `name`
+   existing = an edit, `name` new = a creation. `content` (full new SKILL.md
+   text) is the reliable path; `patch` (unified diff against current/empty
+   content) is refused with an error if it doesn't apply cleanly, telling the
+   caller to pass `content` instead. Refused outright if identical to the
+   current skill, or missing YAML frontmatter. A basic heuristic scan
+   (`scanSkillContent`) — curl/wget-pipe-to-shell, credential-shaped strings,
+   markdown-image/fetch exfiltration patterns, hidden HTML comments (the
+   documented ToxicSkills/OpenClaw backdoor technique — invisible on GitHub's
+   renderer) — sets `flags[]` on the proposal. **Flags never block staging or
+   apply** — they're surfaced to the human, who still decides.
+2. Human reviews in the Skills UI's **Proposals** tab (badge = pending count):
+   rationale, evidence, flags, and the live diff.
+3. `apply` → `writeSkill(name, content, {allowCreate:true})` — the same
+   validated write `skills.ts` already used for the human editor (frontmatter
+   + `description` required), with a new `allowCreate` escape hatch that
+   **only** this path sets; the human-editor's `PUT /__api/skills/:name`
+   still never creates a new skill. `reject`/`quarantine` just record a
+   decision (+ optional `reason`) — neither ever touches `skills/`.
+   Terminal once decided (`pending → applied|rejected|quarantined`, no
+   re-deciding).
+
+**When to propose** (spec M3.3 — explicit, not a background habit): a
+"retro" reflection step at the end of the `machine-work`, `dispatch`, and
+`project-manager` skills — "did you learn something a future run should
+know?" — not a periodic background fork (Hermes's every-10-turns
+self-review was explicitly rejected as a v1 pattern, see RESEARCH.md §1.3).
+`report_to_master` accepts an optional `skill_proposal_id` so a worker can
+point its master at a proposal it filed.
+
+```
+GET  /__api/skill-proposals                → ProposalSummary[]
+POST /__api/skill-proposals                {name,content?,patch?,rationale,evidence?,sessionId?}
+GET  /__api/skill-proposals/:id            → ProposalDetail (content, live diff, stale)
+POST /__api/skill-proposals/:id/apply
+POST /__api/skill-proposals/:id/reject     {reason?}
+POST /__api/skill-proposals/:id/quarantine {reason?}
+```
 
 ## Screen share (server/vnc.ts, useScreenConnection.js, ScreenView.jsx, ScreenModal.jsx)
 

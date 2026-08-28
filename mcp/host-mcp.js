@@ -97,7 +97,9 @@ const TOOLS = [
       'artifacts: pointers the master can open on demand, e.g. [{kind:"branch",ref:"dispatch/x"},{kind:"file",path:"REPORT.md"},{kind:"diff",ref:"HEAD~1"}]. ' +
       'If you farmed out part of your work, aggregate your children into ONE result before reporting up. ' +
       'Normally the host already recorded your master at spawn time; pass `master` only if you know your parent id ' +
-      'and the handoff reports no master (it back-fills the pointer for next time).',
+      'and the handoff reports no master (it back-fills the pointer for next time). ' +
+      'skill_proposal_id: if your retro step (see skill_propose) filed a proposal while doing this task, pass its id ' +
+      'here so your master can see it was raised — purely a pointer, not required.',
     inputSchema: obj({
       state: { type: 'string', enum: ['done', 'blocked', 'error', 'milestone'] },
       note: { type: 'string', description: 'One-line pointer shown to the master (the thin wake text)' },
@@ -107,10 +109,12 @@ const TOOLS = [
         items: obj({ kind: { type: 'string' }, ref: { type: 'string' }, path: { type: 'string' } }),
       },
       master: { type: 'string', description: 'Explicit master/parent session id — fallback when the spawn-time pointer is missing' },
+      skill_proposal_id: { type: 'string', description: 'Optional: id of a skill_propose you filed this task, for your master to see' },
       ...SID_PROP,
     }, ['state', 'note']),
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/report`, {
       state: a.state, note: a.note, summary: a.summary, artifacts: a.artifacts, master: a.master,
+      skillProposalId: a.skill_proposal_id,
     }),
   },
   {
@@ -587,6 +591,34 @@ const TOOLS = [
     description: 'Read one memory file in full by its path (as returned by memory_search, e.g. "USER.md", "journal/2026-08-28.md", "episodes/<id>.md").',
     inputSchema: obj({ path: { type: 'string' } }, ['path']),
     run: (a) => api('GET', `/__api/memory/get?path=${encodeURIComponent(a.path)}`),
+  },
+  {
+    name: 'skill_propose',
+    description:
+      'Propose a change to a skill (or a brand-new one) for HUMAN review — writes ONLY to a staging area ' +
+      '($ARIGAMI_DIR/skill-proposals/), never to the live skills/ pack. Use this from a retro/reflection step ' +
+      '(end of dispatch/project-manager/machine-work, or any time you learn something a future skill run should ' +
+      'know) — not speculatively, and never as a background/periodic habit. ' +
+      'name: the skill dir (existing to edit it, new to propose creating it — lowercase/digits/hyphens). ' +
+      'content: the FULL new SKILL.md text (frontmatter + body) — the reliable way to propose, prefer this. ' +
+      'patch: alternative — a unified diff against the skill\'s current content (or against empty, for a new skill); ' +
+      'refused with an error if it fails to apply cleanly, in which case pass full `content` instead. Exactly one of ' +
+      'content/patch is required. rationale (required): why — what you learned and why a future run needs it. ' +
+      'evidence: optional supporting detail (what happened, a link, a transcript excerpt). ' +
+      'A human then reviews a diff and applies/rejects/quarantines it from the Skills UI — nothing here is ever ' +
+      'auto-applied. Returns the proposal id; you can pass it to report_to_master\'s skill_proposal_id.',
+    inputSchema: obj({
+      name: { type: 'string' },
+      content: { type: 'string', description: 'Full proposed SKILL.md content — preferred over patch' },
+      patch: { type: 'string', description: 'Unified diff against the current (or empty, if new) SKILL.md content' },
+      rationale: { type: 'string' },
+      evidence: { type: 'string' },
+      ...SID_PROP,
+    }, ['name', 'rationale']),
+    run: (a) => api('POST', '/__api/skill-proposals', {
+      name: a.name, content: a.content, patch: a.patch, rationale: a.rationale, evidence: a.evidence,
+      sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
+    }),
   },
   {
     name: 'permission_prompt',

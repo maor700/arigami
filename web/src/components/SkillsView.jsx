@@ -13,6 +13,7 @@ import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import { faCaretDown, faCaretUp, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { DiffView } from './DiffView.jsx';
 
 const nsOf = (name) => {
   const i = name.indexOf(':');
@@ -433,19 +434,266 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
   );
 }
 
+/* ---------- right pane: skill proposals (M3) -------------------------------- */
+// A staged AI-authored diff against skills/*/SKILL.md (or a brand-new skill),
+// never written until a human applies it. Same "clearly AI-inferred" marking
+// as the graph pane's AI-edges legend — this whole pane IS the AI-proposed
+// content, so the badge is on the tab, not per-item.
+
+const STATUS_CLS = {
+  pending: 'text-[#b8791f]',
+  applied: 'text-[#2f9c82]',
+  rejected: 'text-fgdim',
+  quarantined: 'text-[#9c3b33]',
+};
+
+function ProposalList({ proposals, selectedId, onSelect, className }) {
+  const t = useT();
+  return (
+    <div className={`thin-scroll flex shrink-0 flex-col overflow-y-auto bg-panel ${className}`}>
+      <div className="px-3 pt-3 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+        {t('dialogs.skillProposals')} · {proposals.length}
+      </div>
+      {proposals.length === 0 && (
+        <div className="px-3 py-4 text-[11px] text-fgdim">{t('dialogs.noProposals')}</div>
+      )}
+      {proposals.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onSelect(p.id)}
+          className={`flex flex-col gap-0.5 border-b border-hair px-3 py-2 text-left ${
+            selectedId === p.id ? 'bg-chip' : 'hover:bg-chip/60'
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="font-mono text-[11.5px] font-bold text-fg">{p.name}</span>
+            {p.isNew && (
+              <span className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
+            )}
+            {p.flags.length > 0 && <span className="text-[9.5px] text-[#9c3b33]" title={p.flags.join(', ')}>⚠ {p.flags.length}</span>}
+          </span>
+          <span className={`text-[9.5px] font-bold tracking-wide uppercase ${STATUS_CLS[p.status] || 'text-fgdim'}`}>
+            {t(`dialogs.proposalStatus.${p.status}`)}
+          </span>
+          <span className="line-clamp-1 text-[10.5px] leading-snug text-fgdim">{p.rationale}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProposalDetailPane({ id, onDecided, desktop }) {
+  const t = useT();
+  const [detail, setDetail] = useState(null);
+  const [loadErr, setLoadErr] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let dead = false;
+    setDetail(null);
+    setLoadErr('');
+    setReason('');
+    setErr('');
+    api
+      .get(`/skill-proposals/${id}`)
+      .then((d) => { if (!dead) setDetail(d); })
+      .catch((e) => { if (!dead) setLoadErr(String(e?.message || e).replace(/^HTTP \d+ — /, '')); });
+    return () => { dead = true; };
+  }, [id]);
+
+  if (loadErr) return <div className="p-6 text-[12px] text-[#9c3b33]">{loadErr}</div>;
+  if (!detail) return <div className="p-6 text-[12px] text-fgdim">{t('dialogs.loading')}</div>;
+
+  const ACTION_KEYS = {
+    apply: { title: 'dialogs.confirmApplyProposalTitle', label: 'dialogs.apply', done: 'dialogs.proposalApplied' },
+    reject: { title: 'dialogs.confirmRejectProposalTitle', label: 'dialogs.reject', done: 'dialogs.proposalRejected' },
+    quarantine: { title: 'dialogs.confirmQuarantineProposalTitle', label: 'dialogs.quarantine', done: 'dialogs.proposalQuarantined' },
+  };
+
+  const decide = async (action) => {
+    const keys = ACTION_KEYS[action];
+    const ok = await confirmDialog({
+      title: t(keys.title, { name: detail.name }),
+      confirmLabel: t(keys.label),
+      danger: action !== 'apply',
+    });
+    if (!ok) return;
+    setBusy(action);
+    setErr('');
+    try {
+      const updated = await api.post(`/skill-proposals/${id}/${action}`, action === 'apply' ? {} : { reason: reason || undefined });
+      toastSuccess(t(keys.done, { name: detail.name }));
+      onDecided?.(updated);
+    } catch (e) {
+      setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const pending = detail.status === 'pending';
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-white">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
+        <span className="font-mono text-[13px] font-bold text-fg">{detail.name}</span>
+        {detail.isNew && (
+          <span className="rounded-full border border-hair px-1.5 text-[9px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
+        )}
+        <span className="rounded-md border border-[#cdb9ea] bg-[#f3eefc] px-1.5 py-0.5 text-[9.5px] font-bold text-[#5a3aa6]">
+          {t('dialogs.aiProposed')}
+        </span>
+        <span className={`text-[10.5px] font-bold uppercase ${STATUS_CLS[detail.status] || 'text-fgdim'}`}>
+          {t(`dialogs.proposalStatus.${detail.status}`)}
+        </span>
+        {pending && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => decide('quarantine')}
+              disabled={!!busy}
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] font-bold text-fg hover:bg-[#f3e5e3] disabled:cursor-default disabled:opacity-40"
+            >
+              {busy === 'quarantine' ? t('dialogs.quarantining') : t('dialogs.quarantine')}
+            </button>
+            <button
+              type="button"
+              onClick={() => decide('reject')}
+              disabled={!!busy}
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] font-bold text-fg hover:bg-chip disabled:cursor-default disabled:opacity-40"
+            >
+              {busy === 'reject' ? t('dialogs.rejecting') : t('dialogs.reject')}
+            </button>
+            <button
+              type="button"
+              onClick={() => decide('apply')}
+              disabled={!!busy}
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
+            >
+              {busy === 'apply' ? t('dialogs.applying') : t('dialogs.apply')}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {err && (
+        <div className="shrink-0 border-b border-[#e2c4c0] bg-[#FBECEA] px-4 py-2 text-[11px] text-[#9c3b33]">{err}</div>
+      )}
+      {detail.stale && (
+        <div className="shrink-0 border-b border-[#e6d3a3] bg-[#FCF3DE] px-4 py-2 text-[11px] text-[#8a6116]">
+          {t('dialogs.staleProposalWarning')}
+        </div>
+      )}
+
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[900px] px-5 py-4">
+          <div className="mb-3 text-[11px] leading-relaxed text-fg">
+            <span className="font-bold">{t('dialogs.rationale')}: </span>{detail.rationale}
+          </div>
+          {detail.evidence && (
+            <div className="mb-3 text-[11px] leading-relaxed text-fgdim">
+              <span className="font-bold text-fg">{t('dialogs.evidence')}: </span>{detail.evidence}
+            </div>
+          )}
+          {detail.flags.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[10.5px]">
+              <span className="font-bold text-[#9c3b33]">{t('dialogs.flags')}:</span>
+              {detail.flags.map((f) => (
+                <span key={f} className="rounded-md border border-[#e2c4c0] bg-[#FBECEA] px-1.5 py-0.5 text-[#9c3b33]">{f}</span>
+              ))}
+            </div>
+          )}
+          {pending && (
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={t('dialogs.reasonOptional')}
+              rows={2}
+              className="mb-3 w-full resize-none rounded-md border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] text-fg outline-none"
+            />
+          )}
+          {detail.reason && !pending && (
+            <div className="mb-3 text-[11px] text-fgdim">
+              <span className="font-bold text-fg">{t('dialogs.reason')}: </span>{detail.reason}
+            </div>
+          )}
+        </div>
+        {detail.diff ? (
+          <DiffView diff={detail.diff} path={`skills/${detail.name}/SKILL.md`} compact={!desktop} />
+        ) : (
+          <div className="px-5 pb-4 text-[11px] text-fgdim">{t('dialogs.noDiff')}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProposalsPane({ desktop }) {
+  const t = useT();
+  const [proposals, setProposals] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [loadErr, setLoadErr] = useState('');
+  const [listOpen, setListOpen] = useState(false);
+
+  const load = () => {
+    api
+      .get('/skill-proposals')
+      .then((list) => {
+        setProposals(list);
+        setSelected((cur) => (cur && list.some((p) => p.id === cur) ? cur : list[0]?.id || null));
+      })
+      .catch((e) => setLoadErr(String(e?.message || e).replace(/^HTTP \d+ — /, '')));
+  };
+  useEffect(load, []);
+
+  if (loadErr) return <div className="flex-1 p-6 text-[12px] text-[#9c3b33]">{loadErr}</div>;
+  if (!proposals) return <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.loadingProposals')}</div>;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      {!desktop && (
+        <button
+          type="button"
+          onClick={() => setListOpen((o) => !o)}
+          className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-3 py-1.5 text-left font-mono text-[11px] text-fgdim"
+        >
+          <span className="font-bold text-fg">{t('dialogs.skillProposals')} · {proposals.length}</span>
+          <span className="ml-auto truncate">{selected || ''}</span>
+          <span className="shrink-0"><Icon icon={listOpen ? faCaretUp : faCaretDown} /></span>
+        </button>
+      )}
+      <ProposalList
+        proposals={proposals}
+        selectedId={selected}
+        onSelect={(id) => { setSelected(id); if (!desktop) setListOpen(false); }}
+        className={desktop ? 'w-[248px] border-r border-hair' : listOpen ? 'max-h-[50vh] w-full border-b border-hair' : 'hidden'}
+      />
+      {selected ? (
+        <ProposalDetailPane key={selected} id={selected} desktop={desktop} onDecided={load} />
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.selectAProposal')}</div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- the view ------------------------------------------------------- */
 
 export default function SkillsView({ session, onClose }) {
   const t = useT();
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [mode, setMode] = useState('detail'); // 'detail' | 'graph'
+  const [mode, setMode] = useState('detail'); // 'detail' | 'graph' | 'proposals'
   const desktop = useIsDesktop();
   const [listOpen, setListOpen] = useState(false); // mobile: skill-list sheet
   const [analysisResp, setAnalysisResp] = useState(null); // { analysis, hash, stale }
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeErr, setAnalyzeErr] = useState('');
   const [loadErr, setLoadErr] = useState('');
+  const [pendingProposals, setPendingProposals] = useState(0);
 
   useEffect(() => {
     api
@@ -463,6 +711,15 @@ export default function SkillsView({ session, onClose }) {
       );
     api.get('/skills/graph').then(setAnalysisResp).catch(() => {});
   }, []);
+
+  // Refetched whenever the proposals tab is left (a decision there — apply/
+  // reject/quarantine — should clear/shrink this badge without a full reload).
+  useEffect(() => {
+    api
+      .get('/skill-proposals')
+      .then((list) => setPendingProposals(list.filter((p) => p.status === 'pending').length))
+      .catch(() => {});
+  }, [mode]);
 
   const runAnalyze = async () => {
     setAnalyzing(true);
@@ -506,16 +763,21 @@ export default function SkillsView({ session, onClose }) {
       <div className="flex shrink-0 items-center gap-3 border-b border-hair bg-panel px-4 py-2.5">
         <span className="text-[14px] font-bold text-fg">{t('dialogs.skills')}</span>
         <div className="ml-2 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
-          {['detail', 'graph'].map((mItem) => (
+          {['detail', 'graph', 'proposals'].map((mItem) => (
             <button
               key={mItem}
               type="button"
               onClick={() => setMode(mItem)}
-              className={`cursor-pointer px-3 py-1 text-[11px] font-bold ${
+              className={`relative cursor-pointer px-3 py-1 text-[11px] font-bold ${
                 mode === mItem ? 'bg-brand text-fg' : 'bg-panel text-fgdim hover:bg-chip'
               }`}
             >
-              {mItem === 'detail' ? t('dialogs.detailEdit') : t('dialogs.graph')}
+              {mItem === 'detail' ? t('dialogs.detailEdit') : mItem === 'graph' ? t('dialogs.graph') : t('dialogs.skillProposals')}
+              {mItem === 'proposals' && pendingProposals > 0 && (
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#9c3b33] px-1 text-[9px] font-bold text-white">
+                  {pendingProposals}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -530,46 +792,50 @@ export default function SkillsView({ session, onClose }) {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* mobile: the skill list lives behind a toggle sheet (same pattern as
-            the Changes tab file list) — a fixed 248px column doesn't fit */}
-        {!desktop && (
-          <button
-            type="button"
-            onClick={() => setListOpen((o) => !o)}
-            className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-3 py-1.5 text-left font-mono text-[11px] text-fgdim"
-          >
-            <span className="font-bold text-fg">{t('dialogs.skills')} · {data.skills.length}</span>
-            <span className="ml-auto truncate">{selected || ''}</span>
-            <span className="shrink-0"><Icon icon={listOpen ? faCaretUp : faCaretDown} /></span>
-          </button>
-        )}
-        <SkillList
-          skills={data.skills}
-          selected={selected}
-          onSelect={pick}
-          sessionSkills={sessionSkills}
-          sessionTitle={session?.title}
-          className={desktop ? 'w-[248px] border-r border-hair' : listOpen ? 'max-h-[50vh] w-full border-b border-hair' : 'hidden'}
-        />
-        {mode === 'detail' ? (
-          selected ? (
-            <DetailPane key={selected} name={selected} aiSummary={aiSummary} />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.selectASkill')}</div>
-          )
-        ) : (
-          <GraphPane
-            data={data}
-            analysis={analysis}
+      {mode === 'proposals' ? (
+        <ProposalsPane desktop={desktop} />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* mobile: the skill list lives behind a toggle sheet (same pattern as
+              the Changes tab file list) — a fixed 248px column doesn't fit */}
+          {!desktop && (
+            <button
+              type="button"
+              onClick={() => setListOpen((o) => !o)}
+              className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-3 py-1.5 text-left font-mono text-[11px] text-fgdim"
+            >
+              <span className="font-bold text-fg">{t('dialogs.skills')} · {data.skills.length}</span>
+              <span className="ml-auto truncate">{selected || ''}</span>
+              <span className="shrink-0"><Icon icon={listOpen ? faCaretUp : faCaretDown} /></span>
+            </button>
+          )}
+          <SkillList
+            skills={data.skills}
             selected={selected}
-            onSelectSkill={pick}
-            onAnalyze={runAnalyze}
-            analyzing={analyzing}
-            analysisMeta={analysis ? { generatedAt: analysis.generatedAt, stale: analysisResp?.stale } : null}
+            onSelect={pick}
+            sessionSkills={sessionSkills}
+            sessionTitle={session?.title}
+            className={desktop ? 'w-[248px] border-r border-hair' : listOpen ? 'max-h-[50vh] w-full border-b border-hair' : 'hidden'}
           />
-        )}
-      </div>
+          {mode === 'detail' ? (
+            selected ? (
+              <DetailPane key={selected} name={selected} aiSummary={aiSummary} />
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.selectASkill')}</div>
+            )
+          ) : (
+            <GraphPane
+              data={data}
+              analysis={analysis}
+              selected={selected}
+              onSelectSkill={pick}
+              onAnalyze={runAnalyze}
+              analyzing={analyzing}
+              analysisMeta={analysis ? { generatedAt: analysis.generatedAt, stale: analysisResp?.stale } : null}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
