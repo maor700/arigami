@@ -650,7 +650,7 @@ export function ProposalsPane({ desktop }) {
       })
       .catch((e) => setLoadErr(String(e?.message || e).replace(/^HTTP \d+ — /, '')));
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   if (loadErr) return <div className="flex-1 p-6 text-[12px] text-[#9c3b33]">{loadErr}</div>;
   if (!proposals) return <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.loadingProposals')}</div>;

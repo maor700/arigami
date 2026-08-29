@@ -56,7 +56,7 @@ function CappedDoc({ target, path, onChanged }) {
       .get(`/memory/get?path=${encodeURIComponent(path)}`)
       .then((r) => setContent(r.content || ''))
       .catch(() => setContent(''));
-  useEffect(load, [path]);
+  useEffect(() => { load(); }, [path]);
 
   const write = async (body) => {
     setBusy(true);
@@ -235,7 +235,7 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
         setSelected((cur) => (cur && list.some((f) => f.path === cur) ? cur : list[0]?.path || null));
       })
       .catch(() => setFiles([]));
-  useEffect(load, [scope]);
+  useEffect(() => { load(); }, [scope]);
 
   useEffect(() => {
     if (!selected) {
@@ -321,7 +321,7 @@ function LogPane({ onChanged }) {
   const [busy, setBusy] = useState(null);
 
   const load = () => api.get('/memory/log?limit=50').then(setLog).catch(() => setLog([]));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const undo = async (seq) => {
     setBusy(seq);
@@ -377,7 +377,7 @@ function PendingTab({ onChanged }) {
   const [busy, setBusy] = useState(null);
 
   const load = () => api.get('/memory/pending').then(setList).catch(() => setList([]));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const decide = async (id, action) => {
     setBusy(id);
@@ -467,7 +467,7 @@ export default function BrainView({ onClose }) {
       .then((list) => setPendingCount((list || []).length))
       .catch(() => {});
   };
-  useEffect(refreshPendingCount, [mode]);
+  useEffect(() => { refreshPendingCount(); }, [mode]);
 
   const askBrain = async () => {
     setAskBusy(true);
