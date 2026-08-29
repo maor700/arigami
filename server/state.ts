@@ -121,6 +121,23 @@ interface TabContent {
 
 type Tab = TabSession | TabUrl | TabContent;
 
+// A published static artifact (A1, server/artifacts.ts). `path` is the
+// host-relative URL of the CURRENT version (`/__artifacts/<id>/`); older
+// versions stay reachable at `/__artifacts/<id>/v<N>/`.
+export interface Artifact {
+  id: string;
+  title: string;
+  path: string;        // '/__artifacts/<id>/'
+  source: string;      // realpath of what was published (for re-publish → new version)
+  entry: string;       // entry file inside the snapshot (default index.html)
+  version: number;
+  bytes: number;
+  files: number;
+  createdAt: string;
+  updatedAt: string;
+  shareExp?: string;   // K2 share-token expiry (unused until K2)
+}
+
 interface ChangesExplanation {
   language: string | null;
   generatedAt: string;
@@ -165,6 +182,7 @@ interface Session {
   action: unknown;
   tabs: Tab[];
   activeTabId: string;
+  artifacts?: Artifact[];
   claude: ClaudeState;
   bg: unknown[];
   pendingPrompts?: PendingPrompt[];
@@ -957,6 +975,40 @@ export function stopListenersForSession(sessionId: string): void {
   for (const l of db.listeners.values())
     if (l.sessionId === sessionId && l.status !== 'stopped')
       patchListener(l.id, { status: 'stopped' });
+}
+
+// ---- Artifacts (A1) ----
+
+export function upsertArtifact(id: string, art: Artifact): Artifact | null {
+  const s = getSession(id);
+  if (!s) return null;
+  s.artifacts = s.artifacts || [];
+  const i = s.artifacts.findIndex((a) => a.id === art.id);
+  if (i >= 0) s.artifacts[i] = art;
+  else s.artifacts.push(art);
+  touch(s);
+  broadcast({ type: 'session-updated', session: s });
+  return art;
+}
+
+export function removeArtifact(id: string, aid: string): boolean {
+  const s = getSession(id);
+  if (!s?.artifacts) return false;
+  const i = s.artifacts.findIndex((a) => a.id === aid);
+  if (i < 0) return false;
+  s.artifacts.splice(i, 1);
+  touch(s);
+  broadcast({ type: 'session-updated', session: s });
+  return true;
+}
+
+// Owner lookup for the static route: which session published <aid>?
+export function findArtifact(aid: string): { session: Session; artifact: Artifact } | null {
+  for (const s of db.sessions.values()) {
+    const a = s.artifacts?.find((x) => x.id === aid);
+    if (a) return { session: s, artifact: a };
+  }
+  return null;
 }
 
 // ---- Tabs ----

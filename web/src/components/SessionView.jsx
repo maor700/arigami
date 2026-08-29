@@ -1345,6 +1345,10 @@ function UrlTab({ tab, active }) {
           title={tab.title || t('rail.tabFallback')}
           src={src}
           onLoad={() => setLoading(false)}
+          /* Published artifacts (A1) run with an opaque origin — no
+             allow-same-origin — so a page can't call /__api as the cockpit.
+             The host also sends a CSP sandbox header; this is belt+braces. */
+          {...(String(tab.url || '').startsWith('/__artifacts/') ? { sandbox: 'allow-scripts allow-forms allow-popups' } : {})}
           className="absolute inset-0 h-full w-full border-0 bg-white"
         />
       </div>

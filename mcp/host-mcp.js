@@ -320,6 +320,35 @@ const TOOLS = [
     },
   },
   {
+    name: 'publish_artifact',
+    description:
+      'Publish a static artifact (an HTML file, a built app folder, a report, an image) so the human can open it ' +
+      'from ANY device (laptop, phone). The host snapshots the file/folder and serves it on its own origin. ' +
+      'Returns a HOST-RELATIVE path — NEVER print http://localhost URLs; show the returned `path` or rely on the chat card that appears. ' +
+      'Directory: entry defaults to index.html; build with relative asset paths (Vite: base "./"). ' +
+      'Re-publishing the same `path` creates a new version and updates the card. The page runs sandboxed (opaque origin: no cookies, ' +
+      'no localStorage, no same-origin /__api calls). `share:true` is reserved for share links (not available yet → share_url:null + warning).',
+    inputSchema: obj({
+      path: { type: 'string', description: 'Absolute path (or relative to the session cwd) to a file or directory' },
+      title: { type: 'string' },
+      entry: { type: 'string', description: 'Entry file inside a directory (default index.html)' },
+      open: { type: 'boolean', description: 'Also open as a session tab (default true)' },
+      notify: { type: 'boolean', description: 'Send a push notification with the link (default false)' },
+      share: { type: 'boolean', description: 'Also mint an expiring public share link (K2 — not implemented yet)' },
+      ...SID_PROP,
+    }, ['path', 'title']),
+    run: async (a) => {
+      const r = await api('POST', `/__api/sessions/${sid(a)}/artifacts`, {
+        path: a.path, title: a.title, entry: a.entry, open: a.open, notify: a.notify, share: a.share,
+      });
+      if (r?.error) throw new Error(r.error);
+      return {
+        artifact_id: r.artifact_id, path: r.path, version: r.version, bytes: r.bytes, files: r.files,
+        warnings: r.warnings || [], share_url: r.share_url ?? null,
+      };
+    },
+  },
+  {
     name: 'update_tab',
     description: 'Update fields of an existing tab.',
     inputSchema: obj({

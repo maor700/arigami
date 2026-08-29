@@ -15,6 +15,7 @@ import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';
 import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
+import * as artifacts from './artifacts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
@@ -126,6 +127,20 @@ const server = http.createServer(
     if (pathname === '/__host' || pathname.startsWith('/__host/')) {
       serveHost(pathname, res);
       return;
+    }
+    // Published artifacts (A1) — static snapshots, sandboxed CSP, traversal-
+    // guarded. Must precede handlePage/proxy so a pinned SW target can't
+    // swallow it (also listed in the SW SKIP list, proxy.ts).
+    // NOTE(C1): the cookie middleware goes ABOVE this line; K2's ?t= share
+    // token is checked inside artifacts.serve.
+    if (pathname === '/__artifacts' || pathname.startsWith('/__artifacts/')) {
+      try {
+        if (artifacts.serve(req, res)) return;
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end('artifact error: ' + (e as Error).message);
+        return;
+      }
     }
     if (pathname === '/') {
       let pinned = false;

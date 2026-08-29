@@ -5,6 +5,7 @@ import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderCha
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
+import ArtifactCard from './ArtifactCard.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -830,6 +831,8 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // Consecutive screenshots are folded into the first one's row (see the
       // grouping in ChatPane below); `shots` carries the whole run.
       return <ScreenshotCard shots={event.shots || [event]} />;
+    case 'artifact':
+      return <ArtifactCard sessionId={sessionId} event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }

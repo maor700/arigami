@@ -8,6 +8,7 @@ import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig } from './lib/config.js';
 import * as screens from './screenshots.js';
+import * as artifacts from './artifacts.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
 import {
@@ -2224,6 +2225,7 @@ export async function handle(
           u.searchParams.get('runCleanup') === 'true'
             ? await runCleanup(s)
             : undefined;
+        artifacts.removeSession(id); // published snapshots die with the session
         state.deleteSession(id);
         return json(res, { ok: true, ...(cleanup ? { cleanup } : {}) });
       }
@@ -2503,6 +2505,69 @@ export async function handle(
     if (sub === 'browser/sync-logins' && m === 'POST') {
       const r = await chrome.syncProfileToBase(id);
       return json(res, r);
+    }
+    // ---- Published artifacts (A1) — publish_artifact tool + card buttons ----
+    if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));
+    if (sub === 'artifacts' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      let r: artifacts.PublishResult;
+      try {
+        r = artifacts.publish(id, {
+          path: String(body.path || ''),
+          title: String(body.title || '').slice(0, 200),
+          entry: body.entry ? String(body.entry) : undefined,
+        });
+      } catch (e) {
+        const err = e as artifacts.PublishError;
+        return json(res, { error: err.message }, err.status || 500);
+      }
+      const { artifact, warnings } = r;
+      // K2 hook: share links need server/lib/share-token.ts.
+      let share_url: string | null = null;
+      if (body.share === true) warnings.push('share links are not implemented yet (K2) — share_url is null');
+      const ev = claude.appendChat(id, {
+        kind: 'artifact',
+        artifactId: artifact.id,
+        title: artifact.title,
+        path: artifact.path,
+        entry: artifact.entry,
+        version: artifact.version,
+        bytes: artifact.bytes,
+        files: artifact.files,
+        warnings,
+      });
+      if (body.open !== false) {
+        // Re-publish: point the existing tab at the same path (it's stable),
+        // just make it active again; else open a fresh URL tab.
+        const existing = (s as any).tabs.find((t: any) => t.type === 'url' && t.url === artifact.path);
+        if (existing) state.activateTab(id, existing.id);
+        else state.addTab(id, { type: 'url', title: artifact.title, url: artifact.path });
+      }
+      if (body.notify === true) {
+        import('./push.js')
+          .then((push) => { if (!push.hasSubscriptions()) return; return push.sendPush({
+            title: `${(s as any).title || 'Arigami'} — ${artifact.title}`.slice(0, 80),
+            body: `Artifact published (v${artifact.version})`,
+            tag: `artifact:${artifact.id}`,
+            sessionId: id,
+            url: artifact.path, // relative — the SW resolves it on whatever origin the phone uses
+          }); })
+          .catch(() => {});
+      }
+      return json(res, {
+        ok: true,
+        artifact_id: artifact.id,
+        path: artifact.path,
+        version: artifact.version,
+        bytes: artifact.bytes,
+        files: artifact.files,
+        warnings,
+        share_url,
+        event_id: ev?.id,
+      });
+    }
+    if (parts[3] === 'artifacts' && parts[4] && !parts[5] && m === 'DELETE') {
+      return artifacts.remove(id, parts[4]) ? json(res, { ok: true }) : notFound(res, 'no such artifact');
     }
     if (parts[3] === 'screens' && parts[4] && !parts[5] && m === 'GET') {
       const file = screens.screenFilePath(id, parts[4]);
