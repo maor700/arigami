@@ -1,0 +1,8 @@
+[
+  {
+    "name": "standup",
+    "prompt": "Run the daily-standup skill and deliver the report.",
+    "schedule": { "kind": "cron", "value": "0 9 * * 1-5" },
+    "enabled": false
+  }
+]

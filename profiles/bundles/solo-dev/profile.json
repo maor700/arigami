@@ -1,0 +1,10 @@
+{
+  "name": "solo-dev",
+  "version": "0.1.0",
+  "title": "Solo developer",
+  "description": "A generic starting point for one person shipping their own repos: no ticket tracker, no private registries, one tiny daily-standup skill and a disabled morning cron you can switch on.",
+  "repos": [],
+  "plugins": [],
+  "workflows": [],
+  "issueSource": "none"
+}
