@@ -64,7 +64,7 @@ for instant rehydration of the UI.
 Session colors: palette `['#E0594F','#1F9C82','#6A4FC4','#2C6BD6','#CE8324','#3C9A4E','#C2459E','#5B62D6']`,
 round-robin on creation.
 
-## REST API (all JSON; no auth — localhost only)
+## REST API (all JSON; behind the session cookie / internal bearer token — see docs/AUTH.md and docs/SECURITY.md)
 
 ```
 GET    /__api/sessions                       → [session]   (?archived=true includes archived)

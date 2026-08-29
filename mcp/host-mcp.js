@@ -10,14 +10,17 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 // agent might echo to a human — results carry host-relative paths instead
 // (they resolve against whatever origin the human used; see
 // server/lib/public-url.ts). Guarded by test/no-localhost-urls.test.js.
-const HOST = process.env.ARIGAMI_URL || 'http://localhost:3099';
+const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
 // Where the cockpit lives on any origin; the human's browser resolves it.
 const PUBLIC_PATH = (process.env.ARIGAMI_PUBLIC_PATH || '/__host/').replace(/\/+$/, '') + '/';
+// C1: the host injects a per-session bearer token (ARIGAMI_TOKEN) into every
+// claude it spawns; without it every /__api call is a 401 once auth is on.
+const TOKEN = process.env.ARIGAMI_TOKEN || '';
 
 async function api(method, path, body, headers = {}) {
   const res = await fetch(HOST + path, {
     method,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -369,7 +372,7 @@ const TOOLS = [
     description:
       'Publish a static artifact (an HTML file, a built app folder, a report, an image) so the human can open it ' +
       'from ANY device (laptop, phone). The host snapshots the file/folder and serves it on its own origin. ' +
-      'Returns a HOST-RELATIVE path — NEVER print http://localhost URLs; show the returned `path` or rely on the chat card that appears. ' +
+      'Returns a HOST-RELATIVE path — NEVER print localhost URLs; show the returned `path` or rely on the chat card that appears. ' +
       'Directory: entry defaults to index.html; build with relative asset paths (Vite: base "./"). ' +
       'Re-publishing the same `path` creates a new version and updates the card. The page runs sandboxed (opaque origin: no cookies, ' +
       'no localStorage, no same-origin /__api calls). `share:true` is reserved for share links (not available yet → share_url:null + warning).',

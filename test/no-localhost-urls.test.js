@@ -76,7 +76,7 @@ test('publicUrl(): relative by default, absolute only with ARIGAMI_PUBLIC_URL', 
   expect(rel.ok).toBe(true);
   expect(rel.out[0].a).toBe('/__host/?session=x');
   expect(rel.out[0].b).toBe('/__host/#/session/a%20b');
-  expect(rel.out[0].c).toBe('http://localhost:3497/__host/');
+  expect(rel.out[0].c).toBe('http://127.0.0.1:3497/__host/'); // C1: hostBase is the loopback bind, never 'localhost'
   expect(rel.out[0].d).toBe('https://ext/x');
   const abs = runInChild(body, { ARIGAMI_PUBLIC_URL: 'https://example.invalid/', ARIGAMI_PORT: '3497' });
   expect(abs.ok).toBe(true);

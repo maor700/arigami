@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor
+# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user
 # Pidfile + logs under $ARIGAMI_DIR (default ~/.arigami); health check = GET /__api/config.
 set -u
 
@@ -20,7 +20,7 @@ if [ -f "$CONFIG" ]; then
   [ -n "$p" ] && PORT="$p"
 fi
 [ -n "${ARIGAMI_PORT:-}" ] && PORT="$ARIGAMI_PORT"
-URL="http://localhost:$PORT"
+URL="http://127.0.0.1:$PORT"
 
 # Local login service (prod build of the login repo) — gives the app a
 # same-origin /login that authenticates without the deployed redirect_uri wall.
@@ -237,6 +237,14 @@ doctor() {
   [ -f "$ROOT/web/dist/index.html" ] && echo "  web/dist: $(g "✓")" || echo "  web/dist: $(y "missing — run: bun run build:web")"
   [ -f "$ROOT/server/lib/config.ts" ] && echo "  server/lib/config.ts: $(g "✓")" || echo "  server/lib/config.ts: $(y "missing (stub fallback in use)")"
   echo
+  dl "auth (C1):"
+  bind="$(sed -n 's/.*"bind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" 2>/dev/null | head -1)"
+  mode="$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\(pairing\|oidc\|off\)".*/\1/p' "$CONFIG" 2>/dev/null | head -1)"
+  echo "  bind: ${ARIGAMI_BIND:-${bind:-127.0.0.1 (default)}}"
+  echo "  mode: ${ARIGAMI_AUTH:-${mode:-pairing (default)}}"
+  if [ -f "$DIR/users.json" ]; then echo "  users.json: $(g "✓")"; else echo "  users.json: $(y "none — run: host pair, then enter the code at /__host/")"; fi
+  [ -f "$DIR/run/pairing-code" ] && echo "  pairing code pending: $(y "$(cat "$DIR/run/pairing-code")")"
+  echo
   dl "runtime:"
   echo "  manager: $(manager_name)"
   if systemd_managed; then
@@ -280,6 +288,11 @@ uninstall_systemd() {
   as_root rm -f "$UNIT_DST" && as_root systemctl daemon-reload
   gl "✓ removed systemd unit $UNIT_NAME"
 }
+
+# C1 — pairing + users. Delegates to server/auth.ts (same ARIGAMI_DIR rules as
+# the server) so the code file lands exactly where the running host reads it.
+pair() { ARIGAMI_DIR="$DIR" bun "$ROOT/server/auth.ts" pair; }
+user() { ARIGAMI_DIR="$DIR" bun "$ROOT/server/auth.ts" user "$@"; }
 
 install() {
   bun_bin="$(command -v bun)"
@@ -422,10 +435,12 @@ case "${1:-status}" in
   status) status ;;
   logs) shift; logs "${1:-}" ;;
   doctor) doctor ;;
+  pair) pair ;;
+  user) shift; user "$@" ;;
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

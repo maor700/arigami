@@ -1,6 +1,16 @@
 // REST helpers — all under /__api (vite proxies to :3099 in dev).
 
+// C1: the store registers a handler so any 401 (cookie expired / logged out
+// elsewhere) flips the app to the Login screen instead of spraying errors.
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
 async function handle(res) {
+  if (res.status === 401 && onUnauthorized && !/\/__api\/auth\//.test(res.url || '')) {
+    try { onUnauthorized(); } catch { /* ignore */ }
+  }
   if (!res.ok) {
     let detail = '';
     try {

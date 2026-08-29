@@ -1,7 +1,7 @@
 // Sessions store: single WS connection (auto-reconnect with backoff) + REST
 // snapshots. No optimistic updates — the server echoes every mutation via WS.
 import { useSyncExternalStore } from 'react';
-import { api } from './api.js';
+import { api, setUnauthorizedHandler } from './api.js';
 import { mergeChatEvents } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
 import { toast, toastError } from './toast.js';
@@ -20,6 +20,10 @@ let state = {
   lastSent: {}, // sessionId -> the draft most recently sent (for Esc-restore)
   conn: 'connecting', // 'open' | 'connecting' | 'down'
   config: null, // GET /__api/config result (null until loaded / failed)
+  // C1 auth: undefined = not yet checked, null = signed out (Login screen),
+  // object = GET /__api/auth/me ({user, principal, isAdmin, authMode, hasAdmin, oidc}).
+  auth: undefined,
+  authInfo: null, // {authMode, hasAdmin, oidc} — known even when signed out
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
@@ -579,6 +583,7 @@ function connect() {
   };
   ws.onclose = () => {
     setState({ conn: 'down' });
+    if (state.auth === null) return; // signed out: Login will reconnect after success
     scheduleReconnect();
   };
   ws.onerror = () => {
@@ -599,15 +604,57 @@ function connect() {
   };
 }
 
-export function startStore() {
-  if (started) return;
-  started = true;
+// C1 — who am I? 401 → Login screen; anything else (auth off, cookie, bearer)
+// → the normal boot. Called once at start and again after a successful login.
+export async function loadAuth() {
+  try {
+    const me = await fetch('/__api/auth/me', { headers: { accept: 'application/json' } });
+    let body = null;
+    try { body = await me.json(); } catch { /* ignore */ }
+    if (me.status === 401) {
+      setState({ auth: null, authInfo: body ? { authMode: body.authMode, hasAdmin: body.hasAdmin, oidc: body.oidc } : null });
+      return null;
+    }
+    if (!me.ok) throw new Error(`HTTP ${me.status}`);
+    setState({ auth: body, authInfo: { authMode: body.authMode, hasAdmin: body.hasAdmin, oidc: body.oidc } });
+    return body;
+  } catch {
+    // Host unreachable: leave auth unknown; the ws banner reports "offline".
+    setState({ auth: state.auth === undefined ? undefined : state.auth });
+    return state.auth ?? null;
+  }
+}
+
+function bootLoads() {
   loadConfig();
   loadSessions();
   loadFolders();
   loadUsage();
   loadAccounts();
   connect();
+}
+
+// After Login succeeded (pairing or OIDC return): fetch /me, then boot.
+export async function afterLogin() {
+  const me = await loadAuth();
+  if (me) bootLoads();
+  return me;
+}
+
+export function signOut() {
+  setState({ auth: null });
+  try { ws?.close(); } catch { /* ignore */ }
+}
+
+export async function startStore() {
+  if (started) return;
+  started = true;
+  setUnauthorizedHandler(() => {
+    if (state.auth !== null) signOut();
+  });
+  const me = await loadAuth();
+  if (me === null && state.auth === null) return; // Login screen takes over
+  bootLoads();
 }
 
 /* ---------------- event routing ------------------------------------------ */

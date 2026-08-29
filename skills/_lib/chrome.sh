@@ -20,13 +20,15 @@
 # yourself.
 set -euo pipefail
 
-HOST="${ARIGAMI_URL:-http://localhost:3099}"
+HOST="${ARIGAMI_URL:-http://127.0.0.1:3099}"
+# C1: per-session bearer token injected by the host (empty = auth off).
+AUTH=(-H "Authorization: Bearer ${ARIGAMI_TOKEN:-}")
 SID="${ARIGAMI_SESSION_ID:?ARIGAMI_SESSION_ID not set — run inside a host session}"
 
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 if [ "${1:-}" = "--sync" ]; then
-  curl -sf -X POST "$HOST/__api/sessions/$SID/browser/sync-logins" \
+  curl -sf "${AUTH[@]}" -X POST "$HOST/__api/sessions/$SID/browser/sync-logins" \
     -H 'content-type: application/json' -d '{}'
   exit 0
 fi
@@ -37,5 +39,5 @@ if [ -n "$URL" ]; then
 else
   BODY='{}'
 fi
-curl -sf -X POST "$HOST/__api/sessions/$SID/browser" \
+curl -sf "${AUTH[@]}" -X POST "$HOST/__api/sessions/$SID/browser" \
   -H 'content-type: application/json' -d "$BODY"

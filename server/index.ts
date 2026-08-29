@@ -17,6 +17,8 @@ import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
 import * as artifacts from './artifacts.js';
 import { setDrainHandler } from './host-control.js';
+import { validateAuthBind } from './lib/config.js';
+import { auth } from './auth.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
@@ -121,6 +123,16 @@ function serveHost(pathname: string, res: ServerResponse): void {
 const server = http.createServer(
   (req: IncomingMessage, res: ServerResponse) => {
     const pathname = (req.url || '/').split('?')[0];
+    // C1: auth gate before ANY routing. Sets req.auth (the principal) and
+    // answers 401/302 itself for everything outside the small public allowlist
+    // (auth.ts isPublicPath). The proxy, host pages and /__artifacts (A1/K2)
+    // are all behind it — one origin, one cookie.
+    if (auth.gate(req, res)) return;
+    if (pathname === '/__health') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
     if (pathname.startsWith('/__api/') || pathname.startsWith('/__mcp/')) {
       api.handle(req, res);
       return;
@@ -178,6 +190,9 @@ server.on(
     // and kills the process (with it, every running Claude session). Guard it.
     try {
       const pathname = (req.url || '').split('?')[0];
+      // C1: /__ws, /__vnc and the SW proxy's websockets all need the cookie
+      // (or an internal bearer) — an anonymous upgrade is answered 401 + closed.
+      if (auth.gateUpgrade(req, socket)) return;
       if (pathname === '/__ws') return bus.handleUpgrade(req, socket, head);
       if (pathname === '/__vnc') return vnc.handleUpgrade(req, socket, head);
       if (proxy?.handleUpgrade) return proxy.handleUpgrade(req, socket, head);
@@ -191,6 +206,15 @@ server.on(
     }
   }
 );
+
+// Fail-closed (SPEC §7.9): auth off + non-loopback bind is refused outright.
+{
+  const bad = validateAuthBind(cfg);
+  if (bad) {
+    console.error('[host] refusing to start: ' + bad);
+    process.exit(2);
+  }
+}
 
 // FIRST, before anything destructive: refuse to boot if this identity
 // (ARIGAMI_DIR + port) is already being served. A second copy of a live host
@@ -231,10 +255,17 @@ server.on('error', (e: NodeJS.ErrnoException) => {
   console.error('[host] server error:', e?.message || e);
 });
 
-server.listen(cfg.port, () => {
+server.listen(cfg.port, cfg.bind, () => {
   console.log(
-    `[host] arigami up on http://localhost:${cfg.port} (pid ${process.pid})`
+    `[host] arigami up on http://${cfg.bind}:${cfg.port} (pid ${process.pid}, auth: ${cfg.auth.mode}${cfg.publicUrl ? ', public: ' + cfg.publicUrl : ''})`
   );
+  if (cfg.auth.mode === 'off')
+    console.warn('[host] auth is OFF — anyone who can reach this loopback port (incl. tailscale serve / any local proxy) has full control. See docs/AUTH.md');
+  try {
+    auth.announcePairing();
+  } catch (e) {
+    console.error('[host] pairing code failed:', (e as Error)?.message);
+  }
   import('./accounts.js')
     .then((m: any) => {
       m.initAccounts(); // seed from keychain + any inherited .env token

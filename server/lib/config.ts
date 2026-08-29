@@ -100,14 +100,36 @@ export interface HostConfig {
   idleTimeoutMin: number;
 }
 
+// C1 — host auth. `mode:'off'` is ONLY legal when `bind` is loopback (the
+// server refuses to boot otherwise — see validateAuthBind); it exists so the
+// current single-machine install can keep working behind `tailscale serve`
+// while migrating (docs/AUTH.md). 'pairing' = one-time code → admin cookie;
+// 'oidc' = pairing PLUS a "Sign in with <provider>" button (openid-client).
+export interface OidcConfig {
+  issuer: string; // e.g. https://accounts.google.com — discovery is derived
+  clientId: string;
+  clientSecret?: string; // prefer secrets.ts ARIGAMI_OIDC_CLIENT_SECRET
+  allowedEmails: string[];
+  allowedDomains: string[];
+  autoCreate: boolean; // create a 'user' on first allowed login (first ever = admin)
+}
+export interface AuthConfig {
+  mode: 'pairing' | 'oidc' | 'off';
+  cookieDays: number;
+  oidc?: OidcConfig;
+}
+
 export interface Config {
   port: number;
-  // Public origin humans reach this host on (e.g. https://arigami.example.tld),
-  // set via ARIGAMI_PUBLIC_URL. ONLY consulted when a link must leave the host
-  // as an absolute URL (WhatsApp/Slack/OAuth redirect). Everything else is
-  // host-relative (`/__host/?session=…`) and resolves against whatever origin
-  // the client used — see server/lib/public-url.ts.
+  // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
+  // devices through `tailscale serve` / Caddy (C2), which forward to loopback.
+  // `0.0.0.0` (env ARIGAMI_BIND) is honoured only with auth enabled.
+  bind: string;
+  // Absolute origin the host is reachable at from a browser, e.g.
+  // https://host.example.ts.net (env ARIGAMI_PUBLIC_URL). Used for OAuth/OIDC
+  // redirects and outgoing share links; cookies get `Secure` when it's https.
   publicUrl: string;
+  auth: AuthConfig;
   prodUrl: string;
   storybookCompareUrl: string;
   upstreamCookies: Record<string, string>;
@@ -147,7 +169,12 @@ export interface Config {
 
 export const DEFAULTS: Config = {
   port: 3099 + PORT_SHIFT,
+  bind: '127.0.0.1',
   publicUrl: '',
+  auth: {
+    mode: 'pairing',
+    cookieDays: 30,
+  },
   prodUrl: '',
   storybookCompareUrl: '',
   upstreamCookies: {},
@@ -274,7 +301,10 @@ function envOverrides(): Partial<Config> {
   const o: Partial<Config> = {};
   const port = E.ARIGAMI_PORT || E.POC_PORT;
   if (port && Number(port)) o.port = Number(port);
+  if (E.ARIGAMI_BIND) o.bind = E.ARIGAMI_BIND;
   if (E.ARIGAMI_PUBLIC_URL) o.publicUrl = E.ARIGAMI_PUBLIC_URL.replace(/\/+$/, '');
+  if (E.ARIGAMI_AUTH && ['off', 'pairing', 'oidc'].includes(E.ARIGAMI_AUTH))
+    o.auth = { ...DEFAULTS.auth, mode: E.ARIGAMI_AUTH as AuthConfig['mode'] };
   if (E.ARIGAMI_PROD_URL || E.POC_PROD_URL)
     o.prodUrl = E.ARIGAMI_PROD_URL || E.POC_PROD_URL;
   if (E.ARIGAMI_REPOS_DIR || E.POC_REPOS_DIR)
@@ -319,6 +349,25 @@ const merged = deepMerge(
 
 const ticketsDir = tilde(merged.ticketsDir);
 
+export const isLoopbackBind = (bind: string): boolean =>
+  bind === '127.0.0.1' || bind === 'localhost' || bind === '::1' || /^127\./.test(bind);
+
+// Fail-closed sanity (SPEC §7.9): an unauthenticated host may only listen on
+// loopback. Returns an error string (the caller exits 2) or null when fine.
+export function validateAuthBind(c: Pick<Config, 'bind' | 'auth'>): string | null {
+  if (c.auth?.mode === 'off' && !isLoopbackBind(c.bind))
+    return `auth.mode is 'off' but bind is '${c.bind}' — an unauthenticated host may only listen on loopback. ` +
+      `Either drop ARIGAMI_BIND/bind (default 127.0.0.1) or enable auth (auth.mode 'pairing').`;
+  if (c.auth?.mode === 'oidc' && !(c.auth.oidc?.issuer && c.auth.oidc?.clientId))
+    return `auth.mode is 'oidc' but auth.oidc.issuer/clientId are missing.`;
+  return null;
+}
+
+// The loopback address internal callers (MCP, one-shots, bin/host) should dial.
+// Never 'localhost': with bind=127.0.0.1 a resolver that prefers ::1 would miss.
+const loopbackHost = (bind: string): string =>
+  bind === '::' || bind === '::1' ? '[::1]' : '127.0.0.1';
+
 // A non-default instance must never read/write the default instance's state —
 // a config.json copied over from ~/.arigami still says `~/.arigami/state.json`.
 // Remap those into our own dir, loudly.
@@ -346,10 +395,28 @@ export const cfg: Config = {
   logsDir: path.join(CONFIG_DIR, 'logs'),
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
-  // INTERNAL host→self base (what the host injects as ARIGAMI_URL). Never hand
-  // this to a human — it only resolves on the box running the server.
-  hostBase: `http://localhost:${merged.port || DEFAULTS.port}`,
+  publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
+  hostBase: `http://${loopbackHost(merged.bind || DEFAULTS.bind)}:${merged.port || DEFAULTS.port}`,
 };
+
+// `publicUrl('/__artifacts/x/')` → absolute when ARIGAMI_PUBLIC_URL is set,
+// else the relative path unchanged (the client prepends its own origin).
+export function publicUrl(p: string): string {
+  return cfg.publicUrl ? cfg.publicUrl + (p.startsWith('/') ? p : '/' + p) : p;
+}
+
+// Persist a partial auth config (Settings → Users; `bin/host` CLI). Same
+// merge pattern as updateScreenConfig. Note the live `cfg.auth` object is
+// PATCHED in place (not replaced) because server/auth.ts holds a reference.
+export function updateAuthConfig(patch: Partial<AuthConfig>): AuthConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: AuthConfig = { ...cfg.auth, ...patch };
+  const out = { ...file, auth: { ...(file.auth || {}), ...patch } } as any;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  Object.assign(cfg.auth, next);
+  return cfg.auth;
+}
 
 export function ensureConfigFile(): void {
   try {

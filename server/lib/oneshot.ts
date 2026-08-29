@@ -16,6 +16,8 @@
 import { spawn } from 'node:child_process';
 import { supervise, killTree } from './children.js';
 import { tokenForSession, getActiveId } from '../accounts.js';
+import { cfg } from './config.js';
+import { auth } from '../auth.js';
 
 function baseEnv(): NodeJS.ProcessEnv {
   const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
@@ -53,7 +55,14 @@ export function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}): Pro
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd || process.cwd(),
-      env: { ...baseEnv(), ...accountEnv() },
+      env: {
+        ...baseEnv(),
+        ...accountEnv(),
+        // C1: a one-shot has no session, so it gets the host-scoped internal
+        // token — its MCP/curl calls back into the host still authenticate.
+        ARIGAMI_URL: cfg.hostBase,
+        ARIGAMI_TOKEN: auth.hostToken,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     supervise(child, opts.tag || 'oneshot');

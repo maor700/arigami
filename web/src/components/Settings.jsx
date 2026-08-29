@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
+import { useStore, signOut } from '../lib/store.js';
 import { subscribePush, unsubscribePush, isPushSubscribed } from '../lib/push.js';
 import { Wave } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 import { LOGOS, LOGO_IDS, DEFAULT_ACCENT } from '../lib/logos.js';
 import { useT } from '../lib/i18n.js';
-import { useStore } from '../lib/store.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { toast, toastError } from '../lib/toast.js';
 import { LANGS, LANG_IDS } from '../lib/langs.js';
@@ -590,6 +590,7 @@ export default function Settings({ onClose }) {
           <PushNotifications />
           <BrainHeartbeat />
           <HostCard />
+          <UsersCard />
         </div>
       </div>
     </div>
@@ -932,6 +933,127 @@ function HostCard() {
         <pre dir="ltr" className="thin-scroll mb-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">
           {(log.length ? log : upg.log).join('\n')}
         </pre>
+      )}
+    </>
+  );
+}
+
+// C1 — Users & access: who you are, sign out, admin: pairing code for another
+// device/user, users list, API tokens for CLIs.
+function UsersCard() {
+  const t = useT();
+  const { auth } = useStore();
+  const [users, setUsers] = useState([]);
+  const [tokens, setTokens] = useState([]);
+  const [label, setLabel] = useState('');
+  const [fresh, setFresh] = useState(null); // {token} shown once
+  const [code, setCode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const admin = !!auth?.isAdmin;
+  const off = auth?.authMode === 'off';
+
+  const load = () => {
+    if (!auth || off) return;
+    api.get('/auth/users').then((r) => setUsers(r.users || [])).catch(() => {});
+    if (admin) api.get('/auth/tokens').then((r) => setTokens(r.tokens || [])).catch(() => {});
+  };
+  useEffect(load, [auth?.user?.id, admin, off]);
+
+  if (!auth) return null;
+
+  const logout = async () => {
+    await api.post('/auth/logout').catch(() => {});
+    signOut();
+  };
+  const issueCode = async () => {
+    setBusy(true);
+    try { setCode((await api.post('/auth/pairing-code')).code); } catch (e) { toastError(String(e.message || e)); } finally { setBusy(false); }
+  };
+  const createToken = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post('/auth/tokens', { label: label || 'cli' });
+      setFresh(r);
+      setLabel('');
+      load();
+    } catch (e) { toastError(String(e.message || e)); } finally { setBusy(false); }
+  };
+  const delToken = async (id) => { await api.del(`/auth/tokens/${id}`).catch(() => {}); load(); };
+  const delUser = async (id) => { await api.del(`/auth/users/${id}`).catch((e) => toastError(String(e.message || e))); load(); };
+
+  const row = 'flex items-center justify-between gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0';
+  const btn = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[11px] text-fg hover:bg-brand disabled:opacity-40';
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('auth.settings.title')}
+      </h3>
+      {off ? (
+        <div className="text-[11.5px] text-fgdim">{t('auth.settings.off')}</div>
+      ) : (
+        <>
+          <Field label={t('auth.settings.you')} hint={auth.user ? `${auth.user.email} · ${auth.user.role}` : auth.principal}>
+            <button type="button" onClick={logout} className={btn}>{t('auth.settings.logout')}</button>
+          </Field>
+          {admin && (
+            <Field label={t('auth.settings.pairAnother')} hint={code ? t('auth.settings.pairCodeHint') : t('auth.settings.pairAnotherHint')}>
+              {code ? (
+                <span className="font-mono text-sm font-bold tracking-[0.15em]">{code}</span>
+              ) : (
+                <button type="button" disabled={busy} onClick={issueCode} className={btn}>{t('auth.settings.issueCode')}</button>
+              )}
+            </Field>
+          )}
+          {users.length > 0 && (
+            <div className="mt-2 rounded-lg border border-hair px-3 py-1">
+              {users.map((u) => (
+                <div key={u.id} className={row}>
+                  <span className="min-w-0 truncate">
+                    <span className="font-bold">{u.email}</span>
+                    <span className="ml-2 font-mono text-[10px] text-fgdim">{u.role}{u.oidcSub ? ' · oidc' : ''}</span>
+                  </span>
+                  {admin && u.id !== auth.user?.id && (
+                    <button type="button" onClick={() => delUser(u.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-fg">{t('auth.settings.remove')}</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {admin && (
+            <>
+              <Field label={t('auth.settings.tokens')} hint={t('auth.settings.tokensHint')}>
+                <span className="flex items-center gap-1.5">
+                  <input
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder={t('auth.settings.tokenLabel')}
+                    className="w-[110px] rounded-lg border-[1.5px] border-ink bg-panel px-2 py-1 text-[11px] outline-none"
+                  />
+                  <button type="button" disabled={busy} onClick={createToken} className={btn}>{t('auth.settings.createToken')}</button>
+                </span>
+              </Field>
+              {fresh && (
+                <div className="mt-1 rounded-lg border border-hair bg-panel px-3 py-2 text-[11px]">
+                  <div className="mb-1 text-fgdim">{t('auth.settings.tokenOnce')}</div>
+                  <code className="break-all font-mono text-[11px] select-all">{fresh.token}</code>
+                </div>
+              )}
+              {tokens.length > 0 && (
+                <div className="mt-2 rounded-lg border border-hair px-3 py-1">
+                  {tokens.map((tk) => (
+                    <div key={tk.id} className={row}>
+                      <span className="min-w-0 truncate">
+                        <span className="font-bold">{tk.label}</span>
+                        <span className="ml-2 font-mono text-[10px] text-fgdim">{tk.email} · {tk.createdAt?.slice(0, 10)}</span>
+                      </span>
+                      <button type="button" onClick={() => delToken(tk.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-fg">{t('auth.settings.revoke')}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
     </>
   );

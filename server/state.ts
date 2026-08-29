@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { auth } from './auth.js';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { broadcast } from './bus.js';
@@ -762,6 +763,7 @@ export function reorderSessions(orderedIds: string[]): void {
 }
 
 export function deleteSession(id: string): boolean {
+  try { auth.revokeSessionToken(id); } catch {}
   const s = getSession(id);
   if (!s) return false;
   db.sessions.delete(id);
