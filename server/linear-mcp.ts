@@ -64,7 +64,9 @@ let pendingAuthUrl: string | null = null;
 // us, not a fixed localhost: over Tailscale/LAN that's a different device
 // than the one running this server, so a hardcoded localhost redirect just
 // dead-ends there. Falls back to localhost for CLI/non-request callers.
-let currentOrigin = `http://localhost:${cfg.port}`;
+// Redirect URIs must be absolute — the only legitimate absolute-URL site.
+const fallbackOrigin = () => cfg.publicUrl || `http://localhost:${cfg.port}`;
+let currentOrigin = fallbackOrigin();
 
 const provider: OAuthClientProvider = {
   get redirectUrl() {
@@ -180,7 +182,7 @@ export function status(): { connected: boolean; needsAuth: boolean; authUrl: str
 export async function startAuth(
   origin?: string
 ): Promise<{ connected: boolean; authUrl?: string }> {
-  currentOrigin = origin || `http://localhost:${cfg.port}`;
+  currentOrigin = origin || fallbackOrigin();
   // The previously-DCR'd client was registered with a different origin's
   // redirect_uri — Linear will reject an authorize request quoting a
   // redirect_uri outside that set, so force fresh registration instead of

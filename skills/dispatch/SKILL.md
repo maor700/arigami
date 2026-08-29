@@ -171,6 +171,21 @@ concrete change. Not every run produces one — most won't. Never a background
 habit, never speculative. If you're a worker and filed a proposal, pass its
 id as `report_to_master`'s `skill_proposal_id` so your master sees it.
 
+## Showing things to the human (links)
+
+The human may be on a phone, another machine or a tailnet — a
+`http://localhost:…` link only works on the host box. So:
+
+- **Static output** (report, HTML, screenshots dir, built site) →
+  `publish_artifact` and pass on the `/__artifacts/<id>/` path it returns.
+- **Live server** (dev server, Storybook) → bind it to `$PORT` (or the port from
+  `allocate_port`) and `open_tab({type:"url", url:"http://localhost:$PORT"})`;
+  the host proxies it into a cockpit tab.
+- **Never print `http://localhost:…` URLs** in replies, reports, pushes or
+  messages. The host returns host-**relative** paths (`/__host/?session=…`,
+  `/__artifacts/…`) — forward them as-is. `$ARIGAMI_URL` is an internal base for
+  your own API calls, not a link for people.
+
 ## Notes
 
 - Caps are global across the whole tree (`config.json` → `dispatcher.maxMutating` /
@@ -183,7 +198,10 @@ id as `report_to_master`'s `skill_proposal_id` so your master sees it.
   a terminal result or is deleted.
 - **needsServer.** Pass `needsServer:true` (a worker that runs a dev server) and the
   host allocates a free port from the pool into `metadata.port` and exposes it to
-  the worker as `$PORT`; it's released when the worker session is deleted.
+  the worker as `$PORT`; it's released when the worker session is deleted. A
+  session that didn't ask up front can call `allocate_port` later.
+- `create_session` returns a host-**relative** `url` (`/__host/?session=<id>`);
+  show it as-is (`url_internal` is the loopback form, host-box only).
 - Teardown: `delete_session({ run_cleanup:true })` runs the worker's `metadata.cleanup`
   (removes its worktree, deletes its branch).
 - The cockpit shows the tree (Rail "Tree" mode) and a per-master **Orchestration

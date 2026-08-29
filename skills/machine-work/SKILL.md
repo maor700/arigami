@@ -26,6 +26,21 @@ over**, complete it, click **Done**, and you continue.
 this session, say so once and continue without screenshots — do not improvise
 your own screenshot pipeline.
 
+## Showing things to the human (links)
+
+The human may be on a phone, another machine or a tailnet — a
+`http://localhost:…` link only works on the host box. So:
+
+- **Static output** (report, HTML, screenshots dir, built site) →
+  `publish_artifact` and pass on the `/__artifacts/<id>/` path it returns.
+- **Live server** (dev server, Storybook) → bind it to `$PORT` (or the port from
+  `allocate_port`) and `open_tab({type:"url", url:"http://localhost:$PORT"})`;
+  the host proxies it into a cockpit tab.
+- **Never print `http://localhost:…` URLs** in replies, reports, pushes or
+  messages. The host returns host-**relative** paths (`/__host/?session=…`,
+  `/__artifacts/…`) — forward them as-is. `$ARIGAMI_URL` is an internal base for
+  your own API calls, not a link for people.
+
 ## Your own machine
 
 Each session gets its own desktop (its own `Xvfb`+VNC, not the shared one)

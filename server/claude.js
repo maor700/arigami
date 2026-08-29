@@ -392,7 +392,13 @@ function spawnProc(s, resume) {
       ...baseEnv(),
       ...accountEnv(s),
       ARIGAMI_SESSION_ID: s.id,
-      ARIGAMI_URL: `http://localhost:${cfg.port}`,
+      // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
+      // to reach THIS host. It is never a link for a human — the host hands out
+      // relative paths (ARIGAMI_PUBLIC_PATH) that resolve on any origin. See
+      // server/lib/public-url.ts.
+      ARIGAMI_URL: cfg.hostBase || `http://localhost:${cfg.port}`,
+      ARIGAMI_PUBLIC_PATH: '/__host/',
+      ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
       ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
       // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
       // its dev server binds the slot the host reserved (metadata.port).
@@ -965,14 +971,27 @@ function saveAttachments(id, attachments) {
 // first turn only (fresh claude session, nothing sent yet on this proc) — never
 // mid-conversation, so the prompt-cache prefix stays stable. A --resume proc
 // already has this in its history from the original spawn.
+// A3: how to SHOW things to the human. Sessions are reached from laptops,
+// phones and tailnets alike — a `http://localhost:…` link only works on the
+// host box. Goes in the first turn only (same prompt-cache reasoning as memory).
+export const URL_GUIDANCE =
+  '<system-reminder>\n' +
+  'Arigami links: to show the human anything, call publish_artifact (static file/dir → /__artifacts/<id>/) or ' +
+  'open_tab (a LIVE dev server — pass http://localhost:$PORT, the host proxies it into a cockpit tab). ' +
+  'Never write http://localhost:… URLs in replies, reports, pushes or messages: the human may be on a phone or ' +
+  'another machine. The host returns host-RELATIVE paths (/__host/?session=…, /__artifacts/…) — pass them on as-is. ' +
+  '$ARIGAMI_URL is an internal base for your own API calls only, not a link for people. ' +
+  'Need a port for a dev server? call allocate_port (or set_metadata({patch:{needs_server:true}})) and use $PORT / the returned port.\n' +
+  '</system-reminder>\n\n';
+
 function memoryBootstrapPrefix() {
   const { userMd, memoryMd } = getMemoryBootstrap();
-  if (!userMd.trim() && !memoryMd.trim()) return '';
+  if (!userMd.trim() && !memoryMd.trim()) return URL_GUIDANCE;
   let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not Claude Code's per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
   block += '</system-reminder>\n\n';
-  return block;
+  return URL_GUIDANCE + block;
 }
 
 function writeUserMessage(p, text, attachments = []) {
@@ -1129,7 +1148,8 @@ function runHeadless(s, prompt, onExit) {
         ...baseEnv(),
         ...accountEnv(s),
         ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
-        ARIGAMI_URL: `http://localhost:${cfg.port}`,
+        ARIGAMI_URL: cfg.hostBase || `http://localhost:${cfg.port}`, // internal host→self base only
+        ARIGAMI_PUBLIC_PATH: '/__host/',
         ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
       },
       stdio: ['ignore', 'ignore', 'pipe'],
