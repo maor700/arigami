@@ -142,6 +142,112 @@ function RemoteAccess() {
   );
 }
 
+// Settings → Webhooks (C3): the sms share-token (URL for the phone's SMS
+// forwarder, rotate/revoke), Slack/GitHub secrets, custom HMAC hooks, and the
+// Tailscale Funnel toggle that exposes ONLY /__api/webhooks to the internet.
+function WebhooksCard() {
+  const t = useT();
+  const { auth } = useStore();
+  const [cfgv, setCfgv] = useState(null);
+  const [funnel, setFunnel] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [secretDraft, setSecretDraft] = useState({ slack: '', github: '' });
+  const [customId, setCustomId] = useState('');
+  const [fresh, setFresh] = useState(null); // {id, secret, url} shown once
+  const admin = !!auth?.isAdmin || auth?.authMode === 'off';
+
+  const load = () => {
+    if (!admin) return;
+    api.get('/webhooks/config').then(setCfgv).catch(() => setCfgv(null));
+    api.get('/remote/funnel').then(setFunnel).catch(() => setFunnel(null));
+  };
+  useEffect(load, [admin]);
+  if (!admin) return null;
+
+  const run = async (fn) => {
+    setBusy(true); setErr('');
+    try { await fn(); } catch (e) { setErr(String(e?.message || e)); toastError(String(e?.message || e)); } finally { setBusy(false); }
+  };
+  const rotate = () => run(async () => {
+    if (cfgv?.sms && !(await confirmDialog(t('chrome.webhooks.sms.rotateConfirm')))) return;
+    await api.post('/webhooks/token', {}); load();
+  });
+  const revoke = () => run(async () => { if (await confirmDialog(t('chrome.webhooks.sms.revokeConfirm'))) { await api.del('/webhooks/token'); load(); } });
+  const saveSecret = (kind) => run(async () => { await api.put(`/webhooks/${kind}/secret`, { secret: secretDraft[kind] }); setSecretDraft((d) => ({ ...d, [kind]: '' })); load(); });
+  const addCustom = () => run(async () => { const r = await api.post('/webhooks/custom', { id: customId.trim() }); setFresh(r); setCustomId(''); load(); });
+  const delCustom = (id) => run(async () => { if (await confirmDialog(t('chrome.webhooks.custom.removeConfirm', { id }))) { await api.del(`/webhooks/custom/${id}`); load(); } });
+  const toggleFunnel = (on) => run(async () => {
+    if (on && !(await confirmDialog(t('chrome.webhooks.funnel.confirm')))) return;
+    const r = await api.post('/remote/funnel', { enable: on });
+    setFunnel(r); if (r?.error) setErr(r.error);
+  });
+
+  const btn = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[11px] text-fg hover:bg-brand disabled:opacity-40';
+  const input = 'w-[180px] rounded-lg border-[1.5px] border-ink bg-panel px-2 py-1 font-mono text-[11px] text-fg outline-none';
+  const row = 'flex items-center justify-between gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0';
+  const sms = cfgv?.sms;
+  return (
+    <>
+      <div className="mt-6 mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('chrome.webhooks.section')}</div>
+      {!cfgv ? (
+        <div className="py-4 font-mono text-[11px] text-fgdim">{t('chrome.webhooks.loading')}</div>
+      ) : (
+        <>
+          {!cfgv.publicUrl && <div className="py-2 text-[11px] text-fgdim">{t('chrome.webhooks.noPublicUrl')}</div>}
+          <Field
+            label={t('chrome.webhooks.sms')}
+            hint={sms ? (sms.live ? t('chrome.webhooks.sms.live', { date: new Date(sms.exp).toLocaleDateString() }) : t('chrome.webhooks.sms.expired')) : t('chrome.webhooks.sms.none')}
+          >
+            <span className="flex gap-2">
+              <button type="button" disabled={busy} onClick={rotate} className={btn}>{sms ? t('chrome.webhooks.sms.rotate') : t('chrome.webhooks.sms.create')}</button>
+              {sms && <button type="button" disabled={busy} onClick={revoke} className={btn}>{t('chrome.webhooks.sms.revoke')}</button>}
+            </span>
+          </Field>
+          {sms && <CopyRow url={sms.url + '&from={sms_number}&body={sms_message}'} />}
+
+          {['slack', 'github'].map((kind) => (
+            <Field key={kind} label={t(`chrome.webhooks.${kind}`)} hint={`${cfgv[kind].url} · ${cfgv[kind].configured ? t('chrome.webhooks.secret.set', { source: cfgv[kind].source }) : t('chrome.webhooks.secret.missing')}`}>
+              <span className="flex gap-2">
+                <input type="password" autoComplete="off" value={secretDraft[kind]} onChange={(e) => setSecretDraft((d) => ({ ...d, [kind]: e.target.value }))} placeholder={t('chrome.webhooks.secret.placeholder')} className={input} disabled={cfgv[kind].source === 'env'} />
+                <button type="button" disabled={busy || cfgv[kind].source === 'env'} onClick={() => saveSecret(kind)} className={btn}>{secretDraft[kind] ? t('chrome.webhooks.secret.save') : t('chrome.webhooks.secret.clear')}</button>
+              </span>
+            </Field>
+          ))}
+
+          <Field label={t('chrome.webhooks.custom')} hint={t('chrome.webhooks.custom.hint')}>
+            <span className="flex gap-2">
+              <input type="text" value={customId} onChange={(e) => setCustomId(e.target.value)} placeholder="my-hook" className={input} />
+              <button type="button" disabled={busy || !/^[A-Za-z0-9_.-]{1,64}$/.test(customId.trim())} onClick={addCustom} className={btn}>{t('chrome.webhooks.custom.add')}</button>
+            </span>
+          </Field>
+          {fresh && (
+            <div className="border-b border-hair py-2 text-[11px]">
+              <div className="text-fgdim">{t('chrome.webhooks.custom.once', { id: fresh.id })}</div>
+              <CopyRow url={fresh.secret} />
+              <CopyRow url={fresh.url} />
+              <button type="button" onClick={() => setFresh(null)} className={btn}>{t('chrome.webhooks.custom.done')}</button>
+            </div>
+          )}
+          {cfgv.custom.map((c) => (
+            <div key={c.id} className={row}>
+              <span className="min-w-0 flex-1 truncate font-mono">{c.path}{c.label ? ` · ${c.label}` : ''}</span>
+              <button type="button" disabled={busy} onClick={() => delCustom(c.id)} className={btn}>{t('chrome.webhooks.custom.remove')}</button>
+            </div>
+          ))}
+
+          {funnel?.loggedIn && (
+            <Field label={t('chrome.webhooks.funnel')} hint={funnel.funnel ? t('chrome.webhooks.funnel.on', { url: funnel.funnelUrl || '' }) : t('chrome.webhooks.funnel.off')}>
+              <Toggle on={!!funnel.funnel} disabled={busy} onChange={toggleFunnel} />
+            </Field>
+          )}
+          {err && <div className="py-2 text-[11px] leading-snug text-danger">{err}</div>}
+        </>
+      )}
+    </>
+  );
+}
+
 function Segmented({ value, options, onChange }) {
   return (
     <span className="flex overflow-hidden rounded-lg border-[1.5px] border-ink">
@@ -585,6 +691,7 @@ export default function Settings({ onClose }) {
           </Field>
 
           <RemoteAccess />
+          <WebhooksCard />
           <WhatsAppBridge />
           <ScreenShare />
           <PushNotifications />

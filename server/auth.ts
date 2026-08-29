@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { isInboundWebhookPath } from './webhooks.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cfg as liveCfg, type AuthConfig } from './lib/config.js';
 import { secret } from './lib/secrets.js';
@@ -375,8 +376,14 @@ export function createAuth(opts: AuthOptions) {
     if (pathname === '/__host' || pathname.startsWith('/__host/')) return true; // SPA shows Login
     if (pathname === '/') return true; // 302 → /__host/ (index.ts)
     if (pathname === '/__health' || pathname === '/__poc-sw.js') return true;
-    if (pathname.startsWith('/__api/webhooks/')) return true; // C3: share-token auth inside
-    if (pathname.startsWith('/__api/sms/inbound')) return true; // phone webhook (pre-C3; see docs/SECURITY.md)
+    // C3: only the INBOUND webhook routes are public — each verifies its own
+    // credential inside server/webhooks.ts (share-token / Slack v0 / GitHub
+    // HMAC / custom HMAC). The admin routes under /__api/webhooks/* (token,
+    // config, events) are NOT matched here and need a normal principal.
+    if (isInboundWebhookPath(pathname)) return true;
+    // Pre-C3 phone webhook, unauthenticated for ONE more release (deprecation
+    // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
+    if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;
     if (pathname.startsWith('/__artifacts/')) return false; // K2: ?t= share tokens handled in gate() via shareGate
     return false;
   }

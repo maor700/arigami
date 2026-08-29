@@ -12,6 +12,7 @@ import { auth } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
+import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
 import {
@@ -1282,6 +1283,39 @@ export async function handle(
     }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
+    // ---- Webhooks (C3) — inbound routes are public (auth.ts allowlist) and
+    // authenticate themselves in server/webhooks.ts; admin routes below need
+    // the admin role; events are readable by any principal (sessions poll).
+    if (isInboundWebhookPath(p)) { await webhooks().handle(req, res); return; }
+    if (p.startsWith('/__api/webhooks/')) {
+      const wh = webhooks();
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (p === '/__api/webhooks/events' && m === 'GET')
+        return json(res, { events: wh.events({ kind: u.searchParams.get('kind') || undefined, since: u.searchParams.get('since') || undefined, limit: Number(u.searchParams.get('limit')) || undefined }) });
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      if (p === '/__api/webhooks/config' && m === 'GET') return json(res, wh.configView());
+      if (p === '/__api/webhooks/token' && m === 'GET') return json(res, { sms: wh.smsToken() });
+      if (p === '/__api/webhooks/token' && m === 'POST') {
+        const body = await readBody(req);
+        return json(res, { sms: wh.rotateSmsToken(body.days != null ? Number(body.days) : undefined) });
+      }
+      if (p === '/__api/webhooks/token' && m === 'DELETE') return json(res, { ok: wh.revokeSmsToken() });
+      if ((p === '/__api/webhooks/slack/secret' || p === '/__api/webhooks/github/secret') && m === 'PUT') {
+        const body = await readBody(req);
+        wh.setSecret(p.includes('slack') ? 'slack' : 'github', String(body.secret || ''));
+        return json(res, { ok: true });
+      }
+      if (p === '/__api/webhooks/custom' && m === 'POST') {
+        const body = await readBody(req);
+        const id = String(body.id || '').trim();
+        if (!CUSTOM_ID_RE.test(id)) return badRequest(res, 'invalid id (A-Za-z0-9_.- up to 64)');
+        try { return json(res, wh.addCustom(id, body.label ? String(body.label) : undefined)); }
+        catch (e) { return badRequest(res, (e as Error).message); }
+      }
+      const cm = /^\/__api\/webhooks\/custom\/([A-Za-z0-9_.-]{1,64})$/.exec(p);
+      if (cm && m === 'DELETE') return json(res, { ok: wh.removeCustom(cm[1]) });
+      return notFound(res);
+    }
     // ---- Share tokens (K2) — admin: every live link, revoke one / all ----------
     if (p === '/__api/share/tokens' || p.startsWith('/__api/share/')) {
       const me = (req as any).auth as import('./auth.js').Principal | null;
@@ -1427,19 +1461,11 @@ export async function handle(
     }
     // Global (not per-session) screen-share availability — the sidebar icon
     // hides itself when this is false instead of showing a broken button.
-    // ---- SMS inbound webhook -------------------------------------------------
-    if (p.startsWith('/__api/sms/inbound') && (m === 'POST' || m === 'GET')) {
-      const sms = await import('./sms.js');
-      const from = u.searchParams.get('from') || u.searchParams.get('sender') || '';
-      const text = u.searchParams.get('body') || u.searchParams.get('message') || '';
-      if (m === 'POST' && !from && !text) {
-        const b = (await readBody(req)) as any;
-        const msg = sms.receiveSms(b.from || b.sender || '', b.body || b.message || b.text || '', b.timestamp);
-        return json(res, { ok: true, id: msg.id });
-      }
-      if (!text) return badRequest(res, 'missing body/message');
-      const msg = sms.receiveSms(from, text);
-      return json(res, { ok: true, id: msg.id });
+    // ---- SMS inbound webhook — LEGACY (pre-C3), unauthenticated for one more
+    // release. server/webhooks.ts answers it with a Deprecation header and a
+    // rate-limited log warning; the authenticated form is /__api/webhooks/sms.
+    if (p === '/__api/sms/inbound' || p.startsWith('/__api/sms/inbound/')) {
+      if (await webhooks().handleLegacySms(req, res)) return;
     }
 
     // ---- Push notifications (PWA) -------------------------------------------
@@ -1828,6 +1854,14 @@ export async function handle(
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels } = await import('./models.js');
       return json(res, await (getModels as any)(true));
+    }
+    // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
+    // the self-authenticating webhook routes; nothing else leaves the tailnet).
+    if (p === '/__api/remote/funnel' && (m === 'GET' || m === 'POST')) {
+      const remote = await import('./remote.js');
+      if (m === 'GET') return json(res, (remote as any).funnelStatus());
+      const body = await readBody(req);
+      return json(res, await (remote as any).setFunnel(!!(body as any).enable));
     }
     if (p === '/__api/remote' && (m === 'GET' || m === 'POST')) {
       const remote = await import('./remote.js');
