@@ -231,7 +231,8 @@ const TOOLS = [
     description: 'List host sessions (summaries).',
     inputSchema: obj({}),
     run: async () => {
-      const all = await api('GET', '/__api/sessions?archived=true');
+      // full=1: untruncated result.summary (the web wire form caps finished workers' summaries).
+      const all = await api('GET', '/__api/sessions?archived=true&full=1');
       return all.map((s) => ({
         id: s.id, title: s.title, status: s.status, color: s.color, cwd: s.cwd,
         archived: s.archived, claude_state: s.claude?.state, metadata: s.metadata,

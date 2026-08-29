@@ -57,3 +57,36 @@ test('listSessionsForWire slims capabilities and caps finished summaries; the fu
     expect(o.keys).toContain(k);
   expect(o.sameObjWhenNothingToSlim).toBe(true);
 });
+
+// ?full=1 (host-mcp list_sessions): bearer/internal principals may read the
+// untruncated list; cookie browsers never can.
+test('canReadFullList: bearer/internal principals only', async () => {
+  const { canReadFullList } = await import('../server/auth.ts');
+  const user = { id: 'u1', role: 'admin' };
+  expect(canReadFullList({ kind: 'session', sessionId: 's', user: null })).toBe(true);
+  expect(canReadFullList({ kind: 'host', user: null })).toBe(true);
+  expect(canReadFullList({ kind: 'off', user: null })).toBe(true);
+  expect(canReadFullList({ kind: 'user', user, via: 'api-token' })).toBe(true);
+  expect(canReadFullList({ kind: 'user', user, via: 'cookie' })).toBe(false);
+  expect(canReadFullList(null)).toBe(false);
+});
+
+test('GET /__api/sessions?full=1 returns untruncated summaries for a bearer caller, slim for a cookie browser', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const st=await import('./server/state.ts');const {canReadFullList}=await import('./server/auth.ts');" +
+      "const long='x'.repeat(1000);" +
+      "st.createSession({title:'done',metadata:{result:{state:'done',summary:long}}});" +
+      // Mirror api.ts's branch exactly: full only when ?full=1 AND the principal may.
+      "const pick=(url,p)=>{const u=new URL(url,'http://h');const full=u.searchParams.get('full')==='1'&&canReadFullList(p);return (full?st.listSessions({archived:true}):st.listSessionsForWire({archived:true})).find(s=>s.title==='done').metadata.result;};" +
+      "emit({bearer:pick('/__api/sessions?archived=true&full=1',{kind:'session',sessionId:'s',user:null}),cookie:pick('/__api/sessions?archived=true&full=1',{kind:'user',user:{id:'u',role:'admin'},via:'cookie'}),noflag:pick('/__api/sessions?archived=true',{kind:'session',sessionId:'s',user:null})});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.bearer.summary.length).toBe(1000);
+  expect(o.bearer.summaryTruncated).toBeUndefined();
+  expect(o.cookie.summary.length).toBe(400);
+  expect(o.cookie.summaryTruncated).toBe(true);
+  expect(o.noflag.summary.length).toBe(400);
+});
