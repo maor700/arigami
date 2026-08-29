@@ -11,6 +11,7 @@ import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
 import { auth } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
+import { shareTokens } from './share-token.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
 import {
@@ -1281,6 +1282,18 @@ export async function handle(
     }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
+    // ---- Share tokens (K2) — admin: every live link, revoke one / all ----------
+    if (p === '/__api/share/tokens' || p.startsWith('/__api/share/')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const st = shareTokens();
+      if (p === '/__api/share/tokens' && m === 'GET')
+        return json(res, { tokens: st.list(), defaultDays: st.defaultDays, maxDays: st.maxDays, publicUrl: !!cfg.publicUrl });
+      const nm = /^\/__api\/share\/tokens\/([A-Za-z0-9_-]+)$/.exec(p);
+      if (nm && m === 'DELETE') return json(res, { ok: st.revoke(nm[1]) });
+      if (p === '/__api/share/revoke-all' && m === 'POST') return json(res, { ok: true, revoked: st.revokeAll() });
+      return notFound(res);
+    }
     // ---- Composio integrations -------------------------------------------------
     // OAuth login via Composio CLI session API (no API key required upfront)
     if (p === '/__api/composio/auth/start' && m === 'POST') {
@@ -2710,9 +2723,19 @@ export async function handle(
         return json(res, { error: err.message }, err.status || 500);
       }
       const { artifact, warnings } = r;
-      // K2 hook: share links need server/lib/share-token.ts.
+      // K2: share:true mints an expiring cookie-less link for THIS version.
       let share_url: string | null = null;
-      if (body.share === true) warnings.push('share links are not implemented yet (K2) — share_url is null');
+      let share_exp: string | null = null;
+      if (body.share === true) {
+        try {
+          const sh = artifacts.share(id, artifact.id, { days: body.share_days != null ? Number(body.share_days) : undefined });
+          share_url = sh.share_url;
+          share_exp = sh.exp;
+          warnings.push(...sh.warnings);
+        } catch (e) {
+          warnings.push(`share link failed: ${(e as Error).message}`);
+        }
+      }
       const ev = claude.appendChat(id, {
         kind: 'artifact',
         artifactId: artifact.id,
@@ -2723,6 +2746,7 @@ export async function handle(
         bytes: artifact.bytes,
         files: artifact.files,
         warnings,
+        ...(share_url ? { shareUrl: share_url, shareExp: share_exp } : {}),
       });
       if (body.open !== false) {
         // Re-publish: point the existing tab at the same path (it's stable),
@@ -2751,8 +2775,25 @@ export async function handle(
         files: artifact.files,
         warnings,
         share_url,
+        share_exp,
         event_id: ev?.id,
       });
+    }
+    // K2: share links. POST mints (current version), DELETE revokes every live
+    // link of the artifact, GET lists them (nonce/exp only — never the token).
+    if (parts[3] === 'artifacts' && parts[4] && parts[5] === 'share' && !parts[6]) {
+      try {
+        if (m === 'POST') {
+          const body = (await readBody(req)) as any;
+          const r = artifacts.share(id, parts[4], { days: body?.days != null ? Number(body.days) : undefined });
+          return json(res, { ok: true, ...r });
+        }
+        if (m === 'DELETE') return json(res, { ok: true, ...artifacts.unshare(id, parts[4]) });
+        if (m === 'GET') return json(res, { tokens: artifacts.listShares(parts[4]) });
+      } catch (e) {
+        const err = e as artifacts.PublishError;
+        return json(res, { error: err.message }, err.status || 500);
+      }
     }
     if (parts[3] === 'artifacts' && parts[4] && !parts[5] && m === 'DELETE') {
       return artifacts.remove(id, parts[4]) ? json(res, { ok: true }) : notFound(res, 'no such artifact');

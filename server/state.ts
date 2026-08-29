@@ -136,7 +136,11 @@ export interface Artifact {
   files: number;
   createdAt: string;
   updatedAt: string;
-  shareExp?: string;   // K2 share-token expiry (unused until K2)
+  // K2: the most recent share link minted for this artifact (the link itself
+  // is never stored — only its expiry, nonce and pinned version).
+  shareExp?: string;
+  shareNonce?: string;
+  shareVersion?: number;
 }
 
 interface ChangesExplanation {

@@ -86,9 +86,15 @@ GET    /__api/sessions/:id/chat?since=N      → chat events tail (rehydration; 
 GET    /__api/linear/tickets?filter=assigned → launcher picker (reuse PoC Linear fetch/cache)
 GET    /__api/config                         → {defaultCwd, palette, …}
 GET    /__api/sessions/:id/artifacts         → [artifact]                (A1)
-POST   /__api/sessions/:id/artifacts         {path, title, entry?, open?, notify?, share?} → {artifact_id, path, version, bytes, files, warnings, share_url}
+POST   /__api/sessions/:id/artifacts         {path, title, entry?, open?, notify?, share?, share_days?} → {artifact_id, path, version, bytes, files, warnings, share_url, share_exp}
 DELETE /__api/sessions/:id/artifacts/:aid
-GET    /__artifacts/:aid/[v<N>/]<file>        static snapshot (not JSON; CSP sandbox; ?t= share token → 401 until K2)
+POST   /__api/sessions/:id/artifacts/:aid/share {days?} → {share_url, path, exp, nonce, version, warnings}   (K2)
+DELETE /__api/sessions/:id/artifacts/:aid/share → {revoked}                                                   (K2: every live link of the artifact)
+GET    /__api/sessions/:id/artifacts/:aid/share → {tokens:[{nonce,exp,ver,label,createdAt}]}                 (K2)
+GET    /__api/share/tokens                   → {tokens, defaultDays, maxDays, publicUrl}  (K2, admin: all live links, never the token itself)
+DELETE /__api/share/tokens/:nonce            → {ok}                                       (K2, admin)
+POST   /__api/share/revoke-all               → {revoked}                                  (K2, admin: rotates the secret)
+GET    /__artifacts/:aid/[v<N>/]<file>        static snapshot (not JSON; CSP sandbox; `?t=<share-token>` or `/~t/<token>/` opens it cookie-less — K2)
 ```
 
 Archive = PATCH {archived:true}: kill claude proc + leave record; rail shows under
@@ -153,8 +159,10 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
    // reason: login|2fa|captcha|payment|other. BLOCKS until the human clicks
    // Done in the live screen card (or 30 min timeout → note explains).
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
-publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, session_id?})
-   → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:null}
+publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, share_days?, session_id?})
+   → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:string|null, share_exp}
+share_artifact({artifact_id, days?, session_id?}) → {share_url, expires_at, version, warnings[]}   (K2)
+unshare_artifact({artifact_id, session_id?})      → {revoked}                                        (K2)
    // Snapshot a static file/folder and serve it host-relative (A1). NEVER print
    // localhost URLs — show `path` or rely on the chat card. Re-publish of the
    // same path → next version, same id. share:true → K2 (null until then).
@@ -543,9 +551,46 @@ bytes, files, warnings}` event → `ArtifactCard` (open in tab / open in window
 resolves it on whatever origin the device uses. The agent only ever sees the
 host-relative `path`; every absolute link is assembled client-side.
 
-**K2 hook.** `artifacts.verifyShareToken()` is a stub: any `?t=` on an artifact
-URL returns 401 "Link expired" until `server/lib/share-token.ts` exists;
-`share:true` in publish returns `share_url:null` plus a warning.
+## Share links (server/share-token.ts, artifacts.ts share/unshare) — K2
+
+A share link is a **capability**: `/__artifacts/<id>/?t=<token>` opens ONE
+artifact at ONE version (the one current when the link was minted) with no
+cookie and no access to anything else. `publish_artifact({share:true})`,
+`share_artifact`, `POST …/artifacts/:aid/share` and the card's **Share link**
+button all call `artifacts.share()`.
+
+**Token.** `base64url(JSON{kind,id,exp,nonce,ver?}) + '.' + base64url(HMAC-SHA256)`
+over a per-instance secret `$ARIGAMI_DIR/share-secret` (32 random bytes, 0600,
+auto-generated). `verify(token,{kind,id})` compares the MAC with
+`timingSafeEqual` BEFORE parsing the payload, then checks kind+id, expiry and
+the revocation list `$ARIGAMI_DIR/share-revoked.json` (nonce → exp, GC'd once
+the token would have expired anyway). `kind` is `'artifact'` today and
+`'webhook'` for C3 — same module, same secret, `id` = webhook name. Expiry:
+`share.defaultDays` (7), capped at `share.maxDays` (90). An issued registry
+`$ARIGAMI_DIR/share-tokens.json` keeps `{nonce,kind,id,exp,ver,label}` — never
+the token — so the admin list works and a leaked file leaks no link.
+`revokeAll()` rotates the secret (every token ever minted dies).
+
+**Gate.** `auth.gate()` consults `artifacts.shareGate` only when the request
+has NO principal and targets `/__artifacts/…`. A valid token sets `req.share`
+(`{aid, version, nonce, exp}`) — never `req.auth` — so `/__api`, `/__ws`, pages
+and the proxy stay 401 in the same browser. Invalid/expired/revoked/wrong-id →
+401 "Link expired" page. `artifacts.serve()` then pins the grant: a bare path
+gets `v<ver>/` prepended, an explicit different `v<N>/` is 403, another id is 403.
+
+**Sub-resources.** The entry HTML's injected `<base>` would make assets load
+without the token, so under a grant the base is rewritten to the **path form**
+`/__artifacts/<id>/~t/<token>/v<N>/` (`rewriteBaseForShare`); `parseArtifactUrl`
+strips `~t/<token>` and the same verification applies. `Referrer-Policy:
+no-referrer` keeps the token out of outbound referers.
+
+**URL shape.** `share_url = publicUrl(path + '?t=' + token)` — absolute only
+when `ARIGAMI_PUBLIC_URL` is set; otherwise host-relative plus a warning ("set
+ARIGAMI_PUBLIC_URL for external sharing"). The card always shows an absolute
+link (`location.origin + url`). The artifact record carries
+`shareExp/shareNonce/shareVersion` of the latest link. Re-sharing after a
+re-publish mints a link to the new version; earlier links keep showing their
+pinned version until they expire or `unshare` revokes all links of the artifact.
 
 ## Screenshots (server/screenshots.ts, server/vnc.ts captureScreen, ScreenshotCard.jsx)
 

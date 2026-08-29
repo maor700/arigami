@@ -89,6 +89,14 @@ export interface ArtifactsConfig {
   retentionDays: number;  // GC: versions older than this are removed
 }
 
+// K2 share links (server/share-token.ts): signed `?t=` tokens that open ONE
+// artifact without a cookie. Expiry defaults to `defaultDays`, callers may ask
+// for up to `maxDays` (§7.13: 7 / 90).
+export interface ShareConfig {
+  defaultDays: number;
+  maxDays: number;
+}
+
 // Host lifecycle from the cockpit (B4-lite): restart/upgrade endpoints in
 // server/host-control.ts. `allowUpgrade=false` turns POST /__api/host/upgrade
 // into a 403 (restart stays available). drainTimeoutMs = how long an in-flight
@@ -152,6 +160,7 @@ export interface Config {
   screen: ScreenConfig;
   brain: BrainConfig;
   artifacts: ArtifactsConfig;
+  share: ShareConfig;
   host: HostConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
@@ -230,6 +239,10 @@ export const DEFAULTS: Config = {
   artifacts: {
     maxMb: 50,
     retentionDays: 30,
+  },
+  share: {
+    defaultDays: 7,
+    maxDays: 90,
   },
   host: {
     allowUpgrade: true,

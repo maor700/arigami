@@ -28,6 +28,22 @@ Public paths (no credential): `/__api/auth/*`, reduced `/__api/config`,
 `/__api/sms/inbound` (see below), `/__api/webhooks/*` (C3 — authenticated by
 share-token inside the handler).
 
+## Share links (K2)
+
+`/__artifacts/<id>/?t=<token>` is the only cookie-less path into the host by
+design. What the bearer of a link gets: **one artifact, one version** (pinned
+in the signed payload), read-only static files under the artifact's own
+sandboxed CSP. What they do not get: any other artifact or version, `/__api`,
+WebSockets, host pages, the proxy — the gate never sets a principal for a
+token, only `req.share`. Tokens are HMAC-SHA256 over a per-instance random
+secret (`$ARIGAMI_DIR/share-secret`, 0600), verified with `timingSafeEqual`
+before the payload is parsed, expire (7 days default, 90 max), and are
+revocable by nonce (`share-revoked.json`) or all at once (secret rotation).
+A leaked link = a leaked artifact, deliberately; the token also appears in
+sub-resource paths (`/~t/<token>/`) so a shared page can load its assets —
+`Referrer-Policy: no-referrer` keeps it out of third-party referers, but the
+viewer's browser history holds it like any capability URL.
+
 ## What is *not* protected (known, by design or pending)
 
 - **`/__api/sms/inbound`** — the phone's SMS forwarder posts here with no
