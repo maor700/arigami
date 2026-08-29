@@ -103,7 +103,10 @@ Client → server: none (use REST). Reconnect = full state replay.
 
 - Spawn: `claude --input-format stream-json --output-format stream-json --verbose
   -p --permission-mode <mode> --session-id <uuid>` (cwd = session.cwd, env +
-  `ARIGAMI_SESSION_ID`, `ARIGAMI_URL=http://localhost:3099`).
+  `ARIGAMI_SESSION_ID`, `ARIGAMI_URL=http://localhost:3099` — INTERNAL host→self
+  base for the agent's API calls; never a link for humans — `ARIGAMI_PUBLIC_PATH=/__host/`,
+  and `ARIGAMI_PUBLIC_URL` only when the operator set it). Links that leave the
+  host toward a human are host-relative (`server/lib/public-url.ts`).
   Write `.mcp.json`-equivalent via `--mcp-config` pointing at `mcp/host-mcp.js`
   (command: `bun <abs path>/mcp/host-mcp.js`) so EVERY session has the host MCP.
 - Permission prompts: `--permission-prompt-tool mcp__arigami__permission_prompt`.

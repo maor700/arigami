@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { publicUrl, sessionPath } from './lib/public-url.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
 import * as state from './state.js';
@@ -265,7 +266,7 @@ function pushIntervention(
         body: body.slice(0, 200),
         tag: `${kind}:${sessionId}`,
         sessionId,
-        url: `/__host/#/session/${encodeURIComponent(sessionId)}`,
+        url: publicUrl(sessionPath(sessionId)), // relative unless ARIGAMI_PUBLIC_URL (SW resolves it)
       });
     })
     .catch(() => {});
@@ -2193,6 +2194,15 @@ export async function handle(
       if (m === 'PATCH') {
         const body = (await readBody(req)) as any;
         const wasArchived = (s as any).archived;
+        // G5: `set_metadata({patch:{needs_server:true}})` from a MAIN session —
+        // allocate a pool port into metadata.port (same pool as workers). Idempotent.
+        if (body.metadata && typeof body.metadata === 'object' && body.metadata.needs_server === true) {
+          delete body.metadata.needs_server;
+          if (!s.metadata?.port) {
+            const port = allocatePort();
+            if (port) body.metadata.port = port;
+          }
+        }
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
@@ -2615,6 +2625,17 @@ export async function handle(
     // write the capped result to the worker's own metadata.result FIRST, then
     // enqueue a thin pointer to the master (queue-until-idle). Persist-before-wake
     // kills the publish-before-write race (decision 12).
+    // G5: allocate a host port for THIS session (main sessions included — the
+    // worker path does it at spawn via needsServer). Idempotent: returns the
+    // existing metadata.port if one is already held. 503 when the pool is dry.
+    if (sub === 'allocate-port' && m === 'POST') {
+      const existing = Number(s.metadata?.port);
+      if (Number.isFinite(existing) && existing > 0) return json(res, { port: existing, existing: true });
+      const port = allocatePort();
+      if (!port) return json(res, { error: 'port pool exhausted' }, 503);
+      state.patchSession(id, { metadata: { port } });
+      return json(res, { port, existing: false });
+    }
     if (sub === 'report' && m === 'POST') {
       const body = (await readBody(req)) as any;
       // Resolve the master: the recorded parent pointer, or an explicit override

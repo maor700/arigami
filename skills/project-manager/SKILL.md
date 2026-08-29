@@ -89,6 +89,21 @@ pointers to branches/files — never pasted file contents.
 4. **Idle between wakes.** You are event-driven: reports, adoptions and removals
    wake you. Don't poll in a busy loop.
 
+## Showing things to the human (links)
+
+The human may be on a phone, another machine or a tailnet — a
+`http://localhost:…` link only works on the host box. So:
+
+- **Static output** (report, HTML, screenshots dir, built site) →
+  `publish_artifact` and pass on the `/__artifacts/<id>/` path it returns.
+- **Live server** (dev server, Storybook) → bind it to `$PORT` (or the port from
+  `allocate_port`) and `open_tab({type:"url", url:"http://localhost:$PORT"})`;
+  the host proxies it into a cockpit tab.
+- **Never print `http://localhost:…` URLs** in replies, reports, pushes or
+  messages. The host returns host-**relative** paths (`/__host/?session=…`,
+  `/__artifacts/…`) — forward them as-is. `$ARIGAMI_URL` is an internal base for
+  your own API calls, not a link for people.
+
 ## What you never do
 
 - Read a child's chat. Review, approve, or merge code. Answer a child's
@@ -97,6 +112,7 @@ pointers to branches/files — never pasted file contents.
   not yours).
 - Interrupt a child mid-turn; the queue exists so you don't have to.
 - Delete the folder or your own session; teardown is the human's call.
+- Print `http://localhost:…` links — see "Showing things to the human".
 
 ## Retro (when the project wraps up)
 

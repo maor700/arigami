@@ -427,6 +427,7 @@ function tryDeliver(sessionId: string): void {
           tag: mine[0]?.[0] || 'listener',
           sessionId,
           eventId: lastEvent?.id,
+          url: `/__host/#/session/${encodeURIComponent(sessionId)}`, // relative: SW resolves against its own origin
         });
       })
       .catch(() => {});

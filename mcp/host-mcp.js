@@ -6,7 +6,13 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
+// INTERNAL base for host→self fetches only. NEVER put HOST into a value the
+// agent might echo to a human — results carry host-relative paths instead
+// (they resolve against whatever origin the human used; see
+// server/lib/public-url.ts). Guarded by test/no-localhost-urls.test.js.
 const HOST = process.env.ARIGAMI_URL || 'http://localhost:3099';
+// Where the cockpit lives on any origin; the human's browser resolves it.
+const PUBLIC_PATH = (process.env.ARIGAMI_PUBLIC_PATH || '/__host/').replace(/\/+$/, '') + '/';
 
 async function api(method, path, body) {
   const res = await fetch(HOST + path, {
@@ -43,7 +49,8 @@ const TOOLS = [
   {
     name: 'create_session',
     description:
-      'Create a new host session (spawns a claude process in cwd). Returns {id, url}.\n' +
+      'Create a new host session (spawns a claude process in cwd). Returns {id, url} — `url` is a host-RELATIVE path ' +
+      '(/__host/?session=<id>) that works from any device; show it as-is, never prefix it with http://localhost.\n' +
       'DISPATCH (orchestration): pass `kind` to spawn a CHILD under you — you (the caller) automatically become ' +
       'its master, and the host places it in your project folder (auto-created on first spawn). Kinds: ' +
       '"mutating" = thin worker with a host-made `dispatch/<subtask>` worktree+branch off `base`; ' +
@@ -84,7 +91,11 @@ const TOOLS = [
       }
       const s = await api('POST', '/__api/sessions', body);
       if (s.deferred) return { deferred: true, reason: s.reason || 'at-capacity' };
-      return { id: s.id, url: `${HOST}/__host/?session=${s.id}` };
+      // `url` is relative on purpose (A3): the human may open it from a phone or
+      // over a tailnet. `url_internal` = loopback form, kept for one version for
+      // callers that fetch it from the host box itself.
+      const url = `${PUBLIC_PATH}?session=${encodeURIComponent(s.id)}`;
+      return { id: s.id, url, url_internal: `${HOST}${url}` };
     },
   },
   {
@@ -272,9 +283,21 @@ const TOOLS = [
   },
   {
     name: 'set_metadata',
-    description: 'Merge a patch into session.metadata (e.g. {worktree, branch, ticket, cleanup: [cmds]}).',
+    description:
+      'Merge a patch into session.metadata (e.g. {worktree, branch, ticket, cleanup: [cmds]}). ' +
+      '{needs_server:true} asks the host to allocate a dev-server port into metadata.port (see allocate_port).',
     inputSchema: obj({ patch: { type: 'object' }, ...SID_PROP }, ['patch']),
     run: (a) => patchSession(a, { metadata: a.patch }),
+  },
+  {
+    name: 'allocate_port',
+    description:
+      'Reserve a free dev-server port for THIS session from the host pool (same pool dispatch workers get via ' +
+      'needs_server). Returns {port, existing}. Idempotent — a session keeps one port until it is deleted. ' +
+      'Bind your dev server to it, then open_tab({type:"url", url:"http://localhost:<port>"}) so the human sees it ' +
+      'through the host proxy — do not paste the localhost URL into your reply.',
+    inputSchema: obj({ ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/allocate-port`),
   },
   {
     name: 'set_progress',
@@ -292,6 +315,8 @@ const TOOLS = [
     name: 'open_tab',
     description:
       'Open a tab in the session: type "url" (rendered in an iframe via the host proxy) or "content" (html/markdown). Returns {tab_id}. ' +
+      'This is THE way to show the human a live dev server: pass its http://localhost:<port> URL here and the host proxies it — ' +
+      'never paste that URL into your reply (the human may be on a phone). For static output use publish_artifact instead. ' +
       'URL guidance — localhost URLs (dev server, Storybook) render directly; for a Linear issue use "/__ticket/<ID>" (linear.app cannot be embedded); ' +
       'for a GitHub PR use "/__pr/<owner>/<repo>/<number>" (github.com cannot be embedded; this renders via the local gh auth) — raw linear.app/github.com PR urls are auto-rewritten to these; ' +
       'other unembeddable sites (e.g. Chromatic builds) become external link tabs that open in a new window.',

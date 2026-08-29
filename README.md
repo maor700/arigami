@@ -156,4 +156,15 @@ Same-Wi-Fi alternative (simplest, no install): `http://<mac-lan-ip>:3099/__host/
 > `localhost` only, so those API calls fail from a non-localhost origin — chat,
 > review, and the host's own pages are unaffected.
 
+### Links the agent hands you
+
+Everything the host gives the agent to show you is **host-relative**
+(`/__host/?session=…`, `/__artifacts/<id>/`), so it opens from whatever origin
+you used — laptop `localhost`, tailnet, or a reverse proxy. `ARIGAMI_URL`
+(`http://localhost:3099`) is injected into agent processes for their **own**
+API calls only; it is never a link for you. If a channel genuinely needs an
+absolute link (WhatsApp/Slack delivery, OAuth redirect), set
+`ARIGAMI_PUBLIC_URL=https://<your-host>` and the host prefixes it; unset, links
+stay relative.
+
 See `docs/SPEC.md` for the full v1 contract (data model, API, MCP tools, UI).

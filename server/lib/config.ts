@@ -84,6 +84,12 @@ export interface BrainConfig {
 
 export interface Config {
   port: number;
+  // Public origin humans reach this host on (e.g. https://arigami.example.tld),
+  // set via ARIGAMI_PUBLIC_URL. ONLY consulted when a link must leave the host
+  // as an absolute URL (WhatsApp/Slack/OAuth redirect). Everything else is
+  // host-relative (`/__host/?session=…`) and resolves against whatever origin
+  // the client used — see server/lib/public-url.ts.
+  publicUrl: string;
   prodUrl: string;
   storybookCompareUrl: string;
   upstreamCookies: Record<string, string>;
@@ -121,6 +127,7 @@ export interface Config {
 
 export const DEFAULTS: Config = {
   port: 3099 + PORT_SHIFT,
+  publicUrl: '',
   prodUrl: '',
   storybookCompareUrl: '',
   upstreamCookies: {},
@@ -238,6 +245,7 @@ function envOverrides(): Partial<Config> {
   const o: Partial<Config> = {};
   const port = E.ARIGAMI_PORT || E.POC_PORT;
   if (port && Number(port)) o.port = Number(port);
+  if (E.ARIGAMI_PUBLIC_URL) o.publicUrl = E.ARIGAMI_PUBLIC_URL.replace(/\/+$/, '');
   if (E.ARIGAMI_PROD_URL || E.POC_PROD_URL)
     o.prodUrl = E.ARIGAMI_PROD_URL || E.POC_PROD_URL;
   if (E.ARIGAMI_REPOS_DIR || E.POC_REPOS_DIR)
@@ -309,6 +317,8 @@ export const cfg: Config = {
   logsDir: path.join(CONFIG_DIR, 'logs'),
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
+  // INTERNAL host→self base (what the host injects as ARIGAMI_URL). Never hand
+  // this to a human — it only resolves on the box running the server.
   hostBase: `http://localhost:${merged.port || DEFAULTS.port}`,
 };
 
