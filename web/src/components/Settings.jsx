@@ -681,7 +681,7 @@ function BrainHeartbeat() {
         setEvery(r.heartbeat.every);
       })
       .catch(() => setStatus({ enabled: false, every: '30m' }));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const toggle = async (enabled) => {
     setBusy(true);
@@ -795,7 +795,7 @@ function HostCard() {
     api.get('/host/status').then(setSt).catch(() => setSt(null));
     api.get('/version').then(setVer).catch(() => setVer(null));
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   // Reconnect after a restart we triggered → refresh + toast.
   useEffect(() => {
@@ -957,7 +957,7 @@ function UsersCard() {
     api.get('/auth/users').then((r) => setUsers(r.users || [])).catch(() => {});
     if (admin) api.get('/auth/tokens').then((r) => setTokens(r.tokens || [])).catch(() => {});
   };
-  useEffect(load, [auth?.user?.id, admin, off]);
+  useEffect(() => { load(); }, [auth?.user?.id, admin, off]);
 
   if (!auth) return null;
 
