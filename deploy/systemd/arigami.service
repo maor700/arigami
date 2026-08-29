@@ -1,0 +1,42 @@
+# Arigami host — single (default) instance.
+#
+# Install (bin/host install does exactly this, substituting the __TOKENS__):
+#   sed -e 's#__ROOT__#/opt/arigami#g' -e 's#__USER__#arigami#g' \
+#       -e 's#__HOME__#/home/arigami#g' -e 's#__BUN_DIR__#/home/arigami/.bun/bin#g' \
+#       deploy/systemd/arigami.service | sudo tee /etc/systemd/system/arigami.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now arigami
+#
+# Optional per-host overrides (ports, tokens, ARIGAMI_PUBLIC_URL …) go in
+# $ARIGAMI_DIR/env as KEY=VALUE lines — never in this file.
+[Unit]
+Description=Arigami host (cockpit, sessions, MCP)
+Documentation=file:__ROOT__/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__ROOT__
+# Explicit PATH: the native claude/bun installers put binaries under $HOME and
+# never touch a service's environment. HOME is required — every `~` path in
+# server/lib/config.ts is resolved from it.
+Environment=HOME=__HOME__
+Environment=ARIGAMI_DIR=__HOME__/.arigami
+Environment=ARIGAMI_SUPERVISOR=systemd
+Environment=PATH=__BUN_DIR__:__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-__HOME__/.arigami/env
+ExecStart=/usr/bin/env bun server/index.ts
+# POST /__api/host/restart exits 0 on purpose and relies on this to come back.
+Restart=always
+RestartSec=2
+# SIGTERM to the host only (index.ts shutdown → flushState + killAll), then
+# SIGKILL whatever is left in the cgroup after TimeoutStopSec.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

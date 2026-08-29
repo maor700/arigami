@@ -8,10 +8,10 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 
 const HOST = process.env.ARIGAMI_URL || 'http://localhost:3099';
 
-async function api(method, path, body) {
+async function api(method, path, body, headers = {}) {
   const res = await fetch(HOST + path, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -251,6 +251,26 @@ const TOOLS = [
       'NOTE: restarting the CURRENT session (no session_id, or your own) aborts your in-flight turn — call it last.',
     inputSchema: obj({ ...SID_PROP }),
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/restart`),
+  },
+  {
+    name: 'host_restart',
+    description:
+      'Restart the Arigami HOST process itself (not a session) — e.g. after a merge to master so the new code runs, ' +
+      'or with upgrade:true to `git pull --ff-only && bun install && build web` first. The supervisor (systemd/launchd/pm2) ' +
+      'brings it back within seconds; every session is resumed. when:"idle" waits until no session has a turn in flight ' +
+      '(max 30 min), when:"now" gives in-flight turns a short grace period then restarts. ' +
+      'GUARDED: only master/controller sessions may call this (403 otherwise); 409 when the host has no supervisor. ' +
+      'Your own turn will be cut — say what you did first, then call this last.',
+    inputSchema: obj({
+      when: { type: 'string', enum: ['now', 'idle'], description: 'default "idle"' },
+      upgrade: { type: 'boolean', description: 'Pull + install + build before restarting (refused if the repo is dirty)' },
+      ...SID_PROP,
+    }),
+    run: (a) => {
+      const when = a.when === 'now' ? 'now' : 'idle';
+      const hdr = { 'x-arigami-confirm': 'yes', 'x-arigami-session': sid(a) };
+      return api('POST', `/__api/host/${a.upgrade ? 'upgrade' : 'restart'}?when=${when}`, {}, hdr);
+    },
   },
   {
     name: 'set_title',

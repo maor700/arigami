@@ -82,6 +82,17 @@ export interface BrainConfig {
   heartbeatEvery: string; // interval value, e.g. "30m" (cron-schedule.ts parseIntervalMs format)
 }
 
+// Host lifecycle from the cockpit (B4-lite): restart/upgrade endpoints in
+// server/host-control.ts. `allowUpgrade=false` turns POST /__api/host/upgrade
+// into a 403 (restart stays available). drainTimeoutMs = how long an in-flight
+// claude turn may hold up a "restart now"; idleTimeoutMin = how long "restart
+// when idle" waits for sessions to go quiet before restarting anyway.
+export interface HostConfig {
+  allowUpgrade: boolean;
+  drainTimeoutMs: number;
+  idleTimeoutMin: number;
+}
+
 export interface Config {
   port: number;
   prodUrl: string;
@@ -105,6 +116,7 @@ export interface Config {
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
   brain: BrainConfig;
+  host: HostConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -172,6 +184,11 @@ export const DEFAULTS: Config = {
   brain: {
     heartbeatEnabled: false,
     heartbeatEvery: '30m',
+  },
+  host: {
+    allowUpgrade: true,
+    drainTimeoutMs: 20_000,
+    idleTimeoutMin: 30,
   },
   defaultModel: null,
 };

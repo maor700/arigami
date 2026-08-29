@@ -191,3 +191,110 @@ export function releaseDesktop(sessionId: string): void {
   const s = state.getSession(sessionId);
   if ((s?.metadata as any)?.screen) state.patchSession(sessionId, { metadata: { screen: null } });
 }
+
+// ---- global desktop autostart (spec §7.3) --------------------------------------
+//
+// The shared :99/5900 desktop (the one `screenTarget()` falls back to when a
+// session has no desktop of its own) used to be a hand-written systemd unit
+// outside the repo. Starting it from code makes Docker/systemd/launchd behave
+// the same: on boot the DEFAULT instance checks whether the display is already
+// up (another owner — e.g. the legacy unit — or a previous run) and only then
+// spawns Xvfb + a window manager (if present) + x11vnc bound to loopback.
+// Non-default instances never touch it (T5: they don't own the global desktop).
+// Set ARIGAMI_GLOBAL_DESKTOP=0 to opt out entirely.
+import { execSync } from 'node:child_process';
+import { IS_DEFAULT_INSTANCE } from './instance.js';
+
+const globalProcs: ChildProcess[] = [];
+
+function which(bin: string): string | null {
+  try { return execSync(`command -v ${bin}`, { stdio: ['ignore', 'pipe', 'ignore'], shell: '/bin/sh' }).toString().trim() || null; } catch { return null; }
+}
+
+export interface GlobalDesktopOpts {
+  isDefaultInstance?: boolean;
+  enabled?: boolean;
+  display?: string; // ':99'
+  vncPort?: number;
+  vncHost?: string;
+  vncPassword?: string;
+  which?: (bin: string) => string | null;
+  displayBusy?: (n: number) => boolean;
+  portBusy?: (port: number) => Promise<boolean>;
+  spawnFn?: typeof spawn;
+  env?: NodeJS.ProcessEnv;
+  startTimeoutMs?: number; // how long to wait for the X socket / VNC port
+}
+
+export type GlobalDesktopResult =
+  | { started: false; reason: string }
+  | { started: true; display: string; vncPort: number; pids: number[] };
+
+/** Decide-and-spawn, with every probe injectable so the decision is unit-testable. */
+export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise<GlobalDesktopResult> {
+  const env = opts.env || process.env;
+  if (env.ARIGAMI_GLOBAL_DESKTOP === '0') return { started: false, reason: 'ARIGAMI_GLOBAL_DESKTOP=0' };
+  if (process.platform !== 'linux') return { started: false, reason: 'not linux' };
+  if (!(opts.isDefaultInstance ?? IS_DEFAULT_INSTANCE)) return { started: false, reason: 'non-default instance' };
+  if (!(opts.enabled ?? cfg.screen?.enabled)) return { started: false, reason: 'screen disabled' };
+  const display = opts.display || cfg.screen.display || ':99';
+  const n = Number(display.replace(/^:/, '').split('.')[0]);
+  if (!Number.isFinite(n)) return { started: false, reason: `bad display ${display}` };
+  const vncPort = opts.vncPort ?? cfg.screen.vncPort;
+  const vncHost = opts.vncHost ?? cfg.screen.vncHost;
+  if (vncHost && vncHost !== '127.0.0.1' && vncHost !== 'localhost') return { started: false, reason: `vncHost ${vncHost} is remote` };
+  const w = opts.which || which;
+  const xvfbBin = w('Xvfb');
+  const vncBin = w('x11vnc');
+  if (!xvfbBin) return { started: false, reason: 'Xvfb not installed' };
+  if (!vncBin) return { started: false, reason: 'x11vnc not installed' };
+  if ((opts.displayBusy || displayLocked)(n)) return { started: false, reason: `display ${display} already up` };
+  const busy = opts.portBusy ? await opts.portBusy(vncPort) : !(await portFree(vncPort, '127.0.0.1'));
+  if (busy) return { started: false, reason: `vnc port ${vncPort} in use` };
+
+  const sp = opts.spawnFn || spawn;
+  const startTimeoutMs = opts.startTimeoutMs ?? 5000;
+  const pids: number[] = [];
+  const xvfb = sp(xvfbBin, [display, '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  supervise(xvfb, 'desktop:global:xvfb');
+  globalProcs.push(xvfb);
+  if (xvfb.pid) pids.push(xvfb.pid);
+  try {
+    await waitForFile(`/tmp/.X11-unix/X${n}`, startTimeoutMs);
+  } catch (e) {
+    killTree(xvfb.pid);
+    return { started: false, reason: `Xvfb did not come up: ${(e as Error).message}` };
+  }
+  const denv = { ...env, DISPLAY: display };
+  const wm = w('openbox');
+  if (wm) {
+    const p = sp(wm, [], { stdio: 'ignore', env: denv });
+    supervise(p, 'desktop:global:wm');
+    globalProcs.push(p);
+    if (p.pid) pids.push(p.pid);
+  }
+  const panel = w('tint2');
+  if (panel) {
+    const p = sp(panel, [], { stdio: 'ignore', env: denv });
+    supervise(p, 'desktop:global:panel');
+    globalProcs.push(p);
+    if (p.pid) pids.push(p.pid);
+  }
+  const pw = opts.vncPassword ?? cfg.screen.vncPassword;
+  const x11vnc = sp(vncBin, [
+    '-display', display, '-rfbport', String(vncPort),
+    '-localhost', '-shared', '-forever', '-noxdamage', '-quiet',
+    ...(pw ? ['-passwd', pw] : ['-nopw']),
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  supervise(x11vnc, 'desktop:global:x11vnc');
+  globalProcs.push(x11vnc);
+  if (x11vnc.pid) pids.push(x11vnc.pid);
+  try {
+    await waitForPort(vncPort, '127.0.0.1', startTimeoutMs);
+  } catch (e) {
+    for (const p of globalProcs) killTree(p.pid);
+    globalProcs.length = 0;
+    return { started: false, reason: `x11vnc did not come up: ${(e as Error).message}` };
+  }
+  return { started: true, display, vncPort, pids };
+}

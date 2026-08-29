@@ -15,6 +15,7 @@ import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';
 import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
+import { setDrainHandler } from './host-control.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
@@ -238,7 +239,19 @@ server.listen(cfg.port, () => {
   import('./triggers.js')
     .then((m: any) => m.startTriggerScheduler())
     .catch((e: any) => console.error('[host] trigger scheduler failed to start:', e?.message));
+  // Shared :99 desktop (spec §7.3): default instance only, no-op when the
+  // display is already up (legacy unit) or Xvfb/x11vnc are missing.
+  import('./lib/desktops.js')
+    .then((m: any) => m.ensureGlobalDesktop())
+    .then((r: any) => console.log(r?.started ? `[host] global desktop up on ${r.display} (vnc :${r.vncPort})` : `[host] global desktop not started: ${r?.reason}`))
+    .catch((e: any) => console.error('[host] global desktop failed:', e?.message));
 });
+
+// Restart-from-cockpit (host-control.ts): once a restart is draining, stop
+// taking new connections so clients see "offline" and reconnect to the fresh
+// process instead of racing our shutdown. Existing keep-alive sockets stay
+// usable for the in-flight response.
+setDrainHandler(() => { try { server.close(); } catch {} });
 
 function shutdown(): void {
   flushState();
@@ -247,7 +260,7 @@ function shutdown(): void {
   } catch {}
   killAll();
   releaseHost();
-  server.close();
+  try { server.close(); } catch {}
   process.exit(0);
 }
 
