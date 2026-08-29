@@ -375,25 +375,53 @@ const TOOLS = [
       'Returns a HOST-RELATIVE path — NEVER print localhost URLs; show the returned `path` or rely on the chat card that appears. ' +
       'Directory: entry defaults to index.html; build with relative asset paths (Vite: base "./"). ' +
       'Re-publishing the same `path` creates a new version and updates the card. The page runs sandboxed (opaque origin: no cookies, ' +
-      'no localStorage, no same-origin /__api calls). `share:true` is reserved for share links (not available yet → share_url:null + warning).',
+      'no localStorage, no same-origin /__api calls). `share:true` also returns `share_url`: an expiring link (default 7 days) that opens THIS artifact ' +
+      'without login — for sending to people who have no account (WhatsApp, email). It is absolute only when the host has ARIGAMI_PUBLIC_URL; otherwise relative + a warning.',
     inputSchema: obj({
       path: { type: 'string', description: 'Absolute path (or relative to the session cwd) to a file or directory' },
       title: { type: 'string' },
       entry: { type: 'string', description: 'Entry file inside a directory (default index.html)' },
       open: { type: 'boolean', description: 'Also open as a session tab (default true)' },
       notify: { type: 'boolean', description: 'Send a push notification with the link (default false)' },
-      share: { type: 'boolean', description: 'Also mint an expiring public share link (K2 — not implemented yet)' },
+      share: { type: 'boolean', description: 'Also mint an expiring public share link (no login needed to open it)' },
+      share_days: { type: 'number', description: 'Share link lifetime in days (default 7, max 90)' },
       ...SID_PROP,
     }, ['path', 'title']),
     run: async (a) => {
       const r = await api('POST', `/__api/sessions/${sid(a)}/artifacts`, {
-        path: a.path, title: a.title, entry: a.entry, open: a.open, notify: a.notify, share: a.share,
+        path: a.path, title: a.title, entry: a.entry, open: a.open, notify: a.notify, share: a.share, share_days: a.share_days,
       });
       if (r?.error) throw new Error(r.error);
       return {
         artifact_id: r.artifact_id, path: r.path, version: r.version, bytes: r.bytes, files: r.files,
-        warnings: r.warnings || [], share_url: r.share_url ?? null,
+        warnings: r.warnings || [], share_url: r.share_url ?? null, share_exp: r.share_exp ?? null,
       };
+    },
+  },
+  {
+    name: 'share_artifact',
+    description:
+      'Mint an expiring public link for an already-published artifact (its CURRENT version). Anyone with the link can open that one artifact — ' +
+      'nothing else — until it expires or is revoked. Use for "send the report to X". Absolute only when the host has ARIGAMI_PUBLIC_URL.',
+    inputSchema: obj({
+      artifact_id: { type: 'string' },
+      days: { type: 'number', description: 'Lifetime in days (default 7, max 90)' },
+      ...SID_PROP,
+    }, ['artifact_id']),
+    run: async (a) => {
+      const r = await api('POST', `/__api/sessions/${sid(a)}/artifacts/${encodeURIComponent(a.artifact_id)}/share`, { days: a.days });
+      if (r?.error) throw new Error(r.error);
+      return { share_url: r.share_url, expires_at: r.exp, version: r.version, warnings: r.warnings || [] };
+    },
+  },
+  {
+    name: 'unshare_artifact',
+    description: 'Revoke every live share link of an artifact — the links stop working immediately.',
+    inputSchema: obj({ artifact_id: { type: 'string' }, ...SID_PROP }, ['artifact_id']),
+    run: async (a) => {
+      const r = await api('DELETE', `/__api/sessions/${sid(a)}/artifacts/${encodeURIComponent(a.artifact_id)}/share`);
+      if (r?.error) throw new Error(r.error);
+      return { revoked: r.revoked };
     },
   },
   {

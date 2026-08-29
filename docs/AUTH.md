@@ -117,3 +117,24 @@ ss -ltnp | grep 3099                     # 127.0.0.1:3099 only
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3099/__api/sessions   # 401
 bin/host doctor                          # auth: mode / users.json / pending code
 ```
+
+## Share links (K2) — the one cookie-less door
+
+`publish_artifact({share:true})` / the card's **Share link** button mint
+`/__artifacts/<id>/?t=<token>`: an HMAC-signed capability that opens **that
+artifact, at the version it was minted for, and nothing else**. No cookie is
+set, no user is created; `/__api/*`, `/__ws`, host pages and the proxy still
+return 401 in the same browser. The token carries its expiry (default
+`share.defaultDays`=7, max `share.maxDays`=90, config.json) and a nonce that
+`Revoke` puts on `$ARIGAMI_DIR/share-revoked.json`; the signing secret is
+`$ARIGAMI_DIR/share-secret` (0600, generated on first use — delete it or
+`POST /__api/share/revoke-all` to kill every link at once).
+
+Admin view: `GET /__api/share/tokens` lists live links by nonce/expiry/label
+(never the token itself); `DELETE /__api/share/tokens/<nonce>` revokes one.
+
+For a link that works off the host box, set `ARIGAMI_PUBLIC_URL` — without it
+the returned `share_url` is host-relative and the agent gets a warning.
+Assets inside a shared page load through `/__artifacts/<id>/~t/<token>/…`
+(the same token in the path), so the page itself must have relative asset
+paths — as `publish_artifact` already requires.

@@ -20,6 +20,8 @@ import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cfg, nano, getSession, upsertArtifact, removeArtifact, findArtifact } from './state.js';
 import type { Artifact } from './state.js';
+import { shareTokens } from './share-token.js';
+import { publicUrl } from './lib/public-url.js';
 
 export const ARTIFACTS_DIR = path.join(cfg.configDir!, 'uploads', 'artifacts');
 
@@ -182,6 +184,9 @@ export function publish(sessionId: string, opts: PublishOpts): PublishResult {
     files: entries.length,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
+    // K2: a live share link keeps pointing at the version it was minted for;
+    // re-publishing must not forget it exists.
+    ...(existing?.shareNonce ? { shareExp: existing.shareExp, shareNonce: existing.shareNonce, shareVersion: existing.shareVersion } : {}),
   };
   fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ sessionId, ...artifact }, null, 2));
   upsertArtifact(sessionId, artifact);
@@ -285,72 +290,191 @@ export const MIME: Record<string, string> = {
 export const ARTIFACT_CSP =
   "sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob: https:; connect-src 'self' https:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:";
 
-// ---- K2 HOOK (share-token) ----------------------------------------------------
-// K2 adds server/lib/share-token.ts with sign()/verify(). Until then any
-// `?t=<token>` presented on an artifact URL is REJECTED (401) — a token we
-// cannot verify must never grant access. C1's cookie middleware decides normal
-// (cookie-bearing) access; this stub only handles the explicit token path.
-// TODO(K2): replace with `verify(token, {kind:'artifact', id})` and, when
-// valid, serve the version pinned in the token payload cookie-less.
-export function verifyShareToken(_token: string, _ctx: { kind: 'artifact'; id: string }): { ok: boolean; reason: string; version?: number } {
-  return { ok: false, reason: 'share links are not implemented yet (K2)' };
+// ---- K2: share links ---------------------------------------------------------
+// A share link is `/__artifacts/<id>/?t=<token>` — a capability for ONE
+// artifact at ONE version (the one current when it was minted), no cookie, no
+// /__api. The entry HTML's `<base>` normally points at `/__artifacts/<id>/v<N>/`,
+// which sub-resources would then request without the token; so under a share
+// grant the base is rewritten to the PATH form `/__artifacts/<id>/~t/<token>/v<N>/`
+// and serve() strips that segment. Both forms verify identically.
+
+export interface ShareGrant { aid: string; version: number; nonce: string; exp: number; token: string; }
+
+export interface ParsedArtifactUrl {
+  aid: string;
+  rel: string;           // path under the artifact, `~t/<token>` removed, '' or '/...'
+  token: string | null;  // from ?t= or the ~t/ segment
+  query: string;         // raw query string incl. '?', or ''
+  hadTrailing: boolean;  // `/__artifacts/<id>` (false) vs `/__artifacts/<id>/…` (true)
 }
+
+const TOKEN_SEG = '~t';
+
+export function parseArtifactUrl(raw: string): ParsedArtifactUrl | null {
+  const q = raw.indexOf('?');
+  const pathname = q >= 0 ? raw.slice(0, q) : raw;
+  let decoded: string;
+  try { decoded = decodeURIComponent(pathname); } catch { return null; }
+  const m = /^\/__artifacts\/([^/]+)(\/.*)?$/.exec(decoded);
+  if (!m) return null;
+  const params = q >= 0 ? new URLSearchParams(raw.slice(q + 1)) : null;
+  let token = params?.get('t') ?? null;
+  let rel = m[2] || '';
+  const segs = rel.split('/');
+  // ['', '~t', '<token>', ...rest]
+  if (segs.length >= 3 && segs[1] === TOKEN_SEG && segs[2]) {
+    token = segs[2];
+    rel = segs.length > 3 ? '/' + segs.slice(3).join('/') : '/';
+  }
+  return { aid: m[1], rel, token, query: q >= 0 ? raw.slice(q) : '', hadTrailing: !!m[2] };
+}
+
+// Verify the token on an artifact URL against THAT artifact id. Exported for
+// tests; the gate below wraps it with the HTTP behaviour.
+export function verifyShareToken(token: string, ctx: { kind: 'artifact'; id: string }): { ok: boolean; reason: string; version?: number; nonce?: string; exp?: number } {
+  if (!ID_RE.test(ctx.id)) return { ok: false, reason: 'invalid artifact id' };
+  const r = shareTokens().verify(token, { kind: ctx.kind, id: ctx.id });
+  if (!r.ok) return { ok: false, reason: r.reason };
+  const found = findArtifact(ctx.id);
+  if (!found) return { ok: false, reason: 'artifact no longer exists' };
+  const version = r.payload.ver ?? found.artifact.version;
+  return { ok: true, reason: 'ok', version, nonce: r.payload.nonce, exp: r.payload.exp };
+}
+
+// auth.ts ShareGate: called only when the request has NO principal and targets
+// /__artifacts. Never sets req.auth — a share grant is not a user.
+export function shareGate(req: IncomingMessage, res: ServerResponse): 'granted' | 'denied' | 'none' {
+  const u = parseArtifactUrl(req.url || '/');
+  if (!u || u.token == null) return 'none';
+  const v = verifyShareToken(u.token, { kind: 'artifact', id: u.aid });
+  if (!v.ok) {
+    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+    res.end(`<!doctype html><title>Link expired</title><body style="font-family:system-ui;padding:40px"><h1>Link expired</h1><p>${escapeHtml(v.reason)}</p><p>Ask the person who shared it for a fresh link.</p>`);
+    return 'denied';
+  }
+  (req as any).share = { aid: u.aid, version: v.version!, nonce: v.nonce!, exp: v.exp!, token: u.token } satisfies ShareGrant;
+  return 'granted';
+}
+
+export interface ShareResult {
+  share_url: string;     // absolute when ARIGAMI_PUBLIC_URL is set, else host-relative
+  path: string;          // always the host-relative form
+  exp: string;           // ISO
+  nonce: string;
+  version: number;
+  warnings: string[];
+}
+
+// Mint a share link for the CURRENT version of an artifact. Earlier links stay
+// valid until they expire or `unshare()` — re-sharing after a re-publish is
+// how you move a recipient to the new version.
+export function share(sessionId: string, aid: string, opts: { days?: number; label?: string } = {}): ShareResult {
+  const s = getSession(sessionId);
+  if (!s) throw new PublishError(`no such session: ${sessionId}`, 404);
+  const artifact = (s.artifacts || []).find((a) => a.id === aid);
+  if (!artifact) throw new PublishError('no such artifact', 404);
+  const st = shareTokens();
+  if (opts.days != null && (!Number.isFinite(Number(opts.days)) || Number(opts.days) <= 0)) throw new PublishError('days must be a positive number');
+  const warnings: string[] = [];
+  const asked = opts.days == null ? st.defaultDays : Number(opts.days);
+  if (asked > st.maxDays) warnings.push(`share expiry capped at ${st.maxDays} days (share.maxDays)`);
+  const { token, exp, nonce } = st.sign({ kind: 'artifact', id: aid, days: asked, ver: artifact.version, label: opts.label || artifact.title });
+  const rel = `${artifact.path}?t=${token}`;
+  const url = publicUrl(rel);
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url))
+    warnings.push('share_url is host-relative — set ARIGAMI_PUBLIC_URL for an absolute link you can send outside the cockpit');
+  const updated: Artifact = { ...artifact, shareExp: new Date(exp).toISOString(), shareNonce: nonce, shareVersion: artifact.version };
+  upsertArtifact(sessionId, updated);
+  return { share_url: url, path: rel, exp: updated.shareExp!, nonce, version: artifact.version, warnings };
+}
+
+// Revoke EVERY live share link of an artifact.
+export function unshare(sessionId: string, aid: string): { revoked: number } {
+  const s = getSession(sessionId);
+  if (!s) throw new PublishError(`no such session: ${sessionId}`, 404);
+  const artifact = (s.artifacts || []).find((a) => a.id === aid);
+  if (!artifact) throw new PublishError('no such artifact', 404);
+  const revoked = shareTokens().revokeFor('artifact', aid);
+  const { shareExp: _e, shareNonce: _n, shareVersion: _v, ...rest } = artifact;
+  upsertArtifact(sessionId, rest as Artifact);
+  return { revoked };
+}
+
+export const listShares = (aid: string) => shareTokens().listFor('artifact', aid);
 
 // GET /__artifacts/<aid>[/rel]  — returns true when it handled the request.
 export function serve(req: IncomingMessage, res: ServerResponse): boolean {
   const raw = req.url || '/';
-  const q = raw.indexOf('?');
-  const pathname = q >= 0 ? raw.slice(0, q) : raw;
+  const pathname = raw.split('?')[0];
   if (!(pathname === '/__artifacts' || pathname.startsWith('/__artifacts/'))) return false;
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return true; }
-  let decoded: string;
-  try { decoded = decodeURIComponent(pathname); } catch { res.writeHead(400); res.end('bad path'); return true; }
-  const m = /^\/__artifacts\/([^/]+)(\/.*)?$/.exec(decoded);
-  if (!m) { res.writeHead(404); res.end('not found'); return true; }
-  const aid = m[1];
-  const rel = m[2] || '';
-  // K2 hook: explicit share token on the URL.
-  const params = q >= 0 ? new URLSearchParams(raw.slice(q + 1)) : null;
-  const token = params?.get('t');
-  if (token != null) {
-    const v = verifyShareToken(token, { kind: 'artifact', id: aid });
-    if (!v.ok) {
-      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(`<!doctype html><title>Link expired</title><body style="font-family:system-ui;padding:40px"><h1>Link expired</h1><p>${escapeHtml(v.reason)}</p>`);
-      return true;
-    }
+  const u = parseArtifactUrl(raw);
+  if (!u) {
+    const bad = !/^\/__artifacts\/[^/]+/.test(pathname) && pathname !== '/__artifacts';
+    res.writeHead(bad ? 404 : 400); res.end(bad ? 'not found' : 'bad path'); return true;
   }
+  const { aid } = u;
+  let rel = u.rel;
+  const grant = (req as any).share as ShareGrant | undefined;
+  // A grant is bound to the id it was verified for; a principal-bearing request
+  // never has one. (If a cookie user also carries a token, the cookie wins and
+  // the token is ignored — no grant is set.)
+  if (grant && grant.aid !== aid) { res.writeHead(403, { 'content-type': 'text/plain' }); res.end('forbidden'); return true; }
   // `/__artifacts/<id>` → `/__artifacts/<id>/` so relative assets resolve.
-  if (!m[2]) {
-    res.writeHead(302, { location: `/__artifacts/${encodeURIComponent(aid)}/${q >= 0 ? raw.slice(q) : ''}` });
+  if (!u.hadTrailing) {
+    res.writeHead(302, { location: `/__artifacts/${encodeURIComponent(aid)}/${u.query}` });
     res.end();
     return true;
   }
+  if (grant) {
+    // Pin to the signed version: bare paths get it prepended, an explicit
+    // different `v<N>/` is refused.
+    const segs = rel.split('/').filter((x) => x.length);
+    const vm = segs.length ? VERSION_RE.exec(segs[0]) : null;
+    if (vm) { if (Number(vm[1]) !== grant.version) { res.writeHead(403, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); res.end('forbidden'); return true; } }
+    else rel = `/v${grant.version}${rel.startsWith('/') ? rel : '/' + rel}`;
+  }
   const hit = artifactFilePath(aid, rel);
   if (!hit) {
-    const known = ID_RE.test(aid) && !!findArtifact(aid);
     const escaped = rel.split('/').some((x) => x === '..') || rel.includes('\0');
-    res.writeHead(escaped ? 403 : (known ? 404 : 404), { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+    res.writeHead(escaped ? 403 : 404, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
     res.end(escaped ? 'forbidden' : 'not found');
     return true;
   }
   const ext = path.extname(hit.file).toLowerCase();
   const type = MIME[ext] || 'application/octet-stream';
   const isHtml = type.startsWith('text/html');
-  const st = fs.statSync(hit.file);
-  res.writeHead(200, {
+  const headers: Record<string, string | number> = {
     'content-type': type,
-    'content-length': st.size,
     'content-security-policy': ARTIFACT_CSP,
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     // HTML is re-published in place (same URL, new version) — never cache it;
     // everything else is addressed by version and immutable.
     'cache-control': isHtml ? 'no-store' : 'private, max-age=31536000, immutable',
-  });
+  };
+  if (grant && isHtml) {
+    // Cookie-less viewer: sub-resources must carry the token too → route the
+    // injected <base> through the path form. Only the base tag is touched.
+    const html = fs.readFileSync(hit.file, 'utf8');
+    const body = rewriteBaseForShare(html, aid, grant.token);
+    headers['content-length'] = Buffer.byteLength(body);
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') res.end(); else res.end(body);
+    return true;
+  }
+  const st = fs.statSync(hit.file);
+  headers['content-length'] = st.size;
+  res.writeHead(200, headers);
   if (req.method === 'HEAD') { res.end(); return true; }
   fs.createReadStream(hit.file).pipe(res);
   return true;
+}
+
+// `<base href="/__artifacts/<aid>/v3/…">` → `<base href="/__artifacts/<aid>/~t/<token>/v3/…">`
+export function rewriteBaseForShare(html: string, aid: string, token: string): string {
+  const re = new RegExp(`(<base\\s[^>]*href=["'])(/__artifacts/${aid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)(?!${TOKEN_SEG}/)`, 'i');
+  return html.replace(re, (_m, pre: string, base: string) => `${pre}${base}${TOKEN_SEG}/${token}/`);
 }
 
 function escapeHtml(s: string): string {

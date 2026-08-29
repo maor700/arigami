@@ -19,6 +19,8 @@ import * as artifacts from './artifacts.js';
 import { setDrainHandler } from './host-control.js';
 import { validateAuthBind } from './lib/config.js';
 import { auth } from './auth.js';
+// K2: share-token gate for cookie-less artifact links (see auth.ts ShareGate).
+auth.setShareGate(artifacts.shareGate);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
@@ -144,8 +146,9 @@ const server = http.createServer(
     // Published artifacts (A1) — static snapshots, sandboxed CSP, traversal-
     // guarded. Must precede handlePage/proxy so a pinned SW target can't
     // swallow it (also listed in the SW SKIP list, proxy.ts).
-    // NOTE(C1): the cookie middleware goes ABOVE this line; K2's ?t= share
-    // token is checked inside artifacts.serve.
+    // K2: a valid `?t=` share token passed auth.gate via artifacts.shareGate
+    // and left `req.share` — artifacts.serve pins that grant to one artifact
+    // and one version.
     if (pathname === '/__artifacts' || pathname.startsWith('/__artifacts/')) {
       try {
         if (artifacts.serve(req, res)) return;

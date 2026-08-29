@@ -63,7 +63,15 @@ export interface AuthOptions {
   // Session-token scope check: a bearer token is only valid while its session
   // still exists. Injected so the module has no import cycle with state.ts.
   sessionExists?: (id: string) => boolean;
+  shareGate?: ShareGate;
 }
+
+// K2: the share-token gate for `/__artifacts/<id>/…`. Injected by index.ts
+// (artifacts.shareGate) so auth.ts has no import cycle with state/artifacts.
+// 'granted' → the request proceeds cookie-less with `req.share` set (never
+// `req.auth`, so /__api stays 401); 'denied' → the gate already answered 401;
+// 'none' → no token on the URL, normal cookie rules apply.
+export type ShareGate = (req: IncomingMessage, res: ServerResponse) => 'granted' | 'denied' | 'none';
 
 export const COOKIE = 'arigami_sid';
 export const OIDC_COOKIE = 'arigami_oidc';
@@ -126,6 +134,8 @@ export function createAuth(opts: AuthOptions) {
   let sessionExists = opts.sessionExists || (() => true);
   // Wired by the server once state.ts is loaded (avoids an import cycle).
   const setSessionExists = (fn: (id: string) => boolean) => { sessionExists = fn; };
+  let shareGate: ShareGate | null = opts.shareGate || null;
+  const setShareGate = (fn: ShareGate | null) => { shareGate = fn; };
   const mode = () => opts.auth.mode;
 
   // ---- persistence ----------------------------------------------------------
@@ -367,7 +377,7 @@ export function createAuth(opts: AuthOptions) {
     if (pathname === '/__health' || pathname === '/__poc-sw.js') return true;
     if (pathname.startsWith('/__api/webhooks/')) return true; // C3: share-token auth inside
     if (pathname.startsWith('/__api/sms/inbound')) return true; // phone webhook (pre-C3; see docs/SECURITY.md)
-    if (pathname.startsWith('/__artifacts/')) return false; // K2 adds ?t= share tokens here
+    if (pathname.startsWith('/__artifacts/')) return false; // K2: ?t= share tokens handled in gate() via shareGate
     return false;
   }
 
@@ -377,6 +387,13 @@ export function createAuth(opts: AuthOptions) {
     const p = principal(req);
     (req as any).auth = p;
     if (p || isPublicPath(pathname)) return false;
+    // K2: a signed share token opens ONE artifact without a cookie. Only
+    // consulted when there is no principal, only on the artifacts route.
+    if (shareGate && (pathname === '/__artifacts' || pathname.startsWith('/__artifacts/'))) {
+      const r = shareGate(req, res);
+      if (r === 'granted') return false;
+      if (r === 'denied') return true;
+    }
     if (pathname.startsWith('/__api/') || pathname.startsWith('/__mcp/')) {
       res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
@@ -495,7 +512,7 @@ export function createAuth(opts: AuthOptions) {
     // pairing
     announcePairing, issuePairingCode, readPairingCode, pair, pairingFile,
     // internal tokens
-    hostToken, tokenForSession, revokeSessionToken, setSessionExists,
+    hostToken, tokenForSession, revokeSessionToken, setSessionExists, setShareGate,
     // api tokens
     createApiToken, deleteApiToken, listApiTokens,
     // gate
