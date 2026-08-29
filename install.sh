@@ -48,8 +48,8 @@ while [ $# -gt 0 ]; do
     --unattended) UNATTENDED=1 ;;
     --no-service) NO_SERVICE=1 ;;
     --dry-run|-n) DRY_RUN=1 ;;
-    --dir) INSTALL_DIR="${2:?--dir needs a path}"; shift ;;
-    --dir=*) INSTALL_DIR="${1#*=}" ;;
+    --dir) INSTALL_DIR="${2:?--dir needs a path}"; DIR_EXPLICIT=1; shift ;;
+    --dir=*) INSTALL_DIR="${1#*=}"; DIR_EXPLICIT=1 ;;
     --user) TARGET_USER="${2:?--user needs a name}"; shift ;;
     --user=*) TARGET_USER="${1#*=}" ;;
     --profile) PROFILE="${2:?--profile needs a source}"; shift ;;
@@ -321,7 +321,7 @@ clone_or_pull() {
   # When run FROM a checkout (bash install.sh) and no --dir given, use that checkout.
   local here=""
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || here=""
-  if [ -z "${ARIGAMI_INSTALL_DIR:-}" ] && [ -n "$here" ] && [ -f "$here/server/index.ts" ] && [ -d "$here/.git" ] && [ "$INSTALL_DIR" != "$here" ]; then
+  if [ -z "${ARIGAMI_INSTALL_DIR:-}" ] && [ "${DIR_EXPLICIT:-0}" = 0 ] && [ -n "$here" ] && [ -f "$here/server/index.ts" ] && [ -d "$here/.git" ] && [ "$INSTALL_DIR" != "$here" ]; then
     INSTALL_DIR="$here"; ok "using this checkout: $INSTALL_DIR"; return 0
   fi
   [ -d "$(dirname "$INSTALL_DIR")" ] || as_root mkdir -p "$(dirname "$INSTALL_DIR")"
