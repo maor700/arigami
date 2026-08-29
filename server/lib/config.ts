@@ -82,6 +82,13 @@ export interface BrainConfig {
   heartbeatEvery: string; // interval value, e.g. "30m" (cron-schedule.ts parseIntervalMs format)
 }
 
+// Published artifacts (A1, server/artifacts.ts): snapshot copies of static
+// files/folders the agent publishes under $ARIGAMI_DIR/uploads/artifacts.
+export interface ArtifactsConfig {
+  maxMb: number;          // per-publish size cap (all files of one version)
+  retentionDays: number;  // GC: versions older than this are removed
+}
+
 export interface Config {
   port: number;
   // Public origin humans reach this host on (e.g. https://arigami.example.tld),
@@ -111,6 +118,7 @@ export interface Config {
   dispatcher: DispatcherConfig;
   screen: ScreenConfig;
   brain: BrainConfig;
+  artifacts: ArtifactsConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -179,6 +187,10 @@ export const DEFAULTS: Config = {
   brain: {
     heartbeatEnabled: false,
     heartbeatEvery: '30m',
+  },
+  artifacts: {
+    maxMb: 50,
+    retentionDays: 30,
   },
   defaultModel: null,
 };

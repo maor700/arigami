@@ -140,7 +140,7 @@ const getPinnedTicket = (req: IncomingMessage): string =>
   (req.headers['x-poc-ticket'] as string) || '';
 
 export const SW_SOURCE = `
-const SKIP = (p) => p === '/__poc-sw.js' || p === '/__whoami' || p === '/__health' || p === '/__card.js' || p === '/__compare' || p.startsWith('/__host') || p.startsWith('/__api') || p.startsWith('/__ws') || p.startsWith('/__mcp') || p.startsWith('/__ticket');
+const SKIP = (p) => p === '/__poc-sw.js' || p === '/__whoami' || p === '/__health' || p === '/__card.js' || p === '/__compare' || p.startsWith('/__host') || p.startsWith('/__api') || p.startsWith('/__ws') || p.startsWith('/__mcp') || p.startsWith('/__ticket') || p.startsWith('/__artifacts') || p.startsWith('/__preview');
 
 const MEM = new Map();
 

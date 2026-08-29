@@ -85,6 +85,10 @@ POST   /__api/sessions/:id/interrupt                       → SIGINT-equivalent
 GET    /__api/sessions/:id/chat?since=N      → chat events tail (rehydration; live = WS)
 GET    /__api/linear/tickets?filter=assigned → launcher picker (reuse PoC Linear fetch/cache)
 GET    /__api/config                         → {defaultCwd, palette, …}
+GET    /__api/sessions/:id/artifacts         → [artifact]                (A1)
+POST   /__api/sessions/:id/artifacts         {path, title, entry?, open?, notify?, share?} → {artifact_id, path, version, bytes, files, warnings, share_url}
+DELETE /__api/sessions/:id/artifacts/:aid
+GET    /__artifacts/:aid/[v<N>/]<file>        static snapshot (not JSON; CSP sandbox; ?t= share token → 401 until K2)
 ```
 
 Archive = PATCH {archived:true}: kill claude proc + leave record; rail shows under
@@ -149,6 +153,11 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
    // reason: login|2fa|captcha|payment|other. BLOCKS until the human clicks
    // Done in the live screen card (or 30 min timeout → note explains).
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
+publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, session_id?})
+   → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:null}
+   // Snapshot a static file/folder and serve it host-relative (A1). NEVER print
+   // localhost URLs — show `path` or rely on the chat card. Re-publish of the
+   // same path → next version, same id. share:true → K2 (null until then).
 save_browser_logins({session_id?}) → {ok, synced}
    // sync this session's Chrome cookies/Login Data/Local Storage back to
    // ~/.arigami/chrome-base (T8). Automatic after a request_screen takeover
@@ -497,6 +506,46 @@ on demand via the `save_browser_logins` MCP tool /
 its profile back, then removes the copy — unless `config.screen.keepProfiles`
 (default false) is set. Archive only kills the desktop; the profile copy
 survives so unarchiving picks up where it left off.
+
+## Artifacts (server/artifacts.ts, ArtifactCard.jsx) — A1
+
+`publish_artifact({path,title,entry?,open?,notify?})` → `POST /__api/sessions/:id/artifacts`.
+The host **copies** (never symlinks) the file/folder to
+`$ARIGAMI_DIR/uploads/artifacts/<session>/<artifactId>/v<N>/` — realpath on the
+source, symlinks inside the tree skipped, `node_modules/`, `.git/`, `.env*`
+excluded, whole-version cap `artifacts.maxMb` (50), sources under
+`$ARIGAMI_DIR` refused (except `uploads/`). Re-publishing the same source path
+from the same session yields `v<N+1>` under the same id; the record lives on
+`session.artifacts[]` (survives restart and archive), old versions stay
+reachable at `/__artifacts/<id>/v<N>/` until `artifacts.retentionDays` (30)
+GCs them (the newest version is never swept while the record exists).
+
+**Serving.** `GET /__artifacts/<id>/` → the entry of the current version;
+`/__artifacts/<id>/v<N>/…` pins a version. Traversal-guarded (normalize +
+prefix-with-separator, `..`/`.` segments rejected, symlink targets refused),
+`X-Content-Type-Options: nosniff`, `Cache-Control: no-store` for HTML /
+immutable for the rest, and
+`Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob: https:; …`
+(no `allow-same-origin` → opaque origin: a published page cannot read cookies,
+localStorage, or call `/__api` as the cockpit — document this to agents). The
+route sits in `server/index.ts` before `handlePage`/proxy and in the Service
+Worker SKIP list (`/__artifacts`, `/__preview`). If the entry HTML has no
+`<base>`, one pointing at the pinned version dir is injected; root-absolute
+`src="/…"` / `fetch('/…')` in the entry produce `warnings[]` (build with
+`base:'./'`).
+
+**Chat + tabs.** A `{kind:'artifact', artifactId, title, path, entry, version,
+bytes, files, warnings}` event → `ArtifactCard` (open in tab / open in window
+[hidden until `config.auth.mode!=='off'`, C1] / copy link = `location.origin+path`).
+`open!==false` opens (or re-activates) a URL tab whose iframe gets
+`sandbox="allow-scripts allow-forms allow-popups"` when the url starts with
+`/__artifacts/`. `notify:true` sends a push with the RELATIVE `url` — the SW
+resolves it on whatever origin the device uses. The agent only ever sees the
+host-relative `path`; every absolute link is assembled client-side.
+
+**K2 hook.** `artifacts.verifyShareToken()` is a stub: any `?t=` on an artifact
+URL returns 401 "Link expired" until `server/lib/share-token.ts` exists;
+`share:true` in publish returns `share_url:null` plus a warning.
 
 ## Screenshots (server/screenshots.ts, server/vnc.ts captureScreen, ScreenshotCard.jsx)
 
