@@ -2,7 +2,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +13,6 @@ jobs:
       - run: bun install
         working-directory: web
       - run: bun test
+      - run: bun run typecheck
+        continue-on-error: true
+      - run: sh scripts/check-public-readiness.sh

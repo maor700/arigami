@@ -1,0 +1,22 @@
+Arigami
+Copyright 2026 Arigami contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes or is derived from the following third-party work:
+
+- iframe-host-poc — the fixed-origin reverse proxy in server/proxy.ts was
+  ported from the iframe-host-poc server. Included under the terms of its
+  original license.
+
+- noVNC (https://github.com/novnc/noVNC) — used as the npm package
+  @novnc/novnc for the in-browser desktop viewer. Licensed under the
+  Mozilla Public License 2.0. noVNC is not modified; it is consumed as a
+  dependency.
+
+- whatsapp-mcp (https://github.com/lharries/whatsapp-mcp) — an optional,
+  separately installed MCP server that Arigami can connect to. It is not
+  bundled with this repository. Licensed under the MIT License.
+
+All other third-party dependencies are pulled from npm at install time and
+retain their own licenses; see each package's LICENSE file under node_modules.
