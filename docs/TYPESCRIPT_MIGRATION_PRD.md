@@ -247,5 +247,4 @@ export const rewriteLocation = (
 ---
 
 **Created:** 2026-06-18  
-**Owner:** Dana Levi  
 **Questions?** Reference this PRD in the TypeScript migration session

@@ -1,170 +1,111 @@
 # Arigami
 
-> **Fold AI into your workflow.**
-> A customizable cockpit for running teams of AI agents — folded to how your
-> business actually works.
+**Arigami — the self-hosted cockpit for a team of Claude agents that runs on real
+desktops, hands you the wheel when it needs you, and learns your business only
+with your approval.**
 
-A self-hostable web-shell cockpit for running many parallel Claude Code
-sessions, with a customizable skill/workflow layer you shape to your own
-process.
+![Arigami hands you the wheel: a child agent hits 2FA on its own desktop, pushes to your phone, you type the code, it continues](docs/media/hands-you-the-wheel.gif)
 
-One Bun server on **`localhost:3099`** serves three things:
+## Install in 60s
 
-1. **The shell UI** (`/__host/`) — session rail, per-session view tabs, a Claude
-   Code chat terminal per session, launcher.
-2. **The proxy** — the PoC's fixed-origin reverse proxy (one login shared across
-   every localhost port / Vercel preview), plus host pages (`/__ticket/<id>`,
-   `/__compare`).
-3. **The control plane** — REST (`/__api/*`) + WebSocket (`/__ws`) over a
-   server-owned session registry, and a **Host MCP** (`mcp/host-mcp.js`) so the
-   Claude running inside each session drives its own cockpit: title, color,
-   status, progress, tabs, and the human-gated review footer.
-
-The host is an **unopinionated platform** — workflows (tickets, worktrees, dev
-servers, review) live in `skills/`, which talk to the host through the MCP.
-`skills/create-from-ticket` is the bundled default the launcher uses.
-
-## Prerequisites (fresh machine)
-
-- **[bun](https://bun.sh)** ≥ 1.2 — runs the server and installs everything.
-- **git** + **[gh](https://cli.github.com)**, logged in (`gh auth login`) with
-  SSO authorized for **your-org** — cloning this repo and the `app` repo
-  during onboarding both need it (the git-auth onboarding gate checks it).
-  On Windows, use **Git for Windows** — the host runs every shell job (cleanup,
-  onboarding clone/install, the skills) under the `bash` it ships.
-- **Claude Code CLI** (`npm i -g @anthropic-ai/claude-code`), logged in with
-  your own subscription (`claude` once, or `claude setup-token`). The
-  claude-cli / claude-auth onboarding gates check this.
-
-> The web UI uses the **free** FontAwesome packages from public npm — **no token
-> needed**. `web/.npmrc` pins the `@fortawesome` scope to the public registry so
-> a global/ambient `.npmrc` pointing it at the FontAwesome *Pro* registry (common
-> on Acme machines, inherited from the `app` repo) can't hijack the install. If
-> `bun install` in `web/` ever 401s on `@fortawesome/*`, that override is what
-> prevents it — make sure `web/.npmrc` is present.
-
-Optional integrations (voice, Linear ticket pages, a pinned Claude account) are
-env-driven — copy the template and fill in what you need:
+**One line (Linux / macOS / WSL)** — installs bun, the Claude Code CLI and the
+host as a service, then prints the URL and a pairing code:
 
 ```bash
-cp .env.example .env    # optional; bun auto-loads it on server start
+curl -fsSL https://raw.githubusercontent.com/maor700/arigami/master/install.sh | bash
 ```
 
-## Run
+**Docker:**
 
 ```bash
-bun install && (cd web && bun install && bun run build)   # web deps: free FontAwesome from public npm, no token
-bin/host start        # or: bun server/index.js
-open http://localhost:3099/__host/
+git clone https://github.com/maor700/arigami && cd arigami
+cp docker/.env.example .env      # Claude auth (see the file)
+docker compose up --build        # → http://localhost:3199/__host/
 ```
 
-On **Windows**, same thing through the PowerShell CLI (`bin\host.ps1`, the
-counterpart of `bin/host` — same subcommands; `bin\host.cmd` wraps it for
-cmd.exe):
-
-```powershell
-bun install; cd web; bun install; bun run build; cd ..
-bin\host.ps1 start       # or: bun server/index.ts
-bin\host.ps1 launch      # start + open the cockpit in a Chrome app window
-bin\host.ps1 doctor      # checks bun/claude/git/gh + Git Bash + build artifacts
-bin\host.ps1 install     # autostart at logon (a Scheduled Task, in place of launchd)
-```
-
-First run on a clean machine: the cockpit's launcher gates on workspace
-readiness and routes you to **Setup** (or the chat onboarding skill). Apply the
-**Acme profile** there — it registers `github.com/your-org/your-app`, then
-drives clone → env → deps per repo. The env step expects the repo's
-`.env.local`, which is never in git: bring your own (copy from an existing
-checkout or `vercel env pull`) when the gate asks for it — that's expected
-onboarding flow, not a failure.
-
-## Desktop launcher (one click)
-
-`bin/host launch` starts the host + local login and opens the cockpit in a
-**Chrome app-mode window** (a clean standalone window — no tabs/omnibox — on a
-dedicated profile, so it has its own persistent Acme login, isolated from your
-everyday Chrome). Because it's real Chrome (Chromium), everything works: Google
-SSO, iframes, the compare slider.
-
-One-time setup (run from a terminal — the repo lives under `~/Desktop`, which
-macOS TCC shields from Finder-launched apps, so services are managed by launchd,
-not the app):
+**Manual:**
 
 ```bash
-bin/host install       # launchd agents: host (:3099) + local login (:3001) autostart at login
-bin/install-app        # build Arigami.app into ~/Applications (re-run if the repo moves)
+bun install && (cd web && bun install && bun run build)
+bin/host start                   # → http://localhost:3099/__host/
+bin/host pair                    # prints the pairing code for the first sign-in
 ```
 
-Then it's one click: **double-click `Arigami.app`** (or `open "$HOME/Applications/Arigami.app"`).
-It opens the cockpit in a Chrome app-mode window; the launchd agents keep the
-services up. First launch, log into the App tab once (the dedicated Chrome
-profile persists it). `bin/host launch` does the same from a terminal (and will
-start the services itself there, since the terminal has `~/Desktop` access).
+Then open the cockpit, enter the pairing code, pick a profile
+(`solo-dev`, `agency-client`, `ops`) and let Setup walk you through Claude auth,
+git and your first repo. `install.sh --profile <bundle>` pre-selects one.
+Details: [docs/INSTALL.md](docs/INSTALL.md) · [docs/DOCKER.md](docs/DOCKER.md)
+· [docs/DEPLOY.md](docs/DEPLOY.md).
 
-On Windows there's no TCC to work around, so there's no `.app` step —
-`bin\host.ps1 launch` is the one-click path (it opens the same dedicated-profile
-Chrome app window, falling back to Edge if Chrome isn't installed), and
-`bin\host.ps1 install` registers the Scheduled Task that keeps the host up
-across logons. To pin it, make a shortcut to
-`powershell -NoProfile -ExecutionPolicy Bypass -File <repo>\bin\host.ps1 launch`.
+Prerequisites the installer handles for you: [bun](https://bun.sh) ≥ 1.2, git +
+`gh`, and the Claude Code CLI signed in with **your own subscription** — no API
+keys, no OpenRouter. (`ANTHROPIC_API_KEY` works too if you prefer metered
+billing.)
 
-## Platform notes (Windows)
+## What it is
 
-The host targets macOS first; `server/lib/platform.ts` is the single place the
-POSIX assumptions get normalized. What differs:
+- **A team of Claude Code sessions, not one chat.** A project-manager session
+  decomposes work, spawns children in their own git worktrees, tasks them, reads
+  back thin results, and integrates. Cron and listeners (mail, webhooks, Linear,
+  Slack) wake sessions on their own. One origin, one Bun server, one UI on your
+  phone or laptop.
+- **Real desktops, and it hands you the wheel.** Every session can drive a browser
+  on its own Xvfb+VNC desktop. At login, 2FA, CAPTCHA or payment it pushes to your
+  phone, you take over the screen, tap Done, and it continues — the human is in
+  the loop exactly where the human is needed.
+- **A second brain with a human gate.** Sessions write episodes, propose memory
+  facts and skill changes — all of it lands in *Pending* with a diff, undo and
+  scan, and nothing is written until you approve. Fold the cockpit to your
+  business with **profile bundles** (repos + skills + memory seed + cron).
 
-| | macOS/Linux | Windows |
-|---|---|---|
-| `~` expansion | `$HOME` | `%USERPROFILE%` (platform.ts defines `HOME` at boot) |
-| shell jobs | `bash -lc` | Git Bash (`ARIGAMI_BASH` overrides) |
-| `claude` lookup | PATH | PATH + PATHEXT (`claude.exe`/`.cmd`) |
-| Claude credentials | login keychain | `~/.claude/.credentials.json` |
-| bg-shell liveness | `lsof` on the output file | output mtime, then a WMI command-line match |
-| bg-shell kill | SIGTERM → SIGKILL | `taskkill /T /F` |
-| interactive logins | `lib/pty-bridge.py` | `winpty` (ships with Git for Windows) |
-| lifecycle / autostart | `bin/host`, launchd | `bin\host.ps1`, Scheduled Task |
+## Why not …
 
-Two things stay macOS-only by design: `bin/install-app` (builds the `.app`
-bundle) and the local login service (`bin/host login`), which is a Acme-internal
-Next.js repo.
+| | Arigami | OpenClaw | Hermes Agent | Claude Cowork |
+|---|---|---|---|---|
+| Self-hosted | ✅ | ✅ | ✅ | ❌ |
+| Model / billing | your Claude Code subscription | any provider, API keys | any provider, API keys | Claude (Anthropic cloud) |
+| Multi-agent orchestration | PM → children, worktrees, cron | YAML graphs | weak | ❌ |
+| Real desktop per agent + human takeover | ✅ VNC, push to phone | ❌ | ❌ | built-in browser, cloud only |
+| Learns (memory + skills) | ✅ | via skills | ✅ core | ❌ |
+| Human gate on learning | pending + diff + quarantine, always | skill staging | opt-in, no diff | — |
+| Profile bundles (fold to a business) | ✅ | ❌ | ❌ | ❌ |
 
-## Use from your phone (local & private, no public URL)
+## Security posture
 
-The cockpit is responsive — on a phone the session rail becomes a slide-in
-drawer (☰) and the chat goes full-width. To reach it without exposing anything
-publicly, use **Tailscale** (a private mesh between *your* devices only):
+Agents here run shell commands, browsers and git with your credentials, so the
+cockpit is treated as an admin console, never a public site:
 
-One-time: install Tailscale on the Mac + phone, sign into the same account. Then
-**toggle it from the cockpit**: Settings → *Remote access* → flip on, and copy the
-shown `https://<your-mac>.<tailnet>.ts.net/__host/` URL to open on your phone (with
-Tailscale running). The toggle just runs `tailscale serve` for you; the equivalent
-by hand is:
+- **Authenticated by default.** Session cookie, first sign-in by pairing code,
+  optional OIDC (Google/GitHub/your IdP) — [docs/AUTH.md](docs/AUTH.md).
+- **Binds `127.0.0.1` and fails closed.** Reaching it from another device goes
+  through a tunnel you control: `tailscale serve` (private to your tailnet, real
+  HTTPS) or Caddy/your reverse proxy with TLS. Never `tailscale funnel`.
+- **The cockpit is never funnelled.** The only surfaces that open without a
+  cookie are signed, expiring share links for artifacts and webhooks.
+- **Agents never print absolute URLs.** Everything the host hands you is a
+  host-relative path, so links work from `localhost`, a tailnet or a proxy.
+- **Skills and memory are never auto-written.** Proposals wait in *Pending*.
 
-```bash
-tailscale serve --bg 3099        # serves the host over HTTPS, tailnet-only
-```
-This is `serve` (private to your devices, encrypted, real HTTPS cert) — **not**
-`funnel` (which is public). The valid cert means it's a secure context, so the
-Service-Worker proxy tabs work too, not just chat.
+Threat model and hardening: [docs/SECURITY.md](docs/SECURITY.md). Report
+vulnerabilities: [SECURITY.md](SECURITY.md).
 
-Same-Wi-Fi alternative (simplest, no install): `http://<mac-lan-ip>:3099/__host/`
-— chat works, but the proxied app/preview tabs need HTTPS so they won't load.
+## Docs
 
-> The host has no auth and can run commands via the agent — keep it on your
-> tailnet / a trusted LAN, never on `tailscale funnel` or an untrusted network.
-> Embedded **your-app** tabs still call `api.example.com`, whose CORS allowlist is
-> `localhost` only, so those API calls fail from a non-localhost origin — chat,
-> review, and the host's own pages are unaffected.
+- [docs/INSTALL.md](docs/INSTALL.md) — the three doors (installer, Docker, manual)
+- [docs/AUTH.md](docs/AUTH.md) — sign-in, pairing, OIDC, migrating a live host
+- [docs/DEPLOY.md](docs/DEPLOY.md) — systemd units, restart/upgrade from the cockpit
+- [docs/DOCKER.md](docs/DOCKER.md) — image, volumes, Kubernetes notes
+- [docs/SPEC.md](docs/SPEC.md) — data model, REST/WS API, host MCP tools, UI
+- [docs/ONBOARDING.md](docs/ONBOARDING.md) — repos, profiles, readiness gates
+- [docs/TRIGGERS.md](docs/TRIGGERS.md) · [docs/DISPATCHER.md](docs/DISPATCHER.md) — listeners, cron, PM → children
+- [docs/SECURITY.md](docs/SECURITY.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
-### Links the agent hands you
+Windows: `bin\host.ps1` mirrors `bin/host` (start/launch/doctor/install as a
+Scheduled Task); `server/lib/platform.ts` normalizes the POSIX assumptions.
+macOS: `bin/host install` registers a launchd agent and `bin/install-app` builds
+a one-click `Arigami.app`.
 
-Everything the host gives the agent to show you is **host-relative**
-(`/__host/?session=…`, `/__artifacts/<id>/`), so it opens from whatever origin
-you used — laptop `localhost`, tailnet, or a reverse proxy. `ARIGAMI_URL`
-(`http://localhost:3099`) is injected into agent processes for their **own**
-API calls only; it is never a link for you. If a channel genuinely needs an
-absolute link (WhatsApp/Slack delivery, OAuth redirect), set
-`ARIGAMI_PUBLIC_URL=https://<your-host>` and the host prefixes it; unset, links
-stay relative.
+## License
 
-See `docs/SPEC.md` for the full v1 contract (data model, API, MCP tools, UI).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are
+accepted under the DCO ([CONTRIBUTING.md](CONTRIBUTING.md)).

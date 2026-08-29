@@ -22,16 +22,8 @@ fi
 [ -n "${ARIGAMI_PORT:-}" ] && PORT="$ARIGAMI_PORT"
 URL="http://127.0.0.1:$PORT"
 
-# Local login service (prod build of the login repo) — gives the app a
-# same-origin /login that authenticates without the deployed redirect_uri wall.
-LOGIN_DIR="${ACME_LOGIN_DIR:-$HOME/Desktop/repos/login}"
-LOGIN_PORT=3001
-LOGIN_LOG="$LOGDIR/login.log"
-LOGIN_PIDFILE="$DIR/login.pid"
-login_health() { curl -fsS -m 2 "http://localhost:$LOGIN_PORT/login/" >/dev/null 2>&1; }
-
 # Dedicated Chrome profile for the cockpit window: a clean app-mode window,
-# isolated from your everyday Chrome, with its own persistent Acme login.
+# isolated from your everyday Chrome, with its own persistent cockpit sign-in.
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CHROME_PROFILE="$DIR/chrome-profile"
 
@@ -53,8 +45,9 @@ PLIST_LABEL="io.arigami.host"
 OLD_PLIST_LABEL="com.example.arigami"
 PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 OLD_PLIST="$HOME/Library/LaunchAgents/$OLD_PLIST_LABEL.plist"
-LOGIN_PLIST_LABEL="com.example.login"
-LOGIN_PLIST="$HOME/Library/LaunchAgents/$LOGIN_PLIST_LABEL.plist"
+# Pre-rename installs also had a companion login agent; `install`/`uninstall`
+# still unload it so nothing is left behind.
+LEGACY_LOGIN_PLIST="$HOME/Library/LaunchAgents/com.example.login.plist"
 launchd_loaded() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
 
 # ---- systemd (Linux) --------------------------------------------------------
@@ -302,7 +295,7 @@ install() {
     rl "no systemd on this Linux — run the host under your own supervisor (docs/DEPLOY.md)"; return 1
   fi
   mkdir -p "$HOME/Library/LaunchAgents" "$LOGDIR"
-  # Label moved com.example.arigami → io.arigami.host: unload + drop the old agent first.
+  # Label moved to io.arigami.host: unload + drop the pre-rename agent first.
   if [ -f "$OLD_PLIST" ]; then launchctl unload "$OLD_PLIST" 2>/dev/null || true; rm -f "$OLD_PLIST"; fi
   cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -335,69 +328,22 @@ EOF
   launchctl load "$PLIST"
   gl "✓ installed launchd agent $PLIST_LABEL (host :$PORT)"
 
-  # login agent — autostart the local login prod build (:3001) too
-  if [ -d "$LOGIN_DIR" ]; then
-    [ -d "$LOGIN_DIR/.next" ] || ( cd "$LOGIN_DIR" && bun run build >>"$LOGIN_LOG" 2>&1 ) || yl "  (login not built; agent will build-less-fail until 'bin/host login')"
-    cat >"$LOGIN_PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$LOGIN_PLIST_LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$bun_bin</string><string>run</string><string>start</string></array>
-  <key>WorkingDirectory</key><string>$LOGIN_DIR</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>${PATH:-/usr/local/bin:/usr/bin:/bin}</string><key>HOME</key><string>$HOME</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>$LOGIN_LOG</string>
-  <key>StandardErrorPath</key><string>$LOGIN_LOG</string>
-</dict>
-</plist>
-EOF
-    pid="$(cat "$LOGIN_PIDFILE" 2>/dev/null || true)"; alive "$pid" && { stop_pid "$pid"; rm -f "$LOGIN_PIDFILE"; }
-    launchctl unload "$LOGIN_PLIST" 2>/dev/null || true
-    launchctl load "$LOGIN_PLIST"
-    gl "✓ installed launchd agent $LOGIN_PLIST_LABEL (login :$LOGIN_PORT)"
-  fi
-  dl "  both auto-start on login + respawn on crash. The Arigami.app just opens the window."
+  if [ -f "$LEGACY_LOGIN_PLIST" ]; then launchctl unload "$LEGACY_LOGIN_PLIST" 2>/dev/null || true; rm -f "$LEGACY_LOGIN_PLIST"; fi
+  dl "  auto-starts on login + respawns on crash. The Arigami.app just opens the window."
 }
 
 uninstall() {
   if [ "$(uname -s)" = Linux ]; then uninstall_systemd; return $?; fi
-  for p in "$PLIST" "$OLD_PLIST" "$LOGIN_PLIST"; do
+  for p in "$PLIST" "$OLD_PLIST" "$LEGACY_LOGIN_PLIST"; do
     launchctl unload "$p" 2>/dev/null || true
     [ -f "$p" ] && rm -f "$p"
   done
-  gl "✓ removed launchd agents (host + login)"
+  gl "✓ removed launchd agent"
 }
 
-start_login() {
-  if login_health; then echo "$(d "login already up") :$LOGIN_PORT"; return 0; fi
-  if [ ! -d "$LOGIN_DIR" ]; then rl "login repo not found at $LOGIN_DIR (set ACME_LOGIN_DIR)"; return 1; fi
-  if [ ! -d "$LOGIN_DIR/.next" ]; then
-    dl "building login (first run)…"
-    ( cd "$LOGIN_DIR" && bun run build >>"$LOGIN_LOG" 2>&1 ) || { rl "login build failed — see $LOGIN_LOG"; return 1; }
-  fi
-  mkdir -p "$LOGDIR"
-  ( cd "$LOGIN_DIR" && nohup bun run start >>"$LOGIN_LOG" 2>&1 </dev/null & echo $! >"$LOGIN_PIDFILE" )
-  i=0; while [ "$i" -lt 60 ]; do login_health && { echo "$(g "✓ login up") :$LOGIN_PORT"; return 0; }; sleep 0.25; i=$((i+1)); done
-  rl "login did not come up — see $LOGIN_LOG"; return 1
-}
-
-stop_login() {
-  pid="$(cat "$LOGIN_PIDFILE" 2>/dev/null || true)"
-  [ -n "$pid" ] && stop_pid "$pid"
-  pids="$(lsof -nP -iTCP:"$LOGIN_PORT" -sTCP:LISTEN -t 2>/dev/null || true)"
-  [ -n "$pids" ] && for p in $pids; do stop_pid "$p"; done
-  rm -f "$LOGIN_PIDFILE"; gl "✓ login stopped"
-}
-
-# One-click: bring up host + login, then open the cockpit in a Chrome app window.
+# One-click: bring up the host, then open the cockpit in a Chrome app window.
 launch() {
   start || return 1
-  start_login || dl "(continuing without local login — app-tab login may need it)"
   if [ ! -x "$CHROME" ]; then rl "Google Chrome not found at $CHROME"; return 1; fi
   mkdir -p "$CHROME_PROFILE"
   # A force-killed/crashed Chrome leaves Singleton* locks that block the next
@@ -407,7 +353,7 @@ launch() {
   fi
   dl "opening cockpit in Chrome…"
   # Dedicated profile + --app = a standalone app window (no tabs/omnibox), its own
-  # persistent Acme login, isolated from your everyday Chrome. `open -na` launches
+  # persistent cockpit sign-in, isolated from your everyday Chrome. `open -na` launches
   # a NEW Chrome instance fully DETACHED from this launcher (so it survives the
   # .app process exiting, when run from Finder) and brings it to the front.
   open -na "Google Chrome" --args \
@@ -419,8 +365,7 @@ launch() {
 case "${1:-status}" in
   start) start ;;
   launch|app) launch ;;
-  login) start_login ;;
-  stop) stop; stop_login 2>/dev/null ;;
+  stop) stop ;;
   restart)
     if systemd_managed; then
       as_root systemctl restart "$UNIT_NAME" || { rl "systemctl restart failed (need root/sudo?)"; exit 1; }
@@ -440,7 +385,7 @@ case "${1:-status}" in
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

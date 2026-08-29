@@ -1,0 +1,20 @@
+{
+  "name": "agency-client",
+  "title": "Agency client",
+  "description": "One client, one cockpit: a delivery workspace for an agency or freelancer running Arigami on the client's behalf. Register the client's app repo, work from tickets, ship through the human-gated review footer, and fold the client's process into skills that stay in this profile.",
+  "repos": [
+    {
+      "name": "app",
+      "source": "github.com/<client-org>/<app>",
+      "branch": "main",
+      "envSource": { "kind": "file", "value": ".env.local" },
+      "installCmd": "bun install",
+      "devCmd": "bun run dev",
+      "testCmd": "bun test"
+    }
+  ],
+  "ports": { "dev": [3020, 3070], "storybook": [6021, 6070] },
+  "issueSource": "linear",
+  "plugins": ["playwright"],
+  "workflows": ["dispatch", "machine-work"]
+}

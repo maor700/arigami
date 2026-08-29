@@ -643,7 +643,7 @@ targeting works as it does for PoC tabs today; each iframe is its own SW client)
 
 ## Web UI (web/ — React + Vite + Tailwind v4)
 
-Acme-flavored, light: yellow #F9D312 = host chrome accent, neutral surfaces,
+Light theme: yellow #F9D312 = host chrome accent, neutral surfaces,
 per-session colors, `ui-monospace` stack for ids/ports/branches, Inter/system for
 text. Layout per wireframe (IDE shell):
 

@@ -1,0 +1,19 @@
+{
+  "name": "ops",
+  "title": "Ops / automation",
+  "description": "No product repo — a cockpit for recurring operations: cron-driven sessions, listeners on inboxes and webhooks, browser jobs on the shared desktop that hand you the wheel at login/2FA/payment. Point it at an infra or runbook repo and let the project-manager skill fan work out.",
+  "repos": [
+    {
+      "name": "runbooks",
+      "source": "github.com/<org>/runbooks",
+      "branch": "main",
+      "installCmd": "true",
+      "devCmd": "",
+      "testCmd": "true"
+    }
+  ],
+  "ports": { "dev": [3020, 3030] },
+  "issueSource": "github",
+  "plugins": ["playwright"],
+  "workflows": ["project-manager", "machine-work"]
+}

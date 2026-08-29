@@ -363,7 +363,7 @@ function Start-Cockpit {
 
   Write-Dim 'opening cockpit...'
   # Dedicated profile + --app = a standalone window (no tabs/omnibox) with its
-  # own persistent Acme login, isolated from your everyday browser.
+  # own persistent cockpit sign-in, isolated from your everyday browser.
   Start-Process -FilePath $chrome -ArgumentList @(
     "--user-data-dir=$profileDir",
     "--app=$URL/__host/",

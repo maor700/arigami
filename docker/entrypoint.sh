@@ -26,7 +26,7 @@ fi
 # Trust the worktrees the agent creates.
 git config --global --add safe.directory '*' || true
 
-# Optional: authenticate git/gh to private Acme repos via a token from the env.
+# Optional: authenticate git/gh to private repos via a token from the env.
 if [ -n "$GH_TOKEN" ]; then
   git config --global credential.helper store
   printf 'https://x-access-token:%s@github.com\n' "$GH_TOKEN" > "$HOME/.git-credentials"

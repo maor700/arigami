@@ -4,6 +4,7 @@
 #  - package.json / web/package.json must not be "private": true
 #  - both must declare "license": "Apache-2.0"
 #  - NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md must exist
+#  - no employer/internal/personal references (test/no-internal-refs.test.js)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
@@ -25,6 +26,12 @@ for pkg in package.json web/package.json; do
     err "$pkg does not declare \"license\": \"Apache-2.0\""
   fi
 done
+
+if command -v bun >/dev/null 2>&1; then
+  bun test "$ROOT/test/no-internal-refs.test.js" >/dev/null 2>&1 || err "internal references found — run: bun test test/no-internal-refs.test.js"
+else
+  err "bun not found; cannot run test/no-internal-refs.test.js"
+fi
 
 if [ "$fail" -ne 0 ]; then
   echo "public-readiness: FAILED" >&2

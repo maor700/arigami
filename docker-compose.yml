@@ -14,7 +14,7 @@ services:
     build: .
     image: arigami:local
     container_name: arigami
-    # Port 3199 (not 3099): the native launchd host (com.example.arigami) already owns
+    # Port 3199 (not 3099): a natively installed host (bin/host install) already owns
     # localhost:3099.  localhost:3099 = native/local host | localhost:3199 = container.
     # The container runs on 3199 INTERNALLY too (ARIGAMI_PORT) — not just the
     # host-side map — so self-built URLs like the Linear OAuth redirect_uri
