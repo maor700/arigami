@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user
+# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user|profile
 # Pidfile + logs under $ARIGAMI_DIR (default ~/.arigami); health check = GET /__api/config.
 set -u
 
@@ -244,6 +244,7 @@ doctor() {
   echo "  mode: ${ARIGAMI_AUTH:-${mode:-pairing (default)}}"
   if [ -f "$DIR/users.json" ]; then echo "  users.json: $(g "✓")"; else echo "  users.json: $(y "none — run: host pair, then enter the code at /__host/")"; fi
   [ -f "$DIR/run/pairing-code" ] && echo "  pairing code pending: $(y "$(cat "$DIR/run/pairing-code")")"
+  [ -f "$DIR/pending-profile" ] && echo "  profile pending: $(y "$(cat "$DIR/pending-profile")") $(d "(host profile apply pending)")"
   echo
   dl "runtime:"
   echo "  manager: $(manager_name)"
@@ -293,6 +294,36 @@ uninstall_systemd() {
 # the server) so the code file lands exactly where the running host reads it.
 pair() { ARIGAMI_DIR="$DIR" bun "$ROOT/server/auth.ts" pair; }
 user() { ARIGAMI_DIR="$DIR" bun "$ROOT/server/auth.ts" user "$@"; }
+
+# K3 — profile bundles (server/profiles.ts). `apply` cannot authenticate against
+# a RUNNING host (the host bearer is in-memory, C1) unless the caller exports an
+# admin API token as ARIGAMI_TOKEN — then it goes through REST. Otherwise:
+# host down → apply in-process; host up → stage as $ARIGAMI_DIR/pending-profile
+# for the wizard (B3) / Setup to finish.
+profile() {
+  sub="${1:-}"; shift || true
+  case "$sub" in
+    list) ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" list ;;
+    current) ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" current ;;
+    validate) ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" validate "${1:?usage: host profile validate <src>}" ;;
+    apply|install)
+      src="${1:?usage: host profile apply <name|dir|git-url>}"
+      if health && [ -n "${ARIGAMI_TOKEN:-}" ]; then
+        curl -fsS -m 300 -X POST "$URL/__api/profiles/apply" \
+          -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' \
+          --data "$(printf '{"source":"%s"}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')")"
+        echo
+      elif health; then
+        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" pending "$src" || return 1
+        yl "host is running and no ARIGAMI_TOKEN is set — staged as pending"
+        dl "  finish it in the cockpit (Setup → Profile) or: ARIGAMI_TOKEN=<admin api token> host profile apply $src"
+      else
+        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src"
+      fi
+      ;;
+    *) echo "usage: host profile <list|current|validate <src>|apply <name|dir|git-url>>"; return 1 ;;
+  esac
+}
 
 install() {
   bun_bin="$(command -v bun)"
@@ -437,10 +468,11 @@ case "${1:-status}" in
   doctor) doctor ;;
   pair) pair ;;
   user) shift; user "$@" ;;
+  profile) shift; profile "$@" ;;
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

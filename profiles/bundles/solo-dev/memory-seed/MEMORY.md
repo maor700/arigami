@@ -1,0 +1,2 @@
+- Solo-dev profile: there is one human on this host; they own every repo and approve every proposal themselves.
+- Prefer small, reviewable diffs and a passing test run over broad refactors unless asked.

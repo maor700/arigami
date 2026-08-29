@@ -380,10 +380,21 @@ export function listProfiles(): Profile[] {
 export function applyProfile(name: string): { applied: string; repos: string[] } {
   const prof = listProfiles().find((p) => p.name === name);
   if (!prof) throw new Error(`no such profile: ${name}`);
-  const byName = new Map<string, RepoEntry>(listRepos().map((r) => [r.name, r]));
-  for (const r of prof.repos || []) byName.set(r.name, { ...byName.get(r.name), ...r });
-  writeRepos([...byName.values()]);
+  upsertRepos(prof.repos || []);
   return { applied: prof.name, repos: (prof.repos || []).map((r) => r.name) };
+}
+
+// Upsert entries into repos.json by name (entry fields win). Shared by
+// applyProfile and the K3 bundle loader (server/profiles.ts).
+export function upsertRepos(entries: RepoEntry[]): RepoEntry[] {
+  const byName = new Map<string, RepoEntry>(listRepos().map((r) => [r.name, r]));
+  for (const r of entries) {
+    assertRepoName(r.name);
+    byName.set(r.name, { ...byName.get(r.name), ...r });
+  }
+  const list = [...byName.values()];
+  writeRepos(list);
+  return entries.map((e) => byName.get(e.name)!);
 }
 
 // ---------------------------------------------------------------------------

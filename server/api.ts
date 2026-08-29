@@ -1514,6 +1514,36 @@ export async function handle(
       if (!body.path) return badRequest(res, 'path required');
       return json(res, ob.detectLocalSource(String(body.path)));
     }
+    // ---- K3 profile bundles (server/profiles.ts) ------------------------------
+    // Listing/current are readable by any signed-in principal; apply/validate
+    // mutate skills/memory/triggers/repos.json and are admin-only (C1).
+    if (p === '/__api/profiles' && m === 'GET') {
+      const pf = await import('./profiles.js');
+      return json(res, { bundles: pf.listBundles(), pending: pf.getPending() });
+    }
+    if (p === '/__api/profiles/current' && m === 'GET') {
+      const pf = await import('./profiles.js');
+      return json(res, { current: pf.readProvenance(), pending: pf.getPending() });
+    }
+    if ((p === '/__api/profiles/apply' || p === '/__api/profiles/validate') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const pf = await import('./profiles.js');
+      const body = (await readBody(req)) as { source?: unknown };
+      const source = String(body.source || '').trim();
+      if (!source) return badRequest(res, 'source required (bundle name, directory, git URL, or "pending")');
+      try {
+        if (p === '/__api/profiles/validate') {
+          const r = pf.resolveSource(source);
+          const b = pf.loadBundle(r.dir, r.source);
+          return json(res, { ...pf.summarize(b), ...pf.validate(b), readme: b.readme });
+        }
+        const report = await pf.applySource(source, { sessionId: String(req.headers['x-arigami-session'] || '') || undefined });
+        return json(res, { ok: report.errors.length === 0, report });
+      } catch (e) {
+        return badRequest(res, (e as Error).message);
+      }
+    }
     if (p === '/__api/onboarding/profiles' && m === 'GET') {
       const ob = await import('./onboarding.js');
       return json(res, ob.listProfiles());
