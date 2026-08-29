@@ -49,17 +49,54 @@ read_pid() { cat "$PIDFILE" 2>/dev/null || true; }
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 health() { curl -fsS -m 2 "$URL/__api/config" >/dev/null 2>&1; }
 
-PLIST_LABEL="com.example.arigami"
+PLIST_LABEL="io.arigami.host"
+OLD_PLIST_LABEL="com.example.arigami"
 PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
+OLD_PLIST="$HOME/Library/LaunchAgents/$OLD_PLIST_LABEL.plist"
 LOGIN_PLIST_LABEL="com.example.login"
 LOGIN_PLIST="$HOME/Library/LaunchAgents/$LOGIN_PLIST_LABEL.plist"
 launchd_loaded() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
+
+# ---- systemd (Linux) --------------------------------------------------------
+# Units live in the repo (deploy/systemd/); `install` renders them with this
+# checkout's paths and enables them. Once installed, start/stop/restart/status
+# defer to systemctl so KeepAlive-style respawn and our pidfile never fight.
+UNIT_NAME="arigami"
+UNIT_SRC="$ROOT/deploy/systemd/arigami.service"
+UNIT_DST="/etc/systemd/system/$UNIT_NAME.service"
+BUN_DIR="$(dirname "$(command -v bun 2>/dev/null || echo /usr/local/bin/bun)")"
+have_systemd() { [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; }
+systemd_managed() { have_systemd && systemctl cat "$UNIT_NAME" >/dev/null 2>&1; }
+as_root() {
+  if [ "$(id -u)" = "0" ]; then "$@"
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then sudo "$@"
+  else return 126; fi
+}
+render_unit() { # render_unit <src> — substitutes the __TOKENS__ for this checkout
+  sed -e "s#__ROOT__#$ROOT#g" -e "s#__USER__#$(id -un)#g" -e "s#__HOME__#$HOME#g" -e "s#__BUN_DIR__#$BUN_DIR#g" "$1"
+}
+manager_name() {
+  if systemd_managed; then echo systemd
+  elif [ -f "$PLIST" ] || [ -f "$OLD_PLIST" ]; then echo launchd
+  elif command -v pm2 >/dev/null 2>&1 && pm2 jlist 2>/dev/null | grep -q '"name":"arigami"'; then echo pm2
+  else echo none; fi
+}
 
 start() {
   pid="$(read_pid)"
   if alive "$pid" && health; then
     echo "$(y "already running") (pid $pid) on :$PORT"
     return 0
+  fi
+  if systemd_managed; then
+    as_root systemctl start "$UNIT_NAME" || { rl "systemctl start failed (need root/sudo?)"; return 1; }
+    i=0
+    while [ "$i" -lt 60 ]; do
+      if health; then echo "$(g "✓ host started") (systemd) → $URL"; return 0; fi
+      sleep 0.25; i=$((i + 1))
+    done
+    echo "$(r "unit started but health check failed") — see: journalctl -u $UNIT_NAME"
+    return 1
   fi
   # launchd-managed install: load the agent instead of forking our own process,
   # otherwise KeepAlive and the pidfile copy would fight over the port.
@@ -122,6 +159,12 @@ sweep_children() {
 }
 
 stop() {
+  if systemd_managed; then
+    as_root systemctl stop "$UNIT_NAME" || { rl "systemctl stop failed (need root/sudo?)"; return 1; }
+    sweep_children
+    gl "✓ stopped (systemd)"
+    return 0
+  fi
   # Unload the launchd agent first or KeepAlive instantly respawns what we kill.
   if launchd_loaded; then
     launchctl unload "$PLIST" 2>/dev/null || true
@@ -154,7 +197,7 @@ status() {
   [ -z "$pid" ] && pid="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)"
   if health; then
     sessions="$(curl -fsS -m 2 "$URL/__api/sessions" 2>/dev/null | grep -o '"id":"sess_' | wc -l | tr -d ' ')"
-    mgr=""; launchd_loaded && mgr=" (launchd)"
+    mgr="$(manager_name)"; [ "$mgr" = none ] && mgr="" || mgr=" ($mgr)"
     echo "$(g "● running")  pid ${pid:-?}$mgr  :$PORT  sessions: ${sessions:-?}"
   elif alive "$pid"; then
     echo "$(y "◍ process alive but not responding") (pid $pid) — check: host logs"
@@ -195,14 +238,59 @@ doctor() {
   [ -f "$ROOT/server/lib/config.ts" ] && echo "  server/lib/config.ts: $(g "✓")" || echo "  server/lib/config.ts: $(y "missing (stub fallback in use)")"
   echo
   dl "runtime:"
+  echo "  manager: $(manager_name)"
+  if systemd_managed; then
+    echo "  unit: $UNIT_NAME.service $(systemctl is-enabled "$UNIT_NAME" 2>/dev/null || echo '?') / $(systemctl is-active "$UNIT_NAME" 2>/dev/null || echo '?')"
+  fi
+  if have_systemd && [ ! -f "$UNIT_DST" ] && [ "$(uname -s)" = Linux ]; then
+    echo "  $(y "not installed as a systemd unit") — run: bin/host install"
+  fi
   printf '  '
   status
+  if health; then
+    printf '  '
+    curl -fsS -m 2 "$URL/__api/version" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*"commit":"\([^"]*\)".*/version: \1 (\2)/p'
+  fi
+}
+
+install_systemd() {
+  [ -f "$UNIT_SRC" ] || { rl "missing $UNIT_SRC"; return 1; }
+  tmp="$(mktemp)"
+  render_unit "$UNIT_SRC" >"$tmp"
+  if ! as_root install -m 0644 "$tmp" "$UNIT_DST"; then
+    rm -f "$tmp"
+    yl "no root/sudo — install the unit by hand:"
+    echo "  $ROOT/bin/host render-unit | sudo tee $UNIT_DST"
+    echo "  sudo systemctl daemon-reload && sudo systemctl enable --now $UNIT_NAME"
+    dl "  (docs/DEPLOY.md has the full pm2 → systemd migration)"
+    return 1
+  fi
+  rm -f "$tmp"
+  # Hand over from a pidfile-managed process cleanly (the unit owns the port now).
+  pid="$(read_pid)"
+  if alive "$pid"; then stop_pid "$pid"; rm -f "$PIDFILE"; fi
+  as_root systemctl daemon-reload
+  as_root systemctl enable --now "$UNIT_NAME" || { rl "systemctl enable --now failed — see: journalctl -u $UNIT_NAME"; return 1; }
+  gl "✓ installed systemd unit $UNIT_DST (host :$PORT)"
+  dl "  restarts on crash and on POST /__api/host/restart; logs: journalctl -u $UNIT_NAME -f"
+}
+
+uninstall_systemd() {
+  as_root systemctl disable --now "$UNIT_NAME" 2>/dev/null || true
+  as_root rm -f "$UNIT_DST" && as_root systemctl daemon-reload
+  gl "✓ removed systemd unit $UNIT_NAME"
 }
 
 install() {
   bun_bin="$(command -v bun)"
   if [ -z "$bun_bin" ]; then rl "bun not found on PATH"; return 1; fi
+  if [ "$(uname -s)" = Linux ]; then
+    if have_systemd; then install_systemd; return $?; fi
+    rl "no systemd on this Linux — run the host under your own supervisor (docs/DEPLOY.md)"; return 1
+  fi
   mkdir -p "$HOME/Library/LaunchAgents" "$LOGDIR"
+  # Label moved com.example.arigami → io.arigami.host: unload + drop the old agent first.
+  if [ -f "$OLD_PLIST" ]; then launchctl unload "$OLD_PLIST" 2>/dev/null || true; rm -f "$OLD_PLIST"; fi
   cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -264,7 +352,8 @@ EOF
 }
 
 uninstall() {
-  for p in "$PLIST" "$LOGIN_PLIST"; do
+  if [ "$(uname -s)" = Linux ]; then uninstall_systemd; return $?; fi
+  for p in "$PLIST" "$OLD_PLIST" "$LOGIN_PLIST"; do
     launchctl unload "$p" 2>/dev/null || true
     [ -f "$p" ] && rm -f "$p"
   done
@@ -320,17 +409,23 @@ case "${1:-status}" in
   login) start_login ;;
   stop) stop; stop_login 2>/dev/null ;;
   restart)
+    if systemd_managed; then
+      as_root systemctl restart "$UNIT_NAME" || { rl "systemctl restart failed (need root/sudo?)"; exit 1; }
+      i=0; while [ "$i" -lt 60 ]; do health && { echo "$(g "✓ restarted") (systemd) → $URL"; exit 0; }; sleep 0.25; i=$((i+1)); done
+      rl "restarted but health check failed — see: journalctl -u $UNIT_NAME"; exit 1
+    fi
     stop
     sleep 0.4
     start
     ;;
+  render-unit) render_unit "${UNIT_SRC}" ;;
   status) status ;;
   logs) shift; logs "${1:-}" ;;
   doctor) doctor ;;
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|install|uninstall>"
+    echo "usage: host <launch|start|login|stop|restart|status|logs [-f]|doctor|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

@@ -1,0 +1,34 @@
+# Arigami host — per-instance template (spec E1 / T5).
+#   systemctl enable --now arigami@alice
+# runs a host whose ARIGAMI_DIR is /srv/arigami/alice. A non-default
+# ARIGAMI_DIR shifts every default port/display range (+1000/+100) so several
+# instances coexist on one machine with no config at all (server/lib/instance.ts);
+# pin ports per instance in /srv/arigami/%i/env (ARIGAMI_PORT=…).
+[Unit]
+Description=Arigami host instance %i
+Documentation=file:__ROOT__/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__ROOT__
+Environment=HOME=__HOME__
+Environment=ARIGAMI_DIR=/srv/arigami/%i
+Environment=ARIGAMI_INSTANCE=%i
+Environment=ARIGAMI_SUPERVISOR=systemd
+Environment=PATH=__BUN_DIR__:__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/srv/arigami/%i/env
+ExecStartPre=/bin/mkdir -p /srv/arigami/%i
+ExecStart=/usr/bin/env bun server/index.ts
+Restart=always
+RestartSec=2
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

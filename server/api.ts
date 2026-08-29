@@ -1094,6 +1094,55 @@ export async function handle(
     if (p === '/__mcp/screen-request' && m === 'POST') {
       return await handleScreenRequest(res, await readBody(req));
     }
+    // ---- host lifecycle (B4-lite: server/host-control.ts, server/version.ts) ----
+    // Mutations need `X-Arigami-Confirm: yes` (no cross-site form/fetch can send
+    // it without CORS, and a careless curl can't trip it). When the caller is a
+    // session (MCP passes X-Arigami-Session) only masters/controllers may act.
+    // TODO(C1): replace both checks with the admin role on the session cookie.
+    if (p === '/__api/version' && m === 'GET') {
+      const v = await import('./version.js');
+      return json(res, await v.getVersion({ refresh: u.searchParams.get('refresh') === '1' }));
+    }
+    if (p === '/__api/host/status' && m === 'GET') {
+      const hc = await import('./host-control.js');
+      return json(res, hc.hostStatus());
+    }
+    if (p.startsWith('/__api/host/') && (m === 'POST' || m === 'DELETE')) {
+      const hc = await import('./host-control.js');
+      if (String(req.headers['x-arigami-confirm'] || '').toLowerCase() !== 'yes')
+        return json(res, { error: 'missing X-Arigami-Confirm: yes header' }, 428);
+      const callerId = String(req.headers['x-arigami-session'] || '');
+      if (callerId) {
+        const caller = state.getSession(callerId);
+        const isMaster = !!caller && (
+          caller.metadata?.role === 'controller' ||
+          caller.metadata?.kind === 'controller' ||
+          state.listSessions({ archived: true }).some((s) => s.metadata?.master === callerId)
+        );
+        if (!isMaster) return json(res, { error: 'host control is limited to master/controller sessions' }, 403);
+      }
+      const sub = p.slice('/__api/host/'.length);
+      const body: Record<string, unknown> = m === 'POST' ? await readBody(req).catch(() => ({})) : {};
+      const when: 'now' | 'idle' =
+        u.searchParams.get('when') === 'idle' || body.whenIdle === true || body.when === 'idle' ? 'idle' : 'now';
+      try {
+        if (sub === 'restart' && m === 'POST') {
+          const r = hc.restarts.request(when, callerId ? `session ${callerId}` : 'cockpit');
+          return json(res, { ok: true, ...r, status: hc.hostStatus() });
+        }
+        if (sub === 'restart' && m === 'DELETE') {
+          return json(res, { ok: true, cancelled: hc.restarts.cancel(), status: hc.hostStatus() });
+        }
+        if (sub === 'upgrade' && m === 'POST') {
+          const job = await hc.startUpgrade(when);
+          return json(res, { ok: true, jobId: job.id, when, status: hc.hostStatus() });
+        }
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { error: err.message, manager: hc.detectManager() }, err.status || 500);
+      }
+      return notFound(res);
+    }
     if (p === '/__api/config' && m === 'GET') {
       const { groqApiKey, composioApiKey, screen, ...pub } = cfg as any;
       const { vncPassword, ...screenPub } = screen || {};

@@ -7,6 +7,9 @@ import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 import { LOGOS, LOGO_IDS, DEFAULT_ACCENT } from '../lib/logos.js';
 import { useT } from '../lib/i18n.js';
+import { useStore } from '../lib/store.js';
+import { confirmDialog } from '../lib/confirm.js';
+import { toast, toastError } from '../lib/toast.js';
 import { LANGS, LANG_IDS } from '../lib/langs.js';
 
 function Toggle({ on, onChange, disabled }) {
@@ -586,6 +589,7 @@ export default function Settings({ onClose }) {
           <ScreenShare />
           <PushNotifications />
           <BrainHeartbeat />
+          <HostCard />
         </div>
       </div>
     </div>
@@ -740,6 +744,195 @@ function PushNotifications() {
       <Field label={t('settings.pushEnable') || 'Enable push notifications'} hint={t('settings.pushHint') || 'Get notified on your phone when listeners fire or Claude needs input'}>
         <Toggle on={on} onChange={toggle} disabled={loading} />
       </Field>
+    </>
+  );
+}
+
+// Settings → Host (B4-lite): version/commit, restart now / when idle, upgrade.
+// Mutations go through POST /__api/host/* with the X-Arigami-Confirm header
+// (server/host-control.ts). Progress arrives as `host` bus events (store.js →
+// state.hostEvent); the reconnect after the restart is what ws.onclose/onopen
+// already do — we just toast "back" on the down→open transition.
+function hostPost(path, method = 'POST') {
+  return fetch(`/__api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Arigami-Confirm': 'yes' },
+    body: method === 'POST' ? '{}' : undefined,
+  }).then(async (r) => {
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const e = new Error(body?.error || `HTTP ${r.status}`);
+      e.status = r.status;
+      throw e;
+    }
+    return body;
+  });
+}
+
+function fmtUptime(sec) {
+  if (!Number.isFinite(sec)) return '';
+  if (sec < 90) return `${sec}s`;
+  const m = Math.round(sec / 60);
+  if (m < 90) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d`;
+}
+
+function HostCard() {
+  const t = useT();
+  const { conn, hostEvent } = useStore();
+  const [ver, setVer] = useState(null);
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [log, setLog] = useState([]);
+  const [showLog, setShowLog] = useState(false);
+  const wasDown = useRef(false);
+  const restarting = useRef(false);
+
+  const load = () => {
+    api.get('/host/status').then(setSt).catch(() => setSt(null));
+    api.get('/version').then(setVer).catch(() => setVer(null));
+  };
+  useEffect(load, []);
+
+  // Reconnect after a restart we triggered → refresh + toast.
+  useEffect(() => {
+    if (conn !== 'open') { wasDown.current = true; return; }
+    if (wasDown.current) {
+      wasDown.current = false;
+      if (restarting.current) { restarting.current = false; toast(t('host.back')); }
+      setLog([]);
+      load();
+    }
+  }, [conn]);
+
+  // Live progress from the bus.
+  useEffect(() => {
+    if (!hostEvent) return;
+    const ev = hostEvent;
+    if (ev.kind === 'upgrade-progress') {
+      setLog((l) => [...l.slice(-199), ev.line]);
+      setSt((s) => (s ? { ...s, upgrade: { ...(s.upgrade || {}), step: ev.step, finishedAt: null } } : s));
+      return;
+    }
+    if (ev.kind === 'upgrade-failed') { toastError(t('host.upgradeFailed', { error: ev.error })); setShowLog(true); }
+    if (ev.kind === 'upgrade-done') toast(t('host.upgradeDone'));
+    if (ev.kind === 'restarting' || ev.kind === 'restart-draining') restarting.current = true;
+    load();
+  }, [hostEvent]);
+
+  const fail = (e) => {
+    if (e?.status === 409 && /supervisor/.test(e.message)) toastError(t('host.err.noSupervisor'));
+    else if (e?.status === 403) toastError(t('host.err.forbidden'));
+    else toastError(e?.message || String(e));
+  };
+  const act = async (fn) => {
+    setBusy(true);
+    try { await fn(); load(); } catch (e) { fail(e); } finally { setBusy(false); }
+  };
+  const restartNow = async () => {
+    const n = st?.busySessions || 0;
+    const ok = await confirmDialog({
+      title: t('host.confirmRestart.title'),
+      body: n ? t('host.confirmRestart.body', { n }) : '',
+      confirmLabel: t('host.confirmRestart.ok'),
+      danger: true,
+    });
+    if (!ok) return;
+    restarting.current = true;
+    act(() => hostPost('/host/restart?when=now'));
+  };
+  const restartIdle = () => act(() => hostPost('/host/restart?when=idle'));
+  const cancelPending = () => act(() => hostPost('/host/restart', 'DELETE'));
+  const upgrade = async (when) => {
+    const ok = await confirmDialog({
+      title: t('host.confirmUpgrade.title'),
+      body: t('host.confirmUpgrade.body'),
+      confirmLabel: t('host.confirmUpgrade.ok'),
+      danger: true,
+    });
+    if (!ok) return;
+    setLog([]);
+    setShowLog(true);
+    act(() => hostPost(`/host/upgrade?when=${when}`));
+  };
+  const check = async () => {
+    setChecking(true);
+    try { setVer(await api.get('/version?refresh=1')); } catch (e) { fail(e); } finally { setChecking(false); }
+  };
+
+  const btn = 'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
+  const noSup = st && st.manager === 'none';
+  const pending = st?.pendingRestart;
+  const phase = st?.phase;
+  const upg = st?.upgrade;
+  const upgRunning = !!upg && upg.finishedAt === null;
+  const disabled = busy || noSup || phase === 'draining' || phase === 'exiting' || upgRunning;
+
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('host.title')}
+      </h3>
+      <Field label={t('host.version')} hint={t('host.version.hint')}>
+        <div className="flex flex-col items-end gap-1">
+          <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+            {ver ? `v${ver.version} · ${ver.commit || '?'}${ver.branch ? ` · ${ver.branch}` : ''}` : '…'}
+          </span>
+          <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
+            {ver && (ver.ahead === null
+              ? t('host.noUpstream')
+              : ver.ahead > 0
+                ? <span className="text-[#CE8324]">{t('host.updateAvailable', { n: ver.ahead })}</span>
+                : t('host.upToDate'))}
+            <button type="button" disabled={checking} onClick={check} className="cursor-pointer underline disabled:opacity-50">
+              {checking ? t('host.checking') : t('host.check')}
+            </button>
+          </span>
+        </div>
+      </Field>
+      <Field label={t('host.manager')} hint={t('host.manager.hint')}>
+        <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+          {st ? `${st.manager} · ${t('host.uptime', { t: fmtUptime(st.uptimeSec) })}${st.busySessions ? ` · ${t('host.busy', { n: st.busySessions })}` : ''}` : '…'}
+        </span>
+      </Field>
+      <Field label={t('host.restart')} hint={t('host.restart.hint')}>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="flex items-center gap-2">
+            {pending === 'idle' && phase === 'pending-idle' ? (
+              <button type="button" disabled={busy} onClick={cancelPending} className={btn}>{t('host.cancelPending')}</button>
+            ) : (
+              <button type="button" disabled={disabled} onClick={restartIdle} className={btn}>{t('host.restartIdle')}</button>
+            )}
+            <button type="button" disabled={disabled} onClick={restartNow} className={btn}>{t('host.restartNow')}</button>
+          </span>
+          {phase === 'pending-idle' && (
+            <span className="font-mono text-[10.5px] text-[#CE8324]">{t('host.pendingIdle', { n: st.busySessions })}</span>
+          )}
+          {phase === 'draining' && <span className="font-mono text-[10.5px] text-[#CE8324]">{t('host.draining')}</span>}
+          {phase === 'exiting' && <span className="font-mono text-[10.5px] text-[#CE8324]">{t('host.restarting')}</span>}
+        </div>
+      </Field>
+      <Field label={t('host.upgrade')} hint={st && !st.allowUpgrade ? t('host.upgradeDisabled') : t('host.upgrade.hint')}>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="flex items-center gap-2">
+            <button type="button" disabled={disabled || !st?.allowUpgrade} onClick={() => upgrade('idle')} className={btn}>{t('host.upgradeIdleBtn')}</button>
+            <button type="button" disabled={disabled || !st?.allowUpgrade} onClick={() => upgrade('now')} className={btn}>{t('host.upgradeBtn')}</button>
+          </span>
+          {upgRunning && <span className="font-mono text-[10.5px] text-[#CE8324]">{t('host.upgradeRunning', { step: upg.step || '…' })}</span>}
+          {(log.length > 0 || upg?.log?.length > 0) && (
+            <button type="button" onClick={() => setShowLog((v) => !v)} className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">
+              {t('host.log')}
+            </button>
+          )}
+        </div>
+      </Field>
+      {showLog && (log.length > 0 || upg?.log?.length > 0) && (
+        <pre dir="ltr" className="thin-scroll mb-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">
+          {(log.length ? log : upg.log).join('\n')}
+        </pre>
+      )}
     </>
   );
 }

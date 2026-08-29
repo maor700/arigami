@@ -731,6 +731,14 @@ function handleEvent(msg) {
       patchSession(sid, { progress });
       return;
     }
+    case 'host': {
+      // host-control.ts lifecycle events (restart/upgrade). Keep the latest one
+      // in state.hostEvent for the Settings card; a restart also flips the
+      // connection banner via ws.onclose shortly after.
+      const ev = payload?.event || payload;
+      if (ev?.kind) setState({ hostEvent: { ...ev, at: Date.now() } });
+      return;
+    }
     default:
       // Unknown event carrying a full session? Merge it. Otherwise ignore.
       if (payload && payload.id && Array.isArray(payload.tabs)) upsertSession(payload);

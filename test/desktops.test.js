@@ -55,3 +55,54 @@ test('allocatePort throws when the whole range is taken', () => {
   expect(r.ok).toBe(false);
   expect(r.error).toMatch(/exhausted/);
 });
+
+// B4-lite / spec §7.3: the global :99 desktop autostart decision. Every probe is
+// injected, so nothing is spawned; we only assert WHEN it would spawn and that
+// the spawn wiring is the Xvfb → x11vnc pair on loopback.
+import { ensureGlobalDesktop } from '../server/lib/desktops.ts';
+
+const gd = (over = {}) =>
+  ensureGlobalDesktop({
+    isDefaultInstance: true,
+    enabled: true,
+    display: ':99',
+    vncPort: 5900,
+    vncHost: '127.0.0.1',
+    which: (b) => (['Xvfb', 'x11vnc'].includes(b) ? `/usr/bin/${b}` : null),
+    displayBusy: () => false,
+    portBusy: async () => false,
+    env: {},
+    ...over,
+  });
+
+const linuxOnly = process.platform === 'linux' ? test : test.skip;
+
+linuxOnly('global desktop: skipped for non-default instance, disabled screen, missing binaries, busy display/port, opt-out env', async () => {
+  expect((await gd({ isDefaultInstance: false })).reason).toMatch(/non-default/);
+  expect((await gd({ enabled: false })).reason).toMatch(/disabled/);
+  expect((await gd({ which: () => null })).reason).toMatch(/Xvfb/);
+  expect((await gd({ which: (b) => (b === 'Xvfb' ? '/usr/bin/Xvfb' : null) })).reason).toMatch(/x11vnc/);
+  expect((await gd({ displayBusy: (n) => n === 99 })).reason).toMatch(/already up/);
+  expect((await gd({ portBusy: async (p) => p === 5900 })).reason).toMatch(/in use/);
+  expect((await gd({ env: { ARIGAMI_GLOBAL_DESKTOP: '0' } })).reason).toMatch(/ARIGAMI_GLOBAL_DESKTOP/);
+  expect((await gd({ vncHost: '10.0.0.5' })).reason).toMatch(/remote/);
+});
+
+linuxOnly('global desktop: when everything is free it spawns Xvfb :99 then x11vnc on loopback', async () => {
+  const spawned = [];
+  // Fake spawn: record args, and pretend the X socket appears / port opens by
+  // pointing the probes at a temp path… the real waiters need a real socket, so
+  // we only run the pre-spawn decision here and assert the first spawn.
+  const fakeSpawn = (bin, args) => {
+    spawned.push([bin, ...args]);
+    // Return something that looks enough like a ChildProcess for supervise().
+    return { pid: undefined, on: () => {}, stderr: { on() {} } };
+  };
+  // :987 so a real :99 on the test machine can't make the socket wait succeed.
+  const r = await gd({ spawnFn: fakeSpawn, display: ':987', startTimeoutMs: 300 });
+  // The X socket never appears (fake spawn) → reported as not started, but the
+  // Xvfb invocation itself must be correct.
+  expect(r.started).toBe(false);
+  expect(r.reason).toMatch(/Xvfb did not come up/);
+  expect(spawned[0]).toEqual(['/usr/bin/Xvfb', ':987', '-screen', '0', '1280x800x24', '-nolisten', 'tcp']);
+});

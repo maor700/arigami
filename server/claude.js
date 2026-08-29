@@ -911,6 +911,8 @@ function handleEvent(id, j) {
       // The turn finished — deliver any listener wakes that were queued while the
       // session was busy. Dynamic import breaks the claude ⇄ listeners cycle.
       import('./listeners.js').then((m) => m.onSessionIdle(id)).catch(() => {});
+      // A pending "restart when idle" (host-control.ts) advances here too.
+      import('./host-control.js').then((m) => m.restarts.onSessionIdle()).catch(() => {});
       {
         const text = j.result || (j.errors || []).join('; ') || '';
         appendChat(id, {

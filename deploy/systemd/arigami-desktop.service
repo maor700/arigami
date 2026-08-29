@@ -1,0 +1,31 @@
+# OPTIONAL fallback: the shared :99/5900 desktop as its own unit.
+#
+# Since B4-lite the default instance starts this desktop itself on boot
+# (server/lib/desktops.ts ensureGlobalDesktop) when Xvfb/x11vnc are installed
+# and :99 is not already up — so normally you do NOT install this unit. Use it
+# only if you want the desktop to outlive host restarts (e.g. a long-running
+# Chrome you don't want killed with the host), in which case the host detects
+# the running display and leaves it alone.
+[Unit]
+Description=Arigami shared virtual desktop (Xvfb :99 + x11vnc :5900)
+Before=arigami.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+Environment=HOME=__HOME__
+Environment=DISPLAY=:99
+ExecStartPre=-/bin/rm -f /tmp/.X99-lock
+ExecStart=/bin/sh -c '\
+  Xvfb :99 -screen 0 1280x800x24 -nolisten tcp & \
+  for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done; \
+  command -v openbox >/dev/null && openbox & \
+  command -v tint2 >/dev/null && tint2 & \
+  exec x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -localhost -noxdamage -quiet'
+KillMode=mixed
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
