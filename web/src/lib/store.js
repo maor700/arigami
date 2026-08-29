@@ -652,9 +652,16 @@ export async function startStore() {
   setUnauthorizedHandler(() => {
     if (state.auth !== null) signOut();
   });
-  const me = await loadAuth();
-  if (me === null && state.auth === null) return; // Login screen takes over
+  // Optimistic boot: fire the auth probe AND the boot loads in parallel instead
+  // of serialising them (one extra RTT hurt on phones over a tailnet). If the
+  // probe comes back 401 the boot fetches 401 too → setUnauthorizedHandler →
+  // signOut() → Login takes over; ws.onclose sees auth === null and stays quiet.
+  const authP = loadAuth();
   bootLoads();
+  const me = await authP;
+  if (me === null && state.auth === null) {
+    try { ws?.close(); } catch { /* ignore */ }
+  }
 }
 
 /* ---------------- event routing ------------------------------------------ */
