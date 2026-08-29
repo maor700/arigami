@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { requestIsSecure } from './lib/proxy-headers.js';
 import { cfg as liveCfg, type AuthConfig } from './lib/config.js';
 import { secret } from './lib/secrets.js';
 
@@ -59,6 +60,8 @@ export interface AuthOptions {
   dir: string; // ARIGAMI_DIR
   auth: AuthConfig;
   publicUrl?: string;
+  // C2: honour X-Forwarded-Proto from loopback peers (cfg.trustProxy).
+  trustProxy?: boolean;
   log?: (msg: string) => void;
   // Session-token scope check: a bearer token is only valid while its session
   // still exists. Injected so the module has no import cycle with state.ts.
@@ -221,16 +224,19 @@ export function createAuth(opts: AuthOptions) {
     if (!user) return null;
     return { session: s, user };
   }
-  const isHttps = () => /^https:/i.test(opts.publicUrl || '');
-  function cookieHeader(token: string, maxAgeSec: number): string {
+  // `Secure` when the browser reached us over https: an https publicUrl, or
+  // (C2) a trusted X-Forwarded-Proto from Caddy / tailscale serve on loopback.
+  const isHttps = (req?: IncomingMessage) =>
+    requestIsSecure(req, { trustProxy: !!opts.trustProxy, publicUrl: opts.publicUrl });
+  function cookieHeader(token: string, maxAgeSec: number, req?: IncomingMessage): string {
     return (
       `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}` +
-      (isHttps() ? '; Secure' : '')
+      (isHttps(req) ? '; Secure' : '')
     );
   }
-  const setCookie = (res: ServerResponse, s: WebSession) =>
-    res.setHeader('set-cookie', cookieHeader(s.token, Math.max(1, Math.floor((s.exp - Date.now()) / 1000))));
-  const clearCookie = (res: ServerResponse) => res.setHeader('set-cookie', cookieHeader('', 0));
+  const setCookie = (res: ServerResponse, s: WebSession, req?: IncomingMessage) =>
+    res.setHeader('set-cookie', cookieHeader(s.token, Math.max(1, Math.floor((s.exp - Date.now()) / 1000)), req));
+  const clearCookie = (res: ServerResponse, req?: IncomingMessage) => res.setHeader('set-cookie', cookieHeader('', 0, req));
   function logout(req: IncomingMessage): void {
     const tok = parseCookies(req.headers.cookie)[COOKIE];
     if (tok && sessions.delete(tok)) saveSessions();
@@ -438,7 +444,7 @@ export function createAuth(opts: AuthOptions) {
   const oidcEnabled = () => !!(opts.auth.oidc?.issuer && opts.auth.oidc?.clientId);
   const redirectUri = (origin: string) => `${(opts.publicUrl || origin).replace(/\/$/, '')}/__api/auth/oidc/callback`;
 
-  async function oidcStart(origin: string, redirect: string | null): Promise<{ url: string; cookie: string }> {
+  async function oidcStart(origin: string, redirect: string | null, req?: IncomingMessage): Promise<{ url: string; cookie: string }> {
     const client = await import('openid-client');
     const config = await oidc();
     const code_verifier = client.randomPKCECodeVerifier();
@@ -454,7 +460,7 @@ export function createAuth(opts: AuthOptions) {
       nonce,
     });
     const payload = Buffer.from(JSON.stringify({ code_verifier, state, nonce, redirect: redirect || '/__host/', origin })).toString('base64url');
-    const cookie = `${OIDC_COOKIE}=${payload}; Path=/__api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600` + (isHttps() ? '; Secure' : '');
+    const cookie = `${OIDC_COOKIE}=${payload}; Path=/__api/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600` + (isHttps(req) ? '; Secure' : '');
     return { url: url.href, cookie };
   }
 
@@ -533,6 +539,7 @@ export const auth: Auth = createAuth({
   dir: liveCfg.configDir!,
   auth: liveCfg.auth,
   publicUrl: liveCfg.publicUrl,
+  trustProxy: liveCfg.trustProxy,
 });
 
 // ---- CLI (bin/host pair | user list | user remove <id|email>) ----------------

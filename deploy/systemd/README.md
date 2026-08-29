@@ -4,6 +4,7 @@
 |---|---|
 | `arigami.service` | the default instance (`ARIGAMI_DIR=$HOME/.arigami`) — **this is what `bin/host install` installs on Linux** |
 | `arigami@.service` | per-instance template: `systemctl enable --now arigami@alice` → `ARIGAMI_DIR=/srv/arigami/alice` |
+| `caddy.service` | optional TLS edge (C2): native Caddy running `deploy/caddy/Caddyfile` (Let's Encrypt) or `Caddyfile.lan` (self-signed) in front of `127.0.0.1:3099`. Install as `arigami-caddy.service` next to (not instead of) the distro's `caddy.service` — see [docs/TLS.md](../../docs/TLS.md) |
 | `arigami-desktop.service` | optional: the shared `:99`/`5900` desktop as its own unit. Normally unnecessary — the default instance starts that desktop itself on boot (`server/lib/desktops.ts` `ensureGlobalDesktop`) and skips it when the display is already up |
 
 All units carry `__ROOT__`, `__USER__`, `__HOME__`, `__BUN_DIR__` placeholders. `bin/host install` (or `bin/host render-unit`) substitutes them; by hand:

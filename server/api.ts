@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { publicUrl, sessionPath } from './lib/public-url.js';
+import { requestOrigin } from './lib/proxy-headers.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
 import * as state from './state.js';
@@ -392,14 +393,12 @@ function answerScreenRequest(
 // (real HTTPS cert) is fronting this host, not the plain-HTTP direct tailnet
 // URL, which physically cannot satisfy this rule for a spec-compliant
 // provider. Port is dropped for the https case for the same reason.
+// C1: an explicit public URL (ARIGAMI_PUBLIC_URL) wins — it's what the
+// browser actually typed, whatever proxy sits in front. C2: otherwise a
+// trusted X-Forwarded-Proto/-Host from a loopback proxy (Caddy) is used; see
+// server/lib/proxy-headers.ts requestOrigin for the full precedence.
 function browserOrigin(req: IncomingMessage): string {
-  // C1: an explicit public URL (ARIGAMI_PUBLIC_URL) wins — it's what the
-  // browser actually typed, whatever proxy sits in front.
-  if (cfg.publicUrl) return cfg.publicUrl;
-  const host = req.headers.host || `localhost:${cfg.port}`;
-  const hostname = host.split(':')[0];
-  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-  return isLoopback ? `http://${host}` : `https://${hostname}`;
+  return requestOrigin(req, { trustProxy: !!cfg.trustProxy, publicUrl: cfg.publicUrl }, `localhost:${cfg.port}`);
 }
 
 function spawnSafe(id: string): void {
@@ -1117,18 +1116,18 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
       return json(res, { error: r.error }, r.status);
     }
     const ws = auth.createWebSession(r.user.id, String(req.headers['user-agent'] || ''));
-    auth.setCookie(res, ws);
+    auth.setCookie(res, ws, req);
     return json(res, { user: publicUser(r.user), ...auth.publicInfo() });
   }
   if (p === '/__api/auth/logout' && m === 'POST') {
     auth.logout(req);
-    auth.clearCookie(res);
+    auth.clearCookie(res, req);
     return json(res, { ok: true });
   }
   if (p === '/__api/auth/oidc/start' && m === 'GET') {
     if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
     try {
-      const { url, cookie } = await auth.oidcStart(browserOrigin(req), u.searchParams.get('redirect'));
+      const { url, cookie } = await auth.oidcStart(browserOrigin(req), u.searchParams.get('redirect'), req);
       res.writeHead(302, { location: url, 'set-cookie': cookie, 'cache-control': 'no-store' });
       res.end();
       return;
@@ -1145,7 +1144,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
       return;
     }
     const ws = auth.createWebSession(r.user.id, String(req.headers['user-agent'] || ''));
-    res.writeHead(302, { location: r.redirect, 'set-cookie': [auth.cookieHeader(ws.token, Math.floor((ws.exp - Date.now()) / 1000))], 'cache-control': 'no-store' });
+    res.writeHead(302, { location: r.redirect, 'set-cookie': [auth.cookieHeader(ws.token, Math.floor((ws.exp - Date.now()) / 1000), req)], 'cache-control': 'no-store' });
     res.end();
     return;
   }

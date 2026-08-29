@@ -1,0 +1,3 @@
+# Fallback for a stock caddy binary (no caddy-ratelimit module): no proxy-side
+# rate limits. The host still locks pairing after 5 wrong codes / 60 s.
+# Select with: ARIGAMI_RATELIMIT_FILE=ratelimit-off.caddy

@@ -1,0 +1,25 @@
+# Arigami behind Caddy — PUBLIC hostname with automatic Let's Encrypt.
+#
+#   ARIGAMI_DOMAIN=host.example.com   the name that resolves to this machine
+#                                     (ports 80+443 reachable → HTTP-01/TLS-ALPN)
+#   ARIGAMI_UPSTREAM=127.0.0.1:3099   native default; compose sets arigami:3199
+#   ARIGAMI_RATELIMIT_FILE=           ratelimit.caddy | ratelimit-off.caddy
+#
+# The host must be told the same origin: ARIGAMI_PUBLIC_URL=https://$ARIGAMI_DOMAIN
+# (docs/TLS.md). For a LAN name without public DNS use Caddyfile.lan instead.
+#
+#   caddy validate --config deploy/caddy/Caddyfile --adapter caddyfile
+#   caddy run      --config deploy/caddy/Caddyfile --adapter caddyfile
+
+# Global options (optional). Uncomment to get Let's Encrypt expiry mail, or to
+# use the staging CA while testing (stays under LE's issuance limits):
+# {
+# 	email you@example.com
+# 	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+# }
+
+import arigami.caddy
+
+{$ARIGAMI_DOMAIN} {
+	import arigami
+}

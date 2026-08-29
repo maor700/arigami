@@ -1,0 +1,49 @@
+# Arigami TLS edge — native Caddy in front of the host (C2).
+#
+# Serves deploy/caddy/Caddyfile (public name, Let's Encrypt) or
+# deploy/caddy/Caddyfile.lan (LAN, self-signed) and proxies to the host's
+# loopback listener (127.0.0.1:3099). Install as `arigami-caddy.service` so it
+# doesn't collide with the unit the `caddy` apt package ships:
+#
+#   sed -e 's#__ROOT__#/opt/arigami#g' -e 's#__USER__#arigami#g' -e 's#__HOME__#/home/arigami#g' \
+#       deploy/systemd/caddy.service | sudo tee /etc/systemd/system/arigami-caddy.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now arigami-caddy
+#
+# Env (ARIGAMI_DOMAIN, ARIGAMI_UPSTREAM, ARIGAMI_RATELIMIT_FILE, ARIGAMI_CADDYFILE)
+# comes from $ARIGAMI_DIR/env — the same file arigami.service reads, so
+# ARIGAMI_PUBLIC_URL and ARIGAMI_DOMAIN live side by side. Full guide: docs/TLS.md.
+[Unit]
+Description=Arigami TLS edge (Caddy)
+Documentation=file:__ROOT__/docs/TLS.md
+After=network-online.target arigami.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=__USER__
+Group=__USER__
+WorkingDirectory=__ROOT__/deploy/caddy
+Environment=HOME=__HOME__
+# Caddy keeps certificates / the internal CA / ACME account under $XDG_DATA_HOME/caddy.
+Environment=XDG_DATA_HOME=__HOME__/.arigami/caddy
+Environment=XDG_CONFIG_HOME=__HOME__/.arigami/caddy
+Environment=ARIGAMI_CADDYFILE=__ROOT__/deploy/caddy/Caddyfile
+EnvironmentFile=-__HOME__/.arigami/env
+ExecStartPre=/usr/bin/caddy validate --config ${ARIGAMI_CADDYFILE} --adapter caddyfile
+ExecStart=/usr/bin/caddy run --environ --config ${ARIGAMI_CADDYFILE} --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config ${ARIGAMI_CADDYFILE} --adapter caddyfile --force
+# Bind :80/:443 without root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__HOME__/.arigami/caddy
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

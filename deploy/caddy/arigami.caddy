@@ -1,0 +1,71 @@
+# Shared Arigami site body — imported by Caddyfile (public, Let's Encrypt) and
+# Caddyfile.lan (LAN, self-signed via `tls internal`). Everything here is
+# env-driven; nothing is host-specific:
+#
+#   ARIGAMI_UPSTREAM        where the host listens. Native: 127.0.0.1:3099
+#                           (the C1 default bind). Compose: arigami:3199.
+#   ARIGAMI_RATELIMIT_FILE  ratelimit.caddy (needs the caddy-ratelimit module,
+#                           see Dockerfile) or ratelimit-off.caddy (stock caddy).
+#
+# The host is a single origin: cockpit SPA, REST, /__ws (cockpit bus), /__vnc
+# (screen), /__artifacts (published static files) and the service-worker dev
+# server proxy all go to the same upstream. reverse_proxy passes WebSocket
+# upgrades through unchanged and sets X-Forwarded-For / -Proto / -Host on
+# every request; the host trusts X-Forwarded-Proto ONLY from loopback
+# (config `trustProxy`, server/lib/proxy-headers.ts) so the session cookie
+# gets `Secure` behind this proxy and nowhere else.
+
+(arigami) {
+	encode zstd gzip
+
+	header {
+		# 1 year, no preload (preload is a one-way door — opt in by hand).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		# Don't advertise the proxy.
+		-Server
+		defer
+	}
+
+	# Brute-force / abuse limits (no-op with ratelimit-off.caddy).
+	import {$ARIGAMI_RATELIMIT_FILE:ratelimit.caddy}
+
+	# publish_artifact: the body is a small JSON descriptor ({path,title,entry}),
+	# the files themselves are read from the session's disk — 1 MB is generous.
+	# Everything else keeps Caddy's default (unlimited; the host reads at most
+	# 5 MB itself in readBody()).
+	@artifacts_publish {
+		method POST
+		path /__api/sessions/*/artifacts
+	}
+	handle @artifacts_publish {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy {$ARIGAMI_UPSTREAM:127.0.0.1:3099}
+	}
+
+	# /__ws, /__vnc and the SW proxy's websockets (HMR) are long-lived: don't
+	# let a read/write deadline cut them; and stream responses (SSE, logs).
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @ws {
+		reverse_proxy {$ARIGAMI_UPSTREAM:127.0.0.1:3099} {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy {$ARIGAMI_UPSTREAM:127.0.0.1:3099} {
+			flush_interval -1
+		}
+	}
+}

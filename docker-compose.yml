@@ -7,7 +7,12 @@
 #
 #   cp docker/.env.example .env   # fill in ANTHROPIC_API_KEY at minimum
 #   docker compose up --build
-#   open http://localhost:3099/__host/
+#   open http://localhost:3199/__host/
+#
+# TLS (C2): add ARIGAMI_DOMAIN + ARIGAMI_PUBLIC_URL to .env, then
+#   docker compose --profile tls up --build
+# → Caddy on :80/:443 with a Let's Encrypt certificate, proxying to the
+# arigami container over the compose network. See docs/TLS.md.
 
 services:
   arigami:
@@ -21,10 +26,20 @@ services:
     # (http://localhost:<port>/__api/linear/oauth/callback) point back at the
     # container, not the native host. Otherwise the callback lands on :3099 and
     # the in-memory OAuth `state` never matches → "OAuth state mismatch".
+    # Published on the host's LOOPBACK only (C1 fail-closed, SPEC §7.9): reach
+    # it from other machines through `tailscale serve` or the `tls` profile
+    # below, never by exposing this port. Inside the container the host binds
+    # 0.0.0.0 so both the port map and the caddy service can reach it; auth
+    # (pairing cookie) stays on — config.ts refuses 0.0.0.0 with auth off.
     ports:
-      - "3199:3199"
+      - "127.0.0.1:3199:3199"
     environment:
       ARIGAMI_PORT: "3199"
+      ARIGAMI_BIND: "0.0.0.0"
+      # Caddy is NOT a loopback peer from inside this container, so the
+      # X-Forwarded-Proto rule (trustProxy, loopback-only) can't apply here;
+      # the https origin comes from ARIGAMI_PUBLIC_URL in .env instead.
+      ARIGAMI_TRUST_PROXY: "0"
     env_file:
       - .env
     volumes:
@@ -34,5 +49,34 @@ services:
     # 64MB /dev/shm — give it room.
     shm_size: "1gb"
 
+  # --- TLS edge (C2) — only with `docker compose --profile tls up` ---------
+  # Caddy with the caddy-ratelimit module (deploy/caddy/Dockerfile). To use
+  # stock caddy instead: `image: caddy:2`, drop `build`, mount deploy/caddy at
+  # /etc/caddy and set ARIGAMI_RATELIMIT_FILE=ratelimit-off.caddy.
+  caddy:
+    profiles: [tls]
+    build: deploy/caddy
+    image: arigami-caddy:local
+    container_name: arigami-caddy
+    depends_on:
+      - arigami
+    ports:
+      - "80:80"     # ACME HTTP-01 + http→https redirect
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      # Public hostname (DNS → this machine). REQUIRED for the profile; the
+      # same name must be in ARIGAMI_PUBLIC_URL=https://<domain> in .env.
+      ARIGAMI_DOMAIN: ${ARIGAMI_DOMAIN:?set ARIGAMI_DOMAIN in .env for the tls profile}
+      ARIGAMI_UPSTREAM: arigami:3199
+      ARIGAMI_RATELIMIT_FILE: ${ARIGAMI_RATELIMIT_FILE:-ratelimit.caddy}
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - caddy-data:/data      # certificates + ACME account (keep across restarts!)
+      - caddy-config:/config
+    restart: unless-stopped
+
 volumes:
   arigami-data:
+  caddy-data:
+  caddy-config:

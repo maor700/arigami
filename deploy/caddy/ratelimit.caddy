@@ -1,0 +1,37 @@
+# Rate limits — requires the caddy-ratelimit module (github.com/mholt/caddy-ratelimit).
+# Stock `caddy` does not have it: build with deploy/caddy/Dockerfile (xcaddy),
+# download a build from https://caddyserver.com/download with the module
+# ticked, or set ARIGAMI_RATELIMIT_FILE=ratelimit-off.caddy.
+#
+# Keys are the client IP as Caddy sees it (the real peer, since Caddy is the
+# edge here). Exceeding a zone → 429 + Retry-After.
+rate_limit {
+	# Pairing / login / token minting: 10 attempts per client per minute
+	# (the host also locks pairing for 60 s after 5 wrong codes).
+	zone arigami_auth {
+		match {
+			path /__api/auth/*
+		}
+		key {client_ip}
+		events 10
+		window 1m
+	}
+	# Inbound webhooks (C3): 60 per client per minute.
+	zone arigami_webhooks {
+		match {
+			path /__api/webhooks/*
+		}
+		key {client_ip}
+		events 60
+		window 1m
+	}
+	# Published artifacts (share links, K2): 300 per client per minute.
+	zone arigami_artifacts {
+		match {
+			path /__artifacts/*
+		}
+		key {client_ip}
+		events 300
+		window 1m
+	}
+}

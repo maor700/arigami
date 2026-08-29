@@ -63,8 +63,16 @@ viewer's browser history holds it like any capability URL.
 - **`auth.mode: off`** exists for loopback-only installs. Combined with
   `tailscale serve` it re-opens the host to the tailnet — documented in
   AUTH.md, warned at boot.
-- Rate limiting exists only for pairing (5 tries / 60 s lock). Brute-forcing a
-  32-byte session token is not practical; TLS + Caddy rate limits arrive in C2.
+- In-process rate limiting exists only for pairing (5 tries / 60 s lock).
+  Brute-forcing a 32-byte session token is not practical. Per-IP limits on
+  `/__api/auth/*`, `/__api/webhooks/*`, `/__artifacts/*` and TLS come from the
+  Caddy edge (`deploy/caddy/`, C2, docs/TLS.md) — they only exist when Caddy
+  is in front.
+- **`X-Forwarded-Proto` / `-Host` are trusted only from loopback peers** and
+  only when `trustProxy` is on (default: on iff `bind` is loopback). With
+  `ARIGAMI_BIND=0.0.0.0` the headers are ignored unless `ARIGAMI_TRUST_PROXY=1`
+  — and even then only for loopback peers, so a remote client can never forge
+  an https origin (server/lib/proxy-headers.ts).
 
 ## Reporting
 
