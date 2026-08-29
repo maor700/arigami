@@ -6,7 +6,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 wss.on('connection', async (ws) => {
   // dynamic import breaks the state ⇄ bus import cycle
-  const { listSessions, listListeners, listFolders } = await import('./state.js');
+  const { listSessionsForWire, listListeners, listFolders } = await import('./state.js');
   let triggers = [];
   let pending = [];
   let queue = { autoplay: false, maxConcurrent: 3 };
@@ -18,7 +18,7 @@ wss.on('connection', async (ws) => {
     ws.send(
       JSON.stringify({
         type: 'state',
-        sessions: listSessions({ archived: true }),
+        sessions: listSessionsForWire({ archived: true }),
         listeners: listListeners(),
         folders: listFolders(),
         triggers,

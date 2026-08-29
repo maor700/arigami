@@ -56,6 +56,16 @@ export type Principal =
   | { kind: 'host'; user: null }
   | { kind: 'off'; user: null };
 
+// May this principal ask for the UNTRUNCATED session list (GET /__api/sessions?full=1)?
+// Bearer/internal callers only — host-mcp's list_sessions (masters/PMs read
+// child result.summary there), API tokens, host/one-shot tokens, auth off.
+// Cookie browsers always get the slim wire form (state.toWireSession).
+export function canReadFullList(p: Principal | null): boolean {
+  if (!p) return false;
+  if (p.kind === 'user') return p.via === 'api-token';
+  return true; // session | host | off
+}
+
 export interface AuthOptions {
   dir: string; // ARIGAMI_DIR
   auth: AuthConfig;

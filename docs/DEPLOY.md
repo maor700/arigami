@@ -37,6 +37,9 @@ bun install --frozen-lockfile && (cd web && bun run build)
 # 1. Render + install the unit while pm2 still runs (nothing starts yet).
 bin/host render-unit | sudo tee /etc/systemd/system/arigami.service >/dev/null
 sudo systemd-analyze verify /etc/systemd/system/arigami.service   # must print nothing
+#    ^ verify the RENDERED unit you just installed — not the template under
+#      deploy/systemd/ (its __ROOT__/__USER__/__HOME__/__BUN_DIR__ tokens are only filled by `bin/host render-unit`,
+#      so running verify on the template reports bogus errors).
 sudo systemctl daemon-reload
 
 # 2. Hand over. pm2 must release the port BEFORE the unit starts (T5 hostlock refuses a second copy).

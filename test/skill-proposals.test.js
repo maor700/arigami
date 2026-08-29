@@ -247,3 +247,61 @@ test('applyUnifiedDiff round-trips buildUnifiedDiff output, and refuses on a con
   expect(o.mismatchOk).toBe(false);
   expect(o.mismatchErr).toMatch(/context mismatch/);
 });
+
+// F1 (wave-1 test report §7): an agent-written `patch` with a blank context
+// line sent as "" (tool layers strip the trailing space), CRLF endings, a
+// trailing newline, and a miscounted hunk header must still apply; a genuine
+// mismatch names the first non-matching line with expected/actual text.
+test('applyUnifiedDiff tolerates stripped blank context, CRLF, trailing newline and header drift', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const sp=await import('./server/skill-proposals.ts');" +
+      "const lines=[];for(let i=1;i<=80;i++)lines.push(i===60?'':'line '+i);" +
+      "const oldC=lines.join('\\n')+'\\n';" +
+      "const newC=oldC.replace('line 62','line 62 CHANGED');" +
+      "const good=sp.buildUnifiedDiff(oldC,newC,'x');" +
+      // blank context " " -> "", header line numbers off by 5, CRLF, trailing whitespace on a context line
+      "const drifted=good.replace(/^ $/m,'').replace('@@ -59,7','@@ -54,7').replace('\\n line 61\\n','\\n line 61   \\n').replace(/\\n/g,'\\r\\n')+'\\r\\n';" +
+      'const a=sp.applyUnifiedDiff(oldC,drifted);' +
+      "const crlfBase=sp.applyUnifiedDiff(oldC.replace(/\\n/g,'\\r\\n'),good);" +
+      "const bad=sp.applyUnifiedDiff(oldC.replace('line 61','line 61 edited'),good);" +
+      "const malformed=sp.applyUnifiedDiff(oldC,good.replace('\\n line 63\\n','\\n?line 63\\n'));" +
+      'emit({aOk:a.ok,aRound:a.ok&&a.content===newC,crlfOk:crlfBase.ok,crlfRound:crlfBase.ok&&crlfBase.content===newC.replace(/\\n/g,"\\r\\n"),badOk:bad.ok,badErr:bad.error,malOk:malformed.ok,malErr:malformed.error});',
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.aOk).toBe(true);
+  expect(o.aRound).toBe(true);
+  expect(o.crlfOk).toBe(true);
+  expect(o.crlfRound).toBe(true);
+  expect(o.badOk).toBe(false);
+  expect(o.badErr).toMatch(/hunk 1 at line 61: patch expects "line 61" but the skill has "line 61 edited"/);
+  expect(o.malOk).toBe(false);
+  expect(o.malErr).toMatch(/malformed patch line/);
+});
+
+test('buildUnifiedDiff emits minimal hunks (3 lines of context, one hunk per change region)', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const sp=await import('./server/skill-proposals.ts');" +
+      "const lines=[];for(let i=1;i<=60;i++)lines.push('line '+i);" +
+      "const oldC=lines.join('\\n')+'\\n';" +
+      "const newC=oldC.replace('line 10','line 10 A').replace('line 14','line 14 B').replace('line 50\\n','line 50\\nline 50.5\\n');" +
+      "const diff=sp.buildUnifiedDiff(oldC,newC,'skills/x/SKILL.md');" +
+      'const round=sp.applyUnifiedDiff(oldC,diff);' +
+      "const hunks=diff.split('\\n').filter(l=>l.startsWith('@@'));" +
+      "const body=diff.split('\\n').slice(2).filter(l=>l&&!l.startsWith('@@'));" +
+      "emit({diff,hunks,bodyLen:body.length,round:round.ok&&round.content===newC,empty:sp.buildUnifiedDiff(oldC,oldC,'x')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  // Changes at 10 and 14 are 3 lines apart (<= 2*3) so they share a hunk; the
+  // insertion after 50 is its own hunk.
+  expect(o.hunks).toEqual(['@@ -7,11 +7,11 @@', '@@ -48,6 +48,7 @@']);
+  expect(o.bodyLen).toBe(11 + 2 + 7); // hunk1: 11 old lines + 2 adds; hunk2: 6 ctx + 1 add
+  expect(o.diff.startsWith('--- a/skills/x/SKILL.md\n+++ b/skills/x/SKILL.md\n@@')).toBe(true);
+  expect(o.round).toBe(true);
+  expect(o.empty).toBe('');
+});

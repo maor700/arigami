@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
-import { useStore, listenersForSession, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
@@ -868,7 +868,15 @@ function ChatFooter({ session }) {
     setAttachmentsLocal(d.attachments);
   }, [session.id]);
   const working = session.claude?.state === 'working';
-  const caps = session.claude?.capabilities;
+  // List payloads carry slim capabilities; the slash palette + Capabilities
+  // panel need the full command/tool lists — fetched lazily, cached in the store.
+  useStore(); // re-render when capsFull lands
+  const caps = fullCapabilities(session);
+  const capsSlim = !!session.claude?.capabilities?.slim;
+  const capsSessionId = session.claude?.sessionId;
+  useEffect(() => {
+    if (capsSlim) ensureFullCapabilities(session);
+  }, [session.id, capsSlim, capsSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Rich command objects from the initialize handshake; fall back to legacy
   // bare-string slashCommands captured before this shape existed.
   const commands = caps?.commands || (caps?.slashCommands || []).map((name) => ({ name }));

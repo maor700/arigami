@@ -9,7 +9,7 @@ import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
-import { auth } from './auth.js';
+import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
@@ -2288,12 +2288,13 @@ export async function handle(
     }
 
     if (p === '/__api/sessions' && m === 'GET') {
-      return json(
-        res,
-        state.listSessions({
-          archived: u.searchParams.get('archived') === 'true',
-        })
-      );
+      // Wire form (see state.toWireSession): capabilities slimmed, finished
+      // workers' result.summary capped. Full detail: GET /__api/sessions/:id,
+      // or ?full=1 for bearer/internal callers (host-mcp list_sessions — masters
+      // read child results from it); browsers always get the slim form.
+      const archived = u.searchParams.get('archived') === 'true';
+      const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
+      return json(res, full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived }));
     }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
