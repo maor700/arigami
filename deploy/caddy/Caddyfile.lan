@@ -1,0 +1,20 @@
+# Arigami behind Caddy — LAN / no public DNS: self-signed via Caddy's internal CA.
+#
+# Answers ANY name on :443 (arigami.lan, the machine's mDNS name, its LAN IP…)
+# with a certificate minted on the fly by the internal CA — no env needed.
+#   ARIGAMI_UPSTREAM / ARIGAMI_RATELIMIT_FILE as in Caddyfile.
+#
+# Clients must trust Caddy's root CA once (docs/TLS.md → "LAN"): on the Caddy
+# machine `caddy trust`, elsewhere install
+# <caddy data dir>/pki/authorities/local/root.crt. For phones prefer
+# `tailscale serve` (real certificate, nothing to install).
+#
+# The host must be told the same origin: ARIGAMI_PUBLIC_URL=https://<name>
+# — or leave it unset and rely on trustProxy + X-Forwarded-Proto (loopback only).
+
+import arigami.caddy
+
+https://:443 {
+	tls internal
+	import arigami
+}

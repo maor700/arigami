@@ -129,6 +129,12 @@ export interface Config {
   // https://host.example.ts.net (env ARIGAMI_PUBLIC_URL). Used for OAuth/OIDC
   // redirects and outgoing share links; cookies get `Secure` when it's https.
   publicUrl: string;
+  // C2: believe X-Forwarded-Proto/-Host from a reverse proxy (Caddy,
+  // `tailscale serve`) — only ever for LOOPBACK peers, see
+  // server/lib/proxy-headers.ts. Default: true when `bind` is loopback (the
+  // proxy is the only thing that can reach the socket), false otherwise
+  // (a remote client could forge the header). Env ARIGAMI_TRUST_PROXY=0|1.
+  trustProxy?: boolean;
   auth: AuthConfig;
   prodUrl: string;
   storybookCompareUrl: string;
@@ -303,6 +309,7 @@ function envOverrides(): Partial<Config> {
   if (port && Number(port)) o.port = Number(port);
   if (E.ARIGAMI_BIND) o.bind = E.ARIGAMI_BIND;
   if (E.ARIGAMI_PUBLIC_URL) o.publicUrl = E.ARIGAMI_PUBLIC_URL.replace(/\/+$/, '');
+  if (E.ARIGAMI_TRUST_PROXY != null && E.ARIGAMI_TRUST_PROXY !== '') o.trustProxy = /^(1|true|yes)$/i.test(E.ARIGAMI_TRUST_PROXY);
   if (E.ARIGAMI_AUTH && ['off', 'pairing', 'oidc'].includes(E.ARIGAMI_AUTH))
     o.auth = { ...DEFAULTS.auth, mode: E.ARIGAMI_AUTH as AuthConfig['mode'] };
   if (E.ARIGAMI_PROD_URL || E.POC_PROD_URL)
@@ -352,6 +359,10 @@ const ticketsDir = tilde(merged.ticketsDir);
 export const isLoopbackBind = (bind: string): boolean =>
   bind === '127.0.0.1' || bind === 'localhost' || bind === '::1' || /^127\./.test(bind);
 
+// C2: trustProxy defaults to "bind is loopback" (see Config.trustProxy).
+export const resolveTrustProxy = (c: Pick<Config, 'bind' | 'trustProxy'>): boolean =>
+  typeof c.trustProxy === 'boolean' ? c.trustProxy : isLoopbackBind(c.bind || DEFAULTS.bind);
+
 // Fail-closed sanity (SPEC §7.9): an unauthenticated host may only listen on
 // loopback. Returns an error string (the caller exits 2) or null when fine.
 export function validateAuthBind(c: Pick<Config, 'bind' | 'auth'>): string | null {
@@ -396,6 +407,7 @@ export const cfg: Config = {
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
+  trustProxy: resolveTrustProxy(merged),
   hostBase: `http://${loopbackHost(merged.bind || DEFAULTS.bind)}:${merged.port || DEFAULTS.port}`,
 };
 

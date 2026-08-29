@@ -7,6 +7,8 @@ shells out to. **All writable state is redirected onto one mounted volume**
 
 ## Run locally
 
+> HTTPS in front of the container (Let's Encrypt, rate limits): `docker compose --profile tls up` — [TLS.md](TLS.md).
+
 Prereq: Docker Desktop (or colima). Then:
 
 ```bash
