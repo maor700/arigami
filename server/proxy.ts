@@ -54,13 +54,19 @@ export const rewriteLocation = (
   return location;
 };
 
+// The host's own auth cookies (C1) must never be overwritten by an upstream
+// that happens to Set-Cookie the same name through the proxy.
+const RESERVED_COOKIES = /^\s*(arigami_sid|arigami_oidc)\s*=/i;
+
 export const rewriteSetCookie = (cookies: string[]): string[] =>
-  cookies.map((c) =>
-    c
-      .replace(/;\s*Domain=[^;]*/gi, '')
-      .replace(/;\s*Secure/gi, '')
-      .replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
-  );
+  cookies
+    .filter((c) => !RESERVED_COOKIES.test(c))
+    .map((c) =>
+      c
+        .replace(/;\s*Domain=[^;]*/gi, '')
+        .replace(/;\s*Secure/gi, '')
+        .replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
+    );
 
 export const stripFrameAncestors = (v: HeaderValue): HeaderValue => {
   const strip = (s: string): string =>

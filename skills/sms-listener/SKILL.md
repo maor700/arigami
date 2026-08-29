@@ -27,13 +27,13 @@ Receive incoming SMS messages from the user's Android phone in real time.
 
 ```bash
 # All SMS
-curl -X POST http://localhost:3099/__api/sessions/{SESSION_ID}/listeners \
-  -H "Content-Type: application/json" \
+curl -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/listeners" \
+  -H "Authorization: Bearer $ARIGAMI_TOKEN" -H "Content-Type: application/json" \
   -d '{"type":"sms"}'
 
 # Only SMS from a specific number (partial match)
-curl -X POST http://localhost:3099/__api/sessions/{SESSION_ID}/listeners \
-  -H "Content-Type: application/json" \
+curl -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/listeners" \
+  -H "Authorization: Bearer $ARIGAMI_TOKEN" -H "Content-Type: application/json" \
   -d '{"type":"sms","from_filter":"+972..."}'
 ```
 

@@ -6,12 +6,15 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-const HOST = process.env.ARIGAMI_URL || 'http://localhost:3099';
+const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
+// C1: the host injects a per-session bearer token (ARIGAMI_TOKEN) into every
+// claude it spawns; without it every /__api call is a 401 once auth is on.
+const TOKEN = process.env.ARIGAMI_TOKEN || '';
 
 async function api(method, path, body) {
   const res = await fetch(HOST + path, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();

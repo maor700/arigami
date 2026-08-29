@@ -6,7 +6,8 @@ import * as claude from './claude.js';
 import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
+import { auth } from './auth.js';
 import * as screens from './screenshots.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
@@ -389,6 +390,9 @@ function answerScreenRequest(
 // URL, which physically cannot satisfy this rule for a spec-compliant
 // provider. Port is dropped for the https case for the same reason.
 function browserOrigin(req: IncomingMessage): string {
+  // C1: an explicit public URL (ARIGAMI_PUBLIC_URL) wins — it's what the
+  // browser actually typed, whatever proxy sits in front.
+  if (cfg.publicUrl) return cfg.publicUrl;
   const host = req.headers.host || `localhost:${cfg.port}`;
   const hostname = host.split(':')[0];
   const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -1078,6 +1082,122 @@ function probeVnc(host: string, port: number): Promise<boolean> {
   });
 }
 
+let VERSION = '0.0.0';
+try {
+  VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'package.json'), 'utf8')).version || VERSION;
+} catch {}
+
+// Session tokens (ARIGAMI_TOKEN) are only honoured while their session exists.
+auth.setSessionExists((id) => !!state.getSession(id));
+
+const publicUser = (u: any) => (u ? { id: u.id, email: u.email, role: u.role, createdAt: u.createdAt, oidc: !!u.oidcSub } : null);
+
+// /__api/auth/* — the only API surface reachable without a credential (plus the
+// reduced /__api/config). Everything here is deliberately small; see auth.ts.
+async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: string, m: string): Promise<void> {
+  const me = (req as any).auth as import('./auth.js').Principal | null;
+  if (p === '/__api/auth/me' && m === 'GET') {
+    if (!me) return json(res, { error: 'unauthorized', ...auth.publicInfo() }, 401);
+    return json(res, {
+      user: me.kind === 'user' ? publicUser(me.user) : null,
+      principal: me.kind,
+      ...(me.kind === 'session' ? { sessionId: me.sessionId } : {}),
+      isAdmin: auth.isAdmin(me),
+      ...auth.publicInfo(),
+    });
+  }
+  if (p === '/__api/auth/pair' && m === 'POST') {
+    const b = (await readBody(req)) as any;
+    const r = auth.pair(String(b.code || ''), b.email ? String(b.email) : undefined);
+    if (!r.ok) {
+      if (r.retryAfter) res.setHeader('retry-after', String(r.retryAfter));
+      return json(res, { error: r.error }, r.status);
+    }
+    const ws = auth.createWebSession(r.user.id, String(req.headers['user-agent'] || ''));
+    auth.setCookie(res, ws);
+    return json(res, { user: publicUser(r.user), ...auth.publicInfo() });
+  }
+  if (p === '/__api/auth/logout' && m === 'POST') {
+    auth.logout(req);
+    auth.clearCookie(res);
+    return json(res, { ok: true });
+  }
+  if (p === '/__api/auth/oidc/start' && m === 'GET') {
+    if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
+    try {
+      const { url, cookie } = await auth.oidcStart(browserOrigin(req), u.searchParams.get('redirect'));
+      res.writeHead(302, { location: url, 'set-cookie': cookie, 'cache-control': 'no-store' });
+      res.end();
+      return;
+    } catch (e) {
+      return json(res, { error: 'oidc start failed: ' + ((e as Error)?.message || e) }, 502);
+    }
+  }
+  if (p === '/__api/auth/oidc/callback' && m === 'GET') {
+    if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
+    const r = await auth.oidcCallback(req, u);
+    if (!r.ok) {
+      res.writeHead(r.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(`<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px"><h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/">Back</a></p>`);
+      return;
+    }
+    const ws = auth.createWebSession(r.user.id, String(req.headers['user-agent'] || ''));
+    res.writeHead(302, { location: r.redirect, 'set-cookie': [auth.cookieHeader(ws.token, Math.floor((ws.exp - Date.now()) / 1000))], 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  // ---- everything below needs a signed-in principal --------------------------
+  if (!me) return json(res, { error: 'unauthorized' }, 401);
+  if (p === '/__api/auth/users' && m === 'GET') return json(res, { users: auth.listUsers() });
+  if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+  if (p === '/__api/auth/tokens' && m === 'GET') return json(res, { tokens: auth.listApiTokens() });
+  if (p === '/__api/auth/tokens' && m === 'POST') {
+    const b = (await readBody(req)) as any;
+    const owner = me.kind === 'user' ? me.user.id : auth.listUsers().find((x: any) => x.role === 'admin')?.id;
+    if (!owner) return json(res, { error: 'no admin user to own the token' }, 409);
+    const t = auth.createApiToken(owner, String(b.label || 'cli'));
+    return json(res, t, 201);
+  }
+  let mm = /^\/__api\/auth\/tokens\/([^/]+)$/.exec(p);
+  if (mm && m === 'DELETE') return json(res, { ok: auth.deleteApiToken(decodeURIComponent(mm[1])) });
+  mm = /^\/__api\/auth\/users\/([^/]+)$/.exec(p);
+  if (mm && m === 'DELETE') {
+    const id = decodeURIComponent(mm[1]);
+    if (me.kind === 'user' && me.user.id === id) return json(res, { error: 'cannot remove yourself' }, 400);
+    return json(res, { ok: auth.removeUser(id) });
+  }
+  if (p === '/__api/auth/pairing-code' && m === 'POST') {
+    // Admin re-issues a code (e.g. to pair a second device / user).
+    return json(res, { code: auth.issuePairingCode() });
+  }
+  if (p === '/__api/auth/config' && m === 'PATCH') {
+    const b = (await readBody(req)) as any;
+    const patch: any = {};
+    if (typeof b.cookieDays === 'number' && b.cookieDays > 0) patch.cookieDays = Math.min(365, Math.floor(b.cookieDays));
+    if (b.oidc && typeof b.oidc === 'object') {
+      const o = b.oidc;
+      patch.oidc = {
+        ...(cfg.auth.oidc || { allowedEmails: [], allowedDomains: [], autoCreate: true }),
+        ...(typeof o.issuer === 'string' ? { issuer: o.issuer.trim() } : {}),
+        ...(typeof o.clientId === 'string' ? { clientId: o.clientId.trim() } : {}),
+        ...(typeof o.clientSecret === 'string' && o.clientSecret ? { clientSecret: o.clientSecret } : {}),
+        ...(Array.isArray(o.allowedEmails) ? { allowedEmails: o.allowedEmails.map(String) } : {}),
+        ...(Array.isArray(o.allowedDomains) ? { allowedDomains: o.allowedDomains.map(String) } : {}),
+        ...(typeof o.autoCreate === 'boolean' ? { autoCreate: o.autoCreate } : {}),
+      };
+    }
+    if (b.mode === 'pairing' || b.mode === 'oidc') patch.mode = b.mode; // 'off' is CLI/config-only, never from the UI
+    const next = updateAuthConfig(patch);
+    const { clientSecret, ...oidcPub } = next.oidc || ({} as any);
+    return json(res, { auth: { ...next, oidc: next.oidc ? oidcPub : undefined } });
+  }
+  return json(res, { error: 'not found' }, 404);
+}
+
+function escapeHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+}
+
 export async function handle(
   req: IncomingMessage,
   res: ServerResponse
@@ -1093,14 +1213,23 @@ export async function handle(
       return await handleScreenRequest(res, await readBody(req));
     }
     if (p === '/__api/config' && m === 'GET') {
-      const { groqApiKey, composioApiKey, screen, ...pub } = cfg as any;
+      // Anonymous callers (login screen, bin/host health) get the minimum the
+      // Login screen needs — never the full config.
+      if (!(req as any).auth) return json(res, { version: VERSION, ...auth.publicInfo() });
+      const { groqApiKey, composioApiKey, screen, auth: authCfg, ...pub } = cfg as any;
       const { vncPassword, ...screenPub } = screen || {};
+      const { clientSecret, ...oidcPub } = authCfg?.oidc || {};
       return json(res, {
         ...pub,
+        version: VERSION,
+        auth: { ...authCfg, oidc: authCfg?.oidc ? oidcPub : undefined },
+        ...auth.publicInfo(),
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
     }
+    // ---- Auth (C1) ------------------------------------------------------------
+    if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
     // ---- Composio integrations -------------------------------------------------
     // OAuth login via Composio CLI session API (no API key required upfront)
     if (p === '/__api/composio/auth/start' && m === 'POST') {

@@ -16,6 +16,7 @@ import { expirePendingPermissions, expirePendingScreenRequests } from './api.js'
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
+import { auth } from './auth.js';
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
 // stripped: the host chooses the auth per session from the accounts store, so a
@@ -392,7 +393,10 @@ function spawnProc(s, resume) {
       ...baseEnv(),
       ...accountEnv(s),
       ARIGAMI_SESSION_ID: s.id,
-      ARIGAMI_URL: `http://localhost:${cfg.port}`,
+      ARIGAMI_URL: cfg.hostBase,
+      // C1: per-session internal bearer token — host-mcp.js, skills' curl and
+      // the review prompt authenticate with it; it dies with the session.
+      ARIGAMI_TOKEN: auth.tokenForSession(s.id),
       ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
       // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
       // its dev server binds the slot the host reserved (metadata.port).
@@ -1129,7 +1133,8 @@ function runHeadless(s, prompt, onExit) {
         ...baseEnv(),
         ...accountEnv(s),
         ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
-        ARIGAMI_URL: `http://localhost:${cfg.port}`,
+        ARIGAMI_URL: cfg.hostBase,
+        ARIGAMI_TOKEN: auth.tokenForSession(s.id),
         ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
       },
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -1199,7 +1204,7 @@ export function reviewChanges(id, mode) {
       `1. Read the changes by running:\n   ${diffCmds(mode)}\n` +
       `2. Find real problems only: bugs, edge cases, regressions, security/perf issues. Skip style nits.\n` +
       `3. You MUST finish by POSTing your findings (this is the ONLY deliverable). For each finding give the file path and, when it maps to a specific changed line, the NEW-file line number so it can attach inline:\n` +
-      `   curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/review/suggestions" -H 'content-type: application/json' -d '{"comments":[{"path":"<file>","line":<new-file line number, optional>,"body":"<the issue + a concrete suggested fix>"}]}'\n` +
+      `   curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/review/suggestions" -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' -d '{"comments":[{"path":"<file>","line":<new-file line number, optional>,"body":"<the issue + a concrete suggested fix>"}]}'\n` +
       `Include one object per finding. If the changes look clean, POST a single comment with the worst-case path saying they look good. Do not skip the curl.`,
     () => { clearTimeout(guard); clear(); }
   );

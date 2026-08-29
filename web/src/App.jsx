@@ -40,6 +40,7 @@ import VoiceHUD from './components/VoiceHUD.jsx';
 import QuickSwitcher from './components/QuickSwitcher.jsx';
 import ShortcutsHelp from './components/ShortcutsHelp.jsx';
 import Toaster from './components/Toaster.jsx';
+import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
 import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
 
@@ -190,6 +191,9 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
 export default function App() {
   const t = useT();
   const storeState = useStore();
+  // C1: signed out → the Login page replaces the whole cockpit (the store
+  // doesn't boot / connect until afterLogin()). undefined = still checking.
+  if (storeState.auth === null) return <Login info={storeState.authInfo} />;
   const { sessions, chats, chatLoaded, conn, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the

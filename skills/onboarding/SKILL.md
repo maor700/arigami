@@ -25,7 +25,8 @@ the Setup UI and to headless trigger-readiness.
 | `POST /__api/onboarding/repos/<name>/install` | start install (background job) |
 | `DELETE /__api/onboarding/repos/<name>` | unregister |
 
-Use `curl -s "$ARIGAMI_URL/__api/onboarding/..."`. Actions return immediately
+Use `curl -s -H "Authorization: Bearer $ARIGAMI_TOKEN" "$ARIGAMI_URL/__api/onboarding/..."`
+(the host injects `ARIGAMI_TOKEN` into every session; without it the API is 401). Actions return immediately
 (`{started:true,state:"running"}`); the work runs in the background.
 
 Each step has `status: ok | missing | error | blocked | running`. A step is
@@ -60,7 +61,7 @@ Register it (skip if it's already in `status`):
 
 ```bash
 curl -s -X POST "$ARIGAMI_URL/__api/onboarding/repos" \
-  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' \
   -d '{"name":"<name>","source":"<source>","envSource":{"kind":"none|file|command","value":"<glob-or-cmd>"}}'
 ```
 
