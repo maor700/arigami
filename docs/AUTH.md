@@ -138,3 +138,30 @@ the returned `share_url` is host-relative and the agent gets a warning.
 Assets inside a shared page load through `/__artifacts/<id>/~t/<token>/…`
 (the same token in the path), so the page itself must have relative asset
 paths — as `publish_artifact` already requires.
+
+## Webhooks (C3) — the other cookie-less door
+
+`/__api/webhooks/<kind>` routes are public in the gate and authenticate
+themselves (see `docs/SECURITY.md` → Webhooks for the exact schemes).
+
+- **SMS from the phone (Macrodroid).** Settings → Webhooks → *Rotate* mints a
+  long-lived share-token (`kind:'webhook'`, `id:'sms'`) and shows the full URL
+  (`ARIGAMI_PUBLIC_URL` + `/__api/webhooks/sms?t=<token>`; host-relative when
+  the public URL is unset). Put it in the phone's HTTP action with
+  `&from={sms_number}&body={sms_message}` appended — or send the token as
+  `X-Arigami-Token`. Rotating kills the previous token at once; *Revoke*
+  closes the route. API: `GET|POST|DELETE /__api/webhooks/token` (admin).
+- **Slack / GitHub.** Paste the app's signing secret / the hook secret:
+  `PUT /__api/webhooks/slack/secret {secret}` / `PUT /__api/webhooks/github/secret`
+  (or env `SLACK_SIGNING_SECRET` / `ARIGAMI_GITHUB_WEBHOOK_SECRET`).
+- **Custom.** `POST /__api/webhooks/custom {id,label?}` returns the HMAC
+  secret **once**; the sender signs `"<ts>.<nonce>.<body>"` with it.
+- **Events.** `GET /__api/webhooks/events?kind=&since=&limit=` for any
+  principal; the bus broadcasts `{type:'webhook', kind, id}` on arrival.
+- **Legacy.** `/__api/sms/inbound` keeps working unauthenticated for one
+  release with a `Deprecation` header and a log warning — repoint the phone,
+  then it goes away.
+- **Public internet.** Settings → Webhooks → *Funnel* exposes only
+  `/__api/webhooks` via `tailscale funnel --set-path` (`GET|POST
+  /__api/remote/funnel`). Everything else stays tailnet-only.
+

@@ -243,11 +243,14 @@ describe('gate', () => {
     expect((await get('/__artifacts/abc/index.html', { accept: 'text/html' })).status).toBe(302);
   });
   test('public allowlist passes without a credential and carries no principal', async () => {
-    for (const p of ['/__api/auth/me', '/__api/config', '/__host/', '/__host/index.js', '/', '/__health', '/__poc-sw.js', '/__api/sms/inbound?body=x', '/__api/webhooks/x']) {
+    for (const p of ['/__api/auth/me', '/__api/config', '/__host/', '/__host/index.js', '/', '/__health', '/__poc-sw.js', '/__api/sms/inbound?body=x', '/__api/webhooks/sms', '/__api/webhooks/slack', '/__api/webhooks/github', '/__api/webhooks/custom/my-hook']) {
       const r = await get(p);
       expect([p, r.status]).toEqual([p, 200]);
       expect((await r.json()).principal).toBeNull();
     }
+    // C3: only the inbound webhook routes are public; admin/unknown ones are gated.
+    for (const p of ['/__api/webhooks/x', '/__api/webhooks/token', '/__api/webhooks/config', '/__api/webhooks/events', '/__api/webhooks/custom/', '/__api/webhooks/custom/a/b'])
+      expect([p, (await get(p)).status]).toEqual([p, 401]);
   });
   test('cookie passes; bogus cookie does not', async () => {
     const r = await get('/__api/sessions', { cookie });

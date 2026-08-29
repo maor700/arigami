@@ -10,18 +10,26 @@ Receive incoming SMS messages from the user's Android phone in real time.
 ## How it works
 
 1. **Macrodroid** on the user's phone detects incoming SMS
-2. Sends a GET request to `/__api/sms/inbound?from={sms_number}&body={sms_message}`
-3. Arigami stores the SMS and the listener polls for new messages
+2. Sends a GET request to `/__api/webhooks/sms?t=<token>&from={sms_number}&body={sms_message}`
+3. Arigami verifies the token, stores the SMS and the listener polls for new messages
 4. Session is woken with the SMS content + push notification to phone
 
 ## Setup
 
 - **Phone app**: Macrodroid (free) with an SMS Received trigger → HTTP GET action
-- **Webhook URL**: `https://<your-tailnet-hostname>/__api/sms/inbound?from={sms_number}&body={sms_message}`
-  — get `<your-tailnet-hostname>` from `GET /__api/remote`, or from the
-  cockpit's Settings → Remote access panel, once Tailscale Serve is enabled
-  for this host.
-- **Tailscale**: Phone and host on the same tailnet — endpoint is VPN-only, not public
+- **Webhook URL + token**: cockpit → Settings → Webhooks → SMS → *Rotate* shows the
+  complete URL (built from `ARIGAMI_PUBLIC_URL`). Append the Macrodroid
+  placeholders: `…/__api/webhooks/sms?t=<token>&from={sms_number}&body={sms_message}`.
+  The token can also travel as an `X-Arigami-Token` header, and POST JSON
+  `{from, body}` works too. An admin can fetch it with `GET /__api/webhooks/token`.
+- **Token lifecycle**: long-lived (1 year), *Rotate* invalidates the old one
+  immediately, *Revoke* closes the route. Without/with a wrong token the host
+  answers `401 {"error":"unauthorized"}` with no detail.
+- **Reachability**: phone and host on the same tailnet (via `tailscale serve`),
+  or — only if you need it from outside the tailnet — Settings → Webhooks →
+  *Funnel*, which exposes `/__api/webhooks` and nothing else.
+- **Legacy**: `/__api/sms/inbound?from=&body=` (no token) still works for one
+  release and logs a deprecation warning — repoint the phone to the new URL.
 
 ## Registering a listener
 

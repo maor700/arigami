@@ -103,3 +103,70 @@ export function setRemote(enable) {
   }
   return { ok: true, ...remoteStatus() };
 }
+
+// ---- C3 §7.8: Tailscale Funnel for /__api/webhooks ONLY ---------------------------
+// Funnel exposes a path to the public internet. The only path we ever mount is
+// `/__api/webhooks` — every route under it authenticates itself (server/
+// webhooks.ts: share-token / Slack / GitHub / custom HMAC), and the auth gate
+// still 401s everything else, so `/__api/sessions` & co. never leave the
+// tailnet. Off by default; toggled from Settings → Webhooks.
+export const FUNNEL_PATH = '/__api/webhooks';
+
+function funnelState() {
+  const r = run(['funnel', 'status']);
+  const on = r.ok && r.out.includes(FUNNEL_PATH);
+  return { on, raw: r };
+}
+
+export function funnelStatus() {
+  const base = remoteStatus();
+  if (!base.available || !base.loggedIn) return { ...base, funnel: false, funnelUrl: null };
+  const { on } = funnelState();
+  return { ...base, funnel: on, funnelUrl: on && base.hostname ? `https://${base.hostname}${FUNNEL_PATH}` : null };
+}
+
+// After enabling, prove the path really lands on the host: a bare GET on the
+// sms route must come back as OUR 401 JSON (not tailscale's 404/502). Tailscale
+// versions differ on whether a mount path is stripped before proxying, so we
+// try the target with and without the path and keep whichever answers.
+async function funnelProbe(hostname) {
+  if (!hostname) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    const r = await fetch(`https://${hostname}${FUNNEL_PATH}/sms`, { signal: ctl.signal, redirect: 'manual' });
+    clearTimeout(t);
+    if (r.status !== 401) return false;
+    const j = await r.json().catch(() => null);
+    return !!j && j.error === 'unauthorized';
+  } catch {
+    return false;
+  }
+}
+
+export async function setFunnel(enable) {
+  const cli = findCli();
+  if (!cli) return { ok: false, error: 'Tailscale is not installed.' };
+  if (!enable) {
+    let r = run(['funnel', '--bg', `--set-path=${FUNNEL_PATH}`, 'off']);
+    if (funnelState().on) r = run(['funnel', `--set-path=${FUNNEL_PATH}`, 'off']);
+    if (funnelState().on) return { ok: false, error: [r.err, r.out].map((s) => (s || '').trim()).filter(Boolean).join(' — ') || 'Could not disable Funnel.', ...funnelStatus() };
+    return { ok: true, ...funnelStatus() };
+  }
+  const base = remoteStatus();
+  if (!base.loggedIn) return { ok: false, error: base.reason || 'Tailscale is not connected.', ...funnelStatus() };
+  const loop = `http://127.0.0.1:${cfg.port}`; // tailscale's target, never shown to people
+  const targets = [loop + FUNNEL_PATH, loop];
+  let last = null;
+  for (const target of targets) {
+    last = run(['funnel', '--bg', `--set-path=${FUNNEL_PATH}`, target]);
+    if (!funnelState().on) continue;
+    if (await funnelProbe(base.hostname)) return { ok: true, verified: true, ...funnelStatus() };
+    run(['funnel', '--bg', `--set-path=${FUNNEL_PATH}`, 'off']);
+  }
+  const msg = [last?.err, last?.out].map((s) => (s || '').trim()).filter(Boolean).join(' — ');
+  const hint = /not enabled|funnel|administrator|ACL|nodeAttrs/i.test(msg)
+    ? ' Enable Funnel for this node: Tailscale admin console → Access controls → nodeAttrs "funnel" (and HTTPS Certificates under DNS), then retry.'
+    : ' The mount was created but the host did not answer through it — check `tailscale funnel status`.';
+  return { ok: false, error: (msg || 'Could not enable Tailscale Funnel.') + hint, ...funnelStatus() };
+}
