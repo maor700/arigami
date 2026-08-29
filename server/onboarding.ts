@@ -334,8 +334,8 @@ export function removeRepo(name: string): boolean {
 // ---------------------------------------------------------------------------
 // Profiles (decision 5) — a declarative manifest that SEEDS the generic core.
 // A profile is data, not a skill; applying it upserts its repos into repos.json
-// (seed-then-auto-fix), so the normal per-step provisioning then runs. Acme is
-// the first profile (app only).
+// (seed-then-auto-fix), so the normal per-step provisioning then runs. The
+// shipped profiles are generic bundles; users add their own under ARIGAMI_DIR/profiles.
 // ---------------------------------------------------------------------------
 
 export interface Profile {

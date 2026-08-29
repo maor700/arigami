@@ -17,11 +17,11 @@ docker compose up --build
 open http://localhost:3199/__host/
 ```
 
-Access it as **`http://localhost:3199`** — the native launchd host
-(`com.example.arigami`) owns `:3099`, so the container is mapped to host port **3199**
-to avoid the collision (`localhost:3099` = native, `localhost:3199` = container).
-Still `localhost`, so it's a secure context: voice (mic) and the proxied your-app
-tabs (CORS allowlist is `localhost`) both work — exactly like running it natively.
+Access it as **`http://localhost:3199`** — a natively installed host
+(`bin/host install` / systemd) owns `:3099`, so the container is mapped to host
+port **3199** to avoid the collision (`localhost:3099` = native,
+`localhost:3199` = container). Still `localhost`, so it's a secure context: voice
+(mic) and proxied app tabs both work — exactly like running it natively.
 
 To check which is which: `lsof -nP -iTCP:3199 -sTCP:LISTEN` shows `ssh`/colima
 (the container's port-forward); `:3099` shows `bun` (the native host).
@@ -36,9 +36,9 @@ To check which is which: `lsof -nP -iTCP:3199 -sTCP:LISTEN` shows `ssh`/colima
 | `git`, `gh`, `ripgrep` | worktrees/diffs, PRs, the agent's file search |
 | `web/dist` (built in stage 1) | the cockpit UI |
 
-The host's own deps are all public — the build needs **no** `@buf`/`@fortawesome`
-tokens. Those are runtime-only, for when a *session* runs `bun install` inside a
-cloned Acme repo; pass them through `.env`.
+The host's own deps are all public — the build needs **no** private registry
+tokens. If a *session* needs one to `bun install` inside a cloned private repo,
+pass it through `.env`.
 
 ## State → volume mapping
 

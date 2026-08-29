@@ -4,7 +4,7 @@
 // seconds and polls whichever listeners are due. On a strong signal the poller
 // wakes the session with a THIN pointer (sendMessage → the real conversation,
 // which respawns via --resume if it exited); the session re-fetches details and
-// decides. See the arigami_listeners memory for the full decision record.
+// decides. See docs/TRIGGERS.md for the full decision record.
 //
 // Guarantees: at-least-once. We advance a listener's watermark only AFTER the
 // wake is delivered, so a crash between detect and deliver just re-fires next

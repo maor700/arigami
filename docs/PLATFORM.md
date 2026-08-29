@@ -1,4 +1,4 @@
-# PLATFORM.md — From "Dana's cockpit" to a generic, extensible host
+# PLATFORM.md — From "one person's cockpit" to a generic, extensible host
 
 Status: proposal (2026-07-09). Companion to SPEC.md / ONBOARDING.md / TRIGGERS.md / DISPATCHER.md.
 

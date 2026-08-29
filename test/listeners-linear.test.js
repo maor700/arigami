@@ -18,7 +18,7 @@ const snap = (over = {}) => ({
   identifier: 'ENG-1234',
   url: 'https://linear.app/x/issue/ENG-1234',
   state: over.state || { id: 'st-open', name: 'In Progress', type: 'started' },
-  assignee: over.assignee === undefined ? { id: 'me', displayName: 'dana' } : over.assignee,
+  assignee: over.assignee === undefined ? { id: 'me', displayName: 'alice' } : over.assignee,
   comments: over.comments || [],
 });
 const FIRE = ['new_comment'];
@@ -66,7 +66,7 @@ test('diffLinearIssue: an already-seen comment does not re-fire', () => {
 
 test("diffLinearIssue: the session's own comment advances the watermark but never fires", () => {
   const d = diffLinearIssue(
-    snap({ comments: [comment(1, { user: { id: 'me', displayName: 'dana' } })] }),
+    snap({ comments: [comment(1, { user: { id: 'me', displayName: 'alice' } })] }),
     { seenCommentIds: [], lastCommentAt: '2026-07-16T09:00:00.000Z' },
     { fireOn: FIRE, ignoreUserId: 'me' }
   );
@@ -117,11 +117,11 @@ test('diffLinearIssue: assignee_changed fires and renders unassigned transitions
   const unassigned = snap({ assignee: null });
   const d = diffLinearIssue(
     unassigned,
-    { assigneeId: 'me', assigneeName: 'dana' },
+    { assigneeId: 'me', assigneeName: 'alice' },
     { fireOn: ['assignee_changed'] }
   );
   expect(d.shouldFire).toBe(true);
-  expect(d.summary).toContain('assignee changed: dana → unassigned');
+  expect(d.summary).toContain('assignee changed: alice → unassigned');
   expect(d.nextWatermark.assigneeId).toBe('');
 });
 

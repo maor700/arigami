@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 
-const CDP = process.env.ACME_CDP || 'http://127.0.0.1:9333';
+const CDP = process.env.ARIGAMI_CDP || 'http://127.0.0.1:9333';
 const CONFIG = path.join(process.env.HOME, '.arigami', 'config.json');
 // The cookies that actually gate access to *.chromatic.com build domains.
 const WANTED = ['asset-token', 'CloudFront-Policy', 'CloudFront-Key-Pair-Id', 'CloudFront-Signature', 'logged-in'];

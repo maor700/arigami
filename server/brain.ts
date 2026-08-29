@@ -4,7 +4,7 @@
 // it needs (memory_search/get/write, cronjob, create_session, list_sessions —
 // all shipped in M1–M3's mcp/host-mcp.js), and (b) an on/off cron trigger
 // (server/triggers.ts, M2) that wakes it periodically to self-check whether
-// anything needs Dana's attention (SPEC-ARIGAMI-BRAIN.md §M4.3, off by default).
+// anything needs the owner's attention (SPEC-ARIGAMI-BRAIN.md §M4.3, off by default).
 import * as state from './state.js';
 import * as triggers from './triggers.js';
 import type { CronTrigger } from './triggers.js';

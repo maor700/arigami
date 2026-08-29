@@ -25,7 +25,7 @@ CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   # wait briefly for the host (launchd should have started it)
   for _ in $(seq 1 20); do curl -fsS -m1 http://localhost:3099/__api/config >/dev/null 2>&1 && break; sleep 0.3; done
   if ! curl -fsS -m1 http://localhost:3099/__api/config >/dev/null 2>&1; then
-    osascript -e 'display alert "Arigami" message "The host service isn'\''t running. Start it once with: bin/host start  (and bin/host login), or install autostart with: bin/host install."' >/dev/null 2>&1
+    osascript -e 'display alert "Arigami" message "The host service isn'\''t running. Start it once with: bin/host start, or install autostart with: bin/host install."' >/dev/null 2>&1
   fi
   pgrep -f "user-data-dir=$PROFILE" >/dev/null 2>&1 || rm -f "$PROFILE/Singleton"* 2>/dev/null
   open -na "Google Chrome" --args --user-data-dir="$PROFILE" \
@@ -41,7 +41,7 @@ cat >"$CONTENTS/Info.plist" <<'EOF'
 <dict>
   <key>CFBundleName</key><string>Arigami</string>
   <key>CFBundleDisplayName</key><string>Arigami</string>
-  <key>CFBundleIdentifier</key><string>com.example.arigami.launcher</string>
+  <key>CFBundleIdentifier</key><string>io.arigami.host.launcher</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleExecutable</key><string>Arigami</string>
@@ -78,4 +78,4 @@ fi
 # de-quarantine + refresh the Dock/Finder icon cache
 touch "$APP"
 echo "✓ installed: $APP"
-echo "  Open it from ~/Applications (or: open \"$APP\"). First run logs you into Acme in the app window."
+echo "  Open it from ~/Applications (or: open \"$APP\"). First run: sign in to the cockpit (pairing code) in the app window."

@@ -224,7 +224,7 @@ interface TabNormResult {
 
 // A deterministic poller a session arms for an external event it's waiting on
 // (e.g. its own PR getting reviewed). The scheduler in listeners.ts polls it and
-// wakes the session with a thin signal on a match. See arigami_listeners memory.
+// wakes the session with a thin signal on a match. See docs/TRIGGERS.md.
 export interface Listener {
   id: string;
   sessionId: string;

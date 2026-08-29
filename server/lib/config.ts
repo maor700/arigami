@@ -75,7 +75,7 @@ export interface ScreenConfig {
 
 // The brain session's heartbeat (spec M4.3): off by default. When on, a
 // backing CronTrigger (server/brain.ts) wakes the singleton brain session
-// every `heartbeatEvery` to self-check whether anything needs Dana's
+// every `heartbeatEvery` to self-check whether anything needs the owner's
 // attention — see server/brain.ts for the trigger it drives.
 export interface BrainConfig {
   heartbeatEnabled: boolean;

@@ -105,7 +105,7 @@ No repo registry exists today; sessions just receive a `cwd`. This adds one.
 [
   {
     "name": "app",
-    "source": "github.com/your-org/your-app" | "/abs/local/path",  // clone OR register-in-place (native)
+    "source": "github.com/acme/app" | "/abs/local/path",  // clone OR register-in-place (native)
     "branch": "main",
     "installCmd": "...",     // auto-detected, overridable
     "devCmd": "...",
@@ -131,7 +131,7 @@ in the UI (always wins, stored in `repos.json` as the resolved truth)**.
 
 ---
 
-## 6. Profiles (decision 5) — Acme as one profile
+## 6. Profiles (decision 5) — "Acme" (a fictional company) as one profile
 
 A **profile is a declarative manifest that seeds the generic core** — *not* a
 skill. Workflows stay as skills; the profile only *references/enables* them.
@@ -148,7 +148,7 @@ skill. Workflows stay as skills; the profile only *references/enables* them.
 ```jsonc
 {
   "name": "acme",
-  "repos": [ { "name": "app", "source": "github.com/your-org/your-app" } ],  // app ONLY — see below
+  "repos": [ { "name": "app", "source": "github.com/acme/app" } ],  // app ONLY — see below
   "toolchain": { "pm": "bun", "install": "set -a && . ./.env.local && set +a && bun install" },
   "envSource": { "native": "copy-local", "container": "vercel env pull" },
   "ports": { "dev": [3020, 3030], "storybook": [6021, 6030] },

@@ -171,8 +171,8 @@ describe('mdToHtml', () => {
     expect(h).toContain('<a href="https://y.io/z" target="_blank" rel="noopener">https://y.io/z</a>');
   });
   test('Linear <user> mentions become @Name, HTML is escaped', () => {
-    const h = mdToHtml('hi <user id="u1">Dana</user> <script>alert(1)</script>');
-    expect(h).toContain('@Dana');
+    const h = mdToHtml('hi <user id="u1">Alice</user> <script>alert(1)</script>');
+    expect(h).toContain('@Alice');
     expect(h).not.toContain('<script>');
     expect(h).toContain('&lt;script&gt;');
   });
@@ -200,9 +200,9 @@ describe('esc / PR url helpers', () => {
     expect(esc(null)).toBe('');
   });
   test('isPrUrl / parsePrUrl', () => {
-    expect(isPrUrl('https://github.com/your-org/app/pull/2841')).toBe(true);
-    expect(isPrUrl('https://github.com/your-org/app/issues/3')).toBe(false);
-    expect(parsePrUrl('https://github.com/your-org/app/pull/2841/files')).toEqual({ owner: 'your-org', repo: 'app', num: '2841' });
+    expect(isPrUrl('https://github.com/acme/app/pull/2841')).toBe(true);
+    expect(isPrUrl('https://github.com/acme/app/issues/3')).toBe(false);
+    expect(parsePrUrl('https://github.com/acme/app/pull/2841/files')).toEqual({ owner: 'acme', repo: 'app', num: '2841' });
     expect(parsePrUrl('nope')).toBe(null);
   });
 });
