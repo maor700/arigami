@@ -284,7 +284,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   }, [onClose]);
   // Normalize agents (strings from init, objects from initialize) to {name,…}.
   const agents = (caps.agents || []).map((a) => (typeof a === 'string' ? { name: a } : a));
-  const started = !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length);
+  const started = !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6"

@@ -324,6 +324,61 @@ export function listSessions({
   return archived ? all : all.filter((s) => !s.archived);
 }
 
+// ---- wire form -----------------------------------------------------------------
+// What the UI receives for a session in a LIST (GET /__api/sessions, the WS
+// state replay, session-updated broadcasts). The in-memory Session carries two
+// things the rail never needs and that dominate the payload on a real host
+// (~700KB for two dozen sessions, measured 2026-08-29):
+//   - claude.capabilities: the Claude Code init handshake (commands, tools,
+//     agents, models — ~35KB per session). The list keeps the small scalar
+//     fields (permissionMode/model/version/account/mcpServers/skills) plus
+//     item counts, flagged `slim: true`; the Capabilities panel fetches the
+//     full blob lazily from GET /__api/sessions/:id.
+//   - metadata.result.summary of finished workers: truncated to
+//     SUMMARY_WIRE_MAX chars with `summaryTruncated: true` once the worker is
+//     done (archived, or result.state !== 'milestone'). The Orchestration view
+//     reads results through its own endpoint (childSummary), so nothing in the
+//     UI depends on the list carrying the full text.
+// GET /__api/sessions/:id always returns the full session.
+export const SUMMARY_WIRE_MAX = 400;
+const CAPS_KEEP = ['permissionMode', 'model', 'version', 'account', 'apiKeySource', 'mcpServers', 'skills'] as const;
+const CAPS_COUNTED = ['commands', 'slashCommands', 'tools', 'agents', 'models'] as const;
+
+export function slimCapabilities(caps: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!caps || typeof caps !== 'object') return caps;
+  const out: Record<string, unknown> = { slim: true };
+  for (const k of CAPS_KEEP) if (caps[k] !== undefined) out[k] = caps[k];
+  const counts: Record<string, number> = {};
+  for (const k of CAPS_COUNTED) if (Array.isArray(caps[k])) counts[k] = (caps[k] as unknown[]).length;
+  out.counts = counts;
+  return out;
+}
+
+export function toWireSession(s: Session): Session {
+  let out: Session = s;
+  if (s.claude?.capabilities) out = { ...out, claude: { ...s.claude, capabilities: slimCapabilities(s.claude.capabilities) } };
+  const result = s.metadata?.result as { state?: string; summary?: unknown } | undefined;
+  if (
+    result &&
+    typeof result.summary === 'string' &&
+    result.summary.length > SUMMARY_WIRE_MAX &&
+    (s.archived || result.state !== 'milestone')
+  ) {
+    out = {
+      ...out,
+      metadata: {
+        ...s.metadata,
+        result: { ...result, summary: result.summary.slice(0, SUMMARY_WIRE_MAX), summaryTruncated: true },
+      },
+    };
+  }
+  return out;
+}
+
+export function listSessionsForWire(opts: { archived?: boolean } = {}): Session[] {
+  return listSessions(opts).map(toWireSession);
+}
+
 export function getSession(id: string): Session | null {
   return db.sessions.get(id) || null;
 }
@@ -400,7 +455,7 @@ export function createSession({
   };
   db.sessions.set(session.id, session);
   touch(session);
-  broadcast({ type: 'session-created', session });
+  broadcast({ type: 'session-created', session: toWireSession(session) });
   return session;
 }
 
@@ -430,7 +485,7 @@ export function patchSession(
   // An archived controller can't manage anyone — demote its project folder.
   if (patch.archived === true) releaseControllerOf(id);
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   if ('action' in patch) broadcast({ type: `action:${id}`, action: s.action });
   if ('progress' in patch)
     broadcast({ type: `progress:${id}`, progress: s.progress });
@@ -445,7 +500,7 @@ export function setClaude(
   if (!s) return null;
   s.claude = { ...s.claude, ...patch };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -461,7 +516,7 @@ export function addPendingPrompt(id: string, text: string): PendingPrompt | null
   };
   s.pendingPrompts = [...(s.pendingPrompts || []), p];
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return p;
 }
 
@@ -473,7 +528,7 @@ export function removePendingPrompt(id: string, promptId: string): PendingPrompt
   if (!p) return null;
   s.pendingPrompts = list.filter((x) => x.id !== promptId);
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return p;
 }
 
@@ -493,7 +548,7 @@ export function reorderPendingPrompts(id: string, orderedIds: string[]): Session
   next.push(...byId.values()); // anything the client didn't mention keeps its place at the end
   s.pendingPrompts = next;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -502,7 +557,7 @@ export function setPromptAutoPlay(id: string, on: boolean): Session | null {
   if (!s) return null;
   s.promptAutoPlay = !!on;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -511,7 +566,7 @@ export function setBg(id: string, bg: unknown[]): Session | null {
   if (!s) return null;
   s.bg = bg;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -528,7 +583,7 @@ export function setChangesExplanation(
   (s.changesExplanations as Record<string, ChangesExplanation>)[m] =
     explanation;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -540,7 +595,7 @@ export function setChangesExplaining(
   if (!s) return null;
   s.changesExplaining =
     mode === 'pr' || mode === 'uncommitted' ? (mode as 'pr' | 'uncommitted') : null;
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -565,7 +620,7 @@ export function setStatusSummary(
   };
   s.summarizing = false;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -575,7 +630,7 @@ export function setSummaryAutoUpdate(id: string, on: boolean): Session | null {
   if (!s || !s.statusSummary) return null;
   s.statusSummary = { ...s.statusSummary, autoUpdate: !!on };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -585,7 +640,7 @@ export function setSummaryLang(id: string, lang: 'auto' | 'en'): Session | null 
   if (!s || !s.statusSummary) return null;
   s.statusSummary = { ...s.statusSummary, lang: lang === 'en' ? 'en' : 'auto' };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -596,7 +651,7 @@ export function clearStatusSummary(id: string): Session | null {
   s.statusSummary = null;
   s.summarizing = false;
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -605,7 +660,7 @@ export function setSummarizing(id: string, on: boolean): Session | null {
   const s = getSession(id);
   if (!s) return null;
   s.summarizing = !!on;
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -624,7 +679,7 @@ export function addReviewComment(
     comments: [...(s.review?.comments || []), c],
   };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return c;
 }
 
@@ -643,7 +698,7 @@ export function addReviewComments(
     comments: [...(s.review?.comments || []), ...add],
   };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return add;
 }
 
@@ -654,7 +709,7 @@ export function removeReviewComment(id: string, cid: string): boolean {
     comments: s.review.comments.filter((c) => c.id !== cid),
   };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return true;
 }
 
@@ -675,7 +730,7 @@ export function patchReviewComment(
   if ('suggested' in patch) c.suggested = !!patch.suggested;
   if (typeof patch.dir === 'string') c.dir = patch.dir;
   touch(s!);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s!) });
   return c;
 }
 
@@ -694,7 +749,7 @@ export function addReviewReply(
   };
   c.replies = [...(c.replies || []), r];
   touch(s!);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s!) });
   return r;
 }
 
@@ -710,7 +765,7 @@ export function patchReviewReply(
   if (typeof patch.body === 'string' && patch.body.trim())
     r.body = patch.body;
   touch(s!);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s!) });
   return r;
 }
 
@@ -724,7 +779,7 @@ export function removeReviewReply(
   if (!c?.replies) return false;
   c.replies = c.replies.filter((x) => x.id !== rid);
   touch(s!);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s!) });
   return true;
 }
 
@@ -735,7 +790,7 @@ export function setAutoReviewing(id: string, mode?: string): Session | null {
     mode === 'pr' || mode === 'uncommitted'
       ? (mode as 'pr' | 'uncommitted')
       : null;
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -744,7 +799,7 @@ export function clearReview(id: string): Session | null {
   if (!s) return null;
   s.review = { comments: [] };
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
 
@@ -758,7 +813,7 @@ export function reorderSessions(orderedIds: string[]): void {
   persist();
   for (const id of orderedIds) {
     const s = db.sessions.get(id);
-    if (s) broadcast({ type: 'session-updated', session: s });
+    if (s) broadcast({ type: 'session-updated', session: toWireSession(s) });
   }
 }
 
@@ -848,7 +903,7 @@ export function deleteFolder(id: string): { folder: Folder; children: Session[] 
   });
   db.folders.delete(id);
   persist();
-  for (const s of children) broadcast({ type: 'session-updated', session: s });
+  for (const s of children) broadcast({ type: 'session-updated', session: toWireSession(s) });
   broadcast({ type: 'folder-deleted', id });
   return { folder: f, children };
 }
@@ -912,7 +967,7 @@ export function railReorder({
   persist();
   for (const sid of touched) {
     const s = db.sessions.get(sid);
-    if (s) broadcast({ type: 'session-updated', session: s });
+    if (s) broadcast({ type: 'session-updated', session: toWireSession(s) });
   }
   broadcast({ type: 'folders-updated', folders: listFolders() });
 }
@@ -989,7 +1044,7 @@ export function upsertArtifact(id: string, art: Artifact): Artifact | null {
   if (i >= 0) s.artifacts[i] = art;
   else s.artifacts.push(art);
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return art;
 }
 
@@ -1000,7 +1055,7 @@ export function removeArtifact(id: string, aid: string): boolean {
   if (i < 0) return false;
   s.artifacts.splice(i, 1);
   touch(s);
-  broadcast({ type: 'session-updated', session: s });
+  broadcast({ type: 'session-updated', session: toWireSession(s) });
   return true;
 }
 

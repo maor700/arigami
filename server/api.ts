@@ -2276,9 +2276,11 @@ export async function handle(
     }
 
     if (p === '/__api/sessions' && m === 'GET') {
+      // Wire form (see state.toWireSession): capabilities slimmed, finished
+      // workers' result.summary capped. Full detail: GET /__api/sessions/:id.
       return json(
         res,
-        state.listSessions({
+        state.listSessionsForWire({
           archived: u.searchParams.get('archived') === 'true',
         })
       );

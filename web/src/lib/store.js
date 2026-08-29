@@ -16,6 +16,7 @@ let state = {
   queue: { autoplay: false, maxConcurrent: 3 }, // queue policy
   chats: {}, // sessionId -> [normalized chat events]
   chatLoaded: {}, // sessionId -> true once rehydrated over REST
+  capsFull: {}, // sessionId -> {rev, caps}: full claude.capabilities (list payloads carry a slim form)
   drafts: {}, // sessionId -> unsent composer draft {text, attachments}
   lastSent: {}, // sessionId -> the draft most recently sent (for Esc-restore)
   conn: 'connecting', // 'open' | 'connecting' | 'down'
@@ -350,6 +351,45 @@ export async function loadUsage() {
 }
 
 const INITIAL_PAGE = 150;
+
+/* ---------------- full capabilities (lazy) ------------------------------- */
+// Session lists (REST + WS) carry claude.capabilities in a slim form
+// ({slim:true, model, mcpServers, skills, counts…}) — the full handshake
+// (commands/tools/agents/models, ~35KB per session) is fetched here on demand
+// from GET /__api/sessions/:id and cached per session until the Claude
+// process changes (new claude.sessionId) or the counts move.
+function capsRev(session) {
+  const c = session?.claude?.capabilities;
+  return JSON.stringify([session?.claude?.sessionId, c?.version, c?.counts || null]);
+}
+
+export function fullCapabilities(session) {
+  const c = session?.claude?.capabilities;
+  if (!c?.slim) return c;
+  const hit = state.capsFull[session.id];
+  return hit && hit.rev === capsRev(session) ? hit.caps : c;
+}
+
+const capsInflight = new Set();
+export async function ensureFullCapabilities(session) {
+  const c = session?.claude?.capabilities;
+  if (!c?.slim) return;
+  const rev = capsRev(session);
+  const hit = state.capsFull[session.id];
+  if (hit && hit.rev === rev) return;
+  const key = session.id + rev;
+  if (capsInflight.has(key)) return;
+  capsInflight.add(key);
+  try {
+    const full = await api.get(`/sessions/${session.id}`);
+    const caps = full?.claude?.capabilities;
+    if (caps && !caps.slim) setState({ capsFull: { ...state.capsFull, [session.id]: { rev, caps } } });
+  } catch {
+    /* transient — the slim form still drives the panel counts */
+  } finally {
+    capsInflight.delete(key);
+  }
+}
 
 export async function loadChat(sessionId) {
   if (!sessionId || state.chatLoaded[sessionId]) return;

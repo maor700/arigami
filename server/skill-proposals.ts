@@ -75,7 +75,9 @@ export function scanSkillContent(content: string): ProposalFlag[] {
 // Skill files are small (a few hundred lines at most, MAX_FILE guards huge
 // ones elsewhere) so an O(n*m) LCS table is cheap; the size guard below is a
 // defensive fallback, not the expected path.
-function diffOps(oldLines: string[], newLines: string[]): Array<{ type: 'ctx' | 'del' | 'add'; line: string }> {
+type DiffOp = { type: 'ctx' | 'del' | 'add'; line: string };
+
+function diffOps(oldLines: string[], newLines: string[]): DiffOp[] {
   const n = oldLines.length;
   const m = newLines.length;
   if (n * m > 4_000_000) {
@@ -92,7 +94,7 @@ function diffOps(oldLines: string[], newLines: string[]): Array<{ type: 'ctx' | 
       dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
-  const ops: Array<{ type: 'ctx' | 'del' | 'add'; line: string }> = [];
+  const ops: DiffOp[] = [];
   let i = 0;
   let j = 0;
   while (i < n && j < m) {
@@ -113,60 +115,200 @@ function diffOps(oldLines: string[], newLines: string[]): Array<{ type: 'ctx' | 
   return ops;
 }
 
-// One hunk covering the whole file — simplest correct thing for files this
-// small, and it's what DiffView.jsx's parser (`@@ -a,b +c,d @@` then
-// ' '/'-'/'+' lines) expects.
+const DIFF_CONTEXT = 3;
+
+// Minimal unified diff: only the changed regions, each wrapped in
+// DIFF_CONTEXT lines of context, split into separate hunks when the gap
+// between changes exceeds 2*DIFF_CONTEXT (same grouping rule as `diff -u`).
+// DiffView.jsx's parser (`@@ -a,b +c,d @@` then ' '/'-'/'+' lines) handles
+// any number of hunks, so the Proposals UI shows just what changed.
 export function buildUnifiedDiff(oldContent: string, newContent: string, label: string): string {
   if (oldContent === newContent) return '';
   const oldLines = oldContent === '' ? [] : oldContent.split('\n');
   const newLines = newContent === '' ? [] : newContent.split('\n');
   const ops = diffOps(oldLines, newLines);
   const header = `--- a/${label}\n+++ b/${label}\n`;
-  const hunkHeader = `@@ -${oldLines.length ? 1 : 0},${oldLines.length} +${newLines.length ? 1 : 0},${newLines.length} @@\n`;
-  const body = ops.map((o) => (o.type === 'ctx' ? ' ' : o.type === 'del' ? '-' : '+') + o.line).join('\n');
-  return header + hunkHeader + body + '\n';
-}
 
-// Best-effort unified-diff applier for skill_propose's `patch` form. Validates
-// that context/deleted lines actually match the base content it's applied to
-// (refuses instead of silently corrupting on a mismatch) — deliberately
-// stricter than it needs to be for the happy path, since a bad apply here
-// would land in a human's review queue looking like a clean proposal.
-export function applyUnifiedDiff(original: string, patchText: string): { ok: true; content: string } | { ok: false; error: string } {
-  const origLines = original === '' ? [] : original.split('\n');
-  const patchLines = patchText.split('\n');
-  const outLines: string[] = [];
-  let oi = 0;
-  let sawHunk = false;
-  let i = 0;
-  while (i < patchLines.length) {
-    const hm = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(patchLines[i]);
-    if (!hm) {
-      i++;
-      continue;
+  // Index of every non-context op; group into hunks by gap.
+  const changeIdx: number[] = [];
+  ops.forEach((o, k) => {
+    if (o.type !== 'ctx') changeIdx.push(k);
+  });
+  if (!changeIdx.length) return '';
+  const groups: Array<[number, number]> = []; // [firstChange, lastChange] op indices
+  let gs = changeIdx[0];
+  let ge = changeIdx[0];
+  for (let k = 1; k < changeIdx.length; k++) {
+    if (changeIdx[k] - ge > 2 * DIFF_CONTEXT) {
+      groups.push([gs, ge]);
+      gs = changeIdx[k];
     }
-    sawHunk = true;
-    const oldStart = Math.max(0, parseInt(hm[1], 10) - 1);
-    while (oi < oldStart && oi < origLines.length) outLines.push(origLines[oi++]);
-    i++;
-    while (i < patchLines.length && !/^@@ /.test(patchLines[i])) {
-      const l = patchLines[i];
-      if (l.startsWith(' ') || l.startsWith('-')) {
-        if (oi >= origLines.length || origLines[oi] !== l.slice(1))
-          return { ok: false, error: `patch context mismatch at line ${oi + 1} — the skill has changed since this patch was written` };
-        if (l.startsWith(' ')) outLines.push(origLines[oi]);
-        oi++;
-      } else if (l.startsWith('+')) {
-        outLines.push(l.slice(1));
-      } else if (l.startsWith('\\')) {
-        // "\ No newline at end of file" — ignore
-      }
-      i++;
+    ge = changeIdx[k];
+  }
+  groups.push([gs, ge]);
+
+  // Old/new line numbers at the start of each op, so hunk headers can be computed.
+  const oldAt: number[] = new Array(ops.length + 1);
+  const newAt: number[] = new Array(ops.length + 1);
+  let oi = 0;
+  let ni = 0;
+  ops.forEach((o, k) => {
+    oldAt[k] = oi;
+    newAt[k] = ni;
+    if (o.type !== 'add') oi++;
+    if (o.type !== 'del') ni++;
+  });
+  oldAt[ops.length] = oi;
+  newAt[ops.length] = ni;
+
+  let out = header;
+  for (const [a, b] of groups) {
+    const from = Math.max(0, a - DIFF_CONTEXT);
+    const to = Math.min(ops.length, b + 1 + DIFF_CONTEXT); // exclusive
+    const oldCount = oldAt[to] - oldAt[from];
+    const newCount = newAt[to] - newAt[from];
+    // Unified-diff convention: a zero-length side reports its start as the
+    // line BEFORE the hunk (0 for an empty file).
+    const oldStart = oldCount ? oldAt[from] + 1 : oldAt[from];
+    const newStart = newCount ? newAt[from] + 1 : newAt[from];
+    out += `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n`;
+    for (let k = from; k < to; k++) {
+      const o = ops[k];
+      out += (o.type === 'ctx' ? ' ' : o.type === 'del' ? '-' : '+') + o.line + '\n';
     }
   }
-  if (!sawHunk) return { ok: false, error: 'no valid @@ hunk header found in patch' };
+  return out;
+}
+
+// ---- unified-diff applier for skill_propose's `patch` form -------------------
+// Validates that context/deleted lines actually match the base content it's
+// applied to (refuses instead of silently corrupting on a mismatch) — a bad
+// apply here would land in a human's review queue looking like a clean
+// proposal. Tolerant of the ways an agent-written patch drifts from the
+// canonical form without changing its meaning:
+//   - CRLF line endings (patch or skill), a missing/extra trailing newline
+//   - blank context lines sent as "" instead of " " (tool layers strip trailing
+//     whitespace; this is what broke the wave-1 `patch` attempt)
+//   - trailing whitespace differences on context lines
+//   - hunk headers whose line numbers are off (miscounted): the hunk is located
+//     by its context, nearest to the stated position, never before the previous
+//     hunk
+// A genuine mismatch reports the first non-matching line with what the patch
+// expected and what the skill has there.
+const normLine = (l: string): string => l.replace(/\s+$/, '');
+
+interface Hunk {
+  oldStart: number; // 0-based, from the header
+  oldCount: number | null; // declared old-side length, when the header has one
+  lines: Array<{ kind: ' ' | '-' | '+'; text: string }>;
+}
+
+// Blank lines past the declared old-side length (a patch pasted with extra
+// trailing newlines) are padding, not context.
+function trimPadding(h: Hunk): void {
+  if (h.oldCount === null) return;
+  let oldLen = h.lines.filter((l) => l.kind !== '+').length;
+  while (oldLen > h.oldCount && h.lines.length) {
+    const last = h.lines[h.lines.length - 1];
+    if (last.kind !== ' ' || last.text !== '') break;
+    h.lines.pop();
+    oldLen--;
+  }
+}
+
+function parseHunks(patchText: string): Hunk[] | { error: string } {
+  const patchLines = patchText.replace(/\r\n?/g, '\n').split('\n');
+  // A trailing newline in the patch text produces one empty final line — drop it.
+  if (patchLines.length && patchLines[patchLines.length - 1] === '') patchLines.pop();
+  const hunks: Hunk[] = [];
+  let cur: Hunk | null = null;
+  for (const raw of patchLines) {
+    const hm = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(raw);
+    if (hm) {
+      cur = { oldStart: Math.max(0, parseInt(hm[1], 10) - 1), oldCount: hm[2] === undefined ? null : parseInt(hm[2], 10), lines: [] };
+      hunks.push(cur);
+      continue;
+    }
+    if (!cur) continue; // ---/+++ headers and any preamble before the first hunk
+    if (raw.startsWith('\\')) continue; // "\ No newline at end of file"
+    if (raw.startsWith('---') || raw.startsWith('+++')) {
+      // A second file header mid-patch — not something we support (single file).
+      cur = null;
+      continue;
+    }
+    const kind = raw[0];
+    if (kind === ' ' || kind === '-' || kind === '+') cur.lines.push({ kind, text: raw.slice(1) });
+    else if (raw === '') cur.lines.push({ kind: ' ', text: '' }); // blank context line with its leading space stripped
+    else return { error: `malformed patch line (expected ' ', '-' or '+' prefix): ${JSON.stringify(raw.slice(0, 80))}` };
+  }
+  if (!hunks.length) return { error: 'no valid @@ hunk header found in patch' };
+  hunks.forEach(trimPadding);
+  return hunks;
+}
+
+// Does hunk h's old side (context + deletions) match orig at position pos?
+// Returns null on match, else the index (into h.lines) of the first mismatch.
+function hunkMismatchAt(orig: string[], h: Hunk, pos: number): number | null {
+  let oi = pos;
+  for (let k = 0; k < h.lines.length; k++) {
+    const l = h.lines[k];
+    if (l.kind === '+') continue;
+    if (oi >= orig.length || normLine(orig[oi]) !== normLine(l.text)) return k;
+    oi++;
+  }
+  return null;
+}
+
+export function applyUnifiedDiff(original: string, patchText: string): { ok: true; content: string } | { ok: false; error: string } {
+  const crlf = /\r\n/.test(original);
+  const normalized = original.replace(/\r\n?/g, '\n');
+  const origLines = normalized === '' ? [] : normalized.split('\n');
+  const parsed = parseHunks(patchText);
+  if (!Array.isArray(parsed)) return { ok: false, error: parsed.error };
+
+  const outLines: string[] = [];
+  let oi = 0; // next original line to copy
+  for (let hi = 0; hi < parsed.length; hi++) {
+    const h = parsed[hi];
+    const oldLen = h.lines.filter((l) => l.kind !== '+').length;
+    // Locate the hunk: exact position first, then the nearest offset in either
+    // direction (never before `oi` — hunks apply in order).
+    let at = -1;
+    const maxPos = Math.max(oi, origLines.length - oldLen);
+    for (let d = 0; at < 0 && d <= origLines.length; d++) {
+      const fwd = h.oldStart + d;
+      const back = h.oldStart - d;
+      if (fwd >= oi && fwd <= maxPos && hunkMismatchAt(origLines, h, fwd) === null) at = fwd;
+      else if (d > 0 && back >= oi && back <= maxPos && hunkMismatchAt(origLines, h, back) === null) at = back;
+    }
+    if (at < 0) {
+      const pos = Math.min(Math.max(h.oldStart, oi), origLines.length);
+      const k = hunkMismatchAt(origLines, h, pos) ?? 0;
+      const oldBefore = h.lines.slice(0, k).filter((l) => l.kind !== '+').length;
+      const lineNo = pos + oldBefore + 1;
+      const expected = h.lines[k]?.text ?? '';
+      const actual = lineNo - 1 < origLines.length ? origLines[lineNo - 1] : '<end of file>';
+      return {
+        ok: false,
+        error:
+          `patch context mismatch in hunk ${hi + 1} at line ${lineNo}: patch expects ${JSON.stringify(expected)} ` +
+          `but the skill has ${JSON.stringify(actual)} — the skill has changed since this patch was written`,
+      };
+    }
+    while (oi < at) outLines.push(origLines[oi++]);
+    for (const l of h.lines) {
+      if (l.kind === ' ') outLines.push(origLines[oi++]);
+      else if (l.kind === '-') oi++;
+      else outLines.push(l.text);
+    }
+  }
   while (oi < origLines.length) outLines.push(origLines[oi++]);
-  return { ok: true, content: outLines.join('\n') };
+  let content = outLines.join('\n');
+  // Preserve the base file's trailing-newline convention: a patch can't
+  // express "the file now ends without a newline" in this tolerant form.
+  if (normalized.endsWith('\n') && !content.endsWith('\n')) content += '\n';
+  if (crlf) content = content.replace(/\n/g, '\r\n');
+  return { ok: true, content };
 }
 
 // ---- audit log (apply/reject/quarantine/propose — append-only) --------------
