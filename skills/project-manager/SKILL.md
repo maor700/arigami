@@ -11,8 +11,10 @@ over those sessions, never a replacement for the human:
 
 > **The human works with every child directly and approves ALL changes.** Each
 > child requests review from the human (whatever skill it's running should do
-> this); you never review code, never approve, never merge on anyone's behalf.
-> Your job is decomposition, sequencing, and keeping the project moving.
+> this); you never review code and never approve. **Merging is a separate,
+> explicit step that happens only AFTER the human approved** — see "Merge
+> responsibility" below. Your job is decomposition, sequencing, integration
+> after approval, and keeping the project moving.
 
 This skill is the *methodology*. The platform capabilities it drives (folders,
 `create_session kind:"full"`, `task_session`, `report_to_master`) are documented
@@ -34,6 +36,14 @@ in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
 
 Spawn children with `create_session({ kind: "full", skill, prompt, metadata, title, subtask? })`:
 
+- **Give every child a `subtask`** (a short slug): the host then creates its
+  worktree for it — `<reposDir>/<repo>-wt-<subtask>` on branch
+  `child/<subtask>-<id>` off `base` (default: your current branch) — stamps
+  `metadata.worktree/branch/base/cleanup`, and starts the child *in* it. The
+  child's Changes tab works from the first second and you can merge it later
+  with `merge_session`. Pass `worktree:false` only for a child that must
+  provision itself (legacy ticket skills), `worktree:"<path>"` for a fixed path,
+  `branch_prefix` to change `child/`.
 - A full child is a **regular session**: it provisions itself. Pass `skill`
   (a name from `GET /__api/skills`) to have it run a specific bundled skill —
   for ticket work, that's whatever skill your workspace uses to set up and
@@ -104,10 +114,34 @@ The human may be on a phone, another machine or a tailnet — a
   `/__artifacts/…`) — forward them as-is. `$ARIGAMI_URL` is an internal base for
   your own API calls, not a link for people.
 
+## Merge responsibility (fixed — never ambiguous)
+
+1. **The child never merges.** It commits on its branch and calls
+   `request_review` (human) + `report_to_master` (you).
+2. **The human approves.** Their `✓ Verified` / review-approve stamps
+   `metadata.review = {state:"approved", at, by}` on the child. You can read it
+   from `list_sessions`. Nothing you do can stamp it.
+3. **After approval, merging is one call for you: `merge_session({session_id,
+   strategy?, delete_branch?})`** — or one click for the human (the Merge button
+   on the child's review panel / Changes tab). Whoever gets there first; the
+   host makes it idempotent (`already merged`). The HOST runs the git merge in
+   your checkout (the base). It refuses if the child isn't approved, if your
+   checkout has uncommitted tracked changes, or if the base branch isn't what
+   you have checked out — fix that, don't work around it. `force` is not yours.
+4. **On `{conflict:true, files}`** the host already aborted and posted a
+   "merge conflict — resolve" card to you and the child. Task the child to
+   rebase/resolve on its branch (or ask the human) and merge again. Never
+   resolve conflicts by editing the base yourself.
+5. **After `merge_session` succeeds, run the gates on the base — `tsc`, tests,
+   build — then push.** The merge itself runs no gates (the response says so in
+   `hint`). A red gate after a merge is yours to route back to the child.
+6. `delete_branch:true` (or `delete_session({run_cleanup:true})` later) removes
+   the child's worktree + branch once merged.
+
 ## What you never do
 
-- Read a child's chat. Review, approve, or merge code. Answer a child's
-  permission prompts.
+- Read a child's chat. Review or approve code. Merge anything the human has
+  not approved. Answer a child's permission prompts.
 - Task a session outside your folder (403 — and it's the human telling you it's
   not yours).
 - Interrupt a child mid-turn; the queue exists so you don't have to.

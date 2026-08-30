@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { HOME } from './lib/platform.js';
 
@@ -492,4 +493,46 @@ export async function worktreeInfo(
   } catch {
     return { dir, branch: null, linked: false };
   }
+}
+
+// ---- Host-managed worktrees for FULL children (F7) ----
+// `<reposDir>/<repo>-wt-<subtask>` on branch `<prefix>/<subtask>-<id>` off
+// `base`. Shared by wireWorker (dispatch) and wireFullChild (project folders):
+// the host creates it BEFORE the child starts so its Changes tab shows the
+// child's diff without any child action. Pure git — no state import.
+export interface ProvisionOpts {
+  parentDir: string;           // any dir inside the repo (master's cwd/worktree)
+  subtask: string;             // already sanitized by the caller
+  prefix?: string;             // branch prefix (default 'child')
+  base?: string | null;        // ref to fork off (default: parentDir's branch)
+  dir?: string | null;         // explicit worktree path (default derived)
+  reposDir?: string | null;    // where derived dirs go (default: repo's parent dir)
+  suffix?: string | null;      // uniqueness suffix for the branch/dir (default nano-ish)
+  branch?: string | null;      // explicit branch name (dispatch keeps `dispatch/<subtask>`)
+}
+export interface ProvisionResult extends WorktreeAddResult {
+  root?: string;
+}
+
+export async function provisionChildWorktree(o: ProvisionOpts): Promise<ProvisionResult> {
+  const root = await repoCommonRoot(o.parentDir);
+  if (!root)
+    return { ok: false, dir: o.dir || '', branch: '', base: o.base || '', error: `not a git repository: ${o.parentDir}` };
+  const suffix = o.suffix || Math.random().toString(36).slice(2, 6);
+  const safe = o.subtask.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 40) || 'work';
+  let base = o.base || null;
+  if (!base) {
+    const br = await git(o.parentDir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    base = br.code === 0 && br.out.trim() && br.out.trim() !== 'HEAD' ? br.out.trim() : 'main';
+  }
+  const branch = o.branch || `${o.prefix || 'child'}/${safe}-${suffix}`;
+  let dir = o.dir ? untildify(o.dir)! : '';
+  if (!dir) {
+    const repoName = path.basename(root);
+    const parent = o.reposDir ? untildify(o.reposDir)! : path.dirname(root);
+    dir = path.join(parent, `${repoName}-wt-${safe}`);
+    if (fs.existsSync(dir)) dir = `${dir}-${suffix}`;
+  }
+  const r = await addWorktree(root, dir, branch, base);
+  return { ...r, root };
 }

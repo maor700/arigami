@@ -127,10 +127,19 @@ context thin is the whole point.
        and escalate.
      - `blocked` → **decide or escalate** (`request_action` to the human). Never
        auto-retry a block.
-   - **Integrate.** When a wave's mutating branches are all `done`, spawn a
-     **delegated integration worker** (`kind:"mutating"`) whose job is to merge
-     those branches onto `base`, run the gate, and report. You do not merge
-     yourself.
+   - **Integrate.** A worker never merges its own branch. When a wave's
+     mutating branches are all `done`, either (a) — the default when a human
+     is in the loop — wait for the human's approval on each branch
+     (`metadata.review.state === "approved"`, set by their ✓ Verified /
+     review-approve) and then merge it with **one call, `merge_session({
+     session_id, strategy?, delete_branch? })`** — the HOST runs the git merge
+     into your checkout, refuses dirty/unapproved bases, and returns
+     `{conflict:true, files}` (already aborted) on a conflict → task the worker
+     to rebase and try again; after success run the gate (tsc/tests/build)
+     yourself, then push; or (b) for unattended runs, spawn a **delegated
+     integration worker** (`kind:"mutating"`) whose job is to merge those
+     branches onto `base`, run the gate, and report. In both cases you never
+     merge by hand in your own checkout.
    - **Finish.** When every node is terminal, integrate the final result and
      signal the human (`request_review` / `request_action`).
 
@@ -144,7 +153,9 @@ context thin is the whole point.
 1. Read your `subtask` node (the master put your instructions in your first
    prompt; the node id is `metadata.subtask`). If you need plan context, you may
    read your master's `ORCHESTRATION.json`.
-2. Do the work. If `mutating`, all edits go in **your worktree** (`metadata.worktree`,
+2. Do the work. **Never merge your branch into `base` yourself** — commit on
+   your branch; merging is your master's call (`merge_session`) after the
+   human approved, or the integration worker's. If `mutating`, all edits go in **your worktree** (`metadata.worktree`,
    already your cwd) on **your branch** (`metadata.branch`). If `readonly`, do not
    edit — search/analyze and write findings.
 3. Write any large output to an **artifact file** (e.g. `REPORT.md` in your cwd)

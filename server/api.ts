@@ -23,8 +23,9 @@ import {
   changeIdentity,
   prStatus,
   worktreeInfo,
-  addWorktree,
+  provisionChildWorktree,
 } from './git.js';
+import { mergeBranch, baseStatus, mergeMessage } from './merge.js';
 import fs from 'node:fs';
 import net from 'node:net';
 
@@ -1513,6 +1514,41 @@ function allocatePort(): number | null {
   return null;
 }
 
+// F7: host-made worktree for a child (dispatch worker OR full child). Forks
+// off `base` (default: the master's current branch) inside the master's repo
+// and returns the metadata the host stamps: worktree/branch/base/cleanup —
+// cleanup removes the worktree and the branch, so delete-with-run_cleanup
+// tears it all down. Throws when git refuses (the spawn fails loudly).
+async function hostWorktree(
+  master: any,
+  o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null }
+): Promise<{ dir: string; branch: string; base: string; metadata: Record<string, unknown> }> {
+  const parentDir =
+    (untildify((master.metadata?.worktree as string) || master.cwd) as string) || HOME;
+  const info = await worktreeInfo(master);
+  const r = await provisionChildWorktree({
+    parentDir,
+    subtask: o.subtask,
+    branch: o.branch || null,
+    dir: o.dir || null,
+    prefix: o.prefix || 'child',
+    base: o.base || info.branch || null,
+    reposDir: cfg.reposDir,
+  });
+  if (!r.ok) throw new Error(`worktree add failed: ${r.error}`);
+  return {
+    dir: r.dir,
+    branch: r.branch,
+    base: r.base,
+    metadata: {
+      worktree: r.dir,
+      branch: r.branch,
+      base: r.base,
+      cleanup: defaultCleanupCmds(r.dir, r.branch),
+    },
+  };
+}
+
 // Resolve all auto-wiring for a worker spawn: caps → worktree (mutating) → cwd +
 // permission mode + metadata. Returns {deferred} when at capacity (no session is
 // created — the master leaves the node ready and retries next wake, decision 14).
@@ -1548,18 +1584,15 @@ async function wireWorker(
 
   if (kind === 'mutating') {
     const safe = sanitizeSubtask(subtask);
-    const branch = `dispatch/${safe}`;
-    const dir = path.join(cfg.reposDir, '.dispatch-worktrees', `${safe}-${nano()}`);
-    const info = await worktreeInfo(master);
-    const base = body.base ? String(body.base) : info.branch || 'main';
-    const r = await addWorktree(parentDir, dir, branch, base);
-    if (!r.ok) throw new Error(`worktree add failed: ${r.error}`);
-    metadata.worktree = dir;
-    metadata.branch = branch;
-    metadata.base = r.base;
-    metadata.cleanup = defaultCleanupCmds(dir, branch);
+    const r = await hostWorktree(master, {
+      subtask: safe,
+      branch: `dispatch/${safe}`,
+      dir: path.join(cfg.reposDir, '.dispatch-worktrees', `${safe}-${nano()}`),
+      base: body.base ? String(body.base) : null,
+    });
+    Object.assign(metadata, r.metadata);
     return {
-      cwd: dir,
+      cwd: r.dir,
       permissionMode: body.permissionMode || 'bypassPermissions',
       metadata,
     };
@@ -1607,11 +1640,181 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
   const parentDir =
     (untildify((master.metadata?.worktree as string) || master.cwd) as string) ||
     HOME;
+  // F7: `worktree: true | '<path>'` (default true when a subtask is named) →
+  // the host provisions `<reposDir>/<repo>-wt-<subtask>` on `<prefix>/<subtask>-<id>`
+  // off `base` and starts the child IN it, so its Changes tab works from the
+  // first second and the human can merge after approval. `worktree:false` (or
+  // no subtask) keeps today's behaviour: the child provisions itself.
+  const wantWt =
+    body.worktree === true || typeof body.worktree === 'string'
+      ? body.worktree
+      : body.worktree === false
+        ? false
+        : !!subtask;
+  if (wantWt) {
+    const r = await hostWorktree(master, {
+      subtask: sanitizeSubtask(subtask),
+      dir: typeof wantWt === 'string' ? wantWt : null,
+      base: body.base ? String(body.base) : null,
+      prefix: body.branchPrefix ? String(body.branchPrefix).replace(/[^a-zA-Z0-9._-]/g, '-') : 'child',
+    });
+    Object.assign(metadata, r.metadata);
+    return {
+      cwd: r.dir,
+      permissionMode: body.permissionMode || 'bypassPermissions',
+      metadata,
+    };
+  }
   return {
     cwd: (untildify(body.cwd ? String(body.cwd) : '') as string) || parentDir,
     permissionMode: body.permissionMode || 'bypassPermissions',
     metadata,
   };
+}
+
+// ---- F7: approval + host-executed merge ----
+// The child never merges. A human approval (local review verdict `approve`, or
+// the ✓ Verified button of request_review) on a session that owns a branch
+// stamps metadata.review = {state:'approved', at, by}; from there the merge is
+// one click (web) or one tool call (merge_session) — executed by the HOST.
+function principalLabel(me: any): string {
+  if (!me) return 'unknown';
+  if (me.kind === 'user') return me.user?.email || me.user?.name || me.user?.id || 'user';
+  if (me.kind === 'session') return `session:${me.sessionId}`;
+  return me.kind;
+}
+
+export function markApproved(id: string, by: string): boolean {
+  const s = state.getSession(id);
+  if (!s) return false;
+  const md: any = s.metadata || {};
+  if (!md.branch || md.merged) return false;
+  if (md.base && md.branch === md.base) return false;
+  state.patchSession(id, {
+    metadata: { review: { state: 'approved', at: new Date().toISOString(), by }, mergeConflict: null },
+  });
+  return true;
+}
+
+// Where the base lives: the master's checkout (its worktree or cwd), else the
+// main worktree of the child's repo.
+async function baseRepoRootFor(s: any): Promise<string | null> {
+  const master = s.metadata?.master ? state.getSession(String(s.metadata.master)) : null;
+  const candidates = [
+    master ? (untildify((master.metadata?.worktree as string) || master.cwd) as string) : null,
+  ].filter(Boolean) as string[];
+  for (const c of candidates) {
+    const info = await worktreeInfo({ cwd: c } as any);
+    if (info.branch) return c;
+  }
+  const wt = untildify((s.metadata?.worktree as string) || s.cwd) as string;
+  if (!wt) return null;
+  const { repoCommonRoot } = await import('./git.js');
+  const p = Bun.spawnSync(['git', '-C', wt, 'rev-parse', '--git-common-dir']);
+  if (p.exitCode !== 0) return null;
+  const common = Buffer.from(p.stdout).toString().trim();
+  const abs = path.isAbsolute(common) ? common : path.join(wt, common);
+  const root = await repoCommonRoot(path.dirname(abs));
+  return root;
+}
+
+async function defaultBaseFor(root: string): Promise<string> {
+  for (const b of ['main', 'master']) {
+    const p = Bun.spawnSync(['git', '-C', root, 'rev-parse', '--verify', '--quiet', `refs/heads/${b}`]);
+    if (p.exitCode === 0) return b;
+  }
+  return 'main';
+}
+
+// Who may merge a child: an admin (cookie/token), or the session that is the
+// child's master / the controller of its folder. Never the child itself.
+export function mayMerge(me: any, s: any): boolean {
+  if (auth.isAdmin(me)) return true;
+  if (me?.kind === 'session') {
+    if (me.sessionId === s.id) return false;
+    if (s.metadata?.master && String(s.metadata.master) === me.sessionId) return true;
+    const folder = s.folderId ? state.getFolder(s.folderId as string) : null;
+    if (folder?.controllerSessionId === me.sessionId) return true;
+  }
+  return false;
+}
+
+export async function mergeStatus(s: any) {
+  const md: any = s.metadata || {};
+  const root = await baseRepoRootFor(s);
+  const base = md.base ? String(md.base) : root ? await defaultBaseFor(root) : 'main';
+  const approved = md.review?.state === 'approved';
+  const merged = md.merged || null;
+  const out: any = {
+    branch: md.branch || null,
+    base,
+    repoRoot: root,
+    approved,
+    review: md.review || null,
+    merged,
+    conflict: md.mergeConflict || null,
+    canMerge: false,
+    reason: null as string | null,
+  };
+  if (!md.branch) { out.reason = 'no-branch'; return out; }
+  if (merged) { out.reason = 'merged'; return out; }
+  if (!root) { out.reason = 'no-repo'; return out; }
+  const st = await baseStatus(root, base, String(md.branch));
+  out.baseHead = st.head;
+  out.ahead = st.ahead;
+  out.dirtyFiles = st.dirtyFiles;
+  if (!st.branchExists) out.reason = 'branch-missing';
+  else if (!st.checkedOut) out.reason = 'base-not-checked-out';
+  else if (st.dirty) out.reason = 'dirty';
+  else if (st.ahead === 0) out.reason = 'nothing-to-merge';
+  else if (!approved) out.reason = 'not-approved';
+  out.canMerge = out.reason === null;
+  return out;
+}
+
+export async function mergeSession(
+  s: any,
+  o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
+  by: string
+): Promise<any> {
+  const md: any = s.metadata || {};
+  const st = await mergeStatus(s);
+  const HINT = 'merge does not run project gates — run tsc / tests / build on the base, then push';
+  if (!st.branch) return { error: 'session has no branch to merge', status: 400 };
+  if (st.merged) return { error: `already merged (${String(st.merged.sha).slice(0, 7)})`, status: 409 };
+  if (!st.repoRoot) return { error: 'could not resolve the base repository', status: 400 };
+  if (st.reason === 'not-approved' && !o.force)
+    return { error: 'not approved — the human approves first (review verdict approve / ✓ Verified)', status: 409, reason: 'not-approved' };
+  if (st.reason && st.reason !== 'not-approved')
+    return { error: st.reason === 'dirty' ? `base worktree is dirty (${(st.dirtyFiles || []).join(', ')})` : st.reason, status: 409, reason: st.reason, files: st.dirtyFiles };
+  const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
+  const message = mergeMessage({ branch: st.branch, base: st.base, title: s.title, subtask: md.subtask, sessionId: s.id, strategy });
+  const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, base: st.base, strategy, message });
+  const masterId = md.master ? String(md.master) : null;
+  if (!r.ok) {
+    if ('conflict' in r && r.conflict) {
+      state.patchSession(s.id, { metadata: { mergeConflict: { files: r.files, at: new Date().toISOString() } } });
+      const line = `merge conflict — ${st.branch} → ${st.base}: ${r.files.join(', ')} — resolve, then merge again`;
+      claude.appendChat(s.id, { kind: 'merge', state: 'conflict', branch: st.branch, base: st.base, files: r.files, text: line });
+      if (masterId && state.getSession(masterId))
+        claude.appendChat(masterId, { kind: 'merge', state: 'conflict', child: s.id, branch: st.branch, base: st.base, files: r.files, text: `[${s.title || s.id}] ${line}` });
+      return { conflict: true, files: r.files, branch: st.branch, base: st.base, status: 409 };
+    }
+    return { error: (r as any).error, reason: (r as any).reason, files: (r as any).files, status: 409 };
+  }
+  const merged = { sha: r.sha, at: new Date().toISOString(), by, strategy, base: st.base };
+  state.patchSession(s.id, { metadata: { merged, mergeConflict: null } });
+  const card = { kind: 'merge', state: 'merged', sha: r.sha, branch: st.branch, base: st.base, strategy, by, text: `merged ${st.branch} → ${st.base} (${r.sha.slice(0, 7)}, ${strategy})` };
+  claude.appendChat(s.id, card);
+  if (masterId && state.getSession(masterId))
+    claude.appendChat(masterId, { ...card, child: s.id, text: `[${s.title || s.id}] ${card.text}` });
+  let cleanup: unknown;
+  if (o.deleteBranch || o.runCleanup) {
+    // the recorded cleanup removes the worktree AND deletes the branch — a
+    // branch can't be deleted while a worktree has it checked out.
+    try { cleanup = await runCleanup(s); } catch (e) { cleanup = { error: (e as Error).message }; }
+  }
+  return { ok: true, sha: r.sha, strategy, branch: st.branch, base: st.base, hint: HINT, ...(cleanup !== undefined ? { cleanup } : {}) };
 }
 
 // A session that spawns children controls a project folder. First spawn
@@ -1670,6 +1873,8 @@ function childSummary(c: any) {
     branch: c.metadata?.branch ?? null,
     worktree: c.metadata?.worktree ?? null,
     result: c.metadata?.result ?? null,
+    review: c.metadata?.review ?? null,
+    merged: c.metadata?.merged ?? null,
   };
 }
 
@@ -3620,6 +3825,8 @@ export async function handle(
       const { value } = (await readBody(req)) as any;
       if (value === undefined) return badRequest(res, 'value required');
       state.patchSession(id, { action: null });
+      // F7: request_review's ✓ Verified is a human approval of the branch.
+      if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       try {
         claude.sendMessage(id, String(value));
       } catch (e) {
@@ -4027,6 +4234,28 @@ export async function handle(
     if (sub === 'changes/refs' && m === 'GET') {
       return json(res, await prStatus(s));
     }
+    // ---- F7: merge after approval (executed by the host) ----
+    if (sub === 'merge/status' && m === 'GET') {
+      return json(res, await mergeStatus(s));
+    }
+    if (sub === 'merge' && m === 'POST') {
+      const me = (req as any).auth;
+      if (!mayMerge(me, s))
+        return json(res, { error: 'only the human (admin) or this session\'s master/controller may merge' }, 403);
+      const body = ((await readBody(req).catch(() => null)) || {}) as any;
+      const r = await mergeSession(
+        s,
+        {
+          strategy: body.strategy,
+          deleteBranch: body.deleteBranch === true,
+          runCleanup: body.runCleanup === true,
+          force: body.force === true && auth.isAdmin(me),
+        },
+        principalLabel(me)
+      );
+      const { status, ...payload } = r;
+      return json(res, payload, status || 200);
+    }
     // ---- status summary ----
     // Enable + generate (first run reads the whole transcript). body.autoUpdate
     // seeds the checkbox.
@@ -4249,8 +4478,10 @@ export async function handle(
           return json(res, { error: error.message }, 500);
         }
         state.clearReview(id);
-        if (target === 'local' && verdict === 'approve')
+        if (target === 'local' && verdict === 'approve') {
           state.patchSession(id, { status: 'Approved' });
+          markApproved(id, principalLabel((req as any).auth)); // F7
+        }
         const sessTab =
           (s as any).tabs.find((t: any) => t.type === 'session') ||
           (s as any).tabs[0];
