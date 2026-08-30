@@ -263,8 +263,11 @@ function Cockpit() {
   // Order matches the rail's flat list (drag-to-reorder sets sortOrder), so
   // ⌘1–9, ⌘⇧↑/↓ prev-next, and the quick switcher all follow the visual d&d
   // order — new/unordered sessions sink to the end, keeping insertion order.
+  // UX1: an agent's home chat is not a row in that list (it is the בית tab of
+  // the agent surface), so it is not part of this order either — and, crucially,
+  // is never what the auto-selection below lands on.
   const active = sessions
-    .filter((s) => !s.archived)
+    .filter((s) => !s.archived && !s.metadata?.agentHome)
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   const selected = sessions.find((s) => s.id === selectedId) || null;
 
