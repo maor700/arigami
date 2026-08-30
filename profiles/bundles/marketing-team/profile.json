@@ -1,0 +1,21 @@
+{
+  "name": "marketing-team",
+  "version": "0.1.0",
+  "title": "Marketing team (6 agents)",
+  "description": "A small marketing team as Arigami agents: a manager (awesome) who runs the week, a copywriter (Mila), an image maker (Jord), a researcher (Reachard), an outreach agent (Richi) and a social manager (Fibi). Ships three shared skills — campaign-brief, content-calendar, outreach-sequence — a placeholder product memory seed and a disabled weekly-plan cron. No repos, no accounts, no real brand: replace <your-product> before use.",
+  "repos": [],
+  "plugins": [],
+  "workflows": [
+    "project-manager",
+    "machine-work"
+  ],
+  "issueSource": "none",
+  "agents": [
+    "awesome",
+    "mila",
+    "jord",
+    "reachard",
+    "richi",
+    "fibi"
+  ]
+}

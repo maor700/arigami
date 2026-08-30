@@ -1,0 +1,17 @@
+{
+  "slug": "awesome",
+  "name": "awesome",
+  "emoji": "🧭",
+  "color": "#6A4FC4",
+  "skills": [
+    "campaign-brief",
+    "project-manager"
+  ],
+  "tools": [
+    "sessions",
+    "triggers"
+  ],
+  "budget": {
+    "tokensPerDay": 400000
+  }
+}

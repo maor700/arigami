@@ -1,0 +1,16 @@
+{
+  "slug": "richi",
+  "name": "Richi",
+  "emoji": "📨",
+  "color": "#E08A2B",
+  "skills": [
+    "outreach-sequence"
+  ],
+  "tools": [
+    "gmail",
+    "web"
+  ],
+  "budget": {
+    "tokensPerDay": 250000
+  }
+}

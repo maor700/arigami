@@ -75,6 +75,8 @@ export interface BundleManifest {
   ports?: unknown;
   /** Optional allow-list; when present only these skills/ subdirs are loaded. */
   skills?: string[];
+  /** A4: optional allow-list; when present only these agents/ subdirs are loaded. */
+  agents?: string[];
 }
 
 export interface BundleCron {
@@ -87,6 +89,8 @@ export interface BundleCron {
   autonomous?: boolean;
   sessionMode?: string;
   deliver?: { push?: boolean; whatsapp?: string; master?: string };
+  /** A4: slug of a bundle/host agent the runs are born from (A2 cronjob({agent})); dropped when absent on the host */
+  agent?: string;
 }
 
 /** A4: one `agents/<slug>/` directory of a bundle. `record` is agent.json as shipped (user data, no secrets). */
@@ -207,17 +211,17 @@ export function loadBundle(dir: string, source = dir): Bundle {
       throw new Error(`cron.json is not valid JSON: ${(e as Error).message}`);
     }
   }
-  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, agents: loadAgents(dir), readme: readText(path.join(dir, 'README.md')) };
+  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, agents: loadAgents(dir, Array.isArray(manifest.agents) ? new Set(manifest.agents) : null), readme: readText(path.join(dir, 'README.md')) };
 }
 
 /** A4: `agents/<slug>/{agent.json, persona.md, assets/}` — read as shipped; validate() checks the shape. */
-function loadAgents(dir: string): BundleAgent[] {
+function loadAgents(dir: string, want: Set<string> | null): BundleAgent[] {
   const root = path.join(dir, 'agents');
   if (!isDir(root)) return [];
   const out: BundleAgent[] = [];
   for (const slug of fs.readdirSync(root).sort()) {
     const adir = path.join(root, slug);
-    if (!isDir(adir)) continue;
+    if (!isDir(adir) || (want && !want.has(slug))) continue;
     const raw = readText(path.join(adir, 'agent.json'));
     let record: Record<string, unknown> = {};
     if (raw) {
@@ -261,7 +265,7 @@ export function validate(b: Bundle): ValidationResult {
           if (typeof r.source !== 'string' || !r.source.trim()) errors.push(`repos[${i}].source is required`);
         });
     }
-    for (const k of ['plugins', 'workflows', 'skills'] as const)
+    for (const k of ['plugins', 'workflows', 'skills', 'agents'] as const)
       if (mf[k] != null && !(Array.isArray(mf[k]) && mf[k].every((x: unknown) => typeof x === 'string')))
         errors.push(`profile.json: "${k}" must be an array of strings`);
   }
@@ -281,6 +285,10 @@ export function validate(b: Bundle): ValidationResult {
     if (typeof c.schedule?.value !== 'string' && typeof c.schedule?.value !== 'number')
       errors.push(`cron[${i}].schedule.value is required`);
     if (c.enabled === true && !b.trusted) warnings.push(`cron[${i}] asks to start enabled — external bundle, will be registered disabled`);
+    if (c.agent != null) {
+      if (typeof c.agent !== 'string' || !AGENT_SLUG_RE.test(c.agent)) errors.push(`cron[${i}].agent must be an agent slug`);
+      else if (!b.agents.some((a) => a.slug === c.agent)) warnings.push(`cron[${i}] is born from agent "${c.agent}" which this bundle does not ship — used only if the host has it`);
+    }
   });
   const bundleSkills = new Set(b.skills.map((s) => s.name));
   const shippedSkills = new Set(shippedSkillNames());
@@ -650,6 +658,9 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
   // duplicated; its enabled state is left alone.
   if (!opts.skipCron && b.cron.length) {
     const tr = await import('./triggers.js');
+    const ag = await import('./agents.js');
+    // A4: the run is born from the bundle's agent when the host has it (created just above).
+    const agentFor = (c: BundleCron): string | undefined => (c.agent && ag.getAgent(c.agent) ? c.agent : undefined);
     const existing = tr.listTriggers().filter((t: any) => t.type === 'cron') as any[];
     const claimed = new Set<string>();
     for (const c of b.cron) {
@@ -665,6 +676,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
         try {
           const patch: Record<string, unknown> = { bundleKey: key };
           if (String(found.prompt).trim() !== String(c.prompt).trim()) patch.prompt = c.prompt;
+          if (agentFor(c) && found.agent !== agentFor(c)) patch.agent = agentFor(c);
           if (found.schedule?.kind !== c.schedule.kind || String(found.schedule?.value ?? '') !== String(c.schedule.value)) patch.schedule = { kind: c.schedule.kind, value: String(c.schedule.value) };
           if (found.name !== tag && !/^\[/.test(String(found.name))) patch.name = tag; // adopt the tag on a hand-made trigger, keep an earlier bundle's tag
           const t = tr.patchTrigger(found.id, patch) || found;
@@ -683,6 +695,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
           deliver: c.deliver,
           autonomous: !!c.autonomous && b.trusted,
           bundleKey: key,
+          agent: agentFor(c),
         });
         claimed.add(t.id);
         const enabled = c.enabled === true && b.trusted;

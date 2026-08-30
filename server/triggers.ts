@@ -556,6 +556,8 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
   } else {
     if (typeof patch.prompt === 'string' && patch.prompt.trim()) t.prompt = patch.prompt.trim();
     if (typeof patch.bundleKey === 'string' && patch.bundleKey) t.bundleKey = patch.bundleKey;
+    // A4: a bundle re-apply may adopt the agent its cron is born from ('' / null = none).
+    if (t.type === 'cron' && (patch.agent === null || typeof patch.agent === 'string')) t.agent = patch.agent ? String(patch.agent) : null;
     if (typeof patch.sessionMode === 'string') {
       const sm = patch.sessionMode;
       if (sm !== 'isolated' && !(sm.startsWith('existing:') && sm.length > 'existing:'.length))

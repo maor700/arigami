@@ -425,6 +425,8 @@ export function bundleCronFromTrigger(t: any, exportName = 'exported-host'): any
     schedule: { kind: t.schedule?.kind, value: String(t.schedule?.value ?? '') },
     enabled: !!t.enabled,
     autonomous: !!t.autonomous,
+    // A4: the agent the runs are born from — the bundle ships agents/ too, so the slug travels
+    ...(typeof t.agent === 'string' && t.agent ? { agent: t.agent } : {}),
     // "existing:<sessionId>" points at a session on THIS host — meaningless elsewhere
     ...(t.sessionMode && !/^existing:/.test(t.sessionMode) ? { sessionMode: t.sessionMode } : {}),
     // deliver.whatsapp (a phone JID) and deliver.master (a session id) are personal / host-bound

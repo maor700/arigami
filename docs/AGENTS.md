@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3
+# Agents ("צוות") — A1 + A2 + A3 + A4
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -115,7 +115,7 @@ fold). Gates: `bun run typecheck` (2 pre-existing errors), `bun test test/`,
 
 A2 connected identity — shipped, see below.
 A3 control — shipped, see below.
-A4 experience (slash-commands, @mentions, `marketing-team` bundle, bundles ship `agents/`).
+A4 experience — shipped, see below (slash-commands, @mentions, bundles ship `agents/`, `marketing-team`).
 
 ---
 
@@ -356,3 +356,118 @@ families parity with the host).
 - The domain allowlist cannot see desktop-driven Chrome navigation or `curl` in Bash (above).
 - A session that is already running when the cap is raised/lowered picks up the new policy on its
   next spawn (flags) — the hook and the budget check read the current agent.json on every call.
+
+---
+
+# A4 — Experience
+
+The team becomes reachable **from the composer**: slash-commands with autocomplete, `@mentions`
+that hand a message to an agent, and profile bundles that ship agents (with a six-agent showcase).
+
+## Slash-commands in the composer (`web/src/lib/composer.js`, `SlashCommands.jsx`, `SessionView.jsx ChatFooter`)
+
+Typing `/` opens the existing palette; it now merges three sources (host first, then prefix
+matches):
+
+| command | what happens | where |
+|---|---|---|
+| `/team` | a panel with every agent + status (working / n sessions / idle), **@** (insert a mention), home chat, agent page | host, runs at once |
+| `/as <agent> <text>` | a **one-off session born from the agent** that runs `<text>` — a full child in your project folder when you are its controller, else a free session in your cwd | host → `POST /__api/sessions/:id/delegate {mode:'as'}` |
+| `/agent new [name]` | the **create-agent card** in this chat (placeholder name "New agent" when none; the human edits + confirms, nothing is written before) | host → `POST /__api/sessions/:id/agent-card` |
+| `/plan <text>`, `/review [text]`, … | **data-driven**: every skill whose `SKILL.md` frontmatter has `slash: <word>` is offered as `/<word>` and rewritten to its plugin command (`/arigami:<skill> …`, `/arigami-user:<skill> …` for a user skill) before it is sent. Shipped: `dispatch` (`slash: plan`), `explain-changes` (`slash: review`). `GET /__api/skills` carries `slash` (`SLASH_RE = ^[a-z][a-z0-9-]{0,23}$`; user skills win by name) | skill |
+| anything else `/…` | pass-through to the claude CLI, as before | CLI |
+
+Resolution order for a submission (`resolveSubmission`): host command → skill slash → `@mention`
+→ plain. The palette is the same bottom sheet on phones (`max-w-[92vw]`); `/agent new` is the one
+two-word command the palette regex admits.
+
+## @mentions
+
+Typing `@` (at the start, or after whitespace/punctuation) at the end of the text opens the
+**mention palette** (agents from the store: avatar, `@slug`, name, skills; ↑↓ ↵ esc, tap on
+mobile). `@slug` and `@Name` both resolve; `dana@example.com` and `@2pm` stay text.
+
+Sending a message that mentions agents (and has text left after the tokens are stripped) does
+**not** send it to the current session — the host routes it, one `delegate` call per agent:
+
+| the caller is | what the host does | receipt `how` |
+|---|---|---|
+| the **controller of a project folder** (PM) | `wireFullChild` + `applyAgentToSession`: a **full child born from the agent**, placed in the folder, tasked with `[Task from your project controller (…)]\n\n<text>` — the same wrapper `task_session` uses | `child` |
+| any other session | the agent's **home chat** (get-or-create, `ensureHomeSession`) gets `[Forwarded from the chat "…" — the human addressed you with @slug]\n\n<text>` — now if idle, else queued with auto-play (`deliverToSession`) | `home` |
+| `/as` | a new session born from the agent (child when a PM, else free), `metadata.delegatedFrom` | `session` |
+
+Either way the **caller's** chat gets a `{kind:'delegated', agent:{slug,name,emoji,color}, target,
+targetTitle, how, delivered, mode, text}` line — rendered by `DelegatedLine.jsx` as
+**"הוקצה ל-<agent>"** · where it went · the text · **פתח →** (opens the target session). Budget (A3) is
+honoured: a spent agent gets no new child/home/session (429); an unknown agent is 404, empty text 400.
+
+### REST
+
+| method | path | |
+|---|---|---|
+| POST | `/__api/sessions/:id/delegate` `{agent, text, mode?: 'mention'\|'as'}` | `{ok, target, how, delivered, url}` (201) — `agent` is a **slug** (the composer resolves display names) |
+| POST | `/__api/sessions/:id/agent-card` `{name?, draft?}` | posts a pending `agent-card` → `{cardId, slug, state:'pending'}` (201); 409 when the slug exists |
+| GET | `/__api/skills` | `skills[].slash` |
+| POST | `/__api/profiles/apply` `{source, force?}` | `report.agents[]` (below) |
+
+## Bundles ship agents — `agents/<slug>/{agent.json, persona.md, assets/}`
+
+`server/profiles.ts` (see `docs/INSTALL.md` §3 for the whole format):
+
+- **load**: every `agents/<slug>/` dir (`profile.json.agents` is an optional allow-list, like
+  `skills`); `agent.json` must be valid JSON.
+- **validate**: slug (`^[a-z0-9][a-z0-9-]{0,39}$`, same as `agents.ts`), `name` required, `slug`
+  in the file must equal the dir, `emoji`/`color`/`model`/array fields/`budget` shapes,
+  persona ≤ 4000 chars, asset names safe and ≤ 2 MB, **no secret-looking keys** (`token`, `secret`,
+  `password`, `apiKey`); warnings for `homeSessionId` (instance-local, ignored) and for a
+  referenced skill that is neither in the bundle nor shipped. `cron.json[].agent` (the slug the
+  runs are born from — A2's `cronjob({agent})`) must be a slug; a warning when the bundle does not
+  ship it.
+- **apply** (after the skills step, so the bundle's own skills already exist on the host):
+  an **absent** agent is created (`createAgent`) with the record + persona; an **existing** agent is
+  the user's → `unchanged`, nothing touched; with **`force`** (`--force` on the CLI,
+  `{force:true}` over REST) it is `updated` to the bundle's record/persona. Skills the host does
+  not have (e.g. an external bundle's skills are still pending proposals) are **dropped and
+  reported** (`skippedSkills`), never a failure. Assets are copied when missing (all of them under
+  force). The bundle's cron is born from its agent when the host has it. `ApplyReport.agents[]`:
+  `{slug, status: created|updated|unchanged|error, assets?, skippedSkills?, error?}`.
+- **export** (`backup.ts exportBundle`, `bin/host export --bundle`): `agents/<slug>/` with
+  `agent.json` minus `homeSessionId`, `persona.md`, `assets/` — never `memory/`, `browser/`,
+  `identity.json`; `cron.json[].agent` travels too. Re-importing is idempotent.
+
+### Showcase — `profiles/bundles/marketing-team/`
+
+Six agents (English personas ≤ 20 lines, a placeholder product `<your-product>`, no accounts or
+brands): **awesome** 🧭 manager (`sessions`, `triggers`; `campaign-brief`, `project-manager`),
+**Mila** ✍️ copywriter (`web`), **Jord** 🎨 image maker (`desktop`, `web`; domains
+`unsplash.com`, `pexels.com`; one placeholder asset), **Reachard** 🔍 researcher (`web`, `*`),
+**Richi** 📨 outreach (`gmail`, `web`), **Fibi** 📅 social manager (`web`). Three generic skills the
+bundle ships and the agents reference — `campaign-brief`, `content-calendar`, `outreach-sequence`
+(all approval-gated: nothing is sent or posted without `request_action`) — a memory seed with the
+placeholder facts, and a disabled Monday "weekly-plan" cron born from awesome. Every agent has a
+modest daily token budget that A3 enforces.
+
+## Tests
+
+`test/agents-a4-web.test.js` (composer parsing: slash / `agent new` / skill slashes / mentions /
+mention query & completion / `resolveSubmission`; palette merge; `SlashPalette` skill chip,
+`MentionPalette`, `DelegatedLine`, `teamRows` + `TeamPanel`), `test/agents-a4.test.ts` (the
+showcase bundle loads + validates, agent validation errors/warnings, apply → created / unchanged /
+force-updated, skipped skills on an external bundle, cron born from the agent, `exportBundle`
+round-trip), `test/agents-a4-host.test.ts` (isolated host: `skills[].slash`, mention → home,
+mention from a PM → child in the folder, `/as` → session, 404/400/429, agent-card 201/409 + cancel,
+profiles REST apply with agents + force). `test/profile-bundles.test.ts` now covers
+`marketing-team` too.
+
+## Known limits (A4)
+
+- `/plan` and `/review` map to the closest shipped skills (`dispatch`, `explain-changes`); a user
+  skill with the same `slash:` shadows them (user skills win by name in `GET /__api/skills`, and the
+  composer picks the first item per slash word).
+- A mention's text goes to **each** mentioned agent in full (no splitting); attachments stay in the
+  draft — the delegate channel is text-only, like `task_session`.
+- The receipt line is written by the host into the caller's chat; the caller's own claude turn
+  does not see the delegated text (by design — the human addressed the agent, not this session).
+- Bundle agents reference **shared** skills only (the A1 decision): a bundle cannot ship a
+  per-agent private skill; put it under the bundle's `skills/` and reference it by name.
+

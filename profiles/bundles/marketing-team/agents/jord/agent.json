@@ -1,0 +1,21 @@
+{
+  "slug": "jord",
+  "name": "Jord",
+  "emoji": "🎨",
+  "color": "#3C9A4E",
+  "skills": [
+    "content-calendar",
+    "machine-work"
+  ],
+  "tools": [
+    "desktop",
+    "web"
+  ],
+  "domains": [
+    "unsplash.com",
+    "pexels.com"
+  ],
+  "budget": {
+    "tokensPerDay": 250000
+  }
+}

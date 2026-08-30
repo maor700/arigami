@@ -1,0 +1,16 @@
+{
+  "slug": "mila",
+  "name": "Mila",
+  "emoji": "✍️",
+  "color": "#E0594F",
+  "skills": [
+    "campaign-brief",
+    "content-calendar"
+  ],
+  "tools": [
+    "web"
+  ],
+  "budget": {
+    "tokensPerDay": 250000
+  }
+}
