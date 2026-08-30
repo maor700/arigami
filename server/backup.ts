@@ -32,6 +32,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
+export { cronBundleKey };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -48,6 +50,8 @@ export const TMP_DIR = path.join(ARIGAMI_DIR, 'tmp');
  */
 export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-plugin', 'tmp', 'backups', 'node_modules'];
 const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp'];
+/** Root-level only (F4 #7): `mcp-logs.txt`, `wa-logs.txt` … are logs that don't live under logs/. */
+export const ROOT_EXCLUDE_GLOBS = ['./*-logs.txt'];
 
 /**
  * Files a PROFILE BUNDLE must never contain — asserted by the test suite, and
@@ -76,6 +80,8 @@ export interface Manifest {
 export interface ExportResult {
   stream: Readable;
   filename: string;
+  /** stop tar early (client went away) — `done` still settles */
+  kill: () => void;
   /** resolves with tar's exit code once the stream ends */
   done: Promise<number>;
   cleanup: () => void;
@@ -140,6 +146,10 @@ function safeName(s: string): boolean {
 
 function tarArgs(extra: string[] = []): string[] {
   const ex: string[] = [];
+  // root-only globs: `*` must not cross a `/` so uploads/x-logs.txt is kept
+  ex.push('--no-wildcards-match-slash');
+  for (const g of ROOT_EXCLUDE_GLOBS) ex.push(`--exclude=${g}`);
+  ex.push('--wildcards-match-slash');
   for (const e of EXCLUDES) ex.push(`--exclude=./${e}`);
   for (const g of EXCLUDE_GLOBS) ex.push(`--exclude=${g}`);
   return [...ex, ...extra];
@@ -206,17 +216,37 @@ export function exportFull(opts: { include?: string[]; dir?: string } = {}): Exp
     cleanup();
     if (code !== 0 && code !== 1) console.error(`[backup] tar exited ${code}: ${err.trim().split('\n').pop()}`); // 1 = "file changed as we read it"
   });
-  return { stream: p.stdout, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup };
+  return { stream: p.stdout, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup, kill: () => { try { p.kill('SIGTERM'); } catch {} } };
+}
+
+/**
+ * Resolve when `w` has flushed everything. Created BEFORE piping: on a big
+ * archive the file stream's 'finish' fires before tar's 'close' settles
+ * `done`, and a listener attached after the fact waits forever (F4 #1 — the
+ * CLI "hang" after a complete 38 MB export).
+ */
+export function whenFinished(w: fs.WriteStream): Promise<void> {
+  return new Promise<void>((res, rej) => {
+    if (w.writableFinished) return res();
+    w.once('finish', () => res());
+    w.once('error', rej);
+  });
+}
+
+/** Pipe an export stream into a file; resolves with tar's exit code once both tar and the file are done. */
+export async function exportToFile(r: ExportResult, out: string): Promise<number> {
+  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  const w = fs.createWriteStream(out);
+  const finished = whenFinished(w);
+  r.stream.pipe(w);
+  const code = await r.done;
+  await finished;
+  return code;
 }
 
 /** Full export straight to a file (CLI). */
 export async function exportFullToFile(out: string, opts: { include?: string[]; dir?: string } = {}): Promise<Manifest> {
-  const r = exportFull(opts);
-  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-  const w = fs.createWriteStream(out);
-  r.stream.pipe(w);
-  const code = await r.done;
-  await new Promise<void>((res, rej) => { w.on('finish', () => res()); w.on('error', rej); });
+  const code = await exportToFile(exportFull(opts), out);
   if (code !== 0 && code !== 1) throw new Error(`tar exited ${code}`);
   return readManifestFromArchive(out);
 }
@@ -347,8 +377,14 @@ function swapContents(dir: string, staging: string, ts: string): string {
 // ---- profile bundle export ---------------------------------------------------------
 
 export interface BundleExportOptions {
-  /** bundle name (profile.json "name"); default: provenance name or "exported-host" */
+  /**
+   * bundle name (profile.json "name"); default "exported-host". Never the
+   * last applied bundle's provenance name (F4 #2): that re-tagged every cron
+   * as "[<that bundle>] …" and duplicated them on re-import.
+   */
   name?: string;
+  /** include memory/USER.md + MEMORY.md as memory-seed/ (default true; `--no-memory` → false — F4 #4) */
+  memory?: boolean;
   title?: string;
   description?: string;
   /** write here (created / emptied) — default $ARIGAMI_DIR/tmp/bundle-<stamp>/ */
@@ -366,14 +402,22 @@ export interface BundleExportResult {
   cron: number;
   repos: number;
   memorySeed: string[];
+  /** true when memory-seed/ carries USER.md/MEMORY.md — personal profile, review before sharing */
+  memoryWarning: boolean;
 }
 
-const CRON_TAG_RE = /^\[[a-z0-9-]+\]\s+/;
-
-/** Strip host-bound bits from a live cron trigger so the bundle re-applies anywhere. */
-export function bundleCronFromTrigger(t: any): any {
+/**
+ * Strip host-bound bits from a live cron trigger so the bundle re-applies
+ * anywhere. `key` (F4 #2) is the trigger's existing bundleKey — the one it was
+ * created from, whichever bundle that was — or "<exportName>/<slug>" for a
+ * hand-made trigger; profiles.ts matches on it so importing an export back
+ * into the same instance updates instead of duplicating.
+ */
+export function bundleCronFromTrigger(t: any, exportName = 'exported-host'): any {
+  const name = String(t.name || 'cron').replace(CRON_TAG_RE, '');
   return {
-    name: String(t.name || 'cron').replace(CRON_TAG_RE, ''),
+    name,
+    key: typeof t.bundleKey === 'string' && t.bundleKey ? t.bundleKey : cronBundleKey(exportName, name),
     prompt: t.prompt,
     schedule: { kind: t.schedule?.kind, value: String(t.schedule?.value ?? '') },
     enabled: !!t.enabled,
@@ -412,8 +456,7 @@ function copyDir(from: string, to: string): void {
  */
 export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult {
   const dir = ARIGAMI_DIR;
-  const prov = readJson(path.join(dir, 'profile.json'));
-  const name = (opts.name || prov?.name || 'exported-host').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'exported-host';
+  const name = (opts.name || 'exported-host').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'exported-host';
   const out = path.resolve(opts.out || path.join(ensureTmp(dir), `bundle-${stamp()}`));
   const rel = path.relative(dir, out);
   if (out === dir || (!rel.startsWith('..') && !path.isAbsolute(rel) && !rel.startsWith('tmp'))) throw new Error(`refusing to write a bundle into ${out} (inside $ARIGAMI_DIR)`);
@@ -426,7 +469,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
   const manifest = {
     name,
     version: '1.0.0',
-    title: opts.title || prov?.title || `Exported from an Arigami host`,
+    title: opts.title || `Exported from an Arigami host`,
     description: opts.description || `Profile bundle exported on ${new Date().toISOString().slice(0, 10)} (Arigami ${version}): ${repos.length} repo(s), the instance's user skills, memory seed and cron jobs. Contains no secrets, accounts, chat or sessions.`,
     repos,
     plugins: [],
@@ -448,7 +491,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
   }
 
   const memorySeed: string[] = [];
-  for (const f of ['USER.md', 'MEMORY.md']) {
+  for (const f of opts.memory === false ? [] : ['USER.md', 'MEMORY.md']) {
     const src = path.join(dir, 'memory', f);
     if (!fs.existsSync(src)) continue;
     fs.mkdirSync(path.join(out, 'memory-seed'), { recursive: true });
@@ -457,7 +500,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
   }
 
   const triggers = opts.cron ?? (readJson<any>(path.join(dir, 'triggers.json'))?.triggers ?? readJson<any[]>(path.join(dir, 'triggers.json')) ?? []);
-  const cron = (Array.isArray(triggers) ? triggers : []).filter((t) => t && t.type === 'cron' && t.prompt).map(bundleCronFromTrigger);
+  const cron = (Array.isArray(triggers) ? triggers : []).filter((t) => t && t.type === 'cron' && t.prompt).map((t) => bundleCronFromTrigger(t, name));
   fs.writeFileSync(path.join(out, 'cron.json'), JSON.stringify(cron, null, 2) + '\n');
 
   fs.writeFileSync(
@@ -467,18 +510,18 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
       `| part | contents |\n|---|---|\n` +
       `| \`profile.json\` | ${repos.length} repo(s)${Object.keys(settings).length ? `, settings: ${Object.keys(settings).join(', ')}` : ''} |\n` +
       `| \`skills/\` | ${skills.length ? skills.join(', ') : '—'} |\n` +
-      `| \`memory-seed/\` | ${memorySeed.length ? memorySeed.join(', ') : '—'} |\n` +
+      `| \`memory-seed/\` | ${memorySeed.length ? memorySeed.join(', ') + ' — the exporting user\'s own profile/notes; review before sharing (export with \`--no-memory\` to leave them out)' : '—'} |\n` +
       `| \`cron.json\` | ${cron.length} job(s) (registered disabled on apply unless the bundle is shipped) |\n\n` +
       `Not included, by design: accounts, API keys, users/pairing, chat history, sessions, uploads. Use a full backup (\`bin/host export --full\`) for those.\n`,
   );
-  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed };
+  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, memoryWarning: memorySeed.length > 0 };
 }
 
 /** tar.gz stream of a bundle dir (the export UI download). */
 export function tarDir(dir: string, filename: string): ExportResult {
   const p = spawn('tar', ['-czf', '-', '-C', dir, '.'], { stdio: ['ignore', 'pipe', 'pipe'] });
   const done = new Promise<number>((resolve) => p.on('close', (code) => resolve(code ?? 1)));
-  return { stream: p.stdout, filename, done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} } };
+  return { stream: p.stdout, filename, done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: () => { try { p.kill('SIGTERM'); } catch {} } };
 }
 
 /** Extract a bundle archive into $ARIGAMI_DIR/profiles/<name>/ and return the dir (apply is profiles.ts's job). */
@@ -499,7 +542,7 @@ export function unpackBundle(file: string): { dir: string; name: string } {
 }
 
 // ---- CLI (bin/host export|import) ----------------------------------------------------
-// bun server/backup.ts export --full <out.tgz> [--include a,b] | export --bundle <out-dir|out.tgz> | import <file.tgz> [--force] | inspect <file>
+// bun server/backup.ts export --full <out.tgz> [--include a,b] | export --bundle <out-dir|out.tgz> [--name n] [--no-memory] | import <file.tgz> [--force] | inspect <file>
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
@@ -518,16 +561,15 @@ if (import.meta.main) {
       tr.load();
       const target = positional[0];
       const asTgz = !!target && /\.(tgz|tar\.gz)$/.test(target);
-      const r = exportBundle({ out: asTgz ? undefined : target, name: val('--name'), cron: tr.listTriggers() });
+      const r = exportBundle({ out: asTgz ? undefined : target, name: val('--name'), memory: !flag('--no-memory'), cron: tr.listTriggers() });
       if (asTgz) {
         const t = tarDir(r.dir, path.basename(target));
-        const w = fs.createWriteStream(target);
-        t.stream.pipe(w);
-        await t.done;
-        await new Promise<void>((res) => w.on('finish', () => res()));
+        const code = await exportToFile(t, target);
         t.cleanup();
-        out({ ok: true, file: path.resolve(target), name: r.name, skills: r.skills, cron: r.cron, repos: r.repos, memorySeed: r.memorySeed });
+        if (code !== 0) throw new Error(`tar exited ${code}`);
+        out({ ok: true, file: path.resolve(target), name: r.name, skills: r.skills, cron: r.cron, repos: r.repos, memorySeed: r.memorySeed, memoryWarning: r.memoryWarning });
       } else out({ ok: true, ...r });
+      if (r.memoryWarning) process.stderr.write(`warning: bundle includes memory-seed/${r.memorySeed.join(', ')} (the user's own profile/notes) — review before sharing, or export with --no-memory\n`);
     } else if (cmd === 'import') {
       const file = positional[0];
       if (!file) throw new Error('usage: import <file.tgz> [--force]');
@@ -549,7 +591,7 @@ if (import.meta.main) {
       const d = detectArchive(file);
       out({ kind: d.kind, entries: d.entries.length, manifest: d.kind === 'full' ? readManifestFromArchive(file) : null });
     } else {
-      process.stderr.write('usage: bun server/backup.ts export --full [out.tgz] [--include a,b] | export --bundle [out-dir|out.tgz] [--name n] | import <file.tgz> [--force] | inspect <file>\n');
+      process.stderr.write('usage: bun server/backup.ts export --full [out.tgz] [--include a,b] | export --bundle [out-dir|out.tgz] [--name n] [--no-memory] | import <file.tgz> [--force] | inspect <file>\n');
       process.exitCode = 2;
     }
   } catch (e) {

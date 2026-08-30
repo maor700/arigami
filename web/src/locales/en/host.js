@@ -45,6 +45,8 @@ export const strings = {
   'host.exportBundle': 'Download profile bundle',
   'host.exporting': 'Preparing…',
   'host.import': 'Import…',
+  'host.exportMemory': 'Bundle: include memory seed (USER.md / MEMORY.md)',
+  'host.exportMemory.warn': 'The bundle includes USER.md / MEMORY.md — your own profile and notes. Review before sharing.',
   'host.importForce': 'Force (even while sessions are working)',
   'host.confirmImport.title': 'Restore this backup?',
   'host.confirmImport.body': '{file} — a full backup REPLACES the data dir (the current one is kept as a timestamped .bak) and the host restarts; a profile bundle is applied additively (repos, skills as proposals, memory seed, disabled cron jobs).',

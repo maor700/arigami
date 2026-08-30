@@ -23,6 +23,7 @@ Everything under `$ARIGAMI_DIR` **except** the host-bound or regenerable bits:
 | `run/` | pid + lock of the *running* process |
 | `chrome-sessions/`, `chrome-base/` | browser profiles (GBs); logins are re-saved with `save_browser_logins` |
 | `logs/`, `tmp/`, `backups/` | logs, export scratch space, previous in-place restores |
+| `*-logs.txt` at the root (`mcp-logs.txt`, `wa-logs.txt`) | integration logs that don't live under `logs/` (root level only — an upload named `x-logs.txt` is kept) |
 | `user-plugin/` | a symlink shim regenerated at boot (F2) |
 | `*.bak-*` | earlier `.bak` copies |
 
@@ -61,8 +62,12 @@ the manifest records it.
    *Docker:* `/data` is a mount point and can't be renamed — the contents are
    swapped instead and the previous data lands in `/data/backups/<stamp>.bak/`.
 4. The host restarts (B4-lite: needs a supervisor — systemd / launchd / pm2 /
-   the container's entrypoint). Without one the response says
-   `restartRequired` and you run `bin/host restart` yourself.
+   the container's entrypoint). A supervisor only counts when it is the
+   **parent of this process** (inherited `pm_id` / `INVOCATION_ID` in a host
+   started from a shell don't) — without one the host **stays up** on the
+   old code/identity and the response says
+   `restart: { scheduled: false, reason: "no supervisor — restart manually" }`;
+   run `bin/host restart` yourself.
 5. Nothing is deleted. Remove `.bak-*` dirs yourself once you're happy.
 
 Restoring another machine's backup brings **its** users and pairing — your
@@ -119,9 +124,28 @@ The Claude account (`accounts.json` / `secrets.env`) travels with the backup;
 ```sh
 bin/host export --bundle ./my-setup          # a directory you can commit to git
 bin/host export --bundle my-setup.tgz        # or one file
+bin/host export --bundle --no-memory out/    # leave memory/USER.md + MEMORY.md out
+bin/host export --bundle --name team-x out/  # profile.json "name" (default: exported-host)
 # elsewhere:
 bin/host profile apply ./my-setup            # or: bin/host import my-setup.tgz
 ```
+
+**`memory-seed/` is personal.** It carries your `memory/USER.md` and
+`MEMORY.md` — the profile the host has built of *you* (name, family,
+employer, habits…). It is not a secret in the credential sense, but it is
+not something to ship to strangers either: the CLI prints a warning when it
+went in, the Settings card shows the same line next to its *include memory
+seed* checkbox, and the bundle README says so. Review the two files or export
+with `--no-memory` (UI: untick the checkbox, REST: `?memory=0`) before
+sharing.
+
+The bundle's `name` is always `exported-host` (or `--name` / `?name=`) —
+never the name of the last bundle you *applied*. Cron jobs carry a stable
+`key` (`<bundle>/<slug>`, e.g. `solo-dev/standup`) that survives export →
+import hops, so importing an export back into the same instance **updates**
+the existing triggers (prompt/schedule) instead of adding `[exported-host] …`
+twins; a hand-made trigger that matches by name + prompt is adopted the same
+way. Trigger enabled/disabled state is never changed by a re-apply.
 
 A bundle is exactly what `profiles.ts` applies (see `docs/INSTALL.md` §3):
 registered repos (minus local env-file paths) and a few portable settings

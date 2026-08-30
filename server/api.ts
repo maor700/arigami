@@ -92,14 +92,14 @@ const IMPORT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 async function handleHostExport(
   req: IncomingMessage,
   res: ServerResponse,
-  opts: { mode: string; include: string[] }
+  opts: { mode: string; include: string[]; memory?: boolean; name?: string }
 ): Promise<void> {
   const bk = await import('./backup.js');
   let r: import('./backup.js').ExportResult;
   try {
     if (opts.mode === 'bundle') {
       const tr = await import('./triggers.js');
-      const b = bk.exportBundle({ cron: tr.listTriggers() });
+      const b = bk.exportBundle({ cron: tr.listTriggers(), memory: opts.memory !== false, name: opts.name });
       r = bk.tarDir(b.dir, `arigami-bundle-${b.name}-${bk.stamp()}.tgz`);
     } else if (opts.mode === 'full') {
       r = bk.exportFull({ include: opts.include });
@@ -113,9 +113,16 @@ async function handleHostExport(
     'Cache-Control': 'no-store',
     'X-Arigami-Export': opts.mode,
   });
+  // F4 #1: pipe() ends `res` when tar's stdout ends; `done` (tar's close) can
+  // settle after or before that — end explicitly either way, and stop tar
+  // when the client goes away mid-stream so it never runs to completion for nobody.
+  let aborted = false;
+  res.on('close', () => { if (!res.writableFinished) { aborted = true; r.kill(); try { r.stream.destroy(); } catch {} } });
   r.stream.pipe(res);
-  req.on('close', () => { try { r.stream.destroy(); } catch {} });
-  await r.done;
+  const code = await r.done;
+  if (!res.writableEnded) res.end();
+  if (aborted) console.log(`[backup] export ${opts.mode} aborted by the client`);
+  else if (code !== 0 && code !== 1) console.error(`[backup] export ${opts.mode}: tar exited ${code}`);
   r.cleanup();
 }
 
@@ -207,10 +214,16 @@ async function handleHostImport(
     }
     const r = await bk.importFull(file, { force, busyCount: hc.busySessions });
     broadcast({ type: 'host', event: { kind: 'import-done', mode: 'full', backupDir: r.backupDir, version: r.manifest.version } });
-    let restart: { scheduled: string } | null = null;
+    // F4 #3: no supervisor → say so and stay up (the data dir is already
+    // swapped; `bin/host restart` finishes the job). Never exit unsupervised.
+    let restart: { scheduled: string | false; reason?: string; busySessions?: number };
     let restartError: string | null = null;
-    try { restart = hc.restarts.request('now', 'import'); } catch (e) { restartError = (e as Error).message; }
-    return json(res, { ok: true, kind, ...r, restart, restartError, manager: hc.detectManager() });
+    const manager = hc.detectManager();
+    if (manager === 'none') restart = { scheduled: false, reason: 'no supervisor — restart manually' };
+    else {
+      try { restart = hc.restarts.request('now', 'import'); } catch (e) { restartError = (e as Error).message; restart = { scheduled: false, reason: restartError }; }
+    }
+    return json(res, { ok: true, kind, ...r, restart, restartError, manager });
   } catch (e) {
     const err = e as Error & { status?: number };
     return json(res, { error: err.message }, err.status || 500);
@@ -1394,7 +1407,12 @@ export async function handle(
     // is a plain download (cookie or API token) so `curl -OJ` works too.
     if (p === '/__api/host/export' && m === 'GET') {
       if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
-      return await handleHostExport(req, res, { mode: u.searchParams.get('mode') || 'full', include: (u.searchParams.get('include') || '').split(',').filter(Boolean) });
+      return await handleHostExport(req, res, {
+        mode: u.searchParams.get('mode') || 'full',
+        include: (u.searchParams.get('include') || '').split(',').filter(Boolean),
+        memory: !['0', 'false', 'no'].includes(String(u.searchParams.get('memory') || '')),
+        name: u.searchParams.get('name') || undefined,
+      });
     }
     if (p.startsWith('/__api/host/') && (m === 'POST' || m === 'DELETE')) {
       const hc = await import('./host-control.js');
@@ -1416,7 +1434,12 @@ export async function handle(
         if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
         if (sub === 'export') {
           const body: Record<string, unknown> = String(req.headers['content-type'] || '').includes('json') ? await readBody(req).catch(() => ({})) : {};
-          return await handleHostExport(req, res, { mode: String(body.mode || u.searchParams.get('mode') || 'full'), include: Array.isArray(body.include) ? body.include.map(String) : [] });
+          return await handleHostExport(req, res, {
+            mode: String(body.mode || u.searchParams.get('mode') || 'full'),
+            include: Array.isArray(body.include) ? body.include.map(String) : [],
+            memory: body.memory !== false && !['0', 'false', 'no'].includes(String(u.searchParams.get('memory') || '')),
+            name: typeof body.name === 'string' ? body.name : u.searchParams.get('name') || undefined,
+          });
         }
         return await handleHostImport(req, res, u, hc);
       }

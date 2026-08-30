@@ -157,6 +157,27 @@ test('health: injected deps → result persisted; claude failure fails the step'
   expect(file.health.ok).toBe(false);
 });
 
+test('funnel: a late `install` is backdated to the earliest known event, or the data dir birth time (F4 #5)', () => {
+  const dir = fresh();
+  fs.writeFileSync(path.join(dir, 'funnel.jsonl'), JSON.stringify({ name: 'session.first', at: '2026-08-01T00:49:00.000Z' }) + '\n' + JSON.stringify({ name: 'pm.first_tree', at: '2026-08-02T10:00:00.000Z' }) + '\n');
+  const r = runInChild(
+    "const f=await import('./server/funnel.js');const first=f.firstTime('install');const evs=f.readEvents();emit({first,install:evs.find(e=>e.name==='install').at,later:f.firstTime('cron.first'),cronAt:evs.length});",
+    { ARIGAMI_DIR: dir, ARIGAMI_FUNNEL_QUIET: '1' },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].first).toBe(true);
+  expect(r.out[0].install).toBe('2026-08-01T00:49:00.000Z');
+  // fresh dir, no history: install is "now" (or the dir's birth time, never in the future)
+  const dir2 = fresh();
+  const r2 = runInChild(
+    "const f=await import('./server/funnel.js');const t0=Date.now();f.firstTime('install');emit({at:f.readEvents()[0].at,t0});",
+    { ARIGAMI_DIR: dir2, ARIGAMI_FUNNEL_QUIET: '1' },
+  );
+  expect(r2.ok).toBe(true);
+  expect(Date.parse(r2.out[0].at)).toBeLessThanOrEqual(r2.out[0].t0 + 5_000);
+  expect(Date.parse(r2.out[0].at)).toBeGreaterThan(r2.out[0].t0 - 60_000);
+});
+
 test('funnel: firstTime is idempotent across processes; readEvents parses the file', () => {
   const dir = fresh();
   const body = "const f=await import('./server/funnel.js');emit({first:f.firstTime('session.first'),again:f.firstTime('session.first'),n:f.readEvents().length});";
