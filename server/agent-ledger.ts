@@ -131,6 +131,24 @@ export function totalsOf(entries: ActivityEntry[]): Totals {
   return t;
 }
 
+/**
+ * UX1 — per-session totals for the "runs" tab of the agent surface: which of the
+ * agent's sessions cost what. Keyed by sessionId; entries with no session (a
+ * budget warning, a policy denial outside a session) are ignored.
+ */
+export function perSession(entries: ActivityEntry[]): Record<string, { tokens: number; costUsd: number; turns: number }> {
+  const out: Record<string, { tokens: number; costUsd: number; turns: number }> = {};
+  for (const e of entries) {
+    if (e.kind !== 'turn' || !e.sessionId) continue;
+    const row = (out[e.sessionId] ||= { tokens: 0, costUsd: 0, turns: 0 });
+    row.turns++;
+    row.tokens += Number(e.tokens) || 0;
+    row.costUsd += Number(e.costUsd) || 0;
+  }
+  for (const row of Object.values(out)) row.costUsd = Math.round(row.costUsd * 1e6) / 1e6;
+  return out;
+}
+
 /** `today` | `7d` | `30d` → the window start. */
 export function rangeStart(range: string, now: Date = new Date()): Date {
   if (range === '7d' || range === '30d') {
