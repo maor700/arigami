@@ -32,6 +32,8 @@ export type SkillSource = 'shipped' | 'user';
 const GRAPH_CACHE = path.join(cfg.configDir!, 'skills-graph.json');
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+// A4: `slash:` frontmatter value — one lowercase word the composer maps to the skill.
+export const SLASH_RE = /^[a-z][a-z0-9-]{0,23}$/;
 const TEXT_EXT = new Set(['.md', '.sh', '.js', '.ts', '.json', '.txt', '.yml', '.yaml', '.mjs']);
 const MAX_FILE = 200_000;
 
@@ -117,6 +119,8 @@ export interface SkillSummary {
   name: string;
   description: string;
   argumentHint: string;
+  /** A4: optional `slash:` frontmatter — the composer offers the skill as /<slash> (e.g. `slash: plan`). */
+  slash: string;
   files: { name: string; size: number }[];
   /** where the effective copy lives; user overrides shipped by name */
   source: SkillSource;
@@ -146,6 +150,7 @@ function readSkillMeta(dir: string): SkillSummary {
     name: dir,
     description: fm.description || '',
     argumentHint: fm['argument-hint'] || '',
+    slash: SLASH_RE.test(fm.slash || '') ? fm.slash : '',
     files: listSupporting(full),
     source,
     overridesShipped: source === 'user' && hasSkillIn(SKILLS_DIR, dir),

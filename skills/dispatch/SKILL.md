@@ -1,6 +1,7 @@
 ---
 description: Arigami master/worker orchestration — decompose a large task into a tree of worker sessions, spawn them (read-only or mutating-with-worktree), read thin results, decide what's next, and integrate. One skill, role-branched: you act master-side toward children and worker-side toward your parent, possibly both at once. Loaded by any session that needs to farm work out, or that was spawned as a worker.
 argument-hint: [task description, if you are the root master]
+slash: plan
 ---
 
 # Dispatch (Arigami master/worker orchestration)

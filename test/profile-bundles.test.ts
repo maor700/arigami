@@ -13,8 +13,8 @@ const ROOT = path.resolve(import.meta.dir, '..');
 const BUNDLES = path.join(ROOT, 'profiles', 'bundles');
 const names = fs.readdirSync(BUNDLES).filter((n) => fs.existsSync(path.join(BUNDLES, n, 'profile.json'))).sort();
 
-test('the three showcase bundles + solo-dev ship', () => {
-  expect(names).toEqual(['agency-client', 'il-whatsapp-business', 'ops', 'solo-dev']);
+test('the showcase bundles + solo-dev ship', () => {
+  expect(names).toEqual(['agency-client', 'il-whatsapp-business', 'marketing-team', 'ops', 'solo-dev']);
 });
 
 for (const name of names) {

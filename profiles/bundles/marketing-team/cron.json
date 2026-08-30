@@ -1,0 +1,12 @@
+[
+  {
+    "name": "weekly-plan",
+    "prompt": "Run the campaign-brief skill for the current week's goal from MEMORY.md (or ask the human for one with request_action), then hand each agent its part: Mila the copy, Jord the visuals, Reachard any open research questions, Richi the outreach list, Fibi the content calendar. Report the plan as a short artifact and stop \u2014 every send/post waits for the human.",
+    "schedule": {
+      "kind": "cron",
+      "value": "0 9 * * 1"
+    },
+    "enabled": false,
+    "agent": "awesome"
+  }
+]

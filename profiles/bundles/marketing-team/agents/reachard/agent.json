@@ -1,0 +1,18 @@
+{
+  "slug": "reachard",
+  "name": "Reachard",
+  "emoji": "🔍",
+  "color": "#C9A227",
+  "skills": [
+    "campaign-brief"
+  ],
+  "tools": [
+    "web"
+  ],
+  "domains": [
+    "*"
+  ],
+  "budget": {
+    "tokensPerDay": 300000
+  }
+}

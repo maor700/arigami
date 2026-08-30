@@ -1,5 +1,6 @@
 ---
 description: Explain this session's git changes in the host Changes tab — a summary per changed file plus cross-file "feature" write-ups, in the language the user asked. Read-only; run from the main session.
+slash: review
 ---
 
 # Explain Changes

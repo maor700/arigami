@@ -17,7 +17,8 @@ import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
 import OrchestrationTab from './OrchestrationTab.jsx';
 import { Truncate } from './Truncate.jsx';
-import { SlashPalette, CapabilitiesPanel, buildSlashItems } from './SlashCommands.jsx';
+import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
+import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls from './TermControls.jsx';
 import { ActionBar } from './ActionCard.jsx';
@@ -830,16 +831,27 @@ function ChatFooter({ session }) {
   // bare-string slashCommands captured before this shape existed.
   const commands = caps?.commands || (caps?.slashCommands || []).map((name) => ({ name }));
 
-  // The palette shows while the input is a single "/token" (no space yet).
-  const slashMatch = /^\/([\w:-]*)$/.exec(text);
+  // A4: host agent commands (/team, /as, /agent new) + skills with a `slash:`
+  // field (/plan, /review, user skills) join the palette; "@" suggests agents.
+  const { agents, sessions: sessionsAll } = useStore();
+  const skills = useSkills();
+  const [teamOpen, setTeamOpen] = useState(false);
+  const extraItems = useMemo(() => [...agentCommandItems(), ...skillSlashItems(skills)], [skills]);
+
+  // The palette shows while the input is a single "/token" (no space yet) —
+  // "/agent new" is two words, so the second word is allowed for that one.
+  const slashMatch = /^\/([\w:-]*)$/.exec(text) || /^\/(agent(?: [a-z]*)?)$/.exec(text);
   const query = slashMatch ? slashMatch[1] : '';
   const items = useMemo(
-    () => (slashMatch ? buildSlashItems(query, commands) : []),
-    [slashMatch, query, commands]
+    () => (slashMatch ? buildSlashItems(query, commands, extraItems) : []),
+    [slashMatch, query, commands, extraItems]
   );
+  const mq = mentionQuery(text);
+  const mentionItems = useMemo(() => (mq !== null ? buildMentionItems(mq, agents) : []), [mq, agents]);
+  const mentionOpen = mq !== null && !dismissed && mentionItems.length > 0;
   const paletteOpen = !!slashMatch && !dismissed && items.length > 0;
-  useEffect(() => setActive(0), [query]);
-  useEffect(() => { if (!slashMatch) setDismissed(false); }, [slashMatch]);
+  useEffect(() => setActive(0), [query, mq]);
+  useEffect(() => { if (!slashMatch && mq === null) setDismissed(false); }, [slashMatch, mq]);
 
   const focusInput = () => requestAnimationFrame(() => taRef.current?.focus());
 
@@ -869,13 +881,44 @@ function ChatFooter({ session }) {
   // commands are inserted as "/name " so the user can add args, then ↵ sends.
   const accept = (item) => {
     if (!item) return;
-    if (item.host) {
+    if (item.agentCmd) {
+      // A4: /team runs at once; /as and /agent new want arguments.
+      if (item.run) { runHostCommand({ type: item.agentCmd }); setText(''); return; }
+      setText('/' + item.name + ' ');
+      setDismissed(true);
+      focusInput();
+    } else if (item.host) {
       setPanelTab(item.tab);
       setText('');
     } else {
       setText('/' + item.name + ' ');
       setDismissed(true);
       focusInput();
+    }
+  };
+
+  const acceptMention = (a) => {
+    if (!a) return;
+    setText((t) => completeMention(t, a.slug));
+    setDismissed(true);
+    focusInput();
+  };
+
+  // A4: the host-side outcomes of a submission (never sent to claude).
+  const runHostCommand = async (r) => {
+    if (r.type === 'team') { setTeamOpen(true); return; }
+    if (r.type === 'as-usage') { toastError(t('dialogs.asUsage')); return; }
+    if (r.type === 'unknown-agent') { toastError(t('dialogs.unknownAgent', { name: r.name })); return; }
+    if (r.type === 'agent-new') {
+      await api.post(`/sessions/${session.id}/agent-card`, { name: r.name || '' });
+      return;
+    }
+    if (r.type === 'as') {
+      await api.post(`/sessions/${session.id}/delegate`, { agent: r.agent.slug, text: r.text, mode: 'as' });
+      return;
+    }
+    if (r.type === 'mention') {
+      for (const a of r.agents) await api.post(`/sessions/${session.id}/delegate`, { agent: a.slug, text: r.text, mode: 'mention' });
     }
   };
 
@@ -918,7 +961,22 @@ function ChatFooter({ session }) {
     const quotedPrefix = quoted
       ? `> ${quoted.text.split('\n').join('\n> ')}\n\n`
       : '';
-    const fullText = quotedPrefix + t;
+    // A4: slash-commands / @mentions the host answers itself (see lib/composer.js).
+    const resolved = resolveSubmission(t, { skills, agents });
+    if (resolved.type !== 'plain' && resolved.type !== 'skill') {
+      setText('');
+      try {
+        await runHostCommand(resolved.type === 'mention' ? { ...resolved, text: quotedPrefix + resolved.text } : resolved);
+      } catch (e) {
+        setText(t);
+        toastError(e);
+      } finally {
+        sendingRef.current = false;
+      }
+      return;
+    }
+    // A skill slash (/plan …) is rewritten to its plugin command (/arigami:dispatch …).
+    const fullText = quotedPrefix + (resolved.type === 'skill' ? resolved.text : t);
     const payload = { text: fullText, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
     setLastSent(session.id, { text: fullText, attachments: sentAttachments });
     setText('');
@@ -991,6 +1049,12 @@ function ChatFooter({ session }) {
   };
 
   const onKeyDown = (e) => {
+    if (mentionOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(mentionItems.length - 1, i + 1)); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptMention(mentionItems[active]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setDismissed(true); return; }
+    }
     if (paletteOpen) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(items.length - 1, i + 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
@@ -1023,6 +1087,10 @@ function ChatFooter({ session }) {
       onDrop={onDrop}
     >
       {paletteOpen && <SlashPalette items={items} active={active} onPick={accept} onHover={setActive} />}
+      {mentionOpen && !paletteOpen && <MentionPalette items={mentionItems} active={active} onPick={acceptMention} onHover={setActive} />}
+      {teamOpen && (
+        <TeamPanel agents={agents} sessions={sessionsAll} onClose={() => setTeamOpen(false)} onMention={(a) => { setText((t) => (t ? `${t} @${a.slug} ` : `@${a.slug} `)); focusInput(); }} />
+      )}
       {panelTab && (
         <CapabilitiesPanel capabilities={caps} session={session} initialTab={panelTab} onClose={() => setPanelTab(null)} onPickCommand={insertCommand} />
       )}

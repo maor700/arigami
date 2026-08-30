@@ -149,10 +149,14 @@ my-bundle/
 ├── skills/<name>/SKILL.md
 ├── memory-seed/USER.md   # optional
 ├── memory-seed/MEMORY.md # optional
-└── cron.json             # [{name, prompt, schedule:{kind:"cron|interval|at", value}, enabled?}]
+├── cron.json             # [{name, prompt, schedule:{kind:"cron|interval|at", value}, enabled?, agent?}]
+└── agents/<slug>/        # A4, optional — agents ("צוות") the bundle ships
+    ├── agent.json        #   {name, emoji?, color?, model?, skills?[], tools?[], domains?[], budget?, autoApprove?[]} — no secrets
+    ├── persona.md        #   ≤ ~20 lines "who you are + limits"
+    └── assets/           #   brand/style references (optional)
 ```
 
-`profiles/bundles/solo-dev/` in the repo is the reference bundle; `agency-client`, `ops` and `il-whatsapp-business` are the showcase bundles (see `profiles/README.md`).
+`profiles/bundles/solo-dev/` in the repo is the reference bundle; `agency-client`, `ops`, `il-whatsapp-business` and `marketing-team` (six agents) are the showcase bundles (see `profiles/README.md`).
 
 ### What "apply" does (idempotent, additive)
 
@@ -161,7 +165,8 @@ my-bundle/
 | `repos[]` | upserted into `repos.json` — Setup then provisions them per step |
 | `skills/` | staged through the skill-proposal pipeline (M3). **Shipped bundle + new skill ⇒ applied.** External bundle, or any change to an existing skill ⇒ **pending proposal** in Brain (§7.12) |
 | `memory-seed/` | lines **appended** to `USER.md` / `MEMORY.md` only when missing — never overwrites |
-| `cron.json` | cron triggers registered **disabled** unless `enabled:true` on a shipped bundle; named `[<bundle>] <name>` so re-apply finds them |
+| `cron.json` | cron triggers registered **disabled** unless `enabled:true` on a shipped bundle; named `[<bundle>] <name>` so re-apply finds them; `agent` = the slug the runs are born from (used when the host has it) |
+| `agents/` | **created** under `$ARIGAMI_DIR/agents/<slug>` when absent (record + persona + assets, skills the host lacks are dropped and reported); an **existing** agent is yours — left alone unless `--force` / `{"force":true}` (A4, `docs/AGENTS.md`) |
 | provenance | `$ARIGAMI_DIR/profile.json` — what was applied, when, from where (with history) |
 
 ### Ways to apply
@@ -169,7 +174,7 @@ my-bundle/
 ```sh
 install.sh --profile solo-dev                 # staged as $ARIGAMI_DIR/pending-profile; Setup finishes it
 bin/host profile list | current | validate <src>
-bin/host profile apply <name|dir|git-url>     # host down → applied now; host up → staged (or via ARIGAMI_TOKEN=<admin API token> → REST)
+bin/host profile apply <name|dir|git-url> [--force]   # host down → applied now; host up → staged (or via ARIGAMI_TOKEN=<admin API token> → REST); --force overwrites agents you edited
 ```
 
 REST (admin):
@@ -178,7 +183,7 @@ REST (admin):
 GET  /__api/profiles              → {bundles:[…], pending}
 GET  /__api/profiles/current      → {current: <provenance>, pending}
 POST /__api/profiles/validate     {source}  → summary + {ok, errors, warnings}
-POST /__api/profiles/apply        {source}  → {ok, report}      # source may be "pending"
+POST /__api/profiles/apply        {source, force?}  → {ok, report}      # source may be "pending"; force overwrites existing agents
 ```
 
 `source` is a shipped name (`solo-dev`), an installed name
