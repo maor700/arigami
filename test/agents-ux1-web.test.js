@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, AgentView, RunsList, SurfaceStatus, BudgetBar, personaLine, BornFromChip, lastHumanText, teamRows, origFetch;
+let React, render, prefs, store, Rail, AgentView, RunsList, SurfaceStatus, BudgetBar, personaLine, BornFromChip, lastHumanText, teamRows, origFetch;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -53,6 +53,7 @@ beforeAll(async () => {
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
   store = await import(web('lib/store.js'));
+  ({ default: Rail } = await import(web('components/Rail.jsx')));
   ({ default: AgentView, RunsList, SurfaceStatus, BudgetBar, personaLine } = await import(web('components/AgentView.jsx')));
   ({ BornFromChip } = await import(web('components/SessionView.jsx')));
   ({ lastHumanText } = await import(web('lib/composer.js')));
@@ -178,4 +179,23 @@ test('teamRows: the count is work sessions — a busy home chat still reads "wor
   expect(nili.sessions).toBe(1); // sess_work only
   expect(nili.working).toBe(true); // …but the home chat is mid-turn
   expect(rows.find((r) => r.agent.slug === 'scout').sessions).toBe(0);
+});
+
+test('the rail marks one thing: with the agent surface open the agent row is selected, not its work session', () => {
+  prefs.setPrefs({ language: 'en' });
+  const railProps = (extra) => ({
+    sessions: SESSIONS.map((s) => ({ ...s, status: 'In Progress', color: '#1F9C82', createdAt: '2026-08-30T10:00:00Z' })),
+    selectedId: 'sess_work', onSelect: noop, onNew: noop, onOpenSettings: noop, onOpenSkills: noop, onOpenBrain: noop,
+    onOpenSetup: noop, onArchive: noop, onRestore: noop, onRestart: noop, onDelete: noop, onEdit: noop,
+    config: { defaultCwd: '/tmp/ws' }, conn: 'open', onOpenAgent: noop, ...extra,
+  });
+  // A selected row (session or agent) is the one with a coloured left border.
+  const selectedRows = (html) => (html.match(/border-left:4px solid (?!transparent)/g) || []).length;
+  const onSession = render(React.createElement(Rail, railProps()));
+  expect(selectedRows(onSession)).toBe(1); // the work session, alone
+  const onSurface = render(React.createElement(Rail, railProps({ agentOpen: 'nili' })));
+  expect(selectedRows(onSurface)).toBe(1); // …now the agent row, alone — not both
+  // and it IS the agent row that carries it
+  const agentRow = onSurface.slice(onSurface.indexOf('data-rail-agent="nili"'), onSurface.indexOf('data-rail-agent="scout"'));
+  expect(agentRow).toContain('border-left:4px solid');
 });

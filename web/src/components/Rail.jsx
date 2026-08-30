@@ -1213,6 +1213,10 @@ export default function Rail({
     window.addEventListener('mouseup', onUp);
   }, []);
 
+  // UX1: the rail marks WHAT IS ON SCREEN. While an agent surface is open, the
+  // selected thing is the AGENT — keeping the session row highlighted as well
+  // lit up two rows at once and read as "both are open".
+  const selectedRow = agentOpen ? null : selectedId;
   // UX1: an agent's home chat is the בית tab of its agent surface, not a row
   // here. It stays in the API, resumable and counted in the agent's ledger — it
   // just stops competing with the work sessions for the same list. Everything
@@ -1486,7 +1490,7 @@ export default function Rail({
 
   const rowProps = (s) => ({
     session: s,
-    selected: s.id === selectedId,
+    selected: s.id === selectedRow,
     onSelect,
     menuOpen: menuFor === s.id,
     setMenuFor,
@@ -1719,7 +1723,7 @@ export default function Rail({
                       folder={entry.folder}
                       kids={kids}
                       controller={controller}
-                      selectedId={selectedId}
+                      selectedId={selectedRow}
                       onSelect={onSelect}
                       watchFor={watchFor}
                       over={sOver?.id === entry.id ? sOver : null}
