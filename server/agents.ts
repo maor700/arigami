@@ -23,6 +23,7 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { cfg } from './lib/config.js';
 import { broadcast } from './bus.js';
 import { isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
+import { CORE_TOOLS, RESTRICTED_BUILTINS, policyOf, toolAllowed } from './agent-policy.js';
 
 export const AGENTS_DIR = path.join(ARIGAMI_DIR, 'agents');
 // Same shape as bundle/skill slugs: lowercase, digits, hyphens; 1–40 chars.
@@ -47,6 +48,7 @@ export interface Agent {
   domains?: string[]; // allowlist for open_tab + WebFetch (A3: host-enforced)
   budget?: AgentBudget; // tokensPerDay (A3: enforced via the activity ledger, agent-ledger.ts)
   autoApprove?: string[]; // A3: request_action `kind`s the host answers with the primary button at once
+  toolsV?: number; // A5: allowlist generation — 2 = written after `publish` became a revocable family
   homeSessionId?: string | null; // the long-lived DM session (get-or-create)
   createdAt: string;
   updatedAt: string;
@@ -117,6 +119,27 @@ function pickColor(): string {
   return palette.find((c) => !used.has(c)) || palette[listAgents().length % palette.length];
 }
 
+/** The allowlist generation `writeRecord` stamps (see migrateTools). */
+export const TOOLS_V = 2;
+
+/**
+ * A5 (#2) — `publish_artifact`/`share_artifact` used to be CORE (unrevocable), so
+ * every agent could publish and mint a public link. They are a `publish` family
+ * now. A record written before that says nothing about publishing yet WAS able to
+ * publish: grant it the family once and stamp `toolsV`, so unticking the checkbox
+ * later actually sticks. Agents with no allowlist at all are unrestricted anyway.
+ */
+function migrateTools(a: Agent): Agent {
+  if (!a.tools?.length || a.toolsV === TOOLS_V) return a;
+  const next: Agent = { ...a, tools: [...new Set([...a.tools, 'publish'])], toolsV: TOOLS_V };
+  try {
+    writeRecord(next);
+  } catch {
+    /* read-only dir — the in-memory grant still applies */
+  }
+  return next;
+}
+
 function readRecord(slug: string): Agent | null {
   if (!SLUG_RE.test(slug)) return null;
   const raw = readFileSafe(recordFile(slug));
@@ -124,13 +147,14 @@ function readRecord(slug: string): Agent | null {
   try {
     const a = JSON.parse(raw) as Agent;
     if (!a || a.slug !== slug) return null;
-    return { ...a, skills: Array.isArray(a.skills) ? a.skills : [] };
+    return migrateTools({ ...a, skills: Array.isArray(a.skills) ? a.skills : [] });
   } catch {
     return null;
   }
 }
 
 function writeRecord(a: Agent): void {
+  a = { ...a, toolsV: TOOLS_V };
   fs.mkdirSync(agentDir(a.slug), { recursive: true });
   fs.mkdirSync(agentMemoryDir(a.slug), { recursive: true });
   fs.mkdirSync(assetsDir(a.slug), { recursive: true });
@@ -314,9 +338,41 @@ export function personaBlock(slug: string): string {
   if (a.persona.trim()) lines.push('', '## Persona', a.persona.trim());
   if (a.skills.length)
     lines.push('', `## Skills you should use (shared skills, invoke as /arigami:<name> or /arigami-user:<name>): ${a.skills.join(', ')}`);
-  if (a.tools?.length) lines.push('', `## Tools you may use: ${a.tools.join(', ')} — the host ENFORCES this (other tools are hidden or refused); ask the human with request_action instead of working around it.`);
+  // A5 (#3): the old line named only the allowlist, so agents refused legal calls
+  // ("I'm blocked from publishing") and, in the other direction, assumed a
+  // capability they never had. Say all three things: what you MAY use (allowlist
+  // + the always-on core), what is denied, and that a denial is REPORTED by the
+  // host — so trying is safe and guessing never is.
+  if (a.tools?.length) {
+    const p = policyOf(a);
+    const denied = RESTRICTED_BUILTINS.filter((b) => !toolAllowed(p, b));
+    lines.push(
+      '',
+      '## Tools',
+      `- You MAY use: your allowlist — ${a.tools.join(', ')} (families expand to concrete tools) — PLUS the always-on set every session keeps: the read-only built-ins (Read, Glob, Grep, TodoWrite, …) and the cockpit core (${CORE_TOOLS.join(', ')}).`,
+      `- DENIED: everything else${denied.length ? `, including the built-ins ${denied.join(', ')}` : ''}. The host enforces it — denied tools are hidden from your toolset or refused with a reason.`,
+      '- If a call is denied the host TELLS you so in the tool result. So never refuse a task on a guess about your own permissions (try the call), and never assume a capability you were not given. When something you need is blocked, say exactly what was blocked and ask the human with request_action — do not work around it.'
+    );
+    // A5 (#1): without `triggers` there is NO way to make a durable routine — the
+    // CLI's own CronCreate only makes a session-only job that dies with this
+    // process and never shows in the Routine tab.
+    if (!toolAllowed(p, 'cronjob'))
+      lines.push(
+        '- Routines: you may NOT create or change scheduled jobs (no "triggers"), and a session-only schedule (CronCreate) is not a routine — it is invisible in the Routine tab and dies with this process. If the human asks for one, say it has to be added in your Routine tab (Agent page → Routine → "Add routine"), or that you need the "triggers" tool. Never report a routine as created.'
+      );
+  }
+  // A5 (#2): publishing is a revocable family and a PUBLIC link always asks first.
+  {
+    const canPublish = !a.tools?.length || toolAllowed(policyOf(a), 'publish_artifact');
+    const autoShare = (a.autoApprove || []).includes('share');
+    lines.push(
+      '',
+      `## Publishing: publish_artifact is ${canPublish ? 'available to you (host-local link, /__artifacts/…)' : 'NOT available to you — hand the file path to the human instead'}. ` +
+        `A PUBLIC share link (share:true / share_artifact) ${autoShare ? 'is minted at once — the human pre-approved the "share" kind for you.' : 'is never minted on your word alone: the host opens a "share" approval card for the human and gives you the link only after they approve.'}`
+    );
+  }
   if (a.domains?.length) lines.push('', `## Domains you may reach: ${a.domains.join(', ')} — the host refuses open_tab / WebFetch elsewhere.`);
-  if (a.budget?.tokensPerDay) lines.push('', `## Budget: ${a.budget.tokensPerDay} tokens/day, enforced by the host — when it runs out you get one final warning and no new sessions until local midnight. Be economical.`);
+  if (a.budget?.tokensPerDay) lines.push('', `## Budget: ${a.budget.tokensPerDay} tokens/day, enforced by the host — when it runs out you get one final warning to wrap up, and after it every further turn (and every new session) is refused until local midnight. Be economical.`);
   lines.push('', `## Actions: give request_action a short \`kind\` ("send-email", "merge", "post:facebook"). The human can tick "auto-approve this kind from now on" on the card; kinds in your autoApprove list${a.autoApprove?.length ? ` (${a.autoApprove.join(', ')})` : ''} are answered by the host at once with the primary button.`);
   if (a.assets.length)
     lines.push('', `## Assets (brand/style references): ${a.assets.map((f) => path.join(assetsDir(a.slug), f)).join(', ')}`);

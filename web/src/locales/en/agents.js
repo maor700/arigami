@@ -114,6 +114,7 @@ export const strings = {
 
   // A3 — control: activity ledger, budgets, policy, auto-approve
   'agent.tool.web': 'Web fetch / search',
+  'agent.tool.publish': 'Publish artifacts',
   'agent.card.domains': 'Allowed domains',
   'agent.card.domainsHint': 'Comma-separated (example.com matches its subdomains). Enforced on open_tab + WebFetch; empty = any.',
   'agent.card.toolsHint': 'Enforced by the host: other tools are hidden or refused. Empty = everything.',

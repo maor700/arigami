@@ -41,6 +41,15 @@ export interface Policy {
 
 export const HOST_SERVER = 'arigami';
 
+/**
+ * A5 (#1) — Claude Code ships its OWN scheduling builtins. They are as powerful as
+ * the host `triggers` family but produce a SESSION-ONLY job: invisible in the
+ * Routine tab, not attributed to the agent, gone on restart. They therefore live
+ * in the `triggers` family and in RESTRICTED_BUILTINS — an agent without
+ * `triggers` cannot reach them at all, and a denial says so loudly.
+ */
+export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
+
 /** A1 tool FAMILIES (the checkboxes) → concrete tool names / patterns. */
 export const FAMILIES: Record<string, string[]> = {
   desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins'],
@@ -50,22 +59,29 @@ export const FAMILIES: Record<string, string[]> = {
   drive: ['mcp__composio-mcp__GOOGLEDRIVE_*'],
   git: ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'merge_session', 'set_changes_explanation'],
   sessions: ['create_session', 'task_session', 'delete_session', 'restart_session', 'list_sessions', 'merge_session', 'report_to_master', 'host_restart'],
-  triggers: ['cronjob', 'register_listener', 'list_listeners', 'cancel_listener'],
+  triggers: ['cronjob', 'register_listener', 'list_listeners', 'cancel_listener', ...CRON_BUILTINS],
   web: ['WebFetch', 'WebSearch'],
+  // A5 (#2): publishing is revocable — it used to be an unrevocable CORE tool, so a
+  // "read-only" agent could publish a file and mint a public link.
+  publish: ['publish_artifact', 'share_artifact', 'unshare_artifact'],
 };
 export const FAMILY_IDS = Object.keys(FAMILIES);
 
 /** Built-ins an allowlist can take away. Everything else built-in (Read, Glob, Grep, …) is always on. */
-export const RESTRICTED_BUILTINS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task'];
+export const RESTRICTED_BUILTINS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task', ...CRON_BUILTINS];
 
 /** Host tools every session keeps regardless of the allowlist (cockpit plumbing + asking the human). */
 export const CORE_TOOLS = [
   'set_title', 'set_color', 'set_status', 'set_metadata', 'set_progress', 'set_status_summary', 'allocate_port',
-  'publish_artifact', 'share_artifact', 'unshare_artifact',
   'request_action', 'request_review', 'request_setup', 'report_setup', 'check_setup',
   'memory_write', 'memory_search', 'memory_get', 'skill_propose',
   'list_agents', 'permission_prompt', 'report_to_master',
 ];
+
+/** Tools whose denial needs a "the routine has to be added by the human" hint (A5 #1). */
+export const SCHEDULING_TOOLS = new Set(['cronjob', 'register_listener', 'cancel_listener', 'list_listeners', ...CRON_BUILTINS]);
+/** The publish family, for the same reason (A5 #2). */
+export const PUBLISH_TOOLS = new Set(FAMILIES.publish);
 
 const HOST_PREFIX = `mcp__${HOST_SERVER}__`;
 
@@ -153,6 +169,18 @@ export function disallowedToolsFor(p: Policy | null, servers: string[] = []): st
   return out;
 }
 
+/**
+ * A5 (#7) — may the spawn pass `--strict-mcp-config` (ONLY the arigami server from
+ * our own --mcp-config, none of the user's global ones)? True when the allowlist
+ * reaches into no external MCP server: then the CLI never even loads their
+ * schemas, instead of loading them and denying at PreToolUse (a leaked capability
+ * map + tokens burned on tools that can never run).
+ */
+export function strictMcpFor(p: Policy | null): boolean {
+  if (!p || p.tools === null) return false;
+  return !p.tools.some((pat) => pat.startsWith('mcp__') && serverOf(pat) !== HOST_SERVER);
+}
+
 // ---- domains ---------------------------------------------------------------
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0', '[::1]']);
@@ -192,6 +220,19 @@ export interface Verdict {
   reason?: string;
 }
 
+/**
+ * The extra sentence a denial carries for tools whose absence the model tends to
+ * "work around" (A5 #1/#2): a routine faked with the session-only CronCreate, or
+ * a file published by an agent that was told not to publish.
+ */
+export function denialHint(slug: string, name: string): string {
+  if (SCHEDULING_TOOLS.has(name))
+    return ` — agent ${slug} has no "triggers" permission, so it cannot create or change routines. A session-only schedule (CronCreate) is NOT a routine: it is invisible in the Routine tab, is not attributed to you and dies with this process — never create one and never report a routine as created. Ask the human to add it in the agent's Routine tab (Agent page → Routine → "Add routine"), or to tick the "triggers" tool for you.`;
+  if (PUBLISH_TOOLS.has(name))
+    return ` — agent ${slug} has no "publish" permission: it may not publish artifacts or mint share links. Say so plainly and hand the file path to the human instead.`;
+  return '';
+}
+
 const urlOf = (input: unknown): string => {
   const i = (input || {}) as Record<string, unknown>;
   return String(i.url || i.URL || '');
@@ -207,7 +248,7 @@ export function checkToolCall(p: Policy | null, toolName: string, input: unknown
   const name = shortHostName(String(toolName || ''));
   let reason: string | undefined;
   if (!toolAllowed(p, toolName)) {
-    reason = `tool "${name}" is not in agent ${p.slug}'s allowlist (${(p.tools || []).join(', ')}) — ask the human (request_action) instead of working around it`;
+    reason = `tool "${name}" is not in agent ${p.slug}'s allowlist (${(p.tools || []).join(', ')}) — ask the human (request_action) instead of working around it${denialHint(p.slug, name)}`;
   } else if ((name === 'WebFetch' || name === 'open_tab') && !domainAllowed(p, urlOf(input))) {
     reason = `domain "${hostOf(urlOf(input))}" is not in agent ${p.slug}'s allowed domains (${(p.domains || []).join(', ')})`;
   }

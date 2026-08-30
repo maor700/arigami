@@ -114,6 +114,7 @@ export const strings = {
 
   // A3 — שליטה: יומן פעילות, תקציבים, מדיניות, אישור אוטומטי
   'agent.tool.web': 'גלישה / חיפוש ברשת',
+  'agent.tool.publish': 'פרסום תוצרים',
   'agent.card.domains': 'דומיינים מותרים',
   'agent.card.domainsHint': 'מופרד בפסיקים (example.com כולל תתי-דומיינים). נאכף על open_tab ו-WebFetch; ריק = הכול.',
   'agent.card.toolsHint': 'נאכף על ידי המארח: כלים אחרים מוסתרים או נדחים. ריק = הכול.',
