@@ -471,3 +471,35 @@ profiles REST apply with agents + force). `test/profile-bundles.test.ts` now cov
 - Bundle agents reference **shared** skills only (the A1 decision): a bundle cannot ship a
   per-agent private skill; put it under the bundle's `skills/` and reference it by name.
 
+
+
+# M1 — native remote-MCP connections per agent
+
+Full picture (provider per service, the spike results, export rules):
+[INTEGRATIONS.md](INTEGRATIONS.md). What matters for an agent:
+
+- An agent's connection to a vendor-hosted MCP server is its **own OAuth grant**,
+  named `<service>--<slug>` (the server name is what identifies a grant — the same
+  URL under another name is a different grant with a different vendor identity).
+  `sales` connecting Linear gets `linear--sales`, not the host's `linear`.
+- It is recorded in `$ARIGAMI_DIR/agents/<slug>/connections.json`
+  (`[{cap, slug, name, url, auth, at, byIdentity}]` — names and URLs, never a
+  token) and shown in the Connections hub under **שייך ל**.
+- Registration uses `local` scope with the agent's directory as `cwd`, so no other
+  agent's session sees the server; the host injects it into the owner's sessions
+  with `--mcp-config`, under the grant name.
+- Resolution is agent-first, then the host's shared grant — the same rule A2 uses
+  for `identity` and `composio:*`. A capability status says which one answered
+  (`resolvedFrom`), and the card says "(shared)" when it fell back.
+- Its tools are `mcp__<service>--<slug>__*`. When the agent has a **tools
+  allowlist**, connecting a service adds that pattern to it (and the response says
+  `toolsAdded`): A3 denies whole MCP servers no pattern reaches, so a connection
+  the agent could not then call would be a trap. Disconnecting does **not** remove
+  the pattern — that would be editing the agent behind the human's back.
+- `--strict-mcp-config` is not used for sessions: it would also hide the user's own
+  MCP servers (WhatsApp bridge, Composio gateway) from every agent session.
+  Isolation between agents is the local scope; taking tools away is the allowlist.
+
+Composio connections keep working exactly as in A2 — the connected account is
+keyed by `user_id = agent:<slug>` — so an agent can own a native Linear grant and
+a brokered Gmail account at the same time.

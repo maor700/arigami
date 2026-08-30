@@ -2,11 +2,19 @@
 // CLI (which owns the OAuth grants + keychain storage) so the /mcp panel can
 // show each server's auth status and log in/out without dropping to a terminal.
 //
-// `claude mcp login <name>` opens the browser to authorize (claude.ai connectors
-// grant org-side and are picked up on the next session; HTTP servers use an
-// OAuth loopback). Like setup-token these are TTY programs, so they run under a
-// pty relay (lib/pty-bridge.py on POSIX, winpty on Windows — see
-// platform.ptyArgs). We surface the printed authorize URL as a fallback link.
+// `claude mcp login <name> --no-browser` (Claude Code >= 2.1.191) PRINTS the
+// authorize URL instead of opening a browser, then does two things at once:
+// it listens on http://localhost:<random>/callback AND waits on stdin for the
+// redirect URL to be pasted back. Both paths were verified in the M1 spike:
+//
+//   * the session Chrome runs on this same host, so when it follows the consent
+//     the loopback listener completes the exchange by itself (no paste);
+//   * a cockpit open on a phone can't reach that loopback — the human (or the
+//     connect-mcp playbook) pastes the final `…/callback?code=…` URL back and
+//     `submitRedirect()` writes it to the pty's stdin.
+//
+// Like setup-token these are TTY programs, so they run under a pty relay
+// (lib/pty-bridge.py on POSIX, winpty on Windows — see platform.ptyArgs).
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,7 +122,7 @@ const logins = new Map();
 const publicLogin = (f) => ({ name: f.name, state: f.state, url: f.url || null, error: f.error || null });
 const emitLogin = (f) => broadcast({ type: 'mcp-auth', login: publicLogin(f) });
 
-export function startLogin(name, cwd) {
+export function startLogin(name, cwd, opts = {}) {
   if (!name) return { name, state: 'error', url: null, error: 'no server name' };
   const prev = logins.get(name);
   if (prev && (prev.state === 'starting' || prev.state === 'awaiting')) return publicLogin(prev);
@@ -122,11 +130,13 @@ export function startLogin(name, cwd) {
   const f = { name, state: 'starting', url: null, error: null, buf: '' };
   let child;
   try {
-    // Run in the session's cwd so project-scoped .mcp.json servers (e.g.
-    // linear-server) resolve — they don't exist from the daemon's own cwd.
+    // Run in the session's cwd so project-scoped .mcp.json servers (e.g. an
+    // agent's local-scope grants) resolve — they don't exist from the daemon's
+    // own cwd. `--no-browser` keeps the URL on stdout and stdin open for the
+    // paste-back; a headless daemon has no browser to open anyway.
     const claudeBin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
-    const [bin, ...args] = ptyArgs(BRIDGE, [claudeBin, 'mcp', 'login', name]);
-    child = spawn(bin, args, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'], cwd: cwd || undefined });
+    const [bin, ...args] = ptyArgs(BRIDGE, [claudeBin, 'mcp', 'login', name, ...(opts.browser ? [] : ['--no-browser'])]);
+    child = spawn(bin, args, { env: { ...process.env, ...(opts.env || {}) }, stdio: ['pipe', 'pipe', 'pipe'], cwd: cwd || undefined });
     // The pty relay wraps the real `claude mcp login` — supervise the wrapper so
     // the relay AND the claude under it go together.
     supervise(child, `mcp-login:${name}`);
@@ -161,6 +171,13 @@ export function startLogin(name, cwd) {
     if (f.waits && !code) {
       // A loopback server that waited then exited cleanly = authorization landed.
       f.state = 'done';
+    } else if (code && f.pasted) {
+      // M1: we handed a redirect URL over and `claude` still exited non-zero —
+      // the exchange was rejected (stale code, wrong `state`, revoked consent).
+      // Without this the generic "printed a URL, so keep waiting" branch below
+      // would leave the card spinning on a login that is already dead.
+      f.state = 'error';
+      f.error = stripAnsi(f.buf).split('\n').map((s) => s.trim()).filter(Boolean).slice(-1)[0] || 'the redirect URL was rejected';
     } else if (f.url) {
       // Connector that printed a URL and exited: go authorize in the browser.
       f.state = 'awaiting';
@@ -188,4 +205,91 @@ export async function logout(name, cwd) {
   logins.delete(name);
   invalidateLists();
   return { ok: true, output: stripAnsi(out).trim().slice(-200) };
+}
+
+/**
+ * M1 — paste the redirect URL back to a login that is waiting on stdin
+ * (`Or paste the redirect URL here:`). Used when the consent happened in a
+ * browser that cannot reach this host's loopback (cockpit on a phone), or by
+ * the connect-mcp playbook after reading the final URL out of the session
+ * Chrome. Accepts a full `…/callback?code=…` URL; a bare code is rejected
+ * because `claude` wants the whole URL (it re-checks `state`).
+ */
+export function submitRedirect(name, url) {
+  const f = logins.get(name);
+  if (!f || !f.child || f.child.killed) return { ok: false, ...loginStatus(name), error: 'no login in progress' };
+  const u = String(url || '').trim();
+  if (!/^https?:\/\/[^\s]+[?&]code=[^&\s]+/.test(u)) return { ok: false, ...publicLogin(f), error: 'paste the full redirect URL (…/callback?code=…)' };
+  try {
+    f.child.stdin.write(u + '\n');
+  } catch (e) {
+    return { ok: false, ...publicLogin(f), error: `could not hand the URL to the login: ${e.message}` };
+  }
+  f.pasted = true;
+  return { ok: true, ...publicLogin(f) };
+}
+
+/** Give up on a login in progress (the human closed the card). */
+export function cancelLogin(name) {
+  const f = logins.get(name);
+  if (f?.child) killTree(f.child.pid);
+  logins.delete(name);
+  return { name, state: 'idle', url: null, error: null };
+}
+
+// ---- server registration ----------------------------------------------------
+// `claude mcp add` is the only writer of ~/.claude.json's mcpServers we use, so
+// the CLI stays the single owner of that file. Scope matters (M1):
+//   user  — the host's own connections: every session sees them, as today.
+//   local — an agent's: keyed by `cwd` ($ARIGAMI_DIR/agents/<slug>), so ANOTHER
+//           agent's session never sees the grant; the owner's sessions get it
+//           injected explicitly with --mcp-config under the same name.
+
+/**
+ * `claude mcp add --transport http <name> <url>` — idempotent (re-add replaces).
+ * @param {string} name @param {string} url
+ * @param {{scope?: 'user'|'local'|'project', cwd?: string}} [opts]
+ */
+export async function addServer(name, url, { scope = 'user', cwd } = {}) {
+  if (!name || !url) return { ok: false, error: 'name and url are required' };
+  await runClaude(['mcp', 'remove', name, '-s', scope], 10_000, cwd); // replace, never duplicate
+  const out = stripAnsi(await runClaude(['mcp', 'add', '--transport', 'http', name, url, '-s', scope], 20_000, cwd)).trim();
+  invalidateLists();
+  return { ok: /added/i.test(out), output: out.slice(-300) };
+}
+
+/**
+ * `claude mcp add-json <name> '{"type":"http","url":…,"headers":{…}}'` — the
+ * bearer path (GitHub's PAT server). The token is passed to the CLI and lives
+ * in Claude Code's own config afterwards; the host never writes it to a file
+ * of its own and never logs it.
+ */
+/**
+ * @param {string} name @param {string} url @param {string} header @param {string} token
+ * @param {{scope?: 'user'|'local'|'project', cwd?: string}} [opts]
+ */
+export async function addServerWithHeader(name, url, header, token, { scope = 'user', cwd } = {}) {
+  if (!name || !url || !token) return { ok: false, error: 'name, url and token are required' };
+  await runClaude(['mcp', 'remove', name, '-s', scope], 10_000, cwd);
+  const json = JSON.stringify({ type: 'http', url, headers: { [header || 'Authorization']: token } });
+  const out = stripAnsi(await runClaude(['mcp', 'add-json', name, json, '-s', scope], 20_000, cwd)).trim();
+  invalidateLists();
+  return { ok: /added/i.test(out), output: out.replace(token, '<token>').slice(-300) };
+}
+
+/** @param {string} name @param {{scope?: 'user'|'local'|'project', cwd?: string}} [opts] */
+export async function removeServer(name, { scope = 'user', cwd } = {}) {
+  const out = stripAnsi(await runClaude(['mcp', 'remove', name, '-s', scope], 12_000, cwd)).trim();
+  invalidateLists();
+  return { ok: true, output: out.slice(-200) };
+}
+
+/** `claude mcp get <name>` → {name, status, url}. status: connected | needs-auth | unknown | absent. */
+export async function getServer(name, cwd) {
+  const text = stripAnsi(await runClaude(['mcp', 'get', name], 20_000, cwd));
+  if (/no mcp server found|not found/i.test(text)) return { name, status: 'absent', url: null, output: text.trim().slice(-200) };
+  const url = text.match(/^\s*URL:\s*(\S+)/m)?.[1] || null;
+  const statusText = text.match(/^\s*Status:\s*(.+)$/m)?.[1]?.trim() || '';
+  const status = /connected/i.test(statusText) ? 'connected' : /needs authentication/i.test(statusText) ? 'needs-auth' : 'unknown';
+  return { name, status, url, statusText };
 }

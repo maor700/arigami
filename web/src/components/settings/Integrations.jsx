@@ -1,6 +1,10 @@
-// Settings › Connections › Integrations (was the standalone IntegrationsView):
+// Settings › Connections › "More, via Composio" (M1 — it used to be THE
+// integrations section; the native remote-MCP cards now sit above it):
 // the Composio toolkit grid (search + category chips + connected filter) plus
 // the non-Composio capabilities the host tracks (GitHub CLI, desktop, repos).
+// Composio stays for what has no vendor-hosted MCP server we can use — Google
+// (own GCP client + a preview program), Slack (own app + admin approval),
+// Facebook Pages (none at all) — and for its event triggers.
 // Connect/disconnect go through the JIT setup contract (ConnectDialog →
 // AUTO session when a Google identity exists, MANUAL redirect flow
 // otherwise; DELETE /setup/composio:<slug> to disconnect), so this section and
@@ -13,7 +17,11 @@ import { capTitle, capFamily } from '../setup/registry.js';
 import { faArrowUpRightFromSquare, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { Section, StatusPill, ErrorLine, BTN_PRIMARY, BTN_DANGER, BTN_SM, ROW, LIST, fmtWhen } from './shared.jsx';
 
-const FEATURED = ['linear', 'gmail', 'googledrive', 'googledocs', 'whatsapp', 'facebook', 'twitter', 'slack', 'github', 'notion'];
+// M1: what Composio is still the best path for. `linear`/`notion`/`github` moved
+// to their vendors' own MCP servers (the native cards above), and `whatsapp` is
+// gone entirely — Composio's toolkit is WhatsApp *Business* (WABA templates,
+// per-conversation billing), while ours is the local personal bridge.
+const FEATURED = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'];
 const CHIP = (on) => `shrink-0 cursor-pointer rounded-full border px-2.5 py-0.5 text-[10.5px] ${on ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim hover:border-ink hover:text-fg'}`;
 
 function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
@@ -134,7 +142,7 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
   });
 
   return (
-    <Section id="integrations" title={t('settings.connections.integrations')} onRefresh={load}>
+    <Section id="integrations" title={t('settings.connections.composioMore')} onRefresh={load}>
       {data && !data.hasKey && !data.toolkits && <ComposioLogin onDone={load} />}
       {data?.error && data.hasKey && <ErrorLine>{data.error}</ErrorLine>}
       {loading && !data && <div className="py-3 text-[11.5px] text-fgdim">{t('dialogs.loading')}</div>}

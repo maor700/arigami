@@ -15,12 +15,15 @@ import { capTitle, capFamily } from '../setup/registry.js';
 import ConnectDialog from './ConnectDialog.jsx';
 import ClaudeAccounts from './ClaudeAccounts.jsx';
 import Integrations from './Integrations.jsx';
+import NativeMcp from './NativeMcp.jsx';
 import Channels from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
 import { AgentAvatar } from '../AgentCard.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_DANGER, fmtWhen } from './shared.jsx';
 
-const OWN_SECTION = new Set(['identity', 'claude', 'whatsapp', 'remote', 'push', 'telemetry', 'composio']);
+// Families rendered by a section of their own — everything else falls into the
+// leftovers list under the Composio grid. M1 adds `mcp` (the native cards).
+const OWN_SECTION = new Set(['identity', 'claude', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp']);
 
 // Reach the cockpit from your phone over Tailscale — private to your devices.
 // The direct tailnet URL works as soon as Tailscale is up; HTTPS serve is an
@@ -130,6 +133,8 @@ export default function Connections({ initialAdd = false }) {
 
   const identity = ov?.identity || null;
   const caps = (ov?.capabilities || []).filter((c) => !OWN_SECTION.has(capFamily(c.id)));
+  // M1: native remote-MCP cards, in catalog order, above the Composio grid.
+  const mcpCaps = (ov?.capabilities || []).filter((c) => c.provider === 'native-mcp' || capFamily(c.id) === 'mcp');
   const claudeCap = (ov?.capabilities || []).find((c) => c.id === 'claude');
   const audit = (ov?.audit || []).slice(-10).reverse();
   const ownerName = (o) => {
@@ -164,6 +169,7 @@ export default function Connections({ initialAdd = false }) {
       </Section>
 
       <ClaudeAccounts initialAdd={initialAdd} identity={identity} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
+      <NativeMcp caps={mcpCaps} busy={busy} audit={audit} ownerName={ownerName} onRefresh={load} onOpen={setDialog} onDisconnect={disconnect} />
       <Integrations caps={caps} busy={busy} tick={tick} onOpen={setDialog} onDisconnect={disconnect} />
       <Channels onChanged={load} />
       <RemoteAccess />

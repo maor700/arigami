@@ -4,14 +4,20 @@
 // S1, and the wizard/Setup screens that address capabilities by id.
 //
 // Capability ids: identity · claude · git · repo:<name> · whatsapp ·
-// composio:<toolkit> · desktop · push · remote · telemetry
+// mcp:<service> · composio:<toolkit> · desktop · push · remote · telemetry
+//
+// M1 `provider`: where the connection actually lives — 'native-mcp' (the
+// vendor's own remote MCP server, token on this host), 'composio' (brokered),
+// 'local' (this machine). The server sends it per capability; this table is the
+// fallback for old hosts and for ids the UI addresses directly.
 export const FAMILIES = {
   identity: { manual: { kind: 'takeover' }, autoCapable: false, icon: 'user' },
   claude: { manual: { kind: 'oauth', flow: 'pkce', token: true }, autoCapable: true, playbook: 'connect-claude', icon: 'key' },
   git: { manual: { kind: 'oauth', flow: 'device', token: true }, autoCapable: true, playbook: 'connect-github', icon: 'code' },
   repo: { manual: { kind: 'repo' }, autoCapable: false, icon: 'code' },
   whatsapp: { manual: { kind: 'qr' }, autoCapable: false, icon: 'qr' },
-  composio: { manual: { kind: 'oauth', flow: 'redirect', token: true }, autoCapable: true, playbook: 'connect-composio', icon: 'plug' },
+  mcp: { manual: { kind: 'oauth', flow: 'mcp', token: false }, autoCapable: true, playbook: 'connect-mcp', icon: 'plug', provider: 'native-mcp' },
+  composio: { manual: { kind: 'oauth', flow: 'redirect', token: true }, autoCapable: true, playbook: 'connect-composio', icon: 'plug', provider: 'composio' },
   desktop: { manual: { kind: 'toggle' }, autoCapable: false, icon: 'display' },
   push: { manual: { kind: 'toggle' }, autoCapable: false, icon: 'bell' },
   remote: { manual: { kind: 'toggle' }, autoCapable: true, playbook: 'connect-tailscale', icon: 'globe' },
@@ -42,8 +48,8 @@ export function capTitle(t, id) {
   const fam = capFamily(id);
   const arg = capArg(id);
   if (!FAMILIES[fam]) return id;
-  // 'composio' / 'repo' without an argument (legacy hosts, Settings rows).
-  if (!arg && (fam === 'composio' || fam === 'repo')) return t(`setup.cap.${fam}.bare`);
+  // 'composio' / 'repo' / 'mcp' without an argument (legacy hosts, Settings rows).
+  if (!arg && (fam === 'composio' || fam === 'repo' || fam === 'mcp')) return t(`setup.cap.${fam}.bare`);
   return t(`setup.cap.${fam}`, { name: arg });
 }
 
@@ -51,8 +57,11 @@ export function capTitle(t, id) {
 // per playbook so the text can be precise (domains, clicks, what is never typed).
 export function consentKeys(id) {
   const pb = manualFor(id).playbook;
-  const n = { 'connect-composio': 4, 'connect-claude': 4, 'connect-github': 4, 'connect-tailscale': 4 }[pb] || 0;
+  const n = { 'connect-composio': 4, 'connect-claude': 4, 'connect-github': 4, 'connect-tailscale': 4, 'connect-mcp': 4 }[pb] || 0;
   return Array.from({ length: n }, (_, i) => `setup.consent.${pb}.${i + 1}`);
 }
 
 export const AUTO_CAPABLE = Object.keys(FAMILIES).filter((k) => FAMILIES[k].autoCapable);
+
+// M1: 'native-mcp' | 'composio' | 'local' for an id, when the server didn't say.
+export const providerOf = (id) => FAMILIES[capFamily(id)]?.provider || 'local';

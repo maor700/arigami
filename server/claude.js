@@ -21,6 +21,7 @@ import { policyFor, isRestrictive, disallowedToolsFor, hookSettings } from './ag
 import { appendActivity, budgetState, localDay, budgetRefusal } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
+import { injectedServersFor } from './mcp-connections.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
 // first apply) needs no restart for sessions to see user skills.
@@ -92,9 +93,34 @@ function accountEnv(s) {
 }
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MCP_CONFIG = JSON.stringify({
-  mcpServers: { 'arigami': { command: 'bun', args: [path.join(ROOT, 'mcp', 'host-mcp.js')] } },
-});
+const HOST_SERVERS = { 'arigami': { command: 'bun', args: [path.join(ROOT, 'mcp', 'host-mcp.js')] } };
+const MCP_CONFIG = JSON.stringify({ mcpServers: HOST_SERVERS });
+
+// M1 — the `--mcp-config` payload for one session. Always the host MCP; for a
+// session born from an agent, ALSO that agent's native remote-MCP grants.
+//
+// Those grants are registered at `local` scope in the agent's own directory, so
+// they are invisible to every other session — injecting them here is what makes
+// them usable, and the injected NAME must equal the grant name (`<service>--<slug>`)
+// or Claude Code starts a fresh, unauthenticated OAuth flow (verified in the M1
+// spike: credential lookup is by server name + URL hash). The tools therefore
+// appear as `mcp__<service>--<slug>__*`, which is what an A3 allowlist matches.
+//
+// No `--strict-mcp-config`: it would also drop the USER's own servers (the
+// WhatsApp bridge, the Composio gateway, anything they added by hand) from every
+// agent session. Isolation between agents comes from the local scope above;
+// A3's allowlist is what takes tools away on purpose.
+function mcpConfigFor(s) {
+  const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  if (!slug) return MCP_CONFIG;
+  let own = {};
+  try {
+    own = injectedServersFor(`agent:${slug}`);
+  } catch {
+    own = {}; // a missing/foreign connections.json must never stop a session
+  }
+  return Object.keys(own).length ? JSON.stringify({ mcpServers: { ...HOST_SERVERS, ...own } }) : MCP_CONFIG;
+}
 
 // ---- background shells (agent `run_in_background` bashes) -------------------
 // Surfaced from stream-json: a Bash tool_use with run_in_background:true, paired
@@ -404,7 +430,7 @@ function spawnProc(s, resume) {
     ...(s.claude?.modelChoice ? ['--model', s.claude.modelChoice] : []),
     ...(s.claude?.effort ? ['--effort', s.claude.effort] : []),
     ...(s.claude?.autoCompactTokens ? ['--autocompact', String(s.claude.autoCompactTokens)] : []),
-    '--mcp-config', MCP_CONFIG,
+    '--mcp-config', mcpConfigFor(s),
     '--permission-prompt-tool', 'mcp__arigami__permission_prompt',
     // Register the bundled skill pack (skills/) as a plugin so sessions can
     // invoke them as /arigami:<skill> — they appear in the chat palette. The
