@@ -82,6 +82,143 @@ interface CleanupResult {
 const pendingPermissions = new Map<string, PendingPermission>();
 const pendingScreenRequests = new Map<string, PendingScreenRequest>();
 
+// ---- B4-full: host export / import ---------------------------------------------
+// Export streams a tar.gz straight from `tar` (server/backup.ts) — nothing is
+// buffered. Import spools the upload (raw tar.gz body, or multipart with one
+// file field) to $ARIGAMI_DIR/tmp, then either restores a full backup and asks
+// host-control for a restart, or unpacks + applies a profile bundle.
+const IMPORT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+
+async function handleHostExport(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: { mode: string; include: string[] }
+): Promise<void> {
+  const bk = await import('./backup.js');
+  let r: import('./backup.js').ExportResult;
+  try {
+    if (opts.mode === 'bundle') {
+      const tr = await import('./triggers.js');
+      const b = bk.exportBundle({ cron: tr.listTriggers() });
+      r = bk.tarDir(b.dir, `arigami-bundle-${b.name}-${bk.stamp()}.tgz`);
+    } else if (opts.mode === 'full') {
+      r = bk.exportFull({ include: opts.include });
+    } else return json(res, { error: 'mode must be "full" or "bundle"' }, 400);
+  } catch (e) {
+    return json(res, { error: (e as Error).message }, 500);
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/gzip',
+    'Content-Disposition': `attachment; filename="${r.filename}"`,
+    'Cache-Control': 'no-store',
+    'X-Arigami-Export': opts.mode,
+  });
+  r.stream.pipe(res);
+  req.on('close', () => { try { r.stream.destroy(); } catch {} });
+  await r.done;
+  r.cleanup();
+}
+
+/** Spool the request body to a temp file. Multipart: keep only the first file part's bytes. */
+function spoolUpload(req: IncomingMessage, dir: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `import-${Date.now().toString(36)}.tgz`);
+    const ct = String(req.headers['content-type'] || '');
+    const bm = /boundary=("?)([^";]+)\1/i.exec(ct);
+    const out = fs.createWriteStream(file);
+    let total = 0;
+    const fail = (e: Error) => { try { out.destroy(); fs.rmSync(file, { force: true }); } catch {} reject(e); };
+    req.on('error', fail);
+    out.on('error', fail);
+    if (!bm) {
+      req.on('data', (c: Buffer) => { total += c.length; if (total > IMPORT_MAX_BYTES) { req.destroy(); fail(new Error('upload too large')); } });
+      req.pipe(out);
+      out.on('finish', () => resolve(file));
+      return;
+    }
+    // multipart/form-data — a small streaming parser for the first file part.
+    // Each chunk is consumed in a loop: a whole small body may arrive at once,
+    // with the non-file fields AND the file in the same chunk.
+    const boundary = Buffer.from(`\r\n--${bm[2]}`);
+    let buf = Buffer.alloc(0);
+    let inFile = false;
+    let done = false;
+    const feed = () => {
+      for (;;) {
+        if (done) return;
+        if (!inFile) {
+          const hdrEnd = buf.indexOf('\r\n\r\n');
+          if (hdrEnd < 0) return;
+          const hdr = buf.slice(0, hdrEnd).toString('latin1');
+          if (!/filename=/i.test(hdr)) { // skip a non-file field
+            const next = buf.indexOf(boundary, hdrEnd);
+            if (next < 0) return;
+            buf = buf.slice(next + boundary.length);
+            continue;
+          }
+          inFile = true;
+          buf = buf.slice(hdrEnd + 4);
+        }
+        const end = buf.indexOf(boundary);
+        if (end >= 0) {
+          out.write(buf.slice(0, end));
+          done = true;
+          out.end();
+          return;
+        }
+        const keep = boundary.length;
+        if (buf.length > keep) { out.write(buf.slice(0, buf.length - keep)); buf = buf.slice(buf.length - keep); }
+        return;
+      }
+    };
+    req.on('data', (c: Buffer) => {
+      if (done) return;
+      total += c.length;
+      if (total > IMPORT_MAX_BYTES) { req.destroy(); return fail(new Error('upload too large')); }
+      buf = Buffer.concat([buf, c]);
+      feed();
+    });
+    req.on('end', () => {
+      if (!done) { if (inFile) out.write(buf); out.end(); }
+    });
+    out.on('finish', () => (inFile ? resolve(file) : fail(new Error('multipart body has no file part'))));
+  });
+}
+
+async function handleHostImport(
+  req: IncomingMessage,
+  res: ServerResponse,
+  u: URL,
+  hc: typeof import('./host-control.js')
+): Promise<void> {
+  const bk = await import('./backup.js');
+  const force = u.searchParams.get('force') === '1' || u.searchParams.get('force') === 'true';
+  let file = '';
+  try {
+    file = await spoolUpload(req, bk.TMP_DIR);
+    const { kind } = bk.detectArchive(file);
+    if (kind === 'bundle') {
+      const unpacked = bk.unpackBundle(file);
+      const pf = await import('./profiles.js');
+      const report = await pf.applySource(unpacked.dir);
+      broadcast({ type: 'host', event: { kind: 'import-done', mode: 'bundle', name: unpacked.name } });
+      return json(res, { ok: true, kind, ...report });
+    }
+    const r = await bk.importFull(file, { force, busyCount: hc.busySessions });
+    broadcast({ type: 'host', event: { kind: 'import-done', mode: 'full', backupDir: r.backupDir, version: r.manifest.version } });
+    let restart: { scheduled: string } | null = null;
+    let restartError: string | null = null;
+    try { restart = hc.restarts.request('now', 'import'); } catch (e) { restartError = (e as Error).message; }
+    return json(res, { ok: true, kind, ...r, restart, restartError, manager: hc.detectManager() });
+  } catch (e) {
+    const err = e as Error & { status?: number };
+    return json(res, { error: err.message }, err.status || 500);
+  } finally {
+    try { if (file) fs.rmSync(file, { force: true }); } catch {}
+  }
+}
+
 function json(
   res: ServerResponse,
   body: unknown,
@@ -1253,6 +1390,12 @@ export async function handle(
       const hc = await import('./host-control.js');
       return json(res, hc.hostStatus());
     }
+    // ---- B4-full: export / import (server/backup.ts). Admin only; GET export
+    // is a plain download (cookie or API token) so `curl -OJ` works too.
+    if (p === '/__api/host/export' && m === 'GET') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      return await handleHostExport(req, res, { mode: u.searchParams.get('mode') || 'full', include: (u.searchParams.get('include') || '').split(',').filter(Boolean) });
+    }
     if (p.startsWith('/__api/host/') && (m === 'POST' || m === 'DELETE')) {
       const hc = await import('./host-control.js');
       if (String(req.headers['x-arigami-confirm'] || '').toLowerCase() !== 'yes')
@@ -1268,6 +1411,15 @@ export async function handle(
         if (!isMaster) return json(res, { error: 'host control is limited to master/controller sessions' }, 403);
       }
       const sub = p.slice('/__api/host/'.length);
+      if ((sub === 'export' || sub === 'import') && m === 'POST') {
+        // binary bodies / streamed responses — never through readBody
+        if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+        if (sub === 'export') {
+          const body: Record<string, unknown> = String(req.headers['content-type'] || '').includes('json') ? await readBody(req).catch(() => ({})) : {};
+          return await handleHostExport(req, res, { mode: String(body.mode || u.searchParams.get('mode') || 'full'), include: Array.isArray(body.include) ? body.include.map(String) : [] });
+        }
+        return await handleHostImport(req, res, u, hc);
+      }
       const body: Record<string, unknown> = m === 'POST' ? await readBody(req).catch(() => ({})) : {};
       const when: 'now' | 'idle' =
         u.searchParams.get('when') === 'idle' || body.whenIdle === true || body.when === 'idle' ? 'idle' : 'now';

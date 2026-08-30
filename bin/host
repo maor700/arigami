@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user|profile
+# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user|profile|export|import
 # Pidfile + logs under $ARIGAMI_DIR (default ~/.arigami); health check = GET /__api/config.
 set -u
 
@@ -352,6 +352,75 @@ profile() {
   esac
 }
 
+# B4-full — export / import (server/backup.ts). Both run in-process against
+# $ARIGAMI_DIR; reading is always safe. A FULL import swaps $ARIGAMI_DIR under
+# the host, so with the host up it goes through REST (needs ARIGAMI_TOKEN =
+# admin API token; the host restarts itself afterwards) or is refused —
+# `host stop` first, import, `host start`. Bundle import = profile apply.
+export_cmd() {
+  mode=""; out=""; extra=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --full|--bundle) mode="$1" ;;
+      --include|--name) extra+=("$1" "$2"); shift ;;
+      *) out="$1" ;;
+    esac
+    shift
+  done
+  case "$mode" in
+    --full)
+      out="${out:-arigami-backup-$(date -u +%Y%m%dT%H%M%SZ).tgz}"
+      if health; then yl "host is running — the snapshot is taken live (state.json may lag a few seconds; stop the host for a perfectly quiet copy)"; fi
+      ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" export --full "$out" "${extra[@]}" || return 1
+      dl "  contains accounts + secrets as they are on disk — keep it private. Restore: host import $out"
+      ;;
+    --bundle)
+      out="${out:-arigami-bundle-$(date -u +%Y%m%dT%H%M%SZ)}"
+      ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" export --bundle "$out" "${extra[@]}" || return 1
+      dl "  no secrets/accounts/chat inside. Apply elsewhere: host profile apply <dir>  (or host import <file.tgz>)"
+      ;;
+    *) echo "usage: host export --full [out.tgz] [--include a,b] | host export --bundle [out-dir|out.tgz] [--name name]"; return 1 ;;
+  esac
+}
+
+import_cmd() {
+  file=""; force=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --force) force="--force" ;; *) file="$1" ;; esac
+    shift
+  done
+  [ -n "$file" ] && [ -f "$file" ] || { echo "usage: host import <file.tgz> [--force]"; return 1; }
+  kind="$(ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file" 2>/dev/null | sed -n 's/^[[:space:]]*"kind":[[:space:]]*"\([a-z]*\)".*/\1/p' | head -1)"
+  [ -n "$kind" ] || { ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file"; return 1; }
+  if [ "$kind" = "bundle" ]; then
+    if health; then
+      dl "profile bundle → staging + apply through the host"
+      tmpd="$(mktemp -d)"; tar -xzf "$file" -C "$tmpd" || return 1
+      profile apply "$tmpd"; rc=$?; rm -rf "$tmpd"; return $rc
+    fi
+    ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" import "$file"
+    return $?
+  fi
+  # full backup
+  if health; then
+    if [ -n "${ARIGAMI_TOKEN:-}" ]; then
+      q=""; [ -n "$force" ] && q="?force=1"
+      curl -fsS -m 3600 -X POST "$URL/__api/host/import$q" \
+        -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'X-Arigami-Confirm: yes' \
+        -H 'content-type: application/gzip' --data-binary "@$file" || return 1
+      echo
+      dl "  the host restarts itself (supervisor) — or run: host restart"
+      return 0
+    fi
+    rl "host is running: a full restore replaces $DIR under it."
+    dl "  either:  host stop && host import $file && host start"
+    dl "  or:      ARIGAMI_TOKEN=<admin api token> host import $file   (REST; the host restarts itself)"
+    return 1
+  fi
+  ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" import "$file" $force || return 1
+  dl "  previous data kept as a timestamped .bak next to $DIR — start the host: host start"
+}
+
 install() {
   bun_bin="$(command -v bun)"
   if [ -z "$bun_bin" ]; then rl "bun not found on PATH"; return 1; fi
@@ -448,10 +517,12 @@ case "${1:-status}" in
   pair) pair ;;
   user) shift; user "$@" ;;
   profile) shift; profile "$@" ;;
+  export) shift; export_cmd "$@" ;;
+  import) shift; import_cmd "$@" ;;
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|export --full|--bundle [out]|import <file.tgz>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac
