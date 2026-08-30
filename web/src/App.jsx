@@ -628,6 +628,17 @@ function Cockpit() {
     return () => window.removeEventListener('host:select-session', onJump);
   }, [sessions]);
 
+  // A4: open an agent page from anywhere (the /team panel).
+  useEffect(() => {
+    const onOpen = (e) => {
+      const slug = e.detail?.slug;
+      if (!slug) return;
+      setAgentOpen(slug); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
+    };
+    window.addEventListener('host:open-agent', onOpen);
+    return () => window.removeEventListener('host:open-agent', onOpen);
+  }, []);
+
   // Push notification click → navigate to the right session and scroll to event.
   useEffect(() => {
     const onMessage = (e) => {

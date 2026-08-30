@@ -164,4 +164,21 @@ export const strings = {
   'rail.teamNextCron': '⏰ {when}',
   'rail.teamNextCronTitle': 'Next scheduled run: {when}',
   'time.in': 'in {t}',
+
+  // ---- A4: composer slash-commands / @mentions / receipt line ----
+  'dialogs.cmdTeamDesc': 'The team — every agent and what it is doing now',
+  'dialogs.cmdAsDesc': 'Run the text as a one-off session born from that agent',
+  'dialogs.cmdAgentNewDesc': 'Open the create-agent card (name optional)',
+  'dialogs.mentionHint': 'Agents · @mention hands the message to one · ↵ select · esc dismiss',
+  'dialogs.teamTitle': 'Team',
+  'dialogs.teamMention': 'Mention in the composer',
+  'dialogs.teamFooter': '@<agent> in a message hands it over: a project controller spawns a child born from the agent, any other chat forwards to the agent’s home chat. /as <agent> <text> runs it as a one-off session.',
+  'dialogs.asUsage': 'Usage: /as <agent> <text>',
+  'dialogs.unknownAgent': 'No agent named "{name}" — /team lists the team',
+  'chat.delegatedTo': 'Assigned to {name}',
+  'chat.delegatedHow.child': 'child session in this project',
+  'chat.delegatedHow.session': 'new session',
+  'chat.delegatedHow.home': 'home chat',
+  'chat.delegatedQueued': 'queued until its turn ends',
+  'chat.delegatedOpen': 'open',
 };

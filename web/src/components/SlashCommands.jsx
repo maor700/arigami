@@ -12,6 +12,9 @@ import { useStore } from '../lib/store.js';
 import { t, useT } from '../lib/i18n.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
+import { AgentAvatar } from './AgentCard.jsx';
+import { api } from '../lib/api.js';
+import { toastError } from '../lib/toast.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -33,8 +36,10 @@ export const INSPECT_COMMANDS = [
 
 // Build the filtered, ranked palette for a `/query`. `commands` are the rich
 // objects {name, description, argumentHint} from the initialize handshake.
-// Host inspect commands sort first; then prefix matches; then alphabetical.
-export function buildSlashItems(query, commands) {
+// A4: `extra` = the host agent commands (/team, /as, /agent new) + the skills
+// that declare `slash:` (/plan, /review, …) — see lib/composer.js. Host
+// commands sort first; then prefix matches; then alphabetical.
+export function buildSlashItems(query, commands, extra = []) {
   const q = (query || '').toLowerCase();
   const claude = (commands || []).map((c) => ({
     name: c.name,
@@ -43,13 +48,14 @@ export function buildSlashItems(query, commands) {
     host: false,
   }));
   const host = INSPECT_COMMANDS.map((c) => ({ ...c, desc: t(c.descKey) }));
-  const all = [...host, ...claude];
+  const all = [...host, ...(extra || []), ...claude];
   const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
   filtered.sort((a, b) => {
     const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
     const bp = b.name.toLowerCase().startsWith(q) ? 0 : 1;
     if (ap !== bp) return ap - bp;
     if (a.host !== b.host) return a.host ? -1 : 1;
+    if (!!a.skill !== !!b.skill) return a.skill ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
   return filtered.slice(0, 60);
@@ -85,9 +91,11 @@ export function SlashPalette({ items, active, onPick, onHover }) {
             i === active ? 'bg-chip' : ''
           }`}
         >
-          <span className="font-mono text-[11.5px] font-bold text-fg">/{it.name}</span>
+          <span className="font-mono text-[11.5px] font-bold text-fg">/{it.name}{it.argumentHint && it.host ? <span className="ms-1 font-normal text-fgdim">{it.argumentHint}</span> : null}</span>
           {it.host ? (
             <span className="rounded-full bg-brand/30 px-1.5 text-[8.5px] font-bold text-fgdim">host</span>
+          ) : it.skill ? (
+            <span data-slash-skill={it.skill} className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">{it.command}</span>
           ) : (
             it.name.includes(':') && (
               <span className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">
@@ -98,6 +106,112 @@ export function SlashPalette({ items, active, onPick, onHover }) {
           {it.desc && <span className="truncate text-[10.5px] text-fgdim">{it.desc}</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+/* ---------- A4: the "@" mention palette ----------------------------------- */
+
+// Same shell as the slash palette (bottom sheet-ish, ≤92vw so it fits a phone).
+export function MentionPalette({ items, active, onPick, onHover }) {
+  const t = useT();
+  if (!items.length) return null;
+  return (
+    <div data-mention-palette className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
+      <div className="px-3 pt-1 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('dialogs.mentionHint')}</div>
+      {items.map((a, i) => (
+        <button
+          key={a.slug}
+          type="button"
+          data-mention-item={a.slug}
+          onMouseDown={(e) => { e.preventDefault(); onPick(a); }}
+          onMouseEnter={() => onHover(i)}
+          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-chip' : ''}`}
+        >
+          <AgentAvatar agent={a} size={18} />
+          <span className="font-mono text-[11.5px] font-bold text-fg">@{a.slug}</span>
+          <span className="truncate text-[10.5px] text-fgdim">{a.name}{a.skills?.length ? ` · ${a.skills.join(', ')}` : ''}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- A4: /team — the agents + their status (modal) ------------------ */
+
+// Status per agent, the same reading the Rail's team section uses: working when
+// any live session of the agent is mid-turn, else its active session count.
+export function teamRows(agents, sessions) {
+  const byAgent = new Map();
+  for (const s of sessions || []) {
+    if (s.archived || !s.metadata?.agent) continue;
+    (byAgent.get(s.metadata.agent) || byAgent.set(s.metadata.agent, []).get(s.metadata.agent)).push(s);
+  }
+  return (agents || []).map((a) => {
+    const mine = byAgent.get(a.slug) || [];
+    return { agent: a, sessions: mine.length, working: mine.some((s) => s.claude?.state === 'working') };
+  });
+}
+
+export function TeamPanel({ agents, sessions, onClose, onMention }) {
+  const t = useT();
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const rows = teamRows(agents, sessions);
+  const openHome = async (a) => {
+    try {
+      const r = await api.get(`/agents/${encodeURIComponent(a.slug)}/home`);
+      if (r?.session?.id) window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id: r.session.id } }));
+      onClose();
+    } catch {
+      toastError(t('rail.teamOpenFailed'));
+    }
+  };
+  const openPage = (a) => {
+    window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug } }));
+    onClose();
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center md:p-6" onMouseDown={onClose}>
+      <div data-team-panel className="flex max-h-[80vh] w-[520px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
+          <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.teamTitle')}</span>
+          <span className="font-mono text-[10px] text-fgdim">{rows.length}</span>
+          <button type="button" onClick={onClose} className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg">
+            <Icon icon={faXmark} />
+          </button>
+        </div>
+        <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          {rows.length === 0 && <p className="px-1 text-[12px] text-fgdim">{t('rail.teamEmpty')}</p>}
+          {rows.map(({ agent: a, sessions: n, working }) => (
+            <div key={a.slug} data-team-row={a.slug} className="flex items-center gap-2.5 rounded-md px-2 py-2 hover:bg-chip">
+              <AgentAvatar agent={a} size={22} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-2">
+                  <span className="truncate font-mono text-[11.5px] font-bold text-fg">{a.name}</span>
+                  <span className="font-mono text-[10px] text-fgdim">@{a.slug}</span>
+                  {working ? (
+                    <span className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]"><span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}</span>
+                  ) : (
+                    <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim">
+                      <span className="h-[7px] w-[7px] rounded-full" style={{ background: n ? a.color : '#c4c4c4' }} />
+                      {n === 0 ? t('rail.teamIdle') : n === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n })}
+                    </span>
+                  )}
+                </span>
+                {a.skills?.length > 0 && <span className="block truncate text-[10px] text-fgdim">{a.skills.join(' · ')}</span>}
+              </span>
+              <button type="button" title={t('dialogs.teamMention')} onClick={() => { onMention?.(a); onClose(); }} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:border-ink hover:text-fg">@</button>
+              <button type="button" onClick={() => openHome(a)} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[10px] text-fgdim hover:border-ink hover:text-fg">{t('rail.teamHomeChat')}</button>
+              <button type="button" onClick={() => openPage(a)} className="hidden cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[10px] text-fgdim hover:border-ink hover:text-fg sm:block">{t('rail.teamOpenPage')}</button>
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-hair px-4 py-2 text-[10px] text-fgdim">{t('dialogs.teamFooter')}</div>
+      </div>
     </div>
   );
 }

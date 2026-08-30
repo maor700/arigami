@@ -164,4 +164,21 @@ export const strings = {
   'rail.teamNextCron': '⏰ {when}',
   'rail.teamNextCronTitle': 'הריצה המתוזמנת הבאה: {when}',
   'time.in': 'בעוד {t}',
+
+  // ---- A4: פקודות סלאש / @אזכורים / שורת קבלה ----
+  'dialogs.cmdTeamDesc': 'הצוות — כל הסוכנים ומה כל אחד עושה עכשיו',
+  'dialogs.cmdAsDesc': 'הרצת הטקסט כסשן חד-פעמי שנולד מהסוכן',
+  'dialogs.cmdAgentNewDesc': 'פתיחת כרטיס יצירת סוכן (שם — אופציונלי)',
+  'dialogs.mentionHint': 'סוכנים · @אזכור מעביר את ההודעה לסוכן · ↵ בחירה · esc סגירה',
+  'dialogs.teamTitle': 'צוות',
+  'dialogs.teamMention': 'אזכור בתיבת הכתיבה',
+  'dialogs.teamFooter': '@<סוכן> בהודעה מעביר אותה הלאה: מנהל פרויקט מקים סשן-ילד שנולד מהסוכן, כל צ׳אט אחר מעביר לצ׳אט הבית של הסוכן. /as <סוכן> <טקסט> מריץ כסשן חד-פעמי.',
+  'dialogs.asUsage': 'שימוש: /as <סוכן> <טקסט>',
+  'dialogs.unknownAgent': 'אין סוכן בשם "{name}" — /team מציג את הצוות',
+  'chat.delegatedTo': 'הוקצה ל-{name}',
+  'chat.delegatedHow.child': 'סשן-ילד בפרויקט הזה',
+  'chat.delegatedHow.session': 'סשן חדש',
+  'chat.delegatedHow.home': 'צ׳אט הבית',
+  'chat.delegatedQueued': 'בתור עד סיום התור הנוכחי',
+  'chat.delegatedOpen': 'פתח',
 };
