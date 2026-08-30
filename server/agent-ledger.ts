@@ -16,8 +16,9 @@
 //
 // Budget: `agent.budget.tokensPerDay` vs the tokens of today's 'turn' lines,
 // where "today" is the HOST's local calendar day (resets at local midnight).
-// Exceeded → new sessions for the agent are refused (api.applyAgentToSession),
-// running ones get one final warning (claude.js) and keep their current turn.
+// Exceeded → new sessions for the agent are refused (api.applyAgentToSession) and
+// the running one gets ONE final warning (claude.js) to wrap up; after that
+// warning every further turn is refused too (turnBlocked → claude.sendMessage).
 import fs from 'node:fs';
 import path from 'node:path';
 import { agentDir, getAgent } from './agents.js';
@@ -174,9 +175,34 @@ export function budgetState(slug: string, now: Date = new Date()): BudgetState |
   };
 }
 
-/** The refusal line the human/model sees when a budget-exhausted agent is asked for a new session. */
+/**
+ * A5 (#5) — was today's ONE final warning already delivered? Read from the ledger
+ * (not from the claude proc record) so it survives a respawn or a host restart.
+ */
+export function warnedToday(slug: string, now: Date = new Date()): boolean {
+  const day = localDay(now);
+  return readActivity(slug, { since: rangeStart('today', now), kinds: ['budget'] }).some((e) => localDay(e.ts) === day);
+}
+
+/**
+ * A5 (#5) — must a TURN be refused? The cap only gated new sessions, so messages
+ * kept landing in an existing agent chat and the agent ran far past its cap. Once
+ * the cap is crossed AND the final warning went out, every further turn is refused
+ * until local midnight. Returns the state to quote, or null when the turn may run.
+ */
+export function turnBlocked(slug: string | null | undefined, now: Date = new Date()): BudgetState | null {
+  if (!slug) return null;
+  const b = budgetState(slug, now);
+  return b?.exceeded && warnedToday(slug, now) ? b : null;
+}
+
+/**
+ * The refusal line the human/model sees when a budget-exhausted agent is asked for
+ * a new session OR another turn. English only (A5 #11: the UI localises it from
+ * the structured `budget` body — no Hebrew inside an English string).
+ */
 export function budgetRefusal(b: BudgetState, name: string): string {
   const at = new Date(b.resetsAt);
   const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-  return `agent "${name}" hit its daily token budget (${b.usedTokens.toLocaleString('en-US')} / ${(b.cap || 0).toLocaleString('en-US')} tokens today) — no new sessions until local midnight (${hhmm}); raise the cap in Settings → מארח → תקציבים`;
+  return `agent "${name}" hit its daily token budget (${b.usedTokens.toLocaleString('en-US')} / ${(b.cap || 0).toLocaleString('en-US')} tokens today) — no new sessions or turns until local midnight (${hhmm}); raise the cap in Settings → Host → Budgets`;
 }

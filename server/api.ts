@@ -823,6 +823,46 @@ const sessionAgent = (s: { metadata?: Record<string, unknown> } | null | undefin
   s && typeof s.metadata?.agent === 'string' && s.metadata.agent ? (s.metadata.agent as string) : null;
 
 /**
+ * A5 (#2) — a PUBLIC share link (share:true / share_artifact) from a session born
+ * from an agent is never minted on the agent's word alone:
+ *   allow — not an agent session (unchanged for the human's own sessions), or the
+ *           agent has the 'share' kind in autoApprove;
+ *   deny  — the agent has an allowlist without the `publish` family;
+ *   ask   — the default: the host opens a request_action card of kind 'share' and
+ *           mints the link only when the human approves it (see action/answer).
+ */
+const SHARE_KIND = 'share';
+function shareGate(s: unknown, me?: unknown): { mode: 'allow' | 'ask' | 'deny'; agent: agents.AgentView | null } {
+  // A logged-in human clicking "mint a link" in the artifact card IS the approval.
+  if ((me as any)?.kind === 'user') return { mode: 'allow', agent: null };
+  const slug = sessionAgent(s as any);
+  const a = slug ? agents.getAgent(slug) : null;
+  if (!a) return { mode: 'allow', agent: null };
+  if (!policy.toolAllowed(policy.policyOf(a), 'share_artifact')) return { mode: 'deny', agent: a };
+  if ((a.autoApprove || []).includes(SHARE_KIND)) return { mode: 'allow', agent: a };
+  return { mode: 'ask', agent: a };
+}
+
+/** Open the "mint a public link?" card for `artifactId` in the agent's session. */
+function askShareApproval(id: string, a: agents.AgentView, artifactId: string, title: string, days?: number): Record<string, unknown> {
+  const prompt = `${a.emoji} ${a.name} wants a PUBLIC link for "${title}" — anyone with the link can open it without logging in.`;
+  const action: Record<string, unknown> = {
+    id: 'act_' + nano(),
+    prompt,
+    buttons: [
+      { label: 'Approve link', value: 'approve', style: 'primary' },
+      { label: 'No link', value: 'no' },
+    ],
+    kind: SHARE_KIND,
+    agent: { slug: a.slug, name: a.name, emoji: a.emoji, color: a.color },
+    share: { artifactId, title, ...(days != null ? { days } : {}) },
+  };
+  state.patchSession(id, { action });
+  pushIntervention(id, 'action', prompt, 'waiting for your answer');
+  return action;
+}
+
+/**
  * Get-or-create an agent's home chat: one long-lived, worktree-less session for
  * DMs (an archived home is restored). A NEW home is a new session of the agent
  * — refused (429) while its daily budget is spent (A3).
@@ -836,7 +876,7 @@ function ensureHomeSession(a: agents.AgentView): { session: NonNullable<ReturnTy
     if (b?.exceeded) {
       const err = new Error(ledger.budgetRefusal(b, a.name)) as Error & { status?: number; budget?: unknown };
       err.status = 429;
-      err.budget = b;
+      err.budget = { ...b, name: a.name };
       throw err;
     }
     s = state.createSession({
@@ -1475,8 +1515,9 @@ export function applyAgentToSession<T extends { title?: string; model?: string; 
   // A3: daily token budget — a spent agent gets no new sessions until local midnight.
   const b = ledger.budgetState(agent.slug);
   if (b?.exceeded) {
-    const err = new Error(ledger.budgetRefusal(b, agent.name)) as Error & { status?: number };
+    const err = new Error(ledger.budgetRefusal(b, agent.name)) as Error & { status?: number; budget?: unknown };
     err.status = 429;
+    err.budget = { ...b, name: agent.name };
     throw err;
   }
   return {
@@ -3906,8 +3947,11 @@ export async function handle(
         body.metadata = o.metadata;
         agentColor = o.color;
       } catch (e) {
-        const status = (e as { status?: number }).status;
-        return status ? json(res, { error: (e as Error).message }, status) : notFound(res, (e as Error).message);
+        const err = e as Error & { status?: number; budget?: unknown };
+        // A5 (#11): the 429 carries the structured budget so the UI localises it.
+        return err.status
+          ? json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status)
+          : notFound(res, err.message);
       }
       const s = state.createSession({
         title: body.title,
@@ -4184,8 +4228,8 @@ export async function handle(
         const r = await delegateToAgent(id, agentSlug, text, mode);
         return json(res, { ok: true, ...r, url: sessionPath(r.target) }, 201);
       } catch (e) {
-        const err = e as Error & { status?: number };
-        return json(res, { error: err.message }, err.status || 500);
+        const err = e as Error & { status?: number; budget?: unknown };
+        return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
       }
     }
     // A4: `/agent new [name]` → the create-agent card (the human edits + confirms).
@@ -4213,8 +4257,10 @@ export async function handle(
       try {
         claude.sendMessage(id, text, attachments);
       } catch (e) {
-        const error = e instanceof Error ? e : new Error(String(e));
-        return json(res, { error: error.message }, 500);
+        // A5 (#5): a turn past the agent's daily cap is refused with the same 429
+        // line as a new session — and with the structured budget for the UI (#11).
+        const error = e as Error & { status?: number; budget?: unknown };
+        return json(res, { error: error.message, ...(error.budget ? { budget: error.budget } : {}) }, error.status || 500);
       }
       return json(res, { ok: true });
     }
@@ -4259,8 +4305,8 @@ export async function handle(
         const ok = claude.playPendingPrompt(id, parts[4]);
         return ok ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
       } catch (e) {
-        const error = e instanceof Error ? e : new Error(String(e));
-        return json(res, { error: error.message }, 500);
+        const error = e as Error & { status?: number; budget?: unknown };
+        return json(res, { error: error.message, ...(error.budget ? { budget: error.budget } : {}) }, error.status || 500);
       }
     }
     if (parts[3] === 'prompts' && parts[4] && m === 'DELETE') {
@@ -4299,7 +4345,7 @@ export async function handle(
       if (value === undefined) return badRequest(res, 'value required');
       // A3: the human's answer goes to the agent's ledger; "auto-approve this
       // kind from now on" adds the kind to agent.json autoApprove.
-      const cur = (s as any).action as { kind?: string; prompt?: string; agent?: { slug: string } } | null;
+      const cur = (s as any).action as { kind?: string; prompt?: string; agent?: { slug: string }; share?: { artifactId: string; title?: string; days?: number } } | null;
       const agSlug = sessionAgent(s);
       if (agSlug && cur) {
         ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: cur.kind || null, value: String(value), auto: false, by: principalLabel((req as any).auth) });
@@ -4311,6 +4357,27 @@ export async function handle(
       state.patchSession(id, { action: null });
       // F7: request_review's ✓ Verified is a human approval of the branch.
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
+      // A5 (#2): the share card is the ONLY place an agent's public link is minted
+      // — the answer carries the link (or the refusal) back into the session.
+      if (cur?.kind === SHARE_KIND && cur.share) {
+        let line: string;
+        if (String(value) === 'approve') {
+          try {
+            const sh = artifacts.share(id, cur.share.artifactId, { days: cur.share.days });
+            line = `[host] The human APPROVED the public link for "${cur.share.title || cur.share.artifactId}": ${sh.share_url} (expires ${sh.exp}). Hand this link to them as-is — never a localhost URL.`;
+          } catch (e) {
+            line = `[host] The human approved the public link but minting it failed: ${(e as Error).message}`;
+          }
+        } else {
+          line = `[host] The human REFUSED a public link for "${cur.share.title || cur.share.artifactId}". No link exists; the artifact stays inside the cockpit. Do not ask again in this turn.`;
+        }
+        try {
+          claude.sendMessage(id, line);
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 500);
+        }
+        return json(res, { ok: true });
+      }
       try {
         claude.sendMessage(id, String(value));
       } catch (e) {
@@ -4418,6 +4485,11 @@ export async function handle(
     if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));
     if (sub === 'artifacts' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // A5 (#2): publishing is a revocable family now — the REST guard is the
+      // fourth layer under --disallowedTools / the hook / the host-MCP filter.
+      const pubAgent = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
+      if (pubAgent && !policy.toolAllowed(policy.policyOf(pubAgent), 'publish_artifact'))
+        return json(res, { error: `agent "${pubAgent.name}" may not publish artifacts (no "publish" tool) — hand the file path to the human instead` }, 403);
       let r: artifacts.PublishResult;
       try {
         r = artifacts.publish(id, {
@@ -4432,16 +4504,27 @@ export async function handle(
       const { artifact, warnings } = r;
       if (sessionAgent(s)) ledger.appendActivity(sessionAgent(s)!, { kind: 'artifact', sessionId: id, detail: artifact.title || artifact.id, artifactId: artifact.id });
       // K2: share:true mints an expiring cookie-less link for THIS version.
+      // A5 (#2): from an agent session that link waits for the human's approval.
       let share_url: string | null = null;
       let share_exp: string | null = null;
+      let share_pending = false;
       if (body.share === true) {
-        try {
-          const sh = artifacts.share(id, artifact.id, { days: body.share_days != null ? Number(body.share_days) : undefined });
-          share_url = sh.share_url;
-          share_exp = sh.exp;
-          warnings.push(...sh.warnings);
-        } catch (e) {
-          warnings.push(`share link failed: ${(e as Error).message}`);
+        const gate = shareGate(s, (req as any).auth);
+        if (gate.mode === 'deny') {
+          warnings.push(`no share link: agent "${gate.agent!.name}" may not mint public links (no "publish" tool)`);
+        } else if (gate.mode === 'ask') {
+          askShareApproval(id, gate.agent!, artifact.id, artifact.title, body.share_days != null ? Number(body.share_days) : undefined);
+          share_pending = true;
+          warnings.push('a public link needs the human: an approval card is open in this session — the link arrives as a message once they approve');
+        } else {
+          try {
+            const sh = artifacts.share(id, artifact.id, { days: body.share_days != null ? Number(body.share_days) : undefined });
+            share_url = sh.share_url;
+            share_exp = sh.exp;
+            warnings.push(...sh.warnings);
+          } catch (e) {
+            warnings.push(`share link failed: ${(e as Error).message}`);
+          }
         }
       }
       const ev = claude.appendChat(id, {
@@ -4484,6 +4567,7 @@ export async function handle(
         warnings,
         share_url,
         share_exp,
+        ...(share_pending ? { share_pending: true } : {}),
         event_id: ev?.id,
       });
     }
@@ -4493,7 +4577,23 @@ export async function handle(
       try {
         if (m === 'POST') {
           const body = (await readBody(req)) as any;
-          const r = artifacts.share(id, parts[4], { days: body?.days != null ? Number(body.days) : undefined });
+          const days = body?.days != null ? Number(body.days) : undefined;
+          // A5 (#2): same gate as share:true on publish — an agent asks first.
+          const gate = shareGate(s, (req as any).auth);
+          if (gate.mode === 'deny')
+            return json(res, { error: `agent "${gate.agent!.name}" may not mint public links (no "publish" tool)` }, 403);
+          if (gate.mode === 'ask') {
+            const art = artifacts.list(id).find((x: any) => x.id === parts[4]);
+            if (!art) return notFound(res, 'no such artifact');
+            askShareApproval(id, gate.agent!, parts[4], art.title || parts[4], days);
+            return json(res, {
+              ok: true,
+              pending: true,
+              share_url: null,
+              message: 'a public link needs the human: an approval card is open in this session — the link arrives as a message once they approve',
+            }, 202);
+          }
+          const r = artifacts.share(id, parts[4], { days });
           return json(res, { ok: true, ...r });
         }
         if (m === 'DELETE') return json(res, { ok: true, ...artifacts.unshare(id, parts[4]) });
