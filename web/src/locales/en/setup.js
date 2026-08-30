@@ -170,4 +170,5 @@ export const strings = {
   'setup.connections.off': 'off',
   'setup.connections.audit': 'Recent connections',
   'setup.connections.noAudit': 'No connections recorded yet.',
+  'setup.card.owner': 'for {name}',
 };

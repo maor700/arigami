@@ -49,7 +49,8 @@ export const TMP_DIR = path.join(ARIGAMI_DIR, 'tmp');
  * (chrome-sessions/), logs, our own scratch space and previous restores.
  */
 export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-plugin', 'tmp', 'backups', 'node_modules'];
-const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp'];
+// A2: an agent's persistent Chrome profile is a cache like chrome-base (cookies, huge) — never exported.
+const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser'];
 /** Root-level only (F4 #7): `mcp-logs.txt`, `wa-logs.txt` … are logs that don't live under logs/. */
 export const ROOT_EXCLUDE_GLOBS = ['./*-logs.txt'];
 

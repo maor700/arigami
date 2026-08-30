@@ -158,7 +158,7 @@ test('(a) setup card + live patches carry every field S2 renders; start/mode/ski
   const chat = async () => (await api('GET', `/__api/sessions/${sid}/chat`)).json as any[];
   const card = await until(async () => (await chat()).find((e: any) => e.kind === 'setup'));
   for (const k of CARD_FIELDS) expect(k in card).toBe(true);
-  expect(card.identity).toEqual({ email: 'c@example.com' });
+  expect(card.identity).toEqual({ email: 'c@example.com', owner: 'global' });
   expect(['pending', 'auto', 'done', 'failed', 'skipped', 'timeout']).toContain(card.state);
   expect(typeof card.autoCapable).toBe('boolean');
 

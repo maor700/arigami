@@ -26,18 +26,44 @@ export function chromeSessionDir(sessionId: string): string {
   return path.join(CHROME_SESSIONS_DIR, sessionId);
 }
 
-function ensureBase(): void {
-  fs.mkdirSync(CHROME_BASE_DIR, { recursive: true });
+// A2: an agent ("צוות") owns a persistent profile of its own —
+// $ARIGAMI_DIR/agents/<slug>/browser/. Sessions born from the agent clone THAT
+// (not chrome-base) on first open, and sync their logins back into it, so the
+// agent keeps its own identity across sessions. Slug shape = agents.ts SLUG_RE
+// (kept inline: agents.ts pulls in skills/bus, which chrome.ts must not).
+const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export function agentBrowserDir(slug: string): string {
+  if (!AGENT_SLUG_RE.test(slug)) throw new Error(`invalid agent slug: ${slug}`);
+  return path.join(ARIGAMI_DIR, 'agents', slug, 'browser');
+}
+
+/** The agent slug a session was born from (metadata.agent), or null. */
+export function agentOfSession(sessionId: string): string | null {
+  const a = (state.getSession(sessionId)?.metadata as any)?.agent;
+  return typeof a === 'string' && AGENT_SLUG_RE.test(a) ? a : null;
+}
+
+/** Where a session's profile copy is seeded from / synced to: the agent's profile, else chrome-base. */
+export function profileSeedFor(sessionId: string): { dir: string; owner: string } {
+  const slug = agentOfSession(sessionId);
+  return slug ? { dir: agentBrowserDir(slug), owner: `agent:${slug}` } : { dir: CHROME_BASE_DIR, owner: 'global' };
+}
+
+function ensureBase(dir = CHROME_BASE_DIR): void {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
 // First open only — an existing copy is left alone so a session's own
 // in-progress browsing (open tabs, a login mid-flow) survives a restart.
-function ensureSessionProfile(sessionId: string): string {
+// An agent's first-ever profile starts EMPTY (its own identity — it does not
+// inherit the shared base logins); later sessions of the agent inherit its own.
+export function ensureSessionProfile(sessionId: string): string {
   const dir = chromeSessionDir(sessionId);
   if (!fs.existsSync(dir)) {
-    ensureBase();
+    const seed = profileSeedFor(sessionId).dir;
+    ensureBase(seed);
     fs.mkdirSync(CHROME_SESSIONS_DIR, { recursive: true });
-    fs.cpSync(CHROME_BASE_DIR, dir, { recursive: true });
+    fs.cpSync(seed, dir, { recursive: true });
   }
   return dir;
 }
@@ -106,15 +132,15 @@ export function closeChrome(sessionId: string): void {
 // ---- Sync back to chrome-base (T8 §4) ---------------------------------------
 
 const SYNC_PATHS = ['Default/Cookies', 'Default/Login Data', 'Default/Local Storage'];
-const LOCK_DIR = path.join(CHROME_BASE_DIR, '.sync.lock');
 const LOCK_STALE_MS = 10_000;
 
 // Directory-create-as-mutex: mkdir is atomic, so the first caller to succeed
 // holds the lock; everyone else retries (non-blocking — a setTimeout wait,
 // not a busy loop, so it never stalls the server's event loop) until it's
 // free or a stuck holder's lock is old enough to be considered crashed.
-async function withLock<T>(fn: () => T, timeoutMs = 5000): Promise<T> {
-  ensureBase();
+async function withLock<T>(target: string, fn: () => T, timeoutMs = 5000): Promise<T> {
+  ensureBase(target);
+  const LOCK_DIR = path.join(target, '.sync.lock');
   const start = Date.now();
   for (;;) {
     try {
@@ -137,27 +163,41 @@ async function withLock<T>(fn: () => T, timeoutMs = 5000): Promise<T> {
   }
 }
 
-/** Copy cookies/saved logins/local storage from this session's profile copy back to chrome-base. Last-writer-wins. No-op if the session never opened a browser. */
-export async function syncProfileToBase(sessionId: string): Promise<{ ok: boolean; synced: string[] }> {
-  const src = chromeSessionDir(sessionId);
-  if (!fs.existsSync(src)) return { ok: false, synced: [] };
-  return withLock(() => {
-    const synced: string[] = [];
-    for (const rel of SYNC_PATHS) {
-      const from = path.join(src, rel);
-      const to = path.join(CHROME_BASE_DIR, rel);
-      if (!fs.existsSync(from)) continue;
-      try {
-        fs.mkdirSync(path.dirname(to), { recursive: true });
-        fs.rmSync(to, { recursive: true, force: true });
-        fs.cpSync(from, to, { recursive: true });
-        synced.push(rel);
-      } catch (e) {
-        console.error(`[chrome] sync ${rel} for ${sessionId} failed:`, (e as Error).message);
-      }
+function copySyncPaths(src: string, target: string, sessionId: string): string[] {
+  const synced: string[] = [];
+  for (const rel of SYNC_PATHS) {
+    const from = path.join(src, rel);
+    const to = path.join(target, rel);
+    if (!fs.existsSync(from)) continue;
+    try {
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.rmSync(to, { recursive: true, force: true });
+      fs.cpSync(from, to, { recursive: true });
+      synced.push(rel);
+    } catch (e) {
+      console.error(`[chrome] sync ${rel} for ${sessionId} failed:`, (e as Error).message);
     }
-    return { ok: true, synced };
-  });
+  }
+  return synced;
+}
+
+/**
+ * Copy cookies/saved logins/local storage from this session's profile copy back
+ * to its seed — chrome-base for a plain session, the AGENT's browser/ for a
+ * session born from an agent (A2). `shared:true` additionally syncs an agent
+ * session into chrome-base (only when asked — an agent's logins stay its own
+ * by default). Last-writer-wins under a per-target lock. No-op if the session
+ * never opened a browser.
+ */
+export async function syncProfileToBase(sessionId: string, opts: { shared?: boolean } = {}): Promise<{ ok: boolean; synced: string[]; targets: string[] }> {
+  const src = chromeSessionDir(sessionId);
+  if (!fs.existsSync(src)) return { ok: false, synced: [], targets: [] };
+  const seed = profileSeedFor(sessionId);
+  const targets = [seed];
+  if (opts.shared && seed.owner !== 'global') targets.push({ dir: CHROME_BASE_DIR, owner: 'global' });
+  let synced: string[] = [];
+  for (const t of targets) synced = await withLock(t.dir, () => copySyncPaths(src, t.dir, sessionId));
+  return { ok: true, synced, targets: targets.map((t) => t.owner) };
 }
 
 /**
@@ -168,7 +208,10 @@ export async function syncProfileToBase(sessionId: string): Promise<{ ok: boolea
  * null = no Google web session found.
  */
 export function googleAccountEmail(sessionId?: string | null): string | null {
-  const dirs = [sessionId ? chromeSessionDir(sessionId) : null, CHROME_BASE_DIR].filter(Boolean) as string[];
+  // A2: a session born from an agent falls back to the AGENT's profile, never chrome-base
+  // (the agent's identity is its own; the shared one must not leak in).
+  const agent = sessionId ? agentOfSession(sessionId) : null;
+  const dirs = [sessionId ? chromeSessionDir(sessionId) : null, agent ? agentBrowserDir(agent) : CHROME_BASE_DIR].filter(Boolean) as string[];
   for (const d of dirs) {
     try {
       const j = JSON.parse(fs.readFileSync(path.join(d, 'Default', 'Preferences'), 'utf8'));

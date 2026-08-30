@@ -78,6 +78,7 @@ export interface CronTrigger {
   deliver: CronDeliver;
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
+  agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's "שגרה"
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
   lastRun: number | null; // ms epoch of the last fire attempt
@@ -672,6 +673,7 @@ async function fireCron(
         title: t.name,
         prompt,
         permissionMode: t.autonomous ? 'bypassPermissions' : undefined,
+        agent: t.agent || null, // A2: same path as create_session({agent}) — persona, memory, model, color
         metadata: {
           fromQueue: true,
           fromCronTrigger: t.id, // guard: sessions spawned by cron can't create more cron jobs
@@ -727,6 +729,7 @@ export async function createCronTrigger(input: {
   deliver?: CronDeliver;
   autonomous?: boolean;
   bundleKey?: string;
+  agent?: string | null;
   createdBySessionId?: string;
 }): Promise<CronTrigger> {
   // Guard against runaway scheduling loops (lesson from OpenClaw #21775 /
@@ -746,6 +749,22 @@ export async function createCronTrigger(input: {
   const sessionMode = String(input.sessionMode || 'isolated');
   if (sessionMode !== 'isolated' && !(sessionMode.startsWith('existing:') && sessionMode.length > 'existing:'.length))
     throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  // A2: the agent the runs are born from. Explicit `agent` wins; a cron job
+  // created FROM an agent's session defaults to that agent (its שגרה); an
+  // unknown slug is refused. `agent: ''` = explicitly none.
+  let agent: string | null = null;
+  if (input.agent !== undefined && input.agent !== null) {
+    if (String(input.agent).trim()) {
+      const { getAgent } = await import('./agents.js');
+      const a = getAgent(String(input.agent).trim());
+      if (!a) throw new Error(`unknown agent: ${input.agent}`);
+      agent = a.slug;
+    }
+  } else if (input.createdBySessionId) {
+    const creator = state.getSession(input.createdBySessionId);
+    const fromAgent = (creator?.metadata as any)?.agent;
+    if (typeof fromAgent === 'string' && fromAgent) agent = fromAgent;
+  }
   const createdAt = new Date().toISOString();
   // Fail the create on a bad expression instead of discovering it only when
   // the poll loop silently never fires.
@@ -765,6 +784,7 @@ export async function createCronTrigger(input: {
     },
     autonomous: !!input.autonomous,
     ...(input.bundleKey ? { bundleKey: String(input.bundleKey) } : {}),
+    ...(agent ? { agent } : {}),
     createdAt,
     createdBySessionId: input.createdBySessionId || null,
     lastRun: null,

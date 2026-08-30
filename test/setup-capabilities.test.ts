@@ -95,7 +95,7 @@ test('ensure(): returns {ok} when connected, the exact needs_setup shape otherwi
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
   expect(o.a).toEqual({ needs_setup: 'composio:gmail', why: 'read your inbox', hint: 'call request_setup' });
-  expect(o.b).toEqual({ ok: true, detail: 'signed in' });
+  expect(o.b).toEqual({ ok: true, detail: 'signed in', owner: 'global' });
   expect(o.d.needs_setup).toBe('bogus');
   expect(o.d.hint).toMatch(/unknown capability/);
   expect(o.shape).toEqual({ needs_setup: 'whatsapp', why: 'send a message', hint: 'call request_setup' });

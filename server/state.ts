@@ -246,6 +246,7 @@ export interface Listener {
   authFails: number; // consecutive auth failures
   lastPolledAt?: number;
   lastError?: string | null;
+  agent?: string | null; // A2: the agent the arming session was born from (metadata.agent) — the agent's שגרה
 }
 
 // ---- Store ----
@@ -1017,6 +1018,11 @@ export function addListener(
     authFails: 0,
     ...l,
   };
+  // A2: listeners carry the agent of the session that armed them.
+  if (listener.agent === undefined) {
+    const owner = (db.sessions.get(listener.sessionId)?.metadata as any)?.agent;
+    if (typeof owner === 'string' && owner) listener.agent = owner;
+  }
   db.listeners.set(listener.id, listener);
   persist();
   broadcast({ type: 'listener-updated', listener });

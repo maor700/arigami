@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1
+# Agents ("צוות") — A1 + A2
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -21,7 +21,8 @@ persona.md   ≤ ~20 lines "who you are + limits" — injected into the first tu
              session born from the agent (a <system-reminder> block, like the memory snapshot)
 memory/      MEMORY.md + journal/ — the agent's memory namespace (FTS scope agent:<slug>)
 assets/      brand/style references — their paths are listed to the session
-browser/     reserved (A2: persistent Chrome profile)
+browser/     the agent's persistent Chrome profile (A2)
+identity.json the agent's own Google identity (A2, no secrets)
 ```
 
 `slug` matches `^[a-z0-9][a-z0-9-]{0,39}$` (same shape as bundle/skill names). It is derived
@@ -99,7 +100,7 @@ virtual path `agents/<slug>/…`).
   via the store, on reload via `foldSetupUpdates`).
 - **Agent page** `#/agents/<slug>` (`AgentView.jsx`, Settings visual language): tabs
   פרסונה (identity + persona, save/delete/open home) · זיכרון (the agent's MEMORY.md + journal) ·
-  פעילות (sessions + their episodes). חיבורים / שגרה are A2 placeholders.
+  פעילות (sessions + their episodes) · חיבורים / שגרה (A2, below).
 - Mobile: the same section inside the rail drawer.
 
 ## Tests / gates
@@ -112,6 +113,126 @@ fold). Gates: `bun run typecheck` (2 pre-existing errors), `bun test test/`,
 
 ## Next waves
 
-A2 connected identity (per-agent connections + Chrome profile, `cronjob({agent})`, listeners),
+A2 connected identity — shipped, see below.
 A3 control (host-enforced tool/domain allowlists, budgets, cost per agent),
 A4 experience (slash-commands, @mentions, `marketing-team` bundle, bundles ship `agents/`).
+
+---
+
+# A2 — Connected identity
+
+An agent's **connections, browser and routine are its own**. Everything below keys off
+`session.metadata.agent` (set by `create_session({agent})`); a session without an agent behaves
+exactly as before.
+
+## Owners — `global` / `agent:<slug>`
+
+A connection belongs to the host (`global`) or to one agent (`agent:<slug>`). Only capabilities
+that carry real per-identity state are **ownable**:
+
+| capability | agent-owned state | shared fallback |
+|---|---|---|
+| `identity` | the Google login in the agent's own Chrome profile → `agents/<slug>/identity.json` (no secrets) | `$ARIGAMI_DIR/identity.json` |
+| `composio:*` | a Composio connected account with `user_id: agent:<slug>` | the host's account (`user_id: default`) |
+
+`claude`, `git`, `whatsapp`, `desktop`, `push`, `remote`, `telemetry`, `repo:*` are host-level:
+they resolve to `global` for every owner (`ownable:false`).
+
+**Resolution is agent-first, then shared.** `capabilitiesStatus(probes, owner)` /
+`statusOf(cap, probes, owner)` return `owner` (who was asked) and `resolvedFrom`
+(`agent:<slug>` = the agent's own, `global` = inherited from the host — the detail says
+`(shared)`, `null` = not connected). `ensure(id, why, probes, owner)` answers the same way for
+`check_setup`. The first-turn "Connected now" hint is computed **per owner** (`claude.js
+refreshCapabilitiesHint(owner)`), so an agent session sees `identity (shared)` when it is
+inheriting. `connections.log` lines carry `owner` (absent = global); `readAudit(limit, owner)`
+filters.
+
+### The setup card saves to the agent
+
+`request_setup` from a session born from an agent opens a card with `owner: 'agent:<slug>'`
+(persisted in `setup-pending.json`, shown as a chip "עבור <agent>" in the chat). Every path that
+closes it writes to the agent:
+
+- `POST /__api/setup/identity {action:'verify', sessionId}` / the take-over resolve → the agent's
+  `identity.json`, `chromeProfile: 'agent:<slug>'`;
+- `POST /__api/setup/composio:<toolkit> {action:'start'}` → the Composio link uses
+  `user_id: agent:<slug>`; the ACTIVE account is then visible only to that agent;
+- the **consent click** (`/start`) needs the **agent's own** Google identity — the shared one does
+  not drive the agent's Chrome profile;
+- `markIdentityProvider`, orphan pruning and `resolveSetupsFor` are per owner.
+
+Owner of an HTTP request: explicit `?owner=` / `body.owner` (400 on garbage) → else the session
+principal's agent (or `body.sessionId`'s) → else `global`. Host-level capability ids always
+collapse to `global`.
+
+### REST
+
+| method | path | |
+|---|---|---|
+| GET | `/__api/setup/capabilities?owner=agent:<slug>` | resolved for that owner (+ `sharedIdentity`) |
+| GET | `/__api/setup/capabilities/:id?owner=` | `check_setup` twin, `{ok, detail, owner}` |
+| GET | `/__api/setup/connections?owner=` | audit filtered to one owner (no owner = everything, with its `owner` column) |
+| POST | `/__api/setup/:capability` `{…, owner?}` | manual payload for that owner |
+| DELETE | `/__api/setup/:capability?owner=` | disconnect **only** that owner's (an agent's Gmail never removes the host's) |
+| GET | `/__api/agents/:slug/connections` | `{owner, identity, sharedIdentity, capabilities, audit, browserProfile}` |
+
+### Web
+
+Settings → **חיבורים** gets a **"שייך ל:"** select (כללי / each agent). With an agent selected the
+hub shows the agent's view (`settings/AgentConnections.jsx`): the ownable capabilities with
+**משלו / משותף (מארח) / לא מחובר**, the host-level list, the browser-profile line and the
+agent's audit; the global audit shows an owner column. The same panel is the Agent page tab
+**חיבורים**. "חבר לסוכן" opens `ConnectDialog` with the owner — AUTO spawns a session **born from
+the agent** (`connectViaSession(cap, {agent})`), MANUAL steps carry `owner` in their payloads.
+
+## Persistent Chrome profile per agent — `agents/<slug>/browser/`
+
+`server/lib/chrome.ts` keeps the T8 mechanism (one `--user-data-dir` copy per session, seeded on
+the first `openChrome`, logins synced back) and only changes **the seed**:
+
+- `profileSeedFor(sessionId)` → `agents/<slug>/browser` for a session born from an agent, else
+  `chrome-base`. The agent's first profile starts **empty** (its own identity — it does not
+  inherit the shared logins); later sessions of the agent inherit the agent's.
+- `syncProfileToBase(sessionId, {shared})` copies `Default/Cookies`, `Login Data`,
+  `Local Storage` back into the seed under a per-target lock. An agent session lands in the
+  agent's profile; **`shared:true`** additionally syncs into `chrome-base` — only when asked.
+  Same triggers as before (take-over resolve, session delete, `save_browser_logins`).
+- `googleAccountEmail(sessionId)` reads the session copy, then the **agent's** profile — never
+  `chrome-base` for an agent session (the shared account must not leak in).
+- `save_browser_logins({shared?})` / `POST /__api/sessions/:id/browser/sync-logins {shared}`.
+- Backups exclude `agents/*/browser` like `chrome-base` (cookies, huge, rebuilt from logins).
+
+## Routine — `cronjob({agent})` + listeners per agent
+
+- `CronTrigger.agent` — the slug the **isolated runs are born from**. `cronjob({action:'create',
+  agent?})` / `POST /__api/triggers {type:'cron', agent?}`: explicit slug wins (unknown → 400),
+  a job created from an agent's session **defaults to that agent**, `agent: ''` = none. The
+  runaway-loop guard is unchanged.
+- The fire path now shares the `create_session({agent})` code: `api.applyAgentToSession()` is
+  the one helper (model / color / title / `metadata.agent`), used by `POST /__api/sessions` and
+  by `startEmptySession({agent})` that `fireCron` calls — so a cron run gets the persona, the
+  agent memory, the agent's connections and browser profile.
+- `Listener.agent` — stamped by `state.addListener` from the arming session's `metadata.agent`.
+- `GET /__api/agents/:slug/routine` → `{cron: [ …, nextRunAt ], listeners}`; `GET /__api/triggers`
+  rows carry `agent`.
+- Web: Agent page tab **שגרה** (`RoutineList.jsx`): cron jobs with enable/disable (`PATCH
+  /triggers/:id`), run now, delete, next/last run; listeners with cancel. Adding is done in chat
+  ("הוסף דרך הצ׳אט" opens a session born from the agent with a prefilled prompt). The Rail team
+  row of an **idle** agent with an enabled job shows its next run ("⏰ בעוד 3שע") instead of
+  "פנוי" (`nextCronFor(slug, triggers)`).
+
+## Tests
+
+`test/agents-a2.test.ts` (owners, identity per owner, audit filter, Chrome seed/sync/email,
+listener stamping), `test/agents-a2-host.test.ts` (isolated host: card owner, identity verify →
+agent file, connections/routine endpoints, cron born from the agent, sync-logins),
+`test/agents-a2-web.test.js` (Rail next cron, AgentConnections, RoutineList, SetupCard owner
+chip, hub filter). The S1 contract tests now expect `owner` on `card.identity` / `ensure()`.
+
+## Known limits (A2)
+
+- Per-agent ownership is real for `identity` and `composio:*` only; the MCP servers a session
+  sees are still the user's global ones — an agent's Composio account is selected by the
+  `user_id` Composio keys the connection with, not by a per-session MCP config.
+- Claude accounts (`accounts.json`) stay host-level (A3 budgets will attribute cost per agent).
+- An agent's first browser profile is empty by design — the human logs in once per agent.

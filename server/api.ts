@@ -83,11 +83,13 @@ interface SetupResult {
   playbook?: string;
   evidence?: string | null;
   already?: boolean;
+  owner?: caps.Owner; // A2: where an `already` answer resolved from
 }
 interface PendingSetup {
   id: string;
   sessionId: string;
   capability: string;
+  owner: caps.Owner; // A2: 'agent:<slug>' when the requesting session was born from an agent (ownable capabilities only)
   why: string;
   mode: SetupMode;
   state: SetupState;
@@ -106,9 +108,9 @@ const pendingSetups = new Map<string, PendingSetup>();
 const closedSetups = new Map<string, PendingSetup>();
 const CLOSED_SETUPS_MAX = 200;
 
-type PersistedSetup = Pick<PendingSetup, 'id' | 'sessionId' | 'capability' | 'why' | 'mode' | 'state' | 'evidence' | 'detail' | 'createdAt' | 'lines'>;
+type PersistedSetup = Pick<PendingSetup, 'id' | 'sessionId' | 'capability' | 'owner' | 'why' | 'mode' | 'state' | 'evidence' | 'detail' | 'createdAt' | 'lines'>;
 function persistPendingSetups(): void {
-  const list: PersistedSetup[] = [...pendingSetups.values()].map(({ id, sessionId, capability, why, mode, state: st, evidence, detail, createdAt, lines }) => ({ id, sessionId, capability, why, mode, state: st, evidence, detail, createdAt, lines }));
+  const list: PersistedSetup[] = [...pendingSetups.values()].map(({ id, sessionId, capability, owner, why, mode, state: st, evidence, detail, createdAt, lines }) => ({ id, sessionId, capability, owner, why, mode, state: st, evidence, detail, createdAt, lines }));
   try {
     fs.mkdirSync(path.dirname(caps.SETUP_PENDING_FILE), { recursive: true });
     fs.writeFileSync(caps.SETUP_PENDING_FILE, JSON.stringify(list, null, 2) + '\n');
@@ -135,7 +137,7 @@ function loadPendingSetups(): void {
   for (const p of list) {
     if (!p || typeof p.id !== 'string' || !state.getSession(p.sessionId)) continue;
     if (!['pending', 'auto', 'failed'].includes(p.state)) continue;
-    pendingSetups.set(p.id, { ...p, lines: Array.isArray(p.lines) ? p.lines : [], evidence: p.evidence ?? null, timer: setupTimer(p.id, p.createdAt), waiters: [] });
+    pendingSetups.set(p.id, { ...p, owner: caps.parseOwner(p.owner) || ownerOfSession(p.sessionId, p.capability), lines: Array.isArray(p.lines) ? p.lines : [], evidence: p.evidence ?? null, timer: setupTimer(p.id, p.createdAt), waiters: [] });
   }
   if (pendingSetups.size) persistPendingSetups();
 }
@@ -635,12 +637,35 @@ function setupCardPayload(e: PendingSetup): Record<string, unknown> {
     evidence: e.evidence,
     detail: e.detail,
     lines: e.lines,
+    owner: e.owner,
   };
 }
-const identityView = (): { email: string } | null => {
-  const i = caps.readIdentity();
-  return i ? { email: i.email } : null;
+const identityView = (owner: caps.Owner = caps.GLOBAL_OWNER): { email: string; owner: caps.Owner } | null => {
+  // A2: an agent's card shows the AGENT's identity (what its auto playbook would use).
+  const i = caps.readIdentity(owner);
+  return i ? { email: i.email, owner } : null;
 };
+
+/**
+ * A2: the owner a session's connections belong to — 'agent:<slug>' for a
+ * session born from an agent, but only for OWNABLE capabilities (identity,
+ * composio:*); host-level capabilities are always global.
+ */
+export function ownerOfSession(sessionId: string | null | undefined, capability?: string): caps.Owner {
+  if (capability !== undefined && !caps.isOwnable(capability)) return caps.GLOBAL_OWNER;
+  const s = sessionId ? state.getSession(sessionId) : null;
+  return caps.ownerForAgent((s?.metadata as any)?.agent);
+}
+
+/** A2: the owner an HTTP request acts for — explicit `owner` wins (400 on garbage), else the session principal's agent, else global. */
+function ownerOfRequest(explicit: unknown, me: import('./auth.js').Principal | null, capability?: string): caps.Owner | null {
+  if (explicit !== undefined && explicit !== null && explicit !== '') {
+    const o = caps.parseOwner(explicit);
+    if (!o) return null;
+    return capability !== undefined && !caps.isOwnable(capability) ? caps.GLOBAL_OWNER : o;
+  }
+  return me?.kind === 'session' ? ownerOfSession(me.sessionId, capability) : caps.GLOBAL_OWNER;
+}
 
 // Every transition: one `setup-update` chat event (same id as the `setup`
 // card — the web merges by id) + a bus `setup` broadcast for non-chat views
@@ -668,13 +693,13 @@ function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', o
   const s = state.getSession(e.sessionId);
   if (s && (s.claude as any)?.setupRequest?.id === e.id) state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
   broadcastSetup(e);
-  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: e.mode, result: outcome, evidence: e.evidence, human: opts.human, detail: e.detail });
+  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: e.mode, result: outcome, evidence: e.evidence, human: opts.human, detail: e.detail, owner: e.owner });
   import('./funnel.js').then((f) => f.emit(outcome === 'done' ? 'setup.completed' : 'setup.skipped', { capability: e.capability, mode: e.mode, ...(outcome === 'timeout' ? { timeout: true } : {}) })).catch(() => {});
   if (outcome === 'done') {
     caps.invalidateComposioCache();
-    if (e.mode === 'auto' && !opts.human) caps.markIdentityProvider(e.capability);
+    if (e.mode === 'auto' && !opts.human) caps.markIdentityProvider(e.capability, e.owner);
     // F6: a fresh ACTIVE account makes the earlier INITIALIZING/FAILED attempts orphans.
-    if (e.capability.startsWith('composio:')) caps.pruneComposioOrphans(e.capability.slice(9)).catch(() => {});
+    if (e.capability.startsWith('composio:')) caps.pruneComposioOrphans(e.capability.slice(9), { owner: e.owner }).catch(() => {});
   }
   const result: SetupResult = { state: outcome, id: e.id, capability: e.capability, detail: e.detail, mode: e.mode, evidence: e.evidence };
   for (const w of e.waiters.splice(0)) w(result);
@@ -706,20 +731,21 @@ export function resolveIdentityAfterTakeover(sessionId: string): { resolved: boo
     return { resolved: false, email: null };
   }
   try {
-    caps.writeIdentity({ email, chromeProfile: 'base' });
+    // A2: an agent session's Google login lands in the AGENT's identity (its own Chrome profile).
+    caps.writeIdentity({ email, chromeProfile: entry.owner === caps.GLOBAL_OWNER ? 'base' : entry.owner }, entry.owner);
   } catch {
     return { resolved: false, email: null };
   }
   finishSetup(entry, 'done', { detail: `signed in as ${email}`, human: true });
-  broadcast({ type: 'setup.changed', capability: 'identity' });
+  broadcast({ type: 'setup.changed', capability: 'identity', owner: entry.owner });
   return { resolved: true, email };
 }
 
 /** A manual connection landed (REST payload / wizard) — close every open card for that capability. */
-function resolveSetupsFor(capability: string, detail: string, human = true): number {
+function resolveSetupsFor(capability: string, detail: string, human = true, owner: caps.Owner = caps.GLOBAL_OWNER): number {
   let n = 0;
   for (const e of [...pendingSetups.values()]) {
-    if (e.capability !== capability) continue;
+    if (e.capability !== capability || e.owner !== owner) continue;
     finishSetup(e, 'done', { detail, human });
     n++;
   }
@@ -804,7 +830,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     settleAgentCard(String(body.sessionId || ''), cm[1], { state: 'cancelled' }, '[host] The human cancelled the Agent card — do not create the agent.');
     return json(res, { ok: true });
   }
-  const am = /^\/__api\/agents\/([a-z0-9][a-z0-9-]{0,39})(?:\/(home|activity))?$/.exec(p);
+  const am = /^\/__api\/agents\/([a-z0-9][a-z0-9-]{0,39})(?:\/(home|activity|connections|routine))?$/.exec(p);
   if (!am) return notFound(res);
   const slug = am[1];
   const sub = am[2];
@@ -821,6 +847,20 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     // The agent's sessions stay (they just lose the badge); its dir (memory, persona) is removed.
     const r = agents.deleteAgent(slug);
     return r.ok ? json(res, { ok: true }) : badRequest(res, r.error || 'delete failed');
+  }
+  if (sub === 'connections' && m === 'GET') {
+    // A2: the agent's connections — every capability resolved FOR the agent
+    // (own first, shared second; `resolvedFrom` says which) + its audit lines.
+    const owner = caps.ownerForAgent(slug);
+    const view = await caps.capabilitiesStatus({}, owner);
+    return json(res, { ...view, audit: caps.readAudit(50, owner), browserProfile: fs.existsSync(chrome.agentBrowserDir(slug)) });
+  }
+  if (sub === 'routine' && m === 'GET') {
+    // A2: the agent's שגרה — cron jobs whose runs are born from it + listeners its sessions armed.
+    const t = await import('./triggers.js');
+    const cron = t.listTriggers().filter((x: any) => x.type === 'cron' && x.agent === slug).map((x: any) => ({ ...x, nextRunAt: t.nextRunFor(x) }));
+    const listeners = state.listListeners().filter((l: any) => l.agent === slug);
+    return json(res, { cron, listeners });
   }
   if (sub === 'home' && m === 'GET') {
     // Get-or-create the agent's home chat: one long-lived, worktree-less session for DMs.
@@ -864,7 +904,9 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
   const capability = String(body.capability || '').trim();
-  const cap = caps.getCapability(capability);
+  // A2: a session born from an agent asks for the AGENT's connection (agent first, then the shared one).
+  const owner = ownerOfSession(sessionId, capability);
+  const cap = caps.getCapability(capability, {}, owner);
   if (!cap) return badRequest(res, `unknown capability: ${capability} — use a registry id (GET /__api/setup/capabilities)`);
   // F6: never an empty why — the card and the audit fall back to the capability title.
   const why = (String(body.why || '').trim() || cap.title).slice(0, 300);
@@ -873,8 +915,8 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   let check: caps.CheckResult;
   try { check = await cap.check(); } catch (e) { check = { ok: false, detail: (e as Error).message }; }
   if (check.ok) {
-    caps.appendAudit({ sessionId: sessionId!, capability, mode: 'none', result: 'already', evidence: null, human: false, detail: why });
-    const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true };
+    caps.appendAudit({ sessionId: sessionId!, capability, mode: 'none', result: 'already', evidence: null, human: false, detail: why, owner });
+    const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true, owner: check.owner || caps.GLOBAL_OWNER } as SetupResult;
     return json(res, r);
   }
   const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
@@ -901,7 +943,8 @@ export function openSetupCard(sessionId: string, cap: caps.Capability, why: stri
   // Re-request on an open card (e.g. after a failed auto → manual): attach.
   let entry = openSetupFor(sessionId, capability);
   if (!entry) {
-    const def = caps.defaultMode(cap);
+    const owner = ownerOfSession(sessionId, capability);
+    const def = caps.defaultMode(cap, {}, owner);
     // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
     // the card with both choices and blocks like manual.
     const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
@@ -910,7 +953,7 @@ export function openSetupCard(sessionId: string, cap: caps.Capability, why: stri
     // switch; the agent blocks until the human clicks "Connect automatically"
     // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
     const e: PendingSetup = {
-      id, sessionId, capability, why, mode,
+      id, sessionId, capability, owner, why, mode,
       state: 'pending',
       evidence: null, detail, createdAt: new Date().toISOString(), lines: [],
       timer: setupTimer(id, new Date().toISOString()),
@@ -925,10 +968,10 @@ export function openSetupCard(sessionId: string, cap: caps.Capability, why: stri
       manual: cap.manual,
       autoCapable: cap.autoCapable,
       ...(cap.playbook ? { playbook: cap.playbook } : {}),
-      identity: identityView(),
+      identity: identityView(owner),
     });
     broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
-    caps.appendAudit({ sessionId, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
+    caps.appendAudit({ sessionId, capability, mode, result: 'requested', evidence: null, human: false, detail: why, owner });
     import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
     pushIntervention(sessionId, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
     entry = e;
@@ -965,10 +1008,11 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
   }
   if (!entry) {
     // Nothing to (re)open — a human skipped it, or no card ever existed. Still record what happened.
-    caps.appendAudit({ sessionId, capability, mode: 'auto', result: body.ok ? 'done' : 'failed', evidence, human: false, detail });
+    const owner = ownerOfSession(sessionId, capability);
+    caps.appendAudit({ sessionId, capability, mode: 'auto', result: body.ok ? 'done' : 'failed', evidence, human: false, detail, owner });
     if (body.ok) {
       caps.invalidateComposioCache();
-      if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9)).catch(() => {});
+      if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9), { owner }).catch(() => {});
     }
     return json(res, { ok: true, closed: false, ...(skippedByHuman ? { reason: 'skipped by the human' } : {}) });
   }
@@ -981,7 +1025,7 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
   entry.state = 'failed';
   entry.detail = detail || 'automatic setup failed';
   if (evidence) entry.evidence = evidence;
-  caps.appendAudit({ sessionId, capability: entry.capability, mode: 'auto', result: 'failed', evidence, human: false, detail: entry.detail });
+  caps.appendAudit({ sessionId, capability: entry.capability, mode: 'auto', result: 'failed', evidence, human: false, detail: entry.detail, owner: entry.owner });
   broadcastSetup(entry, { failed: true });
   return json(res, { ok: true, closed: false, id: entry.id, state: 'failed', mode: 'manual' });
 }
@@ -1004,12 +1048,13 @@ function startSetupAuto(id: string): PendingSetup | { error: string } | null {
   if (!e) return null;
   const cap = caps.getCapability(e.capability);
   if (!cap?.autoCapable) return { error: `${e.capability} cannot be connected automatically` };
-  if (!caps.readIdentity()) return { error: 'connect a Google identity first' };
+  // A2: an agent's playbook drives the AGENT's Chrome profile — it needs the agent's own Google identity.
+  if (!caps.identityForAuto(e.owner)) return { error: e.owner === caps.GLOBAL_OWNER ? 'connect a Google identity first' : `connect a Google identity for ${e.owner} first` };
   e.mode = 'auto';
   e.state = 'auto';
   e.lines = [];
   broadcastSetup(e);
-  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: 'auto', result: 'requested', evidence: null, human: true, detail: 'consent given' });
+  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: 'auto', result: 'requested', evidence: null, human: true, detail: 'consent given', owner: e.owner });
   const r: SetupResult = { state: 'auto', id: e.id, capability: e.capability, detail: e.detail, mode: 'auto', playbook: cap.playbook };
   for (const w of e.waiters.splice(0)) w(r);
   state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
@@ -1017,9 +1062,9 @@ function startSetupAuto(id: string): PendingSetup | { error: string } | null {
 }
 
 /** DELETE /__api/setup/:capability — disconnect a provider through its existing implementation. */
-async function disconnectCapability(capability: string): Promise<Record<string, unknown>> {
+async function disconnectCapability(capability: string, owner: caps.Owner = caps.GLOBAL_OWNER): Promise<Record<string, unknown>> {
   if (capability === 'identity') {
-    return { ok: caps.clearIdentity(), identity: null };
+    return { ok: caps.clearIdentity(owner), identity: null, owner };
   }
   if (capability.startsWith('composio:')) {
     const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
@@ -1029,7 +1074,8 @@ async function disconnectCapability(capability: string): Promise<Record<string, 
     const r = await fetch('https://backend.composio.dev/api/v3.1/connected_accounts?limit=200', { headers: hdr });
     const j = (await r.json()) as any;
     if (!r.ok) throw new Error(j?.error?.message || `Composio ${r.status}`);
-    const ids = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug).map((c: any) => c.id);
+    // A2: only THIS owner's accounts (user_id) — disconnecting an agent's Gmail never touches the host's.
+    const ids = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug && caps.composioOwnerOf(c) === owner).map((c: any) => c.id);
     for (const id of ids) await fetch(`https://backend.composio.dev/api/v3.1/connected_accounts/${id}`, { method: 'DELETE', headers: hdr });
     caps.invalidateComposioCache();
     return { ok: true, removed: ids.length };
@@ -1093,9 +1139,12 @@ export function expirePendingSetupRequests(sessionId: string, message = 'session
 // Cards persisted before the last host restart come back with their remaining time.
 loadPendingSetups();
 
+/** A2: Composio `user_id` for an owner — the host's accounts stay under 'default'. */
+const composioUserId = (owner: caps.Owner): string => (owner === caps.GLOBAL_OWNER ? 'default' : owner);
+
 /** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
-async function applyManualSetup(capability: string, body: any, req: IncomingMessage): Promise<Record<string, unknown>> {
-  const cap = caps.getCapability(capability);
+async function applyManualSetup(capability: string, body: any, req: IncomingMessage, owner: caps.Owner = caps.GLOBAL_OWNER): Promise<Record<string, unknown>> {
+  const cap = caps.getCapability(capability, {}, owner);
   if (!cap) throw new Error(`unknown capability: ${capability}`);
   const action = String(body?.action || '');
   const ob = await import('./onboarding.js');
@@ -1152,19 +1201,20 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       const acj = (await ac.json()) as any;
       const authConfigId = acj?.auth_config?.id;
       if (!ac.ok || !authConfigId) throw new Error(acj?.error?.message || `Composio ${ac.status}`);
-      const link = await fetch('https://backend.composio.dev/api/v3/connected_accounts/link', { method: 'POST', headers: hdr, body: JSON.stringify({ auth_config_id: authConfigId, user_id: 'default', redirect_url: 'https://backend.composio.dev' }) });
+      // A2: the connected account is keyed by owner — an agent's Gmail is user_id 'agent:<slug>', the host's stays 'default'.
+      const link = await fetch('https://backend.composio.dev/api/v3/connected_accounts/link', { method: 'POST', headers: hdr, body: JSON.stringify({ auth_config_id: authConfigId, user_id: composioUserId(owner), redirect_url: 'https://backend.composio.dev' }) });
       const lj = (await link.json()) as any;
       if (!link.ok) throw new Error(lj?.error?.message || `Composio ${link.status}`);
       caps.invalidateComposioCache();
-      return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id };
+      return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id, owner };
     }
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
     const email = String(body?.email || '').trim() || chrome.googleAccountEmail(String(body?.sessionId || req.headers['x-session-id'] || '') || null) || '';
     if (!email) throw new Error('identity: no Google sign-in detected in the agent\'s browser — pass the account email');
-    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined });
-    out = { identity, email: identity.email };
+    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }, owner);
+    out = { identity, email: identity.email, owner };
   } else if (capability === 'desktop') {
     const enable = body?.enable !== false;
     updateScreenConfig({ enabled: enable });
@@ -1301,6 +1351,29 @@ export function startTicketSession(opts: {
   return { id: s.id };
 }
 
+/**
+ * A1/A2: the ONE place a session is born from an agent — inherit its model
+ * (unless overridden), its rail color, default the title to its name and stamp
+ * metadata.agent (claude.js keys the persona + agent memory + ARIGAMI_AGENT
+ * off that). Used by POST /__api/sessions and by cron fires (cronjob({agent})).
+ * Throws on an unknown agent — never silently ignored.
+ */
+export function applyAgentToSession<T extends { title?: string; model?: string; metadata?: Record<string, unknown> }>(
+  agentSlug: unknown,
+  opts: T
+): T & { color?: string } {
+  if (agentSlug === undefined || agentSlug === null || agentSlug === '') return opts;
+  const agent = agents.getAgent(String(agentSlug));
+  if (!agent) throw new Error(`unknown agent: ${agentSlug}`);
+  return {
+    ...opts,
+    model: opts.model || agent.model || undefined,
+    title: opts.title || agent.name,
+    metadata: { ...(opts.metadata || {}), agent: agent.slug },
+    color: agent.color,
+  };
+}
+
 // Spin up a plain (empty) session — shared by the launcher's empty form and the
 // pending queue's empty items. No first prompt unless a skill/prompt was given.
 export function startEmptySession(opts: {
@@ -1311,16 +1384,19 @@ export function startEmptySession(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  agent?: string | null; // A2: born from an agent (cron runs) — see applyAgentToSession
   metadata?: Record<string, unknown>;
 }): { id: string } {
   const prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt });
+  const o = applyAgentToSession(opts.agent, opts);
   const s = state.createSession({
-    title: opts.title,
-    cwd: opts.cwd,
-    permissionMode: opts.permissionMode || 'bypassPermissions',
-    model: opts.model,
-    effort: opts.effort,
-    metadata: opts.metadata || {},
+    title: o.title,
+    cwd: o.cwd,
+    permissionMode: o.permissionMode || 'bypassPermissions',
+    model: o.model,
+    effort: o.effort,
+    metadata: o.metadata || {},
+    color: o.color,
   });
   spawnSafe(s.id);
   if (prompt && prompt.trim()) {
@@ -2252,45 +2328,52 @@ export async function handle(
       const me = (req as any).auth as import('./auth.js').Principal | null;
       const mayAct = auth.isAdmin(me) || me?.kind === 'session';
       const rest = p.slice('/__api/setup/'.length);
-      if (rest === 'capabilities' && m === 'GET') return json(res, { ...(await caps.capabilitiesStatus()), audit: caps.readAudit(50) });
+      // A2: `?owner=agent:<slug>` resolves for that agent (agent first, then shared);
+      // a session principal defaults to its own agent; anything else is global.
+      const qOwner = ownerOfRequest(u.searchParams.get('owner'), me);
+      if (!qOwner) return badRequest(res, `invalid owner: ${u.searchParams.get('owner')} — "global" or "agent:<slug>"`);
+      if (rest === 'capabilities' && m === 'GET') return json(res, { ...(await caps.capabilitiesStatus({}, qOwner)), audit: caps.readAudit(50, qOwner === caps.GLOBAL_OWNER && !u.searchParams.get('owner') ? undefined : qOwner) });
       if (rest.startsWith('capabilities/') && m === 'GET') {
         const id = decodeURIComponent(rest.slice('capabilities/'.length));
-        const cap = caps.getCapability(id);
+        const owner = caps.isOwnable(id) ? qOwner : caps.GLOBAL_OWNER;
+        const cap = caps.getCapability(id, {}, owner);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
         const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
-        const r = await caps.ensure(id, why);
-        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap) } : r);
+        const r = await caps.ensure(id, why, {}, owner);
+        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, {}, owner) } : r);
       }
-      if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity() });
+      if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity(qOwner), owner: qOwner });
       // DELETE /__api/setup/:capability — disconnect (identity or a provider) + audit.
       if (m === 'DELETE' && rest && !rest.includes('/')) {
         if (!mayAct) return json(res, { error: 'admin only' }, 403);
         const capability = decodeURIComponent(rest);
-        const cap = caps.getCapability(capability);
+        const owner = caps.isOwnable(capability) ? qOwner : caps.GLOBAL_OWNER;
+        const cap = caps.getCapability(capability, {}, owner);
         if (!cap) return badRequest(res, `unknown capability: ${capability}`);
-        const had = capability === 'identity' ? !!caps.readIdentity() : true;
+        const had = capability === 'identity' ? !!caps.readIdentity(owner) : true;
         // F6: ?orphans=1 only removes stale (non-ACTIVE) Composio accounts of the toolkit.
         if (u.searchParams.get('orphans') === '1') {
           if (!capability.startsWith('composio:')) return badRequest(res, 'orphans=1 is for composio:<toolkit>');
           try {
-            const pruned = await caps.pruneComposioOrphans(capability.slice(9));
-            return json(res, { ok: true, capability, ...pruned, status: await caps.statusOf(cap) });
+            const pruned = await caps.pruneComposioOrphans(capability.slice(9), { owner });
+            return json(res, { ok: true, capability, owner, ...pruned, status: await caps.statusOf(cap, {}, owner) });
           } catch (e) {
             return json(res, { ok: false, error: (e as Error).message, capability }, 400);
           }
         }
         try {
-          const out = await disconnectCapability(capability);
-          if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'disconnected', evidence: null, human: true });
-          broadcast({ type: 'setup.changed', capability });
-          return json(res, { ...out, capability, status: await caps.statusOf(cap) });
+          const out = await disconnectCapability(capability, owner);
+          if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'disconnected', evidence: null, human: true, owner });
+          broadcast({ type: 'setup.changed', capability, owner });
+          return json(res, { ...out, capability, owner, status: await caps.statusOf(cap, {}, owner) });
         } catch (e) {
           return json(res, { ok: false, error: (e as Error).message, capability }, 400);
         }
       }
       if (rest === 'connections' && m === 'GET') {
         const limit = Math.min(500, Math.max(1, Number(u.searchParams.get('limit')) || 50));
-        return json(res, { identity: caps.readIdentity(), audit: caps.readAudit(limit) });
+        const filter = u.searchParams.get('owner') ? qOwner : undefined; // no owner → every line, with its owner column
+        return json(res, { owner: qOwner, identity: caps.readIdentity(qOwner), audit: caps.readAudit(limit, filter) });
       }
       if (rest === 'pending' && m === 'GET') {
         const sid = u.searchParams.get('session') || '';
@@ -2327,21 +2410,25 @@ export async function handle(
       if (m === 'POST' && rest && !rest.includes('/')) {
         if (!mayAct) return json(res, { error: 'admin only' }, 403);
         const capability = decodeURIComponent(rest);
-        const cap = caps.getCapability(capability);
-        if (!cap) return badRequest(res, `unknown capability: ${capability}`);
         const body = (await readBody(req)) as any;
+        // A2: the SetupCard of an agent session saves to the AGENT (body.owner /
+        // the session principal / body.sessionId); Settings passes owner explicitly.
+        const owner = ownerOfRequest(body?.owner ?? u.searchParams.get('owner'), me?.kind === 'session' ? me : body?.sessionId && state.getSession(String(body.sessionId)) ? ({ kind: 'session', sessionId: String(body.sessionId), user: null } as any) : me, capability);
+        if (!owner) return badRequest(res, `invalid owner: ${body?.owner} — "global" or "agent:<slug>"`);
+        const cap = caps.getCapability(capability, {}, owner);
+        if (!cap) return badRequest(res, `unknown capability: ${capability}`);
         try {
-          const out = await applyManualSetup(capability, body, req);
-          const status = await caps.statusOf(cap);
+          const out = await applyManualSetup(capability, body, req, owner);
+          const status = await caps.statusOf(cap, {}, owner);
           let closed = 0;
           if (status.ok) {
-            closed = resolveSetupsFor(capability, status.detail, true);
-            if (!closed) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'done', evidence: null, human: true, detail: status.detail });
+            closed = resolveSetupsFor(capability, status.detail, true, owner);
+            if (!closed) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'done', evidence: null, human: true, detail: status.detail, owner });
             import('./funnel.js').then((f) => { if (!closed) f.emit('setup.completed', { capability, mode: 'manual' }); }).catch(() => {});
           }
           if (status.ok) {
-            broadcast({ type: 'setup.changed', capability });
-            if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9)).catch(() => {});
+            broadcast({ type: 'setup.changed', capability, owner });
+            if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9), { owner }).catch(() => {});
           }
           return json(res, { ...out, capability, status, closed });
         } catch (e) {
@@ -2920,6 +3007,7 @@ export async function handle(
             sessionMode: body.sessionMode,
             deliver: body.deliver,
             autonomous: body.autonomous,
+            agent: body.agent,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);
@@ -3696,13 +3784,15 @@ export async function handle(
       // A1: born from an agent — inherit its model (unless overridden), its
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
-      let agent: agents.AgentView | null = null;
-      if (body.agent !== undefined && body.agent !== null && body.agent !== '') {
-        agent = agents.getAgent(String(body.agent));
-        if (!agent) return notFound(res, `unknown agent: ${body.agent}`);
-        if (!body.model && agent.model) body.model = agent.model;
-        body.metadata = { ...(body.metadata || {}), agent: agent.slug };
-        if (!body.title) body.title = agent.name;
+      let agentColor: string | undefined;
+      try {
+        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, metadata: body.metadata });
+        body.title = o.title;
+        body.model = o.model;
+        body.metadata = o.metadata;
+        agentColor = o.color;
+      } catch (e) {
+        return notFound(res, (e as Error).message);
       }
       const s = state.createSession({
         title: body.title,
@@ -3711,7 +3801,7 @@ export async function handle(
         metadata: body.metadata,
         model: body.model,
         effort: body.effort,
-        color: agent?.color,
+        color: agentColor,
       });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into
@@ -4102,7 +4192,9 @@ export async function handle(
     // Storage back to chrome-base on demand (T8 §4) — same op the takeover
     // and delete flows trigger automatically.
     if (sub === 'browser/sync-logins' && m === 'POST') {
-      const r = await chrome.syncProfileToBase(id);
+      // A2: an agent session syncs into the AGENT's profile; `{shared:true}` also into chrome-base.
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      const r = await chrome.syncProfileToBase(id, { shared: body?.shared === true });
       return json(res, r);
     }
     // F8: the take-over modal's "type into the desktop" field — the human's

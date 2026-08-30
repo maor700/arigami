@@ -215,6 +215,7 @@ const TOOLS = [
       deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
       deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
       autonomous: { type: 'boolean', description: 'create: isolated runs only — bypassPermissions + no-questions directive' },
+      agent: { type: 'string', description: 'create: agent slug the isolated runs are born from (persona, memory, connections, browser profile — same as create_session({agent})). Defaults to YOUR agent when you run as one; pass "" for a plain run. Unknown slug → error.' },
       ...SID_PROP,
     }, ['action']),
     run: async (a) => {
@@ -231,6 +232,7 @@ const TOOLS = [
           sessionMode,
           deliver: { push: a.deliver_push, whatsapp: a.deliver_whatsapp, master: a.deliver_master },
           autonomous: a.autonomous,
+          ...(a.agent !== undefined ? { agent: a.agent } : {}),
           createdBySessionId: sid(a),
         });
       }
@@ -240,7 +242,7 @@ const TOOLS = [
           .filter((t) => t.type === 'cron')
           .map((t) => ({
             id: t.id, name: t.name, enabled: t.enabled, schedule: t.schedule, prompt: t.prompt,
-            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous,
+            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null,
             lastRun: t.lastRun, nextRunAt: t.nextRunAt, recentRuns: (t.runs || []).slice(-5),
           }));
       }
@@ -673,7 +675,7 @@ const TOOLS = [
     inputSchema: obj(
       {
         capability: { type: 'string', description: 'Registry id, e.g. "composio:gmail", "repo:my-app", "whatsapp"' },
-        why: { type: 'string', description: 'What you need it for — shown on the card and in the push' },
+        why: { type: 'string', description: 'What you need it for — shown on the card and in the push (when you run as an agent, identity/composio connect to YOUR agent: its Chrome profile + its own Composio account; the shared one is used only as a fallback)' },
         mode: { type: 'string', enum: ['auto', 'manual', 'ask'], description: 'Omit for the host default (auto when possible)' },
         ...SID_PROP,
       },
@@ -755,11 +757,12 @@ const TOOLS = [
   {
     name: 'save_browser_logins',
     description:
-      'Sync this session\'s Chrome profile (cookies, saved logins, local storage — not passwords/autofill) back to the shared base profile, so future sessions\' browsers start already logged in. ' +
+      'Sync this session\'s Chrome profile (cookies, saved logins, local storage — not passwords/autofill) back to its base profile, so future sessions\' browsers start already logged in. ' +
+      'When you run as an AGENT the base is the agent\'s own persistent profile ($ARIGAMI_DIR/agents/<slug>/browser) — the shared chrome-base is only touched when you pass shared:true (do that only if the human asked to share the login with everyone). ' +
       'Happens automatically after a request_screen resolves with the human taking over, and at session end — call this yourself only if you want it synced sooner (e.g. right after completing a login flow without a takeover). ' +
       'Safe to call anytime; a no-op if this session never opened a browser (see the machine-work skill\'s Chrome helper).',
-    inputSchema: obj({ ...SID_PROP }),
-    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, {}),
+    inputSchema: obj({ shared: { type: 'boolean', description: 'Agent sessions only: ALSO sync into the shared chrome-base (default false)' }, ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, { shared: a.shared === true }),
   },
   {
     name: 'memory_write',

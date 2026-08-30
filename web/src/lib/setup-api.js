@@ -51,11 +51,19 @@ async function legacyOverview() {
   return { identity: null, capabilities: caps, audit: [], legacy: true };
 }
 
-export async function overview() {
+// A2: `owner` = 'global' (default) or 'agent:<slug>' — the agent's connections,
+// resolved agent-first (each capability says `resolvedFrom`).
+const ownerQs = (owner) => (owner && owner !== 'global' ? `?owner=${encodeURIComponent(owner)}` : '');
+export const ownerOfAgent = (slug) => (slug ? `agent:${slug}` : 'global');
+export const agentOfOwner = (owner) => (typeof owner === 'string' && owner.startsWith('agent:') ? owner.slice(6) : null);
+
+export async function overview({ owner = 'global' } = {}) {
   try {
-    const r = await api.get('/setup/capabilities');
+    const r = await api.get(`/setup/capabilities${ownerQs(owner)}`);
     return {
+      owner: r?.owner || 'global',
       identity: r?.identity || null,
+      sharedIdentity: r?.sharedIdentity || null,
       capabilities: (r?.capabilities || []).map((c) => ({ ...manualFor(c.id), ...c })),
       audit: r?.audit || [],
     };
@@ -121,13 +129,19 @@ export const skip = (id) => api.post(`/setup/${encodeURIComponent(id)}/skip`, {}
 export const report = (id, body) => api.post(`/setup/${encodeURIComponent(id)}/report`, body);
 export const setMode = (id, mode) => api.post(`/setup/${encodeURIComponent(id)}/mode`, { mode });
 export const start = (id, mode = 'auto') => api.post(`/setup/${encodeURIComponent(id)}/start`, { mode });
-export const disconnect = (capability) => api.del(`/setup/${encodeURIComponent(capability)}`);
+export const disconnect = (capability, owner = 'global') => api.del(`/setup/${encodeURIComponent(capability)}${ownerQs(owner)}`);
+// A2: the agent's own view / routine (GET /__api/agents/:slug/{connections,routine}).
+export const agentConnections = (slug) => api.get(`/agents/${encodeURIComponent(slug)}/connections`);
+export const agentRoutine = (slug) => api.get(`/agents/${encodeURIComponent(slug)}/routine`);
 
 // Settings → Connections → "connect automatically" has no session to run the
-// playbook in; spawn one whose first turn is the request_setup call.
-export async function connectViaSession(capability) {
+// playbook in; spawn one whose first turn is the request_setup call. A2: for
+// an agent's connection the session is born from the agent (its Chrome
+// profile, its identity) so the playbook connects the agent, not the host.
+export async function connectViaSession(capability, { agent = null } = {}) {
   return api.post('/sessions', {
     title: `Connect ${capability}`,
+    ...(agent ? { agent } : {}),
     prompt: `Call request_setup({capability: ${JSON.stringify(capability)}, why: "the user asked to connect it from Settings", mode: "auto"}) and follow the matching connect-* skill. Stop after report_setup.`,
     permissionMode: 'bypassPermissions',
   });

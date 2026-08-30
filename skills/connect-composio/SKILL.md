@@ -23,7 +23,9 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
    you click **Allow/Continue** only for the toolkit the card asked for.
 
 ## Preconditions
-- `identity` connected (`GET /__api/setup/capabilities` → `identity.ok`). If not:
+- `identity` connected (`GET /__api/setup/capabilities` → `identity.ok`; as an AGENT
+  add `?owner=agent:<slug>` — the agent needs its OWN Google identity, the host's
+  shared one does not drive the agent's Chrome profile). If not:
   run `skills/connect-identity` first (call `request_setup({capability:"identity"})`
   so the human sees the card) — never continue with a foreign Google account.
 - Composio API key present on the host (the same `GET` shows `composio` status).
@@ -32,7 +34,9 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
 ## Steps
 0. Opening line + `set_progress`.
 1. Get the redirect URL from the host (S1):
-   `connect.sh api POST /__api/setup/composio:<toolkit> '{"mode":"auto"}'` → `{redirectUrl, id}`.
+   `connect.sh api POST /__api/setup/composio:<toolkit> '{"mode":"auto"}'` → `{redirectUrl, id, owner}`.
+   (A2: from an agent session the host keys the Composio account to the agent —
+   `user_id: agent:<slug>` — so the agent's Gmail is not the host's Gmail.)
    If that route is `not found` (S1 not deployed) use the legacy twin:
    `connect.sh api POST /__api/composio/connect '{"toolkitSlug":"<toolkit>"}'`.
    An `error` field → report failure, stop.

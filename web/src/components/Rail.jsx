@@ -14,6 +14,7 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
+import { untilTime } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
@@ -375,8 +376,17 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
 // sessions and above the archived group. Click → the agent's home chat
 // (get-or-create); ⋯ → the agent page. Status: working when any live session
 // born from the agent is mid-turn, else its active-session count / idle.
-// (The "next cron" status arrives with cronjob({agent}) in A2.)
-export function TeamSection({ agents, sessions, onSelect, onOpenAgent, onNewAgent, selectedId, open, onToggle, menuFor, setMenuFor }) {
+// A2: an idle agent with an enabled cron job shows its NEXT run instead
+// ("⏰ in 3h"), read from the store's triggers (`agent` + `nextRunAt`).
+export function nextCronFor(slug, triggers) {
+  let next = null;
+  for (const x of triggers || []) {
+    if (x.type !== 'cron' || x.agent !== slug || !x.enabled || !x.nextRunAt) continue;
+    if (next === null || x.nextRunAt < next) next = x.nextRunAt;
+  }
+  return next;
+}
+export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent, onNewAgent, selectedId, open, onToggle, menuFor, setMenuFor }) {
   const t = useT();
   const list = agents || [];
   const byAgent = new Map();
@@ -420,6 +430,7 @@ export function TeamSection({ agents, sessions, onSelect, onOpenAgent, onNewAgen
         list.map((a) => {
           const mine = byAgent.get(a.slug) || [];
           const working = mine.some((s) => s.claude?.state === 'working');
+          const nextCron = mine.length === 0 ? nextCronFor(a.slug, triggers) : null;
           const homeSelected = !!a.homeSessionId && a.homeSessionId === selectedId;
           const menuOpen = menuFor === `agent:${a.slug}`;
           return (
@@ -440,9 +451,9 @@ export function TeamSection({ agents, sessions, onSelect, onOpenAgent, onNewAgen
                         <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim">
-                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: mine.length ? a.color : '#c4c4c4' }} />
-                        {mine.length === 0 ? t('rail.teamIdle') : mine.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: mine.length })}
+                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: new Date(nextCron).toLocaleString() }) } : {})}>
+                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: mine.length ? a.color : nextCron ? a.color : '#c4c4c4', opacity: mine.length ? 1 : nextCron ? 0.55 : 1 }} />
+                        {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : mine.length === 0 ? t('rail.teamIdle') : mine.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: mine.length })}
                       </span>
                     )}
                   </span>
@@ -1141,7 +1152,7 @@ export default function Rail({
     return () => { stop = true; clearInterval(iv); };
   }, []);
   const { railWidth } = usePrefs();
-  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents } = useStore();
+  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents, triggers } = useStore();
   // The header reflects the ACTIVE account. Derive it from the per-account map so
   // switching accounts updates instantly instead of lagging on the generic
   // usage-updated broadcast (which only fires when the active usage changes).
@@ -1753,6 +1764,7 @@ export default function Rail({
           <TeamSection
             agents={agents}
             sessions={sessions}
+            triggers={triggers}
             selectedId={selectedId}
             onSelect={onSelect}
             onOpenAgent={onOpenAgent}
