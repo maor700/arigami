@@ -223,7 +223,7 @@ test('POST /__api/profiles/apply with agents: created / unchanged (existing agen
   expect(mila.persona).toBe('You are Mila.'); // the host's Mila, not the bundle's
   const awesome = (await api('GET', '/__api/agents/awesome')).json;
   expect(awesome.skills).toEqual(['campaign-brief', 'project-manager']);
-  expect(awesome.tools).toEqual(['sessions', 'triggers']);
+  expect(awesome.tools).toEqual(['sessions', 'triggers', 'publish']); // A5 (#2): publishing is an explicit family now
   const trig = (await api('GET', '/__api/triggers')).json;
   const list = Array.isArray(trig) ? trig : trig.triggers;
   const cron = list.find((t: any) => t.bundleKey === 'marketing-team/weekly-plan');

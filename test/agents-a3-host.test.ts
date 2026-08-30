@@ -126,8 +126,9 @@ setInterval(()=>{},1e6);
   } catch {
     throw new Error(`host did not come up: ${log.slice(-1500)}`);
   }
-  // bot: restricted (gmail + desktop, example.com only, 2500 tokens/day = 2 turns of the stub); free: unrestricted
-  expect((await api('POST', '/__api/agents', { name: 'Bot', slug: 'bot', emoji: '🤖', tools: ['gmail', 'desktop'], domains: ['example.com'], budget: { tokensPerDay: 2500 } })).status).toBe(201);
+  // bot: restricted (gmail + desktop + publish, example.com only, 2500 tokens/day = 2 turns of
+  // the stub; A5: `publish` is a family now, so publishing has to be asked for); free: unrestricted
+  expect((await api('POST', '/__api/agents', { name: 'Bot', slug: 'bot', emoji: '🤖', tools: ['gmail', 'desktop', 'publish'], domains: ['example.com'], budget: { tokensPerDay: 2500 } })).status).toBe(201);
   expect((await api('POST', '/__api/agents', { name: 'Free', slug: 'free', emoji: '🕊️' })).status).toBe(201);
 });
 
@@ -265,7 +266,7 @@ test('ledger + budget: turns land with tokens/cost; the cap refuses new sessions
   const refused = await api('POST', '/__api/sessions', { agent: 'bot', cwd: ws });
   expect(refused.status).toBe(429);
   expect(refused.json.error).toMatch(/daily token budget/);
-  expect(refused.json.error).toMatch(/no new sessions until local midnight/);
+  expect(refused.json.error).toMatch(/no new sessions or turns until local midnight/); // A5 (#5): turns too
   const home = await api('GET', '/__api/agents/bot/home');
   expect(home.status).toBe(429);
   expect((await api('POST', '/__api/sessions', { agent: 'free', cwd: ws })).status).toBe(201);

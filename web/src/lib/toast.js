@@ -22,12 +22,16 @@ export function dismissToast(id) {
   }
 }
 
+/**
+ * A5 (#11): callers pass raw Errors from api.js all over the app — never print
+ * `Error: HTTP 429 — …`; errText picks the server's {error} / localizes a budget.
+ */
+export const toastText = (message) => (typeof message === 'string' ? message : errText(message));
+
 export function toast(message, opts = {}) {
   const id = ++seq;
   const ttl = opts.ttl ?? (opts.kind === 'error' ? 6000 : 3200);
-  // A5 (#11): callers pass raw Errors from api.js all over the app — never print
-  // `Error: HTTP 429 — …`; errText picks the server's {error} / localizes a budget.
-  toasts = [...toasts, { id, message: typeof message === 'string' ? message : errText(message), kind: opts.kind || 'info', action: opts.action || null }];
+  toasts = [...toasts, { id, message: toastText(message), kind: opts.kind || 'info', action: opts.action || null }];
   emit();
   if (ttl > 0) {
     const t = setTimeout(() => dismissToast(id), ttl);

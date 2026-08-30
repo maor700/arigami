@@ -34,6 +34,17 @@ export function untilTime(ms, t) {
   return t('time.in', { t: v });
 }
 
+/**
+ * The form state → the POST /__api/triggers body, or null when it is not
+ * postable yet (a job with no prompt or no schedule is not a job).
+ */
+export function routinePayload({ kind, value, name, prompt }) {
+  const p = String(prompt || '').trim();
+  const v = String(value || '').trim();
+  if (!p || !v) return null;
+  return { name: String(name || '').trim() || p.slice(0, 48), prompt: p, schedule: { kind: kind || 'cron', value: v } };
+}
+
 /** The inline "add a scheduled job" form — schedule + prompt, nothing else. */
 export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
   const t = useT();
@@ -44,8 +55,8 @@ export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
   const field = 'w-full rounded-md border border-border bg-transparent px-2 py-1 font-mono text-[11px] text-fg';
   const submit = (e) => {
     e?.preventDefault?.();
-    if (!prompt.trim() || !value.trim()) return;
-    onCreate?.({ name: name.trim() || prompt.trim().slice(0, 48), prompt: prompt.trim(), schedule: { kind, value: value.trim() } });
+    const payload = routinePayload({ kind, value, name, prompt });
+    if (payload) onCreate?.(payload);
   };
   return (
     <form data-routine-form={agent.slug} onSubmit={submit} className="mb-2 flex flex-col gap-1.5 rounded-[8px] border border-hair p-2">
