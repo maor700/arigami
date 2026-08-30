@@ -31,6 +31,8 @@ export const strings = {
   'brain.factApproved': 'העובדה אושרה',
   'brain.factRejected': 'העובדה נדחתה',
 
+  'brain.heartbeatSettings': 'הגדרות פעימה',
+
   'brain.heartbeatTitle': 'Heartbeat של המוח',
   'brain.heartbeatHint': 'העיר את סשן המוח מדי פרק זמן קבוע כדי לבדוק אם יש משהו שדורש תשומת לב. כבוי כברירת מחדל; בדיקה שקטה לעולם לא שולחת התראה.',
   'brain.heartbeatEvery': 'כל',

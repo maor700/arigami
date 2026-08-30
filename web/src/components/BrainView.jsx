@@ -509,11 +509,12 @@ export default function BrainView({ onClose }) {
             </button>
           ))}
         </div>
+        <a href="#/settings/automation/heartbeat" className="ms-auto shrink-0 text-[11px] text-fgdim underline hover:text-fg">{t('brain.heartbeatSettings')}</a>
         <button
           type="button"
           onClick={askBrain}
           disabled={askBusy}
-          className="ml-auto shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
+          className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
         >
           {askBusy ? t('brain.asking') : t('brain.askBrain')}
         </button>

@@ -59,6 +59,7 @@ export const strings = {
   'chrome.voice.mic.allow': 'Allow mic to list devices',
   'chrome.voice.mic.systemDefault': 'System default',
   'chrome.voice.mic.fallback': 'Microphone {n}',
+  'chrome.voice.language': 'Recognition language',
   'chrome.voice.language.hint': 'STT recognition language. Auto lets Whisper detect (good for Hebrew/English code-switching).',
   'chrome.voice.language.en': 'English',
   'chrome.voice.language.he': 'Hebrew',

@@ -14,7 +14,6 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { UsageMini } from './Usage.jsx';
-import { startRecording } from '../lib/voice.js';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
@@ -33,7 +32,6 @@ import {
   faFolderTree,
   faGear,
   faGripVertical,
-  faMicrophone,
   faPause,
   faPen,
   faPlay,
@@ -43,9 +41,7 @@ import {
   faTableCells,
   faToolbox,
   faTriangleExclamation,
-  faUser,
   faXmark,
-  faLink,
 } from '@fortawesome/free-solid-svg-icons';
 
 const STATUS_ORDER = ['Booting', 'In Progress', 'In Review', 'Blocked', 'Completed'];
@@ -900,9 +896,10 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
 }
 
 // Footer profile dropdown — consolidates the former standalone footer buttons
-// (voice / setup / skills / settings) plus the new Accounts entry behind one
-// menu, fronted by the account the host is currently running as.
-function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSettings, onOpenIntegrations }) {
+// (setup / skills / brain / settings) behind one menu, fronted by the account
+// the host is currently running as. Accounts, Integrations and Voice moved
+// into Settings (SET): #/settings/connections, #/settings/voice.
+function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSettings }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
@@ -962,13 +959,10 @@ function ProfileMenu({ active, onOpenAccounts, onOpenSkills, onOpenBrain, onOpen
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-chip text-[11px] font-bold text-fg">{initial}</span>
             <span className="min-w-0 truncate text-[12px] font-bold text-fg">{label}</span>
           </div>
-          <Item icon={faUser} onClick={act(onOpenAccounts)}>{t('rail.accounts')}</Item>
-          <Item icon={faLink} onClick={act(onOpenIntegrations)}>{t('rail.integrations')}</Item>
           <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
           <Item icon={faBrain} onClick={act(onOpenBrain)}>{t('rail.brain')}</Item>
           <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
           <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
-          <Item icon={faMicrophone} onClick={act(() => startRecording())}>{t('rail.voiceControl')}</Item>
         </div>,
         document.body
       )
@@ -1001,8 +995,6 @@ export default function Rail({
   onOpenSkills,
   onOpenBrain,
   onOpenSetup,
-  onOpenAccounts,
-  onOpenIntegrations,
   searchRef,
   onArchive,
   onRestore,
@@ -1713,8 +1705,6 @@ export default function Rail({
         )}
         <ProfileMenu
           active={(accounts?.accounts || []).find((a) => a.active) || null}
-          onOpenAccounts={onOpenAccounts}
-          onOpenIntegrations={onOpenIntegrations}
           onOpenSkills={onOpenSkills}
           onOpenBrain={onOpenBrain}
           onOpenSetup={onOpenSetup}

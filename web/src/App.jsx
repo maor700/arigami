@@ -30,11 +30,9 @@ import ScreenSidePanel from './components/ScreenSidePanel.jsx';
 import ScreenModal from './components/ScreenModal.jsx';
 import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
-import Settings from './components/Settings.jsx';
+import Settings, { SETTINGS_CATEGORIES } from './components/Settings.jsx';
 import SkillsView from './components/SkillsView.jsx';
 import BrainView from './components/BrainView.jsx';
-import AccountsView from './components/AccountsView.jsx';
-import IntegrationsView from './components/IntegrationsView.jsx';
 import Setup from './components/Setup.jsx';
 import Wizard from './components/Wizard.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
@@ -79,13 +77,15 @@ function parseHash(hash) {
   const h = (hash || '').replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');
   const seg = h.split('/');
   switch (seg[0]) {
-    case 'settings': return { view: 'settings' };
+    // SET: #/settings/<category>[/<section>]; the old standalone pages map onto
+    // Settings → Connections so shared links keep working.
+    case 'settings': return { view: 'settings', cat: SETTINGS_CATEGORIES.includes(seg[1]) ? seg[1] : 'appearance', section: seg[2] || '' };
+    case 'accounts': return { view: 'settings', cat: 'connections', section: 'claude', add: seg[1] === 'add' };
+    case 'integrations': return { view: 'settings', cat: 'connections', section: 'integrations' };
     case 'skills': return { view: 'skills' };
     case 'brain': return { view: 'brain' };
     case 'setup': return { view: 'setup' };
     case 'wizard': return { view: 'home', wizard: true };
-    case 'accounts': return { view: 'accounts', add: seg[1] === 'add' };
-    case 'integrations': return { view: 'integrations' };
     case 'new':
     case 'launcher': return { view: 'launcher', mode: ['ticket', 'empty', 'trigger'].includes(seg[1]) ? seg[1] : 'ticket' };
     case 'ticket': return seg[1] ? { view: 'ticket', id: decodeURIComponent(seg[1]) } : { view: 'home' };
@@ -95,12 +95,10 @@ function parseHash(hash) {
 }
 
 function routeFromState(s) {
-  if (s.settingsOpen) return '#/settings';
+  if (s.settingsOpen) return `#/settings/${s.settingsCat || 'appearance'}${s.settingsSection ? `/${s.settingsSection}` : ''}`;
   if (s.skillsOpen) return '#/skills';
   if (s.brainOpen) return '#/brain';
   if (s.setupOpen) return '#/setup';
-  if (s.accountsOpen) return s.accountsAddIntent ? '#/accounts/add' : '#/accounts';
-  if (s.integrationsOpen) return '#/integrations';
   if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
   if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
   if (s.selectedId) return `#/session/${encodeURIComponent(s.selectedId)}`;
@@ -218,6 +216,9 @@ function Cockpit() {
   const [launcher, setLauncher] = useState(initial.view === 'launcher' ? { mode: initial.mode } : null); // null | {mode:'ticket'|'empty'|'trigger'}
   const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
   const [settingsOpen, setSettingsOpen] = useState(initial.view === 'settings');
+  const [settingsCat, setSettingsCat] = useState(initial.view === 'settings' ? initial.cat : 'appearance');
+  const [settingsSection, setSettingsSection] = useState(initial.view === 'settings' ? initial.section || '' : '');
+  const [settingsAdd, setSettingsAdd] = useState(initial.view === 'settings' && !!initial.add); // open the add-Claude-account form
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
   const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
@@ -230,9 +231,6 @@ function Cockpit() {
     api.get('/onboarding/wizard').then((v) => setWizardOpen(!v?.done)).catch(() => setWizardOpen(false));
   }, [wizardOpen, storeState.auth]);
   const closeWizard = () => { sessionStorage.setItem('arigami.wizardDismissed', '1'); setWizardOpen(false); };
-  const [accountsOpen, setAccountsOpen] = useState(initial.view === 'accounts');
-  const [integrationsOpen, setIntegrationsOpen] = useState(initial.view === 'integrations');
-  const [accountsAddIntent, setAccountsAddIntent] = useState(initial.view === 'accounts' && !!initial.add);
   const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
   const [addTabOpen, setAddTabOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false); // mobile drawer
@@ -252,16 +250,20 @@ function Cockpit() {
   // Apply a parsed route to the view flags (one active, others cleared).
   const applyRoute = (r) => {
     setSettingsOpen(r.view === 'settings');
+    if (r.view === 'settings') { setSettingsCat(r.cat); setSettingsSection(r.section || ''); setSettingsAdd(!!r.add); }
     setSkillsOpen(r.view === 'skills');
     setBrainOpen(r.view === 'brain');
     setSetupOpen(r.view === 'setup');
-    setAccountsOpen(r.view === 'accounts');
-    setIntegrationsOpen(r.view === 'integrations');
-    setAccountsAddIntent(r.view === 'accounts' && !!r.add);
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
     if (r.view === 'session') setSelectedId(r.id);
     else if (r.view === 'home') setSelectedId(null);
+  };
+
+  // Open Settings on a category (and optionally scroll to a section).
+  const openSettings = (cat = 'appearance', section = '', add = false) => {
+    setSettingsCat(cat); setSettingsSection(section); setSettingsAdd(add);
+    setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
   };
 
   // URL ↔ state sync, with real browser history.
@@ -272,9 +274,9 @@ function Cockpit() {
   //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
   //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
   const firstSync = useRef(true);
-  const lastRoute = useRef(routeFromState({ settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId }));
+  const lastRoute = useRef(routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId }));
   useEffect(() => {
-    const want = routeFromState({ settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId });
+    const want = routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId });
     const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
     // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
     // `#/session/<id>` — leave it alone so the active tab survives a refresh.
@@ -289,7 +291,7 @@ function Cockpit() {
     }
     firstSync.current = false;
     lastRoute.current = want;
-  }, [settingsOpen, skillsOpen, brainOpen, setupOpen, accountsOpen, integrationsOpen, accountsAddIntent, launcher, previewTicket, selectedId]);
+  }, [settingsOpen, settingsCat, settingsSection, settingsAdd, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId]);
 
   useEffect(() => {
     const onHash = () => {
@@ -358,7 +360,7 @@ function Cockpit() {
   const cmd = useRef({});
   cmd.current = {
     sessions, active, selectedId, config,
-    setSelectedId, setLauncher, setSettingsOpen, setAccountsOpen, setDialog, setAddTabOpen,
+    setSelectedId, setLauncher, setSettingsOpen, setDialog, setAddTabOpen,
     setQuickSwitcherOpen, setShortcutsOpen, searchRef,
   };
   useEffect(() => {
@@ -376,7 +378,6 @@ function Cockpit() {
         C().setSelectedId(id);
         C().setLauncher(null);
         C().setSettingsOpen(false);
-        C().setAccountsOpen(false);
         setTimeout(dispatch, 60);
       } else {
         dispatch();
@@ -385,7 +386,6 @@ function Cockpit() {
     const closeOverlays = () => {
       C().setLauncher(null);
       C().setSettingsOpen(false);
-      C().setAccountsOpen(false);
       C().setDialog(null);
       C().setAddTabOpen(false);
       C().setQuickSwitcherOpen(false);
@@ -396,7 +396,7 @@ function Cockpit() {
       select_session: (a, ctx) => {
         const s = findSession(a.sessionId);
         if (!s) return;
-        C().setSelectedId(s.id); C().setLauncher(null); C().setSettingsOpen(false); C().setAccountsOpen(false);
+        C().setSelectedId(s.id); C().setLauncher(null); C().setSettingsOpen(false);
         ctx.targetSessionId = s.id;
       },
       next_session: () => {
@@ -603,7 +603,6 @@ function Cockpit() {
         setSkillsOpen(false);
         setBrainOpen(false);
         setSetupOpen(false);
-        setAccountsOpen(false);
       }
     };
     window.addEventListener('host:select-session', onJump);
@@ -619,7 +618,6 @@ function Cockpit() {
         setSkillsOpen(false);
         setBrainOpen(false);
         setSetupOpen(false);
-        setAccountsOpen(false);
         const eventId = e.data.eventId;
         // Wait for React to render, then scroll to the target event or bottom
         const tryScroll = (attempt = 0) => {
@@ -656,15 +654,7 @@ function Cockpit() {
 
   // Open the Accounts page from anywhere (e.g. the /mcp panel's Authenticate…).
   useEffect(() => {
-    const onOpen = (e) => {
-      setAccountsAddIntent(!!e.detail?.add);
-      setAccountsOpen(true);
-      setSettingsOpen(false);
-      setSkillsOpen(false);
-      setBrainOpen(false);
-      setSetupOpen(false);
-      setLauncher(null);
-    };
+    const onOpen = (e) => openSettings('connections', 'claude', !!e.detail?.add);
     window.addEventListener('host:open-accounts', onOpen);
     return () => window.removeEventListener('host:open-accounts', onOpen);
   }, []);
@@ -693,7 +683,7 @@ function Cockpit() {
     { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: faGear, run: () => setSettingsOpen(true) },
     { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
     { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: faBrain, run: () => setBrainOpen(true) },
-    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => setAccountsOpen(true) },
+    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => openSettings('connections', 'claude') },
     { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: faHouse, run: () => setSetupOpen(true) },
     { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: faQuestion, run: () => setShortcutsOpen(true) },
     { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
@@ -709,7 +699,7 @@ function Cockpit() {
   // the extra top bar would only duplicate the title — skip it there and keep
   // the pixels for the chat. Every other view still gets it for drawer access.
   const sessionIsMain =
-    !!selected && !settingsOpen && !skillsOpen && !brainOpen && !setupOpen && !accountsOpen && !integrationsOpen && !launcher && !previewTicket;
+    !!selected && !settingsOpen && !skillsOpen && !brainOpen && !setupOpen && !launcher && !previewTicket;
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
     ? t('settings.title')
@@ -719,29 +709,21 @@ function Cockpit() {
         ? t('chrome.topbar.brain')
         : setupOpen
           ? t('chrome.topbar.setup')
-          : accountsOpen
-            ? t('chrome.topbar.accounts')
-            : integrationsOpen
-              ? t('integrations.title')
-              : launcher
-                ? t('chrome.topbar.newSession')
-                : previewTicket || selected?.title || 'Arigami';
+          : launcher
+            ? t('chrome.topbar.newSession')
+            : previewTicket || selected?.title || 'Arigami';
 
   let main;
   if (settingsOpen) {
-    main = <Settings onClose={() => setSettingsOpen(false)} />;
+    main = <Settings category={settingsCat} section={settingsSection} initialAdd={settingsAdd} onCategory={(c) => { setSettingsCat(c); setSettingsSection(''); setSettingsAdd(false); }} onClose={() => setSettingsOpen(false)} />;
   } else if (skillsOpen) {
     main = <SkillsView session={selected} onClose={() => setSkillsOpen(false)} />;
   } else if (brainOpen) {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
-  } else if (integrationsOpen) {
-    main = <IntegrationsView onClose={() => setIntegrationsOpen(false)} />;
   } else if (wizardOpen) {
     main = <Wizard onDone={closeWizard} onExit={closeWizard} />;
   } else if (setupOpen) {
     main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} onRunWizard={() => { setSetupOpen(false); sessionStorage.removeItem('arigami.wizardDismissed'); setWizardOpen(true); }} />;
-  } else if (accountsOpen) {
-    main = <AccountsView onClose={() => setAccountsOpen(false)} initialAdd={accountsAddIntent} />;
   } else if (launcher) {
     main = (
       <Launcher
@@ -826,19 +808,16 @@ function Cockpit() {
           setSkillsOpen(false);
           setBrainOpen(false);
           setSetupOpen(false);
-          setAccountsOpen(false);
           setAddTabOpen(false);
           setRailOpen(false);
         }}
-        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
-        onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setAccountsOpen(false); setIntegrationsOpen(false); setRailOpen(false); }}
-        onOpenIntegrations={() => { setIntegrationsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setSettingsOpen(false); setAccountsOpen(false); setLauncher(null); setRailOpen(false); }}
-        onOpenAccounts={() => { setAccountsAddIntent(false); setAccountsOpen(true); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false); }}
-        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
-        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setAccountsOpen(false); setRailOpen(false); }}
+        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
+        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         searchRef={searchRef}
         onArchive={(s) => setDialog({ type: 'archive', session: s })}

@@ -482,11 +482,11 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                 </button>
               </div>
             )}
-            <Section title={t('launcher.setup.connections')}>
-              {global.map((s) => (
-                <StepRow key={s.id} step={s} onFix={fix} busy={busy} />
-              ))}
-            </Section>
+            <a href="#/settings/connections" className="mb-4 flex items-center gap-2 rounded-[10px] border border-border bg-panel px-4 py-3 text-[12px] text-fg hover:border-ink">
+              <span className="font-bold">{t('launcher.setup.connections')}</span>
+              <span className="text-[11px] text-fgdim">{t('setup.minimal.moreConnections')}</span>
+              <span className="ms-auto text-fgdim">→</span>
+            </a>
 
             <Section title={`${t('launcher.setup.repos')}${repoNames.length ? ` · ${repoNames.length}` : ''}`}>
               {repoNames.length === 0 && (

@@ -148,6 +148,7 @@ export const strings = {
   'setup.minimal.startBtn': 'Start',
   'setup.minimal.sessionTitle': 'Workspace',
   'setup.minimal.runFull': 'Run full setup instead',
+  'setup.minimal.moreConnections': 'More connections — identity, integrations, channels, remote access — live in Settings.',
   'setup.minimal.more': 'More',
   'setup.minimal.moreHint': 'connections · repos · profiles',
 
