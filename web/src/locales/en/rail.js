@@ -47,6 +47,7 @@ export const strings = {
   'rail.folderListenerErrored': 'A listener inside this folder errored',
   'rail.folderSessionWorking': 'A session inside is working',
   'rail.needsInputClick': '{n} need your input — click to open',
+  'rail.waitingInsideClick': '{n} waiting for you — click to open',
 
   // ---- Rail.jsx: pending row / section ----
   'rail.dismissedX': 'Dismissed {x}',
@@ -276,9 +277,6 @@ export const strings = {
   'rail.health.WAITING_HUMAN': 'waiting for you',
   'rail.health.BLOCKED_SYSTEM': 'blocked — the host is on it',
   'rail.health.STALLED': 'stalled — no progress',
-  'rail.waiting.pill': 'Waiting for you ({n})',
-  'rail.waiting.show': 'Show what is waiting for you',
-  'rail.waiting.hide': 'Hide the list',
   'waiting.what.action': 'asked you a question',
   'waiting.what.screen': 'needs you on the screen',
   'waiting.what.setup': 'needs a connection',

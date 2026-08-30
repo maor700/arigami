@@ -47,6 +47,7 @@ export const strings = {
   'rail.folderListenerErrored': 'מאזין בתוך התיקייה הזו נכשל',
   'rail.folderSessionWorking': 'סשן בפנים עובד',
   'rail.needsInputClick': '{n} דורשים את הקלט שלך — לחצו לפתיחה',
+  'rail.waitingInsideClick': '{n} ממתינים לך — לחצו לפתיחה',
 
   // ---- Rail.jsx: pending row / section ----
   'rail.dismissedX': 'נדחה {x}',
@@ -276,9 +277,6 @@ export const strings = {
   'rail.health.WAITING_HUMAN': 'ממתין לך',
   'rail.health.BLOCKED_SYSTEM': 'תקוע — המארח מטפל',
   'rail.health.STALLED': 'נתקע — אין התקדמות',
-  'rail.waiting.pill': 'ממתין לך ({n})',
-  'rail.waiting.show': 'הצג מה ממתין לך',
-  'rail.waiting.hide': 'הסתר את הרשימה',
   'waiting.what.action': 'שאל אותך שאלה',
   'waiting.what.screen': 'צריך אותך על המסך',
   'waiting.what.setup': 'צריך חיבור',

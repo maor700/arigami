@@ -74,44 +74,16 @@ function HealthDot({ health }) {
   );
 }
 
-// RES1 §4, toned down: a waiting item no longer shouts from a full-width
-// pulsing bar. It attaches a small, static badge to the row it actually
-// belongs to (see WaitingBadge below) — this is only the expandable list
-// the header's quiet counter reveals, same rows as before, none of the noise.
-function WaitingList({ waiting, onSelect, t }) {
-  if (!waiting?.length) return null;
-  return (
-    <ul className="flex flex-col gap-0.5 px-[13px] pb-2">
-      {waiting.map((w) => (
-        <li key={`${w.sessionId}:${w.kind}`}>
-          <button
-            type="button"
-            onClick={() => onSelect(w.sessionId)}
-            className="flex w-full cursor-pointer flex-col items-start gap-px rounded-md px-2 py-1 text-start hover:bg-chip/60"
-          >
-            <span className="flex w-full items-center gap-1.5">
-              <Truncate text={w.title} className="min-w-0 flex-1 font-mono text-[10.5px] font-bold" />
-              <span className="shrink-0 rounded-full border border-hair px-1.5 text-[9px] text-fgdim">
-                {t(`waiting.do.${w.unblock}`)}
-              </span>
-            </span>
-            <span className="text-[9.5px] text-fgdim">
-              {t(`waiting.what.${w.kind}`)}
-              {w.detail ? ` (${w.detail})` : ''} · {relTime(w.since)}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// The badge itself: same size/shape/colour as the "needs you" `?` and screen
-// take-over badges below (find `needsAttention` / `hasOpenScreenRequest`) —
-// just without their pulse. Those two already cover the 'action'/'screen'
-// waiting kinds on a session row; this is what shows for the rest (setup,
-// review, merge, budget, system) and for agent rows, which had no indicator
-// at all. Shows the count only once there's more than one thing waiting.
+// RES1 §4, toned down — and further, per direct feedback: no aggregated top
+// section at all, just the row itself. A waiting item is a small, static
+// badge on the row it actually belongs to: same size/shape/colour as the
+// "needs you" `?` and screen take-over badges below (find `needsAttention` /
+// `hasOpenScreenRequest`) — just without their pulse. Those two already cover
+// the 'action'/'screen' waiting kinds on a session row; this is what shows for
+// the rest (setup, review, merge, budget, system), for agent rows (which had
+// no indicator at all), and rolled up (hollow, count-only) onto a collapsed
+// folder or the collapsed Team header so nothing disappears behind a fold.
+// Shows the count only once there's more than one thing waiting.
 function WaitingBadge({ items, t }) {
   if (!items?.length) return null;
   const title = items
@@ -494,13 +466,26 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
     l.push(s);
     byAgent.set(s.metadata.agent, l);
   }
+  // RES1 §4: a collapsed Team section hides every per-agent waiting badge —
+  // roll the total up onto the header count, same hollow idiom as a folder.
+  const hiddenWaiting = open
+    ? 0
+    : [...(waitingByAgent?.values() || [])].reduce((n, items) => n + items.length, 0);
   return (
     <div data-rail-team className="mt-2">
       <div className="flex w-full items-center gap-[7px] px-1.5 pt-[9px] pb-1">
-        <button type="button" onClick={onToggle} title={t('agent.oneLiner')} className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]">
+        <button
+          type="button"
+          onClick={onToggle}
+          title={hiddenWaiting ? t('rail.waitingInsideClick', { n: hiddenWaiting }) : t('agent.oneLiner')}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]"
+        >
           <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
-          <span className="font-mono text-[9.5px] text-fgdim">{list.length}</span>
+          <span className={`font-mono text-[9.5px] ${hiddenWaiting ? 'font-bold text-fg' : 'text-fgdim'}`}>
+            {list.length}
+            {hiddenWaiting ? ` · !${hiddenWaiting > 1 ? hiddenWaiting : ''}` : ''}
+          </span>
           <span className="h-px flex-1 bg-hair" />
         </button>
         <button
@@ -712,6 +697,7 @@ function FolderRow({
   selectedId,
   onSelect,
   watchFor,
+  waitingBySession,
   over,
   menuOpen,
   setMenuFor,
@@ -728,12 +714,19 @@ function FolderRow({
   const attention = collapsed
     ? kids.filter((s) => needsAttention(s) && s.id !== selectedId).length
     : 0;
+  // RES1 §4: a waiting badge hidden behind a collapsed folder would otherwise
+  // vanish entirely — roll it up onto the count chip, same hollow idiom as
+  // the needsAttention rollup below.
+  const waitingHidden = collapsed
+    ? kids.reduce((n, s) => n + (waitingBySession?.get(s.id)?.length || 0), 0)
+    : 0;
   const errored = collapsed && kids.some((s) => watchFor(s.id)?.errored);
   const working =
     collapsed && kids.some((s) => ['working', 'restarting'].includes(s.claude?.state));
   // The controller's OWN state renders exactly like a session row's badges —
   // solid, next to the name, visible expanded or collapsed (it has no row).
   const ctlAttention = isProject && needsAttention(controller) && !ctlSelected;
+  const ctlWaiting = isProject ? waitingBySession?.get(controller.id) || [] : [];
   const ctlWorking = isProject && controller.claude?.state === 'working';
   const ctlRestarting = isProject && controller.claude?.state === 'restarting';
   const ctlColor = controller?.color || '#c4c4c4';
@@ -815,6 +808,8 @@ function FolderRow({
               >
                 ?
               </span>
+            ) : ctlWaiting.length > 0 ? (
+              <WaitingBadge items={ctlWaiting} t={t} />
             ) : ctlWorking || ctlRestarting ? (
               <span
                 title={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}
@@ -838,19 +833,22 @@ function FolderRow({
                 e.stopPropagation();
                 onExpand();
               }}
-              title={
-                attention
-                  ? `${count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })} · ${t('rail.needsInputClick', { n: attention })}`
-                  : count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })
-              }
+              title={[
+                count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count }),
+                attention ? t('rail.needsInputClick', { n: attention }) : null,
+                waitingHidden ? t('rail.waitingInsideClick', { n: waitingHidden }) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
               className={`shrink-0 cursor-pointer rounded-full px-1.5 py-px font-mono text-[9px] leading-[14px] ${
-                attention
+                attention || waitingHidden
                   ? 'border border-brand bg-transparent font-bold text-fg'
                   : 'bg-chip text-fgdim'
               }`}
             >
               {count}
               {attention ? ` · ?${attention > 1 ? attention : ''}` : ''}
+              {waitingHidden ? ` · !${waitingHidden > 1 ? waitingHidden : ''}` : ''}
             </button>
           </span>
         </span>
@@ -1241,7 +1239,6 @@ export default function Rail({
   const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(true); // A1: the "צוות" section
-  const [waitingOpen, setWaitingOpen] = useState(false); // RES1 §4: the quiet aggregated list
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
   const [screenAvailable, setScreenAvailable] = useState(false);
   // Global (not per-session) screen-share — poll availability so the icon
@@ -1718,20 +1715,6 @@ export default function Rail({
         <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase">
           {mode === 'grouped' ? t('rail.groupedByStatus') : t('rail.activeCount', { n: active.length })}
         </span>
-        {/* RES1 §4, toned down: what used to be a full-width pulsing pill is now
-            just this muted count — the badges on the rows themselves (see
-            WaitingBadge) already say what's blocked; this is only "reachable". */}
-        {waiting?.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setWaitingOpen((v) => !v)}
-            title={waitingOpen ? t('rail.waiting.hide') : t('rail.waiting.show')}
-            aria-label={t('rail.waiting.pill', { n: waiting.length })}
-            className="shrink-0 cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-fg"
-          >
-            {waiting.length}
-          </button>
-        )}
         {mode === 'flat' && (
           <button
             type="button"
@@ -1761,7 +1744,6 @@ export default function Rail({
           ))}
         </span>
       </div>
-      {waitingOpen && <WaitingList waiting={waiting} onSelect={onSelect} t={t} />}
 
       {/* rows */}
       <div
@@ -1848,6 +1830,7 @@ export default function Rail({
                       selectedId={selectedRow}
                       onSelect={onSelect}
                       watchFor={watchFor}
+                      waitingBySession={waitingBySession}
                       over={sOver?.id === entry.id ? sOver : null}
                       menuOpen={menuFor === entry.id}
                       setMenuFor={setMenuFor}
