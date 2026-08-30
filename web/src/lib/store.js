@@ -26,6 +26,7 @@ let state = {
   auth: undefined,
   authInfo: null, // {authMode, hasAdmin, oidc} — known even when signed out
   wizardTick: 0, // B3: bumps on every onboarding.step bus event (Wizard.jsx re-reads)
+  setupTick: 0, // S2: bumps on every setup.* bus event (Connections card / Setup re-read)
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
@@ -93,7 +94,7 @@ export function subscribe(fn) {
 export const getState = () => state;
 
 export function useStore() {
-  return useSyncExternalStore(subscribe, getState);
+  return useSyncExternalStore(subscribe, getState, getState);
 }
 
 // Per-session composer draft — survives switching away and back to a session.
@@ -273,6 +274,19 @@ function appendChat(sessionId, event) {
     } else if (screen !== state.screen) setState({ screen });
     return;
   }
+  // S2: `setup-update` patches the {kind:'setup'} card in place (state,
+  // detail, evidence, appended narration lines) — same pattern as above.
+  if (event.kind === 'setup-update') {
+    const idx = cur.findIndex((e) => e.kind === 'setup' && e.requestId === event.requestId);
+    if (idx === -1) return;
+    const { kind: _k, requestId: _r, lines, ...patch } = event;
+    const prev = cur[idx];
+    const next = [...cur];
+    next[idx] = { ...prev, ...patch, ...(lines ? { lines: [...(prev.lines || []), ...lines] } : {}) };
+    setState({ chats: { ...state.chats, [sessionId]: next }, setupTick: Date.now() });
+    return;
+  }
+  if (event.kind === 'setup') setState({ setupTick: Date.now() });
   // A fresh screen-request re-arms the side panel's auto-open (a manual close
   // applies to the request that was open at the time, not forever).
   if (event.kind === 'screen-request' && state.screen.panel !== null) {
@@ -292,6 +306,14 @@ function appendChat(sessionId, event) {
     next = [...cur, event];
   }
   setState({ chats: { ...state.chats, [sessionId]: next } });
+}
+
+// S2 dev shim (lib/setup-api.js): append / patch a local-only chat event.
+export function injectLocalChat(sessionId, event) {
+  appendChat(sessionId, event);
+}
+export function patchLocalChat(sessionId, kind, requestId, patch) {
+  if (kind === 'setup') appendChat(sessionId, { kind: 'setup-update', requestId, ...patch });
 }
 
 /* ---------------- REST loaders ------------------------------------------- */
@@ -724,6 +746,13 @@ function handleEvent(msg) {
     case 'onboarding.step':
       setState({ wizardTick: Date.now() });
       break;
+    case 'setup.requested':
+    case 'setup.completed':
+    case 'setup.skipped':
+    case 'setup.changed':
+    case 'setup':
+      setState({ setupTick: Date.now() });
+      return;
     case 'state':
       replaceSnapshot(msg.sessions ?? payload?.sessions);
       if (Array.isArray(msg.folders ?? payload?.folders))
