@@ -2,14 +2,14 @@
 // ABOVE archived, agent rows show emoji + status, a session born from an
 // agent wears the agent's emoji, the AgentCard renders its pending form and
 // its created summary, and agent-card updates fold on reload.
-import { test, expect, beforeAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, Rail, AgentCard, store, fold;
+let React, render, prefs, Rail, AgentCard, store, fold, origFetch;
 
 const AGENTS = [
   { slug: 'marketing-lead', name: 'Marketing Lead', emoji: '📣', color: '#E0594F', skills: ['dispatch'], homeSessionId: 'sess_home', persona: '' },
@@ -28,7 +28,10 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  // The store's loadAgents() fetches /__api/agents — answer it from here.
+  // The store's loadAgents() fetches /__api/agents — answer it from here
+  // (restored in afterAll: bun test shares globals across files, and the
+  // webhook/proxy suites need the real fetch).
+  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}),
@@ -42,6 +45,10 @@ beforeAll(async () => {
   ({ default: AgentCard } = await import(web('components/AgentCard.jsx')));
   ({ foldSetupUpdates: fold } = await import(web('lib/chat-merge.js')));
   await store.loadAgents();
+});
+
+afterAll(() => {
+  globalThis.fetch = origFetch;
 });
 
 const sessions = [
