@@ -161,3 +161,21 @@ export function useSkills() {
 
 /** i18n-resolved host agent commands for the palette. */
 export const agentCommandItems = () => AGENT_COMMANDS.map((c) => ({ ...c, desc: t(c.descKey) }));
+
+/**
+ * UX1 — the text the home chat's "turn this into a work session" chip acts on:
+ * the LAST thing the human said in the DM (never the agent's own answer — the
+ * job is what you asked for). Empty when the chat has no human message yet.
+ */
+export function lastHumanText(events) {
+  for (let i = (events || []).length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (!e || e.kind !== 'user') continue;
+    const raw = e.text ?? e.content ?? e.message ?? '';
+    const text = (typeof raw === 'string' ? raw : (Array.isArray(raw) ? raw.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('\n') : '')).trim();
+    // `[host] …` lines and forwarded-mention wrappers are the host talking, not the human.
+    if (!text || text.startsWith('[host]') || text.startsWith('[Forwarded from')) continue;
+    return text;
+  }
+  return '';
+}

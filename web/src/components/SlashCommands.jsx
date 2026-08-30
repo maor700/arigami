@@ -13,8 +13,6 @@ import { t, useT } from '../lib/i18n.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
-import { api } from '../lib/api.js';
-import { toastError } from '../lib/toast.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -149,7 +147,9 @@ export function teamRows(agents, sessions) {
   }
   return (agents || []).map((a) => {
     const mine = byAgent.get(a.slug) || [];
-    return { agent: a, sessions: mine.length, working: mine.some((s) => s.claude?.state === 'working') };
+    // UX1: `sessions` counts WORK sessions — the home chat is the agent's own
+    // surface, not a job it is running.
+    return { agent: a, sessions: mine.filter((s) => !s.metadata?.agentHome).length, working: mine.some((s) => s.claude?.state === 'working') };
   });
 }
 
@@ -161,17 +161,13 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   const rows = teamRows(agents, sessions);
-  const openHome = async (a) => {
-    try {
-      const r = await api.get(`/agents/${encodeURIComponent(a.slug)}/home`);
-      if (r?.session?.id) window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id: r.session.id } }));
-      onClose();
-    } catch {
-      toastError(t('rail.teamOpenFailed'));
-    }
+  // UX1: both doors lead to the agent surface — בית is a tab of it, not a session.
+  const openHome = (a) => {
+    window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug, tab: 'home' } }));
+    onClose();
   };
   const openPage = (a) => {
-    window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug } }));
+    window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug, tab: 'persona' } }));
     onClose();
   };
   return (

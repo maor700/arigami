@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1
+# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1 + UX1
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -10,7 +10,8 @@ session for DMs (get-or-create).
 
 Decisions (PRD-ARIGAMI-AGENTS, approved 2026-08-30): agents are a layer **on top of** sessions;
 the Rail "צוות" section sits **below** the sessions/folders section; **no per-agent private
-skills** — agents reference shared skills by name.
+skills** — agents reference shared skills by name. (UX1 later made the home chat the **בית** tab of
+the agent surface instead of a rail row — see the last section.)
 
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
 
@@ -89,18 +90,19 @@ virtual path `agents/<slug>/…`).
 
 - **Rail → "צוות"** (`TeamSection` in `Rail.jsx`): collapsible, rendered below folders/free
   sessions and above archived (hidden while searching). Row = emoji avatar in the agent color,
-  name, status (`working` when any live session of the agent is mid-turn, else its active
-  session count / `idle`), skills line, ⋯ → home chat / agent page. Click → the home chat
-  (`GET /agents/:slug/home`). **+ סוכן חדש** starts a normal session with a prefilled
+  name, status (`working` when any live session of the agent is mid-turn, else its **work**-session
+  count / `idle`), skills line, ⋯ → בית / ריצות / פרסונה. Click → the **agent surface**
+  (`#/agents/<slug>`, UX1 — it used to open the home chat as a session).
+  **+ סוכן חדש** starts a normal session with a prefilled
   "תקים סוכן…" prompt (the agent then calls `create_agent` with `confirm:true`).
-  Sessions born from an agent show the agent's emoji instead of the color dot.
+  Sessions born from an agent show the agent's emoji instead of the color dot, plus a
+  "· <agent>" chip (UX1); the agent's own home chat is not listed here at all.
 - **AgentCard** (`AgentCard.jsx`, `{kind:'agent-card'}`): name, slug, emoji, model select
   (from `/models`), budget, tool checkboxes, skills multi-select (from `GET /__api/skills`),
   persona textarea, [צור סוכן] [בטל]. `agent-card-update` events patch the card in place (live
   via the store, on reload via `foldSetupUpdates`).
-- **Agent page** `#/agents/<slug>` (`AgentView.jsx`, Settings visual language): tabs
-  פרסונה (identity + persona, save/delete/open home) · זיכרון (the agent's MEMORY.md + journal) ·
-  פעילות (sessions + their episodes) · חיבורים / שגרה (A2, below).
+- **Agent surface** `#/agents/<slug>[/<tab>]` (`AgentView.jsx`): its own header treatment +
+  tabs בית · פרסונה · זיכרון · חיבורים · שגרה · פעילות · ריצות — see **UX1** below.
 - Mobile: the same section inside the rail drawer.
 
 ## Tests / gates
@@ -218,7 +220,8 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
 - Web: Agent page tab **שגרה** (`RoutineList.jsx`): cron jobs with enable/disable (`PATCH
   /triggers/:id`), run now, delete, next/last run; listeners with cancel. Adding: the **"הוסף שגרה"**
   form (A5 — schedule kind + expression + prompt → `POST /__api/triggers`), or "הוסף דרך הצ׳אט",
-  which opens the agent's **existing home chat** with the ask prefilled. The Rail team
+  which opens the agent's **existing home chat** — since UX1, the surface's בית tab — with the ask
+  prefilled. The Rail team
   row of an **idle** agent with an enabled job shows its next run ("⏰ בעוד 3שע") instead of
   "פנוי" (`nextCronFor(slug, triggers)`).
 
@@ -402,8 +405,9 @@ Sending a message that mentions agents (and has text left after the tokens are s
 | `/as` | a new session born from the agent (child when a PM, else free), `metadata.delegatedFrom` | `session` |
 
 Either way the **caller's** chat gets a `{kind:'delegated', agent:{slug,name,emoji,color}, target,
-targetTitle, how, delivered, mode, text}` line — rendered by `DelegatedLine.jsx` as
-**"הוקצה ל-<agent>"** · where it went · the text · **פתח →** (opens the target session). Budget (A3) is
+targetTitle, how, delivered, mode, text}` line — rendered by `DelegatedLine.jsx`. UX1 reworded it to
+name the destination in a sentence: **"נפתח בבית של <agent>"** + **פתח בית** (the agent surface's
+בית tab) vs **"נוצר סשן עבודה «title» עם <agent>"** + **פתח סשן**. Budget (A3) is
 honoured: a spent agent gets no new child/home/session (429); an unknown agent is 404, empty text 400.
 
 ### REST
@@ -628,3 +632,85 @@ Full picture (provider per service, the spike results, export rules):
 Composio connections keep working exactly as in A2 — the connected account is
 keyed by `user_id = agent:<slug>` — so an agent can own a native Linear grant and
 a brokered Gmail account at the same time.
+
+---
+
+# UX1 — "בית" vs "עבודה"
+
+The complaint the spec starts from: clicking a Team row and being handed work by
+an agent both ended in *a session that looks like every other session*. Nothing
+said what each surface was for. UX1 splits them in the UI (no new concepts, no
+routing changes):
+
+- **Agent (בית)** — a *place*: who the agent is, what it remembers, what it is
+  connected to, what it runs on a schedule, what it costs. Talking to it is a DM.
+- **Work session** — a *job*: a transcript, changes, review/merge. It may be born
+  from an agent, and then it wears the agent's face.
+
+## The home chat stops being a rail row
+
+`metadata.agentHome` sessions are filtered out of the Rail's Sessions section
+(folders, search, drag, archived all read the filtered list). They stay in
+`GET /__api/sessions`, stay resumable and stay in the agent's ledger — they are
+simply reached through the agent surface. Any route that lands on one (a deep
+link, the quick switcher, a push notification, an old bookmark) is bounced to
+`#/agents/<slug>` by `App.jsx`.
+
+**One home per agent, enforced** (`ensureHomeSession`): a home the record lost
+track of — an export/import round-trip strips `homeSessionId`, a restored backup,
+an older build — is **adopted** (oldest first), not re-created; any extra home is
+**demoted** to an ordinary work session, keeping its id, transcript and
+`metadata.agent`. `agentHome` is a host-only stamp: `applyAgentToSession`,
+`POST /__api/sessions` and `PATCH /__api/sessions/:id` all strip it from
+caller-supplied metadata, so nothing but the home route can hide a session.
+
+## The agent surface — `#/agents/<slug>[/<tab>]`
+
+`AgentView.jsx` is a full view with its own header treatment (this is what keeps
+it from reading as a work session): a 40px avatar, the name + `@slug`, the
+persona's first real line, live status (working / next scheduled run / idle —
+`SurfaceStatus`, the home chat counts as "working" but never as a run), the daily
+budget as a bar (`BudgetBar`, `GET /__api/agents/budgets`), the agent's color
+washed over the chrome, and the one-liner *בית = לדבר עם הסוכן. סשן = עבודה שהוא
+מבצע.* Tabs (horizontal, scrollable on a phone; each deep-linkable):
+
+| tab | |
+|---|---|
+| **בית** | the DM chat, embedded (`AgentHomeChat` in `SessionView.jsx`: transcript + composer, no tab bar, no `claude-code` header). Opening the tab is what get-or-creates the home session |
+| פרסונה / זיכרון / חיבורים / שגרה / פעילות | A1–A3, unchanged (פעילות lost its sessions list to ריצות) |
+| **ריצות** | every session born from the agent with its state and cost — `sessions[]` of `GET /agents/:slug/activity` now carries `tokens`/`costUsd`/`turns` per session, summed over the WHOLE ledger so an old run still shows what it cost |
+
+The בית composer carries a hint chip — *רוצה שיבצע משימה? כתוב /as או גרור
+לתיקייה* — that turns the human's last message (`lastHumanText`) into a real work
+session through the existing `POST /__api/sessions/:id/delegate {mode:'as'}`.
+
+## A work session says whose job it is
+
+It stays in the Sessions section, wearing the agent avatar plus a "· <agent>"
+chip in the rail row and **"סשן עבודה · נולד מ-<agent>"** (`BornFromChip`) in the
+session header — both link back to the agent surface.
+
+The delegate receipt (`DelegatedLine`) now says which of the two happened, in a
+sentence instead of a suffix: **"נפתח בבית של <agent>"** with **[פתח בית]** (→ the
+surface's בית tab) vs **"נוצר סשן עבודה «title» עם <agent>"** with **[פתח סשן]**
+(a child adds "in this project"). The `@mention` routing rules themselves are
+unchanged — only the wording is.
+
+## Tests
+
+`test/agents-ux1-host.test.ts` (isolated host with a SEEDED `state.json`: the
+adopt/demote migration, `agentHome` refused from POST + PATCH, per-session cost),
+`test/agents-ux1-web.test.js` (the surface header/status/budget/tabs, `RunsList`,
+`personaLine`, `lastHumanText`, `BornFromChip`, `teamRows`). `agents-web` covers
+the rail (no home row, the "· <agent>" chip) and `agents-a4-web` the receipt.
+
+## Known limits (UX1)
+
+- זיכרון stays a tab of the surface even though the spec's list omits it —
+  dropping it would have deleted an A1 feature.
+- The בית tab creates the home session on open, exactly like the old rail row
+  did; a spent daily budget refuses it with the same 429 (shown inline).
+- The hint chip acts on the last **human** message; `[host]` lines and forwarded
+  mentions are skipped. There is no multi-message selection.
+- A home chat is still a session everywhere below the UI (API, exports, cron,
+  the ledger) — UX1 is a framing change, not a new object.
