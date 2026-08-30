@@ -96,7 +96,7 @@ export const en = {
   'integrations.notFound': 'Connection not found.',
   'integrations.empty': 'No integrations found.',
   'integrations.noKey.title': 'Connect to Composio',
-  'integrations.noKey.body': 'Sign in to access 1,000+ app integrations — Gmail, Linear, WhatsApp, and more.',
+  'integrations.noKey.body': 'Sign in for what has no server of its own above — Gmail, Calendar, Drive, Slack, Facebook Pages — plus 1,000+ more integrations.',
   'integrations.oauth.button': 'Sign in with Composio',
   'integrations.oauth.starting': 'Opening…',
   'integrations.oauth.waiting': 'Waiting for browser sign-in…',

@@ -94,7 +94,7 @@ export const he = {
   'integrations.notFound': 'החיבור לא נמצא.',
   'integrations.empty': 'לא נמצאו אינטגרציות.',
   'integrations.noKey.title': 'התחברות ל-Composio',
-  'integrations.noKey.body': 'התחברו כדי לגשת ליותר מ-1,000 אינטגרציות — Gmail, Linear, WhatsApp ועוד.',
+  'integrations.noKey.body': 'התחברו למה שאין לו שרת משלו למעלה — Gmail, יומן, Drive, Slack, דפי פייסבוק — ולעוד יותר מ-1,000 אינטגרציות.',
   'integrations.oauth.button': 'התחברות עם Composio',
   'integrations.oauth.starting': 'פותח…',
   'integrations.oauth.waiting': 'ממתין להתחברות בדפדפן…',

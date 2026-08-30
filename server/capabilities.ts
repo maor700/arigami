@@ -676,14 +676,17 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
         return {
           ok: true,
           owner: from,
-          detail: `${conn.name}${from !== owner ? ' (shared)' : ''}`,
+          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''}`,
           data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
         };
       }
       const stale = own || shared;
+      // The bearer rows never see a consent screen — saying "authorize" there
+      // would send the human looking for a browser step that does not exist.
+      const how = spec.auth === 'bearer' ? (spec.tokenFrom === 'gh' ? `add a ${title} token (the host can reuse the one \`gh\` already has)` : `add a ${title} token`) : `authorize ${title} once`;
       return {
         ok: false,
-        detail: stale ? `${stale.name} needs authentication again` : `not connected — authorize ${title} once`,
+        detail: stale ? `${stale.name} needs authentication again` : `not connected — ${how}`,
         data: { name, url: spec.url, auth: spec.auth, docs: spec.docs, tools: grantToolPattern(name), ...(spec.readonlyUrl ? { readonlyUrl: spec.readonlyUrl } : {}), ...(spec.note ? { note: spec.note } : {}), ...(stale ? { stale: true } : {}) },
       };
     },
