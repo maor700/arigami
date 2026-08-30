@@ -10,6 +10,7 @@ import { sessionLabel } from '../components/ui.jsx';
 let state = {
   sessions: [], // includes archived (REST snapshot merges them in)
   folders: [], // rail folders (session.folderId points here)
+  agents: [], // A1: the team (GET /__api/agents; 'agents-updated' over WS)
   listeners: [], // deterministic pollers armed by sessions (PR watches etc.)
   triggers: [], // standing trigger rules (Linear-filter producers)
   pending: [], // Pending-tasks queue (ordered = autoplay execution order)
@@ -290,6 +291,16 @@ function appendChat(sessionId, event) {
     setState({ chats: { ...state.chats, [sessionId]: next }, setupTick: Date.now() });
     return;
   }
+  // A1: `agent-card-update` patches the {kind:'agent-card'} card in place (cardId).
+  if (event.kind === 'agent-card-update') {
+    const idx = cur.findIndex((e) => e.kind === 'agent-card' && e.cardId === event.cardId);
+    if (idx === -1) return;
+    const { kind: _k, cardId: _c, ...patch } = event;
+    const next = [...cur];
+    next[idx] = { ...next[idx], ...patch };
+    setState({ chats: { ...state.chats, [sessionId]: next } });
+    return;
+  }
   if (event.kind === 'setup') setState({ setupTick: Date.now() });
   // A fresh screen-request re-arms the side panel's auto-open (a manual close
   // applies to the request that was open at the time, not forever).
@@ -345,6 +356,17 @@ export async function loadFolders() {
     if (Array.isArray(list)) setState({ folders: list });
   } catch {
     /* host not running / pre-folders server */
+  }
+}
+
+// A1: the team. Cheap (a directory of small JSON files); refreshed on every
+// 'agents-updated' broadcast too.
+export async function loadAgents() {
+  try {
+    const r = await api.get('/agents');
+    if (Array.isArray(r?.agents)) setState({ agents: r.agents });
+  } catch {
+    /* pre-agents host */
   }
 }
 
@@ -696,6 +718,7 @@ function bootLoads() {
   loadConfig();
   loadSessions();
   loadFolders();
+  loadAgents();
   loadUsage();
   loadAccounts();
   connect();
@@ -808,6 +831,10 @@ function handleEvent(msg) {
     case 'folders-updated':
       if (Array.isArray(msg.folders ?? payload?.folders))
         setState({ folders: msg.folders ?? payload.folders });
+      return;
+    case 'agents-updated':
+      if (Array.isArray(msg.agents ?? payload?.agents)) setState({ agents: msg.agents ?? payload.agents });
+      else loadAgents();
       return;
     case 'session-deleted': {
       const id =

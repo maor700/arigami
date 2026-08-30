@@ -57,6 +57,11 @@ billing.)
   facts and skill changes — all of it lands in *Pending* with a diff, undo and
   scan, and nothing is written until you approve. Fold the cockpit to your
   business with **profile bundles** (repos + skills + memory seed + cron).
+- **A team of agents ("צוות").** An agent is *who* — a persistent identity with a
+  persona, shared skills it should use, its own memory namespace, default model
+  and budget; sessions are born from it (`create_session({agent})`) and wear its
+  emoji in the rail. Create one from any chat with an editable card, DM it in
+  its home chat, and manage it on its own page. See [docs/AGENTS.md](docs/AGENTS.md).
 
 ## Profiles
 
@@ -118,6 +123,7 @@ vulnerabilities: [SECURITY.md](SECURITY.md).
 - [docs/SPEC.md](docs/SPEC.md) — data model, REST/WS API, host MCP tools, UI
 - [docs/ONBOARDING.md](docs/ONBOARDING.md) — repos, profiles, readiness gates
 - [docs/TRIGGERS.md](docs/TRIGGERS.md) · [docs/DISPATCHER.md](docs/DISPATCHER.md) — listeners, cron, PM → children
+- [docs/AGENTS.md](docs/AGENTS.md) — agents ("צוות"): persona, memory namespace, `create_session({agent})`, the Rail section and chat card
 - [docs/TELEMETRY.md](docs/TELEMETRY.md) — opt-in telemetry: what is sent, how to turn it off, self-host the collector
 - [docs/SECURITY.md](docs/SECURITY.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 

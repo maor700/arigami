@@ -13,6 +13,7 @@ import {
   MakeProjectDialog,
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
+import { AgentAvatar } from './AgentCard.jsx';
 import { UsageMini } from './Usage.jsx';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
@@ -41,6 +42,7 @@ import {
   faTableCells,
   faToolbox,
   faTriangleExclamation,
+  faUserAstronaut,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -219,6 +221,10 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   // toggles it instead, so it doesn't fight the row's own tap-to-select.
   const tip = useHoverTip(session.statusSummary?.tldr);
   const hoverProps = isDesktop ? { onMouseEnter: tip.show, onMouseLeave: tip.hide } : {};
+  // A1: a session born from an agent wears the agent's emoji (its color is
+  // already the session color — stamped at creation).
+  const { agents } = useStore();
+  const agent = session.metadata?.agent ? (agents || []).find((a) => a.slug === session.metadata.agent) : null;
   return (
     <div
       ref={tip.ref}
@@ -231,7 +237,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
       }}
     >
       {tip.tip}
-      <Dot color={color} className="mt-0.5" />
+      {agent ? <AgentAvatar agent={{ ...agent, color }} size={16} className="mt-px" /> : <Dot color={color} className="mt-0.5" />}
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <Truncate text={label} className="font-mono text-[11.5px] font-bold" />
@@ -361,6 +367,111 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
           }}
         />
       )}
+    </div>
+  );
+}
+
+// A1 — the "צוות" (team) section: one row per agent, BELOW folders/free
+// sessions and above the archived group. Click → the agent's home chat
+// (get-or-create); ⋯ → the agent page. Status: working when any live session
+// born from the agent is mid-turn, else its active-session count / idle.
+// (The "next cron" status arrives with cronjob({agent}) in A2.)
+export function TeamSection({ agents, sessions, onSelect, onOpenAgent, onNewAgent, selectedId, open, onToggle, menuFor, setMenuFor }) {
+  const t = useT();
+  const list = agents || [];
+  const byAgent = new Map();
+  for (const s of sessions || []) {
+    if (s.archived || !s.metadata?.agent) continue;
+    const l = byAgent.get(s.metadata.agent) || [];
+    l.push(s);
+    byAgent.set(s.metadata.agent, l);
+  }
+  const openHome = async (a) => {
+    try {
+      const r = await api.get(`/agents/${encodeURIComponent(a.slug)}/home`);
+      if (r?.session?.id) onSelect(r.session.id);
+    } catch {
+      toastError(t('rail.teamOpenFailed'));
+    }
+  };
+  return (
+    <div data-rail-team className="mt-2">
+      <div className="flex w-full items-center gap-[7px] px-1.5 pt-[9px] pb-1">
+        <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]">
+          <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
+          <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
+          <span className="font-mono text-[9.5px] text-fgdim">{list.length}</span>
+          <span className="h-px flex-1 bg-hair" />
+        </button>
+        <button
+          type="button"
+          data-rail-team-new
+          onClick={onNewAgent}
+          title={t('rail.teamNewAgent')}
+          className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[7px] py-[3px] font-mono text-[10px] leading-none text-fgdim hover:border-ink hover:text-fg"
+        >
+          {t('rail.teamNewAgent')}
+        </button>
+      </div>
+      {open && list.length === 0 && (
+        <div className="px-2 py-1.5 text-[10px] text-fgdim italic">{t('rail.teamEmpty')}</div>
+      )}
+      {open &&
+        list.map((a) => {
+          const mine = byAgent.get(a.slug) || [];
+          const working = mine.some((s) => s.claude?.state === 'working');
+          const homeSelected = !!a.homeSessionId && a.homeSessionId === selectedId;
+          const menuOpen = menuFor === `agent:${a.slug}`;
+          return (
+            <div
+              key={a.slug}
+              data-rail-agent={a.slug}
+              onClick={() => openHome(a)}
+              className="group relative mb-0.5 flex cursor-pointer items-center gap-[9px] rounded-[7px] p-2"
+              style={{ background: homeSelected ? tint(a.color) : undefined, borderLeft: `4px solid ${homeSelected ? a.color : 'transparent'}` }}
+            >
+              <AgentAvatar agent={a} size={20} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <Truncate text={a.name} className="font-mono text-[11.5px] font-bold" />
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {working ? (
+                      <span title={t('rail.teamWorking')} className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]">
+                        <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim">
+                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: mine.length ? a.color : '#c4c4c4' }} />
+                        {mine.length === 0 ? t('rail.teamIdle') : mine.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: mine.length })}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                {a.skills?.length > 0 && (
+                  <Truncate as="span" text={a.skills.join(' · ')} className="block text-[10px] text-fgdim" />
+                )}
+              </span>
+              <button
+                type="button"
+                title={t('rail.teamActions')}
+                onClick={(e) => { e.stopPropagation(); setMenuFor(menuOpen ? null : `agent:${a.slug}`); }}
+                className={`shrink-0 cursor-pointer self-start rounded px-1 py-0.5 text-[13px] leading-none tracking-[1px] text-fgdim hover:text-fg ${menuOpen ? '' : 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'}`}
+              >
+                ···
+              </button>
+              {menuOpen && (
+                <div onClick={(e) => e.stopPropagation()} className="absolute end-1 top-8 z-20 min-w-[150px] rounded-[8px] border border-border bg-panel p-1 shadow-[3px_3px_0_#2a2a2a]">
+                  <button type="button" onClick={() => { setMenuFor(null); openHome(a); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
+                    <span className="w-4 text-center text-fgdim"><Icon icon={faPlay} /></span> {t('rail.teamHomeChat')}
+                  </button>
+                  <button type="button" onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
+                    <span className="w-4 text-center text-fgdim"><Icon icon={faUserAstronaut} /></span> {t('rail.teamOpenPage')}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
     </div>
   );
 }
@@ -1009,12 +1120,14 @@ export default function Rail({
   onPreviewTicket,
   onOpenTriggers,
   onOpenShortcuts,
+  onOpenAgent,
 }) {
   const t = useT();
   const [q, setQ] = useState('');
   const [mode, setMode] = useState('flat'); // 'flat' | 'grouped'
   const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(true); // A1: the "צוות" section
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
   const [screenAvailable, setScreenAvailable] = useState(false);
   // Global (not per-session) screen-share — poll availability so the icon
@@ -1028,7 +1141,7 @@ export default function Rail({
     return () => { stop = true; clearInterval(iv); };
   }, []);
   const { railWidth } = usePrefs();
-  const { usage, listeners, pending, queue, accounts, accountUsage, folders } = useStore();
+  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents } = useStore();
   // The header reflects the ACTIVE account. Derive it from the per-account map so
   // switching accounts updates instantly instead of lagging on the generic
   // usage-updated broadcast (which only fires when the active usage changes).
@@ -1633,6 +1746,31 @@ export default function Rail({
           <div className="px-2 py-4 text-center text-[11px] text-fgdim">
             {q ? t('rail.noSessionsMatch') : t('rail.noActiveSessions')}
           </div>
+        )}
+
+        {/* A1: the team ("צוות") — below folders/free sessions, above archived */}
+        {!q && (
+          <TeamSection
+            agents={agents}
+            sessions={sessions}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onOpenAgent={onOpenAgent}
+            open={teamOpen}
+            onToggle={() => setTeamOpen((v) => !v)}
+            menuFor={menuFor}
+            setMenuFor={setMenuFor}
+            onNewAgent={() =>
+              api
+                .post('/sessions', {
+                  title: t('rail.teamNewAgentTitle'),
+                  cwd: config?.reposDir || config?.defaultCwd || undefined,
+                  prompt: t('rail.teamNewAgentPrompt'),
+                })
+                .then((s) => s?.id && onSelect(s.id))
+                .catch((e) => toastError(e?.message || String(e)))
+            }
+          />
         )}
 
         {/* archived: collapsed group at the bottom */}

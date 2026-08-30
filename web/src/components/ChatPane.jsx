@@ -8,6 +8,7 @@ import ScreenshotCard from './ScreenshotCard.jsx';
 import ArtifactCard from './ArtifactCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
+import AgentCard from './AgentCard.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -843,6 +844,9 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // F7: host-executed merge result (merged / conflict) — in the child and
       // mirrored into its master.
       return <MergeEvent event={event} />;
+    case 'agent-card':
+      // A1: create_agent / update_agent — the human edits + confirms the draft here.
+      return <AgentCard sessionId={sessionId} event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }

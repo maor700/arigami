@@ -45,6 +45,10 @@ const patchSession = async (a, body) => {
   return { ok: true };
 };
 
+// A1: the memory namespace a call acts in — explicit `agent` wins ("" = the
+// shared store), else the agent this session was born from (ARIGAMI_AGENT).
+const agentNs = (a) => (a?.agent !== undefined ? String(a.agent || '') : process.env.ARIGAMI_AGENT || '') || null;
+
 const SID_PROP = { session_id: { type: 'string', description: 'Host session id (defaults to ARIGAMI_SESSION_ID env)' } };
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -79,11 +83,13 @@ const TOOLS = [
       branch_prefix: { type: 'string', description: 'full+worktree only: branch prefix (default "child")' },
       needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
       needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
+      agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s default model (unless `model` is given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
     }),
     run: async (a) => {
       const body = {
         title: a.title, cwd: a.cwd, prompt: a.prompt, skill: a.skill, model: a.model, effort: a.effort,
         permissionMode: a.permission_mode, metadata: a.metadata,
+        ...(a.agent ? { agent: a.agent } : {}),
       };
       if (a.needs_screen) body.needsScreen = true;
       // Dispatch: forward the caller as the worker's master + the worker spec.
@@ -768,6 +774,7 @@ const TOOLS = [
         action: { type: 'string', enum: ['add', 'replace', 'remove'] },
         content: { type: 'string', description: 'New/replacement text (required for add/replace; usable as the remove needle if old_text is omitted)' },
         old_text: { type: 'string', description: 'Existing line to match, for replace/remove' },
+        agent: { type: 'string', description: 'Agent namespace for target "memory"/"journal" (default: the agent this session was born from, if any; "" = the shared MEMORY.md). "user" is always the shared USER.md.' },
         ...SID_PROP,
       },
       ['target', 'action']
@@ -780,23 +787,29 @@ const TOOLS = [
         old_text: a.old_text,
         source: 'agent',
         sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
+        agent: agentNs(a),
       }),
   },
   {
     name: 'memory_search',
     description:
       "Full-text search over Arigami's own memory (USER.md, MEMORY.md, journal/*.md, episodes/*.md) — the on-demand half of the two-layer memory model (USER.md+MEMORY.md are already injected once at session start; use this for anything older/deeper). " +
-      'Zero token cost until called. Returns short ranked snippets (~700 chars each), not full files — follow up with memory_get for the whole file. scope optionally narrows to one of "user" | "memory" | "journal" | "episode".',
+      'Zero token cost until called. Returns short ranked snippets (~700 chars each), not full files — follow up with memory_get for the whole file. scope optionally narrows to one of "user" | "memory" | "journal" | "episode" | "agent:<slug>". ' +
+      'A session born from an agent searches USER.md + episodes + its OWN namespace by default; pass agent:"" for the shared view or scope:"agent:<slug>" for another agent\'s memory.',
     inputSchema: obj({
       query: { type: 'string' },
-      scope: { type: 'string', enum: ['user', 'memory', 'journal', 'episode'] },
+      scope: { type: 'string', description: 'user | memory | journal | episode | agent:<slug>' },
       limit: { type: 'number', description: 'Max results (default 8, max 50)' },
+      agent: { type: 'string', description: 'Namespace to search as (default: the session\'s agent; "" = shared)' },
     }, ['query']),
-    run: (a) => api('GET', `/__api/memory/search?query=${encodeURIComponent(a.query)}${a.scope ? `&scope=${encodeURIComponent(a.scope)}` : ''}${a.limit ? `&limit=${a.limit}` : ''}`),
+    run: (a) => {
+      const ns = agentNs(a);
+      return api('GET', `/__api/memory/search?query=${encodeURIComponent(a.query)}${a.scope ? `&scope=${encodeURIComponent(a.scope)}` : ''}${a.limit ? `&limit=${a.limit}` : ''}${ns ? `&agent=${encodeURIComponent(ns)}` : ''}`);
+    },
   },
   {
     name: 'memory_get',
-    description: 'Read one memory file in full by its path (as returned by memory_search, e.g. "USER.md", "journal/2026-08-28.md", "episodes/<id>.md").',
+    description: 'Read one memory file in full by its path (as returned by memory_search, e.g. "USER.md", "journal/2026-08-28.md", "episodes/<id>.md", "agents/<slug>/MEMORY.md").',
     inputSchema: obj({ path: { type: 'string' } }, ['path']),
     run: (a) => api('GET', `/__api/memory/get?path=${encodeURIComponent(a.path)}`),
   },
@@ -827,6 +840,64 @@ const TOOLS = [
       name: a.name, content: a.content, patch: a.patch, rationale: a.rationale, evidence: a.evidence,
       sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
     }),
+  },
+  // ---- A1 agents ("צוות") — persistent identities sessions are born from ----
+  {
+    name: 'create_agent',
+    description:
+      'Create a persistent AGENT (who): name, emoji, persona (≤~20 lines "who you are + limits", goes into the system prompt of every session born from it), ' +
+      'default model, referenced SHARED skills (names from GET /__api/skills — agents have no private skills), tool/domain allowlists and a daily token budget. ' +
+      'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under "צוות"; sessions born from it (create_session({agent})) carry its emoji/color. ' +
+      'confirm (default true): post an editable Agent card in THIS chat — the human confirms/cancels there and you get a message with the decision; nothing is written before that. ' +
+      'confirm:false creates it immediately (only when the human already spelled out every field). Returns the card payload {cardId, state, agent?}. ' +
+      'KEEP IT SIMPLE: ask the human only for name, emoji and a few persona lines; leave model/budget/tools/domains/skills unset unless they asked — the card hides them under "advanced settings" and everything has a sensible default.',
+    inputSchema: obj({
+      name: { type: 'string' },
+      slug: { type: 'string', description: 'lowercase letters/digits/hyphens; derived from name when omitted (pass one for Hebrew names)' },
+      emoji: { type: 'string' },
+      color: { type: 'string', description: '#rrggbb (host picks a free palette color when omitted)' },
+      model: { type: 'string', description: '`claude --model` value; omit for the CLI default' },
+      persona: { type: 'string' },
+      skills: { type: 'array', items: { type: 'string' }, description: 'Names of shared skills the agent should use' },
+      tools: { type: 'array', items: { type: 'string' }, description: 'Tool allowlist (advisory in A1)' },
+      domains: { type: 'array', items: { type: 'string' }, description: 'Domain allowlist (advisory in A1)' },
+      budget: { type: 'object', properties: { tokensPerDay: { type: 'number' } }, additionalProperties: false },
+      confirm: { type: 'boolean', description: 'default true — card first, create on the human\'s click' },
+      ...SID_PROP,
+    }, ['name']),
+    run: (a) => {
+      const { confirm, session_id, ...draft } = a;
+      return api('POST', '/__mcp/agent-card', { session_id: sid(a), action: 'create', confirm: confirm !== false, draft });
+    },
+  },
+  {
+    name: 'list_agents',
+    description: 'List the agents ("צוות") on this host: slug, name, emoji, color, model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
+    inputSchema: obj({}),
+    run: async () => (await api('GET', '/__api/agents')).agents,
+  },
+  {
+    name: 'update_agent',
+    description:
+      'Update an agent: any of name/emoji/color/model/persona/skills/tools/domains/budget (only the fields you pass change; skills/tools/domains replace the list). ' +
+      'Applied immediately (the human sees an "updated" Agent card in this chat). Existing sessions of the agent keep their spawn-time persona until restarted.',
+    inputSchema: obj({
+      slug: { type: 'string' },
+      name: { type: 'string' },
+      emoji: { type: 'string' },
+      color: { type: 'string' },
+      model: { type: ['string', 'null'] },
+      persona: { type: 'string' },
+      skills: { type: 'array', items: { type: 'string' } },
+      tools: { type: 'array', items: { type: 'string' } },
+      domains: { type: 'array', items: { type: 'string' } },
+      budget: { type: ['object', 'null'], properties: { tokensPerDay: { type: 'number' } }, additionalProperties: false },
+      ...SID_PROP,
+    }, ['slug']),
+    run: (a) => {
+      const { slug, session_id, ...draft } = a;
+      return api('POST', '/__mcp/agent-card', { session_id: sid(a), action: 'update', slug, draft });
+    },
   },
   {
     name: 'permission_prompt',
