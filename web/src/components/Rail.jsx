@@ -74,49 +74,56 @@ function HealthDot({ health }) {
   );
 }
 
-// The one place the human looks to answer "what is waiting on me". Every row
-// says what is blocked, since when, and the single action that unblocks it.
-function WaitingPill({ onSelect }) {
-  const t = useT();
-  const { waiting } = useStore();
-  const [open, setOpen] = useState(false);
+// RES1 §4, toned down: a waiting item no longer shouts from a full-width
+// pulsing bar. It attaches a small, static badge to the row it actually
+// belongs to (see WaitingBadge below) — this is only the expandable list
+// the header's quiet counter reveals, same rows as before, none of the noise.
+function WaitingList({ waiting, onSelect, t }) {
   if (!waiting?.length) return null;
   return (
-    <div className="px-[13px] pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={open ? t('rail.waiting.hide') : t('rail.waiting.show')}
-        className="pulse-yellow flex w-full cursor-pointer items-center gap-1.5 rounded-full border border-ink bg-brand px-2.5 py-1 font-mono text-[10px] font-bold text-[#1a1a1a]"
-      >
-        <Icon icon={open ? faCaretDown : faCaretRight} />
-        {t('rail.waiting.pill', { n: waiting.length })}
-      </button>
-      {open && (
-        <ul className="mt-1 flex flex-col gap-0.5">
-          {waiting.map((w) => (
-            <li key={`${w.sessionId}:${w.kind}`}>
-              <button
-                type="button"
-                onClick={() => onSelect(w.sessionId)}
-                className="flex w-full cursor-pointer flex-col items-start gap-px rounded-md px-2 py-1 text-start hover:bg-chip/60"
-              >
-                <span className="flex w-full items-center gap-1.5">
-                  <Truncate text={w.title} className="min-w-0 flex-1 font-mono text-[10.5px] font-bold" />
-                  <span className="shrink-0 rounded-full border border-hair px-1.5 text-[9px] text-fgdim">
-                    {t(`waiting.do.${w.unblock}`)}
-                  </span>
-                </span>
-                <span className="text-[9.5px] text-fgdim">
-                  {t(`waiting.what.${w.kind}`)}
-                  {w.detail ? ` (${w.detail})` : ''} · {relTime(w.since)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <ul className="flex flex-col gap-0.5 px-[13px] pb-2">
+      {waiting.map((w) => (
+        <li key={`${w.sessionId}:${w.kind}`}>
+          <button
+            type="button"
+            onClick={() => onSelect(w.sessionId)}
+            className="flex w-full cursor-pointer flex-col items-start gap-px rounded-md px-2 py-1 text-start hover:bg-chip/60"
+          >
+            <span className="flex w-full items-center gap-1.5">
+              <Truncate text={w.title} className="min-w-0 flex-1 font-mono text-[10.5px] font-bold" />
+              <span className="shrink-0 rounded-full border border-hair px-1.5 text-[9px] text-fgdim">
+                {t(`waiting.do.${w.unblock}`)}
+              </span>
+            </span>
+            <span className="text-[9.5px] text-fgdim">
+              {t(`waiting.what.${w.kind}`)}
+              {w.detail ? ` (${w.detail})` : ''} · {relTime(w.since)}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// The badge itself: same size/shape/colour as the "needs you" `?` and screen
+// take-over badges below (find `needsAttention` / `hasOpenScreenRequest`) —
+// just without their pulse. Those two already cover the 'action'/'screen'
+// waiting kinds on a session row; this is what shows for the rest (setup,
+// review, merge, budget, system) and for agent rows, which had no indicator
+// at all. Shows the count only once there's more than one thing waiting.
+function WaitingBadge({ items, t }) {
+  if (!items?.length) return null;
+  const title = items
+    .map((w) => `${t(`waiting.what.${w.kind}`)} · ${t(`waiting.do.${w.unblock}`)}`)
+    .join('\n');
+  return (
+    <span
+      title={title}
+      className="flex h-[15px] min-w-[15px] shrink-0 items-center justify-center rounded-full border border-ink bg-brand px-1 font-mono text-[10px] font-bold text-[#1a1a1a]"
+    >
+      {items.length > 1 ? items.length : '!'}
+    </span>
   );
 }
 
@@ -275,7 +282,7 @@ function useHoverTip(text) {
   return { ref, show, hide, toggle, tip };
 }
 
-function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health }) {
+function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting }) {
   const t = useT();
   const color = session.color || '#c4c4c4';
   const label = session.metadata?.ticket || session.title || session.id;
@@ -359,6 +366,8 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               >
                 ?
               </span>
+            ) : waiting?.length > 0 ? (
+              <WaitingBadge items={waiting} t={t} />
             ) : working || restarting ? (
               <span
                 title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')}
@@ -475,7 +484,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
 // and "open a session" stopped looking like the same act. ⋯ still offers both
 // doors explicitly (בית / the persona page).
 export { nextCronFor };
-export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, menuFor, setMenuFor }) {
+export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, menuFor, setMenuFor, waitingByAgent }) {
   const t = useT();
   const list = agents || [];
   const byAgent = new Map();
@@ -519,6 +528,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
           const nextCron = runs.length === 0 ? nextCronFor(a.slug, triggers) : null;
           const surfaceOpen = agentOpen === a.slug;
           const menuOpen = menuFor === `agent:${a.slug}`;
+          const mineWaiting = waitingByAgent?.get(a.slug) || [];
           return (
             <div
               key={a.slug}
@@ -533,6 +543,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
                 <span className="flex items-center gap-1.5">
                   <Truncate text={a.name} className="font-mono text-[11.5px] font-bold" />
                   <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
                     {working ? (
                       <span title={t('rail.teamWorking')} className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]">
                         <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
@@ -1230,6 +1241,7 @@ export default function Rail({
   const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(true); // A1: the "צוות" section
+  const [waitingOpen, setWaitingOpen] = useState(false); // RES1 §4: the quiet aggregated list
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
   const [screenAvailable, setScreenAvailable] = useState(false);
   // Global (not per-session) screen-share — poll availability so the icon
@@ -1243,7 +1255,23 @@ export default function Rail({
     return () => { stop = true; clearInterval(iv); };
   }, []);
   const { railWidth } = usePrefs();
-  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents, triggers, health } = useStore();
+  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents, triggers, health, waiting } = useStore();
+  // RES1 §4: index waiting items to the row they belong to — the agent's row
+  // when the blocked session was born from one (metadata.agent, carried as
+  // `w.agent`), otherwise the session's own row.
+  const waitingBySession = new Map();
+  const waitingByAgent = new Map();
+  for (const w of waiting || []) {
+    if (w.agent) {
+      const l = waitingByAgent.get(w.agent) || [];
+      l.push(w);
+      waitingByAgent.set(w.agent, l);
+    } else {
+      const l = waitingBySession.get(w.sessionId) || [];
+      l.push(w);
+      waitingBySession.set(w.sessionId, l);
+    }
+  }
   // The header reflects the ACTIVE account. Derive it from the per-account map so
   // switching accounts updates instantly instead of lagging on the generic
   // usage-updated broadcast (which only fires when the active usage changes).
@@ -1579,6 +1607,7 @@ export default function Rail({
     onRemoveFromFolder: s.folderId ? removeFromFolder : undefined,
     watch: watchFor(s.id),
     health: health?.[s.id],
+    waiting: waitingBySession.get(s.id),
   });
 
   // One draggable session row (used by every view). Always draggable so a
@@ -1684,13 +1713,25 @@ export default function Rail({
         </div>
       </div>
 
-      <WaitingPill onSelect={onSelect} />
-
       {/* header row + flat/grouped toggle */}
       <div className="flex items-center gap-2 px-[13px] pt-[9px] pb-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase">
           {mode === 'grouped' ? t('rail.groupedByStatus') : t('rail.activeCount', { n: active.length })}
         </span>
+        {/* RES1 §4, toned down: what used to be a full-width pulsing pill is now
+            just this muted count — the badges on the rows themselves (see
+            WaitingBadge) already say what's blocked; this is only "reachable". */}
+        {waiting?.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setWaitingOpen((v) => !v)}
+            title={waitingOpen ? t('rail.waiting.hide') : t('rail.waiting.show')}
+            aria-label={t('rail.waiting.pill', { n: waiting.length })}
+            className="shrink-0 cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-fg"
+          >
+            {waiting.length}
+          </button>
+        )}
         {mode === 'flat' && (
           <button
             type="button"
@@ -1720,6 +1761,7 @@ export default function Rail({
           ))}
         </span>
       </div>
+      {waitingOpen && <WaitingList waiting={waiting} onSelect={onSelect} t={t} />}
 
       {/* rows */}
       <div
@@ -1876,6 +1918,7 @@ export default function Rail({
             onToggle={() => setTeamOpen((v) => !v)}
             menuFor={menuFor}
             setMenuFor={setMenuFor}
+            waitingByAgent={waitingByAgent}
             // UX2: no interview session — the button opens the same agent surface
             // an existing agent uses, just in create mode (AgentView, slug '__new__').
             onNewAgent={() => openAgent('__new__', 'persona')}
