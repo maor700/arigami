@@ -403,6 +403,8 @@ export interface BundleExportResult {
   cron: number;
   repos: number;
   memorySeed: string[];
+  /** A4: agents/<slug>/ (agent.json without homeSessionId, persona.md, assets/) */
+  agents: string[];
   /** true when memory-seed/ carries USER.md/MEMORY.md — personal profile, review before sharing */
   memoryWarning: boolean;
 }
@@ -471,7 +473,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
     name,
     version: '1.0.0',
     title: opts.title || `Exported from an Arigami host`,
-    description: opts.description || `Profile bundle exported on ${new Date().toISOString().slice(0, 10)} (Arigami ${version}): ${repos.length} repo(s), the instance's user skills, memory seed and cron jobs. Contains no secrets, accounts, chat or sessions.`,
+    description: opts.description || `Profile bundle exported on ${new Date().toISOString().slice(0, 10)} (Arigami ${version}): ${repos.length} repo(s), the instance's user skills, memory seed, cron jobs and agents. Contains no secrets, accounts, chat or sessions.`,
     repos,
     plugins: [],
     workflows: [],
@@ -500,6 +502,26 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
     memorySeed.push(f);
   }
 
+  // A4: agents are user data a bundle may ship — record (minus the instance-local
+  // home session), persona and assets. Never memory/, browser/ or identity.json.
+  const agents: string[] = [];
+  const agentsDir = path.join(dir, 'agents');
+  if (fs.existsSync(agentsDir)) {
+    for (const slug of fs.readdirSync(agentsDir).sort()) {
+      const rec = readJson<any>(path.join(agentsDir, slug, 'agent.json'));
+      if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug) || !rec || rec.slug !== slug) continue;
+      const { homeSessionId: _h, ...portable } = rec;
+      const to = path.join(out, 'agents', slug);
+      fs.mkdirSync(to, { recursive: true });
+      fs.writeFileSync(path.join(to, 'agent.json'), JSON.stringify(portable, null, 2) + '\n');
+      const persona = path.join(agentsDir, slug, 'persona.md');
+      if (fs.existsSync(persona)) fs.copyFileSync(persona, path.join(to, 'persona.md'));
+      const assets = path.join(agentsDir, slug, 'assets');
+      if (fs.existsSync(assets) && fs.readdirSync(assets).length) copyDir(assets, path.join(to, 'assets'));
+      agents.push(slug);
+    }
+  }
+
   const triggers = opts.cron ?? (readJson<any>(path.join(dir, 'triggers.json'))?.triggers ?? readJson<any[]>(path.join(dir, 'triggers.json')) ?? []);
   const cron = (Array.isArray(triggers) ? triggers : []).filter((t) => t && t.type === 'cron' && t.prompt).map((t) => bundleCronFromTrigger(t, name));
   fs.writeFileSync(path.join(out, 'cron.json'), JSON.stringify(cron, null, 2) + '\n');
@@ -512,10 +534,11 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
       `| \`profile.json\` | ${repos.length} repo(s)${Object.keys(settings).length ? `, settings: ${Object.keys(settings).join(', ')}` : ''} |\n` +
       `| \`skills/\` | ${skills.length ? skills.join(', ') : '—'} |\n` +
       `| \`memory-seed/\` | ${memorySeed.length ? memorySeed.join(', ') + ' — the exporting user\'s own profile/notes; review before sharing (export with \`--no-memory\` to leave them out)' : '—'} |\n` +
-      `| \`cron.json\` | ${cron.length} job(s) (registered disabled on apply unless the bundle is shipped) |\n\n` +
+      `| \`cron.json\` | ${cron.length} job(s) (registered disabled on apply unless the bundle is shipped) |\n` +
+      `| \`agents/\` | ${agents.length ? agents.join(', ') + ' — created on apply when absent; an existing agent is left alone unless `--force`' : '—'} |\n\n` +
       `Not included, by design: accounts, API keys, users/pairing, chat history, sessions, uploads. Use a full backup (\`bin/host export --full\`) for those.\n`,
   );
-  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, memoryWarning: memorySeed.length > 0 };
+  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, agents, memoryWarning: memorySeed.length > 0 };
 }
 
 /** tar.gz stream of a bundle dir (the export UI download). */

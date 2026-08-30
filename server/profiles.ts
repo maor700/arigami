@@ -5,6 +5,7 @@
 //   skills/<name>/SKILL.md       — skills to stage into the host pack
 //   memory-seed/USER.md|MEMORY.md — bootstrap memory (merged, never overwrites)
 //   cron.json                    — [{name, prompt, schedule:{kind,value}, enabled?}]
+//   agents/<slug>/agent.json     — A4: agents ("צוות") the bundle ships (+ persona.md, assets/)
 //   README.md                    — human description
 //
 // Sources, in resolution order (see resolveSource):
@@ -18,8 +19,10 @@
 // bundle's NEW skills are auto-applied (§7.12: built-in = approved), anything
 // external or anything that would CHANGE an existing skill stays a pending
 // proposal for the human — memory seed lines are appended only when missing,
-// cron jobs are registered DISABLED unless `enabled:true`, and the provenance
-// lands in $ARIGAMI_DIR/profile.json.
+// cron jobs are registered DISABLED unless `enabled:true`, agents are created
+// under $ARIGAMI_DIR/agents/<slug> only when absent (an existing agent is the
+// user's — never overwritten unless `force`), and the provenance lands in
+// $ARIGAMI_DIR/profile.json.
 //
 // `bin/host profile apply <src>` cannot authenticate against a running host
 // (the host bearer is in-memory, C1), so it stages the source into
@@ -42,6 +45,10 @@ export const PENDING_FILE = path.join(ARIGAMI_DIR, 'pending-profile');
 
 export const BUNDLE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+// Same shape as agents.ts SLUG_RE (kept local: validate() must not load the host modules).
+const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const AGENT_PERSONA_MAX = 4000;
+const AGENT_ASSET_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SEED_BYTES = 64 * 1024;
 
 // ---- types ------------------------------------------------------------------
@@ -82,6 +89,16 @@ export interface BundleCron {
   deliver?: { push?: boolean; whatsapp?: string; master?: string };
 }
 
+/** A4: one `agents/<slug>/` directory of a bundle. `record` is agent.json as shipped (user data, no secrets). */
+export interface BundleAgent {
+  slug: string;
+  record: Record<string, unknown>;
+  persona: string;
+  /** file names under agents/<slug>/assets/ (copied on apply) */
+  assets: string[];
+  dir: string;
+}
+
 export interface Bundle {
   dir: string;
   source: string;
@@ -90,6 +107,7 @@ export interface Bundle {
   skills: { name: string; content: string }[];
   memorySeed: { user?: string; memory?: string };
   cron: BundleCron[];
+  agents: BundleAgent[];
   readme: string;
 }
 
@@ -109,6 +127,8 @@ export interface ApplyReport {
   skills: { name: string; status: 'applied' | 'pending' | 'unchanged' | 'error'; proposalId?: string; error?: string }[];
   memory: { user: number; memory: number };
   cron: { id: string; name: string; enabled: boolean }[];
+  /** A4: agents shipped by the bundle — created when absent, left alone when present (unless force) */
+  agents: { slug: string; status: 'created' | 'updated' | 'unchanged' | 'error'; assets?: number; skippedSkills?: string[]; error?: string }[];
   errors: string[];
 }
 
@@ -187,7 +207,39 @@ export function loadBundle(dir: string, source = dir): Bundle {
       throw new Error(`cron.json is not valid JSON: ${(e as Error).message}`);
     }
   }
-  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, readme: readText(path.join(dir, 'README.md')) };
+  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, agents: loadAgents(dir), readme: readText(path.join(dir, 'README.md')) };
+}
+
+/** A4: `agents/<slug>/{agent.json, persona.md, assets/}` — read as shipped; validate() checks the shape. */
+function loadAgents(dir: string): BundleAgent[] {
+  const root = path.join(dir, 'agents');
+  if (!isDir(root)) return [];
+  const out: BundleAgent[] = [];
+  for (const slug of fs.readdirSync(root).sort()) {
+    const adir = path.join(root, slug);
+    if (!isDir(adir)) continue;
+    const raw = readText(path.join(adir, 'agent.json'));
+    let record: Record<string, unknown> = {};
+    if (raw) {
+      try {
+        record = JSON.parse(raw);
+      } catch (e) {
+        throw new Error(`agents/${slug}/agent.json is not valid JSON: ${(e as Error).message}`);
+      }
+    }
+    let assets: string[] = [];
+    try {
+      assets = fs
+        .readdirSync(path.join(adir, 'assets'), { withFileTypes: true })
+        .filter((e) => e.isFile() && !e.name.startsWith('.'))
+        .map((e) => e.name)
+        .sort();
+    } catch {
+      /* no assets */
+    }
+    out.push({ slug, record: record && typeof record === 'object' && !Array.isArray(record) ? record : {}, persona: readText(path.join(adir, 'persona.md')), assets, dir: adir });
+  }
+  return out;
 }
 
 export function validate(b: Bundle): ValidationResult {
@@ -230,9 +282,54 @@ export function validate(b: Bundle): ValidationResult {
       errors.push(`cron[${i}].schedule.value is required`);
     if (c.enabled === true && !b.trusted) warnings.push(`cron[${i}] asks to start enabled — external bundle, will be registered disabled`);
   });
+  const bundleSkills = new Set(b.skills.map((s) => s.name));
+  const shippedSkills = new Set(shippedSkillNames());
+  for (const a of b.agents) {
+    const at = `agents/${a.slug}`;
+    if (!AGENT_SLUG_RE.test(a.slug)) {
+      errors.push(`${at}: invalid agent slug (lowercase letters, digits, hyphens; ≤ 40 chars)`);
+      continue;
+    }
+    const r = a.record as any;
+    if (!fs.existsSync(path.join(a.dir, 'agent.json'))) errors.push(`${at}/agent.json missing`);
+    else if (!r || typeof r !== 'object') errors.push(`${at}/agent.json must be an object`);
+    else {
+      if (typeof r.name !== 'string' || !r.name.trim()) errors.push(`${at}/agent.json: "name" is required`);
+      if (r.slug != null && r.slug !== a.slug) errors.push(`${at}/agent.json: "slug" (${JSON.stringify(r.slug)}) must match the directory name`);
+      if (r.emoji != null && (typeof r.emoji !== 'string' || [...r.emoji].length > 4)) errors.push(`${at}/agent.json: "emoji" must be a single glyph`);
+      if (r.color != null && !/^#[0-9a-fA-F]{6}$/.test(String(r.color))) errors.push(`${at}/agent.json: "color" must be #rrggbb`);
+      if (r.model != null && !/^[A-Za-z0-9._:-]{1,80}$/.test(String(r.model))) errors.push(`${at}/agent.json: invalid "model"`);
+      for (const k of ['skills', 'tools', 'domains', 'autoApprove'] as const)
+        if (r[k] != null && !(Array.isArray(r[k]) && r[k].every((x: unknown) => typeof x === 'string')))
+          errors.push(`${at}/agent.json: "${k}" must be an array of strings`);
+      if (r.budget != null && (typeof r.budget !== 'object' || (r.budget.tokensPerDay != null && !(Number(r.budget.tokensPerDay) >= 0))))
+        errors.push(`${at}/agent.json: "budget" must be {tokensPerDay: number}`);
+      if (r.homeSessionId != null) warnings.push(`${at}/agent.json: "homeSessionId" is instance-local and will be ignored`);
+      for (const k of ['token', 'secret', 'password', 'apiKey', 'api_key']) if (k in r) errors.push(`${at}/agent.json: "${k}" — agents must not carry secrets`);
+      if (Array.isArray(r.skills))
+        for (const sk of r.skills as string[])
+          if (!bundleSkills.has(sk) && !shippedSkills.has(sk))
+            warnings.push(`${at}: references skill "${sk}" that is neither in this bundle nor shipped — it is dropped on hosts that do not have it`);
+    }
+    if (a.persona.length > AGENT_PERSONA_MAX) errors.push(`${at}/persona.md exceeds ${AGENT_PERSONA_MAX} chars (keep it to ~20 lines)`);
+    for (const f of a.assets) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(f)) errors.push(`${at}/assets/${f}: unsafe file name`);
+      else if (fs.statSync(path.join(a.dir, 'assets', f)).size > AGENT_ASSET_MAX_BYTES) errors.push(`${at}/assets/${f} exceeds ${AGENT_ASSET_MAX_BYTES} bytes`);
+    }
+  }
   if (!b.readme) warnings.push('README.md missing');
   if (!b.trusted && b.skills.length) warnings.push(`${b.skills.length} skill(s) from an external bundle will be staged as pending proposals`);
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/** Names of the skills shipped with the repo (<repo>/skills/<name>/SKILL.md) — no host modules needed. */
+function shippedSkillNames(): string[] {
+  try {
+    const root = path.join(REPO_ROOT, 'skills');
+    return fs.readdirSync(root).filter((n) => SKILL_NAME_RE.test(n) && fs.existsSync(path.join(root, n, 'SKILL.md')));
+  } catch {
+    return [];
+  }
 }
 
 // ---- sources ----------------------------------------------------------------
@@ -298,6 +395,7 @@ export interface BundleSummary {
   trusted: boolean;
   skills: string[];
   cron: number;
+  agents: string[];
   hasMemorySeed: boolean;
   valid: boolean;
   errors: string[];
@@ -314,6 +412,7 @@ export function summarize(b: Bundle): BundleSummary {
     trusted: b.trusted,
     skills: b.skills.map((s) => s.name),
     cron: b.cron.length,
+    agents: b.agents.map((a) => a.slug),
     hasMemorySeed: !!(b.memorySeed.user || b.memorySeed.memory),
     valid: v.ok,
     errors: v.errors,
@@ -341,7 +440,7 @@ export function listBundles(): BundleSummary[] {
         seen.add(key);
         out.push(summarize(b));
       } catch (e) {
-        out.push({ name: n, dir: d, trusted: false, skills: [], cron: 0, hasMemorySeed: false, valid: false, errors: [(e as Error).message] });
+        out.push({ name: n, dir: d, trusted: false, skills: [], cron: 0, agents: [], hasMemorySeed: false, valid: false, errors: [(e as Error).message] });
       }
     }
   }
@@ -401,6 +500,8 @@ export interface ApplyOptions {
   skipCron?: boolean;
   /** Skip repos.json upsert. */
   skipRepos?: boolean;
+  /** A4: overwrite an EXISTING agent's record/persona/assets with the bundle's (default: leave the user's edits alone). */
+  force?: boolean;
   sessionId?: string;
 }
 
@@ -417,6 +518,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     skills: [],
     memory: { user: 0, memory: 0 },
     cron: [],
+    agents: [],
     errors: [],
   };
 
@@ -468,6 +570,59 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
       } else {
         report.skills.push({ name: s.name, status: 'pending', proposalId: r.proposal.id });
       }
+    }
+  }
+
+  // 2b. agents → $ARIGAMI_DIR/agents/<slug> (A4). User data: created only when
+  // absent; an existing agent is the user's and is left untouched (report
+  // 'unchanged') unless `force`. Skills the agent references must exist on
+  // THIS host (bundle skills were staged just above; on an external bundle
+  // they are still pending) — unknown ones are dropped and reported, never a
+  // failure. Assets are copied when missing (all of them under force).
+  if (b.agents.length) {
+    const ag = await import('./agents.js');
+    const sk = await import('./skills.js');
+    for (const a of b.agents) {
+      const rec = a.record as Record<string, any>;
+      const wanted: string[] = Array.isArray(rec.skills) ? rec.skills.map(String) : [];
+      const skills = wanted.filter((n) => sk.isSkillDir(n));
+      const skippedSkills = wanted.filter((n) => !sk.isSkillDir(n));
+      const input = {
+        slug: a.slug,
+        name: String(rec.name || a.slug),
+        ...(rec.emoji ? { emoji: String(rec.emoji) } : {}),
+        ...(rec.color ? { color: String(rec.color) } : {}),
+        ...(rec.model ? { model: String(rec.model) } : {}),
+        skills,
+        ...(Array.isArray(rec.tools) ? { tools: rec.tools.map(String) } : {}),
+        ...(Array.isArray(rec.domains) ? { domains: rec.domains.map(String) } : {}),
+        ...(rec.budget && typeof rec.budget === 'object' ? { budget: { tokensPerDay: Number(rec.budget.tokensPerDay) || 0 } } : {}),
+        ...(Array.isArray(rec.autoApprove) ? { autoApprove: rec.autoApprove.map(String) } : {}),
+        persona: a.persona,
+      };
+      const existing = ag.getAgent(a.slug);
+      let status: ApplyReport['agents'][number]['status'];
+      if (existing && !opts.force) status = 'unchanged';
+      else {
+        const r = existing ? ag.updateAgent(a.slug, input) : ag.createAgent(input);
+        if (!r.ok) {
+          report.agents.push({ slug: a.slug, status: 'error', error: r.error, ...(skippedSkills.length ? { skippedSkills } : {}) });
+          continue;
+        }
+        status = existing ? 'updated' : 'created';
+      }
+      let copied = 0;
+      if (a.assets.length) {
+        const dest = path.join(ag.agentDir(a.slug), 'assets');
+        fs.mkdirSync(dest, { recursive: true });
+        for (const f of a.assets) {
+          const to = path.join(dest, f);
+          if (fs.existsSync(to) && !opts.force) continue;
+          fs.copyFileSync(path.join(a.dir, 'assets', f), to);
+          copied++;
+        }
+      }
+      report.agents.push({ slug: a.slug, status, ...(copied ? { assets: copied } : {}), ...(skippedSkills.length && status !== 'unchanged' ? { skippedSkills } : {}) });
     }
   }
 
@@ -557,7 +712,7 @@ export async function applySource(source: string, opts: ApplyOptions = {}): Prom
 }
 
 // ---- CLI (bin/host profile …) -------------------------------------------------
-// bun server/profiles.ts list|validate <src>|apply <src> [--skip-cron]|pending <src>|current
+// bun server/profiles.ts list|validate <src>|apply <src> [--skip-cron] [--force]|pending <src>|current
 if (import.meta.main) {
   const [cmd, arg, ...rest] = process.argv.slice(2);
   const out = (o: unknown) => process.stdout.write(JSON.stringify(o, null, 2) + '\n');
@@ -571,8 +726,9 @@ if (import.meta.main) {
       process.exitCode = v.ok ? 0 : 1;
     } else if (cmd === 'apply') {
       const skipCron = rest.includes('--skip-cron');
+      const force = rest.includes('--force');
       if (!skipCron) (await import('./triggers.js')).load();
-      const rep = await applySource(arg, { skipCron });
+      const rep = await applySource(arg, { skipCron, force });
       if (!skipCron) (await import('./triggers.js')).flush();
       out(rep);
       process.exitCode = rep.errors.length ? 1 : 0;
@@ -584,7 +740,7 @@ if (import.meta.main) {
       out({ pending: setPending(r.dir), name: b.manifest.name, dir: r.dir, warnings: v.warnings });
     } else if (cmd === 'current') out({ current: readProvenance(), pending: getPending() });
     else {
-      process.stderr.write('usage: bun server/profiles.ts list | validate <src> | apply <src> [--skip-cron] | pending <src> | current\n');
+      process.stderr.write('usage: bun server/profiles.ts list | validate <src> | apply <src> [--skip-cron] [--force] | pending <src> | current\n');
       process.exitCode = 2;
     }
   } catch (e) {

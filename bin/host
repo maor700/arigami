@@ -351,21 +351,22 @@ profile() {
     current) ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" current ;;
     validate) ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" validate "${1:?usage: host profile validate <src>}" ;;
     apply|install)
-      src="${1:?usage: host profile apply <name|dir|git-url>}"
+      src="${1:?usage: host profile apply <name|dir|git-url> [--force]}"
+      force=false; case " ${*:2} " in *" --force "*) force=true ;; esac   # A4: overwrite existing agents shipped by the bundle
       if health && [ -n "${ARIGAMI_TOKEN:-}" ]; then
         curl -fsS -m 300 -X POST "$URL/__api/profiles/apply" \
           -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' \
-          --data "$(printf '{"source":"%s"}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')")"
+          --data "$(printf '{"source":"%s","force":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$force")"
         echo
       elif health; then
         ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" pending "$src" || return 1
         yl "host is running and no ARIGAMI_TOKEN is set — staged as pending"
         dl "  finish it in the cockpit (Setup → Profile) or: ARIGAMI_TOKEN=<admin api token> host profile apply $src"
       else
-        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src"
+        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src" $([ "$force" = true ] && echo --force)
       fi
       ;;
-    *) echo "usage: host profile <list|current|validate <src>|apply <name|dir|git-url>>"; return 1 ;;
+    *) echo "usage: host profile <list|current|validate <src>|apply <name|dir|git-url> [--force]>"; return 1 ;;
   esac
 }
 

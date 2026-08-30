@@ -778,15 +778,10 @@ function handleAgentCard(res: ServerResponse, body: Record<string, unknown>): vo
   }
   const confirm = body.confirm !== false;
   if (confirm) {
-    // Validate what we can up front so the card never opens on a hopeless draft.
-    const name = String(draft.name || '').trim();
-    if (!name) return badRequest(res, 'name required');
-    const slug = String(draft.slug || agents.slugify(name));
-    if (!agents.SLUG_RE.test(slug)) return badRequest(res, `invalid slug "${slug}" — pass an explicit lowercase slug for non-Latin names`);
-    if (agents.getAgent(slug)) return json(res, { ok: false, error: `agent "${slug}" already exists — use update_agent` }, 409);
-    claude.appendChat(sessionId, { kind: 'agent-card', cardId, action, state: 'pending', draft: { ...draft, slug, name } });
+    const r = openPendingAgentCard(sessionId, draft, cardId);
+    if ('error' in r) return json(res, { ok: false, error: r.error }, r.status);
     return json(res, {
-      card: true, cardId, state: 'pending', slug,
+      card: true, cardId, state: 'pending', slug: r.slug,
       hint: 'The human sees an Agent card in the chat and can edit + confirm or cancel it; you get a message when they decide. Do not create it again meanwhile.',
     });
   }
@@ -794,6 +789,21 @@ function handleAgentCard(res: ServerResponse, body: Record<string, unknown>): vo
   if (!r.ok) return json(res, { ok: false, error: r.error }, r.status || 400);
   claude.appendChat(sessionId, { kind: 'agent-card', cardId, action, state: 'created', agent: r.agent });
   return json(res, { ok: true, cardId, state: 'created', agent: r.agent });
+}
+
+/**
+ * Post a PENDING {kind:'agent-card'} into a session's chat. Validates what it
+ * can up front so the card never opens on a hopeless draft. Shared by the MCP
+ * create_agent({confirm:true}) path and the composer's `/agent new [name]` (A4).
+ */
+function openPendingAgentCard(sessionId: string, draft: agents.AgentInput, cardId = 'agc_' + nano()): { cardId: string; slug: string } | { error: string; status: number } {
+  const name = String(draft.name || '').trim();
+  if (!name) return { error: 'name required', status: 400 };
+  const slug = String(draft.slug || agents.slugify(name));
+  if (!agents.SLUG_RE.test(slug)) return { error: `invalid slug "${slug}" — pass an explicit lowercase slug for non-Latin names`, status: 400 };
+  if (agents.getAgent(slug)) return { error: `agent "${slug}" already exists — use update_agent`, status: 409 };
+  claude.appendChat(sessionId, { kind: 'agent-card', cardId, action: 'create', state: 'pending', draft: { ...draft, slug, name } });
+  return { cardId, slug };
 }
 
 /** Close a pending agent card in the chat (+ tell the session what the human decided). */
@@ -811,6 +821,96 @@ const AGENT_WIRE_KEYS = ['id', 'title', 'status', 'archived', 'createdAt', 'upda
 /** The agent a session was born from (metadata.agent), or null. */
 const sessionAgent = (s: { metadata?: Record<string, unknown> } | null | undefined): string | null =>
   s && typeof s.metadata?.agent === 'string' && s.metadata.agent ? (s.metadata.agent as string) : null;
+
+/**
+ * Get-or-create an agent's home chat: one long-lived, worktree-less session for
+ * DMs (an archived home is restored). A NEW home is a new session of the agent
+ * — refused (429) while its daily budget is spent (A3).
+ */
+function ensureHomeSession(a: agents.AgentView): { session: NonNullable<ReturnType<typeof state.getSession>>; created: boolean } {
+  let s = a.homeSessionId ? state.getSession(a.homeSessionId) : null;
+  let created = false;
+  if (s && s.archived) state.patchSession(s.id, { archived: false });
+  if (!s) {
+    const b = ledger.budgetState(a.slug);
+    if (b?.exceeded) {
+      const err = new Error(ledger.budgetRefusal(b, a.name)) as Error & { status?: number; budget?: unknown };
+      err.status = 429;
+      err.budget = b;
+      throw err;
+    }
+    s = state.createSession({
+      title: a.name,
+      cwd: (cfg as any).reposDir || cfg.defaultCwd,
+      metadata: { agent: a.slug, agentHome: true },
+      model: a.model || null,
+      color: a.color,
+    });
+    created = true;
+    agents.updateAgent(a.slug, { homeSessionId: s.id });
+    spawnSafe(s.id);
+  }
+  return { session: state.getSession(s.id)!, created };
+}
+
+/**
+ * A4 — route a composer @mention / `/as <agent> <text>` from session `fromId`:
+ *  - `as`: a one-off session born from the agent that runs `text` (a FULL child
+ *    in the caller's project folder when the caller is its controller, else a
+ *    free session in the caller's cwd);
+ *  - `mention` from a folder controller (PM): the same — a child born from the
+ *    agent, tasked with the text;
+ *  - `mention` from a normal session: the agent's home chat gets the text
+ *    (now if idle, queued with auto-play if busy).
+ * The caller's chat gets a {kind:'delegated'} receipt line either way. Throws
+ * with .status on an unknown agent (404) / spent budget (429) / at-capacity (503).
+ */
+async function delegateToAgent(fromId: string, agentSlug: string, text: string, mode: 'mention' | 'as'): Promise<{ target: string; how: 'child' | 'session' | 'home'; delivered: 'now' | 'queued' }> {
+  const from = state.getSession(fromId);
+  if (!from) throw Object.assign(new Error(`unknown session: ${fromId}`), { status: 404 });
+  const a = agents.getAgent(agentSlug);
+  if (!a) throw Object.assign(new Error(`unknown agent: ${agentSlug}`), { status: 404 });
+  const folder = from.folderId ? state.getFolder(from.folderId as string) : null;
+  const isController = !!folder && folder.controllerSessionId === fromId;
+  const brief = text.replace(/\s+/g, ' ').trim();
+  const title = `${a.name}: ${brief.length > 48 ? brief.slice(0, 47) + '…' : brief}`;
+  let target: string;
+  let how: 'child' | 'session' | 'home';
+  let delivered: 'now' | 'queued' = 'now';
+  if (mode === 'as' || isController) {
+    let cwd = from.cwd;
+    let permissionMode: string | undefined;
+    let metadata: Record<string, unknown> = {};
+    if (isController) {
+      const wired = await wireFullChild(fromId, { title });
+      if ('deferred' in wired) throw Object.assign(new Error(`at capacity — no session created (${wired.reason})`), { status: 503 });
+      cwd = wired.cwd;
+      permissionMode = wired.permissionMode;
+      metadata = wired.metadata;
+    }
+    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
+    const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, color: o.color });
+    spawnSafe(s.id);
+    try {
+      claude.sendMessage(s.id, isController ? `[Task from your project controller (${from.title || fromId})]\n\n${text}` : text);
+    } catch {}
+    if (isController) {
+      const pf = ensureProjectFolder(fromId);
+      if (pf) state.patchSession(s.id, { folderId: pf.id });
+      how = 'child';
+    } else how = 'session';
+    target = s.id;
+  } else {
+    const home = ensureHomeSession(a).session;
+    const fromLabel = from.title || fromId;
+    delivered = deliverToSession(home.id, `[Forwarded from the chat "${fromLabel}" (session ${fromId}) — the human addressed you with @${a.slug}]\n\n${text}`).delivered;
+    target = home.id;
+    how = 'home';
+  }
+  const targetTitle = state.getSession(target)?.title || a.name;
+  claude.appendChat(fromId, { kind: 'delegated', agent: { slug: a.slug, name: a.name, emoji: a.emoji, color: a.color }, target, targetTitle, how, delivered, mode, text });
+  return { target, how, delivered };
+}
 
 async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p: string, m: string): Promise<void> {
   if (p === '/__api/agents' && m === 'GET') return json(res, { agents: agents.listAgentViews() });
@@ -876,26 +976,13 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     return json(res, { cron, listeners });
   }
   if (sub === 'home' && m === 'GET') {
-    // Get-or-create the agent's home chat: one long-lived, worktree-less session for DMs.
-    let s = a.homeSessionId ? state.getSession(a.homeSessionId) : null;
-    let created = false;
-    if (s && s.archived) state.patchSession(s.id, { archived: false });
-    if (!s) {
-      // A3: a NEW home is a new session of the agent — refused while its daily budget is spent.
-      const b = ledger.budgetState(slug);
-      if (b?.exceeded) return json(res, { error: ledger.budgetRefusal(b, a.name), budget: b }, 429);
-      s = state.createSession({
-        title: a.name,
-        cwd: (cfg as any).reposDir || cfg.defaultCwd,
-        metadata: { agent: a.slug, agentHome: true },
-        model: a.model || null,
-        color: a.color,
-      });
-      created = true;
-      agents.updateAgent(slug, { homeSessionId: s.id });
-      spawnSafe(s.id);
+    try {
+      const { session: s, created } = ensureHomeSession(a);
+      return json(res, { session: state.toWireSession(s), created }, created ? 201 : 200);
+    } catch (e) {
+      const err = e as Error & { status?: number; budget?: unknown };
+      return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
     }
-    return json(res, { session: state.toWireSession(state.getSession(s.id)!), created }, created ? 201 : 200);
   }
   if (sub === 'activity' && m === 'GET') {
     // Episodes are per session; the agent's activity = episodes of its sessions.
@@ -2942,7 +3029,7 @@ export async function handle(
           const b = pf.loadBundle(r.dir, r.source);
           return json(res, { ...pf.summarize(b), ...pf.validate(b), readme: b.readme });
         }
-        const report = await pf.applySource(source, { sessionId: String(req.headers['x-arigami-session'] || '') || undefined });
+        const report = await pf.applySource(source, { sessionId: String(req.headers['x-arigami-session'] || '') || undefined, force: (body as any).force === true });
         return json(res, { ok: report.errors.length === 0, report });
       } catch (e) {
         return badRequest(res, (e as Error).message);
@@ -4083,6 +4170,37 @@ export async function handle(
         delivered: 'queued',
         note: 'child is busy — the task is in its pending-prompt queue and will auto-play when the turn ends',
       });
+    }
+    // A4: composer @mention / `/as <agent> <text>` → a session born from the
+    // agent (or its home chat), with a receipt line in this chat.
+    if (sub === 'delegate' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const agentSlug = String(body.agent || '').trim();
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      const mode = body.mode === 'as' ? 'as' : 'mention';
+      if (!agentSlug) return badRequest(res, 'agent required');
+      if (!text) return badRequest(res, 'text required');
+      try {
+        const r = await delegateToAgent(id, agentSlug, text, mode);
+        return json(res, { ok: true, ...r, url: sessionPath(r.target) }, 201);
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { error: err.message }, err.status || 500);
+      }
+    }
+    // A4: `/agent new [name]` → the create-agent card (the human edits + confirms).
+    if (sub === 'agent-card' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const draft = (body.draft && typeof body.draft === 'object' ? body.draft : {}) as agents.AgentInput;
+      let name = String(body.name || draft.name || '').trim();
+      if (!name) {
+        // Unnamed → a placeholder the human renames on the card; never collide with an existing slug.
+        name = 'New agent';
+        for (let i = 2; agents.getAgent(agents.slugify(name)); i++) name = `New agent ${i}`;
+      }
+      const r = openPendingAgentCard(id, { ...draft, name });
+      if ('error' in r) return json(res, { error: r.error }, r.status);
+      return json(res, { ok: true, cardId: r.cardId, slug: r.slug, state: 'pending' }, 201);
     }
     if (sub === 'message' && m === 'POST') {
       const body = (await readBody(req, 32e6)) as any;
