@@ -24,7 +24,8 @@ arigami/
     host-mcp.js    stdio MCP server (thin shim → HTTP /__api); registered into
                    spawned sessions; scoped by ARIGAMI_SESSION_ID env
   web/             React + Vite + Tailwind shell UI (built → served at /__host/)
-  skills/          bundled default skill pack (create-from-ticket etc.)
+  skills/          SHIPPED skill pack (git-tracked, read-only at runtime — user/bundle
+                   skills live in $ARIGAMI_DIR/skills and override these by name, see F2)
   bin/host         CLI: start/stop/status/logs (modeled on PoC bin/host)
 ```
 
@@ -177,7 +178,8 @@ memory_write({target:'user'|'memory'|'journal', action:'add'|'replace'|'remove',
 memory_search({query, scope?:'user'|'memory'|'journal'|'episode', limit?}) → {hits:[{path,scope,snippet,updatedAt}]}
 memory_get({path}) → {path, content} | {error}
 skill_propose({name, content?, patch?, rationale, evidence?, session_id?}) → proposal | {error}
-   // Stages a skill change/creation for human review — NEVER writes skills/ directly.
+   // Stages a skill change/creation for human review — NEVER writes skills/ directly
+   // (and on apply, only ever $ARIGAMI_DIR/skills — see "Skill roots").
    // See "Skill proposals" below. report_to_master accepts an optional
    // skill_proposal_id to point the master at a proposal filed this task.
 ```
@@ -262,6 +264,42 @@ the episode hook.
 **M2 contract:** `getMemoryBootstrap()` is the agreed hook M2's cron
 (`server/triggers.ts`, isolated-session runs) calls to load the same snapshot
 into a scheduled session — memory.ts doesn't know about cron at all.
+
+## Skill roots (server/skills.ts — F2: repo `skills/` vs `$ARIGAMI_DIR/skills`)
+
+Two roots, merged by name:
+
+| root | path | written at runtime? | sessions see it as |
+|---|---|---|---|
+| **shipped** | `<repo>/skills` (git-tracked) | **never** | `--plugin-dir <repo>` → `/arigami:<name>` |
+| **user** | `$ARIGAMI_DIR/skills` (`USER_SKILLS_DIR`) | yes — the ONLY writable root | `--plugin-dir $ARIGAMI_DIR/user-plugin` → `/arigami-user:<name>` |
+
+A user skill with the same name as a shipped one **overrides** it: `listSkills`
+lists each name once with `source: 'shipped' | 'user'` (+ `overridesShipped`),
+`readSkill`/`skillDir`/`buildSkillPrompt` resolve to the user copy, and the
+graph cache hash covers the effective set. The Skills UI shows the source as a
+badge (`shipped` / `user` / `override`).
+
+**Every write path lands in the user dir** — `writeSkill` (human editor
+`PUT /__api/skills/:name`), skill-proposal `apply`, and profile-bundle apply
+(`server/profiles.ts` routes through proposals). Editing/applying against a
+*shipped* skill therefore creates an **override copy** under
+`$ARIGAMI_DIR/skills/<name>/` (SKILL.md + the shipped supporting files copied
+along so `$SKILL_DIR` stays self-contained); the shipped file and the git tree
+are untouched. Deleting the override directory reverts to the shipped copy.
+Before F2 a bundle apply copied skills into the repo checkout, which polluted
+a live `git status` (`skills/daily-standup/` untracked) — hence the rule.
+
+**Sessions:** Claude Code discovers skills only through `--plugin-dir`, so
+`ensureUserPlugin()` generates `$ARIGAMI_DIR/user-plugin/` = `.claude-plugin/
+plugin.json` (name `arigami-user`) + a `skills` symlink → `$ARIGAMI_DIR/skills`,
+and `server/claude.js` passes it as a second `--plugin-dir` for both the
+interactive session and the headless (`runHeadless`) spawn. It's regenerated
+on every `writeSkill` and at spawn time, so no restart is needed after an
+apply. The plugin namespace is the one place the override is *not* merged:
+a user copy of a shipped skill is listed as both `/arigami:x` (shipped) and
+`/arigami-user:x` (override) — `$ARIGAMI_USER_SKILLS` is exported next to
+`$ARIGAMI_SKILLS` so skills/scripts can prefer the user path.
 
 ## Skill proposals (server/skill-proposals.ts — $ARIGAMI_DIR/skill-proposals/)
 

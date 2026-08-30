@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ARIGAMI_DIR } from './lib/instance.js';
-import { NAME_RE, SKILLS_DIR, isSkillDir, writeSkill, type SkillSummary } from './skills.js';
+import { NAME_RE, isSkillDir, readSkillContent, writeSkill, type SkillSummary } from './skills.js';
 
 export const PROPOSALS_DIR = path.join(ARIGAMI_DIR, 'skill-proposals');
 export const AUDIT_LOG = path.join(PROPOSALS_DIR, '.audit.jsonl');
@@ -399,9 +399,10 @@ function proposalId(): string {
   return `skp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+// Effective content (user override wins over shipped). apply() always writes
+// to the USER dir — a proposal against a shipped skill lands as an override copy.
 function currentSkillContent(name: string): string {
-  if (!isSkillDir(name)) return '';
-  return readFileSafe(path.join(SKILLS_DIR, name, 'SKILL.md'));
+  return readSkillContent(name);
 }
 
 // ---- propose (skill_propose MCP tool → POST /__api/skill-proposals) ---------

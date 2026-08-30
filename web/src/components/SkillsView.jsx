@@ -22,6 +22,28 @@ const nsOf = (name) => {
 
 /* ---------- left column: host pack + session context ---------------------- */
 
+// F2: where the effective copy lives. `shipped` = git-tracked host pack
+// (read-only — saving creates an override copy in $ARIGAMI_DIR/skills);
+// `user` = $ARIGAMI_DIR/skills (bundles, applied proposals, edits).
+function SourceBadge({ skill, title = false }) {
+  const t = useT();
+  const user = skill.source === 'user';
+  const label = user
+    ? skill.overridesShipped ? t('dialogs.skillSourceOverride') : t('dialogs.skillSourceUser')
+    : t('dialogs.skillSourceShipped');
+  const hint = user ? t('dialogs.skillSourceUserHint') : t('dialogs.skillSourceShippedHint');
+  return (
+    <span
+      title={hint}
+      className={`rounded-full border px-1.5 text-[8.5px] font-bold ${title ? '' : 'ml-auto'} ${
+        user ? 'border-brand bg-brand/20 text-fg' : 'border-hair text-fgdim'
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, className }) {
   const t = useT();
   const grouped = useMemo(() => {
@@ -51,6 +73,7 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
                 +{s.files.length}
               </span>
             )}
+            <SourceBadge skill={s} />
           </span>
           {s.description && (
             <span className="line-clamp-2 text-[10.5px] leading-snug text-fgdim">{s.description}</span>
@@ -178,6 +201,7 @@ function DetailPane({ name, aiSummary }) {
       <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="font-mono text-[13px] font-bold text-fg">{name}</span>
         <span className="font-mono text-[10px] text-fgdim">/SKILL.md</span>
+        {detail && <SourceBadge skill={detail} title />}
         <div className="ml-auto flex items-center gap-2">
           {editing ? (
             <>

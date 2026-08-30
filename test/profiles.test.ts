@@ -6,8 +6,9 @@
 //
 // Pure helpers run in-process. Anything touching ARIGAMI_DIR (apply) runs in a
 // child with its own dir (see test/_child.js) because server modules capture
-// ARIGAMI_DIR at import time. Skills land in the git-tracked <repo>/skills, so
-// every apply test uses a unique throwaway skill name and removes it in finally.
+// ARIGAMI_DIR at import time. Skills land in $ARIGAMI_DIR/skills (F2: never in
+// the git-tracked <repo>/skills), so every apply test asserts against its own
+// throwaway ARIGAMI_DIR and that <repo>/skills stays untouched.
 import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -144,6 +145,7 @@ test('external bundle: skill → pending proposal, memory appended, cron disable
     expect(rep.trusted).toBe(false);
     expect(rep.skills).toEqual([{ name: skillName, status: 'pending', proposalId: expect.stringMatching(/^skp_/) }]);
     expect(fs.existsSync(path.join(ROOT, 'skills', skillName))).toBe(false); // never written directly
+    expect(fs.existsSync(path.join(adir, 'skills', skillName))).toBe(false); // pending ⇒ not even in the user dir
     expect(fs.existsSync(path.join(adir, 'skill-proposals', rep.skills[0].proposalId, 'content.md'))).toBe(true);
     expect(mem).toBe('- existing fact\n- new fact from bundle\n');
     expect(rep.memory.memory).toBe(1);
@@ -180,7 +182,8 @@ test('shipped bundle: new skill auto-applied; a CHANGE to an existing skill stay
     if (!r.ok) throw new Error(r.error);
     expect(r.out[0].rep.trusted).toBe(true);
     expect(r.out[0].rep.skills[0].status).toBe('applied');
-    expect(fs.readFileSync(path.join(ROOT, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL);
+    expect(fs.readFileSync(path.join(adir, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL);
+    expect(fs.existsSync(path.join(ROOT, 'skills', skillName))).toBe(false); // repo tree untouched
 
     // same content again → unchanged
     const r2 = applyInChild(bdir, adir);
@@ -191,7 +194,7 @@ test('shipped bundle: new skill auto-applied; a CHANGE to an existing skill stay
     const r3 = applyInChild(bdir, adir);
     if (!r3.ok) throw new Error(r3.error);
     expect(r3.out[0].rep.skills[0].status).toBe('pending');
-    expect(fs.readFileSync(path.join(ROOT, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL);
+    expect(fs.readFileSync(path.join(adir, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL);
   } finally {
     fs.rmSync(bdir, { recursive: true, force: true });
     fs.rmSync(path.join(ROOT, 'skills', skillName), { recursive: true, force: true });

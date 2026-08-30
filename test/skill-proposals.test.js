@@ -3,10 +3,10 @@
 // the apply/reject/quarantine lifecycle. Runs out-of-process (see _child.js's
 // header) since server modules capture ARIGAMI_DIR at import time.
 //
-// skills.ts's SKILLS_DIR is fixed to <repo root>/skills (skills are
-// git-tracked and shared, not per-instance data — unlike memory) — so tests
-// that stage/apply against a REAL skill dir create a throwaway one under the
-// worktree's skills/ and always remove it in a finally, regardless of pass/fail.
+// skills.ts has two roots: the git-tracked <repo>/skills (shipped, read-only)
+// and $ARIGAMI_DIR/skills (user — the only one ever written). Tests that need
+// an EXISTING skill create a throwaway one under the child's ARIGAMI_DIR
+// (withTempSkill puts it in the user root) so the repo tree is never touched.
 import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,7 +22,7 @@ function withTempSkill(skillName, body) {
   return (
     "const path=require('node:path');const fs=require('node:fs');" +
     `const skillName=${JSON.stringify(skillName)};` +
-    `const skillDir=path.join(process.cwd(),'skills',skillName);` +
+    `const skillDir=path.join(process.env.ARIGAMI_DIR,'skills',skillName);` +
     'fs.mkdirSync(skillDir,{recursive:true});' +
     "fs.writeFileSync(path.join(skillDir,'SKILL.md'),'---\\ndescription: throwaway test skill\\n---\\n\\n# Test\\n\\nOriginal body.\\n');" +
     'try{' +
@@ -161,7 +161,7 @@ test('applyProposal writes the proposed content via writeSkill and flips status;
 test('applyProposal is allowed to CREATE a brand-new skill (allowCreate only via this path)', () => {
   const dir = tmp();
   const newName = 'zzz-test-skp-createviaapply';
-  const newPath = path.join(process.cwd(), 'skills', newName);
+  const newPath = path.join(dir, 'skills', newName);
   try {
     const r = runInChild(
       "const sp=await import('./server/skill-proposals.ts');" +
@@ -175,6 +175,7 @@ test('applyProposal is allowed to CREATE a brand-new skill (allowCreate only via
     expect(o.appliedOk).toBe(true);
     expect(o.skillName).toBe(newName);
     expect(fs.existsSync(path.join(newPath, 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(process.cwd(), 'skills', newName))).toBe(false); // never the repo tree
   } finally {
     fs.rmSync(newPath, { recursive: true, force: true });
   }

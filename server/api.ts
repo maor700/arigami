@@ -7,7 +7,7 @@ import * as state from './state.js';
 import * as claude from './claude.js';
 import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
-import { SKILLS_DIR, isSkillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
+import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
@@ -441,8 +441,9 @@ export const CRON_REPORT_DIRECTIVE =
 // The first prompt for a session that's set to run a specific skill — the
 // user (or a saved trigger/preset) picked `skill` from GET /__api/skills.
 export function buildSkillPrompt(skill: string, ticket?: string): string | null {
-  if (!skill || !SKILL_NAME_RE.test(skill) || !isSkillDir(skill)) return null;
-  const dir = path.join(SKILLS_DIR, skill);
+  if (!skill || !SKILL_NAME_RE.test(skill)) return null;
+  const dir = skillDir(skill); // effective copy: user override wins over shipped
+  if (!dir) return null;
   return (
     `Read ${dir}/SKILL.md in full and follow it exactly` +
     (ticket ? `, with $ARGUMENTS=${ticket} and $SKILL_DIR=${dir}.` : `, with $SKILL_DIR=${dir}.`)
