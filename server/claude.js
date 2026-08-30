@@ -17,8 +17,8 @@ import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, se
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
-import { policyFor, isRestrictive, disallowedToolsFor, hookSettings } from './agent-policy.js';
-import { appendActivity, budgetState, localDay, budgetRefusal } from './agent-ledger.js';
+import { policyFor, isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor } from './agent-policy.js';
+import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
@@ -405,15 +405,34 @@ export function ensureRunning(id) {
 // agent with a tools/domains allowlist. Whole external MCP servers no allowlist
 // entry touches are denied by name (the names come from the last init report +
 // the live health map — the hook catches anything that shows up later).
+//
+// A5 (#7): when the allowlist reaches into NO external server, the spawn also gets
+// `--strict-mcp-config` — only what the host itself passes in --mcp-config is
+// loaded, so the user's global servers (composio-mcp…) never reach the model at
+// all. Without it their schemas were still listed (and burned tokens) even though
+// every call was blocked at PreToolUse. The agent's OWN M1 grants ride in that
+// same --mcp-config (mcpConfigFor), so strict never takes those away — an
+// allowlist that does not name them denies them by name below, as before.
 function policyArgs(s) {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   const policy = policyFor(slug);
   if (!isRestrictive(policy)) return [];
   const servers = new Set(Object.keys(mcpServersOf(s.id)));
   for (const sv of s.claude?.capabilities?.mcpServers || []) if (sv && typeof sv === 'object' && sv.name) servers.add(String(sv.name));
+  // M1: the grants this session is spawned with, even before a first init report.
+  try {
+    for (const name of Object.keys(injectedServersFor(`agent:${slug}`))) servers.add(name);
+  } catch {
+    /* no connections.json — the hook still enforces */
+  }
+  const strict = strictMcpFor(policy);
   const denied = disallowedToolsFor(policy, [...servers]);
   const hook = `bun "${path.join(ROOT, 'mcp', 'policy-hook.js')}"`;
-  return [...(denied.length ? ['--disallowedTools', denied.join(',')] : []), '--settings', hookSettings(hook)];
+  return [
+    ...(strict ? ['--strict-mcp-config'] : []),
+    ...(denied.length ? ['--disallowedTools', denied.join(',')] : []),
+    '--settings', hookSettings(hook),
+  ];
 }
 
 function spawnProc(s, resume) {
@@ -772,8 +791,9 @@ function recordTurn(id, j) {
       const line = budgetRefusal(st, name);
       appendActivity(p.agent, { kind: 'budget', sessionId: id, detail: line, tokens: st.usedTokens });
       appendChat(id, { kind: 'error', text: `[host] ${line}`, isError: true, budget: true });
-      // One final turn so the model can wrap up; the host refuses NEW sessions of this agent until midnight.
-      sendMessage(id, `[host] FINAL WARNING — ${line}. Finish now: write a short status (set_status_summary / memory) and stop; do not start new work or sessions.`);
+      // One final turn so the model can wrap up; after it the host refuses every
+      // further turn of this agent (budgetRefusalFor) and every new session.
+      sendMessage(id, `[host] FINAL WARNING — ${line}. This is your LAST turn today: finish now — write a short status (set_status_summary / memory) and stop. Further messages will be refused until local midnight.`, [], { system: true });
     }
   } catch (e) {
     console.error('[ledger] budget check failed:', e?.message || e);
@@ -1215,7 +1235,29 @@ function writeUserMessage(p, text, attachments = []) {
   p.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');
 }
 
-export function sendMessage(id, text, attachments = []) {
+/**
+ * A5 (#5) — the daily cap has to STOP spend, not only gate new sessions: a spent
+ * agent kept running because messages kept landing in its existing chat. After the
+ * one final warning every further turn is refused with the same 429 line, until
+ * local midnight. `system:true` (the warning itself, host notices) bypasses it.
+ */
+export function budgetRefusalFor(id) {
+  const slug = getSession(id)?.metadata?.agent;
+  if (typeof slug !== 'string' || !slug) return null;
+  const st = turnBlocked(slug);
+  if (!st) return null;
+  const name = getAgent(slug)?.name || slug;
+  const err = new Error(budgetRefusal(st, name));
+  err.status = 429;
+  err.budget = { ...st, name };
+  return err;
+}
+
+export function sendMessage(id, text, attachments = [], { system = false } = {}) {
+  if (!system) {
+    const refusal = budgetRefusalFor(id);
+    if (refusal) throw refusal;
+  }
   const p = ensureRunning(id); // respawns with --resume after an exit
   const saved = saveAttachments(id, attachments);
   appendChat(id, {

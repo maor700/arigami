@@ -7,12 +7,12 @@ the accounts you actually use (Settings → חיבורים → "שייך ל:" th
 
 | agent | slug | role | default tools | domains |
 |---|---|---|---|---|
-| awesome | `awesome` | manager — runs the weekly plan, briefs the others, keeps the human as the approver | sessions, triggers | — |
-| Mila | `mila` | copywriter — landing copy, emails, ad variants, in the brand voice | web | — |
-| Jord | `jord` | image maker — visual briefs, image prompts, simple assets on the desktop | desktop, web | `unsplash.com`, `pexels.com` |
-| Reachard | `reachard` | researcher — competitors, audiences, keywords, sources with links | web | `*` |
-| Richi | `richi` | outreach — partner / influencer / press sequences, never sends without approval | gmail, web | — |
-| Fibi | `fibi` | social manager — the content calendar, post drafts per channel, never posts without approval | web | — |
+| awesome | `awesome` | manager — runs the weekly plan, briefs the others, keeps the human as the approver | sessions, triggers, publish | — |
+| Mila | `mila` | copywriter — landing copy, emails, ad variants, in the brand voice | web, publish | — |
+| Jord | `jord` | image maker — visual briefs, image prompts, simple assets on the desktop | desktop, web, publish | `unsplash.com`, `pexels.com` |
+| Reachard | `reachard` | researcher — competitors, audiences, keywords, sources with links | web, publish | `*` |
+| Richi | `richi` | outreach — partner / influencer / press sequences, never sends without approval | gmail, web, publish | — |
+| Fibi | `fibi` | social manager — the content calendar, post drafts per channel, never posts without approval | web, publish | — |
 
 | part | what it does |
 |---|---|
@@ -50,5 +50,5 @@ persona edits win) unless you pass `--force` (`{"force":true}` over REST). Asset
 
 - Replace `<your-product>` in `memory-seed/MEMORY.md` and the personas with the real product.
 - Give Richi a Gmail (Settings → חיבורים → שייך ל: Richi) and Fibi the social accounts you use.
-- Tighten or loosen `tools` / `domains` / `budget` per agent — the host enforces them (A3).
+- Tighten or loosen `tools` / `domains` / `budget` per agent — the host enforces them (A3). `publish` is what lets an agent deliver an artifact; a PUBLIC share link always asks the human first (A5).
 - Bundle format: `docs/INSTALL.md` §3; agents: `docs/AGENTS.md` → A4.

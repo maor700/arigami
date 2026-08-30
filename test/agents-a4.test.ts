@@ -125,7 +125,7 @@ test('apply marketing-team: six agents created with persona/tools/budget, skills
   const mila = agents.find((a: any) => a.slug === 'mila');
   expect(mila.persona).toContain('You are Mila');
   expect(mila.skills).toEqual(['campaign-brief', 'content-calendar']);
-  expect(mila.tools).toEqual(['web']);
+  expect(mila.tools).toEqual(['web', 'publish']); // A5 (#2): the bundle asks for `publish` explicitly
   expect(mila.budget).toEqual({ tokensPerDay: 250000 });
   expect(mila.homeSessionId).toBeNull();
   expect(fs.existsSync(path.join(adir, 'agents', 'jord', 'assets', 'brand-palette.md'))).toBe(true);

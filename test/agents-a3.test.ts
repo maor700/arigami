@@ -126,7 +126,7 @@ test('agents: autoApprove is validated (kind regex), deduped, dropped when empty
   expect(o.bad.error).toMatch(/invalid action kind/);
   expect(o.badType.ok).toBe(false);
   expect('autoApprove' in o.cleared).toBe(false);
-  expect(o.block).toMatch(/ENFORCES/);
+  expect(o.block).toMatch(/The host enforces it/); // A5 (#3): reworded — may / denied / the host tells you
   expect(o.block).toMatch(/refuses open_tab \/ WebFetch/);
   expect(o.block).toMatch(/enforced by the host/);
   expect(o.block).toMatch(/request_action a short `kind`/);

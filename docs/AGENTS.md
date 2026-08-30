@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3 + A4
+# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -216,8 +216,9 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
 - `GET /__api/agents/:slug/routine` → `{cron: [ …, nextRunAt ], listeners}`; `GET /__api/triggers`
   rows carry `agent`.
 - Web: Agent page tab **שגרה** (`RoutineList.jsx`): cron jobs with enable/disable (`PATCH
-  /triggers/:id`), run now, delete, next/last run; listeners with cancel. Adding is done in chat
-  ("הוסף דרך הצ׳אט" opens a session born from the agent with a prefilled prompt). The Rail team
+  /triggers/:id`), run now, delete, next/last run; listeners with cancel. Adding: the **"הוסף שגרה"**
+  form (A5 — schedule kind + expression + prompt → `POST /__api/triggers`), or "הוסף דרך הצ׳אט",
+  which opens the agent's **existing home chat** with the ask prefilled. The Rail team
   row of an **idle** agent with an enabled job shows its next run ("⏰ בעוד 3שע") instead of
   "פנוי" (`nextCronFor(slug, triggers)`).
 
@@ -248,19 +249,22 @@ until now) become real.
 ## Tool allowlist — `tools` (`server/agent-policy.ts`)
 
 Entries may be a **family** (the A1 checkboxes: `desktop`, `whatsapp`, `gmail`, `calendar`,
-`drive`, `git`, `sessions`, `triggers`, `web` — expanded by `FAMILIES`), a host tool name
+`drive`, `git`, `sessions`, `triggers`, `web`, `publish` — expanded by `FAMILIES`), a host tool name
 (`open_tab` / `mcp__arigami__open_tab`), an external MCP pattern (`mcp__composio-mcp__GMAIL_*`,
 `mcp__whatsapp`), or a Claude Code built-in (`Bash`, `Edit`, `WebFetch`). No `tools` = unrestricted.
-With a list, `CORE_TOOLS` (set_title/progress/status, publish_artifact, request_action/review/
-setup, memory_*, list_agents…) and the read-only built-ins (Read, Glob, Grep, …) stay available;
-`RESTRICTED_BUILTINS` (Bash, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Agent, Task)
-need an entry.
+With a list, `CORE_TOOLS` (set_title/progress/status, request_action/review/setup, memory_*,
+list_agents…) and the read-only built-ins (Read, Glob, Grep, …) stay available;
+`RESTRICTED_BUILTINS` (Bash, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Agent, Task,
+CronCreate, CronDelete, CronList) need an entry. Publishing (`publish`) and scheduling (`triggers`,
+which covers the CLI's own cron built-ins) are families, not core — see **A5** below.
 
 Four layers, outer to inner:
 
 1. **`--disallowedTools`** at spawn (`claude.js policyArgs`): restricted built-ins the agent may
    not use + whole external servers (`mcp__<server>`) no entry touches (names from the last init
-   report + the live MCP health map). The CLI never offers them.
+   report + the live MCP health map). The CLI never offers them. A5: when the allowlist reaches
+   into **no** external server the spawn also gets `--strict-mcp-config`, so the user's global
+   servers are never loaded at all (their schemas used to leak into restricted agents).
 2. **PreToolUse hook** — `--settings {hooks:{PreToolUse:[…mcp/policy-hook.js]}}`. Before EVERY tool
    call the hook POSTs `/__api/sessions/:id/policy/check {tool_name, input}`; `allow:false` → exit 2
    with the reason on stderr (the model sees it). Fail-**closed**: an unreachable host blocks the
@@ -292,9 +296,10 @@ their own. Keep `desktop`/`git` (Bash) out of `tools` when the domain list must 
   (`nextLocalMidnight`).
 - Exceeded → `applyAgentToSession` throws a 429 (`budgetRefusal`): `POST /__api/sessions {agent}`,
   `create_session({agent})`, cron fires and a **new** home chat are refused with a clear line
-  ("no new sessions until local midnight (00:00); raise the cap in Settings → מארח → תקציבים").
-  Running sessions get **one final warning** per day (`[host] FINAL WARNING …` as a user message
-  + a `budget` ledger line + a chat error line) and may finish their turn.
+  ("no new sessions or turns until local midnight (00:00); raise the cap in Settings → Host →
+  Budgets"). The running session gets **one final warning** per day (`[host] FINAL WARNING …` as a
+  user message + a `budget` ledger line + a chat error line) and may finish that turn; after it
+  **every further turn is refused too** (A5 #5 — see below).
 - Raising the cap (PATCH `/__api/agents/:slug {budget}`) lifts the refusal at once.
 
 ## Activity ledger with cost — `agents/<slug>/activity.jsonl`
@@ -471,7 +476,123 @@ profiles REST apply with agents + force). `test/profile-bundles.test.ts` now cov
 - Bundle agents reference **shared** skills only (the A1 decision): a bundle cannot ship a
   per-agent private skill; put it under the bundle's `skills/` and reference it by name.
 
+---
 
+# A5 — Hardening (what the live E2E run found)
+
+A5 fixes the bugs of the first end-to-end run of the whole stack on a live host
+(`TEST-REPORT-AGENTS-E2E.md`). Nothing new is added: every item below is a hole in an
+A1–A4 promise.
+
+## #1 — scheduling built-ins are part of `triggers`
+
+Claude Code ships its own `CronCreate` / `CronDelete` / `CronList`. They were outside the
+allowlist, so an agent asked for a routine used them and reported success — while the job was
+**session-only**: invisible in the Routine tab, unattributed, dead on the next restart. They are
+now in `FAMILIES.triggers` **and** in `RESTRICTED_BUILTINS`, so an agent without `triggers` never
+sees them (layer 1). If one still reaches the hook, `denialHint()` makes the refusal loud and
+actionable: *a session-only schedule is not a routine — ask the human to add it in the Routine tab
+(or to tick `triggers`), and never report a routine as created.* The same hint covers `cronjob`
+and `register_listener`. The persona block repeats it for agents without `triggers`.
+
+## #2 — `publish` is a revocable family; a PUBLIC link asks the human
+
+`publish_artifact` / `share_artifact` / `unshare_artifact` left `CORE_TOOLS` for
+`FAMILIES.publish`. An agent whose allowlist omits it gets them **hidden** from its toolset
+(host-MCP filter), refused by the hook, and refused by the REST guard (`POST
+/__api/sessions/:id/artifacts` → 403) — the fourth layer, like `open_tab`'s domain check.
+
+`share:true` (and `share_artifact`) from a session **born from an agent** never mints a link on the
+agent's word:
+
+| agent state | what happens |
+|---|---|
+| no `publish` in the allowlist | refused (403 / a warning on the publish result) |
+| `publish`, `share` **not** in `autoApprove` | the host opens a `request_action` card of kind `share`; publish returns `share_url: null, share_pending: true`. Approving mints the token and sends the link into the session; refusing mints nothing and says so |
+| `publish` + `autoApprove: ['share']` | minted at once (the human pre-approved the kind) |
+| a **logged-in human** clicking the artifact card's own share button | minted — the click *is* the approval |
+
+**Defaults:** agent records written before A5 (`toolsV` < 2) are migrated once — `publish` is added
+to their allowlist, so an existing agent keeps exactly the publishing it had, and unticking the new
+checkbox afterwards sticks. A **new** agent with an allowlist must ask for `publish` explicitly (the
+bundled `marketing-team` agents do). `share` always needs the human unless it is auto-approved.
+
+## #3 — the injected policy line
+
+The old line named only the allowlist, so agents refused legal calls ("I'm blocked from
+publishing" — they were not) and, in the other direction, published without ever considering it
+might be forbidden. `personaBlock` now says three things: what you **MAY** use (allowlist **plus**
+the always-on core tools and read-only built-ins, listed), what is **DENIED** (including the
+restricted built-ins this agent lacks), and that **a denied call is reported by the host** — so
+trying is safe and guessing is not. Publishing and share get their own line, in both directions.
+
+## #5 — the daily cap stops spend, not just new sessions
+
+`budgetState.exceeded` only gated session creation, so messages kept landing in an existing agent
+chat (the run ended at 167% of the cap). Now: crossing the cap still delivers **one** final warning
+(`budget` ledger line + chat error line + a `[host] FINAL WARNING` turn), and after it
+`ledger.turnBlocked(slug)` refuses **every** further turn — `POST /__api/sessions/:id/message`,
+queued-prompt play, delegate-to-home — with the same 429 line, until local midnight. The block is
+read from `activity.jsonl`, so it survives a respawn or a host restart. 429 responses carry a
+structured `budget` object (`{slug, name, cap, usedTokens, exceeded, resetsAt}`) for the UI.
+
+## #7 — restricted agents no longer load external MCP servers
+
+`--disallowedTools mcp__<server>` only denies *calls*; the schemas were still listed (a leaked
+capability map, tokens and latency on tools that can never run). When an allowlist reaches into no
+external server (`strictMcpFor`), the spawn adds `--strict-mcp-config` — only what the host itself
+passes in `--mcp-config` is loaded. That includes the agent's **own M1 grants** (`mcpConfigFor`
+injects them), so strict never takes an agent's own connection away; a grant its allowlist does not
+name is denied by name in `--disallowedTools`, as before. An agent that *does* need an external
+server (e.g. `gmail`) keeps the old per-call filtering.
+
+## #8 / trip-up #2 — the Routine tab
+
+"הוסף דרך הצ׳אט" spawned a brand-new session on every click; it now opens the agent's **existing**
+home chat (`GET /__api/agents/:slug/home`) with the ask prefilled in its composer draft. And chat is
+no longer the only path: **"הוסף שגרה"** opens an inline form (schedule kind `cron` / `interval` /
+`at` + expression + prompt + optional name) that posts to `POST /__api/triggers {type:'cron',
+agent}` — `routinePayload()` is the pure builder, unit-tested.
+
+## #10 / #11 — the composer and the 429
+
+- A failed slash command is **not** restored into the composer. It used to be, so the next thing the
+  human typed was appended to it and Enter silently re-ran the same failing line. The error is
+  toasted with a "Restore text" action instead. A refused plain message also says why (it used to
+  bounce back with no explanation at all).
+- `web/src/lib/errors.js` (`errText` / `budgetText`) turns an `api.js` error into a sentence:
+  `toast()` runs everything non-string through it, so nothing shows as `Error: HTTP 429 — …`. A 429
+  with a `budget` body renders from the locale — the server line is English-only now (no Hebrew UI
+  path inside an English string).
+
+## Tests
+
+`test/agents-a5.test.ts` (cron family + denial hint, publish family + the one-time migration + a
+sticky untick, the reworded policy line, `turnBlocked` before/after the warning, `strictMcpFor`),
+`test/agents-a5-host.test.ts` (isolated host: spawn flags, the routine hint while the tab's own form
+still creates a real trigger, publish 403 + hidden toolset, the share card → approve / refuse /
+auto-approve, a turn refused with 429 after the warning and never reaching the model),
+`test/agents-a5-web.test.js` (both add paths in the Routine tab, `routinePayload`, `errText` /
+`toastText`).
+
+## Known limits (A5) — and the followups left open
+
+- **Not fixed here (recorded, needs its own change):** `#4` question cards time out after ~4–5
+  minutes and swallow late clicks — wrong default for a phone-first cockpit; `#6` a multi-question
+  card seems to submit on the first click (needs one clean human repro); `#9` pairing an already
+  configured host lands mid-wizard on "Profile bundle" with Apply buttons; and `@agent` still means
+  two different things (home chat from a normal session, a child from a folder controller) — only
+  the receipt line says which.
+- The share gate keys off the caller being a logged-in **user**; on a host with `ARIGAMI_AUTH=off`
+  the human's own click on an agent session's artifact goes through the approval card too.
+- `turnBlocked` refuses the turn at the host boundary — a turn already in flight when the cap is
+  crossed finishes (that is the "one final warning" by design).
+- `--strict-mcp-config` is all-or-nothing per session: an agent that needs one external server still
+  loads all of them and relies on the hook.
+- Merged after M1: the two features meet in `policyArgs` / `mcpConfigFor` — see the `--strict-mcp-config`
+  bullet under **M1** below for what strict does and does not hide.
+
+---
 
 # M1 — native remote-MCP connections per agent
 
@@ -496,9 +617,13 @@ Full picture (provider per service, the spike results, export rules):
   `toolsAdded`): A3 denies whole MCP servers no pattern reaches, so a connection
   the agent could not then call would be a trap. Disconnecting does **not** remove
   the pattern — that would be editing the agent behind the human's back.
-- `--strict-mcp-config` is not used for sessions: it would also hide the user's own
-  MCP servers (WhatsApp bridge, Composio gateway) from every agent session.
-  Isolation between agents is the local scope; taking tools away is the allowlist.
+- `--strict-mcp-config` is used only where it takes nothing away (A5 #7): a session
+  whose allowlist reaches into **no** external MCP server. The agent's own grants ride
+  in the host's `--mcp-config` (`mcpConfigFor`), so strict never hides them — what it
+  drops is the user's global servers (WhatsApp bridge, Composio gateway), which that
+  allowlist could not call anyway. An agent that *does* name an external server keeps
+  the old behaviour: everything loads and the allowlist takes tools away.
+  Isolation between agents is still the local scope; taking tools away is the allowlist.
 
 Composio connections keep working exactly as in A2 — the connected account is
 keyed by `user_id = agent:<slug>` — so an agent can own a native Linear grant and

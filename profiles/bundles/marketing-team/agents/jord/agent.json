@@ -9,7 +9,8 @@
   ],
   "tools": [
     "desktop",
-    "web"
+    "web",
+    "publish"
   ],
   "domains": [
     "unsplash.com",
