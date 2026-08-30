@@ -98,6 +98,56 @@ interface PendingSetup {
   waiters: Array<(r: SetupResult) => void>;
 }
 const pendingSetups = new Map<string, PendingSetup>();
+// F6: cards closed by something other than a human skip (timeout / agent
+// report / session delete) stay reachable so a late report_setup can reopen
+// and update them; a human "Not now" is final. Bounded per session.
+const closedSetups = new Map<string, PendingSetup>();
+const CLOSED_SETUPS_MAX = 200;
+
+type PersistedSetup = Pick<PendingSetup, 'id' | 'sessionId' | 'capability' | 'why' | 'mode' | 'state' | 'evidence' | 'detail' | 'createdAt' | 'lines'>;
+function persistPendingSetups(): void {
+  const list: PersistedSetup[] = [...pendingSetups.values()].map(({ id, sessionId, capability, why, mode, state: st, evidence, detail, createdAt, lines }) => ({ id, sessionId, capability, why, mode, state: st, evidence, detail, createdAt, lines }));
+  try {
+    fs.mkdirSync(path.dirname(caps.SETUP_PENDING_FILE), { recursive: true });
+    fs.writeFileSync(caps.SETUP_PENDING_FILE, JSON.stringify(list, null, 2) + '\n');
+  } catch {
+    /* never fail the caller */
+  }
+}
+function setupTimer(id: string, createdAt: string): NodeJS.Timeout {
+  const left = Math.max(1000, new Date(createdAt).getTime() + SETUP_REQUEST_TIMEOUT_MS - Date.now());
+  return setTimeout(() => {
+    const cur = pendingSetups.get(id);
+    if (cur) finishSetup(cur, 'timeout', { detail: 'timed out — nobody connected it in 15 minutes', human: false });
+  }, left);
+}
+/** Host start: reload the open cards of sessions that still exist (their chat already shows the card). */
+function loadPendingSetups(): void {
+  let list: PersistedSetup[] = [];
+  try {
+    list = JSON.parse(fs.readFileSync(caps.SETUP_PENDING_FILE, 'utf8'));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(list)) return;
+  for (const p of list) {
+    if (!p || typeof p.id !== 'string' || !state.getSession(p.sessionId)) continue;
+    if (!['pending', 'auto', 'failed'].includes(p.state)) continue;
+    pendingSetups.set(p.id, { ...p, lines: Array.isArray(p.lines) ? p.lines : [], evidence: p.evidence ?? null, timer: setupTimer(p.id, p.createdAt), waiters: [] });
+  }
+  if (pendingSetups.size) persistPendingSetups();
+}
+function rememberClosed(e: PendingSetup): void {
+  closedSetups.set(e.id, e);
+  while (closedSetups.size > CLOSED_SETUPS_MAX) closedSetups.delete(closedSetups.keys().next().value as string);
+}
+/** The most recent closed (non-skipped) card for a session+capability, or by id. */
+function closedSetupFor(sessionId: string, capability: string, id?: string): PendingSetup | undefined {
+  if (id && closedSetups.has(id)) return closedSetups.get(id);
+  let best: PendingSetup | undefined;
+  for (const e of closedSetups.values()) if (e.sessionId === sessionId && e.capability === capability) best = e;
+  return best;
+}
 
 interface CleanupPlanResult {
   removable: boolean;
@@ -555,7 +605,11 @@ function answerScreenRequest(
   // whatever landed in this session's Chrome profile back into chrome-base
   // (T8 §4) so the NEXT session starts already logged in. Fire-and-forget:
   // never block the answer on it.
-  if (takenOver) chrome.syncProfileToBase(sessionId).catch(() => {});
+  if (takenOver) {
+    chrome.syncProfileToBase(sessionId).catch(() => {});
+    // F6: an identity card waiting on this take-over resolves as done, never skipped.
+    try { resolveIdentityAfterTakeover(sessionId); } catch {}
+  }
   claude.appendChat(sessionId, {
     kind: 'screen-request-answer',
     requestId: data.requestId,
@@ -593,6 +647,7 @@ function broadcastSetup(e: PendingSetup, extra: Record<string, unknown> = {}): v
   const payload = { ...setupCardPayload(e), ...extra };
   claude.appendChat(e.sessionId, { kind: 'setup-update', ...payload });
   broadcast({ type: 'setup-update', sessionId: e.sessionId, ...payload });
+  persistPendingSetups();
 }
 
 function openSetupFor(sessionId: string, capability: string): PendingSetup | undefined {
@@ -604,6 +659,7 @@ function openSetupFor(sessionId: string, capability: string): PendingSetup | und
 function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', opts: { detail?: string; evidence?: string | null; human: boolean }): void {
   clearTimeout(e.timer);
   pendingSetups.delete(e.id);
+  rememberClosed(e);
   e.state = outcome;
   if (opts.detail) e.detail = opts.detail;
   if (opts.evidence !== undefined) e.evidence = opts.evidence;
@@ -615,9 +671,46 @@ function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', o
   if (outcome === 'done') {
     caps.invalidateComposioCache();
     if (e.mode === 'auto' && !opts.human) caps.markIdentityProvider(e.capability);
+    // F6: a fresh ACTIVE account makes the earlier INITIALIZING/FAILED attempts orphans.
+    if (e.capability.startsWith('composio:')) caps.pruneComposioOrphans(e.capability.slice(9)).catch(() => {});
   }
   const result: SetupResult = { state: outcome, id: e.id, capability: e.capability, detail: e.detail, mode: e.mode, evidence: e.evidence };
   for (const w of e.waiters.splice(0)) w(result);
+}
+
+/** F6: put a closed (not human-skipped) card back on the table so a late report can update it. */
+function reopenSetup(e: PendingSetup, st: SetupState): PendingSetup {
+  closedSetups.delete(e.id);
+  e.state = st;
+  e.timer = setupTimer(e.id, new Date().toISOString());
+  e.waiters = [];
+  pendingSetups.set(e.id, e);
+  return e;
+}
+
+/**
+ * F6: the human clicked Done on a take-over while an identity card was open —
+ * probe the session's Chrome for the signed-in Google account and, if there
+ * is one, register the identity and resolve the card as done (never skipped).
+ * Without a detectable account the card stays open for the agent's own verify.
+ */
+export function resolveIdentityAfterTakeover(sessionId: string): { resolved: boolean; email: string | null } {
+  const entry = openSetupFor(sessionId, 'identity');
+  if (!entry) return { resolved: false, email: null };
+  const email = chrome.googleAccountEmail(sessionId);
+  if (!email) {
+    entry.lines = [...entry.lines, 'take-over finished — verifying the Google sign-in'].slice(-20);
+    broadcastSetup(entry);
+    return { resolved: false, email: null };
+  }
+  try {
+    caps.writeIdentity({ email, chromeProfile: 'base' });
+  } catch {
+    return { resolved: false, email: null };
+  }
+  finishSetup(entry, 'done', { detail: `signed in as ${email}`, human: true });
+  broadcast({ type: 'setup.changed', capability: 'identity' });
+  return { resolved: true, email };
 }
 
 /** A manual connection landed (REST payload / wizard) — close every open card for that capability. */
@@ -638,11 +731,14 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   const capability = String(body.capability || '').trim();
   const cap = caps.getCapability(capability);
   if (!cap) return badRequest(res, `unknown capability: ${capability} — use a registry id (GET /__api/setup/capabilities)`);
-  const why = String(body.why || '').slice(0, 300);
-  // Already there? Answer at once — no card, no push.
+  // F6: never an empty why — the card and the audit fall back to the capability title.
+  const why = (String(body.why || '').trim() || cap.title).slice(0, 300);
+  // Already there? Answer at once — no card, no push; one audit line so
+  // Settings → Connections still shows the agent asked.
   let check: caps.CheckResult;
   try { check = await cap.check(); } catch (e) { check = { ok: false, detail: (e as Error).message }; }
   if (check.ok) {
+    caps.appendAudit({ sessionId: sessionId!, capability, mode: 'none', result: 'already', evidence: null, human: false, detail: why });
     const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true };
     return json(res, r);
   }
@@ -662,13 +758,11 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
       id, sessionId: sessionId!, capability, why, mode,
       state: 'pending',
       evidence: null, detail: check.detail, createdAt: new Date().toISOString(), lines: [],
-      timer: setTimeout(() => {
-        const cur = pendingSetups.get(id);
-        if (cur) finishSetup(cur, 'timeout', { detail: 'timed out — nobody connected it in 15 minutes', human: false });
-      }, SETUP_REQUEST_TIMEOUT_MS),
+      timer: setupTimer(id, new Date().toISOString()),
       waiters: [],
     };
     pendingSetups.set(id, e);
+    persistPendingSetups();
     claude.appendChat(sessionId!, {
       kind: 'setup',
       ...setupCardPayload(e),
@@ -699,7 +793,19 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
   const sessionId = body.session_id as string | undefined;
   if (!sessionId || !state.getSession(sessionId)) return badRequest(res, `unknown session_id: ${sessionId}`);
   const capability = String(body.capability || '');
-  const entry: PendingSetup | undefined = (typeof body.id === 'string' ? pendingSetups.get(body.id) : undefined) ?? openSetupFor(sessionId, capability);
+  let entry: PendingSetup | undefined = (typeof body.id === 'string' ? pendingSetups.get(body.id) : undefined) ?? openSetupFor(sessionId, capability);
+  // F6: a card closed by a timeout / restart / earlier report is reopened and
+  // updated by a late report; only a human "Not now" stays closed.
+  let skippedByHuman = false;
+  if (!entry) {
+    const closed = closedSetupFor(sessionId, capability, typeof body.id === 'string' ? body.id : undefined);
+    if (closed && closed.state === 'skipped') skippedByHuman = true;
+    else if (closed && closed.state === 'done') {
+      // Already connected and closed — a repeated success is a no-op, not a second audit line.
+      if (body.ok) return json(res, { ok: true, closed: true, id: closed.id, state: 'done' });
+    } else if (closed && body.ok !== undefined) entry = reopenSetup(closed, 'auto');
+    else if (closed && typeof body.line === 'string') entry = reopenSetup(closed, 'auto');
+  }
   const evidence = typeof body.evidence === 'string' && /^\/__artifacts\/[A-Za-z0-9_-]+\/?$/.test(body.evidence) ? body.evidence.replace(/\/?$/, '/') : null;
   const detail = String(body.detail || '').slice(0, 300);
   const human = body.human === true;
@@ -711,10 +817,13 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
     return json(res, { ok: true, closed: false, id: entry.id, lines: entry.lines });
   }
   if (!entry) {
-    // Nothing open (already closed / expired) — still record what happened.
+    // Nothing to (re)open — a human skipped it, or no card ever existed. Still record what happened.
     caps.appendAudit({ sessionId, capability, mode: 'auto', result: body.ok ? 'done' : 'failed', evidence, human: false, detail });
-    if (body.ok) caps.invalidateComposioCache();
-    return json(res, { ok: true, closed: false });
+    if (body.ok) {
+      caps.invalidateComposioCache();
+      if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9)).catch(() => {});
+    }
+    return json(res, { ok: true, closed: false, ...(skippedByHuman ? { reason: 'skipped by the human' } : {}) });
   }
   if (body.ok) {
     finishSetup(entry, 'done', { detail: detail || (human ? 'connected' : 'connected by the agent'), evidence, human });
@@ -813,9 +922,29 @@ async function disconnectCapability(capability: string): Promise<Record<string, 
   throw new Error(`${capability} has nothing to disconnect`);
 }
 
+/**
+ * The session's claude process stopped (restart / interrupt / crash). F6: the
+ * card stays OPEN — the human may still be mid-login — only the agent blocked
+ * on it is released (its MCP is gone anyway) and the awaiting-input marker
+ * cleared. A re-spawned agent re-attaches with request_setup; the human's
+ * click resolves the card whenever it comes.
+ */
+export function detachPendingSetupRequests(sessionId: string, message = 'session ended'): void {
+  for (const e of pendingSetups.values()) {
+    if (e.sessionId !== sessionId) continue;
+    const result: SetupResult = { state: 'timeout', id: e.id, capability: e.capability, detail: message, mode: e.mode, evidence: e.evidence };
+    for (const w of e.waiters.splice(0)) w(result);
+  }
+  const s = state.getSession(sessionId);
+  if (s && (s.claude as any)?.setupRequest) state.setClaude(sessionId, { setupRequest: null } as any);
+}
+
+/** The session itself is gone (delete / archive): close its cards for good. */
 export function expirePendingSetupRequests(sessionId: string, message = 'session ended'): void {
   for (const e of [...pendingSetups.values()]) if (e.sessionId === sessionId) finishSetup(e, 'timeout', { detail: message, human: false });
 }
+// Cards persisted before the last host restart come back with their remaining time.
+loadPendingSetups();
 
 /** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
 async function applyManualSetup(capability: string, body: any, req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -882,8 +1011,9 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     }
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
-    const email = String(body?.email || '').trim();
-    if (!email) throw new Error('identity: pass the Google account email that was signed in');
+    // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
+    const email = String(body?.email || '').trim() || chrome.googleAccountEmail(String(body?.sessionId || req.headers['x-session-id'] || '') || null) || '';
+    if (!email) throw new Error('identity: no Google sign-in detected in the agent\'s browser — pass the account email');
     const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined });
     out = { identity, email: identity.email };
   } else if (capability === 'desktop') {
@@ -1757,7 +1887,7 @@ export async function handle(
         const id = decodeURIComponent(rest.slice('capabilities/'.length));
         const cap = caps.getCapability(id);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
-        const why = u.searchParams.get('why') || '';
+        const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
         const r = await caps.ensure(id, why);
         return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap) } : r);
       }
@@ -1769,6 +1899,16 @@ export async function handle(
         const cap = caps.getCapability(capability);
         if (!cap) return badRequest(res, `unknown capability: ${capability}`);
         const had = capability === 'identity' ? !!caps.readIdentity() : true;
+        // F6: ?orphans=1 only removes stale (non-ACTIVE) Composio accounts of the toolkit.
+        if (u.searchParams.get('orphans') === '1') {
+          if (!capability.startsWith('composio:')) return badRequest(res, 'orphans=1 is for composio:<toolkit>');
+          try {
+            const pruned = await caps.pruneComposioOrphans(capability.slice(9));
+            return json(res, { ok: true, capability, ...pruned, status: await caps.statusOf(cap) });
+          } catch (e) {
+            return json(res, { ok: false, error: (e as Error).message, capability }, 400);
+          }
+        }
         try {
           const out = await disconnectCapability(capability);
           if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'disconnected', evidence: null, human: true });
@@ -1829,7 +1969,10 @@ export async function handle(
             if (!closed) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'done', evidence: null, human: true, detail: status.detail });
             import('./funnel.js').then((f) => { if (!closed) f.emit('setup.completed', { capability, mode: 'manual' }); }).catch(() => {});
           }
-          if (status.ok) broadcast({ type: 'setup.changed', capability });
+          if (status.ok) {
+            broadcast({ type: 'setup.changed', capability });
+            if (capability.startsWith('composio:')) caps.pruneComposioOrphans(capability.slice(9)).catch(() => {});
+          }
           return json(res, { ...out, capability, status, closed });
         } catch (e) {
           return json(res, { ok: false, error: (e as Error).message, capability }, 400);
@@ -3245,6 +3388,7 @@ export async function handle(
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
+          expirePendingSetupRequests(id, 'session archived');
           state.stopListenersForSession(id); // listeners die with their session
           // Desktop dies with the session's activity (T8) — the Chrome profile
           // copy is kept (only removed on DELETE) so unarchiving picks up where
@@ -3263,6 +3407,7 @@ export async function handle(
       }
       if (m === 'DELETE') {
         claude.kill(id);
+        expirePendingSetupRequests(id, 'session deleted');
         chrome.closeChrome(id);
         // Fold this session's logins back into chrome-base on every close
         // (T8 §4) — independent of whether the profile copy itself survives.

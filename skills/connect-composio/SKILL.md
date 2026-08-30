@@ -38,7 +38,9 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
    An `error` field → report failure, stop.
 2. `connect.sh open "<redirectUrl>"` (the host of the URL must be in the allowlist —
    Composio hands out `backend.composio.dev/...` links which then redirect to the
-   provider). `wait-url 'accounts\.google\.com|<provider domain>' 45`, `shot first`,
+   provider). `open` = ensure Chrome + navigate: if this session's Chrome is
+   already running (e.g. connect-identity just used it) it is navigated to the
+   URL, you never need a separate `nav`. `wait-url 'accounts\.google\.com|<provider domain>' 45`, `shot first`,
    `capture_screen({caption:"Consent flow opened for <toolkit>"})`.
 3. **Account chooser** ("Choose an account"): click the row whose email equals the
    identity email (`GET /__api/setup/capabilities` → identity detail). Never "Use
@@ -56,6 +58,9 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
    `connect.sh api GET /__api/composio/connections` → find `id` from step 1 (or
    the newest entry for the toolkit) with `status == "ACTIVE"`.
    `INITIATED`/`FAILED` after the polling window → attempt 2 from step 1, then fail.
+   Stale accounts a failed attempt left behind (`INITIALIZING`/`FAILED`) are
+   pruned by the host once one account for the toolkit is ACTIVE (also on demand:
+   `connect.sh api DELETE "/__api/setup/composio:<toolkit>?orphans=1"`).
 7. Evidence + report: `connect.sh shot final` → `publish_artifact` →
    `report_setup({capability:"composio:<toolkit>", ok:true, evidence:"<artifact path>"})`.
    `capture_screen({caption:"<toolkit> connected"})`.

@@ -11,7 +11,10 @@
 #   - the result reported to the host with report_setup (MCP) or the REST twin.
 #
 # Usage:
-#   connect.sh open  <url>                 allowlist-check, then open in the session Chrome
+#   connect.sh open  <url>                 allowlist-check, ensure the session Chrome is up, and SHOW <url>:
+#                                          a fresh Chrome starts on it; an already-running one is
+#                                          navigated there (same Ctrl+L path as `nav`) — never "already
+#                                          running, URL ignored" (F6)
 #   connect.sh nav   <url>                 allowlist-check, then Ctrl+L / type / Enter in the running Chrome
 #   connect.sh url                         print the current tab URL (from the profile's session file)
 #   connect.sh wait-url <regex> [secs]     poll until the current URL matches (default 60s); prints it; exit 1 on timeout
@@ -93,11 +96,18 @@ case "$cmd" in
   allowed) allowed "${1:?url}" ;;
   open)
     require_allowed "${1:?url}"
-    "$HERE/chrome.sh" "$1"; echo ;;
+    out="$("$HERE/chrome.sh" "$1")"; printf '%s\n' "$out"
+    # open = "ensure Chrome + navigate": the host only passes the URL to a
+    # NEW Chrome; when one is already running (alreadyRunning:true) the URL
+    # would be ignored, so drive the address bar exactly like `nav`.
+    if printf '%s' "$out" | grep -q '"alreadyRunning":true'; then
+      sleep "${CONNECT_NAV_DELAY:-0.5}"
+      python3 "$XI" key ctrl+l && python3 "$XI" type "$1" && python3 "$XI" key Return
+    fi ;;
   nav)
     require_allowed "${1:?url}"
     "$HERE/chrome.sh" >/dev/null  # make sure Chrome is up + focused
-    sleep 0.5
+    sleep "${CONNECT_NAV_DELAY:-0.5}"
     python3 "$XI" key ctrl+l && python3 "$XI" type "$1" && python3 "$XI" key Return ;;
   url) current_url ;;
   wait-url)

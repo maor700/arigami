@@ -291,8 +291,9 @@ test('auto: preselects only; consent click (/start) releases the agent with stat
   const audit = readJsonl(path.join(dir, 'connections.log')).filter((a) => a.capability === 'composio:gmail');
   expect(audit.map((a) => [a.result, a.human])).toEqual([['requested', false], ['requested', true], ['failed', false], ['requested', true], ['done', false]]);
   expect(audit.at(-1)).toMatchObject({ sessionId: sid, mode: 'auto', evidence: '/__artifacts/abc123/' });
-  // Nothing open → a stray report is just audited.
-  expect(await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: true })).toEqual({ ok: true, closed: false });
+  // Already done → a repeated success is a no-op (F6: only a timed-out card is reopened; a human skip stays closed).
+  expect(await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: true })).toEqual({ ok: true, closed: true, id: card.id, state: 'done' });
+  expect(readJsonl(path.join(dir, 'connections.log')).filter((a) => a.capability === 'composio:gmail').length).toBe(audit.length);
 });
 
 test('start is refused without consent prerequisites (non-auto capability); card report from the human closes with human:true', async () => {
@@ -323,7 +324,7 @@ test('mode switch manual→auto is refused for non-auto capabilities; bad ids/se
   expect((await api('POST', '/__api/setup/bogus', {})).status).toBe(400);
 });
 
-test('session death expires its open setup cards (timeout, "session ended")', async () => {
+test('session delete closes its open setup cards (timeout) — a mere restart keeps them, see setup-lifecycle.test.ts', async () => {
   const sid = await newSession('dies');
   const pending = mcp('/__mcp/setup-request', { session_id: sid, capability: 'git', why: 'push a branch', mode: 'manual' });
   await until(async () => (await setupEvents(sid)).find((e: any) => e.kind === 'setup'));

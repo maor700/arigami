@@ -157,6 +157,28 @@ export async function syncProfileToBase(sessionId: string): Promise<{ ok: boolea
   });
 }
 
+/**
+ * F6: the Google account signed in on a Chrome profile, read from the
+ * profile's Preferences (`account_info[].email` — Chrome records the web
+ * sign-in there; no cookies or secrets are touched). Looks at the session's
+ * own copy first, then chrome-base (the take-over sync just wrote it there).
+ * null = no Google web session found.
+ */
+export function googleAccountEmail(sessionId?: string | null): string | null {
+  const dirs = [sessionId ? chromeSessionDir(sessionId) : null, CHROME_BASE_DIR].filter(Boolean) as string[];
+  for (const d of dirs) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(d, 'Default', 'Preferences'), 'utf8'));
+      const infos: any[] = Array.isArray(j?.account_info) ? j.account_info : [];
+      const email = infos.map((a) => String(a?.email || '').trim().toLowerCase()).find((e) => /^[^\s@]+@[^\s@]+$/.test(e));
+      if (email) return email;
+    } catch {
+      /* no profile / malformed */
+    }
+  }
+  return null;
+}
+
 export function removeSessionProfile(sessionId: string): void {
   try { fs.rmSync(chromeSessionDir(sessionId), { recursive: true, force: true }); } catch {}
 }

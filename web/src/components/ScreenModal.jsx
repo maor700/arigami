@@ -21,7 +21,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
-import { answerScreenRequest, cancelScreenRequest, openScreenRequest, useStore } from '../lib/store.js';
+import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
+import * as setupApi from '../lib/setup-api.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
@@ -37,6 +38,10 @@ export default function ScreenModal({ context, onClose }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [setupErr, setSetupErr] = useState(null);
+  // F6: opened from an identity Setup card (no screen-request) — Done verifies
+  // the Google sign-in on the host and resolves the card as done.
+  const setupCtx = !context?.requestId && context?.setupId ? context : null;
   const onStatusChange = useCallback((st) => setStatus(st), []);
 
   // Resolve the request live from the store so an answer arriving from
@@ -70,6 +75,20 @@ export default function ScreenModal({ context, onClose }) {
       await answerScreenRequest(context.sessionId, req.requestId, note.trim(), true);
       window.dispatchEvent(new CustomEvent('host:focus-input'));
     } catch {
+      setBusy(false);
+    }
+  };
+  const setupDone = async () => {
+    if (!setupCtx) return;
+    setBusy(true);
+    setSetupErr(null);
+    try {
+      const r = await setupApi.connect(setupCtx.capability || 'identity', { action: 'verify', sessionId: setupCtx.sessionId });
+      if (r && r.ok === false) throw new Error(r.error || t('setup.takeover.noAccount'));
+      setScreenModal(false);
+      window.dispatchEvent(new CustomEvent('host:focus-input'));
+    } catch (e) {
+      setSetupErr(/no Google sign-in|not signed|noAccount/i.test(String(e?.message || e)) ? t('setup.takeover.noAccount') : String(e?.message || e).replace(/^HTTP \d+ — /, ''));
       setBusy(false);
     }
   };
@@ -151,6 +170,16 @@ export default function ScreenModal({ context, onClose }) {
 
         <ScreenView priority={SCREEN_PRIORITY.modal} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
+        {setupCtx && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
+            <span dir="auto" className="min-w-0 flex-1 text-[11.5px] text-fgdim">
+              {setupErr ? <span className="text-[#9c3b33]">{setupErr}</span> : t('setup.card.identityHint')}
+            </span>
+            <button type="button" disabled={busy} onClick={setupDone} title={t('setup.card.identityHint')} className={btnPrimary}>
+              {busy ? t('setup.takeover.verifying') : t('setup.takeover.modalDone')}
+            </button>
+          </div>
+        )}
         {req && (
           <div className="flex items-center gap-2 border-t border-hair px-4 py-2.5">
             <input

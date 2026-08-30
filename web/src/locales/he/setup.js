@@ -38,6 +38,10 @@ export const strings = {
   'setup.card.skipped': 'דולג — הסוכן יציע חלופה',
   'setup.card.timeout': 'לא התקבלה תשובה — הסוכן המשיך',
   'setup.card.failedManual': 'החיבור האוטומטי נכשל. אפשר להשלים ידנית למטה.',
+  'setup.card.waiting': 'הסוכן ממתין לך',
+  'setup.card.connecting': 'הסוכן מחבר…',
+  'setup.card.completed': 'הושלם',
+  'setup.card.identityHint': 'כשאתה רואה את דף החשבון עם השם שלך — לחץ Done.',
 
   'setup.mode.auto': 'אוטומטי',
   'setup.mode.manual': 'ידני',
@@ -113,7 +117,9 @@ export const strings = {
 
   'setup.takeover.step1': 'פתח את המסך של הסוכן והתחבר ל-Google ב-Chrome שלו.',
   'setup.takeover.step2': 'הקלד את הסיסמה / 2FA בעצמך — הסוכן לעולם לא רואה אותם.',
-  'setup.takeover.step3': 'סגור את המסך ולחץ "אמת"; המכונה שומרת רק את כתובת המייל שלך.',
+  'setup.takeover.step3': 'כשאתה רואה את דף החשבון עם השם שלך — לחץ Done במסך; ה-host שומר רק את המייל.',
+  'setup.takeover.modalDone': 'Done — התחברתי',
+  'setup.takeover.noAccount': 'עדיין לא זוהה חשבון Google בדפדפן של הסוכן — סיים את ההתחברות, או הקלד את המייל בכרטיס.',
   'setup.takeover.open': 'פתח את המסך של הסוכן',
   'setup.takeover.emailPlaceholder': 'מייל Google (אופציונלי — מזוהה אוטומטית כשאפשר)',
   'setup.takeover.verify': 'התחברתי — אמת',

@@ -2,7 +2,7 @@
 // snapshots. No optimistic updates — the server echoes every mutation via WS.
 import { useSyncExternalStore } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
-import { mergeChatEvents } from './chat-merge.js';
+import { mergeChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
 import { toast, toastError } from './toast.js';
 import { sessionLabel } from '../components/ui.jsx';
@@ -282,7 +282,11 @@ function appendChat(sessionId, event) {
     const { kind: _k, requestId: _r, lines, ...patch } = event;
     const prev = cur[idx];
     const next = [...cur];
-    next[idx] = { ...prev, ...patch, ...(lines ? { lines: [...(prev.lines || []), ...lines] } : {}) };
+    // The host sends the card's FULL narration list on every update (F6); a
+    // delta (old hosts / the dev shim) is appended. Prefix check tells them apart.
+    const prevLines = prev.lines || [];
+    const full = Array.isArray(lines) && lines.length >= prevLines.length && prevLines.every((l, i) => lines[i] === l);
+    next[idx] = { ...prev, ...patch, ...(lines ? { lines: full ? lines : [...prevLines, ...lines] } : {}) };
     setState({ chats: { ...state.chats, [sessionId]: next }, setupTick: Date.now() });
     return;
   }
@@ -423,7 +427,7 @@ export async function loadChat(sessionId) {
     if (Array.isArray(events)) {
       const live = state.chats[sessionId] || [];
       setState({
-        chats: { ...state.chats, [sessionId]: mergeChatEvents(live, events) },
+        chats: { ...state.chats, [sessionId]: foldSetupUpdates(mergeChatEvents(live, events)) },
         chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
         chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
       });
@@ -445,7 +449,7 @@ export async function loadOlderChat(sessionId) {
     if (Array.isArray(events) && events.length) {
       const live = state.chats[sessionId] || [];
       setState({
-        chats: { ...state.chats, [sessionId]: mergeChatEvents(events, live) },
+        chats: { ...state.chats, [sessionId]: foldSetupUpdates(mergeChatEvents(events, live)) },
         chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
         chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
       });
