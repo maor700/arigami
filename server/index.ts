@@ -272,6 +272,9 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./accounts.js')
     .then((m: any) => {
       m.initAccounts(); // seed from keychain + any inherited .env token
+      // B3: `install.sh --unattended` → pre-complete every skippable wizard step
+      // so the wizard is done the moment pairing lands (no UI on a headless box).
+      import('./onboarding.js').then((ob) => { try { ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
       // Keep OAuth-login accounts' 8h access tokens renewed from their refresh tokens.
       import('./oauth-login.js').then((o: any) => o.startTokenRefresher()).catch(() => {});
       return import('./usage.js').then((u: any) => u.startUsagePolling());

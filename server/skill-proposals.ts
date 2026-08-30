@@ -530,6 +530,7 @@ export function applyProposal(id: string): { ok: true; skill: SkillSummary } | {
   const content = readFileSafe(path.join(proposalDir(id), 'content.md'));
   const r = writeSkill(meta.name, content, { allowCreate: true });
   if ('error' in r) return { error: r.error };
+  import('./funnel.js').then((f) => f.firstTime('skill.first_applied')).catch(() => {});
   meta.status = 'applied';
   meta.decidedAt = new Date().toISOString();
   saveMeta(meta);

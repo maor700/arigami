@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { broadcast } from './bus.js';
 import { cfg, ensureConfigFile } from './lib/config.js';
 import { pickSessionAccount } from './accounts.js';
+import * as funnel from './funnel.js';
 
 export { cfg, ensureConfigFile };
 
@@ -418,6 +419,14 @@ export function createSession({
   model?: string | null;
   effort?: string | null;
 } = {}): Session {
+  funnel.firstTime('session.first'); // K5 funnel — once per instance
+  // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
+  const master = metadata?.master;
+  if (typeof master === 'string' && master && !funnel.hasHappened('pm.first_tree')) {
+    const siblings = listSessions({ archived: true }).filter((x) => x.metadata?.master === master).length;
+    if (siblings >= 1) funnel.firstTime('pm.first_tree');
+  }
+
   const now = new Date().toISOString();
   const firstTab: Tab = {
     id: 'tab_' + nano(),

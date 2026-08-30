@@ -88,7 +88,7 @@ const MONO = 'rounded-[7px] border border-border bg-panel px-2 py-1 font-mono te
 // the .git/worktrees). Two sources: clone from GitHub, or copy an existing local
 // working dir (minus node_modules). Either way you can pick env files (.env.local
 // etc.) to copy in, so a fresh clone/copy is actually installable.
-function AddRepo({ onAdd, busy }) {
+export function AddRepo({ onAdd, busy }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState('github'); // 'github' | 'local'
@@ -288,7 +288,7 @@ function Welcome({ steps, onGo, onRecheck, busy }) {
   );
 }
 
-export default function Setup({ onClose, onCreated }) {
+export default function Setup({ onClose, onCreated, onRunWizard }) {
   const t = useT();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -407,6 +407,16 @@ export default function Setup({ onClose, onCreated }) {
         >
           <Icon icon={faRotateRight} /> {t('launcher.setup.refresh')}
         </button>
+        {onRunWizard && (
+          <button
+            type="button"
+            title={t('launcher.setup.runWizardHint')}
+            onClick={async () => { try { await api.post('/onboarding/wizard/reset'); } catch { /* not admin — the wizard still opens read-only */ } onRunWizard(); }}
+            className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg"
+          >
+            {t('launcher.setup.runWizard')}
+          </button>
+        )}
         <button
           type="button" onClick={onClose}
           className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"

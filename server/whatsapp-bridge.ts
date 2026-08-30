@@ -42,13 +42,15 @@ function readStatusFile(): StatusFile {
   }
 }
 
-export function getBridgeStatus(): { status: BridgeStatus; qrUrl: string | null; user: string | null } {
+export function getBridgeStatus(): { status: BridgeStatus; qrUrl: string | null; qr: string | null; user: string | null } {
   const s = readStatusFile();
   // If PID from status file is dead, treat as disconnected
   if (s.pid && s.status !== 'disconnected') {
-    try { process.kill(s.pid, 0); } catch { return { status: 'disconnected', qrUrl: null, user: null }; }
+    try { process.kill(s.pid, 0); } catch { return { status: 'disconnected', qrUrl: null, qr: null, user: null }; }
   }
-  return { status: s.status, qrUrl: s.qrUrl ?? null, user: s.user ?? null };
+  // `qr` (B3 wizard) is the same data-URL as `qrUrl` — the wizard renders it inline.
+  const qr = s.qrUrl ?? null;
+  return { status: s.status, qrUrl: qr, qr, user: s.user ?? null };
 }
 
 // ---- process management -----------------------------------------------------
