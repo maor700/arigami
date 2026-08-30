@@ -31,6 +31,8 @@ export const strings = {
   'brain.factApproved': 'Fact approved',
   'brain.factRejected': 'Fact rejected',
 
+  'brain.heartbeatSettings': 'Heartbeat settings',
+
   'brain.heartbeatTitle': 'Brain heartbeat',
   'brain.heartbeatHint': 'Periodically wake the brain session to check whether anything needs your attention. Off by default; a quiet check never notifies you.',
   'brain.heartbeatEvery': 'Every',

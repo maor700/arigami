@@ -59,6 +59,7 @@ export const strings = {
   'chrome.voice.mic.allow': 'אפשר למיקרופון להציג התקנים',
   'chrome.voice.mic.systemDefault': 'ברירת מחדל של המערכת',
   'chrome.voice.mic.fallback': 'מיקרופון {n}',
+  'chrome.voice.language': 'שפת זיהוי דיבור',
   'chrome.voice.language.hint': 'שפת זיהוי הדיבור. אוטומטי מאפשר ל-Whisper לזהות (מתאים למעבר בין עברית לאנגלית).',
   'chrome.voice.language.en': 'אנגלית',
   'chrome.voice.language.he': 'עברית',

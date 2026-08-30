@@ -135,6 +135,7 @@ export const strings = {
   'setup.minimal.startBtn': 'התחל',
   'setup.minimal.sessionTitle': 'סביבת עבודה',
   'setup.minimal.runFull': 'הרץ התקנה מלאה במקום',
+  'setup.minimal.moreConnections': 'עוד חיבורים — זהות, אינטגרציות, ערוצים, גישה מרחוק — נמצאים בהגדרות.',
   'setup.minimal.more': 'עוד',
   'setup.minimal.moreHint': 'חיבורים · ריפוזיטוריים · פרופילים',
 
