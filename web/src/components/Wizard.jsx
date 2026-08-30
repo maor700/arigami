@@ -1,39 +1,27 @@
 // B3 — first-run wizard. A LINEAR, mobile-friendly stepper over the one
 // onboarding state machine (server/onboarding.ts wizard()):
 //   pair → claude → git → profile → integrations → repo → telemetry → health
-// Every step's status/skippability comes from GET /__api/onboarding/wizard;
-// this component holds no provisioning logic of its own — it calls the same
-// endpoints the Accounts / Setup / Settings views use, then re-reads the state.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// Every step's status/skippability comes from GET /__api/onboarding/wizard.
+// S2: the credential steps are a thin list of the shared setup components
+// (web/src/components/setup/*) — the same ones the chat's SetupCard and
+// Settings → Connections render — so the wizard holds no provisioning UI of
+// its own. In minimal mode (S1) the server marks the wizard done right after
+// Claude; "Run full setup" from the Setup screen reopens the full list.
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT, currentLang, LANGS } from '../lib/i18n.js';
 import { setPrefs } from '../lib/prefs.js';
 import { useStore } from '../lib/store.js';
-import { AddRepo } from './Setup.jsx';
+import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep } from './setup/index.js';
+import { BTN, BTN2, INPUT, CARD, BODY, PILL, ErrorBox, OkLine, Spinner } from './setup/shared.jsx';
 import {
   faCheck,
   faArrowLeft,
   faArrowRight,
   faRotateRight,
   faXmark,
-  faTriangleExclamation,
-  faCircleNotch,
 } from '@fortawesome/free-solid-svg-icons';
-
-const PILL = {
-  ok: 'border-[#bfe3cf] bg-[#EAF6EF] text-[#2f7d4f]',
-  todo: 'border-[#e7d3a8] bg-[#FBF3E0] text-[#8a6d1f]',
-  error: 'border-[#e2c4c0] bg-[#FBECEA] text-[#9c3b33]',
-  blocked: 'border-hair bg-chip text-fgdim',
-  skipped: 'border-hair bg-chip text-fgdim',
-  running: 'border-[#bcd4ee] bg-[#EAF1FB] text-[#2C6BD6]',
-};
-
-const BTN = 'cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-4 py-2 text-[13px] font-bold text-fg disabled:cursor-default disabled:opacity-50';
-const BTN2 = 'cursor-pointer rounded-[9px] border-[1.5px] border-border bg-panel px-4 py-2 text-[12.5px] font-semibold text-fgdim hover:border-ink hover:text-fg disabled:opacity-50';
-const INPUT = 'w-full rounded-[8px] border-[1.5px] border-border bg-bg px-3 py-2 text-[12.5px] text-fg outline-none focus:border-ink';
-const CARD = 'rounded-[12px] border-[1.5px] border-ink bg-panel';
 
 function Pill({ status }) {
   const t = useT();
@@ -41,15 +29,6 @@ function Pill({ status }) {
     <span className={`shrink-0 rounded-full border px-2 py-px text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
       {t(`wizard.status.${status}`)}
     </span>
-  );
-}
-
-function ErrorBox({ err }) {
-  if (!err) return null;
-  return (
-    <div className="mt-3 rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[11.5px] text-[#9c3b33]">
-      <Icon icon={faTriangleExclamation} /> {String(err)}
-    </div>
   );
 }
 
@@ -90,197 +69,44 @@ function PairStep({ step }) {
   );
 }
 
-// ---- step 2: claude --------------------------------------------------------
+// ---- step 2: claude / step 3: git — the shared setup components ------------
+// (web/src/components/setup/*): the same OAuthCodeStep/TokenStep the chat's
+// SetupCard renders. The wizard only adds the step's copy + "done" line.
 function ClaudeStep({ step, refresh }) {
   const t = useT();
-  const [mode, setMode] = useState(null); // null | 'auth' | 'paste'
-  const [flow, setFlow] = useState(null); // {id,url}
-  const [code, setCode] = useState('');
-  const [token, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const [copied, setCopied] = useState(false);
-
-  const start = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.post('/accounts/oauth/start', { label: 'wizard' });
-      if (r?.state === 'error') throw new Error(r.error || 'could not start sign-in');
-      setFlow(r);
-      setMode('auth');
-      try { window.open(r.url, '_blank', 'noopener'); } catch { /* user clicks the link */ }
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const exchange = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.post('/accounts/oauth/code', { id: flow.id, code: code.trim() });
-      if (!r?.ok) throw new Error(r?.error || 'exchange failed');
-      setFlow(null);
-      setCode('');
-      setMode(null);
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const saveToken = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      // F3 #2: the server verifies the token with a real `claude -p` probe
-      // before storing it — a rejected token comes back as a 400 with the reason.
-      await api.post('/onboarding/wizard/claude', { action: 'token', token: token.trim(), label: 'wizard' });
-      setToken('');
-      setMode(null);
-      await refresh();
-    } catch (e) {
-      setErr(String(e.message || e).replace(/^HTTP \d+ — /, ''));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const cancel = () => {
-    if (flow?.id) api.post('/accounts/oauth/cancel', { id: flow.id }).catch(() => {});
-    setFlow(null);
-    setMode(null);
-    setCode('');
-  };
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(flow.url); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
-  };
-
   if (step.status === 'ok')
     return (
       <>
-        <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.claude.body')}</p>
-        <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.claude.connected')}</div>
+        <p className={BODY}>{t('wizard.claude.body')}</p>
+        <OkLine>{t('wizard.claude.connected')}</OkLine>
       </>
     );
   if (!step.data?.cli)
     return (
       <>
-        <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.claude.noCli')}</p>
+        <p className={BODY}>{t('wizard.claude.noCli')}</p>
         <code className="mt-2 block rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] select-all">npm i -g @anthropic-ai/claude-code</code>
         <button type="button" className={`${BTN2} mt-3`} onClick={refresh}><Icon icon={faRotateRight} /> {t('wizard.recheck')}</button>
       </>
     );
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.claude.body')}</p>
-      {mode === null && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" className={BTN} disabled={busy} onClick={start}>{t('wizard.claude.signIn')}</button>
-          <button type="button" className={BTN2} onClick={() => setMode('paste')}>{t('wizard.claude.pasteToken')}</button>
-        </div>
-      )}
-      {mode === 'auth' && flow && (
-        <div className="mt-4 flex flex-col gap-2">
-          <div className="flex flex-wrap gap-2">
-            <a href={flow.url} target="_blank" rel="noopener noreferrer" className={BTN}>{t('wizard.claude.openLink')} ↗</a>
-            <button type="button" className={BTN2} onClick={copy}>{copied ? '✓' : t('wizard.claude.copyLink')}</button>
-          </div>
-          <div className="break-all rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[10px] text-fgdim select-all">{flow.url}</div>
-          <div className="text-[11px] text-fgdim">{t('wizard.claude.linkHint')}</div>
-          <input className={INPUT} value={code} onChange={(e) => setCode(e.target.value)} placeholder={t('wizard.claude.codePlaceholder')} spellCheck={false} onKeyDown={(e) => e.key === 'Enter' && code.trim() && exchange()} />
-          <div className="flex gap-2">
-            <button type="button" className={BTN} disabled={busy || !code.trim()} onClick={exchange}>{t('wizard.claude.exchange')}</button>
-            <button type="button" className={BTN2} onClick={cancel}>{t('wizard.claude.cancel')}</button>
-          </div>
-        </div>
-      )}
-      {mode === 'paste' && (
-        <div className="mt-4 flex flex-col gap-2">
-          <input className={INPUT} type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={t('wizard.claude.tokenPlaceholder')} spellCheck={false} autoComplete="off" onKeyDown={(e) => e.key === 'Enter' && token.trim() && saveToken()} />
-          <div className="flex gap-2">
-            <button type="button" className={BTN} disabled={busy || !token.trim()} onClick={saveToken}>{t('wizard.claude.tokenSave')}</button>
-            <button type="button" className={BTN2} onClick={() => setMode(null)}>{t('wizard.claude.cancel')}</button>
-          </div>
-        </div>
-      )}
-      <ErrorBox err={err} />
+      <p className={`${BODY} mb-4`}>{t('wizard.claude.body')}</p>
+      <OAuthCodeStep capability="claude" manual={{ kind: 'oauth', flow: 'pkce', token: true }} onDone={refresh} />
     </>
   );
 }
 
-// ---- step 3: git -----------------------------------------------------------
-function GitStep({ step, ghLogin, refresh }) {
+function GitStep({ step, refresh }) {
   const t = useT();
-  const [token, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const active = ghLogin && (ghLogin.state === 'starting' || ghLogin.state === 'awaiting');
-
-  // Poll the wizard while a gh login is in flight (device-code flow).
-  useEffect(() => {
-    if (!active) return undefined;
-    const id = setInterval(refresh, 2500);
-    return () => clearInterval(id);
-  }, [active, refresh]);
-
-  const startGh = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.post('/onboarding/wizard/git', { action: 'gh-login' });
-      if (r?.ghLogin?.state === 'error') setErr(r.ghLogin.error);
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const saveToken = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.post('/onboarding/wizard/git', { action: 'token', token: token.trim() });
-      setToken('');
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.git.body')}</p>
-      {step.status === 'ok' && <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.git.connected')}</div>}
-      {step.status !== 'ok' && (
-        <div className="mt-4 flex flex-col gap-3">
-          {step.data?.gh && !active && (
-            <button type="button" className={BTN} disabled={busy} onClick={startGh}>{t('wizard.git.ghWeb')}</button>
-          )}
-          {active && (
-            <div className={`${CARD} px-4 py-3`}>
-              {ghLogin.code ? (
-                <>
-                  <div className="text-[11.5px] text-fgdim">{t('wizard.git.ghCode')} <a className="underline" href={ghLogin.url} target="_blank" rel="noopener noreferrer">{ghLogin.url}</a></div>
-                  <div className="mt-2 inline-block rounded-[10px] border-[1.5px] border-ink bg-bg px-5 py-3 font-mono text-[22px] tracking-[0.2em] select-all">{ghLogin.code}</div>
-                </>
-              ) : null}
-              <div className="mt-2 text-[11px] text-fgdim"><Icon icon={faCircleNotch} /> {t('wizard.git.ghWaiting')}</div>
-            </div>
-          )}
-          {ghLogin?.state === 'done' && <div className="text-[12px] text-[#2f7d4f]">{t('wizard.git.ghDone')}</div>}
-          {ghLogin?.state === 'error' && <ErrorBox err={ghLogin.error} />}
-          <div className="text-[11px] text-fgdim">{t('wizard.git.orToken')}</div>
-          <input className={INPUT} type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={t('wizard.git.tokenPlaceholder')} spellCheck={false} autoComplete="off" onKeyDown={(e) => e.key === 'Enter' && token.trim() && saveToken()} />
-          <div><button type="button" className={BTN} disabled={busy || !token.trim()} onClick={saveToken}>{t('wizard.git.tokenSave')}</button></div>
-        </div>
+      <p className={`${BODY} mb-4`}>{t('wizard.git.body')}</p>
+      {step.status === 'ok' ? (
+        <OkLine>{t('wizard.git.connected')}</OkLine>
+      ) : (
+        <OAuthCodeStep capability="git" manual={{ kind: 'oauth', flow: 'device', token: true }} onDone={refresh} />
       )}
-      <ErrorBox err={err} />
     </>
   );
 }
@@ -361,60 +187,10 @@ function ProfileStep({ step, refresh, onSkip }) {
   );
 }
 
-// ---- step 5: integrations --------------------------------------------------
+// ---- step 5: integrations — Composio key (TokenStep), WhatsApp (QrStep),
+// remote access (ToggleStep) --------------------------------------------------
 function IntegrationsStep({ step, refresh }) {
   const t = useT();
-  const [key, setKey] = useState('');
-  const [wa, setWa] = useState(null);
-  const [remote, setRemote] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const pollRef = useRef(null);
-
-  const loadWa = useCallback(() => api.get('/whatsapp/status').then(setWa).catch(() => setWa({ status: 'disconnected' })), []);
-  useEffect(() => {
-    loadWa();
-    api.get('/remote').then(setRemote).catch(() => setRemote({ available: false }));
-  }, [loadWa]);
-  useEffect(() => {
-    clearInterval(pollRef.current);
-    if (wa?.status === 'qr' || wa?.status === 'starting') pollRef.current = setInterval(loadWa, 3000);
-    return () => clearInterval(pollRef.current);
-  }, [wa?.status, loadWa]);
-
-  const saveKey = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.post('/onboarding/wizard/integrations', { action: 'composio-key', key: key.trim() });
-      setKey('');
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const connectWa = async () => {
-    setBusy(true);
-    setErr(null);
-    try { setWa(await api.post('/whatsapp/connect', {})); } catch (e) { setErr(e.message); } finally { setBusy(false); }
-  };
-  const toggleRemote = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.post('/remote', { enable: !remote?.serving });
-      if (r?.ok === false) setErr(r.error);
-      setRemote(r);
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const Row = ({ title, hint, children }) => (
     <div className={`${CARD} px-4 py-3`}>
       <div className="text-[12.5px] font-bold text-fg">{title}</div>
@@ -422,115 +198,51 @@ function IntegrationsStep({ step, refresh }) {
       <div className="mt-2">{children}</div>
     </div>
   );
-
   const composioSet = !!step.data?.composio;
-  const qr = wa?.qr || wa?.qrUrl;
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.integrations.body')}</p>
+      <p className={BODY}>{t('wizard.integrations.body')}</p>
       <div className="mt-3 flex flex-col gap-3">
         <Row title={t('wizard.integrations.composio')} hint={t('wizard.integrations.composioHint')}>
-          {composioSet ? (
-            <div className="text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div>
-          ) : (
-            <div className="flex gap-2">
-              <input className={INPUT} type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={t('wizard.integrations.composioPlaceholder')} autoComplete="off" spellCheck={false} />
-              <button type="button" className={BTN} disabled={busy || !key.trim()} onClick={saveKey}>{t('wizard.integrations.save')}</button>
-            </div>
-          )}
+          {composioSet ? <div className="text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div> : <TokenStep capability="composio" onDone={refresh} />}
         </Row>
         <Row title={t('wizard.integrations.whatsapp')} hint={t('wizard.integrations.whatsappHint')}>
-          {wa?.status === 'connected' ? (
-            <div className="text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.integrations.whatsappConnected', { user: wa.user || '…' })}</div>
-          ) : wa?.status === 'qr' && qr ? (
-            <img src={qr} alt="WhatsApp QR" className="h-[200px] w-[200px] rounded-[8px] border border-hair bg-white" />
-          ) : wa?.status === 'starting' || (wa?.status === 'qr' && !qr) ? (
-            <div className="text-[12px] text-fgdim"><Icon icon={faCircleNotch} /> {t('wizard.integrations.whatsappStarting')}</div>
-          ) : (
-            <button type="button" className={BTN2} disabled={busy} onClick={connectWa}>{t('wizard.integrations.whatsappConnect')}</button>
-          )}
+          <QrStep capability="whatsapp" onDone={refresh} />
         </Row>
         <Row title={t('wizard.integrations.tailscale')} hint={t('wizard.integrations.tailscaleHint')}>
-          {remote === null ? (
-            <div className="text-[12px] text-fgdim">{t('wizard.loading')}</div>
-          ) : !remote.available ? (
-            <div className="text-[12px] text-fgdim">{t('wizard.integrations.tailscaleMissing')}</div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={remote.serving ? BTN : BTN2} disabled={busy || remote.loggedIn === false} onClick={toggleRemote}>
-                {remote.serving ? t('wizard.integrations.tailscaleOn') : t('wizard.integrations.tailscaleOff')}
-              </button>
-              {remote.reason && <span className="text-[11px] text-fgdim">{remote.reason}</span>}
-              {remote.httpsUrl && <span className="font-mono text-[10.5px] text-fgdim">{remote.httpsUrl}</span>}
-            </div>
-          )}
+          <ToggleStep capability="remote" enabled={!!step.data?.remote} onDone={refresh} />
         </Row>
       </div>
-      <ErrorBox err={err} />
     </>
   );
 }
 
 // ---- step 6: repo ----------------------------------------------------------
-function RepoStep({ step, refresh }) {
+function WizardRepoStep({ step, refresh }) {
   const t = useT();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const add = async (entry) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.post('/onboarding/repos', entry);
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const names = step.data?.repos || [];
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.repo.body')}</p>
-      {names.length > 0 && <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.repo.have', { names: names.join(', ') })}</div>}
-      <div className={`${CARD} mt-3 overflow-hidden`}>
-        <AddRepo onAdd={add} busy={busy} />
-      </div>
-      <ErrorBox err={err} />
+      <p className={BODY}>{t('wizard.repo.body')}</p>
+      <RepoStep capability="repo" have={step.data?.repos || []} onDone={refresh} />
     </>
   );
 }
 
-// ---- step 7: telemetry (D3) -------------------------------------------------
-// One question, off by default. "Yes" / "No thanks" both settle the step; the
-// preview is the exact JSON the host would POST (GET /__api/telemetry.preview).
+// ---- step 7: telemetry (D3) — ToggleStep + the exact JSON preview --------------
 function TelemetryStep({ step, refresh }) {
   const t = useT();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [err, setErr] = useState(null);
   const enabled = !!step.data?.enabled;
   const reason = step.data?.reason;
   const pinned = reason === 'dnt' || reason === 'env';
-  const decide = async (on) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api.post('/onboarding/wizard/telemetry', { action: on ? 'enable' : 'disable' });
-      await refresh();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
   const show = async () => {
     if (preview) { setPreview(null); return; }
     try { setPreview((await api.get('/telemetry')).preview); } catch (e) { setErr(e.message); }
   };
   return (
     <>
-      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.telemetry.body')}</p>
+      <p className={BODY}>{t('wizard.telemetry.body')}</p>
       <ul className="mt-2 list-disc ps-5 text-[12px] leading-relaxed text-fgdim">
         <li>{t('wizard.telemetry.sends')}</li>
         <li>{t('wizard.telemetry.never')}</li>
@@ -538,16 +250,10 @@ function TelemetryStep({ step, refresh }) {
       </ul>
       {reason === 'dnt' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.dnt')}</div>}
       {reason === 'env' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.env', { state: enabled ? 'on' : 'off' })}</div>}
-      {step.status === 'ok' && !pinned && (
-        <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {enabled ? t('wizard.telemetry.on') : t('wizard.telemetry.off')}</div>
-      )}
-      {!pinned && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className={enabled ? BTN2 : BTN} disabled={busy || enabled} onClick={() => decide(true)}>{t('wizard.telemetry.yes')}</button>
-          <button type="button" className={BTN2} disabled={busy || (step.status === 'ok' && !enabled)} onClick={() => decide(false)}>{t('wizard.telemetry.no')}</button>
-          <button type="button" className={BTN2} onClick={show}>{preview ? t('telemetry.hidePreview') : t('telemetry.preview')}</button>
-        </div>
-      )}
+      <div className="mt-3">
+        <ToggleStep key={String(enabled)} capability="telemetry" enabled={enabled} pinned={pinned} onDone={refresh} />
+      </div>
+      <button type="button" className={`${BTN2} mt-2`} onClick={show}>{preview ? t('telemetry.hidePreview') : t('telemetry.preview')}</button>
       {preview && (
         <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[10.5px] leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
       )}
@@ -580,7 +286,7 @@ function HealthStep({ step, refresh, onOpen }) {
       <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.health.body')}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" className={BTN2} disabled={running} onClick={run}>
-          {running ? <><Icon icon={faCircleNotch} /> {t('wizard.health.running')}</> : <><Icon icon={faRotateRight} /> {t('wizard.health.run')}</>}
+          {running ? <Spinner>{t('wizard.health.running')}</Spinner> : <><Icon icon={faRotateRight} /> {t('wizard.health.run')}</>}
         </button>
       </div>
       {health && (
@@ -721,10 +427,10 @@ export default function Wizard({ onDone, onExit }) {
 
             {step.id === 'pair' && <PairStep step={step} />}
             {step.id === 'claude' && <ClaudeStep step={step} refresh={refresh} />}
-            {step.id === 'git' && <GitStep step={step} ghLogin={view?.ghLogin} refresh={refresh} />}
+            {step.id === 'git' && <GitStep step={step} refresh={refresh} />}
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}
-            {step.id === 'repo' && <RepoStep step={step} refresh={refresh} />}
+            {step.id === 'repo' && <WizardRepoStep step={step} refresh={refresh} />}
             {step.id === 'telemetry' && <TelemetryStep step={step} refresh={refresh} />}
             {step.id === 'health' && <HealthStep step={step} refresh={refresh} onOpen={finish} />}
 

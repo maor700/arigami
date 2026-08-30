@@ -11,6 +11,7 @@ import { useT } from '../lib/i18n.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { toast, toastError } from '../lib/toast.js';
 import { LANGS, LANG_IDS } from '../lib/langs.js';
+import ConnectionsCard from './setup/ConnectionsCard.jsx';
 
 function Toggle({ on, onChange, disabled }) {
   return (
@@ -692,6 +693,7 @@ export default function Settings({ onClose }) {
             />
           </Field>
 
+          <ConnectionsCard />
           <RemoteAccess />
           <WebhooksCard />
           <WhatsAppBridge />

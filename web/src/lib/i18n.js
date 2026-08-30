@@ -24,11 +24,13 @@ import { strings as wizardEn } from '../locales/en/wizard.js';
 import { strings as telemetryEn } from '../locales/en/telemetry.js';
 import { strings as telemetryHe } from '../locales/he/telemetry.js';
 import { strings as wizardHe } from '../locales/he/wizard.js';
+import { strings as setupEn } from '../locales/en/setup.js';
+import { strings as setupHe } from '../locales/he/setup.js';
 
 // Core (settings/common) + per-module fragments. Fragments are authored per
 // area so localization work never collides on one file.
-const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn, ...wizardEn, ...telemetryEn };
-const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe, ...wizardHe, ...telemetryHe };
+const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn, ...wizardEn, ...telemetryEn, ...setupEn };
+const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe, ...wizardHe, ...telemetryHe, ...setupHe };
 
 const DICTS = { en, he };
 
@@ -65,6 +67,7 @@ export function dirOf(s) {
 
 // Hook form — re-renders the component when the language pref changes.
 export function useT() {
-  useSyncExternalStore(subscribe, () => getPrefs().language);
+  const lang = () => getPrefs().language;
+  useSyncExternalStore(subscribe, lang, lang);
   return t;
 }

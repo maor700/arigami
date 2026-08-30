@@ -7,7 +7,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { faCheck, faRotateRight, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faRotateRight, faXmark, faArrowRight, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
+import { useStore } from '../lib/store.js';
+import { OAuthCodeStep } from './setup/index.js';
+import * as setupApi from '../lib/setup-api.js';
 
 const PILL = {
   ok: 'border-[#bfe3cf] bg-[#EAF6EF] text-[#2f7d4f]',
@@ -241,47 +244,51 @@ export function AddRepo({ onAdd, busy }) {
 // missing (or unauthenticated) there's no session to open. Those two global
 // steps therefore hard-gate the "Go!" button: we surface the fix (install
 // command / token) + a Recheck, and only enable Go once both are ok.
-function Welcome({ steps, onGo, onRecheck, busy }) {
+// S2 — minimal first screen: Connect Claude → Start. Nothing else blocks;
+// every other capability connects just-in-time from the chat (SetupCard).
+// "Run full setup" reopens the B3 wizard for people who want all the steps.
+function MinimalHero({ claude, onStart, onRecheck, onRunWizard, busy }) {
   const t = useT();
-  const cli = steps.find((s) => s.id === 'claude-cli');
-  const auth = steps.find((s) => s.id === 'claude-auth');
-  const blocker = cli && cli.status !== 'ok' ? cli : auth && auth.status !== 'ok' ? auth : null;
-
+  const cli = claude?.data?.cli !== false;
   return (
     <div className="mb-4 overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel">
       <div className="px-4 py-4">
-        <div className="text-[15px] font-bold text-fg">{t('launcher.setup.welcomeTitle')}</div>
-        <p className="mt-1 text-[12px] leading-relaxed text-fgdim">
-          {t('launcher.setup.welcomeBody')}
-        </p>
-
-        {blocker ? (
-          <div className="mt-3 rounded-[9px] border border-[#e7d3a8] bg-[#FBF3E0] px-3 py-2.5">
-            <div className="text-[12px] font-bold text-[#8a6d1f]">
-              {blocker.id === 'claude-cli' ? t('launcher.setup.installCli') : t('launcher.setup.authCli')}
+        <div className="text-[15px] font-bold text-fg">{t('setup.minimal.title')}</div>
+        <p className="mt-1 text-[12px] leading-relaxed text-fgdim">{t('setup.minimal.body')}</p>
+        <ol className="mt-3 flex flex-col gap-3">
+          <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
+            <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[10px]">{claude?.ok ? <Icon icon={faCheck} /> : '1'}</span>
+              {t('setup.minimal.connectClaude')}
             </div>
-            <p className="mt-0.5 text-[11px] leading-snug text-[#8a6d1f]/90">
-              {t('launcher.setup.blockerBody')}
-            </p>
-            {blocker.detail && (
-              <code className="mt-2 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[10.5px] text-[#7a5f18] select-all">
-                {blocker.detail}
-              </code>
+            {claude?.ok ? (
+              <div className="mt-1 text-[11.5px] text-[#2f7d4f]">{t('wizard.claude.connected')}</div>
+            ) : !cli ? (
+              <div className="mt-2">
+                <p className="text-[11px] leading-snug text-[#8a6d1f]">{t('wizard.claude.noCli')}</p>
+                <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[10.5px] select-all">npm i -g @anthropic-ai/claude-code</code>
+                <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
+              </div>
+            ) : (
+              <div className="mt-2"><OAuthCodeStep capability="claude" manual={{ kind: 'oauth', flow: 'pkce', token: true }} onDone={onRecheck} /></div>
             )}
+          </li>
+          <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
+            <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[10px]">2</span>
+              {t('setup.minimal.start')}
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
             <button
-              type="button" onClick={onRecheck}
-              className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
+              type="button" disabled={busy || !claude?.ok} onClick={onStart}
+              className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
             >
-              <Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}
+              {busy ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
             </button>
-          </div>
-        ) : (
-          <button
-            type="button" disabled={busy} onClick={onGo}
-            className="mt-3 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
-          >
-            {busy ? t('launcher.setup.starting') : t('launcher.setup.startOnboarding')}
-          </button>
+          </li>
+        </ol>
+        {onRunWizard && (
+          <button type="button" onClick={onRunWizard} className="mt-3 cursor-pointer text-[11px] text-fgdim underline hover:text-fg">{t('setup.minimal.runFull')}</button>
         )}
       </div>
     </div>
@@ -294,15 +301,21 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [profiles, setProfiles] = useState([]);
+  const [claude, setClaude] = useState(null); // {ok, detail, data} from setup-api.overview()
+  const [more, setMore] = useState(false);
+  const { setupTick, wizardTick } = useStore();
 
   const refresh = useCallback(async () => {
     try {
-      setData(await api.get('/onboarding/status'));
+      const [st, ov] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null)]);
+      setData(st);
+      setClaude(ov?.capabilities?.find((c) => c.id === 'claude') || null);
       setErr(null);
     } catch (e) {
       setErr(e.message);
     }
   }, []);
+  useEffect(() => { if (setupTick || wizardTick) refresh(); }, [setupTick, wizardTick, refresh]);
 
   useEffect(() => {
     refresh();
@@ -369,6 +382,24 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
     }
   };
 
+  // S2 Start — a plain first session (S1 minimal mode gives it the empty
+  // workspace cwd). Everything else is connected just-in-time from the chat.
+  const startSession = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const s = await api.post('/sessions', { title: t('setup.minimal.sessionTitle'), permissionMode: 'bypassPermissions' });
+      onCreated?.(s);
+    } catch (e) {
+      setErr(e.message);
+      setBusy(false);
+    }
+  };
+  const runWizard = async () => {
+    try { await api.post('/onboarding/wizard/reset'); } catch { /* not admin — the wizard still opens read-only */ }
+    onRunWizard?.();
+  };
+
   const applyProfile = async (name) => {
     setBusy(true);
     try {
@@ -411,7 +442,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
           <button
             type="button"
             title={t('launcher.setup.runWizardHint')}
-            onClick={async () => { try { await api.post('/onboarding/wizard/reset'); } catch { /* not admin — the wizard still opens read-only */ } onRunWizard(); }}
+            onClick={runWizard}
             className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg"
           >
             {t('launcher.setup.runWizard')}
@@ -435,10 +466,22 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
         {data && (
           <>
-            {!workspaceReady && (
-              <Welcome steps={steps} onGo={startOnboarding} onRecheck={refresh} busy={busy} />
-            )}
+            <MinimalHero claude={claude} onStart={startSession} onRecheck={refresh} onRunWizard={onRunWizard ? runWizard : null} busy={busy} />
 
+            <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
+              {more ? '▾' : '▸'} {t('setup.minimal.more')}{workspaceReady ? '' : ` · ${t('setup.minimal.moreHint')}`}
+            </button>
+            {more && (
+            <>
+            {!workspaceReady && (
+              <div className="mb-4 rounded-[10px] border border-border bg-panel px-4 py-3">
+                <div className="text-[12px] font-bold text-fg">{t('launcher.setup.welcomeTitle')}</div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-fgdim">{t('launcher.setup.welcomeBody')}</p>
+                <button type="button" disabled={busy} onClick={startOnboarding} className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-panel px-4 py-1.5 text-[12px] font-bold text-fg hover:bg-brand disabled:opacity-50">
+                  {busy ? t('launcher.setup.starting') : t('launcher.setup.startOnboarding')}
+                </button>
+              </div>
+            )}
             <Section title={t('launcher.setup.connections')}>
               {global.map((s) => (
                 <StepRow key={s.id} step={s} onFix={fix} busy={busy} />
@@ -504,6 +547,8 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                   </div>
                 ))}
               </Section>
+            )}
+            </>
             )}
           </>
         )}

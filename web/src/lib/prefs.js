@@ -154,7 +154,12 @@ function read() {
 let state = read();
 const listeners = new Set();
 
+// No-DOM guard: the same modules are imported by `bun test` (S2 renders the
+// setup components with react-dom/server), where `document` doesn't exist.
+const HAS_DOM = typeof document !== 'undefined' && !!document.documentElement;
+
 function applyTheme() {
+  if (!HAS_DOM) return;
   document.documentElement.dataset.theme = state.theme;
 }
 
@@ -163,6 +168,7 @@ function applyTheme() {
 // rebrands the whole UI. The favicon can't read CSS vars, so it's baked from the
 // resolved accent + logo preset.
 function applyBranding() {
+  if (!HAS_DOM) return;
   const root = document.documentElement;
   if (state.accent) root.style.setProperty('--color-brand', state.accent);
   else root.style.removeProperty('--color-brand');
@@ -194,7 +200,7 @@ export function setPrefs(patch) {
 }
 
 export function usePrefs() {
-  return useSyncExternalStore(subscribe, getPrefs);
+  return useSyncExternalStore(subscribe, getPrefs, getPrefs);
 }
 
 // Effective terminal view for a session: per-session override wins over the
