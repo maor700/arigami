@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createShareTokens, clampDays } from '../server/share-token.ts';
+import { rewriteAbsoluteRefs } from '../server/artifacts.ts';
 import { parseArtifactUrl, rewriteBaseForShare } from '../server/artifacts.ts';
 import { runInChild } from './_child.js';
 
@@ -123,6 +124,25 @@ describe('share-token: sign/verify', () => {
   });
 });
 
+describe('share-token: asset scope (F5)', () => {
+  test('scope rides in the payload; hidden from list()/listFor; unshare-style revokeFor spares it, includeAssets kills it', () => {
+    const dir = tmp('st-scope-');
+    const st = createShareTokens({ dir });
+    const link = st.sign({ kind: 'artifact', id: 'A', days: 3, ver: 1 });
+    const asset = st.sign({ kind: 'artifact', id: 'A', days: 1, scope: 'assets' });
+    expect(st.verify(asset.token, { kind: 'artifact', id: 'A' })).toMatchObject({ ok: true, payload: { scope: 'assets', id: 'A' } });
+    expect(st.verify(asset.token, { kind: 'artifact', id: 'B' }).ok).toBe(false);
+    expect(st.verify(link.token, { kind: 'artifact', id: 'A' }).payload.scope).toBeUndefined();
+    expect(st.list().map((x) => x.nonce)).toEqual([link.nonce]);
+    expect(st.listFor('artifact', 'A').map((x) => x.nonce)).toEqual([link.nonce]);
+    expect(st.revokeFor('artifact', 'A')).toBe(1);
+    expect(st.verify(link.token, { kind: 'artifact', id: 'A' }).ok).toBe(false);
+    expect(st.verify(asset.token, { kind: 'artifact', id: 'A' }).ok).toBe(true);
+    expect(st.revokeFor('artifact', 'A', { includeAssets: true })).toBe(1);
+    expect(st.verify(asset.token, { kind: 'artifact', id: 'A' })).toMatchObject({ ok: false, reason: 'link revoked' });
+  });
+});
+
 describe('artifacts: share URL helpers (pure)', () => {
   test('parseArtifactUrl: query form, path form, redirect form, escapes', () => {
     expect(parseArtifactUrl('/__artifacts/abc/?t=TOK')).toEqual({ aid: 'abc', rel: '/', token: 'TOK', query: '?t=TOK', hadTrailing: true });
@@ -134,6 +154,17 @@ describe('artifacts: share URL helpers (pure)', () => {
     expect(parseArtifactUrl('/__artifacts/')).toBeNull();
     expect(parseArtifactUrl('/__host/')).toBeNull();
     expect(parseArtifactUrl('/__artifacts/%zz')).toBeNull();
+  });
+  test('rewriteAbsoluteRefs (F5): root-absolute refs to THIS artifact get the token; others untouched; idempotent', () => {
+    const html = '<base href="/__artifacts/A1/~t/T/v1/"><img src="/__artifacts/A1/v1/x.png"><a href=\'/__artifacts/A1/doc.pdf\'>d</a><img src="/__artifacts/B2/y.png"><img src="./z.png"><a href="/__api/x">';
+    const out = rewriteAbsoluteRefs(html, 'A1', 'T');
+    expect(out).toContain('src="/__artifacts/A1/~t/T/v1/x.png"');
+    expect(out).toContain("href='/__artifacts/A1/~t/T/doc.pdf'");
+    expect(out).toContain('src="/__artifacts/B2/y.png"');
+    expect(out).toContain('src="./z.png"');
+    expect(out).toContain('href="/__api/x"');
+    expect(out.startsWith('<base href="/__artifacts/A1/~t/T/v1/">')).toBe(true);
+    expect(rewriteAbsoluteRefs(out, 'A1', 'T')).toBe(out);
   });
   test('rewriteBaseForShare: only the injected base of that artifact, idempotent', () => {
     const html = '<html><head><base href="/__artifacts/abc/v3/"><title>x</title></head><body><a href="/__artifacts/abc/v3/">no</a></body></html>';

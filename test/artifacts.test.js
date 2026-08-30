@@ -36,10 +36,12 @@ describe('walkSource', () => {
 });
 
 describe('injectBase / scanHtmlWarnings', () => {
-  test('adds <base> after <head> only when missing', () => {
+  test('adds <base> after <head>; overrides an existing base (F5) keeping only its target', () => {
     expect(injectBase('<html><head><title>x</title></head></html>', '/__artifacts/a/v1/')).toBe('<html><head><base href="/__artifacts/a/v1/"><title>x</title></head></html>');
-    const has = '<html><head><base href="./"></head></html>';
-    expect(injectBase(has, '/x/')).toBe(has);
+    expect(injectBase('<html><head><base href="./"></head></html>', '/x/')).toBe('<html><head><base href="/x/"></head></html>');
+    expect(injectBase('<html><head><meta charset="utf-8"><BASE target="_blank" href="https://example.invalid/site/" /></head></html>', '/x/'))
+      .toBe('<html><head><meta charset="utf-8"><base href="/x/" target="_blank"></head></html>');
+    expect(injectBase('<head><base target=_top></head>', '/x/')).toBe('<head><base href="/x/" target=_top></head>');
     expect(injectBase('<p>hi</p>', '/x/')).toBe('<base href="/x/"><p>hi</p>');
   });
   test('warns on root-absolute urls and fetch("/…")', () => {

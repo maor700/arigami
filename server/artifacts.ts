@@ -21,6 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cfg, nano, getSession, upsertArtifact, removeArtifact, findArtifact } from './state.js';
 import type { Artifact } from './state.js';
 import { shareTokens } from './share-token.js';
+import type { ShareScope } from './share-token.js';
 import { publicUrl } from './lib/public-url.js';
 
 export const ARTIFACTS_DIR = path.join(cfg.configDir!, 'uploads', 'artifacts');
@@ -71,11 +72,21 @@ export function walkSource(root: string): WalkEntry[] {
   return out;
 }
 
-// `<base href>` injection: only when the document has none. Placed right after
-// <head> so it precedes every relative URL. Root-absolute URLs (src="/x") are
-// NOT fixed by <base> — those get a warning instead (see scanHtmlWarnings).
+// `<base href>` injection. The artifact is served from `/__artifacts/<id>/v<N>/`
+// (and, for cookie-less viewers, the tokenized `~t/<token>/` form), so the
+// document's OWN base — usually `./` or the site it was built for — would send
+// every relative URL to the wrong place: any existing <base> is overridden
+// (its `target` attribute is kept, that is the only other thing <base> does).
+// Placed right after <head> so it precedes every relative URL. Root-absolute
+// URLs (src="/x") are NOT fixed by <base> — those get a warning instead (see
+// scanHtmlWarnings); `/__artifacts/<id>/…` ones are rewritten at serve time.
 export function injectBase(html: string, href: string): string {
-  if (/<base\s/i.test(html)) return html;
+  const own = /<base(\s[^>]*)?>/i.exec(html);
+  if (own) {
+    const tm = /\starget=(["'][^"']*["']|[^\s>]+)/i.exec(own[1] || '');
+    const tag = `<base href="${href}"${tm ? ` target=${tm[1]}` : ''}>`;
+    return html.slice(0, own.index) + tag + html.slice(own.index + own[0].length);
+  }
   const tag = `<base href="${href}">`;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + tag);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + '<head>' + tag + '</head>');
@@ -206,7 +217,12 @@ export function list(sessionId: string): Artifact[] {
 export function remove(sessionId: string, aid: string): boolean {
   if (!ID_RE.test(aid)) return false;
   const ok = removeArtifact(sessionId, aid);
-  if (ok) fs.rmSync(artifactDir(sessionId, aid), { recursive: true, force: true });
+  if (ok) {
+    fs.rmSync(artifactDir(sessionId, aid), { recursive: true, force: true });
+    // Every token (share links AND asset tokens) dies with the artifact.
+    try { shareTokens().revokeFor('artifact', aid, { includeAssets: true }); } catch {}
+    assetTokenCache.delete(aid);
+  }
   return ok;
 }
 
@@ -299,7 +315,8 @@ export const ARTIFACT_CSP =
 // grant the base is rewritten to the PATH form `/__artifacts/<id>/~t/<token>/v<N>/`
 // and serve() strips that segment. Both forms verify identically.
 
-export interface ShareGrant { aid: string; version: number; nonce: string; exp: number; token: string; }
+// `scope:'assets'` (F5) — the host-minted asset token: any version, no pin.
+export interface ShareGrant { aid: string; version: number; nonce: string; exp: number; token: string; scope?: ShareScope; }
 
 export interface ParsedArtifactUrl {
   aid: string;
@@ -332,15 +349,41 @@ export function parseArtifactUrl(raw: string): ParsedArtifactUrl | null {
 
 // Verify the token on an artifact URL against THAT artifact id. Exported for
 // tests; the gate below wraps it with the HTTP behaviour.
-export function verifyShareToken(token: string, ctx: { kind: 'artifact'; id: string }): { ok: boolean; reason: string; version?: number; nonce?: string; exp?: number } {
+export function verifyShareToken(token: string, ctx: { kind: 'artifact'; id: string }): { ok: boolean; reason: string; version?: number; nonce?: string; exp?: number; scope?: ShareScope } {
   if (!ID_RE.test(ctx.id)) return { ok: false, reason: 'invalid artifact id' };
   const r = shareTokens().verify(token, { kind: ctx.kind, id: ctx.id });
   if (!r.ok) return { ok: false, reason: r.reason };
   const found = findArtifact(ctx.id);
   if (!found) return { ok: false, reason: 'artifact no longer exists' };
   const version = r.payload.ver ?? found.artifact.version;
-  return { ok: true, reason: 'ok', version, nonce: r.payload.nonce, exp: r.payload.exp };
+  return { ok: true, reason: 'ok', version, nonce: r.payload.nonce, exp: r.payload.exp, ...(r.payload.scope ? { scope: r.payload.scope } : {}) };
 }
+
+// ---- F5: asset tokens ----------------------------------------------------------
+// The artifact document runs under CSP `sandbox` (opaque origin) — in the
+// cockpit iframe AND in a top-level window — so the browser treats its
+// sub-requests as cross-site and never attaches the SameSite=Lax session
+// cookie: every `<img>`/`<link>`/`<script>` came back 401. Fix: whoever may
+// see the entry HTML (cookie user, PAT, or a valid share link) gets its
+// `<base>` routed through `/__artifacts/<id>/~t/<token>/`, where <token> is a
+// host-minted, artifact-scoped, 24h capability that opens ONLY that
+// artifact's files. Cached per artifact so an open tab doesn't mint on every
+// reload; re-minted an hour before expiry. Works on http/https/tailscale,
+// top-level or iframe — no cookie involved.
+export const ASSET_TOKEN_DAYS = 1;
+const ASSET_TOKEN_REFRESH_MS = 3_600_000;
+const assetTokenCache = new Map<string, { token: string; exp: number }>();
+
+export function assetToken(aid: string, now = Date.now()): string {
+  const hit = assetTokenCache.get(aid);
+  if (hit && hit.exp - now > ASSET_TOKEN_REFRESH_MS) return hit.token;
+  const { token, exp } = shareTokens().sign({ kind: 'artifact', id: aid, days: ASSET_TOKEN_DAYS, scope: 'assets' });
+  assetTokenCache.set(aid, { token, exp });
+  return token;
+}
+
+// Test hook: forget the cached tokens (they stay valid until expiry).
+export function resetAssetTokenCache(): void { assetTokenCache.clear(); }
 
 // auth.ts ShareGate: called only when the request has NO principal and targets
 // /__artifacts. Never sets req.auth — a share grant is not a user.
@@ -353,7 +396,7 @@ export function shareGate(req: IncomingMessage, res: ServerResponse): 'granted' 
     res.end(`<!doctype html><title>Link expired</title><body style="font-family:system-ui;padding:40px"><h1>Link expired</h1><p>${escapeHtml(v.reason)}</p><p>Ask the person who shared it for a fresh link.</p>`);
     return 'denied';
   }
-  (req as any).share = { aid: u.aid, version: v.version!, nonce: v.nonce!, exp: v.exp!, token: u.token } satisfies ShareGrant;
+  (req as any).share = { aid: u.aid, version: v.version!, nonce: v.nonce!, exp: v.exp!, token: u.token, ...(v.scope ? { scope: v.scope } : {}) } satisfies ShareGrant;
   return 'granted';
 }
 
@@ -428,9 +471,10 @@ export function serve(req: IncomingMessage, res: ServerResponse): boolean {
     res.end();
     return true;
   }
-  if (grant) {
-    // Pin to the signed version: bare paths get it prepended, an explicit
-    // different `v<N>/` is refused.
+  if (grant && !grant.scope) {
+    // Share link: pin to the signed version — bare paths get it prepended, an
+    // explicit different `v<N>/` is refused. (An asset-scope grant is any
+    // version: the <base> of the served HTML already names the pinned one.)
     const segs = rel.split('/').filter((x) => x.length);
     const vm = segs.length ? VERSION_RE.exec(segs[0]) : null;
     if (vm) { if (Number(vm[1]) !== grant.version) { res.writeHead(403, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); res.end('forbidden'); return true; } }
@@ -455,11 +499,15 @@ export function serve(req: IncomingMessage, res: ServerResponse): boolean {
     // everything else is addressed by version and immutable.
     'cache-control': isHtml ? 'no-store' : 'private, max-age=31536000, immutable',
   };
-  if (grant && isHtml) {
-    // Cookie-less viewer: sub-resources must carry the token too → route the
-    // injected <base> through the path form. Only the base tag is touched.
+  if (isHtml) {
+    // The document is sandboxed (opaque origin) → its sub-requests carry no
+    // cookie. Route the injected <base> (and any root-absolute
+    // `/__artifacts/<id>/…` reference, which <base> does not cover) through
+    // the tokenized path form: a share grant keeps ITS token (version-pinned),
+    // everyone else gets the host's asset token for this artifact.
     const html = fs.readFileSync(hit.file, 'utf8');
-    const body = rewriteBaseForShare(html, aid, grant.token);
+    const token = grant && !grant.scope ? grant.token : (grant?.token ?? assetToken(aid));
+    const body = rewriteAbsoluteRefs(rewriteBaseForShare(html, aid, token), aid, token);
     headers['content-length'] = Buffer.byteLength(body);
     res.writeHead(200, headers);
     if (req.method === 'HEAD') res.end(); else res.end(body);
@@ -476,6 +524,15 @@ export function serve(req: IncomingMessage, res: ServerResponse): boolean {
 // `<base href="/__artifacts/<aid>/v3/…">` → `<base href="/__artifacts/<aid>/~t/<token>/v3/…">`
 export function rewriteBaseForShare(html: string, aid: string, token: string): string {
   const re = new RegExp(`(<base\\s[^>]*href=["'])(/__artifacts/${aid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)(?!${TOKEN_SEG}/)`, 'i');
+  return html.replace(re, (_m, pre: string, base: string) => `${pre}${base}${TOKEN_SEG}/${token}/`);
+}
+
+// F5: `src="/__artifacts/<aid>/x.png"` → `src="/__artifacts/<aid>/~t/<token>/x.png"`.
+// Root-absolute URLs bypass <base>; a page that references its own artifact
+// path that way (e.g. a link copied from an earlier publish) is fixed here.
+// Only attribute values are touched, and never an already-tokenized one.
+export function rewriteAbsoluteRefs(html: string, aid: string, token: string): string {
+  const re = new RegExp(`((?:src|href|poster|data)=["'])(/__artifacts/${aid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)(?!${TOKEN_SEG}/)`, 'gi');
   return html.replace(re, (_m, pre: string, base: string) => `${pre}${base}${TOKEN_SEG}/${token}/`);
 }
 

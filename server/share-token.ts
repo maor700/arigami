@@ -27,7 +27,14 @@ export interface SharePayload {
   exp: number;     // unix ms
   nonce: string;
   ver?: number;    // artifact: the version pinned when the link was minted
+  scope?: ShareScope;
 }
+
+// F5: `scope:'assets'` marks the short-lived token the host itself mints so a
+// sandboxed (opaque-origin, cookie-less) artifact document can fetch its own
+// sub-resources. It is NOT a share link: hidden from the share lists, not
+// revoked by `unshare()`, any version of that artifact, 24h TTL.
+export type ShareScope = 'assets';
 
 export interface IssuedToken {
   nonce: string;
@@ -35,6 +42,7 @@ export interface IssuedToken {
   id: string;
   exp: number;
   ver?: number;
+  scope?: ShareScope;
   label?: string;
   createdAt: string;
 }
@@ -44,6 +52,7 @@ export interface SignInput {
   id: string;
   days?: number;   // default `defaultDays`, clamped to (0, maxDays]
   ver?: number;
+  scope?: ShareScope;
   label?: string;  // free text for the admin list (e.g. artifact title)
 }
 
@@ -142,10 +151,11 @@ export function createShareTokens(opts: ShareTokenOptions) {
     const nonce = crypto.randomBytes(12).toString('base64url');
     const payload: SharePayload = { kind: input.kind, id: input.id, exp, nonce };
     if (input.ver != null) payload.ver = input.ver;
+    if (input.scope) payload.scope = input.scope;
     const p = b64u(JSON.stringify(payload));
     const token = `${p}.${b64u(mac(p))}`;
     const issued = readIssued();
-    issued.push({ nonce, kind: input.kind, id: input.id, exp, ...(input.ver != null ? { ver: input.ver } : {}), ...(input.label ? { label: String(input.label).slice(0, 120) } : {}), createdAt: new Date(now()).toISOString() });
+    issued.push({ nonce, kind: input.kind, id: input.id, exp, ...(input.ver != null ? { ver: input.ver } : {}), ...(input.scope ? { scope: input.scope } : {}), ...(input.label ? { label: String(input.label).slice(0, 120) } : {}), createdAt: new Date(now()).toISOString() });
     writeJson(issuedFile, issued);
     return { token, exp, nonce };
   }
@@ -182,15 +192,17 @@ export function createShareTokens(opts: ShareTokenOptions) {
     if (hit) writeJson(issuedFile, issued.filter((x) => x.nonce !== nonce));
     return true;
   }
-  // Every live token for one resource (e.g. all links of an artifact).
-  function revokeFor(kind: ShareKind, id: string): number {
+  // Every live SHARE token for one resource (e.g. all links of an artifact).
+  // Asset-scope tokens survive unless `includeAssets` (artifact deleted).
+  function revokeFor(kind: ShareKind, id: string, opts: { includeAssets?: boolean } = {}): number {
     const issued = readIssued();
-    const mine = issued.filter((x) => x.kind === kind && x.id === id);
+    const match = (x: IssuedToken): boolean => x.kind === kind && x.id === id && (opts.includeAssets || !x.scope);
+    const mine = issued.filter(match);
     if (!mine.length) return 0;
     const revoked = readRevoked();
     for (const x of mine) revoked[x.nonce] = x.exp;
     writeJson(revokedFile, revoked);
-    writeJson(issuedFile, issued.filter((x) => !(x.kind === kind && x.id === id)));
+    writeJson(issuedFile, issued.filter((x) => !match(x)));
     return mine.length;
   }
   // Rotate the secret: every token ever minted becomes invalid, lists reset.
@@ -201,7 +213,9 @@ export function createShareTokens(opts: ShareTokenOptions) {
     writeJson(issuedFile, []);
     return n;
   }
-  const list = (): IssuedToken[] => readIssued().sort((a, b) => a.exp - b.exp);
+  // Share links only — the host's own asset tokens are an implementation
+  // detail (they never leave the served HTML) and would only clutter Settings.
+  const list = (): IssuedToken[] => readIssued().filter((x) => !x.scope).sort((a, b) => a.exp - b.exp);
   const listFor = (kind: ShareKind, id: string): IssuedToken[] => list().filter((x) => x.kind === kind && x.id === id);
 
   return { sign, verify, revoke, revokeFor, revokeAll, list, listFor, defaultDays, maxDays, files: { secretFile, revokedFile, issuedFile } };
