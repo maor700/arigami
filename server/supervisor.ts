@@ -50,6 +50,7 @@ export interface SessionView {
   // --- system failures
   lastErrorClass?: ErrorClass | null;
   accountsExhausted?: boolean; // limit hit and no pooled account left
+  accountsAvailable?: boolean; // at least one pooled account is usable right now
   modelRungsLeft?: number; // rungs still below the current one in the chain
   mcpDown?: string[]; // MCP servers currently reported down
   mcpRequired?: boolean; // one of them is genuinely required for this session
@@ -226,12 +227,16 @@ export function decide(input: {
   // A model rung we dropped to has served its purpose once the top rung's quota
   // reset — climb back before anything else, so the session runs on the model the
   // human actually picked.
-  if ((v.modelRung || 0) > 0 && shouldRestoreModel(v.modelRestoreAt, th.now))
+  // Climbing back only makes sense if the top rung can actually run: with every
+  // pooled account still quarantined it would be downgraded again on the next
+  // turn, and the session would flap between rungs.
+  if ((v.modelRung || 0) > 0 && shouldRestoreModel(v.modelRestoreAt, th.now) && v.accountsAvailable !== false)
     return { action: 'model-restore', health: cl.state, reason: 'quota-reset', next: w };
 
   // Already handed to a human and nothing has moved since — the ladder is over.
-  // Re-notify on the cadence, but never walk it again (that is what turns a
-  // one-off failure into a nudge loop).
+  // Re-notify on the cadence (the escalation itself counts as the first push, so
+  // the next one is an hour out), but never walk the ladder again: that is what
+  // turns a one-off failure into a nudge loop.
   if (w.escalatedAt && (v.lastActivityAt || 0) <= w.escalatedAt) {
     if (th.now - w.lastNotifyAt >= th.notifyEveryMs)
       return { action: 'notify-human', health: cl.state, reason: cl.reason, next: bump(w, { lastNotifyAt: th.now }) };
@@ -288,12 +293,12 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
   if (cl.reason === 'proc-dead')
     return w.respawns < th.maxRespawns
       ? out('respawn', bump(w, { respawns: w.respawns + 1 }))
-      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'respawn', attempts: w.respawns }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'respawn', attempts: w.respawns }, true);
 
   if (cl.reason === 'auth')
     return w.authRetries < th.maxAuthRetries
       ? out('refresh-auth', bump(w, { authRetries: w.authRetries + 1 }))
-      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'refresh-auth', attempts: w.authRetries }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'refresh-auth', attempts: w.authRetries }, true);
 
   // The account pool is exhausted — the account switch in claude.js already ran
   // and found nothing. Drop a rung of the model chain and keep working; only the
@@ -301,11 +306,11 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
   if (cl.reason === 'accounts-exhausted')
     return (v.modelRungsLeft || 0) > 0
       ? out('model-down', w, { rungsLeft: v.modelRungsLeft })
-      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'model-ladder' }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'model-ladder' }, true);
 
   if (cl.reason === 'mcp-down')
     return v.mcpRequired
-      ? out('escalate', bump(w, { escalatedAt: th.now }), { after: 'mcp', servers: v.mcpDown }, true)
+      ? out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'mcp', servers: v.mcpDown }, true)
       : out('disable-mcp', w, { servers: v.mcpDown });
 
   return out('none', w);
@@ -326,7 +331,7 @@ function stalled(v: SessionView, cl: Classification, w: Watermark, th: Threshold
 
   if (w.nudges < th.maxNudges) return out('nudge', bump(next, { nudges: w.nudges + 1 }));
   if (w.respawns < th.maxRespawns) return out('respawn', bump(next, { respawns: w.respawns + 1 }));
-  return out('escalate', bump(next, { escalatedAt: th.now }), true);
+  return out('escalate', bump(next, { escalatedAt: th.now, lastNotifyAt: th.now }), true);
 }
 
 /** A successful turn clears the ladder counters — the session is healthy again. */

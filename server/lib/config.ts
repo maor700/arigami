@@ -150,6 +150,8 @@ export interface SupervisorConfig {
   reportGraceMin: number;
   notifyEveryMin: number;
   maxRespawns: number;
+  /** How long to stay on a weaker rung when the CLI never said when the quota resets. */
+  modelBackoffMin: number;
 }
 
 export interface Config {
@@ -305,6 +307,7 @@ export const DEFAULTS: Config = {
     reportGraceMin: 2,
     notifyEveryMin: 60,
     maxRespawns: 2,
+    modelBackoffMin: 60,
   },
 };
 
@@ -427,6 +430,7 @@ function envOverrides(): Partial<Config> {
   if (num(E.ARIGAMI_SUPERVISOR_STALL_MIN)) sup.stallMin = num(E.ARIGAMI_SUPERVISOR_STALL_MIN)!;
   if (num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)) sup.reportGraceMin = num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)!;
   if (num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)) sup.notifyEveryMin = num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)!;
+  if (num(E.ARIGAMI_MODEL_BACKOFF_MIN)) sup.modelBackoffMin = num(E.ARIGAMI_MODEL_BACKOFF_MIN)!;
   if (Object.keys(sup).length) o.supervisor = { ...DEFAULTS.supervisor, ...sup };
   return o;
 }

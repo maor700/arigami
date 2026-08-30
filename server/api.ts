@@ -4841,6 +4841,13 @@ export async function handle(
         return badRequest(res, error.message);
       }
     }
+    // RES1: climb back to the top rung of the model ladder NOW, without waiting
+    // for the quota reset the supervisor is counting down to.
+    if (sub === 'model/restore' && m === 'POST') {
+      const to = claude.restoreModel(id);
+      if (!to) return badRequest(res, 'this session is already on the top rung of its model chain');
+      return json(res, { ok: true, model: to });
+    }
     if (sub === 'effort' && m === 'POST') {
       const { effort } = (await readBody(req)) as any;
       try {

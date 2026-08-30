@@ -153,6 +153,7 @@ export function viewOf(s: Session, now = Date.now()): SessionView {
     lastErrorClass: errClass,
     // A limit we could not route around: the account pool is dry.
     accountsExhausted: errClass === 'limit' && accountsAllLimited(),
+    accountsAvailable: !accountsAllLimited(),
     modelRungsLeft: ladder.rungsLeft,
     mcpDown: down,
     mcpRequired: mcpRequired(s, down),
@@ -286,7 +287,12 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'model-down': {
-      const r = claude.downgradeModel(id, { resetAt: null, why: 'all accounts limited' });
+      // Climb back when the earliest quarantined account frees up, if we know.
+      const soonest = (listAccounts().accounts as any[])
+        .filter((a) => a.pool && a.quarantineUntil)
+        .map((a) => a.quarantineUntil)
+        .sort()[0] as string | undefined;
+      const r = claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
       if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model });
       else if (r.reason === 'bottom') incident(id, d, 'failed', { reason: 'bottom-rung' });
       return;

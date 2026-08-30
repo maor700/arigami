@@ -886,8 +886,11 @@ export function chainFor(id) {
     sessionChain: s?.claude?.modelChain,
     agentChain: agent?.modelChain,
     configChain: cfg.modelChain,
-    // The top rung is whatever this session actually runs on today.
-    modelChoice: s?.claude?.modelChoice || agent?.model || cfg.defaultModel || null,
+    // The top rung is the model the session is MEANT to run on. While it is
+    // downgraded that is `modelDowngradedFrom`, not the weaker rung it is on —
+    // reading modelChoice here would re-root the chain at every downgrade and
+    // make "restore to the top" restore to the model we just dropped to.
+    modelChoice: s?.claude?.modelDowngradedFrom || s?.claude?.modelChoice || agent?.model || cfg.defaultModel || null,
   });
 }
 
@@ -908,6 +911,7 @@ const ladderCooldown = new Set(); // guards against a downgrade cascade per sess
  *   {ok:false, reason:'bottom'} — no rung left; the ONE limit case a human owns
  *   {ok:false, reason:'cooling'|'failed'} — a downgrade is already in flight
  */
+/** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
 export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
   const { chain, rung } = ladderState(id);
   const nxt = nextRung(chain, rung);
@@ -924,11 +928,16 @@ export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
     kind: 'system',
     text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing`,
   });
+  // When the CLI never told us when the quota resets, arm the climb back after
+  // cfg.supervisor.modelBackoffMin instead of never — a downgrade that can't
+  // expire would quietly pin the session to the weakest model forever.
+  const restoreAt =
+    resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
   try {
     restartWith(id, {
       modelChoice: nxt.model,
       modelRung: nxt.rung,
-      modelRestoreAt: resetAt || null,
+      modelRestoreAt: restoreAt,
       modelDowngradedFrom: chain[0] || from,
     });
   } catch {
@@ -1265,7 +1274,9 @@ function handleEvent(id, j) {
         // RES1: the model itself is unavailable/overloaded — no account switch
         // can fix that, so go straight down one rung of the model chain.
         else if (j.is_error && MODEL_UNAVAILABLE_RE.test(text)) {
-          const stepped = downgradeModel(id, { resetAt: parseResetAt(text), why: 'model unavailable' });
+          // No reset time to parse here — an unavailable/overloaded model says
+          // nothing about quota. Fall back to cfg.supervisor.modelBackoffMin.
+          const stepped = downgradeModel(id, { resetAt: null, why: 'model unavailable' });
           if (stepped.ok) recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, cause: 'unavailable' });
           else if (stepped.reason === 'bottom') recordIncident(id, 'escalate', { after: 'model-ladder', cause: 'unavailable' }, 'escalated');
         }
