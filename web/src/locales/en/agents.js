@@ -12,9 +12,6 @@ export const strings = {
   'rail.teamHomeChat': 'Home chat',
   'rail.teamOpenPage': 'Agent page',
   'rail.teamActions': 'Agent actions',
-  'rail.teamNewAgentTitle': 'New agent',
-  'rail.teamNewAgentPrompt':
-    'Set up a new agent for my team. Ask me only for a name, an emoji and 2–5 lines of persona (what it does + its limits); pick sensible defaults for everything else (default model, no budget, no tool restrictions, no skills) unless I say otherwise. Then call create_agent with confirm:true so I can review the card before it is created.',
   'rail.teamOpenFailed': 'Could not open the agent’s home chat',
 
   // ---- AgentCard.jsx ----
@@ -82,6 +79,13 @@ export const strings = {
   'agent.page.noEpisodes': 'No episodes yet — they are written when a session reports or is archived.',
   'agent.page.home': 'home',
   'agent.page.created': 'created {when}',
+
+  // UX2 — creating an agent through the surface (AgentView in create mode), not a session
+  'agent.page.createTitle': 'New agent',
+  'agent.page.create': 'Create agent',
+  'agent.page.createdToast': 'Agent created',
+  'agent.page.cancel': 'Cancel',
+  'agent.page.tabDisabledHint': 'Available after creation',
 
   // A2 — connections per agent
   'agent.conn.title': 'Connections of {name}',
@@ -222,4 +226,13 @@ export const strings = {
   'chat.delegatedOpenSession': 'open session',
   'session.bornFrom': 'Work session · born from {name}',
   'session.bornFromTitle': 'Born from {name} — open the agent',
+
+  // UX2 — "adopt agent": an existing session adopts an existing agent from its
+  // next turn on, without spawning a new session
+  'dialogs.cmdAdoptDesc': 'Adopt an existing agent into this session, from the next turn',
+  'dialogs.adoptUsage': 'Usage: /adopt <agent>',
+  'chat.agentAdopted': '{name} adopted into this session',
+  'chat.agentAdoptedHint': '· its persona, tools, policy and budget apply from the next turn on — earlier turns ran without it.',
+  'chat.agentAdoptRevert': 'Back to normal',
+  'chat.agentAdoptReverted': 'Adoption reverted — back to normal',
 };

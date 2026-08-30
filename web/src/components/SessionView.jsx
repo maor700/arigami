@@ -942,7 +942,14 @@ function ChatFooter({ session }) {
     if (r.type === 'as-usage') { toastError(t('dialogs.asUsage')); return; }
     if (r.type === 'unknown-agent') { toastError(t('dialogs.unknownAgent', { name: r.name })); return; }
     if (r.type === 'agent-new') {
-      await api.post(`/sessions/${session.id}/agent-card`, { name: r.name || '' });
+      // UX2: no session-spawning "interview" — opens the same agent surface an
+      // existing agent uses, just in create mode (AgentView, slug '__new__').
+      openAgent('__new__', 'persona', r.name || '');
+      return;
+    }
+    if (r.type === 'adopt-usage') { toastError(t('dialogs.adoptUsage')); return; }
+    if (r.type === 'adopt') {
+      await api.post(`/sessions/${session.id}/adopt-agent`, { agent: r.agent.slug });
       return;
     }
     if (r.type === 'as') {

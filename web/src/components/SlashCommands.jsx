@@ -34,7 +34,7 @@ export const INSPECT_COMMANDS = [
 
 // Build the filtered, ranked palette for a `/query`. `commands` are the rich
 // objects {name, description, argumentHint} from the initialize handshake.
-// A4: `extra` = the host agent commands (/team, /as, /agent new) + the skills
+// A4/UX2: `extra` = the host agent commands (/team, /as, /agent new, /adopt) + the skills
 // that declare `slash:` (/plan, /review, …) — see lib/composer.js. Host
 // commands sort first; then prefix matches; then alphabetical.
 export function buildSlashItems(query, commands, extra = []) {
