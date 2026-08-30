@@ -473,6 +473,10 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
   }, [onClose]);
   const agent = fetched || (agents || []).find((a) => a.slug === slug) || null;
   const color = agent?.color || '#c4c4c4';
+  // A tab that opens "the agent's home session" (Routine → הוסף דרך הצ׳אט, an
+  // activity row) means the בית tab — leaving the surface for it and being
+  // bounced back by App would only flicker.
+  const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
 
   const navItem = (id) => (
     <button
@@ -492,12 +496,12 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
   let body;
   if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-[12px] text-fgdim">{t('agent.page.notFound')}</div>;
   else if (!agent) body = <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
-  else if (tab === 'home') body = <HomeTab agent={agent} onOpenSession={onOpenSession} />;
+  else if (tab === 'home') body = <HomeTab agent={agent} onOpenSession={openSession} />;
   else if (tab === 'memory') body = <MemoryTab agent={agent} />;
-  else if (tab === 'activity') body = <ActivityTab agent={agent} onOpenSession={onOpenSession} />;
-  else if (tab === 'runs') body = <RunsTab agent={agent} onOpenSession={onOpenSession} />;
+  else if (tab === 'activity') body = <ActivityTab agent={agent} onOpenSession={openSession} />;
+  else if (tab === 'runs') body = <RunsTab agent={agent} onOpenSession={openSession} />;
   else if (tab === 'connections') body = <AgentConnectionsPanel agent={agent} />;
-  else if (tab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={onOpenSession} />;
+  else if (tab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={openSession} />;
   else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={() => setTab('home')} />;
 
   const persona = personaLine(agent?.persona);
