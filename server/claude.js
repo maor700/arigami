@@ -397,11 +397,12 @@ function spawnProc(s, resume) {
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
   ];
   const cwd = untildify(s.cwd) || HOME;
+  const accountEnvSnapshot = accountEnv(s);
   const child = spawn(CLAUDE_BIN, args, {
     cwd,
     env: {
       ...baseEnv(),
-      ...accountEnv(s),
+      ...accountEnvSnapshot,
       ARIGAMI_SESSION_ID: s.id,
       // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
       // to reach THIS host. It is never a link for a human — the host hands out
@@ -434,6 +435,7 @@ function spawnProc(s, resume) {
   supervise(child, `session:${s.id}`);
   const p = {
     capabilitiesHint: capabilitiesHintCache, // F8: the connectable-capabilities line for the first turn
+    hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     child,
     resume,
     spawnedAt: Date.now(),
@@ -771,6 +773,20 @@ async function tryAuthRecover(id, text) {
   if (authRecovering.has(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
+  // F8: the session was spawned before a Claude account existed (fresh
+  // install: "New session" first, Connect Claude second) and an account
+  // resolves NOW → just respawn with it and replay the turn.
+  const p = record(id);
+  if (p && !p.hadToken && accountEnv(s).CLAUDE_CODE_OAUTH_TOKEN) {
+    authRecovering.add(id);
+    const lastMsg = [...(p.sent || [])].pop();
+    appendChat(id, { kind: 'system', text: '⟳ Claude account connected — restarted the session with it' });
+    restart(id, { silent: true });
+    const t = setTimeout(() => { try { if (lastMsg) sendMessage(id, lastMsg); } catch {} }, 900);
+    if (t.unref) t.unref();
+    setTimeout(() => authRecovering.delete(id), 5000);
+    return;
+  }
   if (!resolveRefreshToken(accountId)) {
     // Nothing to refresh: open the Connect-Claude card right here in the chat
     // (paste the code / a token) instead of a dead-end error.
