@@ -33,6 +33,7 @@ import FirstRun from './components/FirstRun.jsx';
 import Settings, { SETTINGS_CATEGORIES } from './components/Settings.jsx';
 import SkillsView from './components/SkillsView.jsx';
 import BrainView from './components/BrainView.jsx';
+import AgentView from './components/AgentView.jsx';
 import Setup from './components/Setup.jsx';
 import Wizard from './components/Wizard.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
@@ -84,6 +85,7 @@ function parseHash(hash) {
     case 'integrations': return { view: 'settings', cat: 'connections', section: 'integrations' };
     case 'skills': return { view: 'skills' };
     case 'brain': return { view: 'brain' };
+    case 'agents': return seg[1] ? { view: 'agent', slug: decodeURIComponent(seg[1]) } : { view: 'home' };
     case 'setup': return { view: 'setup' };
     case 'wizard': return { view: 'home', wizard: true };
     case 'new':
@@ -98,6 +100,7 @@ function routeFromState(s) {
   if (s.settingsOpen) return `#/settings/${s.settingsCat || 'appearance'}${s.settingsSection ? `/${s.settingsSection}` : ''}`;
   if (s.skillsOpen) return '#/skills';
   if (s.brainOpen) return '#/brain';
+  if (s.agentOpen) return `#/agents/${encodeURIComponent(s.agentOpen)}`;
   if (s.setupOpen) return '#/setup';
   if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
   if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
@@ -221,6 +224,7 @@ function Cockpit() {
   const [settingsAdd, setSettingsAdd] = useState(initial.view === 'settings' && !!initial.add); // open the add-Claude-account form
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
   const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
+  const [agentOpen, setAgentOpen] = useState(initial.view === 'agent' ? initial.slug : null); // A1: #/agents/<slug>
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
   // B3: first-run wizard. null = not decided yet (we ask the host once after
   // login); true = show it full-pane; false = dismissed / done for this tab.
@@ -267,6 +271,7 @@ function Cockpit() {
     if (r.view === 'settings') { setSettingsCat(r.cat); setSettingsSection(r.section || ''); setSettingsAdd(!!r.add); }
     setSkillsOpen(r.view === 'skills');
     setBrainOpen(r.view === 'brain');
+    setAgentOpen(r.view === 'agent' ? r.slug : null);
     setSetupOpen(r.view === 'setup');
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
@@ -277,7 +282,7 @@ function Cockpit() {
   // Open Settings on a category (and optionally scroll to a section).
   const openSettings = (cat = 'appearance', section = '', add = false) => {
     setSettingsCat(cat); setSettingsSection(section); setSettingsAdd(add);
-    setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
+    setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setLauncher(null); setRailOpen(false);
   };
 
   // URL ↔ state sync, with real browser history.
@@ -288,9 +293,9 @@ function Cockpit() {
   //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
   //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
   const firstSync = useRef(true);
-  const lastRoute = useRef(routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId }));
+  const lastRoute = useRef(routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId }));
   useEffect(() => {
-    const want = routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId });
+    const want = routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId });
     const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
     // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
     // `#/session/<id>` — leave it alone so the active tab survives a refresh.
@@ -305,7 +310,7 @@ function Cockpit() {
     }
     firstSync.current = false;
     lastRoute.current = want;
-  }, [settingsOpen, settingsCat, settingsSection, settingsAdd, skillsOpen, brainOpen, setupOpen, launcher, previewTicket, selectedId]);
+  }, [settingsOpen, settingsCat, settingsSection, settingsAdd, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId]);
 
   useEffect(() => {
     const onHash = () => {
@@ -713,7 +718,7 @@ function Cockpit() {
   // the extra top bar would only duplicate the title — skip it there and keep
   // the pixels for the chat. Every other view still gets it for drawer access.
   const sessionIsMain =
-    !!selected && !settingsOpen && !skillsOpen && !brainOpen && !setupOpen && !launcher && !previewTicket;
+    !!selected && !settingsOpen && !skillsOpen && !brainOpen && !agentOpen && !setupOpen && !launcher && !previewTicket;
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
     ? t('settings.title')
@@ -721,6 +726,8 @@ function Cockpit() {
       ? t('chrome.topbar.skills')
       : brainOpen
         ? t('chrome.topbar.brain')
+        : agentOpen
+          ? t('agent.page.title')
         : setupOpen
           ? t('chrome.topbar.setup')
           : launcher
@@ -734,6 +741,8 @@ function Cockpit() {
     main = <SkillsView session={selected} onClose={() => setSkillsOpen(false)} />;
   } else if (brainOpen) {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
+  } else if (agentOpen) {
+    main = <AgentView slug={agentOpen} onClose={() => setAgentOpen(null)} onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }} />;
   } else if (wizardOpen) {
     main = <Wizard onDone={closeWizard} onExit={closeWizard} onStart={startFirstSession} />;
   } else if (setupOpen) {
@@ -821,18 +830,20 @@ function Cockpit() {
           setSettingsOpen(false);
           setSkillsOpen(false);
           setBrainOpen(false);
+          setAgentOpen(null);
           setSetupOpen(false);
           setAddTabOpen(false);
           setRailOpen(false);
         }}
-        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
-        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setRailOpen(false); }}
+        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
+        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenAgent={(slug) => { setAgentOpen(slug); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
         searchRef={searchRef}
         onArchive={(s) => setDialog({ type: 'archive', session: s })}
         onEdit={(s) => setDialog({ type: 'edit', session: s })}

@@ -145,7 +145,7 @@ export function listAssets(slug: string): string[] {
 }
 
 export function readPersona(slug: string): string {
-  return readFileSafe(personaFile(slug));
+  return readFileSafe(personaFile(slug)).replace(/\s+$/, '');
 }
 
 export function writePersona(slug: string, text: string): void {
