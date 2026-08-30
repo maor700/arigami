@@ -156,4 +156,5 @@ export const strings = {
   'setup.connections.off': 'כבוי',
   'setup.connections.audit': 'חיבורים אחרונים',
   'setup.connections.noAudit': 'עוד לא נרשמו חיבורים.',
+  'setup.card.owner': 'עבור {name}',
 };

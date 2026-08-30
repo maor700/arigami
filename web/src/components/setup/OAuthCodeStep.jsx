@@ -15,7 +15,8 @@ import { faCheck } from '@fortawesome/free-solid-svg-icons';
 
 const POLL_MS = 2500;
 
-export default function OAuthCodeStep({ capability, manual = {}, onDone, onCancel, sessionId }) {
+export default function OAuthCodeStep({ capability, manual = {}, onDone, onCancel, sessionId, owner }) {
+  const own = owner ? { owner } : {}; // A2: an agent's OAuth account is keyed by its owner
   const t = useT();
   const flow = manual.flow || 'pkce';
   const [mode, setMode] = useState(null); // null | 'link' | 'token'
@@ -34,7 +35,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await setupApi.connect(capability, { action: 'poll', id: link.id });
+        const r = await setupApi.connect(capability, { action: 'poll', id: link.id, ...own });
         if (cancelled) return;
         if (r?.device?.state === 'error') { setErr(r.device.error || 'failed'); return; }
         if (r?.device?.code && !link.code) setLink((l) => ({ ...l, code: r.device.code, url: r.device.url || l.url }));
@@ -52,7 +53,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
 
   const start = () =>
     run(async () => {
-      const r = await setupApi.connect(capability, { action: flow === 'device' ? 'device' : 'start', ...(sessionId ? { sessionId } : {}) });
+      const r = await setupApi.connect(capability, { action: flow === 'device' ? 'device' : 'start', ...(sessionId ? { sessionId } : {}), ...own });
       if (r?.state === 'error' || r?.device?.state === 'error') throw new Error(r.error || r.device?.error || 'could not start sign-in');
       const l = flow === 'device'
         ? { url: r?.device?.url || r?.url, code: r?.device?.code || r?.code, id: r?.id }
@@ -65,7 +66,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
 
   const exchange = () =>
     run(async () => {
-      const r = await setupApi.connect(capability, { action: 'code', id: link?.id, code: code.trim() });
+      const r = await setupApi.connect(capability, { action: 'code', id: link?.id, code: code.trim(), ...own });
       if (r && r.ok === false) throw new Error(r.error || 'exchange failed');
       setCode('');
       setLink(null);

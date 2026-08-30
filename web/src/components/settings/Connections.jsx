@@ -16,6 +16,8 @@ import ConnectDialog from './ConnectDialog.jsx';
 import ClaudeAccounts from './ClaudeAccounts.jsx';
 import Integrations from './Integrations.jsx';
 import Channels from './Channels.jsx';
+import AgentConnectionsPanel from './AgentConnections.jsx';
+import { AgentAvatar } from '../AgentCard.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_DANGER, fmtWhen } from './shared.jsx';
 
 const OWN_SECTION = new Set(['identity', 'claude', 'whatsapp', 'remote', 'push', 'telemetry', 'composio']);
@@ -86,9 +88,26 @@ function Notifications() {
   );
 }
 
+// A2: "שייך ל:" — the hub shows the host's (global) connections or ONE agent's.
+function OwnerFilter({ owner, agents, onChange }) {
+  const t = useT();
+  if (!agents?.length) return null;
+  return (
+    <label className="mb-3 flex items-center gap-2 text-[11.5px]">
+      <span className="font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownerLabel')}</span>
+      <select data-connections-owner value={owner} onChange={(e) => onChange(e.target.value)} className="rounded-[7px] border-[1.5px] border-border bg-panel px-2 py-1 text-[11.5px] text-fg outline-none focus:border-ink">
+        <option value="global">{t('agent.conn.ownerGlobal')}</option>
+        {agents.map((a) => <option key={a.slug} value={`agent:${a.slug}`}>{a.emoji} {a.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
 export default function Connections({ initialAdd = false }) {
   const t = useT();
-  const { setupTick } = useStore();
+  const { setupTick, agents } = useStore();
+  const [owner, setOwner] = useState('global');
+  const ownerAgent = (agents || []).find((a) => `agent:${a.slug}` === owner) || null;
   const [ov, setOv] = useState(null);
   const [err, setErr] = useState(null);
   const [dialog, setDialog] = useState(null); // capability object
@@ -113,10 +132,26 @@ export default function Connections({ initialAdd = false }) {
   const caps = (ov?.capabilities || []).filter((c) => !OWN_SECTION.has(capFamily(c.id)));
   const claudeCap = (ov?.capabilities || []).find((c) => c.id === 'claude');
   const audit = (ov?.audit || []).slice(-10).reverse();
+  const ownerName = (o) => {
+    const a = o && (agents || []).find((x) => `agent:${x.slug}` === o);
+    return a ? `${a.emoji} ${a.name}` : t('agent.conn.ownerGlobal');
+  };
+
+  if (ownerAgent) {
+    // An agent's view: its own connections (settings/AgentConnections.jsx) — host-level sections are the host's.
+    return (
+      <Section id="identity" title={t('agent.conn.title', { name: ownerAgent.name })} first>
+        <OwnerFilter owner={owner} agents={agents} onChange={setOwner} />
+        <div className="mb-3 flex items-center gap-2 text-[12px]"><AgentAvatar agent={ownerAgent} size={18} /> <span className="font-bold">{ownerAgent.name}</span></div>
+        <AgentConnectionsPanel agent={ownerAgent} />
+      </Section>
+    );
+  }
 
   return (
     <>
       <Section id="identity" title={t('setup.connections.identity')} onRefresh={load} first>
+        <OwnerFilter owner={owner} agents={agents} onChange={setOwner} />
         <ErrorLine>{err}</ErrorLine>
         <SettingCard
           title={t('setup.connections.identity')}
@@ -143,6 +178,7 @@ export default function Connections({ initialAdd = false }) {
               <div key={i} className="flex flex-wrap gap-x-2 border-b border-hair py-1 last:border-b-0">
                 <span>{fmtWhen(a.at)}</span>
                 <span className="font-bold text-fg">{a.capability}</span>
+                <span data-audit-owner={a.owner || 'global'} dir="auto">{ownerName(a.owner)}</span>
                 <span>{a.mode}</span>
                 <span className={a.result === 'ok' || a.result === 'done' || a.result === 'already' ? 'text-[#2f7d4f]' : a.result === 'failed' ? 'text-[#9c3b33]' : ''}>{a.result}</span>
                 {a.human ? <span>human</span> : null}

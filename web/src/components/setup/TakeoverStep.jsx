@@ -14,7 +14,7 @@ import * as setupApi from '../../lib/setup-api.js';
 import { BTN, BTN2, INPUT, ErrorBox, OkLine, useAction } from './shared.jsx';
 import { faDisplay } from '@fortawesome/free-solid-svg-icons';
 
-export default function TakeoverStep({ capability = 'identity', sessionId, requestId, onDone }) {
+export default function TakeoverStep({ capability = 'identity', sessionId, requestId, owner, onDone }) {
   const t = useT();
   const s = useStore();
   const [email, setEmail] = useState('');
@@ -32,7 +32,7 @@ export default function TakeoverStep({ capability = 'identity', sessionId, reque
   };
   const verify = () =>
     run(async () => {
-      const r = await setupApi.connect(capability, { action: 'verify', ...(sessionId ? { sessionId } : {}), ...(email.trim() ? { email: email.trim() } : {}) });
+      const r = await setupApi.connect(capability, { action: 'verify', ...(sessionId ? { sessionId } : {}), ...(owner ? { owner } : {}), ...(email.trim() ? { email: email.trim() } : {}) });
       if (r && r.ok === false) throw new Error(r.error || r.detail || t('setup.takeover.notSignedIn'));
       setResult(r);
       onDone?.(r);

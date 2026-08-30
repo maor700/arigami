@@ -1,8 +1,10 @@
-// A1 — the Agent page (#/agents/<slug>), same visual language as Settings:
-// header + tabs פרסונה / זיכרון / פעילות (חיבורים / שגרה are A2 placeholders).
-//   persona   identity fields + the persona textarea → PATCH /__api/agents/:slug
-//   memory    the agent's MEMORY.md + journal (memory namespace agents/<slug>/…)
-//   activity  the agent's sessions + their episodes (GET /__api/agents/:slug/activity)
+// A1/A2 — the Agent page (#/agents/<slug>), same visual language as Settings:
+// header + tabs פרסונה / זיכרון / פעילות / חיבורים / שגרה.
+//   persona      identity fields + the persona textarea → PATCH /__api/agents/:slug
+//   memory       the agent's MEMORY.md + journal (memory namespace agents/<slug>/…)
+//   activity     the agent's sessions + their episodes (GET /__api/agents/:slug/activity)
+//   connections  A2: the agent's own connections + browser profile (settings/AgentConnections.jsx)
+//   routine      A2: cron jobs born from the agent + its listeners (RoutineList.jsx)
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
@@ -14,6 +16,8 @@ import { relTime } from '../lib/time.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { Wave } from './ui.jsx';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
+import AgentConnectionsPanel from './settings/AgentConnections.jsx';
+import RoutinePanel from './RoutineList.jsx';
 import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
 const TABS = ['persona', 'memory', 'activity', 'connections', 'routine'];
@@ -246,7 +250,8 @@ export default function AgentView({ slug, onClose, onOpenSession }) {
   else if (!agent) body = <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
   else if (tab === 'memory') body = <MemoryTab agent={agent} />;
   else if (tab === 'activity') body = <ActivityTab agent={agent} onOpenSession={onOpenSession} />;
-  else if (tab === 'connections' || tab === 'routine') body = <div className="text-[12px] text-fgdim">{t('agent.page.soon')}</div>;
+  else if (tab === 'connections') body = <AgentConnectionsPanel agent={agent} />;
+  else if (tab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={onOpenSession} />;
   else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={openHome} />;
 
   return (

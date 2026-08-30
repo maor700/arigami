@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { Icon } from '../../lib/icons.js';
+import { useStore } from '../../lib/store.js';
 import * as setupApi from '../../lib/setup-api.js';
 import { stepFor } from './index.js';
 import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
@@ -104,6 +105,11 @@ export default function SetupCard({ sessionId, event }) {
   const identity = event.identity || null;
   const autoAllowed = !!autoCapable && !!identity;
   const title = capTitle(t, capability);
+  // A2: a card raised by a session born from an agent connects the AGENT (its
+  // identity / Composio account) — say so, by the agent's name.
+  const { agents } = useStore();
+  const ownerSlug = typeof event.owner === 'string' && event.owner.startsWith('agent:') ? event.owner.slice(6) : null;
+  const ownerAgent = ownerSlug ? (agents || []).find((a) => a.slug === ownerSlug) : null;
 
   // A failure reported by the agent flips the card to MANUAL with the reason
   // (rule 5) unless the human explicitly picks auto again.
@@ -133,6 +139,7 @@ export default function SetupCard({ sessionId, event }) {
     manual,
     sessionId,
     requestId: event.requestId,
+    owner: event.owner,
     onDone: manualDone,
     ...(manual.kind === 'toggle' ? { enabled: !!event.enabled } : {}),
     ...(manual.kind === 'repo' ? { have: event.have || [] } : {}),
@@ -158,6 +165,11 @@ export default function SetupCard({ sessionId, event }) {
           {t('setup.card.needs', { name: title })}
           {event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}
         </span>
+        {ownerSlug && (
+          <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[10px] text-[var(--term-accent-fg)]">
+            {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
+          </span>
+        )}
         <span className="ms-auto"><Pill status={phase} /></span>
       </div>
       {statusLine && (

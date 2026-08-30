@@ -12,7 +12,8 @@ import { capTitle, consentKeys } from '../setup/registry.js';
 import { BTN_SM, BTN2_SM } from '../setup/shared.jsx';
 import { faXmark, faWandMagicSparkles, faHand } from '@fortawesome/free-solid-svg-icons';
 
-export default function ConnectDialog({ cap, identity, onClose, onChanged }) {
+export default function ConnectDialog({ cap, identity, owner = 'global', onClose, onChanged }) {
+  const ownerAgent = owner && owner.startsWith('agent:') ? owner.slice(6) : null; // A2: connect FOR an agent
   const t = useT();
   const autoAllowed = !!cap.autoCapable && !!identity;
   const [mode, setMode] = useState(autoAllowed ? 'auto' : 'manual');
@@ -22,7 +23,7 @@ export default function ConnectDialog({ cap, identity, onClose, onChanged }) {
   const auto = async () => {
     setBusy(true);
     try {
-      await setupApi.connectViaSession(cap.id);
+      await setupApi.connectViaSession(cap.id, { agent: ownerAgent });
       toast(t('setup.connections.autoStarted', { name: title }));
       onClose();
     } catch (e) { toastError(String(e?.message || e)); } finally { setBusy(false); }
@@ -63,7 +64,7 @@ export default function ConnectDialog({ cap, identity, onClose, onChanged }) {
               </div>
             </>
           ) : (
-            <Step capability={cap.id} manual={cap.manual || {}} enabled={!!cap.ok} detail={cap.detail} have={cap.data?.repos || []} onDone={() => { onChanged?.(); onClose(); }} />
+            <Step capability={cap.id} manual={cap.manual || {}} enabled={!!cap.ok} detail={cap.detail} have={cap.data?.repos || []} owner={ownerAgent ? owner : undefined} onDone={() => { onChanged?.(); onClose(); }} />
           )}
         </div>
       </div>
