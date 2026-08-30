@@ -43,6 +43,7 @@ export interface Agent {
   emoji: string;
   color: string;
   model?: string | null; // `claude --model` value; null/absent = CLI default
+  modelChain?: string[] | null; // RES1: this agent's model ladder (overrides cfg.modelChain)
   skills: string[]; // names of SHARED skills the agent should use
   tools?: string[]; // allowlist — families / tool names / mcp__<server>__* patterns (A3: host-enforced, agent-policy.ts)
   domains?: string[]; // allowlist for open_tab + WebFetch (A3: host-enforced)
@@ -66,6 +67,7 @@ export interface AgentInput {
   emoji?: string;
   color?: string;
   model?: string | null;
+  modelChain?: string[] | null;
   skills?: string[];
   tools?: string[];
   domains?: string[];
@@ -224,6 +226,11 @@ function validateFields(input: AgentInput): string | null {
   if (input.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(input.color))) return 'color must be #rrggbb';
   if (input.model !== undefined && input.model !== null && !/^[A-Za-z0-9._:-]{1,80}$/.test(String(input.model)))
     return 'invalid model';
+  if (input.modelChain !== undefined && input.modelChain !== null) {
+    if (!Array.isArray(input.modelChain)) return 'modelChain must be an array of models';
+    for (const m of input.modelChain)
+      if (!/^[A-Za-z0-9._:\[\]-]{1,80}$/.test(String(m))) return `invalid model in modelChain: ${m}`;
+  }
   if (input.persona !== undefined && String(input.persona).length > PERSONA_MAX_CHARS)
     return `persona too long (max ${PERSONA_MAX_CHARS} chars — keep it to ~20 lines)`;
   if (input.budget !== undefined && input.budget !== null) {
@@ -261,6 +268,7 @@ export function createAgent(input: AgentInput): AgentResult {
     emoji: String(input.emoji || EMOJI_DEFAULT),
     color: input.color ? String(input.color) : pickColor(),
     model: input.model ? String(input.model) : null,
+    ...(cleanList(input.modelChain)?.length ? { modelChain: cleanList(input.modelChain) } : {}),
     skills: cleanList(input.skills) || [],
     ...(cleanList(input.tools)?.length ? { tools: cleanList(input.tools) } : {}),
     ...(cleanList(input.domains)?.length ? { domains: cleanList(input.domains) } : {}),
@@ -286,6 +294,11 @@ export function updateAgent(slug: string, patch: AgentInput & { homeSessionId?: 
   if (patch.emoji !== undefined) next.emoji = String(patch.emoji || EMOJI_DEFAULT);
   if (patch.color !== undefined) next.color = String(patch.color);
   if (patch.model !== undefined) next.model = patch.model ? String(patch.model) : null;
+  if (patch.modelChain !== undefined) {
+    const l = cleanList(patch.modelChain);
+    if (l?.length) next.modelChain = l;
+    else delete next.modelChain;
+  }
   if (patch.skills !== undefined) next.skills = cleanList(patch.skills) || [];
   if (patch.tools !== undefined) {
     const l = cleanList(patch.tools);

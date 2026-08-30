@@ -298,6 +298,11 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./triggers.js')
     .then((m: any) => m.startTriggerScheduler())
     .catch((e: any) => console.error('[host] trigger scheduler failed to start:', e?.message));
+  // RES1: the session supervisor — one tick classifies every session and walks
+  // the recovery ladder (server/supervisor.ts is the pure decision).
+  import('./supervisor-loop.js')
+    .then((m: any) => m.startSupervisor())
+    .catch((e: any) => console.error('[host] supervisor failed to start:', e?.message));
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')

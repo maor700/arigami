@@ -37,6 +37,9 @@ interface McpServerHealth {
   statusText?: string;
   at?: number; // when this verdict was recorded
   source?: string; // init | traffic | probe | spawn | stale
+  // RES1: the supervisor took this server out of play for the session after it
+  // stayed down — the model was told, and the session kept working without it.
+  disabled?: boolean;
 }
 
 interface ClaudeState {
@@ -185,7 +188,7 @@ export interface StatusSummary {
   atSeq: number; // chat seq the summary already accounts for (the fold cursor)
 }
 
-interface Session {
+export interface Session {
   id: string;
   title: string;
   color: string;

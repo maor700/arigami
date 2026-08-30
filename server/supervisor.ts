@@ -37,6 +37,7 @@ export interface SessionView {
   procAlive?: boolean; // claude.isRunning(id)
   lastActivityAt?: number; // epoch ms of the last transcript/state activity
   queued?: number; // pendingPrompts.length
+  autoPlay?: boolean; // the queue is set to play itself when the turn ends
 
   // --- owed to a human
   action?: boolean; // an open request_action card
@@ -96,7 +97,9 @@ const BUSY_STATES = new Set(['working', 'restarting']);
 /** True when the session owes a report/answer to somebody in the tree. */
 function owesWork(v: SessionView): boolean {
   if (v.master && !v.reported) return true; // a worker that never reported
-  if ((v.queued || 0) > 0) return true; // queued prompts that never played
+  // A queue only counts as owed when auto-play promised to run it. A queue the
+  // human parked with auto-play OFF is theirs to release, not ours to nudge.
+  if ((v.queued || 0) > 0 && v.autoPlay) return true;
   if (v.waitingOn && !v.waitingOnChildGone) return true; // a master mid-orchestration
   return false;
 }
@@ -164,6 +167,8 @@ export interface Watermark {
   lastNotifyAt: number;
   reportSynthesized: boolean;
   lastRedeliverAt: number;
+  /** When we handed this session to a human. Cleared by the next real progress. */
+  escalatedAt: number;
 }
 
 export const freshWatermark = (): Watermark => ({
@@ -174,6 +179,7 @@ export const freshWatermark = (): Watermark => ({
   lastNotifyAt: 0,
   reportSynthesized: false,
   lastRedeliverAt: 0,
+  escalatedAt: 0,
 });
 
 export interface Decision {
@@ -222,6 +228,15 @@ export function decide(input: {
   // human actually picked.
   if ((v.modelRung || 0) > 0 && shouldRestoreModel(v.modelRestoreAt, th.now))
     return { action: 'model-restore', health: cl.state, reason: 'quota-reset', next: w };
+
+  // Already handed to a human and nothing has moved since — the ladder is over.
+  // Re-notify on the cadence, but never walk it again (that is what turns a
+  // one-off failure into a nudge loop).
+  if (w.escalatedAt && (v.lastActivityAt || 0) <= w.escalatedAt) {
+    if (th.now - w.lastNotifyAt >= th.notifyEveryMs)
+      return { action: 'notify-human', health: cl.state, reason: cl.reason, next: bump(w, { lastNotifyAt: th.now }) };
+    return none();
+  }
 
   // A child that reached a terminal state without report_to_master (§3): the
   // master is never left guessing. Fires once per session (reportSynthesized).
@@ -273,12 +288,12 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
   if (cl.reason === 'proc-dead')
     return w.respawns < th.maxRespawns
       ? out('respawn', bump(w, { respawns: w.respawns + 1 }))
-      : out('escalate', w, { after: 'respawn', attempts: w.respawns }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'respawn', attempts: w.respawns }, true);
 
   if (cl.reason === 'auth')
     return w.authRetries < th.maxAuthRetries
       ? out('refresh-auth', bump(w, { authRetries: w.authRetries + 1 }))
-      : out('escalate', w, { after: 'refresh-auth', attempts: w.authRetries }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'refresh-auth', attempts: w.authRetries }, true);
 
   // The account pool is exhausted — the account switch in claude.js already ran
   // and found nothing. Drop a rung of the model chain and keep working; only the
@@ -286,11 +301,11 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
   if (cl.reason === 'accounts-exhausted')
     return (v.modelRungsLeft || 0) > 0
       ? out('model-down', w, { rungsLeft: v.modelRungsLeft })
-      : out('escalate', w, { after: 'model-ladder' }, true);
+      : out('escalate', bump(w, { escalatedAt: th.now }), { after: 'model-ladder' }, true);
 
   if (cl.reason === 'mcp-down')
     return v.mcpRequired
-      ? out('escalate', w, { after: 'mcp', servers: v.mcpDown }, true)
+      ? out('escalate', bump(w, { escalatedAt: th.now }), { after: 'mcp', servers: v.mcpDown }, true)
       : out('disable-mcp', w, { servers: v.mcpDown });
 
   return out('none', w);
@@ -311,12 +326,12 @@ function stalled(v: SessionView, cl: Classification, w: Watermark, th: Threshold
 
   if (w.nudges < th.maxNudges) return out('nudge', bump(next, { nudges: w.nudges + 1 }));
   if (w.respawns < th.maxRespawns) return out('respawn', bump(next, { respawns: w.respawns + 1 }));
-  return out('escalate', next, true);
+  return out('escalate', bump(next, { escalatedAt: th.now }), true);
 }
 
 /** A successful turn clears the ladder counters — the session is healthy again. */
 export function resetOnProgress(w: Watermark): Watermark {
-  return { ...w, respawns: 0, authRetries: 0, nudges: 0 };
+  return { ...w, respawns: 0, authRetries: 0, nudges: 0, escalatedAt: 0, lastNotifyAt: 0 };
 }
 
 // ---- the model ladder -------------------------------------------------------
