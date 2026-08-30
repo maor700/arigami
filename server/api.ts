@@ -18,6 +18,8 @@ import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
+import * as policy from './agent-policy.js';
+import * as ledger from './agent-ledger.js';
 import {
   changesFor,
   changeDiff,
@@ -806,6 +808,9 @@ function settleAgentCard(sessionId: string, cardId: string, patch: Record<string
 }
 
 const AGENT_WIRE_KEYS = ['id', 'title', 'status', 'archived', 'createdAt', 'updatedAt', 'color'] as const;
+/** The agent a session was born from (metadata.agent), or null. */
+const sessionAgent = (s: { metadata?: Record<string, unknown> } | null | undefined): string | null =>
+  s && typeof s.metadata?.agent === 'string' && s.metadata.agent ? (s.metadata.agent as string) : null;
 
 async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p: string, m: string): Promise<void> {
   if (p === '/__api/agents' && m === 'GET') return json(res, { agents: agents.listAgentViews() });
@@ -829,6 +834,14 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     const body = (await readBody(req)) as any;
     settleAgentCard(String(body.sessionId || ''), cm[1], { state: 'cancelled' }, '[host] The human cancelled the Agent card — do not create the agent.');
     return json(res, { ok: true });
+  }
+  // A3: Settings → מארח → תקציבים — agent × model × daily cap × used today.
+  if (p === '/__api/agents/budgets' && m === 'GET') {
+    const rows = agents.listAgentViews().map((a) => {
+      const b = ledger.budgetState(a.slug)!;
+      return { slug: a.slug, name: a.name, emoji: a.emoji, color: a.color, model: a.model || null, cap: b.cap, usedTokens: b.usedTokens, usedCostUsd: b.usedCostUsd, exceeded: b.exceeded, resetsAt: b.resetsAt };
+    });
+    return json(res, { budgets: rows, day: ledger.localDay() });
   }
   const am = /^\/__api\/agents\/([a-z0-9][a-z0-9-]{0,39})(?:\/(home|activity|connections|routine))?$/.exec(p);
   if (!am) return notFound(res);
@@ -868,6 +881,9 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     let created = false;
     if (s && s.archived) state.patchSession(s.id, { archived: false });
     if (!s) {
+      // A3: a NEW home is a new session of the agent — refused while its daily budget is spent.
+      const b = ledger.budgetState(slug);
+      if (b?.exceeded) return json(res, { error: ledger.budgetRefusal(b, a.name), budget: b }, 429);
       s = state.createSession({
         title: a.name,
         cwd: (cfg as any).reposDir || cfg.defaultCwd,
@@ -894,7 +910,11 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     const sessions = mine
       .map((s) => ({ ...Object.fromEntries(AGENT_WIRE_KEYS.map((k) => [k, (s as any)[k]])), claudeState: s.claude?.state || 'idle', home: s.id === a.homeSessionId }))
       .sort((x: any, y: any) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
-    return json(res, { sessions, episodes });
+    // A3: the ledger (activity.jsonl) for the range — today / 7d / 30d — newest first, with totals + the budget line.
+    const range = ['today', '7d', '30d'].includes(String(u.searchParams.get('range'))) ? String(u.searchParams.get('range')) : 'today';
+    const entries = ledger.readActivity(slug, { since: ledger.rangeStart(range) }).reverse();
+    const limit = Math.min(1000, Math.max(1, Number(u.searchParams.get('limit')) || 300));
+    return json(res, { sessions, episodes, range, entries: entries.slice(0, limit), totals: ledger.totalsOf(entries), budget: ledger.budgetState(slug) });
   }
   return notFound(res);
 }
@@ -1365,6 +1385,13 @@ export function applyAgentToSession<T extends { title?: string; model?: string; 
   if (agentSlug === undefined || agentSlug === null || agentSlug === '') return opts;
   const agent = agents.getAgent(String(agentSlug));
   if (!agent) throw new Error(`unknown agent: ${agentSlug}`);
+  // A3: daily token budget — a spent agent gets no new sessions until local midnight.
+  const b = ledger.budgetState(agent.slug);
+  if (b?.exceeded) {
+    const err = new Error(ledger.budgetRefusal(b, agent.name)) as Error & { status?: number };
+    err.status = 429;
+    throw err;
+  }
   return {
     ...opts,
     model: opts.model || agent.model || undefined,
@@ -3792,7 +3819,8 @@ export async function handle(
         body.metadata = o.metadata;
         agentColor = o.color;
       } catch (e) {
-        return notFound(res, (e as Error).message);
+        const status = (e as { status?: number }).status;
+        return status ? json(res, { error: (e as Error).message }, status) : notFound(res, (e as Error).message);
       }
       const s = state.createSession({
         title: body.title,
@@ -3914,8 +3942,33 @@ export async function handle(
       return notFound(res);
     }
 
+    // A3: the agent policy of this session (mcp/host-mcp.js hides the tools it
+    // lists as hidden; `?names=a,b` = the names to classify).
+    if (sub === 'policy' && m === 'GET') {
+      const pol = policy.policyFor(sessionAgent(s));
+      const names = String(u.searchParams.get('names') || '').split(',').map((x) => x.trim()).filter(Boolean);
+      return json(res, {
+        agent: sessionAgent(s),
+        restrictive: policy.isRestrictive(pol),
+        tools: pol?.tools ?? null,
+        domains: pol?.domains ?? null,
+        autoApprove: pol?.autoApprove ?? [],
+        hidden: names.filter((n) => !policy.toolAllowed(pol, n)),
+      });
+    }
+    // A3: the PreToolUse hook (mcp/policy-hook.js) asks before every tool call.
+    if (sub === 'policy/check' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), String(body?.tool_name || ''), body?.input ?? {}, id);
+      return json(res, v);
+    }
     if (sub === 'tabs' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // A3: a url tab from a session born from an agent must stay inside its domain allowlist.
+      if (body?.type === 'url') {
+        const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'open_tab', { url: body.url }, id);
+        if (!v.allow) return json(res, { error: v.reason }, 403);
+      }
       try {
         return json(res, state.addTab(id, body), 201);
       } catch (e) {
@@ -4097,17 +4150,46 @@ export async function handle(
       return removed ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
     }
     if (sub === 'action' && m === 'POST') {
-      const { prompt, buttons } = (await readBody(req)) as any;
+      const { prompt, buttons, kind: rawKind } = (await readBody(req)) as any;
       if (!prompt || !Array.isArray(buttons))
         return badRequest(res, 'prompt and buttons required');
-      const action = { id: 'act_' + nano(), prompt, buttons };
+      // A3: the card carries the agent (avatar/name in the UI) and the action
+      // `kind`; a kind the human already auto-approved is answered at once.
+      const kind = rawKind !== undefined && rawKind !== null && String(rawKind).trim() ? String(rawKind).trim().toLowerCase() : null;
+      if (kind && !agents.ACTION_KIND_RE.test(kind)) return badRequest(res, `invalid kind: ${kind} — lowercase letters, digits, :._- (max 40)`);
+      const ag = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
+      const action: Record<string, unknown> = { id: 'act_' + nano(), prompt, buttons, ...(kind ? { kind } : {}) };
+      if (ag) action.agent = { slug: ag.slug, name: ag.name, emoji: ag.emoji, color: ag.color };
+      if (ag && kind && (ag.autoApprove || []).includes(kind)) {
+        const pick = buttons.find((b: any) => b?.style === 'primary') || buttons[0];
+        const value = String(pick?.value ?? '');
+        ledger.appendActivity(ag.slug, { kind: 'action', sessionId: id, detail: String(prompt).slice(0, 200), actionKind: kind, value, auto: true });
+        claude.appendChat(id, { kind: 'action-auto', actionId: action.id, prompt, actionKind: kind, value, label: pick?.label || value, agent: action.agent });
+        try {
+          claude.sendMessage(id, value);
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 500);
+        }
+        return json(res, { ...action, autoApproved: true, value }, 201);
+      }
       state.patchSession(id, { action });
       pushIntervention(id, 'action', String(prompt), 'waiting for your answer');
       return json(res, action, 201);
     }
     if (sub === 'action/answer' && m === 'POST') {
-      const { value } = (await readBody(req)) as any;
+      const { value, autoApprove } = (await readBody(req)) as any;
       if (value === undefined) return badRequest(res, 'value required');
+      // A3: the human's answer goes to the agent's ledger; "auto-approve this
+      // kind from now on" adds the kind to agent.json autoApprove.
+      const cur = (s as any).action as { kind?: string; prompt?: string; agent?: { slug: string } } | null;
+      const agSlug = sessionAgent(s);
+      if (agSlug && cur) {
+        ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: cur.kind || null, value: String(value), auto: false, by: principalLabel((req as any).auth) });
+        if (autoApprove === true && cur.kind) {
+          const a = agents.getAgent(agSlug);
+          if (a) agents.updateAgent(agSlug, { autoApprove: [...new Set([...(a.autoApprove || []), cur.kind])] });
+        }
+      }
       state.patchSession(id, { action: null });
       // F7: request_review's ✓ Verified is a human approval of the branch.
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
@@ -4230,6 +4312,7 @@ export async function handle(
         return json(res, { error: err.message }, err.status || 500);
       }
       const { artifact, warnings } = r;
+      if (sessionAgent(s)) ledger.appendActivity(sessionAgent(s)!, { kind: 'artifact', sessionId: id, detail: artifact.title || artifact.id, artifactId: artifact.id });
       // K2: share:true mints an expiring cookie-less link for THIS version.
       let share_url: string | null = null;
       let share_exp: string | null = null;

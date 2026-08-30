@@ -556,9 +556,10 @@ const TOOLS = [
         type: 'array',
         items: obj({ label: { type: 'string' }, value: { type: 'string' }, style: { type: 'string', enum: ['primary', 'default', 'danger'] } }, ['label', 'value']),
       },
+      kind: { type: 'string', description: 'A3: short machine tag of the action type ("send-email", "merge", "post:facebook"). In a session born from an agent the human can tick "auto-approve this kind from now on"; kinds already in the agent\'s autoApprove list are answered by the host at once with the primary button (the result says autoApproved:true + the value).' },
       ...SID_PROP,
     }, ['prompt', 'buttons']),
-    run: (a) => api('POST', `/__api/sessions/${sid(a)}/action`, { prompt: a.prompt, buttons: a.buttons }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/action`, { prompt: a.prompt, buttons: a.buttons, kind: a.kind }),
   },
   {
     name: 'request_review',
@@ -934,13 +935,34 @@ const TOOLS = [
 
 const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} } });
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
-}));
+// A3: a session born from an agent with a tools allowlist sees only the host
+// tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a
+// hidden one is refused here too (the PreToolUse hook is the outer layer).
+let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
+async function refreshHidden() {
+  const id = process.env.ARIGAMI_SESSION_ID;
+  if (!process.env.ARIGAMI_AGENT || !id) return (hiddenTools = null);
+  try {
+    const r = await api('GET', `/__api/sessions/${id}/policy?names=${encodeURIComponent(TOOLS.map((t) => t.name).join(','))}`);
+    hiddenTools = Array.isArray(r.hidden) && r.hidden.length ? new Set(r.hidden) : null;
+  } catch {
+    /* host not ready — keep the last answer; the hook still enforces */
+  }
+  return hiddenTools;
+}
+
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  await refreshHidden();
+  return {
+    tools: TOOLS.filter((t) => !hiddenTools?.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+  };
+});
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
+  if (hiddenTools?.has(tool.name))
+    return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
   try {
     const result = await tool.run(req.params.arguments || {});
     return { content: [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }] };

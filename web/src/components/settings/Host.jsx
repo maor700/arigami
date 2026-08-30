@@ -11,6 +11,7 @@ import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
 import { Section, Field, BTN, hostPost } from './shared.jsx';
+import Budgets from './Budgets.jsx';
 
 function fmtUptime(sec) {
   if (!Number.isFinite(sec)) return '';
@@ -233,6 +234,7 @@ export default function Host() {
           <pre dir="ltr" className="thin-scroll my-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
         )}
       </Section>
+      <Budgets />
       <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} />
     </>
   );

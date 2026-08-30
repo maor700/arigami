@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2
+# Agents ("צוות") — A1 + A2 + A3
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -114,7 +114,7 @@ fold). Gates: `bun run typecheck` (2 pre-existing errors), `bun test test/`,
 ## Next waves
 
 A2 connected identity — shipped, see below.
-A3 control (host-enforced tool/domain allowlists, budgets, cost per agent),
+A3 control — shipped, see below.
 A4 experience (slash-commands, @mentions, `marketing-team` bundle, bundles ship `agents/`).
 
 ---
@@ -234,5 +234,125 @@ chip, hub filter). The S1 contract tests now expect `owner` on `card.identity` /
 - Per-agent ownership is real for `identity` and `composio:*` only; the MCP servers a session
   sees are still the user's global ones — an agent's Composio account is selected by the
   `user_id` Composio keys the connection with, not by a per-session MCP config.
-- Claude accounts (`accounts.json`) stay host-level (A3 budgets will attribute cost per agent).
+- Claude accounts (`accounts.json`) stay host-level; A3 attributes tokens/cost per agent from the stream.
 - An agent's first browser profile is empty by design — the human logs in once per agent.
+
+---
+
+# A3 — Control
+
+Everything below is enforced **in the host**, never by the prompt. `agent.json` gains
+`autoApprove: [kinds]`; `tools`, `domains` and `budget.tokensPerDay` (A1 fields, advisory
+until now) become real.
+
+## Tool allowlist — `tools` (`server/agent-policy.ts`)
+
+Entries may be a **family** (the A1 checkboxes: `desktop`, `whatsapp`, `gmail`, `calendar`,
+`drive`, `git`, `sessions`, `triggers`, `web` — expanded by `FAMILIES`), a host tool name
+(`open_tab` / `mcp__arigami__open_tab`), an external MCP pattern (`mcp__composio-mcp__GMAIL_*`,
+`mcp__whatsapp`), or a Claude Code built-in (`Bash`, `Edit`, `WebFetch`). No `tools` = unrestricted.
+With a list, `CORE_TOOLS` (set_title/progress/status, publish_artifact, request_action/review/
+setup, memory_*, list_agents…) and the read-only built-ins (Read, Glob, Grep, …) stay available;
+`RESTRICTED_BUILTINS` (Bash, Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Agent, Task)
+need an entry.
+
+Four layers, outer to inner:
+
+1. **`--disallowedTools`** at spawn (`claude.js policyArgs`): restricted built-ins the agent may
+   not use + whole external servers (`mcp__<server>`) no entry touches (names from the last init
+   report + the live MCP health map). The CLI never offers them.
+2. **PreToolUse hook** — `--settings {hooks:{PreToolUse:[…mcp/policy-hook.js]}}`. Before EVERY tool
+   call the hook POSTs `/__api/sessions/:id/policy/check {tool_name, input}`; `allow:false` → exit 2
+   with the reason on stderr (the model sees it). Fail-**closed**: an unreachable host blocks the
+   call. Only sessions born from an agent with a restrictive policy get the hook. This is what makes
+   partial external allowlists (`GMAIL_*` but not `GOOGLEDRIVE_*`) and the domain allowlist real.
+3. **Host MCP filtering** — `mcp/host-mcp.js` asks `GET /__api/sessions/:id/policy?names=…` on
+   `tools/list` and hides the arigami tools that are not allowed; a call to a hidden one is refused.
+4. **REST guards** — `POST /__api/sessions/:id/tabs {type:'url'}` (open_tab) refuses a URL outside
+   `domains` (403).
+
+Every denial is a `policy` line in the agent's ledger (below) and shows in the Activity tab.
+
+## Domain allowlist — `domains`
+
+`example.com` matches itself and subdomains, `*.example.com` only subdomains, `*` everything;
+loopback and relative paths (dev servers, `/__pr/…`) always pass. Enforced on **`open_tab`** (REST)
+and **`WebFetch`** (hook, `tool_input.url`).
+
+**Not enforceable by the host, documented only:** pages the agent reaches by driving Chrome on the
+desktop (xdotool/typing a URL), `curl`/`wget` inside `Bash`, and requests external MCP servers make on
+their own. Keep `desktop`/`git` (Bash) out of `tools` when the domain list must be airtight.
+
+## Daily token budget — `budget.tokensPerDay` (`server/agent-ledger.ts`)
+
+- Tokens are counted from the stream: every `assistant` message's `usage` (input + output +
+  cache_creation + cache_read) is summed per turn; the `result` event closes the turn with the
+  per-turn delta of the CLI's cumulative `total_cost_usd`.
+- `usedToday(slug)` = today's `turn` lines, **host-local calendar day** — resets at local midnight
+  (`nextLocalMidnight`).
+- Exceeded → `applyAgentToSession` throws a 429 (`budgetRefusal`): `POST /__api/sessions {agent}`,
+  `create_session({agent})`, cron fires and a **new** home chat are refused with a clear line
+  ("no new sessions until local midnight (00:00); raise the cap in Settings → מארח → תקציבים").
+  Running sessions get **one final warning** per day (`[host] FINAL WARNING …` as a user message
+  + a `budget` ledger line + a chat error line) and may finish their turn.
+- Raising the cap (PATCH `/__api/agents/:slug {budget}`) lifts the refusal at once.
+
+## Activity ledger with cost — `agents/<slug>/activity.jsonl`
+
+One JSON line per event: `session` (first spawn of a session born from the agent), `turn`
+(tokens, breakdown, costUsd, model, durationMs), `action` (request_action — `auto:true` when the
+host answered, else `by`), `artifact` (publish_artifact), `policy` (a denied tool call, with the
+reason), `budget` (the daily warning). `readActivity(slug,{since,kinds})`, `totalsOf`,
+`rangeStart('today'|'7d'|'30d')`, `budgetState(slug)`.
+
+### REST
+
+| method | path | |
+|---|---|---|
+| GET | `/__api/agents/:slug/activity?range=today\|7d\|30d&limit=` | `{sessions, episodes, range, entries (newest first), totals:{tokens,costUsd,turns,sessions,actions,artifacts,denied}, budget}` |
+| GET | `/__api/agents/budgets` | `{budgets:[{slug,name,emoji,color,model,cap,usedTokens,usedCostUsd,exceeded,resetsAt}], day}` |
+| GET | `/__api/sessions/:id/policy?names=a,b` | `{agent, restrictive, tools, domains, autoApprove, hidden}` |
+| POST | `/__api/sessions/:id/policy/check` `{tool_name, input}` | `{allow, reason?}` (the hook's backend) |
+| POST | `/__api/sessions/:id/action` `{prompt, buttons, kind?}` | the action now carries `agent` + `kind`; `{…, autoApproved:true, value}` when the host answered |
+| POST | `/__api/sessions/:id/action/answer` `{value, autoApprove?}` | `autoApprove:true` adds the action's kind to `agent.json autoApprove` |
+
+## request_action — agent card + "אשר אוטומטית פעולות מסוג זה מעכשיו"
+
+`request_action({prompt, buttons, kind?})` — `kind` is a short machine tag
+(`^[a-z0-9][a-z0-9:._-]{0,39}$`: `send-email`, `merge`, `post:facebook`). From a session born from
+an agent the action carries `agent:{slug,name,emoji,color}`; the card (transcript `ActionCard` and
+the sticky `ActionBar`, both in `web/src/components/ActionCard.jsx`) shows the avatar/name/kind and,
+when a kind is present, the toggle. Answering with it ticked stores the kind; the next action of
+that kind from any of the agent's sessions is answered **by the host at once** with the primary
+button (else the first), logged as `action {auto:true}`, and shown as an `action-auto` receipt line
+in the chat. The Agent page → פרסונה → advanced lists the auto-approved kinds (untick to revoke).
+
+## Web
+
+- **Agent page → פעילות** (`AgentView.jsx ActivityTab`): range chips today / 7d / 30d, a totals
+  strip (tokens, cost, turns, runs, actions, artifacts, denied) + the budget line, the ledger rows
+  (time · kind · what · tokens/cost, session id opens the session), the agent's sessions, and the
+  A1 episodes collapsed below.
+- **Settings → מארח → תקציבים** (`settings/Budgets.jsx`): agent × model × daily cap (inline, Save on
+  change) × used today (tokens / cap · % · $, "נוצל" pill when exhausted).
+- Agent page → פרסונה → advanced: `web` tool family, a **domains** field, the auto-approved kinds.
+
+## Tests
+
+`test/agents-a3.test.ts` (policy matching, families, disallowed list, domains, checkToolCall →
+ledger; ledger ranges/totals/budget/local day; autoApprove validation, persona block),
+`test/agents-a3-host.test.ts` (isolated host with a stream-json stub claude: spawn flags, policy
+REST, the hook script exit codes incl. fail-closed, open_tab 403, request_action agent/kind/
+auto-approve flow, turns → ledger, 429 + final warning, budgets/activity REST, artifacts logged),
+`test/agents-a3-web.test.js` (ActionCard/ActionBar/receipt, Budgets table, Activity totals/rows,
+families parity with the host).
+
+## Known limits (A3)
+
+- Claude accounts stay host-level; cost is attributed per agent from the CLI's `total_cost_usd`
+  (subscription plans report $0 for some models — tokens are always counted).
+- `--disallowedTools` can only deny whole external servers it knows about at spawn; a server that
+  appears later is covered by the hook only.
+- The domain allowlist cannot see desktop-driven Chrome navigation or `curl` in Bash (above).
+- A session that is already running when the cap is raised/lowered picks up the new policy on its
+  next spawn (flags) — the hook and the budget check read the current agent.json on every call.
