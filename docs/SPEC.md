@@ -898,22 +898,34 @@ itself via a `connect-<provider>` playbook skill).
 
 ### Capability ids (shared contract with web + skills)
 `identity` (Google login in Chrome) · `claude` · `git` (gh/PAT) · `repo:<name>` ·
-`whatsapp` · `composio:<toolkit>` (gmail/googledrive/googlecalendar/slack/linear/notion/…) ·
-`desktop` · `push` · `remote` (tailscale serve) · `telemetry`.
-Validated by `isCapabilityId()` — `repo:` names `[A-Za-z0-9._-]`, toolkits `[a-z0-9_-]`.
+`whatsapp` · `mcp:<service>` (a vendor's own remote MCP server — linear/notion/
+sentry/vercel/stripe/figma/cloudflare/supabase/atlassian/github; catalog in
+`server/mcp-catalog.ts`) · `composio:<toolkit>` (gmail/googledrive/
+googlecalendar/googledocs/slack/facebook) · `desktop` · `push` ·
+`remote` (tailscale serve) · `telemetry`.
+Validated by `isCapabilityId()` — `repo:` names `[A-Za-z0-9._-]`, toolkits
+`[a-z0-9_-]`, services `[a-z0-9-]`.
+M1: every capability also carries `provider: 'native-mcp'|'composio'|'local'` —
+where the token lives and who the calls go through. See docs/INTEGRATIONS.md.
 
 ### Registry (`server/capabilities.ts`)
 ```
 Capability { id, title, group:'core'|'code'|'messaging'|'integrations'|'machine'|'host',
              check(): {ok, detail, data?},          // reuses onboarding.ts gates (defaultProbes)
              manual: {kind:'token'|'oauth'|'qr'|'toggle'|'repo'|'takeover', fields?, start?, help?},
-             autoCapable: boolean, playbook?: 'connect-identity'|'connect-composio'|'connect-claude'|'connect-tailscale'|'connect-github',
+             provider: 'native-mcp'|'composio'|'local',
+             autoCapable: boolean, playbook?: 'connect-identity'|'connect-composio'|'connect-mcp'|'connect-claude'|'connect-tailscale'|'connect-github',
              events: string[] }                    // bus/funnel types after which status may change
 listCapabilities() / getCapability(id) / capabilitiesStatus() / ensure(id, why) / needsSetup(id, why)
 ```
 Manual kinds: identity=takeover · claude=oauth (+token) · git=token (+gh device flow) ·
-repo=repo · whatsapp=qr · composio:*=oauth · desktop/push/remote/telemetry=toggle.
-autoCapable: claude, git, remote, composio:* (only ever `auto` when `identity.json` exists).
+repo=repo · whatsapp=qr · composio:*=oauth · mcp:*=oauth (bearer rows: token) ·
+desktop/push/remote/telemetry=toggle.
+autoCapable: claude, git, remote, composio:*, mcp:* with `auth:'oauth'` (only ever
+`auto` when `identity.json` exists). `mcp:<service>` resolves agent-first like
+`composio:*`: the grant name is `<service>` for the host and `<service>--<slug>`
+for an agent, and `data.tools` is the `mcp__<grant>__*` pattern an A3 allowlist
+needs.
 `composio:<toolkit>` probes Composio's connected accounts (ACTIVE, cached 60 s; no
 key → "not connected", offline → unknown/not ok). Probes are injectable (tests).
 
@@ -973,6 +985,9 @@ POST   /__api/setup/:capability  (admin or session bearer) — manual payload pe
          oauth    {action:'start'} → {id, url}   claude PKCE: {action:'code', id, code} / {action:'poll', id} / {action:'cancel', id}
                                                   git device: {action:'device'} → {device:{state,code,url,error}}, {action:'poll'} → {ok, device}
                                                   composio:x: {action:'start'} → {url, id}, {action:'poll'} → {ok}
+                                                  mcp:x:      {action:'start'} → {name, url:<vendor authorize URL>, domains, docs},
+                                                              {action:'paste'|'code', code:'<…/callback?code=…>'}, {action:'poll'} → {ok, connection},
+                                                              {action:'cancel'}; bearer rows (github): {token?} — empty reuses `gh auth token`
          qr       {action:'connect'|'poll'|'disconnect'} → {ok, status:'starting'|'qr'|'connected'|…, qr, qrUrl, user}
          toggle   {enable}                      (desktop / remote / telemetry; push: hint only)
          repo     {entry:{name, source, …}}     (registers if unknown, then the clone job)
@@ -985,7 +1000,8 @@ POST   /__api/setup/:id/start {mode:'auto'}  → CONSENT: mode auto, state auto,
                                                (400 when not autoCapable / no identity)
 POST   /__api/setup/:id/report {ok?|line, evidence?, detail?, human?}   // same as report_setup; human:true from the card
 DELETE /__api/setup/:capability              → disconnect via the existing implementation + audit 'disconnected':
-         identity → identity.json removed · composio:x → connected accounts deleted · remote → serve off ·
+         identity → identity.json removed · composio:x → connected accounts deleted ·
+         mcp:x → `claude mcp logout` + `remove` + the ownership record dropped · remote → serve off ·
          git → github.com line dropped from ~/.git-credentials (+env) · whatsapp → bridge stopped ·
          telemetry → off · desktop → screen disabled · claude / repo:* → 400 (use their own views)
 GET    /__api/setup/identity                 → {identity|null}       (DELETE = DELETE /__api/setup/identity)
@@ -998,6 +1014,11 @@ Pinned by test/setup-contract.test.ts (route set cross-checked against S2's clie
 `$ARIGAMI_DIR/identity.json` — `{email, provider:'google', connectedAt, chromeProfile:'base', providers:{'composio:gmail':{at},…}}`,
 mode 0600, never a secret (writer refuses token-looking values).
 `$ARIGAMI_DIR/connections.log` — JSONL `{at, sessionId, capability, mode, result:'requested'|'done'|'failed'|'skipped'|'timeout'|'disconnected', evidence:'/__artifacts/<id>/'|null, human, detail?}`.
+`$ARIGAMI_DIR/mcp-connections.json` / `agents/<slug>/connections.json` (M1) —
+`[{cap:'mcp:<service>', slug, name:'<service>[--<agent>]', url, auth, at, byIdentity}]`,
+mode 0600. Ownership only: the grant itself lives in Claude Code's
+`$CLAUDE_CONFIG_DIR/.credentials.json` (`mcpOAuth`, plaintext, machine-local) and
+is never exported.
 
 ### Minimal onboarding mode (default)
 `onboarding.json.mode` ('minimal' default, 'full'; env `ARIGAMI_ONBOARDING_MODE`). `wizard()` →

@@ -84,7 +84,7 @@ Integrations, Accounts, Setup → Connections) לפני הריסטרקצ'ר, ה�
 |---|---|---|---|
 | **מראה** | `appearance` | `Appearance.jsx` | theme, language, accent, font size, ברירות-מחדל לטרמינל (theme/dir) |
 | **קול** | `voice` | `Voice.jsx` | mode, mic, שפת זיהוי, hotkey (הקלטה), auto-send |
-| **חיבורים** | `connections` | `Connections.jsx` + `ClaudeAccounts.jsx` + `Integrations.jsx` + `Channels.jsx` + `ConnectDialog.jsx` | sections: `identity` · `claude` · `integrations` (Composio + git/desktop/repos כ-capabilities) · `channels` (WhatsApp, SMS webhook, Slack/GitHub, custom, Funnel) · `remote` · `notifications` · audit |
+| **חיבורים** | `connections` | `Connections.jsx` + `ClaudeAccounts.jsx` + `NativeMcp.jsx` + `Integrations.jsx` + `Channels.jsx` + `ConnectDialog.jsx` | sections: `identity` · `claude` · `mcp` (M1 — כרטיסי השרתים של הספקים עצמם, מעל Composio) · `integrations` ("עוד דרך Composio" + git/desktop/repos כ-capabilities) · `channels` (WhatsApp, SMS webhook, Slack/GitHub, custom, Funnel) · `remote` · `notifications` · audit |
 | **אוטומציה** | `automation` | `Automation.jsx` | Brain heartbeat, telemetry (+preview, rotate), קישור ל-cron ב-Launcher |
 | **מארח** | `host` | `Host.jsx` + `Access.jsx` | version/restart/upgrade, backup, users & access (pairing/users/tokens), VNC password, danger zone (sign-out, איפוס העדפות מקומיות) |
 

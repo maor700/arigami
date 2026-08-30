@@ -123,7 +123,8 @@ vulnerabilities: [SECURITY.md](SECURITY.md).
 - [docs/SPEC.md](docs/SPEC.md) — data model, REST/WS API, host MCP tools, UI
 - [docs/ONBOARDING.md](docs/ONBOARDING.md) — repos, profiles, readiness gates
 - [docs/TRIGGERS.md](docs/TRIGGERS.md) · [docs/DISPATCHER.md](docs/DISPATCHER.md) — listeners, cron, PM → children
-- [docs/AGENTS.md](docs/AGENTS.md) — agents ("צוות"): persona, memory namespace, `create_session({agent})`, the Rail section and chat card; A2: connections + Chrome profile + cron per agent; A3: host-enforced tool/domain allowlists, daily budgets, activity ledger with cost, auto-approved actions
+- [docs/AGENTS.md](docs/AGENTS.md) — agents ("צוות"): persona, memory namespace, `create_session({agent})`, the Rail section and chat card; A2: connections + Chrome profile + cron per agent; A3: host-enforced tool/domain allowlists, daily budgets, activity ledger with cost, auto-approved actions; M1: a vendor MCP grant per agent
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) — which provider connects what (`native-mcp` / `composio` / `local`), connecting a vendor's own MCP server, per-agent grants, what a backup does and does not carry
 - [docs/TELEMETRY.md](docs/TELEMETRY.md) — opt-in telemetry: what is sent, how to turn it off, self-host the collector
 - [docs/SECURITY.md](docs/SECURITY.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
