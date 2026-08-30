@@ -1,8 +1,10 @@
-// RES1 §4, toned down (2026-08-30): the rail no longer surfaces "ממתין לך"
-// with a full-width pulsing bar. A waiting item now attaches a small, static
-// badge to the row it belongs to — the agent's row when the blocked session
-// was born from one, otherwise the session's own row — and the aggregated
-// list survives only as a muted count next to the sessions header.
+// RES1 §4, toned down (2026-08-30, then further per direct feedback): the
+// rail no longer surfaces "ממתין לך" as a full-width pulsing bar, and it no
+// longer has a separate aggregated section at all. A waiting item is only a
+// small, static badge on the row it belongs to — the agent's row when the
+// blocked session was born from one, otherwise the session's own row — rolled
+// up (hollow, count-only) onto a collapsed folder's count chip or the
+// collapsed Team header so nothing silently disappears behind a fold.
 import { test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +12,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, store, prefs, Rail, origFetch;
+let React, render, store, prefs, Rail, TeamSection, origFetch;
 const h = (...a) => React.createElement(...a);
 
-// What GET /health and GET /agents answer in this test.
+// What GET /health, /agents and /folders answer in this test.
 let HEALTH = { sessions: [], waiting: [] };
 let AGENTS = { agents: [] };
+let FOLDERS = [];
 
 beforeAll(async () => {
   const mem = new Map();
@@ -32,7 +35,7 @@ beforeAll(async () => {
   origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
-    const body = u.includes('/health') ? HEALTH : u.includes('/agents') ? AGENTS : {};
+    const body = u.includes('/health') ? HEALTH : u.includes('/agents') ? AGENTS : u.includes('/folders') ? FOLDERS : {};
     return { ok: true, status: 200, url: u, json: async () => body, text: async () => JSON.stringify(body) };
   };
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
@@ -40,7 +43,9 @@ beforeAll(async () => {
   store = await import(web('lib/store.js'));
   prefs = await import(web('lib/prefs.js'));
   prefs.setPrefs({ language: 'en' });
-  Rail = (await import(web('components/Rail.jsx'))).default;
+  const RailModule = await import(web('components/Rail.jsx'));
+  Rail = RailModule.default;
+  TeamSection = RailModule.TeamSection;
 });
 
 afterAll(() => {
@@ -50,6 +55,7 @@ afterAll(() => {
 beforeEach(() => {
   HEALTH = { sessions: [], waiting: [] };
   AGENTS = { agents: [] };
+  FOLDERS = [];
 });
 
 const baseProps = () => ({
@@ -81,10 +87,11 @@ const baseProps = () => ({
 async function renderRail(sessions) {
   await store.loadHealth();
   await store.loadAgents();
+  await store.loadFolders();
   return render(h(Rail, { ...baseProps(), sessions }));
 }
 
-test('no full-width pulsing pill — and no pulse-yellow anywhere — when something is waiting', async () => {
+test('no pulse-yellow anywhere, and no aggregated top section, when something is waiting', async () => {
   HEALTH = {
     sessions: [],
     waiting: [{ sessionId: 's1', title: 'plain session', kind: 'setup', unblock: 'connect', since: new Date().toISOString(), agent: null }],
@@ -92,10 +99,9 @@ test('no full-width pulsing pill — and no pulse-yellow anywhere — when somet
   const sessions = [{ id: 's1', title: 'plain session', metadata: {}, claude: { state: 'idle' } }];
   const out = await renderRail(sessions);
   expect(out).not.toContain('pulse-yellow');
-  // the old full-width bar rendered its label as visible text; now that
-  // sentence only lives in an aria-label, and the visible text is "1".
-  expect(out).not.toContain('>Waiting for you (1)<');
-  expect(out).toContain('aria-label="Waiting for you (1)"');
+  // no separate "waiting for you" section header/sentence anywhere — the row
+  // badge (checked below) is the only signal.
+  expect(out).not.toContain('Waiting for you');
 });
 
 test('a session with no agent gets the badge on its own row', async () => {
@@ -141,29 +147,75 @@ test('more than one waiting item on the same row shows the count, not the glyph'
   expect(out).toMatch(/Scout[\s\S]*?>\s*2\s*</);
 });
 
-test('the aggregated count sits quietly next to the sessions header and is clickable to expand', async () => {
+test('a waiting session hidden inside a collapsed folder rolls up onto the folder chip', async () => {
   HEALTH = {
     sessions: [],
-    waiting: [
-      { sessionId: 's1', title: 'one', kind: 'setup', unblock: 'connect', since: new Date().toISOString(), agent: null },
-      { sessionId: 's2', title: 'two', kind: 'budget', unblock: 'raise-cap', since: new Date().toISOString(), agent: null },
-    ],
+    waiting: [{ sessionId: 's1', title: 'in a folder', kind: 'merge', unblock: 'merge', since: new Date().toISOString(), agent: null }],
   };
+  FOLDERS = [{ id: 'f1', name: 'My Folder', collapsed: true, sortOrder: 0 }];
   const sessions = [
-    { id: 's1', title: 'one', metadata: {}, claude: { state: 'idle' } },
-    { id: 's2', title: 'two', metadata: {}, claude: { state: 'idle' } },
+    { id: 's1', title: 'in a folder', folderId: 'f1', metadata: {}, claude: { state: 'idle' } },
+    { id: 's2', title: 'also in the folder', folderId: 'f1', metadata: {}, claude: { state: 'idle' } },
   ];
   const out = await renderRail(sessions);
-  // the muted counter itself: a plain clickable "2", with the full sentence
-  // only in the accessible name — never rendered as a full-width labelled bar.
-  expect(out).toContain('aria-label="Waiting for you (2)"');
-  expect(out).toMatch(/text-fgdim hover:text-fg">2<\/button>/);
-  expect(out).not.toContain('Waiting for you (2)</');
+  // collapsed folder: the two rows never render, so the badge would
+  // otherwise be invisible — it must show up on the count chip instead.
+  expect(out).not.toContain('in a folder<');
+  expect(out).toMatch(/My Folder[\s\S]*?>2 · !<\/button>/);
+  expect(out).not.toContain('pulse-yellow');
 });
 
-test('no waiting items renders no badges and no counter', async () => {
+test('a collapsed Team section rolls up hidden per-agent waiting onto its header', async () => {
+  const waitingByAgent = new Map([
+    ['scout', [{ sessionId: 's1', kind: 'review', unblock: 'approve' }]],
+  ]);
+  const out = render(
+    h(TeamSection, {
+      agents: [{ slug: 'scout', name: 'Scout', color: '#2C6BD6', emoji: '🔭', skills: [] }],
+      sessions: [{ id: 's1', metadata: { agent: 'scout' }, archived: false }],
+      triggers: [],
+      onOpenAgent: () => {},
+      onNewAgent: () => {},
+      agentOpen: null,
+      open: false,
+      onToggle: () => {},
+      menuFor: null,
+      setMenuFor: () => {},
+      waitingByAgent,
+    })
+  );
+  // collapsed: no per-agent rows render, so the header count carries it.
+  expect(out).not.toContain('Scout');
+  expect(out).toMatch(/>1 · !<\/span>/);
+  expect(out).not.toContain('pulse-yellow');
+});
+
+test('an open Team section shows the badge on the agent row, not a header rollup', async () => {
+  const waitingByAgent = new Map([
+    ['scout', [{ sessionId: 's1', kind: 'review', unblock: 'approve' }]],
+  ]);
+  const out = render(
+    h(TeamSection, {
+      agents: [{ slug: 'scout', name: 'Scout', color: '#2C6BD6', emoji: '🔭', skills: [] }],
+      sessions: [{ id: 's1', metadata: { agent: 'scout' }, archived: false }],
+      triggers: [],
+      onOpenAgent: () => {},
+      onNewAgent: () => {},
+      agentOpen: null,
+      open: true,
+      onToggle: () => {},
+      menuFor: null,
+      setMenuFor: () => {},
+      waitingByAgent,
+    })
+  );
+  expect(out).toMatch(/Scout[\s\S]*?>\s*!\s*</);
+  expect(out).not.toMatch(/>1 · !<\/span>/);
+});
+
+test('no waiting items renders no badges and no rollups', async () => {
   const sessions = [{ id: 's1', title: 'quiet session', metadata: {}, claude: { state: 'idle' } }];
   const out = await renderRail(sessions);
   expect(out).not.toContain('pulse-yellow');
-  expect(out).not.toContain('waiting.pill');
+  expect(out).not.toContain('Waiting for you');
 });

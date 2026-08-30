@@ -1,5 +1,6 @@
-// RES1 web (§4): the rail's health dot + "ממתין לך" pill, and the Settings ›
-// Host › Health panel. Server-rendered, so what is asserted is the markup the
+// RES1 web (§4): the rail's health dot (rail-waiting-web.test.js covers the
+// waiting badges/rollups) and the Settings › Host › Health panel. Server-
+// rendered, so what is asserted is the markup the
 // human actually gets — including that both locales carry every string the new
 // UI reaches for by a computed key (`waiting.what.<kind>`, `health.action.<x>`),
 // which the static i18n-keys test cannot see.
@@ -156,9 +157,9 @@ test('Hebrew renders the panel and the queue in Hebrew', async () => {
     expect(out).toContain('חשבונות ומודלים');
     expect(out).toContain('אירועים (24 שעות)');
     expect(out).toContain('חזרה ל-fable');
-    // The pill's own label, straight out of the dictionary.
+    // The health dot's own label, straight out of the dictionary.
     const he = await dict('he');
-    expect(he['rail.waiting.pill']).toContain('ממתין לך');
+    expect(he['rail.health.WAITING_HUMAN']).toContain('ממתין לך');
   } finally {
     prefs.setPrefs({ language: 'en' });
   }
