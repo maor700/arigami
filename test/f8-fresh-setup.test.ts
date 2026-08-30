@@ -190,3 +190,11 @@ test('oauth read-browser: unknown flow / no session desktop are clean errors, no
   expect(noSess.error).toMatch(/no session desktop/);
   await api('POST', '/__api/accounts/oauth/cancel', { id: started.id });
 });
+
+// ---- "Not logged in" from the CLI → Connect-Claude card, not a dead end ----
+test('AUTH_RE catches the CLI "Not logged in · Please run /login" text', () => {
+  const r = runInChild("const c=await import('./server/claude.js');emit({m:c.AUTH_RE.test('Not logged in · Please run /login'), m2:c.AUTH_RE.test('all good')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1' });
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ m: true, m2: false });
+});

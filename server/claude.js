@@ -755,18 +755,26 @@ function tryAutoSwitch(id, text) {
 // outlives one token lifetime starts failing auth on every turn until
 // something respawns it. Detected the same way tryAutoSwitch detects a
 // subscription-limit hit: from the structured `result` event's error text.
-const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again/i;
+// F8: also the CLI's own "Not logged in · Please run /login" — the human cannot
+// run /login in the cockpit; the answer is a `claude` Setup card.
+export const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again|not logged in|please run \/login/i;
 const authRecovering = new Set(); // guards against re-entrant recovery per session
+
+async function openClaudeSetupCard(id, why) {
+  const [api, caps] = await Promise.all([import('./api.js'), import('./capabilities.js')]);
+  const cap = caps.getCapability('claude');
+  if (!cap) return;
+  api.openSetupCard(id, cap, why, 'manual', 'not signed in');
+}
 
 async function tryAuthRecover(id, text) {
   if (authRecovering.has(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
   if (!resolveRefreshToken(accountId)) {
-    appendChat(id, {
-      kind: 'error',
-      text: 'Authentication error, and this account has no refresh token to recover automatically — please re-authenticate it.',
-    });
+    // Nothing to refresh: open the Connect-Claude card right here in the chat
+    // (paste the code / a token) instead of a dead-end error.
+    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in — connect one to continue').catch(() => {});
     return;
   }
   authRecovering.add(id);

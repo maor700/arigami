@@ -743,42 +743,8 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true };
     return json(res, r);
   }
-  // Re-request on an open card (e.g. after a failed auto → manual): attach.
-  let entry = openSetupFor(sessionId!, capability);
-  if (!entry) {
-    const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
-    const def = caps.defaultMode(cap);
-    // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
-    // the card with both choices and blocks like manual.
-    const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
-    const id = 'setup_' + nano();
-    // Rule 3: no auto without a click. `mode` only PRESELECTS the card's
-    // switch; the agent blocks until the human clicks "Connect automatically"
-    // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
-    const e: PendingSetup = {
-      id, sessionId: sessionId!, capability, why, mode,
-      state: 'pending',
-      evidence: null, detail: check.detail, createdAt: new Date().toISOString(), lines: [],
-      timer: setupTimer(id, new Date().toISOString()),
-      waiters: [],
-    };
-    pendingSetups.set(id, e);
-    persistPendingSetups();
-    claude.appendChat(sessionId!, {
-      kind: 'setup',
-      ...setupCardPayload(e),
-      title: cap.title,
-      manual: cap.manual,
-      autoCapable: cap.autoCapable,
-      ...(cap.playbook ? { playbook: cap.playbook } : {}),
-      identity: identityView(),
-    });
-    broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
-    caps.appendAudit({ sessionId: sessionId!, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
-    import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
-    pushIntervention(sessionId!, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
-    entry = e;
-  }
+  const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
+  const entry = openSetupCard(sessionId!, cap, why, requested, check.detail);
   if (entry.state === 'auto') {
     // The human already consented (start clicked); the agent runs the playbook
     // itself and closes the card with report_setup.
@@ -788,6 +754,52 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   state.setClaude(sessionId!, { state: 'awaiting-input', setupRequest: { id: entry.id, capability } } as any);
   const result = await new Promise<SetupResult>((resolve) => entry.waiters.push(resolve));
   json(res, result);
+}
+
+/**
+ * Open (or attach to) the Setup card for a capability in a session's chat —
+ * the core of request_setup, also used by the host itself (F8: a session whose
+ * Claude account turns out to be signed out gets a `claude` card instead of
+ * a dead-end "please run /login").
+ */
+export function openSetupCard(sessionId: string, cap: caps.Capability, why: string, requested?: SetupMode, detail = ''): PendingSetup {
+  const capability = cap.id;
+  // Re-request on an open card (e.g. after a failed auto → manual): attach.
+  let entry = openSetupFor(sessionId, capability);
+  if (!entry) {
+    const def = caps.defaultMode(cap);
+    // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
+    // the card with both choices and blocks like manual.
+    const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
+    const id = 'setup_' + nano();
+    // Rule 3: no auto without a click. `mode` only PRESELECTS the card's
+    // switch; the agent blocks until the human clicks "Connect automatically"
+    // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
+    const e: PendingSetup = {
+      id, sessionId, capability, why, mode,
+      state: 'pending',
+      evidence: null, detail, createdAt: new Date().toISOString(), lines: [],
+      timer: setupTimer(id, new Date().toISOString()),
+      waiters: [],
+    };
+    pendingSetups.set(id, e);
+    persistPendingSetups();
+    claude.appendChat(sessionId, {
+      kind: 'setup',
+      ...setupCardPayload(e),
+      title: cap.title,
+      manual: cap.manual,
+      autoCapable: cap.autoCapable,
+      ...(cap.playbook ? { playbook: cap.playbook } : {}),
+      identity: identityView(),
+    });
+    broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
+    caps.appendAudit({ sessionId, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
+    import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
+    pushIntervention(sessionId, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
+    entry = e;
+  }
+  return entry;
 }
 
 async function handleSetupReport(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
