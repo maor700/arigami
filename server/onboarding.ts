@@ -144,7 +144,7 @@ const isLocalPath = (source: string): boolean =>
 // Has the repo been fetched into its managed dir yet? A git source lands a .git;
 // a copied local source keeps its .git too, but tolerate a non-git folder by
 // also accepting a non-empty dir.
-function repoPresent(r: RepoEntry): boolean {
+export function repoPresent(r: RepoEntry): boolean {
   const dir = repoDir(r);
   if (fs.existsSync(path.join(dir, '.git'))) return true;
   if (isLocalPath(r.source)) {
@@ -787,11 +787,19 @@ export interface WizardStep {
 
 export interface WizardView {
   steps: WizardStep[];
-  current: WizardStepId | null; // first step that is neither ok nor skipped
+  current: WizardStepId | null; // first REQUIRED step that is neither ok nor skipped
   done: boolean;
   completedAt?: string;
   unattended: boolean;
+  // S1 (JIT setup): 'minimal' (default) = only pair + claude are required;
+  // everything else is optional and connects just-in-time from the chat.
+  // 'full' = the classic linear wizard ("Run full setup").
+  mode: OnboardingMode;
+  required: WizardStepId[];
 }
+
+export type OnboardingMode = 'minimal' | 'full';
+export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude'];
 
 export interface HealthCheck {
   id: 'claude' | 'desktop' | 'chrome' | 'whatsapp';
@@ -812,6 +820,7 @@ interface StepRecord {
 }
 interface OnboardingFile {
   version: 1;
+  mode?: OnboardingMode; // absent = 'minimal'
   steps: Partial<Record<WizardStepId, StepRecord>>;
   emitted: Partial<Record<WizardStepId, WizardStatus>>;
   health?: HealthResult;
@@ -838,6 +847,25 @@ function writeOnboardingFile(f: OnboardingFile): void {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(ONBOARDING_FILE, JSON.stringify(f, null, 2) + '\n');
 }
+
+export function getOnboardingMode(): OnboardingMode {
+  const env = process.env.ARIGAMI_ONBOARDING_MODE;
+  if (env === 'full' || env === 'minimal') return env;
+  return readOnboardingFile().mode === 'full' ? 'full' : 'minimal';
+}
+
+/** "Run full setup" (→ 'full') / back to just-in-time ('minimal'). Returns the recomputed view. */
+export function setOnboardingMode(mode: OnboardingMode, probes: Partial<WizardProbes> = {}): WizardView {
+  if (mode !== 'full' && mode !== 'minimal') throw new Error(`unknown onboarding mode: ${String(mode)}`);
+  const file = readOnboardingFile();
+  file.mode = mode;
+  writeOnboardingFile(file);
+  return wizard(probes);
+}
+
+/** The steps that gate `done` in the given mode. */
+export const requiredSteps = (mode: OnboardingMode): WizardStepId[] =>
+  mode === 'full' ? [...WIZARD_STEPS] : [...MINIMAL_REQUIRED];
 
 // --- probes -----------------------------------------------------------------
 // Injectable so the state machine is unit-testable without a host, gh, or a
@@ -1077,7 +1105,12 @@ export function wizard(probes: Partial<WizardProbes> = {}): WizardView {
       emitStep(s.id, s.status);
     }
   }
-  const done = steps.every((s) => settled(s.status));
+  // Minimal mode (S1): done = every REQUIRED step settled; optional steps
+  // never block and are connected just-in-time from the chat (request_setup).
+  const mode = getOnboardingMode();
+  const required = requiredSteps(mode);
+  const isRequired = (id: WizardStepId): boolean => required.includes(id);
+  const done = steps.every((s) => !isRequired(s.id) || settled(s.status));
   if (done && !file.done) {
     file.done = true;
     file.completedAt = new Date().toISOString();
@@ -1089,8 +1122,8 @@ export function wizard(probes: Partial<WizardProbes> = {}): WizardView {
     dirty = true;
   }
   if (dirty) writeOnboardingFile(file);
-  const current = steps.find((s) => !settled(s.status))?.id ?? null;
-  return { steps, current, done, completedAt: file.completedAt, unattended: p.unattended() };
+  const current = steps.find((s) => isRequired(s.id) && !settled(s.status))?.id ?? null;
+  return { steps, current, done, completedAt: file.completedAt, unattended: p.unattended(), mode, required };
 }
 
 function emitStep(step: WizardStepId, status: WizardStatus): void {
@@ -1180,7 +1213,7 @@ function chromeVersionSync(): string | null {
   return null;
 }
 
-function desktopUpSync(display: string): boolean {
+export function desktopUpSync(display: string): boolean {
   const xdpy = which('xdpyinfo');
   if (!xdpy) {
     // No xdpyinfo: the X socket is the next best evidence.
@@ -1193,6 +1226,9 @@ function desktopUpSync(display: string): boolean {
     return false;
   }
 }
+
+/** S1 capabilities registry reuses the same desktop gate. */
+export const desktopUp = (display: string): boolean => desktopUpSync(display);
 
 export async function runHealth(deps: HealthDeps = {}): Promise<HealthResult> {
   if (healthRunning) throw new Error('health check already running');
@@ -1337,6 +1373,7 @@ export async function verifyClaudeCredential(cred: { token?: string; apiKey?: st
 export function formatDoctor(view: WizardView): string {
   const mark: Record<WizardStatus, string> = { ok: '✓', skipped: '–', todo: '○', blocked: '⊘', error: '✗', running: '…' };
   const lines = view.steps.map((s) => `  ${mark[s.status]} ${s.id.padEnd(13)} ${s.status.padEnd(8)} ${s.detail || ''}`);
+  lines.push(`  mode: ${view.mode} (required: ${view.required.join(', ')})`);
   lines.push(view.done ? `  wizard: done${view.completedAt ? ` (${view.completedAt})` : ''}` : `  wizard: current step → ${view.current}`);
   return lines.join('\n');
 }

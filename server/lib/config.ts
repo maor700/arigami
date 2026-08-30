@@ -205,7 +205,9 @@ export const DEFAULTS: Config = {
   prodUrl: '',
   storybookCompareUrl: '',
   upstreamCookies: {},
-  defaultCwd: '~/Desktop/repos',
+  // S1: a fresh install's first session opens in an empty workspace the host
+  // creates on first start (no repo needed) — see server/index.ts.
+  defaultCwd: `${DEFAULT_DIR_TOKEN}/workspace`,
   reposDir: '~/Desktop/repos',
   ticketsDir: '~/.arigami-tickets',
   stateFile: `${DEFAULT_DIR_TOKEN}/state.json`,

@@ -11,6 +11,9 @@ const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-tele-
 const env = (dir: string, extra: Record<string, string> = {}) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',
+  // S1: these cases describe the classic linear machine; the default is now
+  // 'minimal' (pair+claude only — see test/setup-capabilities.test.ts).
+  ARIGAMI_ONBOARDING_MODE: 'full',
   HOME: path.join(dir, 'home'),
   ARIGAMI_TELEMETRY: '',
   DO_NOT_TRACK: '',

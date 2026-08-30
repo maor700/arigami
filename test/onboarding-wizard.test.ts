@@ -11,6 +11,9 @@ const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wiz-'
 const env = (dir: string, extra: Record<string, string> = {}) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',
+  // S1: these cases describe the classic linear machine; the default is now
+  // 'minimal' (pair+claude only — see test/setup-capabilities.test.ts).
+  ARIGAMI_ONBOARDING_MODE: 'full',
   HOME: path.join(dir, 'home'),
   ...extra,
 });
@@ -216,5 +219,6 @@ test('doctor output lists the same steps in order', () => {
   );
   const lines = r.out[0].txt.split('\n');
   expect(lines.slice(0, 8).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
-  expect(lines[8]).toContain('current step → pair');
+  expect(lines[8]).toContain('mode: full');
+  expect(lines[9]).toContain('current step → pair');
 });

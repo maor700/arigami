@@ -62,6 +62,8 @@ interface ClaudeState {
   // handleScreenRequest). Lives on the session (not only in the chat log) so
   // the rail can badge "needs you" on sessions whose chat isn't loaded.
   screenRequest?: { requestId: string; reason?: string } | null;
+  // S1: an open request_setup card this session is blocked on (manual/ask mode).
+  setupRequest?: { id: string; capability: string } | null;
 }
 
 interface ReviewTarget {
