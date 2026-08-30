@@ -332,6 +332,9 @@ export function getMemoryFile(relPath: string): { path: string; content: string 
   try {
     if (!fs.statSync(full).isFile()) return { error: 'no such file' };
   } catch {
+    // The two root docs are created lazily on first write; on a fresh instance
+    // the UI asks for them before they exist → an empty doc (200), not a 404.
+    if (clean === 'USER.md' || clean === 'MEMORY.md') return { path: clean, content: '' };
     return { error: 'no such file' };
   }
   return { path: clean, content: fs.readFileSync(full, 'utf8') };

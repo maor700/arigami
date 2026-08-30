@@ -1245,7 +1245,11 @@ export function setComposioKey(key: string): { ok: true } {
 export async function setClaudeToken(token: string, label?: string): Promise<{ ok: true; kind: 'oauth' | 'api-key' }> {
   const t = String(token || '').trim();
   if (!t || /\s/.test(t) || t.length < 20) throw new Error('paste the whole token (no spaces)');
-  if (/^sk-ant-api/.test(t)) {
+  const isApiKey = /^sk-ant-api/.test(t);
+  // F3 #2: prove the credential works BEFORE it is stored — a mistyped/revoked
+  // token used to be saved and the step marked "connected" regardless.
+  await verifyClaudeCredential(isApiKey ? { apiKey: t } : { token: t });
+  if (isApiKey) {
     const sec = await import('./lib/secrets.js');
     const file = sec.SECRETS_ENV;
     const lines = safeRead(file).split('\n').filter((l) => l && !l.startsWith('ANTHROPIC_API_KEY='));
@@ -1257,6 +1261,32 @@ export async function setClaudeToken(token: string, label?: string): Promise<{ o
   const acc = await import('./accounts.js');
   (acc as any).addTokenAccount({ label: label || 'wizard', token: t });
   return { ok: true, kind: 'oauth' };
+}
+
+export const TOKEN_VERIFY_TIMEOUT_MS = 60_000;
+
+/**
+ * The cheapest real auth probe we have: a one-shot `claude -p` with ONLY the
+ * candidate credential in its env (server/lib/oneshot.ts strips the host's
+ * own). A dead token comes back as `is_error` ("OAuth access token has been
+ * revoked" / "Not logged in") → a clear, user-facing error; a timeout or a
+ * missing CLI is reported as such rather than silently accepted.
+ */
+export async function verifyClaudeCredential(cred: { token?: string; apiKey?: string }): Promise<void> {
+  const { runClaudeOneShot } = await import('./lib/oneshot.js');
+  try {
+    await runClaudeOneShot('Reply with the single word: pong', {
+      ...cred,
+      model: 'haiku',
+      timeoutMs: TOKEN_VERIFY_TIMEOUT_MS,
+      tag: 'wizard-token-verify',
+    });
+  } catch (e: any) {
+    const raw = String(e?.message || e || '');
+    if (/ENOENT/.test(raw)) throw new Error('claude CLI not found — install it first (see the wizard)');
+    const reason = raw.replace(/^claude exited \d+:?\s*/, '').trim();
+    throw new Error(`token rejected by Claude — not saved${reason ? `: ${reason}` : ' (no response before the timeout)'}`);
+  }
 }
 
 // --- doctor (CLI) ------------------------------------------------------------------------

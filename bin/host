@@ -68,6 +68,19 @@ as_root() {
 render_unit() { # render_unit <src> — substitutes the __TOKENS__ for this checkout
   sed -e "s#__ROOT__#$ROOT#g" -e "s#__USER__#$(id -un)#g" -e "s#__HOME__#$HOME#g" -e "s#__BUN_DIR__#$BUN_DIR#g" "$1"
 }
+# The claude CLI the host resolves (mirrors server/claude.js): an explicit
+# ARIGAMI_CLAUDE_BIN — from the env, $DIR/env (systemd EnvironmentFile) or
+# $DIR/secrets.env — wins; otherwise `claude` on PATH.
+claude_bin() {
+  b="${ARIGAMI_CLAUDE_BIN:-}"
+  for f in "$DIR/env" "$DIR/secrets.env" "$ROOT/.local.env"; do
+    [ -n "$b" ] && break
+    [ -f "$f" ] || continue
+    b="$(sed -n 's/^[[:space:]]*ARIGAMI_CLAUDE_BIN[[:space:]]*=[[:space:]]*//p' "$f" | tail -1 | sed 's/^["'"'"']//; s/["'"'"']$//')"
+  done
+  if [ -z "$b" ]; then b="$(command -v claude 2>/dev/null || true)"; fi
+  printf '%s' "$b"
+}
 manager_name() {
   if systemd_managed; then echo systemd
   elif [ -f "$PLIST" ] || [ -f "$OLD_PLIST" ]; then echo launchd
@@ -216,7 +229,7 @@ doctor() {
   echo "port: $PORT"
   echo
   dl "tooling:"
-  for bin in bun claude curl; do
+  for bin in bun curl; do
     if command -v "$bin" >/dev/null 2>&1; then
       v="$("$bin" --version 2>/dev/null | head -1)"
       echo "  $bin: $(g "${v:-found}")"
@@ -224,6 +237,18 @@ doctor() {
       echo "  $bin: $(r "not found")"
     fi
   done
+  # claude: the binary the HOST actually runs (F3 #6) — ARIGAMI_CLAUDE_BIN from
+  # the environment or from $DIR/env (the unit's EnvironmentFile) / secrets.env
+  # — not whatever `claude` happens to be first on this shell's PATH.
+  cbin="$(claude_bin)"
+  if [ -n "$cbin" ] && [ -x "$cbin" ] || command -v "$cbin" >/dev/null 2>&1; then
+    v="$("$cbin" --version 2>/dev/null | head -1)"
+    echo "  claude: $(g "${v:-found}") $(d "($cbin)")"
+  elif [ -n "$cbin" ]; then
+    echo "  claude: $(r "ARIGAMI_CLAUDE_BIN=$cbin is not executable")"
+  else
+    echo "  claude: $(r "not found") — set ARIGAMI_CLAUDE_BIN in $DIR/env or add it to PATH"
+  fi
   echo
   dl "files:"
   [ -d "$ROOT/node_modules" ] && echo "  node_modules: $(g "✓")" || echo "  node_modules: $(r "✗ — run: bun install")"

@@ -31,7 +31,10 @@ x-arigami: &arigami
     # the https origin comes from ARIGAMI_PUBLIC_URL in .env instead.
     ARIGAMI_TRUST_PROXY: "0"
   env_file:
-    - .env
+    # Optional: `docker compose config/build` must work on a bare checkout
+    # (no .env yet); a missing file is then simply skipped.
+    - path: .env
+      required: false
   volumes:
     - arigami-data:/data
   # Chrome (the VNC desktop + Playwright) crashes on the default 64MB /dev/shm.
@@ -64,8 +67,9 @@ services:
     profiles: [build]
     build:
       context: .
-      args:
-        # WHATSAPP_MCP_REF: <commit>   # override the pinned whatsapp-mcp checkout
+      # To override the pinned whatsapp-mcp checkout add
+      #   args: { WHATSAPP_MCP_REF: <commit> }
+      # (an EMPTY `args:` is invalid — compose requires a mapping).
     container_name: arigami-build
     entrypoint: ["/bin/true"]
     command: []
@@ -89,10 +93,21 @@ services:
     environment:
       # Public hostname (DNS → this machine). REQUIRED for the profile; the
       # same name must be in ARIGAMI_PUBLIC_URL=https://<domain> in .env.
-      ARIGAMI_DOMAIN: ${ARIGAMI_DOMAIN:?set ARIGAMI_DOMAIN in .env for the tls profile}
+      # Defaulted (not `:?`) so `docker compose up/config/build` WITHOUT the tls
+      # profile never trips on it; the startup check below fails only this
+      # service, at `--profile tls up`, with the same message.
+      ARIGAMI_DOMAIN: ${ARIGAMI_DOMAIN:-}
       ARIGAMI_UPSTREAM: arigami:3199
       ARIGAMI_RATELIMIT_FILE: ${ARIGAMI_RATELIMIT_FILE:-ratelimit.caddy}
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$ARIGAMI_DOMAIN" ]; then
+          echo "arigami-caddy: set ARIGAMI_DOMAIN in .env for the tls profile" >&2
+          exit 1
+        fi
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     volumes:
       - caddy-data:/data      # certificates + ACME account (keep across restarts!)
       - caddy-config:/config

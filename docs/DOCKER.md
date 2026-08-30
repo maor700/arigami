@@ -87,7 +87,13 @@ Nothing to configure. On boot the host (`ARIGAMI_SCREEN_ENABLED=1`,
 `ARIGAMI_GLOBAL_DESKTOP=1`, `DISPLAY=:99` — all set in the image) starts `Xvfb :99`, openbox, tint2 and
 `x11vnc` on `127.0.0.1:5900`, supervised like any other child process; per-
 session desktops are allocated on demand on top. `request_screen` in the cockpit
-shows it. Chrome runs as the unprivileged `node` user, so the host adds
+shows it. The host, the desktop and Chrome run as the unprivileged `node` user
+(uid 1000): the entrypoint starts as root only to own the `/data` volume, then
+drops via `gosu` — `docker compose exec arigami ps -eo user,comm` shows `node`
+for `bun`/`Xvfb`/`x11vnc`. Note that a plain `docker compose exec` shell is
+root (the image sets no `USER` so that first-boot chown can run); use
+`docker compose exec -u node arigami …` for anything that touches `/data` or
+runs `claude`. Because Chrome runs as `node`, the host adds
 `--no-sandbox --disable-dev-shm-usage` automatically when `/.dockerenv` exists;
 compose gives it `shm_size: 1gb` and no extra capabilities. Turn the shared
 desktop off with `ARIGAMI_GLOBAL_DESKTOP=0`.

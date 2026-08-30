@@ -123,3 +123,71 @@ test('on a non-zero exit with the real is_error envelope shape (empty stderr), s
   expect(r.out[0].msg).toMatch(/claude exited 1/);
   expect(r.out[0].msg).toMatch(/Not logged in/);
 }, 15000);
+
+// ---- F3 #7: stale token after a restart → refresh once, retry once ----------
+function seedRefreshableAccount(dir, token, refresh) {
+  fs.writeFileSync(
+    path.join(dir, 'accounts.json'),
+    JSON.stringify({
+      activeId: 'acc_r',
+      accounts: [{ id: 'acc_r', label: 'login', type: 'oauth-token', pool: true, addedAt: new Date().toISOString(),
+        token: { v: 0, t: token }, refreshToken: { v: 0, t: refresh }, expiresAt: new Date(Date.now() + 3600_000).toISOString() }],
+    })
+  );
+}
+
+test('F3 #7: a 401/revoked envelope refreshes the active account once and retries with the NEW token (resolved at call time)', () => {
+  const dir = tmp();
+  seedRefreshableAccount(dir, 'sk-ant-OLD-REVOKED', 'rt-1');
+  const marker = path.join(dir, 'first-call');
+  const r = runInChild(
+    // Stub the OAuth token endpoint: no network in tests.
+    "globalThis.fetch=async(url,init)=>{globalThis.__calls=(globalThis.__calls||0)+1;" +
+      "return new Response(JSON.stringify({access_token:'sk-ant-FRESH',refresh_token:'rt-2',expires_in:28800}),{status:200,headers:{'content-type':'application/json'}});};" +
+      "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runClaudeOneShot}=await import('./server/lib/oneshot.ts');" +
+      "const out=JSON.parse(await runClaudeOneShot('reply ok'));" +
+      "emit({out,refreshCalls:globalThis.__calls||0,stored:acc.resolveToken('acc_r'),first:require('node:fs').readFileSync(process.env.FAKE_CLAUDE_FAIL_ONCE_FILE,'utf8')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_FAIL_ONCE_FILE: marker }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.first).toBe('sk-ant-OLD-REVOKED'); // first attempt ran with the stale token
+  expect(o.refreshCalls).toBe(1); // exactly one refresh
+  expect(o.out.token).toBe('sk-ant-FRESH'); // retry re-resolved the token from the store
+  expect(o.stored).toBe('sk-ant-FRESH'); // and the store now holds it for the next run
+}, 15000);
+
+test('F3 #7: an auth failure with NO refresh token (paste account) is not retried — surfaces the error once', () => {
+  const dir = tmp();
+  seedAccount(dir, 'sk-ant-DEAD-PASTE');
+  const marker = path.join(dir, 'first-call');
+  const r = runInChild(
+    "globalThis.fetch=async()=>{throw new Error('must not be called');};" +
+      "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runClaudeOneShot,isAuthFailure}=await import('./server/lib/oneshot.ts');" +
+      "let msg=null;try{await runClaudeOneShot('reply ok');}catch(e){msg=e.message;}" +
+      "emit({msg,auth:isAuthFailure(msg),benign:isAuthFailure('claude exited 1: rate limit reached')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_FAIL_ONCE_FILE: marker }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].msg).toMatch(/revoked/);
+  expect(r.out[0].auth).toBe(true);
+  expect(r.out[0].benign).toBe(false);
+}, 15000);
+
+test('F3 #2: an explicit opts.token overrides the active account and is used verbatim', () => {
+  const dir = tmp();
+  seedAccount(dir, 'sk-ant-ACTIVE');
+  const r = runInChild(
+    "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runClaudeOneShot}=await import('./server/lib/oneshot.ts');" +
+      "const a=JSON.parse(await runClaudeOneShot('ping',{token:'sk-ant-oat01-CANDIDATE'}));" +
+      "const b=JSON.parse(await runClaudeOneShot('ping',{apiKey:'sk-ant-api03-CANDIDATE'}));emit({a,b});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CLAUDE_BIN: FAKE_CLAUDE }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].a.token).toBe('sk-ant-oat01-CANDIDATE');
+  expect(r.out[0].b.token).toBeNull();
+  expect(r.out[0].b.apiKey).toBe('sk-ant-api03-CANDIDATE');
+}, 15000);

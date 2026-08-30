@@ -73,6 +73,7 @@ export const strings = {
   'chat.dismissNoneTitle': 'Dismiss — none of these',
   'chat.dismiss': 'Dismiss',
   'chat.showEarlier': 'show earlier ({n} hidden)',
+  'chat.loadEarlier': 'Load earlier messages',
   'chat.loadingTranscript': 'loading transcript…',
   'chat.noMessages': 'No messages yet — say something below.',
   'chat.working': 'working…',
