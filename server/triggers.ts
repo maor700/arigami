@@ -770,6 +770,7 @@ export async function createCronTrigger(input: {
   tlog(t.id, 'info', `armed — next run ${new Date(nextRun).toISOString()}`);
   persist();
   emitTriggers();
+  import('./funnel.js').then((f) => f.firstTime('cron.first')).catch(() => {}); // K5 funnel
   return t;
 }
 

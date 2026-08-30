@@ -19,7 +19,7 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
 const NONE =
   "const probes={hasAdmin:()=>false,claudeCli:()=>true,claudeAuth:()=>false,gitAuth:()=>false," +
   "profileApplied:()=>null,pendingProfile:()=>null,integrations:()=>({composio:false,whatsapp:'disconnected',tailscale:false})," +
-  "repos:()=>[],health:()=>undefined,unattended:()=>false};";
+  "repos:()=>[],health:()=>undefined,unattended:()=>false,telemetry:()=>({enabled:false,reason:'config'})};";
 
 const readFunnel = (dir: string): any[] =>
   fs.existsSync(path.join(dir, 'funnel.jsonl'))
@@ -35,7 +35,7 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   );
   expect(r.ok).toBe(true);
   const { v1, v2 } = r.out[0];
-  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'health']);
+  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
   expect(v1.current).toBe('pair');
   expect(v1.done).toBe(false);
   expect(v1.steps.every((s: any) => s.status === 'todo')).toBe(true);
@@ -45,12 +45,12 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   // Second read = same view, and NO new events (emitted once per transition).
   expect(v2.steps.map((s: any) => s.status)).toEqual(v1.steps.map((s: any) => s.status));
   const ev = readFunnel(dir);
-  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(7);
+  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(8);
   expect(ev.every((e) => typeof e.at === 'string' && e.step && e.status)).toBe(true);
   // onboarding.json persisted with the emitted map.
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.version).toBe(1);
-  expect(Object.keys(file.emitted).length).toBe(7);
+  expect(Object.keys(file.emitted).length).toBe(8);
 });
 
 test('probe-ok wins, skip/complete records persist, done flips exactly once', () => {
@@ -62,7 +62,7 @@ test('probe-ok wins, skip/complete records persist, done flips exactly once', ()
       "let threw=false;try{ob.wizardAct('claude','skip','user',probes);}catch{threw=true;}" +
       "const b=ob.wizardAct('git','skip','user',probes);" +
       "ob.wizardAct('profile','skip','user',probes);ob.wizardAct('integrations','complete','user',probes);" +
-      "ob.wizardAct('repo','skip','user',probes);" +
+      "ob.wizardAct('repo','skip','user',probes);ob.wizardAct('telemetry','skip','user',probes);" +
       "const c=ob.wizardAct('health','skip','user',probes);" +
       "const d=ob.wizard(probes);" +
       "let bad=false;try{ob.wizardAct('nope','skip');}catch{bad=true;}" +
@@ -100,7 +100,7 @@ test('reset forgets decisions but probes still decide', () => {
   const dir = fresh();
   const r = runInChild(
     `const ob=await import('./server/onboarding.js');${NONE}probes.hasAdmin=()=>true;probes.claudeAuth=()=>true;probes.repos=()=>['app'];` +
-      "for(const s of ['git','profile','integrations','health'])ob.wizardAct(s,'skip','user',probes);" +
+      "for(const s of ['git','profile','integrations','telemetry','health'])ob.wizardAct(s,'skip','user',probes);" +
       "const before=ob.wizard(probes);const after=ob.wizardReset(probes);emit({before:before.done,after});",
     env(dir)
   );
@@ -124,7 +124,7 @@ test('unattended pre-completes skippable steps only; pairing stays open', () => 
   expect(v.unattended).toBe(true);
   expect(v.done).toBe(false);
   expect(v.current).toBe('pair');
-  for (const id of ['git', 'profile', 'integrations', 'repo', 'health']) {
+  for (const id of ['git', 'profile', 'integrations', 'repo', 'telemetry', 'health']) {
     const s = v.steps.find((x: any) => x.id === id);
     expect(s.status).toBe('skipped');
     expect(s.by).toBe('unattended');
@@ -194,6 +194,6 @@ test('doctor output lists the same steps in order', () => {
     env(fresh())
   );
   const lines = r.out[0].txt.split('\n');
-  expect(lines.slice(0, 7).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'health']);
-  expect(lines[7]).toContain('current step → pair');
+  expect(lines.slice(0, 8).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+  expect(lines[8]).toContain('current step → pair');
 });

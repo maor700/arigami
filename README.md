@@ -101,6 +101,10 @@ cockpit is treated as an admin console, never a public site:
 - **Agents never print absolute URLs.** Everything the host hands you is a
   host-relative path, so links work from `localhost`, a tailnet or a proxy.
 - **Skills and memory are never auto-written.** Proposals wait in *Pending*.
+- **Telemetry is off by default.** Opting in sends only funnel milestone names,
+  version, OS/arch and a random id — never prompts, paths or hostnames.
+  `DO_NOT_TRACK=1` always wins; Settings shows the exact payload —
+  [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 Threat model and hardening: [docs/SECURITY.md](docs/SECURITY.md). Report
 vulnerabilities: [SECURITY.md](SECURITY.md).
@@ -114,6 +118,7 @@ vulnerabilities: [SECURITY.md](SECURITY.md).
 - [docs/SPEC.md](docs/SPEC.md) — data model, REST/WS API, host MCP tools, UI
 - [docs/ONBOARDING.md](docs/ONBOARDING.md) — repos, profiles, readiness gates
 - [docs/TRIGGERS.md](docs/TRIGGERS.md) · [docs/DISPATCHER.md](docs/DISPATCHER.md) — listeners, cron, PM → children
+- [docs/TELEMETRY.md](docs/TELEMETRY.md) — opt-in telemetry: what is sent, how to turn it off, self-host the collector
 - [docs/SECURITY.md](docs/SECURITY.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 Windows: `bin\host.ps1` mirrors `bin/host` (start/launch/doctor/install as a
