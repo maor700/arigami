@@ -432,7 +432,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     const sp = await import('./skill-proposals.js');
     const sk = await import('./skills.js');
     for (const s of b.skills) {
-      const current = sk.isSkillDir(s.name) ? readText(path.join(sk.SKILLS_DIR, s.name, 'SKILL.md')) : '';
+      const current = sk.readSkillContent(s.name); // effective copy; applies land in $ARIGAMI_DIR/skills
       if (current && current === s.content) {
         report.skills.push({ name: s.name, status: 'unchanged' });
         continue;

@@ -97,6 +97,11 @@ export const strings = {
 
   // skills view
   'dialogs.hostSkillPack': 'Host skill pack',
+  'dialogs.skillSourceShipped': 'shipped',
+  'dialogs.skillSourceUser': 'user',
+  'dialogs.skillSourceOverride': 'override',
+  'dialogs.skillSourceShippedHint': 'Ships with Arigami (git-tracked, read-only). Saving creates an override copy under $ARIGAMI_DIR/skills.',
+  'dialogs.skillSourceUserHint': 'Lives in $ARIGAMI_DIR/skills (profile bundle, applied proposal or your edit). A same-named skill overrides the shipped one.',
   'dialogs.alsoInThisSession': 'Also in this session',
   'dialogs.couldntLoadSkill': 'Couldn’t load “{name}”: {err}',
   'dialogs.loadingSkills': 'Loading skills…',

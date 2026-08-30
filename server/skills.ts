@@ -1,9 +1,21 @@
-// Host skill pack — read/edit the bundled skills at ROOT/skills, plus a curated
-// "relationship" backbone (which host surface invokes which skill) and an
-// optional, AI-generated enrichment layer (per-skill summaries + inferred
-// secondary edges). The backbone is correct-by-construction; the AI layer is
-// opt-in, cached to ~/.arigami (never into the git-tracked pack), and clearly
-// marked as inferred in the UI.
+// Host skill pack — TWO roots merged by name:
+//   shipped  ROOT/skills            git-tracked, READ-ONLY from the app's point
+//                                   of view (never written at runtime)
+//   user     $ARIGAMI_DIR/skills    writable: human editor saves, skill-proposal
+//                                   applies, profile-bundle skills all land here
+// A user skill with the same name as a shipped one OVERRIDES it (the app and
+// sessions see the user copy); each listed skill carries `source`. Editing a
+// shipped skill therefore creates an override copy in the user dir — the repo
+// checkout stays clean (F2: a profile apply used to pollute the git tree).
+// Sessions see the user dir through a generated plugin at
+// $ARIGAMI_DIR/user-plugin (see userPluginDir()) passed as a second
+// --plugin-dir by server/claude.js.
+//
+// Plus a curated "relationship" backbone (which host surface invokes which
+// skill) and an optional, AI-generated enrichment layer (per-skill summaries +
+// inferred secondary edges). The backbone is correct-by-construction; the AI
+// layer is opt-in, cached to $ARIGAMI_DIR (never into the git-tracked pack),
+// and clearly marked as inferred in the UI.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -12,7 +24,11 @@ import { cfg } from './state.js';
 import { runClaudeOneShot } from './lib/oneshot.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** Shipped pack (git-tracked). Read-only at runtime. */
 export const SKILLS_DIR = path.join(ROOT, 'skills');
+/** User/bundle skills — the only root the app ever writes to. */
+export const USER_SKILLS_DIR = path.join(cfg.configDir!, 'skills');
+export type SkillSource = 'shipped' | 'user';
 const GRAPH_CACHE = path.join(cfg.configDir!, 'skills-graph.json');
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -54,22 +70,44 @@ function parseFrontmatter(content: string): Record<string, string> {
   return out;
 }
 
-export function isSkillDir(dir: string): boolean {
+function rootOf(source: SkillSource): string {
+  return source === 'user' ? USER_SKILLS_DIR : SKILLS_DIR;
+}
+
+function hasSkillIn(root: string, dir: string): boolean {
   try {
-    return fs.statSync(path.join(SKILLS_DIR, dir)).isDirectory() &&
-      fs.existsSync(path.join(SKILLS_DIR, dir, 'SKILL.md'));
+    return fs.statSync(path.join(root, dir)).isDirectory() &&
+      fs.existsSync(path.join(root, dir, 'SKILL.md'));
   } catch {
     return false;
   }
 }
 
-function listSupporting(dir: string): { name: string; size: number }[] {
+/** Which root a skill resolves from (user wins), or null if it isn't anywhere. */
+export function skillSource(name: string): SkillSource | null {
+  if (!NAME_RE.test(name)) return null;
+  if (hasSkillIn(USER_SKILLS_DIR, name)) return 'user';
+  if (hasSkillIn(SKILLS_DIR, name)) return 'shipped';
+  return null;
+}
+
+/** Absolute directory of the EFFECTIVE skill (user override wins), or null. */
+export function skillDir(name: string): string | null {
+  const src = skillSource(name);
+  return src ? path.join(rootOf(src), name) : null;
+}
+
+export function isSkillDir(dir: string): boolean {
+  return skillSource(dir) !== null;
+}
+
+function listSupporting(full: string): { name: string; size: number }[] {
   try {
     return fs
-      .readdirSync(path.join(SKILLS_DIR, dir))
+      .readdirSync(full)
       .filter((f) => f !== 'SKILL.md')
-      .filter((f) => fs.statSync(path.join(SKILLS_DIR, dir, f)).isFile())
-      .map((f) => ({ name: f, size: fs.statSync(path.join(SKILLS_DIR, dir, f)).size }));
+      .filter((f) => fs.statSync(path.join(full, f)).isFile())
+      .map((f) => ({ name: f, size: fs.statSync(path.join(full, f)).size }));
   } catch {
     return [];
   }
@@ -80,25 +118,49 @@ export interface SkillSummary {
   description: string;
   argumentHint: string;
   files: { name: string; size: number }[];
+  /** where the effective copy lives; user overrides shipped by name */
+  source: SkillSource;
+  /** true when a user copy shadows a shipped skill of the same name */
+  overridesShipped: boolean;
 }
 
-function skillDirs(): string[] {
+function dirsIn(root: string): string[] {
   try {
-    return fs.readdirSync(SKILLS_DIR).filter(isSkillDir).sort();
+    return fs.readdirSync(root).filter((d) => NAME_RE.test(d) && hasSkillIn(root, d));
   } catch {
     return [];
   }
 }
 
+/** Merged, sorted skill names: shipped ∪ user (each name once). */
+function skillDirs(): string[] {
+  return [...new Set([...dirsIn(SKILLS_DIR), ...dirsIn(USER_SKILLS_DIR)])].sort();
+}
+
 function readSkillMeta(dir: string): SkillSummary {
-  const content = fs.readFileSync(path.join(SKILLS_DIR, dir, 'SKILL.md'), 'utf8');
+  const source = skillSource(dir)!;
+  const full = path.join(rootOf(source), dir);
+  const content = fs.readFileSync(path.join(full, 'SKILL.md'), 'utf8');
   const fm = parseFrontmatter(content);
   return {
     name: dir,
     description: fm.description || '',
     argumentHint: fm['argument-hint'] || '',
-    files: listSupporting(dir),
+    files: listSupporting(full),
+    source,
+    overridesShipped: source === 'user' && hasSkillIn(SKILLS_DIR, dir),
   };
+}
+
+/** Effective SKILL.md text ('' if the skill doesn't exist). */
+export function readSkillContent(name: string): string {
+  const dir = skillDir(name);
+  if (!dir) return '';
+  try {
+    return fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  } catch {
+    return '';
+  }
 }
 
 // GET /__api/skills — pack list + curated backbone (instant, always correct).
@@ -123,9 +185,10 @@ export function listSkills() {
 // GET /__api/skills/:name — raw SKILL.md + read-only supporting file contents.
 export function readSkill(name: string) {
   if (!NAME_RE.test(name) || !isSkillDir(name)) return null;
-  const content = fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
-  const files = listSupporting(name).map((f) => {
-    const full = path.join(SKILLS_DIR, name, f.name);
+  const dir = skillDir(name)!;
+  const content = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  const files = listSupporting(dir).map((f) => {
+    const full = path.join(dir, f.name);
     const ext = path.extname(f.name).toLowerCase();
     const text = TEXT_EXT.has(ext) && f.size <= MAX_FILE;
     return {
@@ -137,7 +200,10 @@ export function readSkill(name: string) {
   return { ...readSkillMeta(name), content, supporting: files };
 }
 
-// PUT /__api/skills/:name — validated write of SKILL.md. Edit-only by default
+// PUT /__api/skills/:name — validated write of SKILL.md, ALWAYS into the user
+// dir. Editing a shipped skill creates an override copy there (the shipped
+// file is untouched; supporting files are copied along so $SKILL_DIR stays
+// self-contained). Edit-only by default
 // (the skill must already exist) — that's the human editor's UI path. Creation
 // of a brand-new skill is only allowed with opts.allowCreate:true, which only
 // the skill-proposals apply path (server/skill-proposals.ts) sets — never the
@@ -154,9 +220,53 @@ export function writeSkill(
   if (!fm) return { error: 'missing YAML frontmatter (--- … ---) at the top of the file' };
   const parsed = parseFrontmatter(content);
   if (!parsed.description) return { error: 'frontmatter must include a non-empty "description"' };
-  fs.mkdirSync(path.join(SKILLS_DIR, name), { recursive: true });
-  fs.writeFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), content);
+  const dest = path.join(USER_SKILLS_DIR, name);
+  fs.mkdirSync(dest, { recursive: true });
+  if (skillSource(name) === 'shipped') {
+    // first override of a shipped skill: bring its supporting files along
+    for (const f of listSupporting(path.join(SKILLS_DIR, name))) {
+      const to = path.join(dest, f.name);
+      if (!fs.existsSync(to)) fs.copyFileSync(path.join(SKILLS_DIR, name, f.name), to);
+    }
+  }
+  fs.writeFileSync(path.join(dest, 'SKILL.md'), content);
+  ensureUserPlugin();
   return { ok: true, skill: readSkillMeta(name) };
+}
+
+// ---- user plugin (how SESSIONS see the user dir) ---------------------------
+// Claude Code discovers skills through --plugin-dir (repeatable). The shipped
+// pack is ROOT itself (ROOT/.claude-plugin + ROOT/skills). For the user dir we
+// generate a tiny second plugin under $ARIGAMI_DIR: a manifest plus a `skills`
+// symlink to $ARIGAMI_DIR/skills — so sessions list user skills as
+// /arigami-user:<name> with no copying and no regeneration on every write.
+export const USER_PLUGIN_DIR = path.join(cfg.configDir!, 'user-plugin');
+export function ensureUserPlugin(): string {
+  try {
+    fs.mkdirSync(USER_SKILLS_DIR, { recursive: true });
+    fs.mkdirSync(path.join(USER_PLUGIN_DIR, '.claude-plugin'), { recursive: true });
+    const manifest = path.join(USER_PLUGIN_DIR, '.claude-plugin', 'plugin.json');
+    const want = JSON.stringify(
+      {
+        name: 'arigami-user',
+        description: 'Skills installed on this Arigami instance ($ARIGAMI_DIR/skills): profile bundles, applied proposals, edited/overridden host skills',
+        version: '0.1.0',
+      },
+      null,
+      2
+    );
+    let cur = '';
+    try { cur = fs.readFileSync(manifest, 'utf8'); } catch {}
+    if (cur !== want) fs.writeFileSync(manifest, want);
+    const link = path.join(USER_PLUGIN_DIR, 'skills');
+    let ok = false;
+    try { ok = fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === USER_SKILLS_DIR; } catch {}
+    if (!ok) {
+      try { fs.rmSync(link, { recursive: true, force: true }); } catch {}
+      fs.symlinkSync(USER_SKILLS_DIR, link, 'dir');
+    }
+  } catch { /* best-effort: sessions still get the shipped pack */ }
+  return USER_PLUGIN_DIR;
 }
 
 // ---- AI enrichment ---------------------------------------------------------
@@ -165,7 +275,7 @@ function packHash(): string {
   const h = crypto.createHash('sha1');
   for (const dir of skillDirs()) {
     h.update(dir);
-    h.update(fs.readFileSync(path.join(SKILLS_DIR, dir, 'SKILL.md')));
+    h.update(readSkillContent(dir));
   }
   return h.digest('hex');
 }
@@ -196,7 +306,7 @@ function extractJson(text: string): any {
 const ANALYZE_PROMPT =
   `You are documenting the Arigami's skill system for a small relationship graph. ` +
   `Work in the current directory, READ-ONLY.\n\n` +
-  `1. Read every skills/*/SKILL.md.\n` +
+  `1. Read every skills/*/SKILL.md, and every SKILL.md under ${USER_SKILLS_DIR} (user/bundle skills; a same-named one overrides the shipped copy).\n` +
   `2. Skim server/claude.js, server/api.ts and server/lib/config.ts to see how the host invokes skills, ` +
   `which skills call the arigami MCP, and which source scripts from skills/_lib.\n\n` +
   `Then output ONLY a JSON object (no prose, no markdown fences) of exactly this shape:\n` +

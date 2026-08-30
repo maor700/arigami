@@ -97,6 +97,11 @@ export const strings = {
 
   // skills view
   'dialogs.hostSkillPack': 'חבילת הסקילים של המארח',
+  'dialogs.skillSourceShipped': 'מובנה',
+  'dialogs.skillSourceUser': 'משתמש',
+  'dialogs.skillSourceOverride': 'דריסה',
+  'dialogs.skillSourceShippedHint': 'מגיע עם Arigami (בגיט, לקריאה בלבד). שמירה יוצרת עותק דורס תחת $ARIGAMI_DIR/skills.',
+  'dialogs.skillSourceUserHint': 'נמצא ב-$ARIGAMI_DIR/skills (חבילת פרופיל, הצעה שאושרה או עריכה שלך). סקיל באותו שם דורס את המובנה.',
   'dialogs.alsoInThisSession': 'גם בסשן זה',
   'dialogs.couldntLoadSkill': 'טעינת “{name}” נכשלה: {err}',
   'dialogs.loadingSkills': 'טוען סקילים…',

@@ -17,6 +17,13 @@ import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, se
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { auth } from './auth.js';
+import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
+
+// $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
+// first apply) needs no restart for sessions to see user skills.
+function userPluginDir() {
+  return ensureUserPlugin();
+}
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
 // stripped: the host chooses the auth per session from the accounts store, so a
@@ -382,8 +389,11 @@ function spawnProc(s, resume) {
     '--mcp-config', MCP_CONFIG,
     '--permission-prompt-tool', 'mcp__arigami__permission_prompt',
     // Register the bundled skill pack (skills/) as a plugin so sessions can
-    // invoke them as /arigami:<skill> — they appear in the chat palette.
+    // invoke them as /arigami:<skill> — they appear in the chat palette. The
+    // user/bundle skills ($ARIGAMI_DIR/skills) ride along as a second plugin
+    // (/arigami-user:<skill>) — see skills.ts ensureUserPlugin().
     '--plugin-dir', ROOT,
+    '--plugin-dir', userPluginDir(),
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
   ];
   const cwd = untildify(s.cwd) || HOME;
@@ -404,6 +414,7 @@ function spawnProc(s, resume) {
       // the review prompt authenticate with it; it dies with the session.
       ARIGAMI_TOKEN: auth.tokenForSession(s.id),
       ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
+      ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
       // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
       // its dev server binds the slot the host reserved (metadata.port).
       ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
@@ -1147,6 +1158,7 @@ function runHeadless(s, prompt, onExit) {
       '--mcp-config', MCP_CONFIG,
       '--strict-mcp-config', // ONLY the arigami MCP — skip the user's global servers (fast, focused)
       '--plugin-dir', ROOT, // registers the host skill pack (explain-changes etc.)
+      '--plugin-dir', userPluginDir(), // + user/bundle skills ($ARIGAMI_DIR/skills)
     ],
     {
       cwd,
@@ -1158,6 +1170,7 @@ function runHeadless(s, prompt, onExit) {
         ARIGAMI_PUBLIC_PATH: '/__host/',
         ARIGAMI_TOKEN: auth.tokenForSession(s.id),
         ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
+        ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
       },
       stdio: ['ignore', 'ignore', 'pipe'],
     }
