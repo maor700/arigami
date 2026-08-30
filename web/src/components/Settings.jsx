@@ -15,6 +15,7 @@ import Voice from './settings/Voice.jsx';
 import Connections from './settings/Connections.jsx';
 import Automation from './settings/Automation.jsx';
 import Host from './settings/Host.jsx';
+import Health from './settings/Health.jsx';
 import Access from './settings/Access.jsx';
 
 export const SETTINGS_CATEGORIES = ['appearance', 'voice', 'connections', 'automation', 'host'];
@@ -83,7 +84,7 @@ export default function Settings({ category = 'appearance', section = '', initia
   if (cat === 'voice') body = <Voice recording={recordingHotkey} setRecording={setRecordingHotkey} />;
   else if (cat === 'connections') body = <Connections initialAdd={initialAdd} />;
   else if (cat === 'automation') body = <Automation />;
-  else if (cat === 'host') body = <><Host /><Access /></>;
+  else if (cat === 'host') body = <><Host /><Health /><Access /></>;
   else body = <Appearance />;
 
   return (

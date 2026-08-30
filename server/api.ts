@@ -3375,7 +3375,11 @@ export async function handle(
     }
     if (p === '/__api/pending' && m === 'GET') {
       const t = await import('./triggers.js');
-      return json(res, t.snapshot());
+      // RES1 §3: the aggregated "ממתין לך" queue rides along here too, so the
+      // one endpoint answers "what is waiting for me" in full.
+      const sup = await import('./supervisor-loop.js');
+      const waiting = await sup.waitingQueue().catch(() => []);
+      return json(res, { ...t.snapshot(), waiting });
     }
     if (p === '/__api/pending' && m === 'POST') {
       // Manually defer into the queue — a ticket or an empty (plain) session.
@@ -3417,6 +3421,45 @@ export async function handle(
       }
       if (m === 'DELETE') return json(res, { ok: t.dismissPending(rest) });
       return notFound(res);
+    }
+    // ---- RES1 — the supervisor's read surface -------------------------------
+    // /health      the per-session health map + the "ממתין לך" queue + a 24h
+    //              incident tally, plus per-account/model quota with reset times.
+    // /health/incidents?hours=  what the supervisor actually did.
+    // /waiting     the queue on its own (the rail pill polls/streams this).
+    // NB: the aggregated queue does NOT live at /__api/pending — that path is
+    // the trigger/ticket queue and predates this. GET /__api/pending carries a
+    // `waiting` key too, so the spec's single endpoint still answers.
+    if (p === '/__api/health' && m === 'GET') {
+      const sup = await import('./supervisor-loop.js');
+      const accountsMod = await import('./accounts.js');
+      const snap = await sup.healthSnapshot();
+      const { accounts } = accountsMod.listAccounts() as any;
+      return json(res, {
+        ...snap,
+        accounts: accounts.map((a: any) => ({
+          id: a.id,
+          label: a.label,
+          pool: a.pool,
+          active: a.active,
+          available: a.available,
+          quarantineUntil: a.quarantineUntil,
+          plan: a.plan,
+        })),
+        modelChain: cfg.modelChain,
+        supervisor: cfg.supervisor,
+      });
+    }
+    if (p === '/__api/health/incidents' && m === 'GET') {
+      const sup = await import('./supervisor-loop.js');
+      const hours = Math.min(24 * 30, Math.max(1, Number(u.searchParams.get('hours')) || 24));
+      const list = sup.incidents(hours);
+      return json(res, { hours, incidents: list.slice(-500).reverse(), count: list.length });
+    }
+    if (p === '/__api/waiting' && m === 'GET') {
+      const sup = await import('./supervisor-loop.js');
+      const waiting = await sup.waitingQueue();
+      return json(res, { waiting, count: waiting.length });
     }
     if (p === '/__api/queue' && m === 'GET') {
       const t = await import('./triggers.js');
@@ -4375,6 +4418,12 @@ export async function handle(
         );
       const fromLabel = state.getSession(from)?.title || from;
       const wrapped = `[Task from your project controller (${fromLabel})]\n\n${text}`;
+      // RES1 §3: the controller is now waiting on this child. The supervisor
+      // checks the child actually got the ask and re-delivers it if not; the
+      // pointer is cleared the moment the child reports (or the host synthesizes).
+      state.patchSession(from, {
+        metadata: { waitingOn: { sessionId: id, since: new Date().toISOString(), what: text.slice(0, 400) } },
+      });
       if (s.claude?.state === 'idle') {
         try {
           claude.sendMessage(id, wrapped);
@@ -4498,7 +4547,7 @@ export async function handle(
       const kind = rawKind !== undefined && rawKind !== null && String(rawKind).trim() ? String(rawKind).trim().toLowerCase() : null;
       if (kind && !agents.ACTION_KIND_RE.test(kind)) return badRequest(res, `invalid kind: ${kind} — lowercase letters, digits, :._- (max 40)`);
       const ag = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
-      const action: Record<string, unknown> = { id: 'act_' + nano(), prompt, buttons, ...(kind ? { kind } : {}) };
+      const action: Record<string, unknown> = { id: 'act_' + nano(), at: new Date().toISOString(), prompt, buttons, ...(kind ? { kind } : {}) };
       if (ag) action.agent = { slug: ag.slug, name: ag.name, emoji: ag.emoji, color: ag.color };
       if (ag && kind && (ag.autoApprove || []).includes(kind)) {
         const pick = buttons.find((b: any) => b?.style === 'primary') || buttons[0];
@@ -4825,13 +4874,22 @@ export async function handle(
       }
     }
     if (sub === 'model' && m === 'POST') {
-      const { model } = (await readBody(req)) as any;
+      const { model, modelChain } = (await readBody(req)) as any;
+      if (modelChain !== undefined && modelChain !== null && !Array.isArray(modelChain))
+        return badRequest(res, 'modelChain must be an array of `claude --model` values');
       try {
-        return json(res, claude.setModel(id, model));
+        return json(res, claude.setModel(id, model, modelChain === undefined ? {} : { chain: modelChain }));
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         return badRequest(res, error.message);
       }
+    }
+    // RES1: climb back to the top rung of the model ladder NOW, without waiting
+    // for the quota reset the supervisor is counting down to.
+    if (sub === 'model/restore' && m === 'POST') {
+      const to = claude.restoreModel(id);
+      if (!to) return badRequest(res, 'this session is already on the top rung of its model chain');
+      return json(res, { ok: true, model: to });
     }
     if (sub === 'effort' && m === 'POST') {
       const { effort } = (await readBody(req)) as any;
@@ -4948,6 +5006,13 @@ export async function handle(
         });
       const subtask = (s.metadata?.subtask as string) || s.title;
       const pointer = `worker ${id} (${subtask}) → ${result.state}${result.note ? `: ${result.note}` : ''}`;
+      // RES1 §3: the master is no longer waiting on this child.
+      try {
+        const sup = await import('./supervisor-loop.js');
+        sup.clearWaitingOn(master, id);
+      } catch {
+        /* the supervisor is optional — a report must never fail on it */
+      }
       try {
         const listeners = await import('./listeners.js');
         listeners.enqueueWake(master, pointer, `report:${id}`);

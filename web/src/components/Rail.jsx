@@ -51,6 +51,75 @@ import {
 
 const STATUS_ORDER = ['Booting', 'In Progress', 'In Review', 'Blocked', 'Completed'];
 
+// RES1 §4 — the supervisor's health dot. The badges beside it already say
+// "working" and "needs you"; what the dot adds is the two states nothing else
+// showed: a session the host is failing to recover (red) and one that has gone
+// quiet with work still owed (also red — it is not fine, it is stuck).
+const HEALTH_COLOR = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
+
+function HealthDot({ health }) {
+  const t = useT();
+  if (!health) return null;
+  const color = HEALTH_COLOR[health.dot] || HEALTH_COLOR.grey;
+  // An escalated session is not one the host is still working on — it is one it
+  // gave up on, which is a different thing to tell the human.
+  const label = health.escalated ? t('waiting.what.system') : t(`rail.health.${health.state}`);
+  return (
+    <span
+      title={`${label} · ${health.reason}`}
+      aria-label={label}
+      className="inline-block h-[6px] w-[6px] shrink-0 rounded-full align-middle"
+      style={{ background: color }}
+    />
+  );
+}
+
+// The one place the human looks to answer "what is waiting on me". Every row
+// says what is blocked, since when, and the single action that unblocks it.
+function WaitingPill({ onSelect }) {
+  const t = useT();
+  const { waiting } = useStore();
+  const [open, setOpen] = useState(false);
+  if (!waiting?.length) return null;
+  return (
+    <div className="px-[13px] pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? t('rail.waiting.hide') : t('rail.waiting.show')}
+        className="pulse-yellow flex w-full cursor-pointer items-center gap-1.5 rounded-full border border-ink bg-brand px-2.5 py-1 font-mono text-[10px] font-bold text-[#1a1a1a]"
+      >
+        <Icon icon={open ? faCaretDown : faCaretRight} />
+        {t('rail.waiting.pill', { n: waiting.length })}
+      </button>
+      {open && (
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {waiting.map((w) => (
+            <li key={`${w.sessionId}:${w.kind}`}>
+              <button
+                type="button"
+                onClick={() => onSelect(w.sessionId)}
+                className="flex w-full cursor-pointer flex-col items-start gap-px rounded-md px-2 py-1 text-start hover:bg-chip/60"
+              >
+                <span className="flex w-full items-center gap-1.5">
+                  <Truncate text={w.title} className="min-w-0 flex-1 font-mono text-[10.5px] font-bold" />
+                  <span className="shrink-0 rounded-full border border-hair px-1.5 text-[9px] text-fgdim">
+                    {t(`waiting.do.${w.unblock}`)}
+                  </span>
+                </span>
+                <span className="text-[9.5px] text-fgdim">
+                  {t(`waiting.what.${w.kind}`)}
+                  {w.detail ? ` (${w.detail})` : ''} · {relTime(w.since)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function statusSort(a, b) {
   const ia = STATUS_ORDER.indexOf(a);
   const ib = STATUS_ORDER.indexOf(b);
@@ -206,7 +275,7 @@ function useHoverTip(text) {
   return { ref, show, hide, toggle, tip };
 }
 
-function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch }) {
+function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health }) {
   const t = useT();
   const color = session.color || '#c4c4c4';
   const label = session.metadata?.ticket || session.title || session.id;
@@ -307,10 +376,18 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
             className="mt-px mb-[3px] block text-xs text-fgdim"
           />
         )}
-        <span className="block text-[10.5px] text-fgdim">
-          {[session.status, relTime(session.updatedAt || session.createdAt)]
-            .filter(Boolean)
-            .join(' · ')}
+        {/* The subline carries three things now, in the order you scan them:
+            RES1's health dot, then the status + time (which may clip), then
+            UX1's agent button. The button is a click target, so it sits outside
+            the truncating span — the time is what gives way on a narrow rail,
+            not "whose job this is". */}
+        <span className="flex items-center gap-1.5 text-[10.5px] text-fgdim">
+          <HealthDot health={health} />
+          <span className="min-w-0 truncate">
+            {[session.status, relTime(session.updatedAt || session.createdAt)]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
           {/* UX1: born from an agent — the row wears its face AND says whose job
               this is, so a work session never reads as "the agent itself". */}
           {agent && (
@@ -319,7 +396,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               data-row-agent={agent.slug}
               title={t('session.bornFromTitle', { name: agent.name })}
               onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
-              className="ms-1 cursor-pointer font-mono text-[10px] hover:underline"
+              className="shrink-0 cursor-pointer font-mono text-[10px] hover:underline"
               style={{ color: agent.color || undefined }}
             >
               · {agent.name}
@@ -1166,7 +1243,7 @@ export default function Rail({
     return () => { stop = true; clearInterval(iv); };
   }, []);
   const { railWidth } = usePrefs();
-  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents, triggers } = useStore();
+  const { usage, listeners, pending, queue, accounts, accountUsage, folders, agents, triggers, health } = useStore();
   // The header reflects the ACTIVE account. Derive it from the per-account map so
   // switching accounts updates instantly instead of lagging on the generic
   // usage-updated broadcast (which only fires when the active usage changes).
@@ -1501,6 +1578,7 @@ export default function Rail({
     onEdit,
     onRemoveFromFolder: s.folderId ? removeFromFolder : undefined,
     watch: watchFor(s.id),
+    health: health?.[s.id],
   });
 
   // One draggable session row (used by every view). Always draggable so a
@@ -1605,6 +1683,8 @@ export default function Rail({
           </span>
         </div>
       </div>
+
+      <WaitingPill onSelect={onSelect} />
 
       {/* header row + flat/grouped toggle */}
       <div className="flex items-center gap-2 px-[13px] pt-[9px] pb-1">

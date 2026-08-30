@@ -28,6 +28,11 @@ let state = {
   authInfo: null, // {authMode, hasAdmin, oidc} — known even when signed out
   wizardTick: 0, // B3: bumps on every onboarding.step bus event (Wizard.jsx re-reads)
   setupTick: 0, // S2: bumps on every setup.* bus event (Connections card / Setup re-read)
+  // RES1: the supervisor's health map (sessionId → {state, reason, dot, since})
+  // and the aggregated "ממתין לך" queue. Both arrive as a `health` bus event
+  // whenever they change; `loadHealth()` is the initial snapshot.
+  health: {},
+  waiting: [],
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
@@ -391,6 +396,20 @@ export async function loadAccounts() {
   }
 }
 
+// RES1: the per-session health map + the queue of things only a human can
+// clear. Cheap (pure computation over live state), and pushed on every change.
+export async function loadHealth() {
+  try {
+    const r = await api.get('/health');
+    setState({
+      health: Object.fromEntries((r?.sessions || []).map((row) => [row.sessionId, row])),
+      waiting: r?.waiting || [],
+    });
+  } catch {
+    /* pre-supervisor host — the rail just shows no dots */
+  }
+}
+
 export async function loadUsage() {
   try {
     setState({ usage: await api.get('/usage') });
@@ -721,6 +740,7 @@ function bootLoads() {
   loadAgents();
   loadUsage();
   loadAccounts();
+  loadHealth();
   connect();
 }
 
@@ -887,6 +907,15 @@ function handleEvent(msg) {
             ? payload
             : null;
       patchSession(sid, { progress });
+      return;
+    }
+    case 'health': {
+      // RES1: one event carries both the map and the queue, and only fires when
+      // something the cockpit renders actually changed.
+      const rows = msg.health ?? payload?.health;
+      if (Array.isArray(rows)) setState({ health: Object.fromEntries(rows.map((r) => [r.sessionId, r])) });
+      const w = msg.waiting ?? payload?.waiting;
+      if (Array.isArray(w)) setState({ waiting: w });
       return;
     }
     case 'host': {

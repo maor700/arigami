@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { isWin, which, extraBinDirs, pidAlive, HOME } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
-import { cfg, CHAT_DIR, getSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
+import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
@@ -22,6 +22,8 @@ import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } fro
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
+import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
+import { appendIncident } from './incidents.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
 // first apply) needs no restart for sessions to see user skills.
@@ -386,6 +388,15 @@ function record(id) {
   return procs.get(id) || null;
 }
 
+/** RES1 — the last user message in the transcript, replayed after a respawn. */
+export function lastUserMessage(id) {
+  const sent = [...(record(id)?.sent || [])].pop();
+  if (sent) return sent;
+  const evs = getChat(id, 0) || [];
+  for (let i = evs.length - 1; i >= 0; i--) if (evs[i].kind === 'user' && evs[i].text) return String(evs[i].text);
+  return null;
+}
+
 export function isRunning(id) {
   const p = record(id);
   return !!(p && p.child.exitCode === null && !p.child.killed);
@@ -677,6 +688,21 @@ function noteMcpResult(id, server, block) {
 // now unverifiable, so flip previously-healthy servers to needs-reconnect until
 // a real signal (respawn's init, a probe, a live call) proves otherwise.
 // needs-auth stays — a reconnect can't mint credentials.
+/**
+ * RES1 — take a dead MCP server out of play for one session and tell the model,
+ * instead of letting every call to it fail the turn. Nothing is respawned: the
+ * server stays in the CLI's config, but the session knows not to reach for it.
+ */
+export function disableMcpServer(id, name, why = 'server is down') {
+  if (!mcpServersOf(id)[name]) return false;
+  patchMcp(id, { [name]: { status: 'degraded', statusText: `disabled by the supervisor — ${why}`, source: 'supervisor', disabled: true } });
+  appendChat(id, {
+    kind: 'system',
+    text: `⤷ the "${name}" MCP server is down (${why}) — disabled for this session. Don't call its tools; use another route, or say why you can't continue without it.`,
+  });
+  return true;
+}
+
 export function markMcpStale(id, reason = 'account switched') {
   const patch = {};
   for (const [name, sv] of Object.entries(mcpServersOf(id))) {
@@ -807,6 +833,11 @@ function recordTurn(id, j) {
 // the turn actually completes. This is the "auto switch when hit the limit" the
 // accounts feature was built for.
 const LIMIT_RE = /hit your (?:session|usage|weekly) limit|usage limit reached|rate limit|exceeded your.{0,20}limit|out of (?:usage|credits)/i;
+// RES1 — the other way a model stops being usable: the CLI/API says the model
+// itself is gone or saturated. Same remedy as an exhausted account pool (drop a
+// rung of the model chain), so it shares the limit path below.
+const MODEL_UNAVAILABLE_RE =
+  /model[^.\n]{0,40}(?:is\s+)?(?:not available|unavailable|not found|overloaded)|overloaded_error|do(?:es)? not have access to (?:the )?model|invalid[_ ]model/i;
 const switchingSessions = new Set(); // guards against re-entrant switching per session
 
 // Parse "resets 3:20pm (Asia/Jerusalem)" → a future ISO timestamp (server-local
@@ -828,6 +859,155 @@ function parseResetAt(text) {
   return d.toISOString();
 }
 
+// RES1 — one line in $ARIGAMI_DIR/incidents.jsonl per automatic recovery, so
+// Settings → מארח → בריאות can answer "what did the host do while I slept".
+// Never allowed to fail the recovery it is describing.
+function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
+  try {
+    appendIncident({ sessionId: id, action, health: 'BLOCKED_SYSTEM', reason, outcome, detail });
+    broadcast({ type: 'incident', sessionId: id, action, outcome });
+    // An escalation here is the same event the supervisor records for the ones it
+    // handles: stamp it on the session so it shows red on the rail and lands in
+    // the "waiting for you" queue instead of quietly looking idle.
+    if (outcome === 'escalated')
+      patchSession(id, { metadata: { supervisor: { escalated: true, at: new Date().toISOString(), reason, after: detail.after || null } } });
+  } catch {}
+}
+
+// ---- RES1: the model ladder -------------------------------------------------
+// "Fable ran out but the weaker models still have quota — keep going." Every
+// session has a chain (session override → its agent's → cfg.modelChain →
+// supervisor.DEFAULT_MODEL_CHAIN) whose TOP rung is the model the human actually
+// picked. When the account pool can no longer route around a limit we drop ONE
+// rung and replay the failed turn; the supervisor climbs back to the top rung
+// once the quota reset time passes (server/supervisor-loop.ts, 'model-restore').
+
+/** The effective chain for a session, top rung first. */
+export function chainFor(id) {
+  const s = getSession(id);
+  const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const agent = slug ? getAgent(slug) : null;
+  return effectiveChain({
+    sessionChain: s?.claude?.modelChain,
+    agentChain: agent?.modelChain,
+    configChain: cfg.modelChain,
+    // The top rung is the model the session is MEANT to run on. While it is
+    // downgraded that is `modelDowngradedFrom`, not the weaker rung it is on —
+    // reading modelChoice here would re-root the chain at every downgrade and
+    // make "restore to the top" restore to the model we just dropped to.
+    modelChoice: s?.claude?.modelDowngradedFrom || s?.claude?.modelChoice || agent?.model || cfg.defaultModel || null,
+  });
+}
+
+/** Where the session sits in its chain right now + how far it can still fall. */
+export function ladderState(id) {
+  const s = getSession(id);
+  const chain = chainFor(id);
+  const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
+  const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
+  return { chain, rung, model: chain[rung] || null, rungsLeft: rungsLeft(chain, rung), restoreAt: s?.claude?.modelRestoreAt || null };
+}
+
+const ladderCooldown = new Set(); // guards against a downgrade cascade per session
+
+/**
+ * Drop one rung, announce it in the chat, and replay the turn that failed.
+ *   {ok:true, model}          — we moved down and the turn is being replayed
+ *   {ok:false, reason:'bottom'} — no rung left; the ONE limit case a human owns
+ *   {ok:false, reason:'cooling'|'failed'} — a downgrade is already in flight
+ */
+/** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
+export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
+  const { chain, rung } = ladderState(id);
+  const nxt = nextRung(chain, rung);
+  if (!nxt) return { ok: false, reason: 'bottom' };
+  // One rung per cooldown window: the replayed turn below can fail the same way,
+  // and without this the session would walk the whole chain in a second.
+  if (ladderCooldown.has(id)) return { ok: false, reason: 'cooling' };
+  ladderCooldown.add(id);
+  const cd = setTimeout(() => ladderCooldown.delete(id), 30_000);
+  if (cd.unref) cd.unref();
+  const from = chain[rung] || getSession(id)?.claude?.modelChoice || 'default';
+  const lastMsg = [...(record(id)?.sent || [])].pop();
+  appendChat(id, {
+    kind: 'system',
+    text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing`,
+  });
+  // When the CLI never told us when the quota resets, arm the climb back after
+  // cfg.supervisor.modelBackoffMin instead of never — a downgrade that can't
+  // expire would quietly pin the session to the weakest model forever.
+  const restoreAt =
+    resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
+  try {
+    restartWith(id, {
+      modelChoice: nxt.model,
+      modelRung: nxt.rung,
+      modelRestoreAt: restoreAt,
+      modelDowngradedFrom: chain[0] || from,
+    });
+  } catch {
+    ladderCooldown.delete(id);
+    return { ok: false, reason: 'failed' };
+  }
+  // Replay the failed turn on the weaker model once the resumed proc is up.
+  const t = setTimeout(() => {
+    try { if (lastMsg) sendMessage(id, lastMsg); } catch {}
+  }, 900);
+  if (t.unref) t.unref();
+  return { ok: true, model: nxt.model, from };
+}
+
+/** Climb back to the top rung (the supervisor calls this once the quota reset). */
+export function restoreModel(id) {
+  const { chain, rung } = ladderState(id);
+  if (rung <= 0) return null;
+  const top = chain[0];
+  appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
+  restartWith(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null });
+  return top;
+}
+
+/**
+ * RES1 — the error family of the session's LAST turn, for the supervisor's
+ * health model. Reads the transcript tail backwards and stops at the first
+ * terminal signal: a successful result (or a newer user message) means the
+ * session recovered and there is nothing to classify.
+ */
+/**
+ * RES1 — the chat seq of the last real TURN signal (a user message or a finished
+ * result). The supervisor uses it as "did anything actually move", which
+ * session.updatedAt cannot answer: the supervisor's own receipts and metadata
+ * writes bump updatedAt, so an escalated session would look like it had
+ * recovered on the very next tick.
+ */
+export function lastTurnSeq(id) {
+  const evs = getChat(id, 0) || [];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const k = evs[i].kind;
+    if (k === 'user' || k === 'result') return evs[i].seq || 0;
+  }
+  return 0;
+}
+
+export function lastTurnError(id) {
+  const evs = getChat(id, 0) || [];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.kind === 'result' && !e.isError) return null;
+    if (e.kind === 'user') return null;
+    if (e.kind === 'error' || (e.kind === 'result' && e.isError)) {
+      const t = String(e.text || '');
+      if (AUTH_RE.test(t)) return 'auth';
+      // A model that cannot run right now is remedied exactly like an exhausted
+      // account pool — one rung down the chain.
+      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
+      if (/claude (?:exited|failed to start)/i.test(t)) return 'proc-dead';
+      return 'other';
+    }
+  }
+  return null;
+}
+
 function tryAutoSwitch(id, text) {
   if (switchingSessions.has(id)) return;
   const s = getSession(id);
@@ -836,10 +1016,19 @@ function tryAutoSwitch(id, text) {
   try { quarantine(curId, resetAt); } catch {}
   const next = nextAvailable(curId);
   if (!next) {
+    // RES1: the account pool is exhausted — before giving up, drop a rung of the
+    // model chain. Only the BOTTOM rung with no quota left is a human's problem.
+    const stepped = downgradeModel(id, { resetAt, why: 'all accounts limited' });
+    if (stepped.ok) {
+      recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, resetAt }, 'ok', 'all accounts limited');
+      return;
+    }
+    if (stepped.reason !== 'bottom') return; // a downgrade is already in flight
     appendChat(id, {
       kind: 'error',
-      text: 'All accounts have hit their limit. Add another account, or wait for one to reset.',
+      text: 'All accounts have hit their limit and the model ladder is at its bottom rung. Add another account, or wait for one to reset.',
     });
+    recordIncident(id, 'escalate', { after: 'model-ladder', resetAt }, 'escalated', 'bottom rung, no quota left');
     return;
   }
   switchingSessions.add(id);
@@ -861,6 +1050,7 @@ function tryAutoSwitch(id, text) {
     switchingSessions.delete(id);
     return;
   }
+  recordIncident(id, 'account-switch', { from: cur?.label || curId, to: next.label, resetAt }, 'ok', 'account limit');
   // Replay the failed turn on the fresh account once the resumed proc is up.
   const t = setTimeout(() => {
     try { if (lastMsg) sendMessage(id, lastMsg); } catch {} finally { switchingSessions.delete(id); }
@@ -886,6 +1076,18 @@ async function openClaudeSetupCard(id, why) {
   const cap = caps.getCapability('claude');
   if (!cap) return;
   api.openSetupCard(id, cap, why, 'manual', 'not signed in');
+}
+
+/**
+ * RES1 — the same auth recovery the `result` handler runs, exposed so the
+ * supervisor can drive it for a session that is already sitting dead (the event
+ * that would have triggered it is long gone). Resolves true when a refresh +
+ * respawn actually happened.
+ */
+export async function recoverAuth(id) {
+  const before = getSession(id)?.claude?.state;
+  await tryAuthRecover(id, 'unauthorized');
+  return getSession(id)?.claude?.state !== before || isRunning(id);
 }
 
 async function tryAuthRecover(id, text) {
@@ -918,9 +1120,11 @@ async function tryAuthRecover(id, text) {
     const ok = await refreshOne(accountId);
     if (!ok) {
       appendChat(id, { kind: 'error', text: 'Authentication error — token refresh failed. Please re-authenticate this account.' });
+      recordIncident(id, 'refresh-auth', { accountId }, 'failed', 'token expired');
       return;
     }
     appendChat(id, { kind: 'system', text: '⟳ authentication expired — refreshed the token and restarted the session' });
+    recordIncident(id, 'refresh-auth', { accountId }, 'ok', 'token expired');
     restart(id, { silent: true }); // respawns, re-reading the just-refreshed token
     // Replay the failed turn once the resumed proc is up.
     const t = setTimeout(() => {
@@ -1088,6 +1292,15 @@ function handleEvent(id, j) {
         if (j.is_error && LIMIT_RE.test(text)) tryAutoSwitch(id, text);
         // Auth token expired/revoked → refresh it and respawn on the same account.
         else if (j.is_error && AUTH_RE.test(text)) tryAuthRecover(id, text);
+        // RES1: the model itself is unavailable/overloaded — no account switch
+        // can fix that, so go straight down one rung of the model chain.
+        else if (j.is_error && MODEL_UNAVAILABLE_RE.test(text)) {
+          // No reset time to parse here — an unavailable/overloaded model says
+          // nothing about quota. Fall back to cfg.supervisor.modelBackoffMin.
+          const stepped = downgradeModel(id, { resetAt: null, why: 'model unavailable' });
+          if (stepped.ok) recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, cause: 'unavailable' }, 'ok', 'model unavailable');
+          else if (stepped.reason === 'bottom') recordIncident(id, 'escalate', { after: 'model-ladder', cause: 'unavailable' }, 'escalated', 'model unavailable, bottom rung');
+        }
         // Queued prompts: with auto-play on, a finished turn plays the next one.
         if (!j.is_error) scheduleAutoPlay(id);
         // Auto status-summary: fold the just-finished turn into the brief (cheap
@@ -1636,9 +1849,17 @@ export function setPermissionMode(id, mode) {
 // full model id. '' or 'default' clears it back to the Claude Code default
 // (no --model flag). Stored as `modelChoice` so it persists across respawns; the
 // reported `model` field reflects what the running session actually resolved to.
-export function setModel(id, model) {
+export function setModel(id, model, { chain } = {}) {
   const choice = !model || model === 'default' ? null : String(model);
-  return restartWith(id, { modelChoice: choice });
+  // RES1: an explicit pick is the new TOP rung — reset the ladder so a session
+  // the supervisor had downgraded doesn't climb back over the human's choice.
+  return restartWith(id, {
+    modelChoice: choice,
+    modelRung: 0,
+    modelRestoreAt: null,
+    modelDowngradedFrom: null,
+    ...(chain !== undefined ? { modelChain: Array.isArray(chain) && chain.length ? chain.map(String) : null } : {}),
+  });
 }
 
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
