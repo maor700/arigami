@@ -228,6 +228,7 @@ function Cockpit() {
   const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
   const [agentOpen, setAgentOpen] = useState(initial.view === 'agent' ? initial.slug : null); // A1: #/agents/<slug>
   const [agentTab, setAgentTab] = useState(initial.view === 'agent' ? initial.tab || 'home' : 'home'); // UX1: which tab of the agent surface
+  const [agentDraftName, setAgentDraftName] = useState(''); // UX2: prefill for the create-mode surface (#/agents/__new__)
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
   // B3: first-run wizard. null = not decided yet (we ask the host once after
   // login); true = show it full-pane; false = dismissed / done for this tab.
@@ -656,6 +657,7 @@ function Cockpit() {
       const slug = e.detail?.slug;
       if (!slug) return;
       setAgentOpen(slug); setAgentTab(e.detail?.tab || 'home');
+      setAgentDraftName(e.detail?.draftName || '');
       setSelectedId(null);
       setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
     };
@@ -777,7 +779,20 @@ function Cockpit() {
   } else if (brainOpen) {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
   } else if (agentOpen) {
-    main = <AgentView slug={agentOpen} tab={agentTab} onTab={setAgentTab} onClose={() => setAgentOpen(null)} onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }} />;
+    main = (
+      <AgentView
+        slug={agentOpen}
+        tab={agentTab}
+        draftName={agentDraftName}
+        onTab={setAgentTab}
+        onClose={() => setAgentOpen(null)}
+        onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }}
+        // UX2: create mode's POST succeeded — flip the surface into normal
+        // (existing-agent) mode for the new slug, still on the פרסונה tab
+        // (its own "פתח בית" button is what lazily mints the home chat).
+        onCreated={(a) => { setAgentOpen(a.slug); setAgentTab('persona'); setAgentDraftName(''); }}
+      />
+    );
   } else if (wizardOpen) {
     main = <Wizard onDone={closeWizard} onExit={closeWizard} onStart={startFirstSession} />;
   } else if (setupOpen) {
@@ -879,7 +894,7 @@ function Cockpit() {
         onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
+        onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setAgentDraftName(''); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
         searchRef={searchRef}
         onArchive={(s) => setDialog({ type: 'archive', session: s })}
         onEdit={(s) => setDialog({ type: 'edit', session: s })}

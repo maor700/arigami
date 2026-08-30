@@ -1876,16 +1876,9 @@ export default function Rail({
             onToggle={() => setTeamOpen((v) => !v)}
             menuFor={menuFor}
             setMenuFor={setMenuFor}
-            onNewAgent={() =>
-              api
-                .post('/sessions', {
-                  title: t('rail.teamNewAgentTitle'),
-                  cwd: config?.reposDir || config?.defaultCwd || undefined,
-                  prompt: t('rail.teamNewAgentPrompt'),
-                })
-                .then((s) => s?.id && onSelect(s.id))
-                .catch((e) => toastError(e?.message || String(e)))
-            }
+            // UX2: no interview session — the button opens the same agent surface
+            // an existing agent uses, just in create mode (AgentView, slug '__new__').
+            onNewAgent={() => openAgent('__new__', 'persona')}
           />
         )}
 

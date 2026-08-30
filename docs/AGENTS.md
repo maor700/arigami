@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1 + UX1
+# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1 + UX1 + UX2
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -381,13 +381,18 @@ matches):
 |---|---|---|
 | `/team` | a panel with every agent + status (working / n sessions / idle), **@** (insert a mention), home chat, agent page | host, runs at once |
 | `/as <agent> <text>` | a **one-off session born from the agent** that runs `<text>` — a full child in your project folder when you are its controller, else a free session in your cwd | host → `POST /__api/sessions/:id/delegate {mode:'as'}` |
-| `/agent new [name]` | the **create-agent card** in this chat (placeholder name "New agent" when none; the human edits + confirms, nothing is written before) | host → `POST /__api/sessions/:id/agent-card` |
+| `/agent new [name]` | **UX2**: opens the **create-agent SURFACE** (`AgentView`, create mode) with `name` prefilled — no session, no chat card. See the UX2 section below | host → `openAgent('__new__', 'persona', name)` (a `host:open-agent` event; `App.jsx` owns the surface) |
+| `/adopt <agent>` | **UX2**: this session **adopts** an existing agent from its next turn on — no new session | host → `POST /__api/sessions/:id/adopt-agent` |
 | `/plan <text>`, `/review [text]`, … | **data-driven**: every skill whose `SKILL.md` frontmatter has `slash: <word>` is offered as `/<word>` and rewritten to its plugin command (`/arigami:<skill> …`, `/arigami-user:<skill> …` for a user skill) before it is sent. Shipped: `dispatch` (`slash: plan`), `explain-changes` (`slash: review`). `GET /__api/skills` carries `slash` (`SLASH_RE = ^[a-z][a-z0-9-]{0,23}$`; user skills win by name) | skill |
 | anything else `/…` | pass-through to the claude CLI, as before | CLI |
 
 Resolution order for a submission (`resolveSubmission`): host command → skill slash → `@mention`
-→ plain. The palette is the same bottom sheet on phones (`max-w-[92vw]`); `/agent new` is the one
-two-word command the palette regex admits.
+→ plain. The palette is the same bottom sheet on phones (`max-w-[92vw]`); `/agent new` and `/adopt`
+are the multi-word / argument-taking commands the palette regex admits.
+
+> The `POST /__api/sessions/:id/agent-card` route itself is unchanged and still live — it is what
+> the MCP `create_agent` tool and its `{kind:'agent-card'}` chat card use (an *agent* proposing an
+> agent from inside a session). Only the *composer's* `/agent new` stopped calling it — see UX2.
 
 ## @mentions
 
@@ -714,3 +719,129 @@ the rail (no home row, the "· <agent>" chip) and `agents-a4-web` the receipt.
   mentions are skipped. There is no multi-message selection.
 - A home chat is still a session everywhere below the UI (API, exports, cron,
   the ledger) — UX1 is a framing change, not a new object.
+
+# UX2 — creating an agent is a surface, not a session
+
+The complaint: clicking "+ סוכן חדש" spawned a session whose only job was to
+*interview* the human and eventually call `create_agent` — a work session for
+work that was never work. UX2 removes that detour: creating an agent opens the
+same surface an existing agent already has (`AgentView.jsx`), just in **create
+mode**, with an empty draft.
+
+## The rail button — create mode, not an interview session
+
+`Rail.jsx`'s "+ סוכן חדש" now calls `openAgent('__new__', 'persona')` — the same
+`host:open-agent` event `/team`, mentions and receipts already use to jump to
+the agent surface (`App.jsx` owns `agentOpen`/`agentTab`/`agentDraftName` and
+renders `AgentView`). `'__new__'` is a sentinel slug that can never collide with
+a real one (`SLUG_RE` bars underscores) — `AgentView` treats it as `isNew` and
+skips its `GET /agents/:slug` + `/agents/budgets` fetches entirely, building a
+local draft object instead (`{name: draftName, emoji:'🤖', color, persona:'', …}`).
+
+**The surface reads the same in both modes.** All seven tabs render; only
+פרסונה is enabled before the agent exists — the rest (`בית` / `זיכרון` /
+`חיבורים` / `שגרה` / `פעילות` / `ריצות`) are visibly present but `disabled`,
+with a `title` hint ("יהיה זמין אחרי היצירה") so the surface doesn't look
+broken, just not-yet-applicable. The header drops the `@slug` line and the
+status/budget row (there is no session or ledger yet); the persona form gains
+one extra field only in create mode — an explicit **slug** input (Hebrew names
+don't survive `slugify`, so `createAgent` needs one explicitly, exactly like
+the `{kind:'agent-card'}` chat card already does).
+
+`PersonaTab`'s save button becomes **"צור סוכן"** and calls `POST /__api/agents`
+(instead of `PATCH /__api/agents/:slug`); the delete button becomes **"ביטול"**
+and just closes the surface (`onClose`) — nothing was written, there is nothing
+to undo. On success, `AgentView`'s `onCreated(agent)` callback (wired in
+`App.jsx`) flips the surface into normal existing-agent mode for the real slug,
+still on the פרסונה tab. **The home chat is not created at this point** — it
+stays exactly as lazy as UX1 left it (`ensureHomeSession`, minted on first
+`GET /agents/:slug/home`, i.e. only when the human clicks the newly-available
+**"פתח צ׳אט בית"** button or the agent is first delegated to).
+
+## `/agent new [name]` — same surface, from a session
+
+The composer's `/agent new [name]` (`resolveSubmission` → `{type:'agent-new',
+name}`, unchanged parsing) now resolves in `SessionView.jsx`'s `runHostCommand`
+to `openAgent('__new__', 'persona', name)` instead of `POST
+/sessions/:id/agent-card` — same create-mode surface as the rail button, with
+`name` prefilled. Leaving the draft (✕ or "ביטול") behaves exactly like leaving
+any other agent surface reached this way (`/team`, a mention receipt, …) — back
+to the rail, nothing session-specific to restore.
+
+## What still creates an agent from inside a session — unchanged
+
+Two paths are explicitly **not** touched by UX2, because they are a different
+thing: an *agent* proposing a new agent, not a human clicking a button.
+
+- **MCP `create_agent`** (`mcp/host-mcp.js`) → `POST /__mcp/agent-card` →
+  `openPendingAgentCard` → a `{kind:'agent-card', state:'pending'}` chat card
+  the human edits and confirms (`AgentCard.jsx`) → `POST /__api/agents
+  {…, cardId, sessionId}`. Entirely separate code path from the rail
+  button/`/agent new` (different draft, different confirm step) — see the A1
+  section above.
+- The underlying `POST /__api/sessions/:id/agent-card` REST route is likewise
+  unchanged and still tested (`agents-a4-host.test.ts`) — only the composer
+  stopped calling it.
+
+Neither path spawns a session either; they always operated on the
+*already-open* session's chat.
+
+## "אמץ סוכן" — a session adopts an existing agent, no new session
+
+`/adopt <agent>` (composer, autocompletes like `/as`) calls `POST
+/__api/sessions/:id/adopt-agent {agent}`. `adoptAgentIntoSession` (`server/api.ts`):
+
+1. 404s on an unknown session/agent; **429s** (with `.budget`) if the agent's
+   daily cap is already spent — same shape as `applyAgentToSession`/
+   `ensureHomeSession` — and leaves the session **untouched** on failure.
+2. Sets `metadata.agent = slug` and remembers what ran before it
+   (`metadata.adoptedFrom`, `null` if the session had no agent at all).
+3. Appends a `{kind:'agent-adopt', agent:{slug,name,emoji,color}, prevAgent}`
+   chat card (`AgentAdoptLine.jsx`) — a plain-language receipt: *"{name} אומץ
+   לסשן הזה"* + a note that earlier turns ran without it, and a **"החזר
+   לרגיל"** button.
+4. Queues a `[host]` line carrying the agent's persona block
+   (`agents.personaBlock`) via `deliverToSession` (sent now if idle, queued
+   with auto-play if busy) — so the model itself learns what it just became,
+   not only the human watching the chat.
+
+**Why setting `metadata.agent` is enough for A3 from the very next turn**:
+`policyArgs`/`mcpConfigFor` (tool/domain allowlist + MCP server grants) and
+`budgetRefusalFor` (the daily-cap 429) all read `session.metadata?.agent` fresh
+on *every* spawn/`sendMessage` call — there is no cached policy object tied to
+session creation time. The one thing that is **not** automatic: persona
+injection normally only happens on a session's true first spawn
+(`!resume && !sent.length`) — an adopted session is already resumed, so step 4
+above is what actually tells the model, not a side-effect of setting metadata.
+
+**Reversible**: `POST /__api/sessions/:id/adopt-agent/revert` restores
+`metadata.agent` to whatever `adoptedFrom` remembered (or clears it, via an
+explicit `agent: undefined` — `patchSession`'s metadata merge is additive and
+can't delete a key by omission) and appends a `{kind:'agent-adopt', agent:null,
+reverted:true}` receipt. Adopting a second agent without reverting first
+remembers the *immediately preceding* one — revert is one step back, not
+"forget every adoption ever."
+
+## Tests
+
+`test/agents-ux2-host.test.ts` (isolated host: adopt sets `metadata.agent` +
+color, receipt card, `[host]` persona line reaches the chat/queue, 404s, 429 on
+a spent budget with the session left untouched, revert restores the prior
+agent, a second adoption without reverting remembers the first one).
+`test/agents-ux2-web.test.js` (`AgentView` create mode: disabled tabs + hint,
+"צור סוכן"/no delete/no open-home, the slug field, draftName prefill, the
+sentinel never leaking into the header; existing-agent mode unaffected;
+`resolveSubmission('/adopt …')`; the `{kind:'agent-adopt'}` receipt in both
+states; source assertions that the rail button and `/agent new` no longer POST
+a session or an agent-card).
+
+## Known limits (UX2)
+
+- The create-mode draft is pure client state — refreshing the page mid-draft
+  loses it (same as any unsaved form; there was never a server-side "draft"
+  object, by design — nothing is written until "צור סוכן").
+- `/adopt` has no autocomplete UI of its own yet (unlike `/as`'s `@mention`
+  picker) — it resolves the same way `/as <agent>` does (`findAgent` by slug or
+  name), so a typo just 404s/`unknown-agent`s like any other host command.
+- Adoption is a single-slot "what ran before" — adopting three agents in a row
+  without reverting only remembers the last swap, not the whole chain.

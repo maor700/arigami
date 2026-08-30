@@ -10,7 +10,7 @@ import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
 import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
-import { DelegatedLine } from './DelegatedLine.jsx';
+import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -768,6 +768,9 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'delegated':
       // A4: a composer @mention / `/as` handed the text to an agent.
       return <DelegatedLine event={event} />;
+    case 'agent-adopt':
+      // UX2: "אמץ סוכן" — this session took on (or gave back) an agent's identity.
+      return <AgentAdoptLine event={event} sessionId={sessionId} />;
     case 'system':
       return <SystemLine event={event} />;
     case 'permission-request': {

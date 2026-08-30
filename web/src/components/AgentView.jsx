@@ -40,12 +40,12 @@ const lbl = 'mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim upper
 const btn = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-chip disabled:opacity-40';
 const btnBrand = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-40 disabled:shadow-none';
 
-function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
+function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const t = useT();
   const { models } = useModels();
   const [skillNames, setSkillNames] = useState([]);
   const [form, setForm] = useState({
-    name: agent.name, emoji: agent.emoji, color: agent.color, model: agent.model || '', persona: agent.persona || '',
+    name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, model: agent.model || '', persona: agent.persona || '',
     skills: agent.skills || [], tools: agent.tools || [], budget: agent.budget?.tokensPerDay ? String(agent.budget.tokensPerDay) : '',
     domains: (agent.domains || []).join(', '), autoApprove: agent.autoApprove || [],
   });
@@ -58,12 +58,15 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
   const save = async () => {
     setBusy(true);
     try {
-      const a = await api.patch(`/agents/${agent.slug}`, {
+      const body = {
         name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, model: form.model || null, persona: form.persona,
         skills: form.skills, tools: form.tools, budget: Number(form.budget) > 0 ? { tokensPerDay: Number(form.budget) } : null,
         domains: form.domains.split(',').map((d) => d.trim()).filter(Boolean), autoApprove: form.autoApprove,
-      });
-      toastSuccess(t('agent.page.saved'));
+      };
+      const a = isNew
+        ? await api.post('/agents', { ...body, slug: form.slug.trim() || undefined })
+        : await api.patch(`/agents/${agent.slug}`, body);
+      toastSuccess(t(isNew ? 'agent.page.createdToast' : 'agent.page.saved'));
       onSaved?.(a);
     } catch (e) {
       toastError(t('agent.page.saveFailed', { err: e?.body?.error || e?.message || e }));
@@ -71,7 +74,8 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
       setBusy(false);
     }
   };
-  const del = async () => {
+  const discard = async () => {
+    if (isNew) { onDeleted?.(); return; }
     if (!window.confirm(t('agent.page.deleteConfirm', { name: agent.name }))) return;
     try { await api.del(`/agents/${agent.slug}`); toastSuccess(t('agent.page.deleted')); onDeleted?.(); } catch (e) { toastError(e?.message || String(e)); }
   };
@@ -85,6 +89,12 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
             <div><label className={lbl}>{t('agent.card.emoji')}</label><input value={form.emoji} onChange={set('emoji')} className={`${input} text-center`} /></div>
             <div><label className={lbl}>{t('agent.card.color')}</label><input type="color" value={form.color} onChange={set('color')} className="h-[34px] w-full cursor-pointer rounded-[7px] border-[1.5px] border-border bg-panel p-0.5" /></div>
           </div>
+          {isNew && (
+            <div className="sm:col-span-2">
+              <label className={lbl}>{t('agent.card.slug')}</label>
+              <input data-agent-field="slug" dir="ltr" value={form.slug} onChange={set('slug')} placeholder="marketing-lead" className={`${input} font-mono`} />
+            </div>
+          )}
         </div>
       </section>
       <section className="rounded-[10px] border border-hair p-3">
@@ -147,9 +157,11 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
       </section>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={save} disabled={busy || !form.name.trim()} className={btnBrand}>{t('agent.page.save')}</button>
-        <button type="button" onClick={onOpenHome} className={btn}><Icon icon={faComments} /> {t('agent.page.openHome')}</button>
-        <button type="button" onClick={del} className={`${btn} ms-auto text-danger`}><Icon icon={faTrash} /> {t('agent.page.delete')}</button>
+        <button type="button" data-agent-save onClick={save} disabled={busy || !form.name.trim()} className={btnBrand}>{t(isNew ? 'agent.page.create' : 'agent.page.save')}</button>
+        {!isNew && <button type="button" onClick={onOpenHome} className={btn}><Icon icon={faComments} /> {t('agent.page.openHome')}</button>}
+        <button type="button" data-agent-discard onClick={discard} className={isNew ? btn : `${btn} ms-auto text-danger`}>
+          {isNew ? t('agent.page.cancel') : (<><Icon icon={faTrash} /> {t('agent.page.delete')}</>)}
+        </button>
       </div>
     </div>
   );
@@ -442,9 +454,16 @@ export function BudgetBar({ budget }) {
   );
 }
 
-export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSession }) {
+// UX2: the sentinel slug for "no agent yet" — never a real one (SLUG_RE bars
+// underscores), so it can't collide with anything createAgent would accept.
+export const NEW_AGENT_SLUG = '__new__';
+
+const DRAFT_COLOR = '#6A4FC4';
+
+export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClose, onOpenSession, onCreated }) {
   const t = useT();
   const { agents, sessions, triggers } = useStore();
+  const isNew = slug === NEW_AGENT_SLUG;
   const [tab, setTabLocal] = useState(TABS.includes(wantTab) ? wantTab : 'home');
   const [fetched, setFetched] = useState(null); // full record (persona) — the store list has it too, but fetch to be exact
   const [missing, setMissing] = useState(false);
@@ -452,56 +471,68 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
   const setTab = (id) => { setTabLocal(id); onTab?.(id); };
   useEffect(() => { if (TABS.includes(wantTab) && wantTab !== tab) setTabLocal(wantTab); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [wantTab]);
   useEffect(() => {
+    if (isNew) return; // a draft has nothing to GET — see the local `draft` object below
     let stop = false;
     setMissing(false);
     api.get(`/agents/${encodeURIComponent(slug)}`).then((a) => { if (!stop) setFetched(a); }).catch(() => { if (!stop) setMissing(true); });
     return () => { stop = true; };
-  }, [slug]);
+  }, [slug, isNew]);
   // A3 budget for the header bar — the cheap all-agents endpoint, refreshed when
   // the record changes (raising the cap in the persona tab lifts the bar at once).
   useEffect(() => {
+    if (isNew) return; // no budget exists for a draft
     let stop = false;
     api.get('/agents/budgets')
       .then((r) => { if (!stop) setBudget((r?.budgets || []).find((b) => b.slug === slug) || null); })
       .catch(() => { if (!stop) setBudget(null); });
     return () => { stop = true; };
-  }, [slug, fetched?.updatedAt]);
+  }, [slug, isNew, fetched?.updatedAt]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-  const agent = fetched || (agents || []).find((a) => a.slug === slug) || null;
+  // Create mode: an in-memory draft, never fetched — there is nothing on disk
+  // yet. Only the פרסונה tab makes sense until POST /agents returns a slug.
+  const draft = { slug: null, name: draftName || '', emoji: '🤖', color: DRAFT_COLOR, model: '', persona: '', skills: [], tools: [], budget: null, domains: [], autoApprove: [], updatedAt: 0 };
+  const agent = isNew ? draft : (fetched || (agents || []).find((a) => a.slug === slug) || null);
   const color = agent?.color || '#c4c4c4';
+  const effectiveTab = isNew ? 'persona' : tab;
   // A tab that opens "the agent's home session" (Routine → הוסף דרך הצ׳אט, an
   // activity row) means the בית tab — leaving the surface for it and being
   // bounced back by App would only flicker.
   const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
 
-  const navItem = (id) => (
-    <button
-      key={id}
-      type="button"
-      data-agent-tab={id}
-      onClick={() => setTab(id)}
-      aria-current={tab === id ? 'page' : undefined}
-      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${tab === id ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
-      style={tab === id ? { borderColor: color, background: `${color}1a` } : undefined}
-    >
-      <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
-      {t(`agent.page.tab.${id}`)}
-    </button>
-  );
+  const navItem = (id) => {
+    const disabled = isNew && id !== 'persona';
+    return (
+      <button
+        key={id}
+        type="button"
+        data-agent-tab={id}
+        disabled={disabled}
+        title={disabled ? t('agent.page.tabDisabledHint') : undefined}
+        onClick={() => !disabled && setTab(id)}
+        aria-current={effectiveTab === id ? 'page' : undefined}
+        className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${effectiveTab === id ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
+        style={effectiveTab === id ? { borderColor: color, background: `${color}1a` } : undefined}
+      >
+        <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
+        {t(`agent.page.tab.${id}`)}
+      </button>
+    );
+  };
 
   let body;
-  if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-[12px] text-fgdim">{t('agent.page.notFound')}</div>;
+  if (isNew) body = <PersonaTab key="draft" agent={agent} isNew onSaved={(a) => onCreated?.(a)} onDeleted={onClose} />;
+  else if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-[12px] text-fgdim">{t('agent.page.notFound')}</div>;
   else if (!agent) body = <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
-  else if (tab === 'home') body = <HomeTab agent={agent} onOpenSession={openSession} />;
-  else if (tab === 'memory') body = <MemoryTab agent={agent} />;
-  else if (tab === 'activity') body = <ActivityTab agent={agent} onOpenSession={openSession} />;
-  else if (tab === 'runs') body = <RunsTab agent={agent} onOpenSession={openSession} />;
-  else if (tab === 'connections') body = <AgentConnectionsPanel agent={agent} />;
-  else if (tab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={openSession} />;
+  else if (effectiveTab === 'home') body = <HomeTab agent={agent} onOpenSession={openSession} />;
+  else if (effectiveTab === 'memory') body = <MemoryTab agent={agent} />;
+  else if (effectiveTab === 'activity') body = <ActivityTab agent={agent} onOpenSession={openSession} />;
+  else if (effectiveTab === 'runs') body = <RunsTab agent={agent} onOpenSession={openSession} />;
+  else if (effectiveTab === 'connections') body = <AgentConnectionsPanel agent={agent} />;
+  else if (effectiveTab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={openSession} />;
   else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={() => setTab('home')} />;
 
   const persona = personaLine(agent?.persona);
@@ -514,8 +545,8 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
           {agent ? <AgentAvatar agent={agent} size={40} /> : null}
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span dir="auto" className="text-[16px] leading-tight font-bold text-fg">{agent?.name || t('agent.page.title')}</span>
-              <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{slug}</span>
+              <span dir="auto" className="text-[16px] leading-tight font-bold text-fg">{agent?.name || (isNew ? t('agent.page.createTitle') : t('agent.page.title'))}</span>
+              {!isNew && <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{slug}</span>}
             </div>
             {persona && <div dir="auto" className="mt-0.5 line-clamp-2 text-[11.5px] text-fgdim">{persona}</div>}
           </div>
@@ -523,7 +554,7 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
             <Icon icon={faXmark} />
           </button>
         </div>
-        {agent && (
+        {agent && !isNew && (
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
             <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />
             <BudgetBar budget={budget} />
@@ -532,11 +563,11 @@ export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSe
         )}
         <div className="thin-scroll -mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1">{TABS.map(navItem)}</div>
       </div>
-      {tab === 'home' && agent ? (
+      {effectiveTab === 'home' && agent ? (
         <div key="home" className="flex min-h-0 flex-1 flex-col bg-bg">{body}</div>
       ) : (
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
-          <div key={tab} className="mx-auto w-full max-w-[720px] px-4 py-5 sm:px-7">{body}</div>
+          <div key={effectiveTab} className="mx-auto w-full max-w-[720px] px-4 py-5 sm:px-7">{body}</div>
         </div>
       )}
     </div>

@@ -12,9 +12,6 @@ export const strings = {
   'rail.teamHomeChat': 'צ׳אט הבית',
   'rail.teamOpenPage': 'עמוד הסוכן',
   'rail.teamActions': 'פעולות סוכן',
-  'rail.teamNewAgentTitle': 'סוכן חדש',
-  'rail.teamNewAgentPrompt':
-    'תקים סוכן חדש לצוות שלי. שאל אותי רק על שם, אימוג׳י ו-2–5 שורות פרסונה (מה הוא עושה + הגבולות שלו); לכל השאר קח ברירות מחדל (מודל ברירת מחדל, בלי תקציב, בלי הגבלת כלים, בלי סקילים) אלא אם אגיד אחרת. אחר כך קרא ל-create_agent עם confirm:true כדי שאוכל לאשר את הכרטיס לפני היצירה.',
   'rail.teamOpenFailed': 'לא הצלחתי לפתוח את צ׳אט הבית של הסוכן',
 
   // ---- AgentCard.jsx ----
@@ -82,6 +79,13 @@ export const strings = {
   'agent.page.noEpisodes': 'אין עדיין אפיזודות — הן נכתבות כשסשן מדווח או עובר לארכיון.',
   'agent.page.home': 'בית',
   'agent.page.created': 'נוצר {when}',
+
+  // UX2 — יצירת סוכן דרך המשטח (AgentView במצב create), לא סשן
+  'agent.page.createTitle': 'סוכן חדש',
+  'agent.page.create': 'צור סוכן',
+  'agent.page.createdToast': 'הסוכן נוצר',
+  'agent.page.cancel': 'ביטול',
+  'agent.page.tabDisabledHint': 'יהיה זמין אחרי היצירה',
 
   // A2 — חיבורים לסוכן
   'agent.conn.title': 'החיבורים של {name}',
@@ -222,4 +226,12 @@ export const strings = {
   'chat.delegatedOpenSession': 'פתח סשן',
   'session.bornFrom': 'סשן עבודה · נולד מ-{name}',
   'session.bornFromTitle': 'נולד מ-{name} — פתח את הסוכן',
+
+  // UX2 — "אמץ סוכן": סשן קיים מאמץ סוכן קיים מהתור הבא, בלי ליצור סשן חדש
+  'dialogs.cmdAdoptDesc': 'אימוץ סוכן קיים בסשן הזה, מהתור הבא',
+  'dialogs.adoptUsage': 'שימוש: /adopt <סוכן>',
+  'chat.agentAdopted': '{name} אומץ לסשן הזה',
+  'chat.agentAdoptedHint': '· הפרסונה, הכלים, המדיניות והתקציב שלו חלים מהתור הבא — התורות הקודמים רצו בלעדיו.',
+  'chat.agentAdoptRevert': 'החזר לרגיל',
+  'chat.agentAdoptReverted': 'האימוץ בוטל — הסשן חזר לרגיל',
 };

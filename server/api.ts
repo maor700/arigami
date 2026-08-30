@@ -974,6 +974,49 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
   return { target, how, delivered };
 }
 
+/**
+ * UX2 — "אמץ סוכן": a session already underway takes on an existing agent's
+ * persona/skills/model/connections/policy for its NEXT turn onward, without
+ * spawning a new session. `metadata.agent` is the single source both A3's
+ * per-turn policy/budget checks (claude.js policyArgs / budgetRefusalFor) and
+ * mcpConfigFor read fresh on every spawn, so setting it here is enough — the
+ * only extra step is telling the model (a queued `[host]` line with the
+ * adopted persona) and leaving a chat receipt so the human can revert.
+ * `adoptedFrom` remembers what to restore ("החזר לרגיל") — null if the session
+ * had no agent at all before adopting.
+ */
+function adoptAgentIntoSession(sessionId: string, agentSlug: string): { session: NonNullable<ReturnType<typeof state.getSession>>; agent: agents.AgentView } {
+  const s = state.getSession(sessionId);
+  if (!s) throw Object.assign(new Error(`unknown session: ${sessionId}`), { status: 404 });
+  const a = agents.getAgent(agentSlug);
+  if (!a) throw Object.assign(new Error(`unknown agent: ${agentSlug}`), { status: 404 });
+  const b = ledger.budgetState(a.slug);
+  if (b?.exceeded) {
+    const err = new Error(ledger.budgetRefusal(b, a.name)) as Error & { status?: number; budget?: unknown };
+    err.status = 429;
+    err.budget = { ...b, name: a.name };
+    throw err;
+  }
+  const prevAgent = typeof s.metadata?.agent === 'string' ? (s.metadata.agent as string) : null;
+  state.patchSession(sessionId, { metadata: { agent: a.slug, adoptedFrom: prevAgent }, color: a.color });
+  claude.appendChat(sessionId, { kind: 'agent-adopt', agent: { slug: a.slug, name: a.name, emoji: a.emoji, color: a.color }, prevAgent });
+  const persona = agents.personaBlock(a.slug);
+  deliverToSession(sessionId, `[host] The human adopted ${a.name} (${a.slug}) into this session — its persona, skills, tools/domain policy and daily budget apply from now on. Earlier turns in this chat ran without it.\n\n${persona}`);
+  return { session: state.getSession(sessionId)!, agent: a };
+}
+
+/** The reverse of `adoptAgentIntoSession` — back to whatever agent (or none) ran the session before the adoption. */
+function revertAgentAdoption(sessionId: string): void {
+  const s = state.getSession(sessionId);
+  if (!s) throw Object.assign(new Error(`unknown session: ${sessionId}`), { status: 404 });
+  const prev = typeof s.metadata?.adoptedFrom === 'string' ? (s.metadata.adoptedFrom as string) : null;
+  // `patchSession`'s metadata merge is additive (never deletes by omission) —
+  // an explicit `undefined` is what actually clears a key, both in memory
+  // (every reader here checks `typeof … === 'string'`) and on disk (JSON drops it).
+  state.patchSession(sessionId, { metadata: { agent: prev || undefined, adoptedFrom: undefined } });
+  claude.appendChat(sessionId, { kind: 'agent-adopt', agent: null, reverted: true });
+}
+
 async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p: string, m: string): Promise<void> {
   if (p === '/__api/agents' && m === 'GET') return json(res, { agents: agents.listAgentViews() });
   if (p === '/__api/agents' && m === 'POST') {
@@ -4455,6 +4498,29 @@ export async function handle(
       } catch (e) {
         const err = e as Error & { status?: number; budget?: unknown };
         return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
+      }
+    }
+    // UX2: "אמץ סוכן" — this session takes on an existing agent from its next
+    // turn on, without spawning anything. Reversible via .../adopt-agent/revert.
+    if (sub === 'adopt-agent' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const agentSlug = String(body.agent || '').trim();
+      if (!agentSlug) return badRequest(res, 'agent required');
+      try {
+        const r = adoptAgentIntoSession(id, agentSlug);
+        return json(res, { ok: true, session: state.toWireSession(r.session), agent: r.agent });
+      } catch (e) {
+        const err = e as Error & { status?: number; budget?: unknown };
+        return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
+      }
+    }
+    if (sub === 'adopt-agent/revert' && m === 'POST') {
+      try {
+        revertAgentAdoption(id);
+        return json(res, { ok: true, session: state.getSession(id) });
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { error: err.message }, err.status || 500);
       }
     }
     // A4: `/agent new [name]` → the create-agent card (the human edits + confirms).

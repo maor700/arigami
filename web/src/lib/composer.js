@@ -5,7 +5,8 @@
 //                                     frontmatter field (data-driven, GET /__api/skills)
 //   /team                          → host: list the agents + status (TeamPanel)
 //   /as <agent> <text>             → host: a one-off session born from the agent
-//   /agent new [name]              → host: the create-agent card in this chat
+//   /agent new [name]              → host: the create-agent SURFACE (AgentView, create mode)
+//   /adopt <agent>                 → host: UX2 — this session adopts the agent from its next turn
 //   @<agent> <text>                → host: delegate (PM → child born from the agent,
 //                                     otherwise the agent's home chat)
 //   anything else starting with /  → pass-through to the claude CLI (as before)
@@ -18,6 +19,7 @@ export const AGENT_COMMANDS = [
   { name: 'team', descKey: 'dialogs.cmdTeamDesc', host: true, agentCmd: 'team', run: true },
   { name: 'as', descKey: 'dialogs.cmdAsDesc', host: true, agentCmd: 'as', argumentHint: '<agent> <text>' },
   { name: 'agent new', descKey: 'dialogs.cmdAgentNewDesc', host: true, agentCmd: 'agent-new', argumentHint: '[name]' },
+  { name: 'adopt', descKey: 'dialogs.cmdAdoptDesc', host: true, agentCmd: 'adopt', argumentHint: '<agent>' },
 ];
 
 /** The plugin namespace a skill is invoked under (`/arigami:<name>` / `/arigami-user:<name>`). */
@@ -106,8 +108,8 @@ export function buildMentionItems(query, agents) {
 /**
  * Decide what a composer submission means. Returns one of:
  *   {type:'team'} · {type:'as', agent, text} · {type:'as-usage'} · {type:'unknown-agent', name}
- *   {type:'agent-new', name} · {type:'skill', text: '/arigami:<skill> args'}
- *   {type:'mention', agents, text} · {type:'plain', text}
+ *   {type:'agent-new', name} · {type:'adopt', agent} · {type:'adopt-usage'}
+ *   {type:'skill', text: '/arigami:<skill> args'} · {type:'mention', agents, text} · {type:'plain', text}
  */
 export function resolveSubmission(text, { skills = [], agents = [] } = {}) {
   const raw = String(text || '').trim();
@@ -115,6 +117,12 @@ export function resolveSubmission(text, { skills = [], agents = [] } = {}) {
   if (slash) {
     if (slash.name === 'team') return { type: 'team' };
     if (slash.name === 'agent new') return { type: 'agent-new', name: slash.args };
+    if (slash.name === 'adopt') {
+      if (!slash.args.trim()) return { type: 'adopt-usage' };
+      const agent = findAgent(agents, slash.args.trim());
+      if (!agent) return { type: 'unknown-agent', name: slash.args.trim() };
+      return { type: 'adopt', agent };
+    }
     if (slash.name === 'as') {
       const m = /^(\S+)\s+([\s\S]+)$/.exec(slash.args);
       if (!m) return { type: 'as-usage' };
