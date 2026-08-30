@@ -193,7 +193,9 @@ export default function App() {
   const storeState = useStore();
   // C1: signed out → the Login page replaces the whole cockpit (the store
   // doesn't boot / connect until afterLogin()). undefined = still checking.
-  if (storeState.auth === null) return <Login info={storeState.authInfo} />;
+  // NOTE: this can't be an early `return` here — every hook below still has
+  // to run on every render (Rules of Hooks), so the branch happens at the
+  // bottom, right before the final JSX return.
   const { sessions, chats, chatLoaded, conn, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
@@ -774,6 +776,8 @@ export default function App() {
       />
     );
   }
+
+  if (storeState.auth === null) return <Login info={storeState.authInfo} />;
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg font-sans text-fg">
