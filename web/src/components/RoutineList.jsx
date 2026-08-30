@@ -35,6 +35,19 @@ export function untilTime(ms, t) {
 }
 
 /**
+ * The soonest next run of an ENABLED cron job born from `slug` (ms), or null.
+ * Shown as the agent's status in the rail row and on the agent surface header.
+ */
+export function nextCronFor(slug, triggers) {
+  let next = null;
+  for (const x of triggers || []) {
+    if (x.type !== 'cron' || x.agent !== slug || !x.enabled || !x.nextRunAt) continue;
+    if (next === null || x.nextRunAt < next) next = x.nextRunAt;
+  }
+  return next;
+}
+
+/**
  * The form state → the POST /__api/triggers body, or null when it is not
  * postable yet (a job with no prompt or no schedule is not a job).
  */

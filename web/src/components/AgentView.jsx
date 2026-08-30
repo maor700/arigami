@@ -1,29 +1,39 @@
-// A1/A2 — the Agent page (#/agents/<slug>), same visual language as Settings:
-// header + tabs פרסונה / זיכרון / פעילות / חיבורים / שגרה.
+// The **agent surface** (#/agents/<slug>[/<tab>]) — a PLACE, not a session.
+//
+// UX1: clicking a Team row lands here, not in "just another session". The
+// surface owns the agent's home chat (the בית tab — the DM, embedded), so a
+// home chat is no longer a rail row at all; work sessions born from the agent
+// stay in the Sessions section and link back here (SessionView BornFromChip).
+// Its own header treatment — big avatar, persona line, live status, budget bar,
+// the agent's color washed over the chrome — is what keeps it from reading as a
+// work session.
+//
+//   home         UX1: the agent's home chat, embedded (GET /__api/agents/:slug/home)
 //   persona      identity fields + the persona textarea → PATCH /__api/agents/:slug
 //   memory       the agent's MEMORY.md + journal (memory namespace agents/<slug>/…)
-//   activity     A3: the agent's activity ledger with cost (today / 7d / 30d) + its sessions
-//                (+ episodes, collapsed) — GET /__api/agents/:slug/activity?range=
 //   connections  A2: the agent's own connections + browser profile (settings/AgentConnections.jsx)
 //   routine      A2: cron jobs born from the agent + its listeners (RoutineList.jsx)
+//   activity     A3: the agent's activity ledger with cost (today / 7d / 30d)
+//                (+ episodes, collapsed) — GET /__api/agents/:slug/activity?range=
+//   runs         UX1: every session born from the agent, with state and cost
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { useIsDesktop } from '../lib/useMedia.js';
 import { useModels } from '../lib/models.js';
-import { useStore } from '../lib/store.js';
+import { useStore, loadChat } from '../lib/store.js';
 import { relTime } from '../lib/time.js';
+import { errText } from '../lib/errors.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
-import { Wave } from './ui.jsx';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
 import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
-import RoutinePanel from './RoutineList.jsx';
-import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
+import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
+import { AgentHomeChat } from './SessionView.jsx';
+import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject } from '@fortawesome/free-solid-svg-icons';
 
-const TABS = ['persona', 'memory', 'activity', 'connections', 'routine'];
-const ICONS = { persona: faIdBadge, memory: faBrain, activity: faListCheck, connections: faLink, routine: faClock };
+export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs'];
+const ICONS = { home: faComments, persona: faIdBadge, memory: faBrain, connections: faLink, routine: faClock, activity: faListCheck, runs: faDiagramProject };
 
 const input = 'w-full rounded-[7px] border-[1.5px] border-border bg-panel px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink';
 const lbl = 'mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase';
@@ -267,18 +277,6 @@ function ActivityTab({ agent, onOpenSession }) {
           {entries.map((e, i) => <ActivityRow key={`${e.ts}-${i}`} e={e} onOpenSession={onOpenSession} />)}
         </div>
       </div>
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.sessions')} · {data.sessions.length}</div>
-        {data.sessions.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.page.noSessions')}</div>}
-        {data.sessions.map((s) => (
-          <button key={s.id} type="button" onClick={() => onOpenSession(s.id)} className={`flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 text-start hover:bg-chip/60 ${s.archived ? 'opacity-60' : ''}`}>
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
-            <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
-            {s.home && <span className="rounded-full bg-chip px-1.5 py-px font-mono text-[9px] text-fgdim">{t('agent.page.home')}</span>}
-            <span className="font-mono text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
-          </button>
-        ))}
-      </div>
       <button type="button" onClick={() => setShowEp((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
         <Icon icon={showEp ? faCaretDown : faCaretRight} /> {showEp ? t('agent.activity.hideEpisodes') : t('agent.activity.showEpisodes')} · {data.episodes.length}
       </button>
@@ -304,44 +302,176 @@ function ActivityTab({ agent, onOpenSession }) {
   );
 }
 
-export default function AgentView({ slug, onClose, onOpenSession }) {
+/**
+ * UX1 — the **בית** tab: the agent's home chat, embedded. Opening the tab is
+ * what get-or-creates the home session (`GET /__api/agents/:slug/home`, the same
+ * call the rail row used to make), so the DM keeps its transcript, its ledger
+ * and its id — it just stopped being a rail row.
+ */
+function HomeTab({ agent, onOpenSession }) {
   const t = useT();
-  const desktop = useIsDesktop();
-  const { agents } = useStore();
-  const [tab, setTab] = useState('persona');
+  const { sessions, chats, chatLoaded } = useStore();
+  const [home, setHome] = useState(null); // the wire session from /home (until the store has it)
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let stop = false;
+    setErr('');
+    api.get(`/agents/${encodeURIComponent(agent.slug)}/home`)
+      .then((r) => {
+        if (stop || !r?.session?.id) return;
+        setHome(r.session);
+        loadChat(r.session.id);
+      })
+      .catch((e) => { if (!stop) setErr(errText(e)); });
+    return () => { stop = true; };
+  }, [agent.slug]);
+  const id = home?.id || agent.homeSessionId || null;
+  const session = (id && (sessions || []).find((s) => s.id === id)) || home;
+  if (err) return <div data-home-error className="px-4 py-5 text-[12px] text-danger">{t('agent.surface.homeFailed', { err })}</div>;
+  if (!session) return <div className="px-4 py-5 text-[11.5px] text-fgdim">{t('agent.surface.homeOpening')}</div>;
+  return (
+    <AgentHomeChat
+      session={session}
+      agent={agent}
+      events={chats[session.id] || []}
+      loading={!chatLoaded[session.id] && !(chats[session.id]?.length)}
+      onOpenSession={onOpenSession}
+    />
+  );
+}
+
+/**
+ * UX1 — the **ריצות** tab: every session born from this agent (the work it did),
+ * with its state and what it cost. The home chat is not a run — it is the tab
+ * next door.
+ */
+export function RunsTab({ agent, onOpenSession }) {
+  const t = useT();
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    api.get(`/agents/${agent.slug}/activity?range=30d&limit=1`)
+      .then((d) => { if (!stop) setData(d); })
+      .catch(() => { if (!stop) setData({ sessions: [] }); });
+    return () => { stop = true; };
+  }, [agent.slug, agent.updatedAt]);
+  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  const runs = (data.sessions || []).filter((s) => !s.home);
+  return (
+    <div data-agent-runs className="flex flex-col gap-3">
+      <div className="text-[11.5px] text-fgdim">{t('agent.oneLiner')}</div>
+      <div className="rounded-[10px] border border-hair p-3">
+        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.runs.title')} · {runs.length}</div>
+        {runs.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.runs.empty', { oneLiner: t('agent.oneLiner') })}</div>}
+        {runs.map((s) => (
+          <button key={s.id} type="button" data-agent-run={s.id} onClick={() => onOpenSession(s.id)} className={`flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 text-start hover:bg-chip/60 ${s.archived ? 'opacity-60' : ''}`}>
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
+            <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
+            {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
+            <span className="shrink-0 font-mono text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtUsd(s.costUsd)}</span>
+            <span className="shrink-0 font-mono text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The persona's first real line — the one-line "who is this" under the name. */
+export const personaLine = (persona) => {
+  for (const raw of String(persona || '').split('\n')) {
+    const line = raw.replace(/^[#>\-*\s]+/, '').trim();
+    if (line) return line.length > 120 ? `${line.slice(0, 119)}…` : line;
+  }
+  return '';
+};
+
+/** UX1 — live status of the agent: working / next scheduled run / idle. */
+export function SurfaceStatus({ agent, sessions, triggers }) {
+  const t = useT();
+  const mine = (sessions || []).filter((s) => !s.archived && s.metadata?.agent === agent.slug);
+  const working = mine.some((s) => s.claude?.state === 'working');
+  const runs = mine.filter((s) => !s.metadata?.agentHome).length;
+  const nextCron = working ? null : nextCronFor(agent.slug, triggers);
+  const label = working
+    ? t('agent.surface.status.working')
+    : nextCron
+      ? t('agent.surface.status.nextRun', { when: untilTime(nextCron, t) })
+      : runs === 0
+        ? t('agent.surface.status.idle')
+        : runs === 1
+          ? t('rail.teamSession')
+          : t('rail.teamSessions', { n: runs });
+  return (
+    <span data-agent-status={working ? 'working' : nextCron ? 'next-run' : 'idle'} className="flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+      {working
+        ? <span className="host-spinner h-[11px] w-[11px]" />
+        : <span className="h-[7px] w-[7px] rounded-full" style={{ background: agent.color || '#c4c4c4', opacity: nextCron || runs ? 1 : 0.45 }} />}
+      {label}
+    </span>
+  );
+}
+
+/** UX1 — today's token spend against the agent's daily cap (A3), as a bar. */
+export function BudgetBar({ budget }) {
+  const t = useT();
+  if (!budget?.cap) return <span data-agent-budget="none" className="font-mono text-[10.5px] text-fgdim">{t('agent.surface.budgetNone')}</span>;
+  const pct = Math.min(100, Math.round((budget.usedTokens / budget.cap) * 100));
+  return (
+    <span data-agent-budget={budget.exceeded ? 'exceeded' : 'ok'} className="flex min-w-0 shrink items-center gap-2">
+      <span className="h-[6px] w-[90px] shrink-0 overflow-hidden rounded-full bg-chip">
+        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: budget.exceeded ? 'var(--danger, #C0392B)' : '#1F9C82' }} />
+      </span>
+      <span dir="ltr" className={`truncate font-mono text-[10.5px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fgdim'}`}>
+        {budget.exceeded
+          ? t('agent.surface.budgetExceeded')
+          : t('agent.surface.budget', { used: fmtTokens(budget.usedTokens), cap: fmtTokens(budget.cap) })}
+      </span>
+    </span>
+  );
+}
+
+export default function AgentView({ slug, tab: wantTab, onTab, onClose, onOpenSession }) {
+  const t = useT();
+  const { agents, sessions, triggers } = useStore();
+  const [tab, setTabLocal] = useState(TABS.includes(wantTab) ? wantTab : 'home');
   const [fetched, setFetched] = useState(null); // full record (persona) — the store list has it too, but fetch to be exact
   const [missing, setMissing] = useState(false);
+  const [budget, setBudget] = useState(null);
+  const setTab = (id) => { setTabLocal(id); onTab?.(id); };
+  useEffect(() => { if (TABS.includes(wantTab) && wantTab !== tab) setTabLocal(wantTab); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [wantTab]);
   useEffect(() => {
     let stop = false;
     setMissing(false);
     api.get(`/agents/${encodeURIComponent(slug)}`).then((a) => { if (!stop) setFetched(a); }).catch(() => { if (!stop) setMissing(true); });
     return () => { stop = true; };
   }, [slug]);
+  // A3 budget for the header bar — the cheap all-agents endpoint, refreshed when
+  // the record changes (raising the cap in the persona tab lifts the bar at once).
+  useEffect(() => {
+    let stop = false;
+    api.get('/agents/budgets')
+      .then((r) => { if (!stop) setBudget((r?.budgets || []).find((b) => b.slug === slug) || null); })
+      .catch(() => { if (!stop) setBudget(null); });
+    return () => { stop = true; };
+  }, [slug, fetched?.updatedAt]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   const agent = fetched || (agents || []).find((a) => a.slug === slug) || null;
-
-  const openHome = async () => {
-    try {
-      const r = await api.get(`/agents/${slug}/home`);
-      if (r?.session?.id) onOpenSession(r.session.id);
-    } catch (e) {
-      toastError(t('rail.teamOpenFailed'));
-    }
-  };
+  const color = agent?.color || '#c4c4c4';
 
   const navItem = (id) => (
     <button
       key={id}
       type="button"
+      data-agent-tab={id}
       onClick={() => setTab(id)}
       aria-current={tab === id ? 'page' : undefined}
-      className={desktop
-        ? `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[12.5px] ${tab === id ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:bg-chip/60 hover:text-fg'}`
-        : `flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${tab === id ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim'}`}
+      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${tab === id ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
+      style={tab === id ? { borderColor: color, background: `${color}1a` } : undefined}
     >
       <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
       {t(`agent.page.tab.${id}`)}
@@ -351,35 +481,49 @@ export default function AgentView({ slug, onClose, onOpenSession }) {
   let body;
   if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-[12px] text-fgdim">{t('agent.page.notFound')}</div>;
   else if (!agent) body = <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  else if (tab === 'home') body = <HomeTab agent={agent} onOpenSession={onOpenSession} />;
   else if (tab === 'memory') body = <MemoryTab agent={agent} />;
   else if (tab === 'activity') body = <ActivityTab agent={agent} onOpenSession={onOpenSession} />;
+  else if (tab === 'runs') body = <RunsTab agent={agent} onOpenSession={onOpenSession} />;
   else if (tab === 'connections') body = <AgentConnectionsPanel agent={agent} />;
   else if (tab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={onOpenSession} />;
-  else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={openHome} />;
+  else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={() => setTab('home')} />;
 
+  const persona = personaLine(agent?.persona);
   return (
-    <div data-agent-page={slug} className="flex min-h-0 flex-1 flex-col bg-panel">
-      <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
-        <Wave />
-        {agent ? <AgentAvatar agent={agent} size={20} /> : null}
-        <span dir="auto" className="text-sm font-bold text-fg">{agent?.name || t('agent.page.title')}</span>
-        <span className="text-[12px] text-fgdim">/ {t(`agent.page.tab.${tab}`)}</span>
-        {agent && (
-          <button type="button" onClick={openHome} title={t('agent.page.openHome')} className="ms-2 cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11px] text-fgdim hover:border-ink hover:text-fg">
-            <Icon icon={faComments} /> {t('rail.teamHomeChat')}
+    // The accent wash + the oversized identity block are the whole point: this
+    // must not read as "another session with a header".
+    <div data-agent-page={slug} data-agent-surface={slug} className="flex min-h-0 flex-1 flex-col bg-panel">
+      <div className="shrink-0 border-b-[1.5px] px-4 pt-3 pb-2" style={{ background: `linear-gradient(180deg, ${color}26, ${color}0d)`, borderColor: `${color}66` }}>
+        <div className="flex items-start gap-3">
+          {agent ? <AgentAvatar agent={agent} size={40} /> : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span dir="auto" className="text-[16px] leading-tight font-bold text-fg">{agent?.name || t('agent.page.title')}</span>
+              <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{slug}</span>
+            </div>
+            {persona && <div dir="auto" className="mt-0.5 line-clamp-2 text-[11.5px] text-fgdim">{persona}</div>}
+          </div>
+          <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
+            <Icon icon={faXmark} />
           </button>
-        )}
-        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="ms-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
-          <Icon icon={faXmark} />
-        </button>
-      </div>
-      {!desktop && <div className="thin-scroll flex shrink-0 gap-1.5 overflow-x-auto border-b border-hair px-3 py-2">{TABS.map(navItem)}</div>}
-      <div className="flex min-h-0 flex-1">
-        {desktop && <nav className="flex w-[180px] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">{TABS.map(navItem)}</nav>}
-        <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
-          <div key={tab} className="mx-auto w-full max-w-[640px] px-4 py-5 sm:px-7">{body}</div>
         </div>
+        {agent && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />
+            <BudgetBar budget={budget} />
+            <span className="ms-auto hidden text-[10.5px] text-fgdim sm:block">{t('agent.oneLiner')}</span>
+          </div>
+        )}
+        <div className="thin-scroll -mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1">{TABS.map(navItem)}</div>
       </div>
+      {tab === 'home' && agent ? (
+        <div key="home" className="flex min-h-0 flex-1 flex-col bg-bg">{body}</div>
+      ) : (
+        <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
+          <div key={tab} className="mx-auto w-full max-w-[720px] px-4 py-5 sm:px-7">{body}</div>
+        </div>
+      )}
     </div>
   );
 }

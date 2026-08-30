@@ -53,7 +53,10 @@ afterAll(() => {
 
 const sessions = [
   { id: 'sess_free', title: 'free one', status: 'In Progress', color: '#2C6BD6', metadata: {}, claude: { state: 'idle' }, createdAt: '2026-08-30T10:00:00Z' },
+  // UX1: the home chat is the agent surface's בית tab — it must NOT be a rail row…
   { id: 'sess_home', title: 'Marketing Lead', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead', agentHome: true }, claude: { state: 'working' }, createdAt: '2026-08-30T10:00:00Z' },
+  // …while a work session born from the agent stays in the Sessions section.
+  { id: 'sess_work', title: 'landing page copy', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead' }, claude: { state: 'idle' }, createdAt: '2026-08-30T10:30:00Z' },
   { id: 'sess_old', title: 'archived one', status: 'Completed', color: '#3C9A4E', metadata: {}, archived: true, claude: { state: 'idle' }, createdAt: '2026-08-30T09:00:00Z' },
 ];
 const noop = () => {};
@@ -82,18 +85,32 @@ test('Rail (he): the צוות section sits below the sessions and above archived
   prefs.setPrefs({ language: 'en' });
 });
 
-test('Rail (en): a session born from an agent wears the agent emoji; free sessions keep the dot', () => {
+test('Rail (en): a work session born from an agent wears its emoji + name chip; free sessions keep the dot', () => {
   prefs.setPrefs({ language: 'en' });
   const html = mountRail();
   expect(html).toContain('Team');
   expect(html).toContain('+ New agent');
-  // the session row of the home chat carries the avatar (rendered before the team section)
+  // the WORK session's row carries the avatar (rendered before the team section)
   const avatar = html.indexOf('data-agent-avatar="marketing-lead"');
   expect(avatar).toBeGreaterThan(-1);
   expect(avatar).toBeLessThan(html.indexOf('data-rail-team'));
   expect(html.slice(avatar, avatar + 400)).toContain('📣');
+  // UX1: … and says whose job it is, linking back to the agent
+  expect(html).toContain('data-row-agent="marketing-lead"');
+  expect(html).toContain('· Marketing Lead');
   const freeRow = html.slice(html.indexOf('free one') - 600, html.indexOf('free one'));
   expect(freeRow).not.toContain('data-agent-avatar');
+});
+
+test('Rail (en): the home chat is NOT a session row — only the work session is', () => {
+  prefs.setPrefs({ language: 'en' });
+  const html = mountRail();
+  const sessionsPart = html.slice(0, html.indexOf('data-rail-team'));
+  expect(sessionsPart).toContain('landing page copy');
+  expect(sessionsPart).not.toContain('sess_home');
+  // the team row still reads "working" — the agent IS mid-turn, in its home chat
+  const mk = html.slice(html.indexOf('data-rail-agent="marketing-lead"'), html.indexOf('data-rail-agent="ops"'));
+  expect(mk).toContain('working');
 });
 
 test('AgentCard: pending renders the editable form with the draft; created renders the summary + page link', () => {

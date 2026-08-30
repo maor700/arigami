@@ -150,20 +150,28 @@ test('SlashPalette shows the skill command chip; MentionPalette lists agents wit
 
 // ---- receipt line + /team panel ---------------------------------------------------
 
-test('DelegatedLine: "הוקצה ל-<agent>" + where it went + open link', () => {
+// UX1 reworded this line: it now says WHICH of the two things happened, in a
+// sentence, instead of "assigned to X" with the destination as a suffix.
+test('DelegatedLine: a work session names its title, a home hand-off says "נפתח בבית של"', () => {
   prefs.setPrefs({ language: 'he' });
   const ev = { kind: 'delegated', agent: AGENTS[0], target: 's_child', targetTitle: 'Mila: write it', how: 'child', delivered: 'now', mode: 'mention', text: 'write it' };
   const html = render(h(DelegatedLine, { event: ev }));
   expect(html).toContain('data-delegated-line="mila"');
-  expect(html).toContain('הוקצה ל-Mila');
-  expect(html).toContain('סשן-ילד בפרויקט הזה');
+  expect(html).toContain('data-delegated-how="child"');
+  expect(html).toContain('נוצר סשן עבודה «Mila: write it» עם Mila');
+  expect(html).toContain('בפרויקט הזה');
   expect(html).toContain('data-delegated-open="s_child"');
+  expect(html).toContain('פתח סשן');
   expect(html).toContain('write it');
+  // home → the agent surface's בית tab, not a session
   const home = render(h(DelegatedLine, { event: { ...ev, how: 'home', delivered: 'queued' } }));
-  expect(home).toContain('צ׳אט הבית');
+  expect(home).toContain('נפתח בבית של Mila');
+  expect(home).toContain('data-delegated-open-home="mila"');
+  expect(home).not.toContain('data-delegated-open="s_child"');
+  expect(home).toContain('פתח בית');
   expect(home).toContain('בתור');
   prefs.setPrefs({ language: 'en' });
-  expect(render(h(DelegatedLine, { event: { ...ev, how: 'session' } }))).toContain('Assigned to Mila');
+  expect(render(h(DelegatedLine, { event: { ...ev, how: 'session' } }))).toContain('Work session «Mila: write it» created with Mila');
 });
 
 test('teamRows + TeamPanel: status per agent (working / n sessions / idle)', () => {

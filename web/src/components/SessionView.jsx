@@ -19,10 +19,12 @@ import ChangesTab from './ChangesTab.jsx';
 import OrchestrationTab from './OrchestrationTab.jsx';
 import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
-import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
+import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls from './TermControls.jsx';
 import { ActionBar } from './ActionCard.jsx';
+import { AgentAvatar } from './AgentCard.jsx';
+import { openAgent } from './DelegatedLine.jsx';
 
 // Built-in "Changes" tab id — distinguishes it from agent-opened tabs.
 export const CHANGES_TAB_ID = '__changes';
@@ -298,6 +300,34 @@ function MachineChip({ session }) {
   );
 }
 
+/**
+ * UX1 — a session born from an agent is a JOB, not the agent. It keeps the
+ * agent's face, and says so in words: "סשן עבודה · נולד מ-<agent>", linking back
+ * to the agent surface. The agent's own home chat never renders this header (it
+ * is the בית tab of the agent surface instead).
+ */
+export function BornFromChip({ session, className = '' }) {
+  const tt = useT();
+  const { agents } = useStore();
+  const slug = session.metadata?.agent;
+  if (!slug || session.metadata?.agentHome) return null;
+  const agent = (agents || []).find((a) => a.slug === slug) || { slug, name: slug };
+  const name = agent.name || slug;
+  return (
+    <button
+      type="button"
+      data-born-from={slug}
+      title={tt('session.bornFromTitle', { name })}
+      onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
+      className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[9.5px] leading-none whitespace-nowrap hover:opacity-80 ${className}`}
+      style={{ borderColor: `${agent.color || '#c4c4c4'}66`, background: `${agent.color || '#c4c4c4'}14` }}
+    >
+      <AgentAvatar agent={agent} size={12} />
+      {tt('session.bornFrom', { name })}
+    </button>
+  );
+}
+
 function TerminalHeader({ session }) {
   const [procPanel, setProcPanel] = useState(false);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
@@ -310,6 +340,7 @@ function TerminalHeader({ session }) {
       <Dot color={session.color} size={9} />
       <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
       <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
+      <BornFromChip session={session} />
       {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
       {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[10.5px] text-fgdim sm:block" />}
       {session.metadata?.fromTriggerName && (
@@ -1414,6 +1445,62 @@ function ContentTab({ tab }) {
 }
 
 /* ---------- the session view ------------------------------------------------ */
+
+/**
+ * UX1 — the agent's home chat, embedded as the **בית** tab of the agent surface.
+ * The same transcript and composer a session has, minus the session chrome (no
+ * tab bar, no "claude-code" terminal header): this is a DM with the agent, not a
+ * job. It is no longer reachable as a rail row — the surface owns it.
+ *
+ * The hint chip above the composer is the bridge to the other half of the model:
+ * one click turns the human's last message into a real work session born from
+ * the agent (`/as` under the hood), which then lives in the Sessions section.
+ */
+export function AgentHomeChat({ session, events, loading, agent, onOpenSession }) {
+  const tt = useT();
+  const [busy, setBusy] = useState(false);
+  const ask = lastHumanText(events);
+  const toWork = async () => {
+    if (busy) return;
+    if (!ask) return toastError(tt('agent.surface.homeHintEmpty'));
+    setBusy(true);
+    try {
+      const r = await api.post(`/sessions/${session.id}/delegate`, { agent: agent.slug, text: ask, mode: 'as' });
+      if (r?.target) onOpenSession?.(r.target);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div data-agent-home={agent.slug} className="flex min-h-0 flex-1 flex-col">
+      <ProgressStrip progress={session.progress} />
+      <ListenerChips session={session} />
+      <ChatPane
+        sessionId={session.id}
+        events={events}
+        loading={loading}
+        working={session.claude?.state === 'working'}
+        awaiting={session.claude?.state === 'awaiting-input'}
+        action={session.action}
+      />
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[10.5px] text-fgdim">
+        <button
+          type="button"
+          data-home-to-work
+          disabled={busy}
+          title={tt('agent.surface.homeHintAction')}
+          onClick={toWork}
+          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2 py-0.5 font-mono text-[10px] hover:border-ink hover:text-fg disabled:opacity-50"
+        >
+          <Icon icon={faListCheck} /> {tt('agent.surface.homeHint')}
+        </button>
+      </div>
+      {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+    </div>
+  );
+}
 
 export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen }) {
   const isDesktop = useIsDesktop();
