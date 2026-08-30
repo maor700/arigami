@@ -1,0 +1,21 @@
+{
+  "name": "agency-client",
+  "version": "0.1.0",
+  "title": "Agency client",
+  "description": "Arigami folded to one client: an agency or freelancer runs a cockpit on the client's behalf. Two skills — a weekly status report published as a shareable artifact, and an intake flow that turns a request into a ticket and a child session — plus a CLIENT.md memory template and a disabled weekly-report cron.",
+  "repos": [
+    {
+      "name": "app",
+      "source": "github.com/<client-org>/<app>",
+      "branch": "main",
+      "envSource": { "kind": "file", "value": ".env.local" },
+      "installCmd": "bun install",
+      "devCmd": "bun run dev",
+      "testCmd": "bun test"
+    }
+  ],
+  "ports": { "dev": [3020, 3070], "storybook": [6021, 6070] },
+  "issueSource": "github",
+  "plugins": ["playwright"],
+  "workflows": ["project-manager", "dispatch", "machine-work"]
+}

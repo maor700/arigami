@@ -1647,7 +1647,21 @@ export async function handle(
       const [rawName, action] = rest.split('/');
       if (action === 'apply' && m === 'POST') {
         try {
-          return json(res, ob.applyProfile(decodeURIComponent(rawName)));
+          const name = decodeURIComponent(rawName);
+          // A shipped/installed Profile Bundle of that name gets the full apply
+          // (repos + skills + memory seed + cron); a thin <name>.json only seeds repos.
+          const pf = await import('./profiles.js');
+          let bundle: string | null = null;
+          try {
+            bundle = pf.resolveSource(name).dir;
+          } catch {
+            /* not a bundle */
+          }
+          if (bundle) {
+            const report = await pf.applySource(name, { sessionId: String(req.headers['x-arigami-session'] || '') || undefined });
+            return json(res, { applied: report.name, repos: report.repos, report });
+          }
+          return json(res, ob.applyProfile(name));
         } catch (e) {
           return badRequest(res, (e as Error).message);
         }

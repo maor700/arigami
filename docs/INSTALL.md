@@ -141,7 +141,7 @@ my-bundle/
 └── cron.json             # [{name, prompt, schedule:{kind:"cron|interval|at", value}, enabled?}]
 ```
 
-`profiles/bundles/solo-dev/` in the repo is the reference bundle.
+`profiles/bundles/solo-dev/` in the repo is the reference bundle; `agency-client`, `ops` and `il-whatsapp-business` are the showcase bundles (see `profiles/README.md`).
 
 ### What "apply" does (idempotent, additive)
 

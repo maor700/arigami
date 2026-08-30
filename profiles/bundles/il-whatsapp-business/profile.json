@@ -1,0 +1,10 @@
+{
+  "name": "il-whatsapp-business",
+  "version": "0.1.0",
+  "title": "עסק קטן — וואטסאפ (IL WhatsApp business)",
+  "description": "Arigami folded to a small Hebrew-speaking service business: the agent triages the WhatsApp inbox in Hebrew (classify → draft a reply → ask the owner with buttons before anything is sent, never auto-send), follows up on open quotes and appointments, keeps a BUSINESS.md memory template and a disabled morning-digest cron.",
+  "repos": [],
+  "plugins": [],
+  "workflows": ["machine-work"],
+  "issueSource": "none"
+}
