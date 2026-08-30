@@ -16,7 +16,9 @@ import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSet
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
-import { personaBlock } from './agents.js';
+import { personaBlock, getAgent } from './agents.js';
+import { policyFor, isRestrictive, disallowedToolsFor, hookSettings } from './agent-policy.js';
+import { appendActivity, budgetState, localDay, budgetRefusal } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 
@@ -373,6 +375,21 @@ export function ensureRunning(id) {
   return spawnProc(s, !!s.claude?.sessionId);
 }
 
+// A3: the `--disallowedTools` / `--settings` flags for a session born from an
+// agent with a tools/domains allowlist. Whole external MCP servers no allowlist
+// entry touches are denied by name (the names come from the last init report +
+// the live health map — the hook catches anything that shows up later).
+function policyArgs(s) {
+  const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const policy = policyFor(slug);
+  if (!isRestrictive(policy)) return [];
+  const servers = new Set(Object.keys(mcpServersOf(s.id)));
+  for (const sv of s.claude?.capabilities?.mcpServers || []) if (sv && typeof sv === 'object' && sv.name) servers.add(String(sv.name));
+  const denied = disallowedToolsFor(policy, [...servers]);
+  const hook = `bun "${path.join(ROOT, 'mcp', 'policy-hook.js')}"`;
+  return [...(denied.length ? ['--disallowedTools', denied.join(',')] : []), '--settings', hookSettings(hook)];
+}
+
 function spawnProc(s, resume) {
   const claudeSid = resume ? s.claude.sessionId : randomUUID();
   const args = [
@@ -396,6 +413,9 @@ function spawnProc(s, resume) {
     '--plugin-dir', ROOT,
     '--plugin-dir', userPluginDir(),
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
+    // A3: host-enforced tool/domain allowlist (agent-policy.ts) — real CLI
+    // denials + a PreToolUse hook that asks the host before every call.
+    ...policyArgs(s),
   ];
   const cwd = untildify(s.cwd) || HOME;
   const accountEnvSnapshot = accountEnv(s);
@@ -453,9 +473,13 @@ function spawnProc(s, resume) {
     pendingBg: new Map(), // tool_use_id → {command,description} awaiting its bg tool_result
     hostToolIds: new Set(), // tool_use_ids of mcp__arigami__* calls — their JSON echoes are suppressed in the transcript (they manifest as UI: status badge, action card, tabs…)
     mcpToolCalls: new Map(), // tool_use_id → mcp server name, so each result feeds that server's live health
+    turn: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }, // A3: token accounting of the turn in flight (agent ledger)
+    lastCostUsd: 0, // A3: the CLI's cumulative total_cost_usd at the last result → per-turn delta
   };
   procs.set(s.id, p);
   if (!resume) setClaude(s.id, { sessionId: claudeSid });
+  // A3: a session run in the agent's ledger (first spawn only — a resume is the same run).
+  if (!resume && agentSlug) appendActivity(agentSlug, { kind: 'session', sessionId: s.id, model: s.claude?.modelChoice || null, detail: s.title || '' });
 
   child.stdout.on('data', (d) => {
     p.buf += d;
@@ -688,6 +712,48 @@ function updateUsage(id, u) {
   });
 }
 
+// ---- A3: agent ledger + daily budget ----------------------------------------
+// Every assistant message of a turn adds its usage to the proc's running tally;
+// the `result` event closes the turn: one 'turn' line in the agent's
+// activity.jsonl (tokens + cost delta), then the budget check — exceeded → one
+// final warning into the session (once per local day) and a 'budget' line.
+function noteTurnUsage(id, u) {
+  const p = record(id);
+  if (!p?.agent || !u) return;
+  p.turn.input += u.input_tokens || 0;
+  p.turn.output += u.output_tokens || 0;
+  p.turn.cacheCreation += u.cache_creation_input_tokens || 0;
+  p.turn.cacheRead += u.cache_read_input_tokens || 0;
+}
+
+function recordTurn(id, j) {
+  const p = record(id);
+  if (!p?.agent) return;
+  const b = p.turn;
+  const tokens = b.input + b.output + b.cacheCreation + b.cacheRead;
+  const total = Number(j.total_cost_usd) || 0;
+  const costUsd = total >= p.lastCostUsd ? total - p.lastCostUsd : total;
+  p.lastCostUsd = total;
+  p.turn = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+  if (tokens > 0 || costUsd > 0)
+    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
+  try {
+    const st = budgetState(p.agent);
+    const day = localDay();
+    if (st?.exceeded && p.budgetWarnedDay !== day) {
+      p.budgetWarnedDay = day;
+      const name = getAgent(p.agent)?.name || p.agent;
+      const line = budgetRefusal(st, name);
+      appendActivity(p.agent, { kind: 'budget', sessionId: id, detail: line, tokens: st.usedTokens });
+      appendChat(id, { kind: 'error', text: `[host] ${line}`, isError: true, budget: true });
+      // One final turn so the model can wrap up; the host refuses NEW sessions of this agent until midnight.
+      sendMessage(id, `[host] FINAL WARNING — ${line}. Finish now: write a short status (set_status_summary / memory) and stop; do not start new work or sessions.`);
+    }
+  } catch (e) {
+    console.error('[ledger] budget check failed:', e?.message || e);
+  }
+}
+
 // ---- auto-switch on account limit -------------------------------------------
 // When a turn ends with a subscription limit error, quarantine the account that
 // hit it until its reset, switch the session to the next available pooled
@@ -870,6 +936,7 @@ function handleEvent(id, j) {
     }
     case 'assistant':
       updateUsage(id, j.message?.usage);
+      noteTurnUsage(id, j.message?.usage);
       for (const block of j.message?.content || []) {
         if (block.type === 'text' && block.text) {
           appendChat(id, { kind: 'assistant-text', text: block.text });
@@ -970,6 +1037,7 @@ function handleEvent(id, j) {
           costUsd: j.total_cost_usd,
           numTurns: j.num_turns,
         });
+        recordTurn(id, j); // A3: agent ledger + daily budget
         // Subscription limit hit → quarantine this account and retry on another.
         if (j.is_error && LIMIT_RE.test(text)) tryAutoSwitch(id, text);
         // Auth token expired/revoked → refresh it and respawn on the same account.

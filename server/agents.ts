@@ -28,6 +28,8 @@ export const AGENTS_DIR = path.join(ARIGAMI_DIR, 'agents');
 // Same shape as bundle/skill slugs: lowercase, digits, hyphens; 1–40 chars.
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 export const PERSONA_MAX_CHARS = 4000;
+// A3: request_action `kind` — a short machine tag ("send-email", "merge", "post:facebook").
+export const ACTION_KIND_RE = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
 const EMOJI_DEFAULT = '🤖';
 
 export interface AgentBudget {
@@ -41,9 +43,10 @@ export interface Agent {
   color: string;
   model?: string | null; // `claude --model` value; null/absent = CLI default
   skills: string[]; // names of SHARED skills the agent should use
-  tools?: string[]; // allowlist (enforced in A3; advisory in A1)
-  domains?: string[]; // allowlist (enforced in A3; advisory in A1)
-  budget?: AgentBudget;
+  tools?: string[]; // allowlist — families / tool names / mcp__<server>__* patterns (A3: host-enforced, agent-policy.ts)
+  domains?: string[]; // allowlist for open_tab + WebFetch (A3: host-enforced)
+  budget?: AgentBudget; // tokensPerDay (A3: enforced via the activity ledger, agent-ledger.ts)
+  autoApprove?: string[]; // A3: request_action `kind`s the host answers with the primary button at once
   homeSessionId?: string | null; // the long-lived DM session (get-or-create)
   createdAt: string;
   updatedAt: string;
@@ -65,6 +68,7 @@ export interface AgentInput {
   tools?: string[];
   domains?: string[];
   budget?: AgentBudget | null;
+  autoApprove?: string[] | null;
   persona?: string;
 }
 
@@ -210,6 +214,10 @@ function validateFields(input: AgentInput): string | null {
   }
   if (input.tools !== undefined && input.tools !== null && !Array.isArray(input.tools)) return 'tools must be an array';
   if (input.domains !== undefined && input.domains !== null && !Array.isArray(input.domains)) return 'domains must be an array';
+  if (input.autoApprove !== undefined && input.autoApprove !== null) {
+    if (!Array.isArray(input.autoApprove)) return 'autoApprove must be an array of action kinds';
+    for (const k of input.autoApprove) if (!ACTION_KIND_RE.test(String(k))) return `invalid action kind: ${k}`;
+  }
   return null;
 }
 
@@ -233,6 +241,7 @@ export function createAgent(input: AgentInput): AgentResult {
     ...(cleanList(input.tools)?.length ? { tools: cleanList(input.tools) } : {}),
     ...(cleanList(input.domains)?.length ? { domains: cleanList(input.domains) } : {}),
     ...(input.budget && Number(input.budget.tokensPerDay) > 0 ? { budget: { tokensPerDay: Number(input.budget.tokensPerDay) } } : {}),
+    ...(cleanList(input.autoApprove)?.length ? { autoApprove: cleanList(input.autoApprove) } : {}),
     homeSessionId: null,
     createdAt: now,
     updatedAt: now,
@@ -269,6 +278,11 @@ export function updateAgent(slug: string, patch: AgentInput & { homeSessionId?: 
     if (t > 0) next.budget = { tokensPerDay: t };
     else delete next.budget;
   }
+  if (patch.autoApprove !== undefined) {
+    const l = cleanList(patch.autoApprove);
+    if (l?.length) next.autoApprove = l;
+    else delete next.autoApprove;
+  }
   if (patch.homeSessionId !== undefined) next.homeSessionId = patch.homeSessionId || null;
   next.updatedAt = new Date().toISOString();
   writeRecord(next);
@@ -300,9 +314,10 @@ export function personaBlock(slug: string): string {
   if (a.persona.trim()) lines.push('', '## Persona', a.persona.trim());
   if (a.skills.length)
     lines.push('', `## Skills you should use (shared skills, invoke as /arigami:<name> or /arigami-user:<name>): ${a.skills.join(', ')}`);
-  if (a.tools?.length) lines.push('', `## Tools you may use: ${a.tools.join(', ')} — do not use others without asking.`);
-  if (a.domains?.length) lines.push('', `## Domains you may reach: ${a.domains.join(', ')} — do not browse others without asking.`);
-  if (a.budget?.tokensPerDay) lines.push('', `## Budget: ~${a.budget.tokensPerDay} tokens/day — be economical.`);
+  if (a.tools?.length) lines.push('', `## Tools you may use: ${a.tools.join(', ')} — the host ENFORCES this (other tools are hidden or refused); ask the human with request_action instead of working around it.`);
+  if (a.domains?.length) lines.push('', `## Domains you may reach: ${a.domains.join(', ')} — the host refuses open_tab / WebFetch elsewhere.`);
+  if (a.budget?.tokensPerDay) lines.push('', `## Budget: ${a.budget.tokensPerDay} tokens/day, enforced by the host — when it runs out you get one final warning and no new sessions until local midnight. Be economical.`);
+  lines.push('', `## Actions: give request_action a short \`kind\` ("send-email", "merge", "post:facebook"). The human can tick "auto-approve this kind from now on" on the card; kinds in your autoApprove list${a.autoApprove?.length ? ` (${a.autoApprove.join(', ')})` : ''} are answered by the host at once with the primary button.`);
   if (a.assets.length)
     lines.push('', `## Assets (brand/style references): ${a.assets.map((f) => path.join(assetsDir(a.slug), f)).join(', ')}`);
   lines.push(
