@@ -104,6 +104,9 @@ export const strings = {
   'setup.oauth.deviceCode': 'Enter this code on the page that opened:',
   'setup.oauth.waiting': 'Waiting for authorization…',
   'setup.oauth.waitingConsent': 'Waiting for you to approve in the other tab…',
+  'setup.oauth.readBrowser': 'Can’t paste? Read the code from the browser',
+  'setup.oauth.readBrowserHint': 'After you approve in the agent’s browser, the host reads the code from the callback page for you.',
+  'setup.oauth.readBrowserMissing': 'The agent’s browser has not reached the callback page yet — approve first, then try again.',
   'setup.oauth.noUrl': 'The host did not return a sign-in link.',
 
   // QrStep

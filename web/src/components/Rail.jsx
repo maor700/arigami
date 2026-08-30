@@ -1661,16 +1661,19 @@ export default function Rail({
       </div>
 
       {/* Pending tasks — stuck to the bottom, always visible (autoplay control) */}
+      {(serverCount > 0 || (pending || []).length > 0) && (
       <PendingSection
         pending={pending || []}
         queue={queue || { autoplay: false, maxConcurrent: 3 }}
         onPreview={(t) => onPreviewTicket?.(t)}
         onOpenTriggers={onOpenTriggers}
       />
+      )}
 
       {/* usage charts (session / week) — compact, above the footer. Reflects the
-          active account (see activeUsage above). */}
-      <UsageMini usage={activeUsage} />
+          active account (see activeUsage above). F8: hidden until the first
+          session exists — a percentage without context on the first screen. */}
+      {serverCount > 0 && <UsageMini usage={activeUsage} />}
 
       {/* footer */}
       <div className="flex items-center gap-1.5 border-t border-hair px-[13px] py-2.5 font-mono text-[10.5px] text-fgdim">

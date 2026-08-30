@@ -23,6 +23,7 @@ import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
 import * as setupApi from '../lib/setup-api.js';
+import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
@@ -39,6 +40,25 @@ export default function ScreenModal({ context, onClose }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [setupErr, setSetupErr] = useState(null);
+  // F8: "type into the desktop" — the human's clipboard never crosses VNC, so
+  // a code copied on their own machine can be typed here and inserted where
+  // the cursor is on the session desktop.
+  const [typed, setTyped] = useState('');
+  const [typeBusy, setTypeBusy] = useState(false);
+  const [typeErr, setTypeErr] = useState(null);
+  const typeIt = async (enter) => {
+    if (!typed || !context?.sessionId) return;
+    setTypeBusy(true);
+    setTypeErr(null);
+    try {
+      await api.post(`/sessions/${context.sessionId}/desktop/type`, { text: typed, enter: !!enter });
+      setTyped('');
+    } catch (e) {
+      setTypeErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
+    } finally {
+      setTypeBusy(false);
+    }
+  };
   // F6: opened from an identity Setup card (no screen-request) — Done verifies
   // the Google sign-in on the host and resolves the card as done.
   const setupCtx = !context?.requestId && context?.setupId ? context : null;
@@ -170,6 +190,21 @@ export default function ScreenModal({ context, onClose }) {
 
         <ScreenView priority={SCREEN_PRIORITY.modal} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
+        {context?.sessionId && (
+          <div className="flex items-center gap-2 border-t border-hair px-4 py-2" title={t('screen.typeIntoHint')}>
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !typeBusy && typeIt(true)}
+              placeholder={t('screen.typeInto')}
+              dir="auto"
+              spellCheck={false}
+              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1 font-mono text-[11.5px] text-fg outline-none placeholder:font-sans placeholder:text-fgdim"
+            />
+            <button type="button" disabled={typeBusy || !typed} onClick={() => typeIt(false)} className={btnSecondary}>{t('screen.typeSend')}</button>
+            {typeErr && <span className="text-[11px] text-[#9c3b33]">{typeErr}</span>}
+          </div>
+        )}
         {setupCtx && (
           <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
             <span dir="auto" className="min-w-0 flex-1 text-[11.5px] text-fgdim">

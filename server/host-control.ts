@@ -32,7 +32,7 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import * as state from './state.js';
 import * as bus from './bus.js';
 
-export type Manager = 'systemd' | 'launchd' | 'pm2' | 'none';
+export type Manager = 'systemd' | 'launchd' | 'pm2' | 'docker' | 'none';
 export type RestartWhen = 'now' | 'idle';
 export type Phase = 'idle' | 'pending-idle' | 'draining' | 'exiting';
 
@@ -67,9 +67,12 @@ export function detectManager(
   proc: { ppid?: number; parentCommand?: string } = {},
 ): Manager {
   const forced = (env.ARIGAMI_SUPERVISOR || '').toLowerCase();
-  if (forced === 'systemd' || forced === 'launchd' || forced === 'pm2') return forced;
+  if (forced === 'systemd' || forced === 'launchd' || forced === 'pm2' || forced === 'docker') return forced;
   if (forced === 'none') return 'none';
   const ppid = proc.ppid ?? process.ppid;
+  // F8: inside a container the image's ENTRYPOINT (pid 1) is our parent and
+  // compose's `restart: unless-stopped` brings the container back after exit 0.
+  if (inContainer() && ppid === 1) return 'docker';
   const parent = (proc.parentCommand ?? parentCommand(ppid)).toLowerCase();
   const head = parent.split(/\s+/).slice(0, 4); // only the program + first args count, not a shell's whole script text
   const isSystemd = ppid === 1 || /(^|\/)systemd$/.test(head[0] || '');
@@ -297,17 +300,31 @@ export const restarts = new RestartController({
   },
 });
 
+/** /.dockerenv or a docker/k8s cgroup — same probe telemetry/onboarding use. */
+export function inContainer(): boolean {
+  try {
+    if (fs.existsSync('/.dockerenv')) return true;
+    return /docker|kubepods|containerd/.test(fs.readFileSync('/proc/1/cgroup', 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 export function hostStatus() {
   const r = restarts.status();
+  const docker = inContainer();
   return {
     manager: detectManager(),
+    // F8: Docker mode — no git checkout to pull; upgrade = pull + recreate on the host machine.
+    docker,
+    image: docker ? process.env.ARIGAMI_IMAGE || null : null,
     uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000),
     pid: process.pid,
     busySessions: r.busySessions,
     pendingRestart: r.pendingRestart,
     phase: r.phase,
     requestedAt: r.requestedAt,
-    allowUpgrade: cfg.host?.allowUpgrade !== false,
+    allowUpgrade: !docker && cfg.host?.allowUpgrade !== false,
     upgrade: current ? { ...current, log: current.log.slice(-40) } : null,
   };
 }

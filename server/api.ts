@@ -960,8 +960,10 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
   if (capability === 'claude') {
     const o: any = await import('./oauth-login.js');
     if (body?.token) out = await ob.setClaudeToken(String(body.token), body?.label ? String(body.label) : 'setup');
-    else if (action === 'start' || action === 'oauth-start') return { ok: true, ...o.startLogin({ label: body?.label || 'setup' }) }; // {id, url, state}
+    else if (action === 'start' || action === 'oauth-start') return { ok: true, ...o.startLogin({ label: body?.label || 'setup', sessionId: body?.sessionId ? String(body.sessionId) : (req.headers['x-arigami-session'] as string) || null }) }; // {id, url, state}
     else if (action === 'poll') return { ok: o.loginStatus(String(body?.id || ''))?.state === 'done', ...o.loginStatus(String(body?.id || '')) };
+    // F8: "can't paste? read the code from the browser" — the take-over desktop's Chrome has the callback URL.
+    else if (action === 'read-browser') out = await o.readCodeFromBrowser(String(body?.id || ''), body?.sessionId ? String(body.sessionId) : (req.headers['x-arigami-session'] as string) || null);
     else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
     else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
     else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
@@ -1521,11 +1523,14 @@ function allocatePort(): number | null {
 // tears it all down. Throws when git refuses (the spawn fails loudly).
 async function hostWorktree(
   master: any,
-  o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null }
+  o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null; parentDir?: string | null }
 ): Promise<{ dir: string; branch: string; base: string; metadata: Record<string, unknown> }> {
+  // F8 (F7 follow-up): the repo is the one the CALLER named (`cwd` /
+  // metadata.repo), falling back to the master's own checkout — a master whose
+  // cwd is a plain workspace folder can still spawn a full child on a repo.
   const parentDir =
-    (untildify((master.metadata?.worktree as string) || master.cwd) as string) || HOME;
-  const info = await worktreeInfo(master);
+    o.parentDir || (untildify((master.metadata?.worktree as string) || master.cwd) as string) || HOME;
+  const info = await worktreeInfo({ cwd: parentDir } as any);
   const r = await provisionChildWorktree({
     parentDir,
     subtask: o.subtask,
@@ -1621,6 +1626,12 @@ function countFullChildren(): number {
     ).length;
 }
 
+/** The repo a child worktree forks from: the caller's `cwd`, else `metadata.repo`, else the master's checkout. */
+export function childRepoDir(body: any, masterDir: string): string {
+  const named = body?.cwd ? String(body.cwd) : body?.metadata?.repo ? String(body.metadata.repo) : '';
+  return (untildify(named) as string) || masterDir;
+}
+
 async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
   const master = state.getSession(masterId);
   if (!master) throw new Error(`unknown master session: ${masterId}`);
@@ -1653,6 +1664,7 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
         : !!subtask;
   if (wantWt) {
     const r = await hostWorktree(master, {
+      parentDir: childRepoDir(body, parentDir),
       subtask: sanitizeSubtask(subtask),
       dir: typeof wantWt === 'string' ? wantWt : null,
       base: body.base ? String(body.base) : null,
@@ -2962,7 +2974,14 @@ export async function handle(
     if (p === '/__api/accounts/oauth/start' && m === 'POST') {
       const o = await import('./oauth-login.js');
       const body = (await readBody(req)) as any;
-      return json(res, (o as any).startLogin({ label: body?.label }));
+      // F8: a session id (body or the MCP caller header) lets the host finish the
+      // exchange itself by reading the callback URL from that session's Chrome.
+      return json(res, (o as any).startLogin({ label: body?.label, sessionId: body?.sessionId || (req.headers['x-arigami-session'] as string) || null }));
+    }
+    if (p === '/__api/accounts/oauth/read-browser' && m === 'POST') {
+      const o = await import('./oauth-login.js');
+      const body = (await readBody(req)) as any;
+      return json(res, await (o as any).readCodeFromBrowser(body?.id, body?.sessionId || (req.headers['x-arigami-session'] as string) || null));
     }
     if (p === '/__api/accounts/oauth/status' && m === 'GET') {
       const o = await import('./oauth-login.js');
@@ -3091,6 +3110,13 @@ export async function handle(
       const s = await import('./slack.js');
       s.disconnect();
       return json(res, { ok: true });
+    }
+    // F8: the host-mcp `whatsapp` tool — needs_setup when the bridge is not
+    // connected, else proxied to the WhatsApp MCP server (server/whatsapp-proxy.ts).
+    if (p === '/__api/whatsapp/tool' && m === 'POST') {
+      const wp = await import('./whatsapp-proxy.js');
+      const body = (await readBody(req)) as any;
+      return json(res, await wp.callWhatsapp(String(body?.tool || ''), body?.args && typeof body.args === 'object' ? body.args : {}, body?.why ? String(body.why) : undefined));
     }
     if (p === '/__api/whatsapp/status' && m === 'GET') {
       const wb = await import('./whatsapp-bridge.js');
@@ -3910,6 +3936,23 @@ export async function handle(
     if (sub === 'browser/sync-logins' && m === 'POST') {
       const r = await chrome.syncProfileToBase(id);
       return json(res, r);
+    }
+    // F8: the take-over modal's "type into the desktop" field — the human's
+    // clipboard does not cross VNC, so text typed in the cockpit is inserted
+    // into whatever has focus on the session desktop (CDP, else XTEST).
+    if (sub === 'desktop/type' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      try {
+        const cdp = await import('./lib/chrome-cdp.js');
+        return json(res, await cdp.typeIntoDesktop(id, String(body?.text || ''), body?.enter ? 'Enter' : undefined));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    // F8: the session's real browser tabs (urls only) — what the PKCE reader sees.
+    if (sub === 'browser/tabs' && m === 'GET') {
+      const cdp = await import('./lib/chrome-cdp.js');
+      return json(res, { tabs: (await cdp.listTabs(id)).map((t) => ({ url: t.url, title: t.title, type: t.type })) });
     }
     // ---- Published artifacts (A1) — publish_artifact tool + card buttons ----
     if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));

@@ -120,7 +120,10 @@ export const strings = {
   'launcher.empty.promptPlaceholder':
     'First message to send the session on start. Required to “Do it later” unless a skill is picked.',
   'launcher.empty.deferRequired': 'A starting prompt or a chosen skill is required to defer an empty session.',
-  'launcher.empty.createEmpty': 'Create empty session →',
+  'launcher.empty.createEmpty': 'Start →',
+  'launcher.empty.advanced': 'Advanced',
+  'launcher.empty.advancedHint': 'name · working directory · permissions · skill, model & effort',
+  'launcher.empty.promptFirst': 'What should this session do?',
   'launcher.empty.addToPending': 'Add to Pending',
   'launcher.empty.deferTitle': 'A starting prompt or a chosen skill is required to defer',
 
@@ -239,8 +242,18 @@ export const strings = {
   // first run
   'launcher.firstRun.pasteError': 'Paste a Linear URL or an ID like ENG-16498.',
   'launcher.firstRun.createError': 'Couldn’t create the session — {msg}',
-  'launcher.firstRun.heading': 'What are we building?',
-  'launcher.firstRun.sub': 'Paste a Linear ticket to spin up your first session.',
+  'launcher.firstRun.heading': 'What would you like me to do?',
+  'launcher.firstRun.sub': 'Describe it in your own words — the agent can browse and screenshot sites, read and send WhatsApp, work on repos, and connect Gmail, Calendar and more when it needs them.',
+  'launcher.firstRun.placeholder': 'e.g. open ynet.co.il and screenshot the front page',
+  'launcher.firstRun.emptyError': 'Type what you want done, or pick one of the suggestions.',
+  'launcher.firstRun.chip.screenshot': 'Screenshot a site',
+  'launcher.firstRun.chip.screenshot.prompt': 'Open https://example.com in the browser and show me a screenshot of the page.',
+  'launcher.firstRun.chip.whatsapp': 'Connect WhatsApp',
+  'launcher.firstRun.chip.whatsapp.prompt': 'Connect my WhatsApp and show me my most recent chats.',
+  'launcher.firstRun.chip.clone': 'Clone a repo',
+  'launcher.firstRun.chip.clone.prompt': 'Clone this repository into the workspace and give me a short tour of it: <paste a git URL>',
+  'launcher.firstRun.advanced': 'Advanced: from a ticket, a trigger, or with options',
+  'launcher.firstRun.legacySub': 'Paste a Linear ticket to spin up your first session.',
   'launcher.firstRun.createTitle': 'Create session',
   'launcher.firstRun.browse': 'or browse tickets / start an empty session',
 

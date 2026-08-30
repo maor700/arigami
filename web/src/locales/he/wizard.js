@@ -1,7 +1,8 @@
 // B3 — אשף הרצה ראשונה (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'הגדרת Arigami',
-  'wizard.subtitle': 'שמונה צעדים קצרים. אפשר לדלג על רובם ולחזור אליהם מ״התקנה״ בהמשך.',
+  'wizard.subtitle': '{n} צעדים קצרים. אפשר לדלג על רובם ולחזור אליהם מ״התקנה״ בהמשך.',
+  'wizard.reviewSteps': 'עיון בשלבים',
   'wizard.stepOf': 'שלב {n} מתוך {total}',
   'wizard.back': 'חזרה',
   'wizard.next': 'המשך',

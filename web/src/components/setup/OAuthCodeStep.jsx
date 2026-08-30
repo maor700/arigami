@@ -15,7 +15,7 @@ import { faCheck } from '@fortawesome/free-solid-svg-icons';
 
 const POLL_MS = 2500;
 
-export default function OAuthCodeStep({ capability, manual = {}, onDone, onCancel }) {
+export default function OAuthCodeStep({ capability, manual = {}, onDone, onCancel, sessionId }) {
   const t = useT();
   const flow = manual.flow || 'pkce';
   const [mode, setMode] = useState(null); // null | 'link' | 'token'
@@ -27,8 +27,10 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
   const doneRef = useRef(false);
 
   // device/redirect flows: poll the server until it reports the credential.
+  // F8: pkce too when the consent runs in a session desktop — the host reads
+  // the callback URL out of that Chrome and finishes the exchange by itself.
   useEffect(() => {
-    if (mode !== 'link' || flow === 'pkce' || !link) return undefined;
+    if (mode !== 'link' || (flow === 'pkce' && !sessionId) || !link) return undefined;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -46,11 +48,11 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     };
     pollRef.current = setInterval(tick, POLL_MS);
     return () => { cancelled = true; clearInterval(pollRef.current); };
-  }, [mode, flow, link, capability, onDone, setErr]);
+  }, [mode, flow, link, capability, onDone, setErr, sessionId]);
 
   const start = () =>
     run(async () => {
-      const r = await setupApi.connect(capability, { action: flow === 'device' ? 'device' : 'start' });
+      const r = await setupApi.connect(capability, { action: flow === 'device' ? 'device' : 'start', ...(sessionId ? { sessionId } : {}) });
       if (r?.state === 'error' || r?.device?.state === 'error') throw new Error(r.error || r.device?.error || 'could not start sign-in');
       const l = flow === 'device'
         ? { url: r?.device?.url || r?.url, code: r?.device?.code || r?.code, id: r?.id }
@@ -65,6 +67,18 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     run(async () => {
       const r = await setupApi.connect(capability, { action: 'code', id: link?.id, code: code.trim() });
       if (r && r.ok === false) throw new Error(r.error || 'exchange failed');
+      setCode('');
+      setLink(null);
+      setMode(null);
+      onDone?.(r);
+    });
+
+  // F8: "can't paste? read the code from the browser" — for the take-over case
+  // where the human's clipboard never reaches the VNC desktop.
+  const readFromBrowser = () =>
+    run(async () => {
+      const r = await setupApi.connect(capability, { action: 'read-browser', id: link?.id, sessionId });
+      if (r && r.ok === false) throw new Error(r.error || t('setup.oauth.readBrowserMissing'));
       setCode('');
       setLink(null);
       setMode(null);
@@ -113,6 +127,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
         )}
         <div className="flex gap-2">
           {flow === 'pkce' && <button type="button" className={BTN} disabled={busy || !code.trim()} onClick={exchange}>{t('setup.oauth.exchange')}</button>}
+          {flow === 'pkce' && sessionId && <button type="button" className={BTN2} disabled={busy} onClick={readFromBrowser} title={t('setup.oauth.readBrowserHint')}>{t('setup.oauth.readBrowser')}</button>}
           <button type="button" className={BTN2} onClick={cancel}>{t('setup.cancel')}</button>
         </div>
         <ErrorBox err={err} />

@@ -32,7 +32,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST="${ARIGAMI_URL:-http://127.0.0.1:3099}"
-AUTH=(-H "Authorization: Bearer ${ARIGAMI_TOKEN:-}")
+AUTH=(-H "Authorization: Bearer ${ARIGAMI_TOKEN:-}" -H "X-Arigami-Session: ${ARIGAMI_SESSION_ID:-}")
 SID="${ARIGAMI_SESSION_ID:?ARIGAMI_SESSION_ID not set — run inside a host session}"
 ADIR="${ARIGAMI_DIR:-$HOME/.arigami}"
 PROFILE="$ADIR/chrome-sessions/$SID"

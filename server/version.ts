@@ -21,6 +21,7 @@ export interface VersionInfo {
   ahead: number | null; // commits upstream has that we don't (null = no upstream / unknown)
   behind: number | null; // local commits not on upstream
   updateAvailable: boolean;
+  image: string | null; // container image (Docker builds), else null
   fetchedAt: number | null;
   checkedAt: number;
 }
@@ -73,7 +74,12 @@ export async function getVersion(opts: { refresh?: boolean; root?: string } = {}
     const { behind, ahead } = parseLeftRight(lr);
     cache = {
       version: packageVersion(root),
-      commit, commitDate, branch, upstream,
+      // F8: a Docker image has no .git — the build stamps ARIGAMI_COMMIT/ARIGAMI_BRANCH.
+      commit: commit || process.env.ARIGAMI_COMMIT || null,
+      commitDate: commitDate || process.env.ARIGAMI_COMMIT_DATE || null,
+      branch: branch || process.env.ARIGAMI_BRANCH || null,
+      upstream,
+      image: process.env.ARIGAMI_IMAGE || null,
       ahead, behind,
       updateAvailable: (ahead ?? 0) > 0,
       fetchedAt: lastFetch || null,

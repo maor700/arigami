@@ -54,7 +54,7 @@ const emit = (f) => broadcast({ type: 'account-auth', flow: publicView(f) });
 
 // Step 1: mint PKCE + state, build the consent URL. The client opens `url`; the
 // user approves and Anthropic shows a code (formatted "CODE#STATE") to paste.
-export function startLogin({ label } = {}) {
+export function startLogin({ label, sessionId } = {}) {
   const verifier = b64url(crypto.randomBytes(32));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   // 32 bytes → 43-char base64url, matching the real `claude setup-token` state
@@ -79,12 +79,66 @@ export function startLogin({ label } = {}) {
   // state (the random value that rode into the authorize URL) lives in its own
   // field `oauthState` — do NOT reuse `f.state` for it, or it gets overwritten
   // and the token exchange sends the literal string 'awaiting-code'.
-  const f = { id, verifier, oauthState: state, url, label: (label || '').trim(), state: 'awaiting-code', account: null, error: null };
+  const f = { id, verifier, oauthState: state, url, label: (label || '').trim(), state: 'awaiting-code', account: null, error: null, sessionId: sessionId || null };
   flows.set(id, f);
   // Auto-expire an abandoned flow so the map doesn't grow unbounded.
-  const t = setTimeout(() => flows.delete(id), 15 * 60_000);
+  const t = setTimeout(() => { flows.delete(id); stopBrowserWatch(f); }, 15 * 60_000);
   if (t.unref) t.unref();
+  if (f.sessionId) watchBrowser(id, f.sessionId);
   return publicView(f);
+}
+
+// ---- F8: read the code out of the session's Chrome -------------------------
+// Anthropic's hosted callback page shows the code for the human to paste — but
+// when the consent ran inside the session desktop (connect-claude playbook /
+// take-over) pasting through VNC is exactly what fails. The callback URL itself
+// carries `?code=…&state=…`, and the host can read the desktop Chrome's tabs
+// (server/lib/chrome-cdp.ts), so: find the callback tab, exchange, done.
+const CALLBACK_RE = /^https:\/\/platform\.claude\.com\/oauth\/code\/callback\?/;
+const BROWSER_POLL_MS = 2000;
+
+export async function readCodeFromBrowser(id, sessionId) {
+  const f = flows.get(id);
+  if (!f) return { ok: false, error: 'unknown login flow' };
+  if (f.state === 'done' && f.account) return { ok: true, account: f.account };
+  const sid = sessionId || f.sessionId;
+  if (!sid) return { ok: false, error: 'no session desktop to read from' };
+  const cdp = await import('./lib/chrome-cdp.js');
+  const hit = await cdp.findUrl(sid, CALLBACK_RE);
+  if (!hit) return { ok: false, notFound: true, error: 'the browser has not reached the callback page yet — approve the request in the browser first' };
+  const u = new URL(hit.url);
+  const code = u.searchParams.get('code');
+  const st = u.searchParams.get('state');
+  if (!code) return { ok: false, notFound: true, error: 'callback page has no code' };
+  // A stale callback from an earlier attempt would fail the CSRF check below —
+  // which is what we want; the caller just retries after the new approval.
+  if (st && st !== f.oauthState) return { ok: false, notFound: true, error: 'the callback in the browser belongs to an older attempt — approve again' };
+  return submitCode(id, st ? `${code}#${st}` : code);
+}
+
+function stopBrowserWatch(f) {
+  if (f?.watch) { clearInterval(f.watch); f.watch = null; }
+}
+
+// Poll the session browser while the flow is awaiting a code; the moment the
+// callback tab shows up, complete the exchange without any human paste.
+export function watchBrowser(id, sessionId) {
+  const f = flows.get(id);
+  if (!f) return false;
+  f.sessionId = sessionId;
+  stopBrowserWatch(f);
+  let busy = false;
+  f.watch = setInterval(async () => {
+    if (busy) return;
+    if (!flows.has(id) || f.state !== 'awaiting-code') { stopBrowserWatch(f); return; }
+    busy = true;
+    try {
+      const r = await readCodeFromBrowser(id, sessionId);
+      if (r.ok || (!r.notFound && f.state !== 'awaiting-code')) stopBrowserWatch(f);
+    } catch { /* keep polling */ } finally { busy = false; }
+  }, BROWSER_POLL_MS);
+  if (f.watch.unref) f.watch.unref();
+  return true;
 }
 
 export function loginStatus(id) {
@@ -172,6 +226,7 @@ export async function submitCode(id, codeInput) {
 }
 
 export function cancelLogin(id) {
+  stopBrowserWatch(flows.get(id));
   flows.delete(id);
   return { ok: true };
 }

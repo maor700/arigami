@@ -80,6 +80,9 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--no-first-run',
     '--no-default-browser-check',
     '--start-maximized',
+    // F8: loopback DevTools port (Chrome writes it to <profile>/DevToolsActivePort)
+    // so the host can read the take-over browser's tabs / type into it — see chrome-cdp.ts.
+    '--remote-debugging-port=0',
     ...(url ? [url] : []),
   ];
   const child = spawn(chromeBin(), chromeExtraFlags().concat(args), {

@@ -711,6 +711,17 @@ const TOOLS = [
       }),
   },
   {
+    name: 'whatsapp',
+    description:
+      'Read or send WhatsApp on the human\'s own account (linked-device bridge on the host). ' +
+      'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | send_message; ' +
+      'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; send_message {recipient, message}). ' +
+      'If WhatsApp is not connected yet the result is {needs_setup:"whatsapp", why, hint} — do NOT say you have no access: call request_setup({capability:"whatsapp", why}) so the human gets the QR card in the chat, then retry. ' +
+      'Returns {ok:true, result} (the MCP content blocks) or {ok:false, error}.',
+    inputSchema: obj({ tool: { type: 'string' }, args: { type: 'object', additionalProperties: true }, why: { type: 'string', description: 'What you need it for — shown on the setup card' }, ...SID_PROP }, ['tool']),
+    run: (a) => api('POST', '/__api/whatsapp/tool', { tool: a.tool, args: a.args || {}, why: a.why }),
+  },
+  {
     name: 'check_setup',
     description:
       'Cheap probe: is a capability connected right now? Returns {ok:true, detail} or the needs_setup shape {needs_setup, why, hint}. ' +

@@ -1,7 +1,8 @@
 // B3 — first-run wizard (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'Set up Arigami',
-  'wizard.subtitle': 'Eight short steps. You can skip most of them and come back from Setup later.',
+  'wizard.subtitle': '{n} short steps. You can skip most of them and come back from Setup later.',
+  'wizard.reviewSteps': 'Review the steps',
   'wizard.stepOf': 'Step {n} of {total}',
   'wizard.back': 'Back',
   'wizard.next': 'Continue',

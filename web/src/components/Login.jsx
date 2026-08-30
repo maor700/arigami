@@ -49,6 +49,7 @@ export default function Login({ info }) {
       <div className="mb-1 text-[26px] leading-tight font-bold">{t('auth.login.heading')}</div>
       <div className="mb-4 max-w-[360px] text-center text-[11.5px] text-fgdim">
         {hasAdmin ? t('auth.login.subPaired') : t('auth.login.subFirst')}
+        {!hasAdmin && <div className="mt-1.5 text-[11px] leading-relaxed text-fgdim">{t('auth.login.whereCode')}</div>}
       </div>
 
       {oidc && (
