@@ -273,6 +273,15 @@ doctor() {
     yl "  (bun not found)"
   fi
   echo
+  # S1 — the capability registry (server/capabilities.ts): the SAME list the
+  # in-chat Setup card and Settings → Connections read. Offline probes only.
+  dl "capabilities (S1 registry):"
+  if command -v bun >/dev/null 2>&1; then
+    ARIGAMI_DIR="$DIR" ARIGAMI_PORT="$PORT" bun "$ROOT/server/capabilities.ts" doctor 2>/dev/null || yl "  (could not compute — run: bun install)"
+  else
+    yl "  (bun not found)"
+  fi
+  echo
   dl "runtime:"
   echo "  manager: $(manager_name)"
   if systemd_managed; then

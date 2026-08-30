@@ -16,6 +16,7 @@ import { shareTokens } from './share-token.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
+import * as caps from './capabilities.js';
 import {
   changesFor,
   changeDiff,
@@ -64,6 +65,38 @@ interface PendingScreenRequest {
   timer: NodeJS.Timeout;
   sessionId: string;
 }
+
+// S1 — request_setup: the agent asks for a capability; the human (or the agent
+// itself, in auto mode) connects it. Mirrors request_screen: blocking promise,
+// pending map, chat card + push, force-expire on session death.
+const SETUP_REQUEST_TIMEOUT_MS = Number(process.env.ARIGAMI_SETUP_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_SETUP_TIMEOUT_MS) : 15 * 60 * 1000; // env: tests only
+type SetupMode = 'auto' | 'manual' | 'ask';
+type SetupState = 'pending' | 'auto' | 'done' | 'skipped' | 'timeout' | 'failed';
+interface SetupResult {
+  state: 'done' | 'skipped' | 'timeout' | 'auto';
+  id: string;
+  capability: string;
+  detail: string;
+  mode: SetupMode;
+  playbook?: string;
+  evidence?: string | null;
+  already?: boolean;
+}
+interface PendingSetup {
+  id: string;
+  sessionId: string;
+  capability: string;
+  why: string;
+  mode: SetupMode;
+  state: SetupState;
+  evidence: string | null;
+  detail: string;
+  createdAt: string;
+  timer: NodeJS.Timeout;
+  // Agents blocked on this card (manual/ask). Empty in auto mode.
+  waiters: Array<(r: SetupResult) => void>;
+}
+const pendingSetups = new Map<string, PendingSetup>();
 
 interface CleanupPlanResult {
   removable: boolean;
@@ -530,6 +563,244 @@ function answerScreenRequest(
   });
   entry.resolve({ ok: true, takenOver, ...(data.note ? { note: data.note } : {}) });
   return { ok: true };
+}
+
+// ---- S1 JIT setup state machine ---------------------------------------------
+
+function setupCardPayload(e: PendingSetup): Record<string, unknown> {
+  return {
+    id: e.id,
+    capability: e.capability,
+    why: e.why,
+    mode: e.mode,
+    state: e.state,
+    evidence: e.evidence,
+    detail: e.detail,
+  };
+}
+
+// Every transition: one `setup-update` chat event (same id as the `setup`
+// card — the web merges by id) + a bus `setup` broadcast for non-chat views
+// (Settings → Connections re-fetches capabilities on it).
+function broadcastSetup(e: PendingSetup, extra: Record<string, unknown> = {}): void {
+  const payload = { ...setupCardPayload(e), ...extra };
+  claude.appendChat(e.sessionId, { kind: 'setup-update', ...payload });
+  broadcast({ type: 'setup', sessionId: e.sessionId, ...payload });
+}
+
+function openSetupFor(sessionId: string, capability: string): PendingSetup | undefined {
+  for (const e of pendingSetups.values())
+    if (e.sessionId === sessionId && e.capability === capability && (e.state === 'pending' || e.state === 'auto')) return e;
+  return undefined;
+}
+
+function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', opts: { detail?: string; evidence?: string | null; human: boolean }): void {
+  clearTimeout(e.timer);
+  pendingSetups.delete(e.id);
+  e.state = outcome;
+  if (opts.detail) e.detail = opts.detail;
+  if (opts.evidence !== undefined) e.evidence = opts.evidence;
+  const s = state.getSession(e.sessionId);
+  if (s && (s.claude as any)?.setupRequest?.id === e.id) state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
+  broadcastSetup(e);
+  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: e.mode, result: outcome, evidence: e.evidence, human: opts.human, detail: e.detail });
+  import('./funnel.js').then((f) => f.emit(outcome === 'done' ? 'setup.completed' : 'setup.skipped', { capability: e.capability, mode: e.mode, ...(outcome === 'timeout' ? { timeout: true } : {}) })).catch(() => {});
+  if (outcome === 'done') {
+    caps.invalidateComposioCache();
+    if (e.mode === 'auto') caps.markIdentityProvider(e.capability);
+  }
+  const result: SetupResult = { state: outcome, id: e.id, capability: e.capability, detail: e.detail, mode: e.mode, evidence: e.evidence };
+  for (const w of e.waiters.splice(0)) w(result);
+}
+
+/** A manual connection landed (REST payload / wizard) — close every open card for that capability. */
+function resolveSetupsFor(capability: string, detail: string, human = true): number {
+  let n = 0;
+  for (const e of [...pendingSetups.values()]) {
+    if (e.capability !== capability) continue;
+    finishSetup(e, 'done', { detail, human });
+    n++;
+  }
+  return n;
+}
+
+async function handleSetupRequest(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
+  const sessionId = body.session_id as string | undefined;
+  const s = sessionId && state.getSession(sessionId);
+  if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
+  const capability = String(body.capability || '').trim();
+  const cap = caps.getCapability(capability);
+  if (!cap) return badRequest(res, `unknown capability: ${capability} — use a registry id (GET /__api/setup/capabilities)`);
+  const why = String(body.why || '').slice(0, 300);
+  // Already there? Answer at once — no card, no push.
+  let check: caps.CheckResult;
+  try { check = await cap.check(); } catch (e) { check = { ok: false, detail: (e as Error).message }; }
+  if (check.ok) {
+    const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true };
+    return json(res, r);
+  }
+  // Re-request on an open card (e.g. after a failed auto → manual): attach.
+  let entry = openSetupFor(sessionId!, capability);
+  if (!entry) {
+    const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
+    const def = caps.defaultMode(cap);
+    // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
+    // the card with both choices and blocks like manual.
+    const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
+    const id = 'setup_' + nano();
+    const e: PendingSetup = {
+      id, sessionId: sessionId!, capability, why, mode,
+      state: mode === 'auto' ? 'auto' : 'pending',
+      evidence: null, detail: check.detail, createdAt: new Date().toISOString(),
+      timer: setTimeout(() => {
+        const cur = pendingSetups.get(id);
+        if (cur) finishSetup(cur, 'timeout', { detail: 'timed out — nobody connected it in 15 minutes', human: false });
+      }, SETUP_REQUEST_TIMEOUT_MS),
+      waiters: [],
+    };
+    pendingSetups.set(id, e);
+    claude.appendChat(sessionId!, {
+      kind: 'setup',
+      ...setupCardPayload(e),
+      title: cap.title,
+      manual: cap.manual,
+      autoCapable: cap.autoCapable,
+      ...(cap.playbook ? { playbook: cap.playbook } : {}),
+      identity: !!caps.readIdentity(),
+    });
+    broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
+    caps.appendAudit({ sessionId: sessionId!, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
+    import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
+    pushIntervention(sessionId!, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
+    entry = e;
+  }
+  if (entry.mode === 'auto' && entry.state === 'auto') {
+    // The agent runs the playbook itself and closes the card with report_setup.
+    const r: SetupResult = { state: 'auto', id: entry.id, capability, detail: entry.detail, mode: 'auto', playbook: cap.playbook };
+    return json(res, r);
+  }
+  state.setClaude(sessionId!, { state: 'awaiting-input', setupRequest: { id: entry.id, capability } } as any);
+  const result = await new Promise<SetupResult>((resolve) => entry.waiters.push(resolve));
+  json(res, result);
+}
+
+async function handleSetupReport(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
+  const sessionId = body.session_id as string | undefined;
+  if (!sessionId || !state.getSession(sessionId)) return badRequest(res, `unknown session_id: ${sessionId}`);
+  const capability = String(body.capability || '');
+  const entry: PendingSetup | undefined = (typeof body.id === 'string' ? pendingSetups.get(body.id) : undefined) ?? openSetupFor(sessionId, capability);
+  const evidence = typeof body.evidence === 'string' && /^\/__artifacts\/[A-Za-z0-9_-]+\/?$/.test(body.evidence) ? body.evidence.replace(/\/?$/, '/') : null;
+  const detail = String(body.detail || '').slice(0, 300);
+  if (!entry) {
+    // Nothing open (already closed / expired) — still record what happened.
+    caps.appendAudit({ sessionId, capability, mode: 'auto', result: body.ok ? 'done' : 'failed', evidence, human: false, detail });
+    if (body.ok) caps.invalidateComposioCache();
+    return json(res, { ok: true, closed: false });
+  }
+  if (body.ok) {
+    finishSetup(entry, 'done', { detail: detail || 'connected by the agent', evidence, human: false });
+    return json(res, { ok: true, closed: true, id: entry.id, state: 'done' });
+  }
+  // Rule 5: failure → the card flips to manual with the reason; the human can finish it.
+  entry.mode = 'manual';
+  entry.state = 'pending';
+  entry.detail = detail || 'automatic setup failed';
+  if (evidence) entry.evidence = evidence;
+  caps.appendAudit({ sessionId, capability: entry.capability, mode: 'auto', result: 'failed', evidence, human: false, detail: entry.detail });
+  broadcastSetup(entry, { failed: true });
+  return json(res, { ok: true, closed: false, id: entry.id, state: 'pending', mode: 'manual' });
+}
+
+/** Human clicked Auto/Manual on the card. Switching to auto unblocks a waiting agent with state:'auto'. */
+function setSetupMode(id: string, mode: SetupMode): PendingSetup | null {
+  const e = pendingSetups.get(id);
+  if (!e) return null;
+  const cap = caps.getCapability(e.capability);
+  if (mode === 'auto' && !cap?.autoCapable) mode = 'manual';
+  e.mode = mode;
+  e.state = mode === 'auto' ? 'auto' : 'pending';
+  broadcastSetup(e);
+  if (mode === 'auto') {
+    const r: SetupResult = { state: 'auto', id: e.id, capability: e.capability, detail: e.detail, mode: 'auto', playbook: cap?.playbook };
+    for (const w of e.waiters.splice(0)) w(r);
+    state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
+  }
+  return e;
+}
+
+export function expirePendingSetupRequests(sessionId: string, message = 'session ended'): void {
+  for (const e of [...pendingSetups.values()]) if (e.sessionId === sessionId) finishSetup(e, 'timeout', { detail: message, human: false });
+}
+
+/** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
+async function applyManualSetup(capability: string, body: any, req: IncomingMessage): Promise<Record<string, unknown>> {
+  const cap = caps.getCapability(capability);
+  if (!cap) throw new Error(`unknown capability: ${capability}`);
+  const action = String(body?.action || '');
+  const ob = await import('./onboarding.js');
+  let out: Record<string, unknown> = {};
+  if (capability === 'claude') {
+    if (body?.token) out = await ob.setClaudeToken(String(body.token), body?.label ? String(body.label) : 'setup');
+    else if (action === 'oauth-start') { const o: any = await import('./oauth-login.js'); return { ok: true, oauth: o.startLogin({ label: body?.label }) }; }
+    else if (action === 'oauth-code' || body?.code) { const o: any = await import('./oauth-login.js'); out = await o.submitCode(body?.id, body?.code); }
+    else throw new Error('claude: pass {token} or {action:"oauth-start"} / {action:"oauth-code", id, code}');
+  } else if (capability === 'git') {
+    if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);
+    else if (action === 'gh-login') { const gl = await import('./git-login.js'); return { ok: true, ghLogin: gl.startGhLogin() }; }
+    else if (action === 'gh-cancel') { const gl = await import('./git-login.js'); return { ok: true, ghLogin: gl.cancelGhLogin() }; }
+    else throw new Error('git: pass {token, host?} or {action:"gh-login"}');
+  } else if (capability.startsWith('repo:')) {
+    const name = capability.slice(5);
+    const known = ob.listRepos().find((r) => r.name === name);
+    if (!known) {
+      const url = String(body?.url || body?.source || '');
+      if (!url) throw new Error(`repo ${name} is not registered — pass {url}`);
+      ob.addRepo({ name, source: url } as any);
+    }
+    out = { clone: ob.cloneRepo(name) };
+  } else if (capability === 'whatsapp') {
+    const wb = await import('./whatsapp-bridge.js');
+    if (action === 'disconnect') { wb.stopBridge(); return { ok: true, status: wb.getBridgeStatus() }; }
+    const { enqueueWake } = await import('./listeners.js');
+    const sid = (req.headers['x-session-id'] as string) || 'ui';
+    wb.startBridge(sid, enqueueWake).catch(console.error);
+    return { ok: true, status: wb.getBridgeStatus() };
+  } else if (capability.startsWith('composio:')) {
+    if (body?.key) { ob.setComposioKey(String(body.key)); caps.invalidateComposioCache(); }
+    if (action === 'connect' || !body?.key) {
+      // Same flow as POST /__api/composio/connect: managed auth config → redirect link.
+      const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
+      if (!key) throw new Error('Composio is not signed in — pass {key} or sign in via Settings → Integrations');
+      const slug = capability.slice(9);
+      const hdr = { 'x-api-key': key, 'Content-Type': 'application/json' };
+      const ac = await fetch('https://backend.composio.dev/api/v3.1/auth_configs', { method: 'POST', headers: hdr, body: JSON.stringify({ toolkit: { slug }, type: 'use_composio_managed_auth' }) });
+      const acj = (await ac.json()) as any;
+      const authConfigId = acj?.auth_config?.id;
+      if (!ac.ok || !authConfigId) throw new Error(acj?.error?.message || `Composio ${ac.status}`);
+      const link = await fetch('https://backend.composio.dev/api/v3/connected_accounts/link', { method: 'POST', headers: hdr, body: JSON.stringify({ auth_config_id: authConfigId, user_id: 'default', redirect_url: 'https://backend.composio.dev' }) });
+      const lj = (await link.json()) as any;
+      if (!link.ok) throw new Error(lj?.error?.message || `Composio ${link.status}`);
+      caps.invalidateComposioCache();
+      return { ok: true, redirectUrl: lj.redirect_url, connectionId: lj.connected_account_id };
+    }
+  } else if (capability === 'identity') {
+    out = { identity: caps.writeIdentity({ email: String(body?.email || ''), chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }) };
+  } else if (capability === 'desktop') {
+    const enable = body?.enable !== false;
+    updateScreenConfig({ enabled: enable });
+    if (enable) { try { await desktops.ensureGlobalDesktop(); } catch (e) { out = { warning: (e as Error).message }; } }
+  } else if (capability === 'remote') {
+    const remote: any = await import('./remote.js');
+    out = { remote: remote.setRemote(body?.enable !== false) };
+  } else if (capability === 'telemetry') {
+    const tm = await import('./telemetry.js');
+    out = { telemetry: tm.setEnabled(body?.enable !== false) };
+    try { ob.wizardAct('telemetry', 'complete'); } catch {}
+  } else if (capability === 'push') {
+    // Subscriptions come from the browser (POST /__api/push/subscribe); nothing to apply server-side.
+    out = { hint: 'allow notifications in the cockpit on the device you want notified' };
+  }
+  return { ok: true, ...out };
 }
 
 // The origin an OAuth redirect_uri should use to land back on THIS request's
@@ -1365,7 +1636,87 @@ export async function handle(
       return await handlePermissionRequest(res, await readBody(req));
     }
     if (p === '/__mcp/screen-request' && m === 'POST') {
+      // S1: no desktop → the tool asks instead of failing.
+      if (!cfg.screen?.enabled) return json(res, caps.needsSetup('desktop', 'drive a browser / hand you the screen'));
       return await handleScreenRequest(res, await readBody(req));
+    }
+    if (p === '/__mcp/setup-request' && m === 'POST') {
+      return await handleSetupRequest(res, await readBody(req));
+    }
+    if (p === '/__mcp/setup-report' && m === 'POST') {
+      return await handleSetupReport(res, await readBody(req));
+    }
+    // ---- S1 JIT setup REST (server/capabilities.ts) ----
+    if (p.startsWith('/__api/setup/') || p === '/__api/setup') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      const mayAct = auth.isAdmin(me) || me?.kind === 'session';
+      const rest = p.slice('/__api/setup/'.length);
+      if (rest === 'capabilities' && m === 'GET') return json(res, await caps.capabilitiesStatus());
+      if (rest.startsWith('capabilities/') && m === 'GET') {
+        const id = decodeURIComponent(rest.slice('capabilities/'.length));
+        const cap = caps.getCapability(id);
+        if (!cap) return badRequest(res, `unknown capability: ${id}`);
+        const why = u.searchParams.get('why') || '';
+        const r = await caps.ensure(id, why);
+        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap) } : r);
+      }
+      if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity() });
+      if (rest === 'identity' && m === 'DELETE') {
+        if (!mayAct) return json(res, { error: 'admin only' }, 403);
+        const had = caps.readIdentity();
+        const ok = caps.clearIdentity();
+        if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability: 'identity', mode: 'manual', result: 'disconnected', evidence: null, human: true });
+        return json(res, { ok, identity: null });
+      }
+      if (rest === 'connections' && m === 'GET') {
+        const limit = Math.min(500, Math.max(1, Number(u.searchParams.get('limit')) || 50));
+        return json(res, { identity: caps.readIdentity(), audit: caps.readAudit(limit) });
+      }
+      if (rest === 'pending' && m === 'GET') {
+        const sid = u.searchParams.get('session') || '';
+        return json(res, { pending: [...pendingSetups.values()].filter((e) => !sid || e.sessionId === sid).map(setupCardPayload) });
+      }
+      // /__api/setup/:id/(skip|report|mode) — id = setup_…
+      const idm = /^(setup_[A-Za-z0-9_-]+)\/(skip|report|mode)$/.exec(rest);
+      if (idm && m === 'POST') {
+        if (!mayAct) return json(res, { error: 'admin only' }, 403);
+        const e = pendingSetups.get(idm[1]);
+        if (!e) return notFound(res, `no pending setup: ${idm[1]}`);
+        const body = (await readBody(req)) as any;
+        if (idm[2] === 'skip') {
+          finishSetup(e, 'skipped', { detail: body?.note ? String(body.note).slice(0, 200) : 'skipped by the human', human: true });
+          return json(res, { ok: true, id: e.id, state: 'skipped' });
+        }
+        if (idm[2] === 'mode') {
+          const mode = body?.mode === 'auto' ? 'auto' : body?.mode === 'ask' ? 'ask' : 'manual';
+          const out = setSetupMode(e.id, mode);
+          return out ? json(res, { ok: true, ...setupCardPayload(out) }) : notFound(res, 'no pending setup');
+        }
+        // report: same body as report_setup, for the card / skills that know the id.
+        return await handleSetupReport(res, { ...body, session_id: e.sessionId, id: e.id, capability: e.capability });
+      }
+      // POST /__api/setup/:capability — manual payload → existing implementation.
+      if (m === 'POST' && rest && !rest.includes('/')) {
+        if (!mayAct) return json(res, { error: 'admin only' }, 403);
+        const capability = decodeURIComponent(rest);
+        const cap = caps.getCapability(capability);
+        if (!cap) return badRequest(res, `unknown capability: ${capability}`);
+        const body = (await readBody(req)) as any;
+        try {
+          const out = await applyManualSetup(capability, body, req);
+          const status = await caps.statusOf(cap);
+          let closed = 0;
+          if (status.ok) {
+            closed = resolveSetupsFor(capability, status.detail, true);
+            if (!closed) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'done', evidence: null, human: true, detail: status.detail });
+            import('./funnel.js').then((f) => { if (!closed) f.emit('setup.completed', { capability, mode: 'manual' }); }).catch(() => {});
+          }
+          return json(res, { ...out, capability, status, closed });
+        } catch (e) {
+          return json(res, { ok: false, error: (e as Error).message, capability }, 400);
+        }
+      }
+      return notFound(res);
     }
     // ---- host lifecycle (B4-lite: server/host-control.ts, server/version.ts) ----
     // Mutations need `X-Arigami-Confirm: yes` (no cross-site form/fetch can send
@@ -1724,6 +2075,17 @@ export async function handle(
       const view = ob.wizard();
       return json(res, { ...view, ghLogin: gl.ghLoginStatus() });
     }
+    if (p === '/__api/onboarding/wizard/mode' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const ob = await import('./onboarding.js');
+      const body = (await readBody(req)) as any;
+      try {
+        return json(res, ob.setOnboardingMode(body?.mode === 'full' ? 'full' : 'minimal'));
+      } catch (e) {
+        return badRequest(res, (e as Error).message);
+      }
+    }
     if (p === '/__api/onboarding/wizard/reset' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -1880,7 +2242,14 @@ export async function handle(
         if (!action && m === 'PATCH')
           return json(res, ob.saveRepo(name, (await readBody(req)) as any));
         if (!action && m === 'DELETE') return json(res, { ok: ob.removeRepo(name) });
-        if (action === 'clone' && m === 'POST') return json(res, ob.cloneRepo(name));
+        if (action === 'clone' && m === 'POST') {
+          // S1: a remote clone without git credentials asks for `git` instead of failing.
+          const entry = ob.listRepos().find((r) => r.name === name);
+          const gate = ob.status().steps.find((st) => st.id === 'git-auth');
+          if (entry && !/^(\/|~|\.)/.test(entry.source) && !ob.repoPresent(ob.resolveRepo(entry)) && gate && gate.status !== 'ok')
+            return json(res, caps.needsSetup('git', `clone ${name}`));
+          return json(res, ob.cloneRepo(name));
+        }
         if (action === 'env' && m === 'POST') return json(res, ob.resolveEnv(name));
         if (action === 'install' && m === 'POST') return json(res, ob.installDeps(name));
       } catch (e) {
@@ -2664,6 +3033,17 @@ export async function handle(
         body.permissionMode = wired.permissionMode;
         body.metadata = { ...(body.metadata || {}), ...wired.metadata };
       }
+      // S1: cwd names a registered repo that isn't cloned (or a path that
+      // doesn't exist) → ask for `repo:<name>` instead of spawning claude in
+      // a missing directory.
+      if (body.cwd && !(body.master && kind)) {
+        const want = path.resolve(untildify(String(body.cwd)) as string);
+        if (!fs.existsSync(want)) {
+          const ob = await import('./onboarding.js');
+          const hit = ob.listRepos().map((r) => ob.resolveRepo(r)).find((r) => path.resolve(ob.repoDir(r)) === want || r.name === path.basename(want));
+          return json(res, caps.needsSetup(`repo:${hit ? hit.name : path.basename(want)}`, `open a session in ${body.cwd}`));
+        }
+      }
       const s = state.createSession({
         title: body.title,
         cwd: body.cwd,
@@ -2825,6 +3205,11 @@ export async function handle(
       const type = body.type || 'github-pr';
       if (type !== 'github-pr' && type !== 'linear-issue' && type !== 'slack' && type !== 'whatsapp' && type !== 'sms')
         return badRequest(res, `unsupported listener type: ${type}`);
+      if (type === 'whatsapp') {
+        // S1: bridge not paired/connected → needs_setup instead of a dead listener.
+        const wb = await import('./whatsapp-bridge.js');
+        if (wb.getBridgeStatus().status !== 'connected') return json(res, caps.needsSetup('whatsapp', 'watch your WhatsApp messages'));
+      }
       try {
         const listeners = await import('./listeners.js');
         const l =
@@ -3024,7 +3409,7 @@ export async function handle(
     if (sub === 'screenshot' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const caption = body.caption ? String(body.caption).slice(0, 300) : undefined;
-      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled' }, 503);
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'take a screenshot') });
       try {
         const r = await screens.takeScreenshot(id, { caption });
         // Same screen as the previous screenshot → no new card (T9); the

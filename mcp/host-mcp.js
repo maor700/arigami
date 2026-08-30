@@ -94,6 +94,9 @@ const TOOLS = [
       }
       const s = await api('POST', '/__api/sessions', body);
       if (s.deferred) return { deferred: true, reason: s.reason || 'at-capacity' };
+      // S1: cwd names a registered repo that is not cloned yet → the host does
+      // not fail, it asks — pass the needs_setup shape through (call request_setup).
+      if (s.needs_setup) return s;
       // `url` is relative on purpose (A3): the human may open it from a phone or
       // over a tailnet. `url_internal` = loopback form, kept for one version for
       // callers that fetch it from the host box itself.
@@ -626,6 +629,67 @@ const TOOLS = [
         ...(a.reason ? { reason: a.reason } : {}),
         ...(a.hint ? { hint: a.hint } : {}),
       }),
+  },
+  {
+    name: 'request_setup',
+    description:
+      'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
+      'Capability ids: identity (Google login in Chrome) · claude · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
+      'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
+      'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
+      'MANUAL/ASK: BLOCKS until the human connects it, skips it, or ~15 min pass → {state:"done"|"skipped"|"timeout", capability, detail, mode}. On "skipped"/"timeout" offer an alternative, never nag. ' +
+      'AUTO: returns {state:"auto", id, playbook} IMMEDIATELY — YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence) and finish with report_setup. ' +
+      'If the capability is already connected you get {state:"done", already:true} at once. why: one short clause the card shows ("read your inbox").',
+    inputSchema: obj(
+      {
+        capability: { type: 'string', description: 'Registry id, e.g. "composio:gmail", "repo:my-app", "whatsapp"' },
+        why: { type: 'string', description: 'What you need it for — shown on the card and in the push' },
+        mode: { type: 'string', enum: ['auto', 'manual', 'ask'], description: 'Omit for the host default (auto when possible)' },
+        ...SID_PROP,
+      },
+      ['capability', 'why']
+    ),
+    run: (a) =>
+      api('POST', '/__mcp/setup-request', {
+        session_id: sid(a),
+        capability: a.capability,
+        why: a.why,
+        ...(a.mode ? { mode: a.mode } : {}),
+      }),
+  },
+  {
+    name: 'report_setup',
+    description:
+      'Close an AUTO setup you ran yourself (after request_setup returned state:"auto"). ok:true → the card turns green (with your screenshot if `evidence` is a published artifact path like "/__artifacts/<id>/") and the capability is re-checked; ' +
+      'ok:false → the card flips to MANUAL with `detail` as the reason so the human can finish it (you may call request_setup again to wait for them). Always call it — an unreported auto setup times out after 15 min.',
+    inputSchema: obj(
+      {
+        capability: { type: 'string' },
+        ok: { type: 'boolean' },
+        evidence: { type: 'string', description: 'Host-relative artifact path of the final screenshot, e.g. /__artifacts/abc123/' },
+        detail: { type: 'string', description: 'Short outcome / failure reason (no secrets)' },
+        id: { type: 'string', description: 'The setup id from request_setup (optional — capability alone resolves the open card)' },
+        ...SID_PROP,
+      },
+      ['capability', 'ok']
+    ),
+    run: (a) =>
+      api('POST', '/__mcp/setup-report', {
+        session_id: sid(a),
+        capability: a.capability,
+        ok: !!a.ok,
+        ...(a.evidence ? { evidence: a.evidence } : {}),
+        ...(a.detail ? { detail: a.detail } : {}),
+        ...(a.id ? { id: a.id } : {}),
+      }),
+  },
+  {
+    name: 'check_setup',
+    description:
+      'Cheap probe: is a capability connected right now? Returns {ok:true, detail} or the needs_setup shape {needs_setup, why, hint}. ' +
+      'Use it BEFORE calling a provider MCP tool that cannot report needs_setup itself (e.g. Composio Gmail tools: check_setup({capability:"composio:gmail", why:"read your inbox"})). Cached ~60s for Composio.',
+    inputSchema: obj({ capability: { type: 'string' }, why: { type: 'string' }, ...SID_PROP }, ['capability']),
+    run: (a) => api('GET', `/__api/setup/capabilities/${encodeURIComponent(a.capability)}?why=${encodeURIComponent(a.why || '')}`),
   },
   {
     name: 'capture_screen',

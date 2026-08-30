@@ -838,6 +838,120 @@ Other skills (ship-it, feedback-loop, login…) copied + MCP-wired incrementally
 Skills are made available to spawned sessions via --mcp-config + a settings dir
 passed with --settings (skills/ mounted as a plugin dir or copied into cwd/.claude).
 
+## Just-in-time setup (S1 — server/capabilities.ts, request_setup / report_setup)
+
+Minimal onboarding: a fresh install needs only `pair` + `claude`; every other
+capability is connected **from the chat, the moment a tool needs it**. Tools
+never fail on a missing capability — they return `needs_setup` and the agent
+calls `request_setup`, which posts a Setup card the human answers (or, with a
+Google identity signed in on the session's Chrome, the agent connects it
+itself via a `connect-<provider>` playbook skill).
+
+### Capability ids (shared contract with web + skills)
+`identity` (Google login in Chrome) · `claude` · `git` (gh/PAT) · `repo:<name>` ·
+`whatsapp` · `composio:<toolkit>` (gmail/googledrive/googlecalendar/slack/linear/notion/…) ·
+`desktop` · `push` · `remote` (tailscale serve) · `telemetry`.
+Validated by `isCapabilityId()` — `repo:` names `[A-Za-z0-9._-]`, toolkits `[a-z0-9_-]`.
+
+### Registry (`server/capabilities.ts`)
+```
+Capability { id, title, group:'core'|'code'|'messaging'|'integrations'|'machine'|'host',
+             check(): {ok, detail, data?},          // reuses onboarding.ts gates (defaultProbes)
+             manual: {kind:'token'|'oauth'|'qr'|'toggle'|'repo'|'takeover', fields?, start?, help?},
+             autoCapable: boolean, playbook?: 'connect-identity'|'connect-composio'|'connect-claude'|'connect-tailscale'|'connect-github',
+             events: string[] }                    // bus/funnel types after which status may change
+listCapabilities() / getCapability(id) / capabilitiesStatus() / ensure(id, why) / needsSetup(id, why)
+```
+Manual kinds: identity=takeover · claude=oauth (+token) · git=token (+gh device flow) ·
+repo=repo · whatsapp=qr · composio:*=oauth · desktop/push/remote/telemetry=toggle.
+autoCapable: claude, git, remote, composio:* (only ever `auto` when `identity.json` exists).
+`composio:<toolkit>` probes Composio's connected accounts (ACTIVE, cached 60 s; no
+key → "not connected", offline → unknown/not ok). Probes are injectable (tests).
+
+`bun server/capabilities.ts doctor` (run by `bin/host doctor`) prints the same list offline.
+
+### `needs_setup` — the shape every wrapped tool/route returns (HTTP 200)
+```
+{ needs_setup: 'composio:gmail', why: 'read your inbox', hint: 'call request_setup' }
+```
+Wrapped: `POST /__api/sessions` with a `cwd` that does not exist → `repo:<name>`
+(registered repo dir/name, else the basename) · `POST /__api/sessions/:id/listeners {type:'whatsapp'}`
+when the bridge is not connected → `whatsapp` · `POST /__mcp/screen-request` and
+`…/screenshot` when screen share is disabled → `desktop` · `POST /__api/onboarding/repos/:name/clone`
+of a remote repo without git credentials → `git` · `check_setup` / `GET /__api/setup/capabilities/:id`
+for anything not connected (use it before provider MCP tools such as Composio, which
+cannot answer needs_setup themselves).
+
+### MCP tools (mcp/host-mcp.js)
+```
+request_setup({capability, why, mode?:'auto'|'manual'|'ask', session_id?})
+   → already connected:        {state:'done', already:true, capability, detail, mode:'manual', id:''}
+   → mode auto (immediately):  {state:'auto', id, capability, detail, mode:'auto', playbook}
+   → manual/ask (BLOCKS ≤15m): {state:'done'|'skipped'|'timeout', id, capability, detail, mode, evidence}
+   // default mode: 'auto' iff identity.json exists AND autoCapable, else 'manual';
+   // 'auto' requested on a non-auto capability → 'manual'. A second request_setup
+   // for the same {session, capability} attaches to the open card (used after a
+   // failed auto → manual hand-off).
+report_setup({capability, ok, evidence?:'/__artifacts/<id>/', detail?, id?, session_id?})
+   → ok:true  → card done (green, evidence shown), audit, funnel setup.completed, identity.providers[cap] stamped
+   → ok:false → card flips to mode:'manual', state:'pending', detail=reason (rule 5); {closed:false, mode:'manual'}
+check_setup({capability, why?}) → {ok:true, detail, status} | needs_setup shape
+```
+
+### Chat events (S2 renders `kind:'setup'`, merges `setup-update` by `id`)
+```
+{kind:'setup',        id:'setup_…', capability, why, mode, state:'pending'|'auto', evidence:null, detail,
+                      title, manual:{kind,…}, autoCapable, playbook?, identity:boolean}
+{kind:'setup-update', id, capability, why, mode, state:'pending'|'auto'|'done'|'skipped'|'timeout', evidence, detail, failed?:true}
+```
+Bus: `{type:'setup', sessionId, id, capability, why, mode, state, evidence, detail}` on every
+transition. `session.claude.setupRequest = {id, capability}` while an agent is blocked
+(state `awaiting-input`), like `screenRequest`. Push: "<session> — needs <title>" with the
+relative session link (same cooldown as request_action).
+
+### REST (`/__api/setup/*`)
+```
+GET    /__api/setup/capabilities            → {identity, capabilities:[CapabilityStatus]}   // + defaultMode per entry
+GET    /__api/setup/capabilities/:id?why=   → {ok:true, detail, status} | needs_setup
+GET    /__api/setup/pending?session=        → {pending:[card payloads]}                      // web reload
+POST   /__api/setup/:capability  (admin or session bearer) — manual payload → existing implementation:
+         claude     {token} | {action:'oauth-start', label?} | {action:'oauth-code', id, code}
+         git        {token, host?} | {action:'gh-login'|'gh-cancel'}
+         repo:<n>   {url?}        (registers if unknown, then clone job)
+         whatsapp   {action?:'connect'|'disconnect'} → {status:{status, qr,…}}
+         composio:x {key?} | {action:'connect'} → {redirectUrl, connectionId}
+         identity   {email, chromeProfile?}   → writes identity.json (called by skills/connect-identity)
+         desktop    {enable}   remote {enable}   telemetry {enable}   push {} (hint only)
+       → {ok, …, capability, status:CapabilityStatus, closed:<open cards resolved>}; on a
+         green re-check every open card for that capability resolves state:'done' (human:true).
+POST   /__api/setup/:id/skip {note?}         → agent gets state:'skipped'
+POST   /__api/setup/:id/mode {mode}          → switch on the card; →'auto' unblocks the agent with state:'auto'
+POST   /__api/setup/:id/report {ok, evidence?, detail?}   // same as report_setup
+GET    /__api/setup/identity                 → {identity|null}
+DELETE /__api/setup/identity                 → {ok, identity:null} (+ audit result:'disconnected')
+GET    /__api/setup/connections?limit=50     → {identity, audit:[…newest last]}
+POST   /__api/onboarding/wizard/mode {mode:'minimal'|'full'}   // "Run full setup" / back
+```
+
+### Files
+`$ARIGAMI_DIR/identity.json` — `{email, provider:'google', connectedAt, chromeProfile:'base', providers:{'composio:gmail':{at},…}}`,
+mode 0600, never a secret (writer refuses token-looking values).
+`$ARIGAMI_DIR/connections.log` — JSONL `{at, sessionId, capability, mode, result:'requested'|'done'|'failed'|'skipped'|'timeout'|'disconnected', evidence:'/__artifacts/<id>/'|null, human, detail?}`.
+
+### Minimal onboarding mode (default)
+`onboarding.json.mode` ('minimal' default, 'full'; env `ARIGAMI_ONBOARDING_MODE`). `wizard()` →
+`{…, mode, required:['pair','claude']}`; `done` = every REQUIRED step settled; `current` = first
+unsettled required step. Optional steps stay `todo` without blocking. `cfg.defaultCwd` defaults to
+`$ARIGAMI_DIR/workspace`, created on host start, so "Connect Claude → Start" opens a session with zero repos.
+
+### Funnel
+`setup.requested {capability, mode}` · `setup.completed {capability, mode}` · `setup.skipped {capability, mode, timeout?}` · `setup.first_request` (once).
+
+### Automation rules (enforced by skills, audited here)
+The agent never types passwords / 2FA / OTP (→ `request_screen`); playbooks navigate only their
+domain allowlist; the card states exactly what will happen before "Connect automatically";
+one final screenshot published as evidence + one audit line; failure → manual with reason, ≤2 attempts.
+
 ## Out of scope v1
 
 Multi-user/auth, Tauri wrapper, tab drag-reorder, session pop-out windows,

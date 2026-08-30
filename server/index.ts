@@ -27,6 +27,9 @@ const WEB_DIST = path.join(ROOT, 'web', 'dist');
 
 try {
   ensureConfigFile?.();
+  // S1 (minimal onboarding): the default cwd is an empty workspace under the
+  // data dir so "Connect Claude → Start" works with zero repos configured.
+  try { fs.mkdirSync(cfg.defaultCwd, { recursive: true }); } catch {}
 } catch {}
 
 interface ProxyModule {
