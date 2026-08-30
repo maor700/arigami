@@ -201,7 +201,9 @@ export function releaseDesktop(sessionId: string): void {
 // up (another owner — e.g. the legacy unit — or a previous run) and only then
 // spawns Xvfb + a window manager (if present) + x11vnc bound to loopback.
 // Non-default instances never touch it (T5: they don't own the global desktop).
-// Set ARIGAMI_GLOBAL_DESKTOP=0 to opt out entirely.
+// Set ARIGAMI_GLOBAL_DESKTOP=0 to opt out entirely, or =1 to opt IN from a
+// non-default ARIGAMI_DIR (the Docker image: /data/.arigami is the only host
+// in the container, so it owns :99 even though the dir is not ~/.arigami).
 import { execSync } from 'node:child_process';
 import { IS_DEFAULT_INSTANCE } from './instance.js';
 
@@ -235,7 +237,8 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   const env = opts.env || process.env;
   if (env.ARIGAMI_GLOBAL_DESKTOP === '0') return { started: false, reason: 'ARIGAMI_GLOBAL_DESKTOP=0' };
   if (process.platform !== 'linux') return { started: false, reason: 'not linux' };
-  if (!(opts.isDefaultInstance ?? IS_DEFAULT_INSTANCE)) return { started: false, reason: 'non-default instance' };
+  const optIn = env.ARIGAMI_GLOBAL_DESKTOP === '1';
+  if (!optIn && !(opts.isDefaultInstance ?? IS_DEFAULT_INSTANCE)) return { started: false, reason: 'non-default instance' };
   if (!(opts.enabled ?? cfg.screen?.enabled)) return { started: false, reason: 'screen disabled' };
   const display = opts.display || cfg.screen.display || ':99';
   const n = Number(display.replace(/^:/, '').split('.')[0]);

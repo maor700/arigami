@@ -44,6 +44,22 @@ function ensureSessionProfile(sessionId: string): string {
 
 const running = new Map<string, ChildProcess>();
 
+// B2/§7.4: the browser binary is abstracted behind CHROME_BIN — google-chrome
+// on amd64, chromium on arm64 (the Docker image and install.sh both set it).
+export function chromeBin(): string {
+  return process.env.CHROME_BIN || 'google-chrome';
+}
+
+// Inside a container the host runs as an unprivileged user without user
+// namespaces, so Chrome's sandbox cannot start; `--no-sandbox` is the
+// documented answer (compose gives it a 1g /dev/shm instead of SYS_ADMIN).
+// Detected via /.dockerenv (or an explicit CHROME_NO_SANDBOX=1) — never on a
+// native host.
+export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env): string[] {
+  const inDocker = env.CHROME_NO_SANDBOX === '1' || fs.existsSync('/.dockerenv');
+  return inDocker ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
+}
+
 export function isChromeRunning(sessionId: string): boolean {
   const p = running.get(sessionId);
   return !!(p && p.exitCode === null && !p.killed);
@@ -66,7 +82,7 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--start-maximized',
     ...(url ? [url] : []),
   ];
-  const child = spawn('google-chrome', args, {
+  const child = spawn(chromeBin(), chromeExtraFlags().concat(args), {
     env: { ...process.env, DISPLAY: display },
     stdio: ['ignore', 'ignore', 'pipe'],
   });

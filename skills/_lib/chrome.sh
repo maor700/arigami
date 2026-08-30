@@ -14,6 +14,13 @@
 #                                    (also happens automatically after a
 #                                    request_screen takeover and at session end)
 #
+# Binary + container flags are decided host-side (server/lib/chrome.ts):
+# CHROME_BIN picks google-chrome/chromium, and when /.dockerenv exists (or
+# CHROME_NO_SANDBOX=1) the host adds --no-sandbox --disable-dev-shm-usage so
+# Chrome starts as the unprivileged container user. If a skill must exec the
+# browser directly (it shouldn't), source the same rule:
+#   CHROME="${CHROME_BIN:-google-chrome}"; [ -e /.dockerenv ] && CHROME_FLAGS="--no-sandbox --disable-dev-shm-usage"
+#
 # Never `pkill chrome` / `pkill -f chrome` — that would kill OTHER sessions'
 # browsers too. This session's instance is torn down by the host at
 # archive/delete; you don't need to (and don't have a clean way to) kill it

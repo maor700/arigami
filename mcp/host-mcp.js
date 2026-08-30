@@ -572,7 +572,7 @@ const TOOLS = [
       thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
       fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms'] } },
       group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363412808577334@g.us") — for type whatsapp. Omit for personal messages only.' },
-      db_path: { type: 'string', description: 'Override WhatsApp DB path (for type whatsapp, default: /home/arigami/.local/lib/whatsapp-mcp/data/whatsapp.db)' },
+      db_path: { type: 'string', description: 'Override WhatsApp DB path (for type whatsapp, default: <whatsapp-mcp data dir>/whatsapp.db — ~/.local/lib/whatsapp-mcp/data natively, /data/.arigami/whatsapp/data in Docker)' },
       from_filter: { type: 'string', description: 'SMS sender filter — partial match on phone number (for type sms)' },
       ttl_days: { type: 'number', description: 'Auto-stop after this many days (default 7)' },
       interval_sec: { type: 'number', description: 'Poll interval seconds (default 10 for whatsapp, 30 for others)' },
