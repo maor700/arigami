@@ -1,6 +1,10 @@
-// Settings › Connections › Integrations (was the standalone IntegrationsView):
+// Settings › Connections › "More, via Composio" (M1 — it used to be THE
+// integrations section; the native remote-MCP cards now sit above it):
 // the Composio toolkit grid (search + category chips + connected filter) plus
 // the non-Composio capabilities the host tracks (GitHub CLI, desktop, repos).
+// Composio stays for what has no vendor-hosted MCP server we can use — Google
+// (own GCP client + a preview program), Slack (own app + admin approval),
+// Facebook Pages (none at all) — and for its event triggers.
 // Connect/disconnect go through the JIT setup contract (ConnectDialog →
 // AUTO session when a Google identity exists, MANUAL redirect flow
 // otherwise; DELETE /setup/composio:<slug> to disconnect), so this section and
@@ -138,7 +142,7 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
   });
 
   return (
-    <Section id="integrations" title={t('settings.connections.integrations')} onRefresh={load}>
+    <Section id="integrations" title={t('settings.connections.composioMore')} onRefresh={load}>
       {data && !data.hasKey && !data.toolkits && <ComposioLogin onDone={load} />}
       {data?.error && data.hasKey && <ErrorLine>{data.error}</ErrorLine>}
       {loading && !data && <div className="py-3 text-[11.5px] text-fgdim">{t('dialogs.loading')}</div>}
