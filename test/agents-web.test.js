@@ -102,12 +102,14 @@ test('AgentCard: pending renders the editable form with the draft; created rende
   expect(pending).toContain('data-agent-card="pending"');
   expect(pending).toContain('data-agent-field="name"');
   expect(pending).toContain('value="Ops Bot"');
-  expect(pending).toContain('value="ops-bot"');
   expect(pending).toContain('Keep it up.');
   expect(pending).toContain('data-agent-confirm');
   expect(pending).toContain('Create agent');
   expect(pending).toContain('Cancel');
-  expect(pending).toContain('Browser / desktop');
+  // simple by default: the tool/skill/model fields live behind the advanced fold
+  expect(pending).toContain('data-agent-advanced');
+  expect(pending).not.toContain('Browser / desktop');
+  expect(pending).not.toContain('data-agent-field="slug"');
   const created = render(React.createElement(AgentCard, { sessionId: 'sess_x', event: { kind: 'agent-card', cardId: 'agc_1', action: 'create', state: 'created', agent: { slug: 'ops-bot', name: 'Ops Bot', emoji: '🧰', color: '#1F9C82', skills: ['dispatch'], persona: 'Keep it up.' } } }));
   expect(created).toContain('data-agent-card="created"');
   expect(created).not.toContain('data-agent-confirm');

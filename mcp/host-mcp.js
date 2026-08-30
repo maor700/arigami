@@ -849,7 +849,8 @@ const TOOLS = [
       'default model, referenced SHARED skills (names from GET /__api/skills — agents have no private skills), tool/domain allowlists and a daily token budget. ' +
       'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under "צוות"; sessions born from it (create_session({agent})) carry its emoji/color. ' +
       'confirm (default true): post an editable Agent card in THIS chat — the human confirms/cancels there and you get a message with the decision; nothing is written before that. ' +
-      'confirm:false creates it immediately (only when the human already spelled out every field). Returns the card payload {cardId, state, agent?}.',
+      'confirm:false creates it immediately (only when the human already spelled out every field). Returns the card payload {cardId, state, agent?}. ' +
+      'KEEP IT SIMPLE: ask the human only for name, emoji and a few persona lines; leave model/budget/tools/domains/skills unset unless they asked — the card hides them under "advanced settings" and everything has a sensible default.',
     inputSchema: obj({
       name: { type: 'string' },
       slug: { type: 'string', description: 'lowercase letters/digits/hyphens; derived from name when omitted (pass one for Hebrew names)' },

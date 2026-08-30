@@ -14,7 +14,7 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { useModels } from '../lib/models.js';
 import { toastError } from '../lib/toast.js';
-import { faCheck, faXmark, faUserAstronaut, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faXmark, faUserAstronaut, faCircleNotch, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
 export const TOOL_FAMILIES = ['desktop', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers'];
 
@@ -76,6 +76,7 @@ export default function AgentCard({ sessionId, event }) {
     budget: d0.budget?.tokensPerDay ? String(d0.budget.tokensPerDay) : '',
   }));
   const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false); // simple by default: name + emoji + persona
   const [err, setErr] = useState(event.error || null);
   useEffect(() => { if (event.error) setErr(event.error); }, [event.error]);
 
@@ -133,62 +134,69 @@ export default function AgentCard({ sessionId, event }) {
 
       {state === 'pending' && (
         <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div>
-            <label className={label}>{t('agent.card.name')}</label>
-            <input data-agent-field="name" dir="auto" value={draft.name} onChange={set('name')} className={field} />
-          </div>
-          <div className="grid grid-cols-[1fr_64px] gap-2">
+          <div className="grid grid-cols-[1fr_64px] gap-2 sm:col-span-2">
             <div>
-              <label className={label}>{t('agent.card.slug')}</label>
-              <input data-agent-field="slug" value={draft.slug} onChange={set('slug')} placeholder="marketing-lead" className={field} />
+              <label className={label}>{t('agent.card.name')}</label>
+              <input data-agent-field="name" dir="auto" value={draft.name} onChange={set('name')} className={field} />
             </div>
             <div>
               <label className={label}>{t('agent.card.emoji')}</label>
               <input data-agent-field="emoji" value={draft.emoji} onChange={set('emoji')} className={`${field} text-center`} />
             </div>
           </div>
-          <div>
-            <label className={label}>{t('agent.card.model')}</label>
-            <select data-agent-field="model" value={draft.model} onChange={set('model')} className={field}>
-              <option value="">{t('agent.card.modelDefault')}</option>
-              {(models || []).filter((m) => m.value && m.value !== 'default').map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              {draft.model && !(models || []).some((m) => m.value === draft.model) && <option value={draft.model}>{draft.model}</option>}
-            </select>
-          </div>
-          <div>
-            <label className={label}>{t('agent.card.budget')}</label>
-            <input data-agent-field="budget" type="number" min="0" value={draft.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={field} />
-          </div>
-          <div className="sm:col-span-2">
-            <label className={label}>{t('agent.card.tools')}</label>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {TOOL_FAMILIES.map((id) => (
-                <label key={id} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
-                  <input type="checkbox" checked={draft.tools.includes(id)} onChange={() => toggle('tools', id)} /> {t(`agent.tool.${id}`)}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="sm:col-span-2">
-            <label className={label}>{t('agent.card.skills')}</label>
-            {skillNames === null ? (
-              <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faCircleNotch} spin /></span>
-            ) : skillNames.length === 0 ? (
-              <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('agent.card.noSkills')}</span>
-            ) : (
-              <div className="flex max-h-[96px] flex-wrap gap-x-3 gap-y-1 overflow-y-auto thin-scroll">
-                {skillNames.map((n) => (
-                  <label key={n} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
-                    <input type="checkbox" checked={draft.skills.includes(n)} onChange={() => toggle('skills', n)} /> {n}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
           <div className="sm:col-span-2">
             <label className={label}>{t('agent.card.persona')}</label>
             <textarea data-agent-field="persona" dir="auto" rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
           </div>
+          <button type="button" data-agent-advanced onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] sm:col-span-2">
+            <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
+          </button>
+          {advanced && (
+            <>
+              <div>
+                <label className={label}>{t('agent.card.slug')}</label>
+                <input data-agent-field="slug" value={draft.slug} onChange={set('slug')} placeholder="marketing-lead" className={field} />
+              </div>
+              <div>
+                <label className={label}>{t('agent.card.model')}</label>
+                <select data-agent-field="model" value={draft.model} onChange={set('model')} className={field}>
+                  <option value="">{t('agent.card.modelDefault')}</option>
+                  {(models || []).filter((m) => m.value && m.value !== 'default').map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                  {draft.model && !(models || []).some((m) => m.value === draft.model) && <option value={draft.model}>{draft.model}</option>}
+                </select>
+              </div>
+              <div>
+                <label className={label}>{t('agent.card.budget')}</label>
+                <input data-agent-field="budget" type="number" min="0" value={draft.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={field} />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={label}>{t('agent.card.tools')}</label>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {TOOL_FAMILIES.map((id) => (
+                    <label key={id} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+                      <input type="checkbox" checked={draft.tools.includes(id)} onChange={() => toggle('tools', id)} /> {t(`agent.tool.${id}`)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="sm:col-span-2">
+                <label className={label}>{t('agent.card.skills')}</label>
+                {skillNames === null ? (
+                  <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faCircleNotch} spin /></span>
+                ) : skillNames.length === 0 ? (
+                  <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('agent.card.noSkills')}</span>
+                ) : (
+                  <div className="flex max-h-[96px] flex-wrap gap-x-3 gap-y-1 overflow-y-auto thin-scroll">
+                    {skillNames.map((n) => (
+                      <label key={n} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+                        <input type="checkbox" checked={draft.skills.includes(n)} onChange={() => toggle('skills', n)} /> {n}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           {err && <div dir="auto" className="rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-1.5 font-mono text-[10.5px] text-[#9c3b33] sm:col-span-2">{err}</div>}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <button type="button" data-agent-confirm onClick={confirm} disabled={busy || !draft.name.trim()} className={btnPrimary}>

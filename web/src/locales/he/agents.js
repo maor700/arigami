@@ -14,7 +14,7 @@ export const strings = {
   'rail.teamActions': 'פעולות סוכן',
   'rail.teamNewAgentTitle': 'סוכן חדש',
   'rail.teamNewAgentPrompt':
-    'תקים סוכן חדש לצוות שלי. שאל אותי (בקצרה) על: שם, אימוג׳י, על מה הוא אחראי ומה הגבולות שלו (עד 20 שורות פרסונה), אילו סקילים משותפים הוא צריך (list_agents / GET /__api/skills), מודל ברירת מחדל ותקציב טוקנים יומי. אחר כך קרא ל-create_agent עם confirm:true כדי שאוכל לאשר את הכרטיס לפני היצירה.',
+    'תקים סוכן חדש לצוות שלי. שאל אותי רק על שם, אימוג׳י ו-2–5 שורות פרסונה (מה הוא עושה + הגבולות שלו); לכל השאר קח ברירות מחדל (מודל ברירת מחדל, בלי תקציב, בלי הגבלת כלים, בלי סקילים) אלא אם אגיד אחרת. אחר כך קרא ל-create_agent עם confirm:true כדי שאוכל לאשר את הכרטיס לפני היצירה.',
   'rail.teamOpenFailed': 'לא הצלחתי לפתוח את צ׳אט הבית של הסוכן',
 
   // ---- AgentCard.jsx ----
@@ -37,6 +37,7 @@ export const strings = {
   'agent.card.skills': 'סקילים (משותפים)',
   'agent.card.noSkills': 'אין עדיין סקילים במארח הזה.',
   'agent.card.confirm': 'צור סוכן',
+  'agent.card.advanced': 'הגדרות מתקדמות',
   'agent.card.cancel': 'בטל',
   'agent.card.creating': 'יוצר…',
   'agent.card.createdLine': '{name} הצטרף לצוות — אפשר עכשיו לפתוח ממנו סשנים.',

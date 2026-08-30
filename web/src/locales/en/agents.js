@@ -14,7 +14,7 @@ export const strings = {
   'rail.teamActions': 'Agent actions',
   'rail.teamNewAgentTitle': 'New agent',
   'rail.teamNewAgentPrompt':
-    'Set up a new agent for my team. Ask me (briefly) for: name, emoji, what it is responsible for and its limits (≤20 lines of persona), which shared skills it should use (list_agents / GET /__api/skills), default model and a daily token budget. Then call create_agent with confirm:true so I can review the card before it is created.',
+    'Set up a new agent for my team. Ask me only for a name, an emoji and 2–5 lines of persona (what it does + its limits); pick sensible defaults for everything else (default model, no budget, no tool restrictions, no skills) unless I say otherwise. Then call create_agent with confirm:true so I can review the card before it is created.',
   'rail.teamOpenFailed': 'Could not open the agent’s home chat',
 
   // ---- AgentCard.jsx ----
@@ -37,6 +37,7 @@ export const strings = {
   'agent.card.skills': 'Skills (shared)',
   'agent.card.noSkills': 'No skills on this host yet.',
   'agent.card.confirm': 'Create agent',
+  'agent.card.advanced': 'Advanced settings',
   'agent.card.cancel': 'Cancel',
   'agent.card.creating': 'Creating…',
   'agent.card.createdLine': '{name} is on the team — sessions can now be born from it.',

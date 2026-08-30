@@ -14,7 +14,7 @@ import { relTime } from '../lib/time.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { Wave } from './ui.jsx';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
-import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
 const TABS = ['persona', 'memory', 'activity', 'connections', 'routine'];
 const ICONS = { persona: faIdBadge, memory: faBrain, activity: faListCheck, connections: faLink, routine: faClock };
@@ -33,6 +33,8 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
     skills: agent.skills || [], tools: agent.tools || [], budget: agent.budget?.tokensPerDay ? String(agent.budget.tokensPerDay) : '',
   });
   const [busy, setBusy] = useState(false);
+  // Advanced (model/budget/tools/skills) opens only when something is already set there.
+  const [advanced, setAdvanced] = useState(!!(agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length));
   useEffect(() => { api.get('/skills').then((r) => setSkillNames((r?.skills || []).map((s) => s.name))).catch(() => {}); }, []);
   const set = (k) => (e) => setForm((c) => ({ ...c, [k]: e.target.value }));
   const toggle = (k, v) => setForm((c) => ({ ...c, [k]: c[k].includes(v) ? c[k].filter((x) => x !== v) : [...c[k], v] }));
@@ -65,6 +67,18 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
             <div><label className={lbl}>{t('agent.card.emoji')}</label><input value={form.emoji} onChange={set('emoji')} className={`${input} text-center`} /></div>
             <div><label className={lbl}>{t('agent.card.color')}</label><input type="color" value={form.color} onChange={set('color')} className="h-[34px] w-full cursor-pointer rounded-[7px] border-[1.5px] border-border bg-panel p-0.5" /></div>
           </div>
+        </div>
+      </section>
+      <section className="rounded-[10px] border border-hair p-3">
+        <label className={lbl}>{t('agent.card.persona')}</label>
+        <textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className={`${input} resize-y font-mono text-[11.5px] leading-relaxed`} />
+      </section>
+      <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
+        <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
+      </button>
+      {advanced && (
+      <section className="rounded-[10px] border border-hair p-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className={lbl}>{t('agent.card.model')}</label>
             <select value={form.model} onChange={set('model')} className={input}>
@@ -94,10 +108,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome }) {
           </div>
         </div>
       </section>
-      <section className="rounded-[10px] border border-hair p-3">
-        <label className={lbl}>{t('agent.card.persona')}</label>
-        <textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className={`${input} resize-y font-mono text-[11.5px] leading-relaxed`} />
-      </section>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={save} disabled={busy || !form.name.trim()} className={btnBrand}>{t('agent.page.save')}</button>
         <button type="button" onClick={onOpenHome} className={btn}><Icon icon={faComments} /> {t('agent.page.openHome')}</button>
