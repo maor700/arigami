@@ -28,6 +28,9 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
+  // UX1: AgentView embeds the home chat (ChatPane → the VNC client), whose module
+  // scope constructs a MutationObserver — SSR rendering never uses it.
+  globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
   origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => ({}), text: async () => '' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;

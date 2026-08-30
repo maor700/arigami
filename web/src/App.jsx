@@ -85,7 +85,9 @@ function parseHash(hash) {
     case 'integrations': return { view: 'settings', cat: 'connections', section: 'integrations' };
     case 'skills': return { view: 'skills' };
     case 'brain': return { view: 'brain' };
-    case 'agents': return seg[1] ? { view: 'agent', slug: decodeURIComponent(seg[1]) } : { view: 'home' };
+    // UX1: #/agents/<slug>[/<tab>] — the agent surface is deep-linkable per tab
+    // (a receipt's "open home" lands straight on the בית tab).
+    case 'agents': return seg[1] ? { view: 'agent', slug: decodeURIComponent(seg[1]), tab: seg[2] ? decodeURIComponent(seg[2]) : '' } : { view: 'home' };
     case 'setup': return { view: 'setup' };
     case 'wizard': return { view: 'home', wizard: true };
     case 'new':
@@ -100,7 +102,7 @@ function routeFromState(s) {
   if (s.settingsOpen) return `#/settings/${s.settingsCat || 'appearance'}${s.settingsSection ? `/${s.settingsSection}` : ''}`;
   if (s.skillsOpen) return '#/skills';
   if (s.brainOpen) return '#/brain';
-  if (s.agentOpen) return `#/agents/${encodeURIComponent(s.agentOpen)}`;
+  if (s.agentOpen) return `#/agents/${encodeURIComponent(s.agentOpen)}${s.agentTab && s.agentTab !== 'home' ? `/${encodeURIComponent(s.agentTab)}` : ''}`;
   if (s.setupOpen) return '#/setup';
   if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
   if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
@@ -225,6 +227,7 @@ function Cockpit() {
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
   const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
   const [agentOpen, setAgentOpen] = useState(initial.view === 'agent' ? initial.slug : null); // A1: #/agents/<slug>
+  const [agentTab, setAgentTab] = useState(initial.view === 'agent' ? initial.tab || 'home' : 'home'); // UX1: which tab of the agent surface
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
   // B3: first-run wizard. null = not decided yet (we ask the host once after
   // login); true = show it full-pane; false = dismissed / done for this tab.
@@ -260,8 +263,11 @@ function Cockpit() {
   // Order matches the rail's flat list (drag-to-reorder sets sortOrder), so
   // ⌘1–9, ⌘⇧↑/↓ prev-next, and the quick switcher all follow the visual d&d
   // order — new/unordered sessions sink to the end, keeping insertion order.
+  // UX1: an agent's home chat is not a row in that list (it is the בית tab of
+  // the agent surface), so it is not part of this order either — and, crucially,
+  // is never what the auto-selection below lands on.
   const active = sessions
-    .filter((s) => !s.archived)
+    .filter((s) => !s.archived && !s.metadata?.agentHome)
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
   const selected = sessions.find((s) => s.id === selectedId) || null;
 
@@ -272,6 +278,7 @@ function Cockpit() {
     setSkillsOpen(r.view === 'skills');
     setBrainOpen(r.view === 'brain');
     setAgentOpen(r.view === 'agent' ? r.slug : null);
+    if (r.view === 'agent') setAgentTab(r.tab || 'home');
     setSetupOpen(r.view === 'setup');
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
@@ -293,9 +300,9 @@ function Cockpit() {
   //   hash→state: a hashchange (Back/Forward, edited URL, a shared link) applies
   //   to state. Our own pushState/replaceState never fire hashchange, so no loop.
   const firstSync = useRef(true);
-  const lastRoute = useRef(routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId }));
+  const lastRoute = useRef(routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, agentTab, setupOpen, launcher, previewTicket, selectedId }));
   useEffect(() => {
-    const want = routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId });
+    const want = routeFromState({ settingsOpen, settingsCat, settingsSection, skillsOpen, brainOpen, agentOpen, agentTab, setupOpen, launcher, previewTicket, selectedId });
     const cur = '#' + (window.location.hash.replace(/^#/, '') || '/');
     // `#/session/<id>/tab/<tabId>` is SessionView's refinement of our
     // `#/session/<id>` — leave it alone so the active tab survives a refresh.
@@ -310,7 +317,7 @@ function Cockpit() {
     }
     firstSync.current = false;
     lastRoute.current = want;
-  }, [settingsOpen, settingsCat, settingsSection, settingsAdd, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket, selectedId]);
+  }, [settingsOpen, settingsCat, settingsSection, settingsAdd, skillsOpen, brainOpen, agentOpen, agentTab, setupOpen, launcher, previewTicket, selectedId]);
 
   useEffect(() => {
     const onHash = () => {
@@ -628,12 +635,29 @@ function Cockpit() {
     return () => window.removeEventListener('host:select-session', onJump);
   }, [sessions]);
 
+  // UX1: the home chat is the agent surface's בית tab, not a session page. Any
+  // route that lands on one (a deep link, the quick switcher, a push, an older
+  // bookmark) is bounced to the surface — the transcript is the same, the frame
+  // is the one that says "this is a DM with the agent, not a job".
+  useEffect(() => {
+    if (!selectedId) return;
+    const s = sessions.find((x) => x.id === selectedId);
+    if (!s?.metadata?.agentHome || !s.metadata?.agent) return;
+    setSelectedId(null);
+    setAgentOpen(s.metadata.agent);
+    setAgentTab('home');
+    setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null);
+  }, [selectedId, sessions]);
+
   // A4: open an agent page from anywhere (the /team panel).
+  // UX1: `tab` picks the surface's tab — a "פתח בית" receipt opens the DM.
   useEffect(() => {
     const onOpen = (e) => {
       const slug = e.detail?.slug;
       if (!slug) return;
-      setAgentOpen(slug); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
+      setAgentOpen(slug); setAgentTab(e.detail?.tab || 'home');
+      setSelectedId(null);
+      setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setRailOpen(false);
     };
     window.addEventListener('host:open-agent', onOpen);
     return () => window.removeEventListener('host:open-agent', onOpen);
@@ -753,7 +777,7 @@ function Cockpit() {
   } else if (brainOpen) {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
   } else if (agentOpen) {
-    main = <AgentView slug={agentOpen} onClose={() => setAgentOpen(null)} onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }} />;
+    main = <AgentView slug={agentOpen} tab={agentTab} onTab={setAgentTab} onClose={() => setAgentOpen(null)} onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }} />;
   } else if (wizardOpen) {
     main = <Wizard onDone={closeWizard} onExit={closeWizard} onStart={startFirstSession} />;
   } else if (setupOpen) {
@@ -831,6 +855,7 @@ function Cockpit() {
       <Rail
         sessions={sessions}
         selectedId={selected?.id}
+        agentOpen={agentOpen}
         isDesktop={isDesktop}
         mobileOpen={railOpen}
         onClose={() => setRailOpen(false)}
@@ -854,7 +879,7 @@ function Cockpit() {
         onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAgent={(slug) => { setAgentOpen(slug); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
+        onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
         searchRef={searchRef}
         onArchive={(s) => setDialog({ type: 'archive', session: s })}
         onEdit={(s) => setDialog({ type: 'edit', session: s })}

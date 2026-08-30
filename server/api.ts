@@ -865,13 +865,32 @@ function askShareApproval(id: string, a: agents.AgentView, artifactId: string, t
   return action;
 }
 
+/** Every session stamped as this agent's home, oldest first (archived included). */
+function homeSessionsOf(slug: string) {
+  return state
+    .listSessions({ archived: true })
+    .filter((s) => s.metadata?.agentHome && s.metadata?.agent === slug)
+    .sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
+}
+
 /**
  * Get-or-create an agent's home chat: one long-lived, worktree-less session for
  * DMs (an archived home is restored). A NEW home is a new session of the agent
  * — refused (429) while its daily budget is spent (A3).
+ *
+ * UX1 — **one home per agent, enforced**: a home the agent record lost track of
+ * (an older build, a restored backup) is adopted rather than re-created, and any
+ * extra home is demoted to an ordinary work session — its transcript, ledger and
+ * id all stay, it just stops being "the" home.
  */
 function ensureHomeSession(a: agents.AgentView): { session: NonNullable<ReturnType<typeof state.getSession>>; created: boolean } {
+  const homes = homeSessionsOf(a.slug);
   let s = a.homeSessionId ? state.getSession(a.homeSessionId) : null;
+  if (!s) s = homes[0] || null;
+  for (const extra of homes) {
+    if (extra.id !== s?.id) state.patchSession(extra.id, { metadata: { ...extra.metadata, agentHome: false } });
+  }
+  if (s && a.homeSessionId !== s.id) agents.updateAgent(a.slug, { homeSessionId: s.id });
   let created = false;
   if (s && s.archived) state.patchSession(s.id, { archived: false });
   if (!s) {
@@ -1037,8 +1056,17 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
       .filter((f) => f.scope === 'episode' && [...ids].some((id) => f.path.includes(id)))
       .map((f) => ({ ...f, sessionId: [...ids].find((id) => f.path.includes(id)) || null }))
       .sort((x, y) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
+    // UX1: the "runs" tab lists the agent's sessions with their state AND cost —
+    // per-session totals come from the WHOLE ledger, not the selected range, so a
+    // run started last month still shows what it cost.
+    const perSession = ledger.perSession(ledger.readActivity(slug, { kinds: ['turn'] }));
     const sessions = mine
-      .map((s) => ({ ...Object.fromEntries(AGENT_WIRE_KEYS.map((k) => [k, (s as any)[k]])), claudeState: s.claude?.state || 'idle', home: s.id === a.homeSessionId }))
+      .map((s) => ({
+        ...Object.fromEntries(AGENT_WIRE_KEYS.map((k) => [k, (s as any)[k]])),
+        claudeState: s.claude?.state || 'idle',
+        home: s.id === a.homeSessionId,
+        ...(perSession[s.id] || { tokens: 0, costUsd: 0, turns: 0 }),
+      }))
       .sort((x: any, y: any) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
     // A3: the ledger (activity.jsonl) for the range — today / 7d / 30d — newest first, with totals + the budget line.
     const range = ['today', '7d', '30d'].includes(String(u.searchParams.get('range'))) ? String(u.searchParams.get('range')) : 'today';
@@ -1653,11 +1681,14 @@ export function applyAgentToSession<T extends { title?: string; model?: string; 
     err.budget = { ...b, name: agent.name };
     throw err;
   }
+  // UX1: `agentHome` is minted by ensureHomeSession alone — a caller asking for
+  // one would get a session that no longer shows in the rail.
+  const { agentHome: _home, ...meta } = (opts.metadata || {}) as Record<string, unknown>;
   return {
     ...opts,
     model: opts.model || agent.model || undefined,
     title: opts.title || agent.name,
-    metadata: { ...(opts.metadata || {}), agent: agent.slug },
+    metadata: { ...meta, agent: agent.slug },
     color: agent.color,
   };
 }
@@ -4112,6 +4143,12 @@ export async function handle(
           return json(res, caps.needsSetup(`repo:${hit ? hit.name : path.basename(want)}`, `open a session in ${body.cwd}`));
         }
       }
+      // UX1: only ensureHomeSession mints an agent home — a client-supplied
+      // `agentHome` would hide the session from the Sessions section for good.
+      if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
+        const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
+        body.metadata = rest;
+      }
       // A1: born from an agent — inherit its model (unless overridden), its
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
@@ -4208,6 +4245,12 @@ export async function handle(
             const port = allocatePort();
             if (port) body.metadata.port = port;
           }
+        }
+        // UX1: `agentHome` is minted by ensureHomeSession alone — set_metadata
+        // must not be able to hide a session from the Sessions section.
+        if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
+          const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
+          body.metadata = rest;
         }
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {

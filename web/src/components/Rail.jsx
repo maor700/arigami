@@ -14,7 +14,8 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
-import { untilTime } from './RoutineList.jsx';
+import { openAgent } from './DelegatedLine.jsx';
+import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
@@ -34,6 +35,7 @@ import {
   faFolderTree,
   faGear,
   faGripVertical,
+  faListCheck,
   faPause,
   faPen,
   faPlay,
@@ -374,6 +376,11 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
             className="mt-px mb-[3px] block text-xs text-fgdim"
           />
         )}
+        {/* The subline carries three things now, in the order you scan them:
+            RES1's health dot, then the status + time (which may clip), then
+            UX1's agent button. The button is a click target, so it sits outside
+            the truncating span — the time is what gives way on a narrow rail,
+            not "whose job this is". */}
         <span className="flex items-center gap-1.5 text-[10.5px] text-fgdim">
           <HealthDot health={health} />
           <span className="min-w-0 truncate">
@@ -381,6 +388,20 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               .filter(Boolean)
               .join(' · ')}
           </span>
+          {/* UX1: born from an agent — the row wears its face AND says whose job
+              this is, so a work session never reads as "the agent itself". */}
+          {agent && (
+            <button
+              type="button"
+              data-row-agent={agent.slug}
+              title={t('session.bornFromTitle', { name: agent.name })}
+              onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
+              className="shrink-0 cursor-pointer font-mono text-[10px] hover:underline"
+              style={{ color: agent.color || undefined }}
+            >
+              · {agent.name}
+            </button>
+          )}
         </span>
         {session.metadata?.description && (
           <Truncate
@@ -445,20 +466,16 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
 }
 
 // A1 — the "צוות" (team) section: one row per agent, BELOW folders/free
-// sessions and above the archived group. Click → the agent's home chat
-// (get-or-create); ⋯ → the agent page. Status: working when any live session
-// born from the agent is mid-turn, else its active-session count / idle.
+// sessions and above the archived group. Status: working when any live session
+// born from the agent is mid-turn, else its WORK-session count / idle.
 // A2: an idle agent with an enabled cron job shows its NEXT run instead
 // ("⏰ in 3h"), read from the store's triggers (`agent` + `nextRunAt`).
-export function nextCronFor(slug, triggers) {
-  let next = null;
-  for (const x of triggers || []) {
-    if (x.type !== 'cron' || x.agent !== slug || !x.enabled || !x.nextRunAt) continue;
-    if (next === null || x.nextRunAt < next) next = x.nextRunAt;
-  }
-  return next;
-}
-export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent, onNewAgent, selectedId, open, onToggle, menuFor, setMenuFor }) {
+// UX1: a row is a door to the agent SURFACE (#/agents/<slug>), whose בית tab is
+// the DM chat — the home chat is not a session row anymore, so "click an agent"
+// and "open a session" stopped looking like the same act. ⋯ still offers both
+// doors explicitly (בית / the persona page).
+export { nextCronFor };
+export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, menuFor, setMenuFor }) {
   const t = useT();
   const list = agents || [];
   const byAgent = new Map();
@@ -468,18 +485,10 @@ export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent,
     l.push(s);
     byAgent.set(s.metadata.agent, l);
   }
-  const openHome = async (a) => {
-    try {
-      const r = await api.get(`/agents/${encodeURIComponent(a.slug)}/home`);
-      if (r?.session?.id) onSelect(r.session.id);
-    } catch {
-      toastError(t('rail.teamOpenFailed'));
-    }
-  };
   return (
     <div data-rail-team className="mt-2">
       <div className="flex w-full items-center gap-[7px] px-1.5 pt-[9px] pb-1">
-        <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]">
+        <button type="button" onClick={onToggle} title={t('agent.oneLiner')} className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]">
           <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
           <span className="font-mono text-[9.5px] text-fgdim">{list.length}</span>
@@ -498,20 +507,26 @@ export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent,
       {open && list.length === 0 && (
         <div className="px-2 py-1.5 text-[10px] text-fgdim italic">{t('rail.teamEmpty')}</div>
       )}
+      {open && list.length > 0 && (
+        <div className="px-2 pb-1 text-[9.5px] leading-tight text-fgdim italic">{t('agent.oneLiner')}</div>
+      )}
       {open &&
         list.map((a) => {
           const mine = byAgent.get(a.slug) || [];
           const working = mine.some((s) => s.claude?.state === 'working');
-          const nextCron = mine.length === 0 ? nextCronFor(a.slug, triggers) : null;
-          const homeSelected = !!a.homeSessionId && a.homeSessionId === selectedId;
+          // UX1: the count is WORK sessions — the home chat is the agent, not a job it is doing.
+          const runs = mine.filter((s) => !s.metadata?.agentHome);
+          const nextCron = runs.length === 0 ? nextCronFor(a.slug, triggers) : null;
+          const surfaceOpen = agentOpen === a.slug;
           const menuOpen = menuFor === `agent:${a.slug}`;
           return (
             <div
               key={a.slug}
               data-rail-agent={a.slug}
-              onClick={() => openHome(a)}
+              onClick={() => onOpenAgent?.(a.slug, 'home')}
+              title={t('agent.oneLiner')}
               className="group relative mb-0.5 flex cursor-pointer items-center gap-[9px] rounded-[7px] p-2"
-              style={{ background: homeSelected ? tint(a.color) : undefined, borderLeft: `4px solid ${homeSelected ? a.color : 'transparent'}` }}
+              style={{ background: surfaceOpen ? tint(a.color) : undefined, borderLeft: `4px solid ${surfaceOpen ? a.color : 'transparent'}` }}
             >
               <AgentAvatar agent={a} size={20} />
               <span className="min-w-0 flex-1">
@@ -524,8 +539,8 @@ export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent,
                       </span>
                     ) : (
                       <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: new Date(nextCron).toLocaleString() }) } : {})}>
-                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: mine.length ? a.color : nextCron ? a.color : '#c4c4c4', opacity: mine.length ? 1 : nextCron ? 0.55 : 1 }} />
-                        {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : mine.length === 0 ? t('rail.teamIdle') : mine.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: mine.length })}
+                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
+                        {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
                       </span>
                     )}
                   </span>
@@ -544,10 +559,13 @@ export function TeamSection({ agents, sessions, triggers, onSelect, onOpenAgent,
               </button>
               {menuOpen && (
                 <div onClick={(e) => e.stopPropagation()} className="absolute end-1 top-8 z-20 min-w-[150px] rounded-[8px] border border-border bg-panel p-1 shadow-[3px_3px_0_#2a2a2a]">
-                  <button type="button" onClick={() => { setMenuFor(null); openHome(a); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
+                  <button type="button" data-agent-menu-home onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'home'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
                     <span className="w-4 text-center text-fgdim"><Icon icon={faPlay} /></span> {t('rail.teamHomeChat')}
                   </button>
-                  <button type="button" onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
+                  <button type="button" data-agent-menu-runs onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'runs'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
+                    <span className="w-4 text-center text-fgdim"><Icon icon={faListCheck} /></span> {t('agent.page.tab.runs')}
+                  </button>
+                  <button type="button" onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'persona'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
                     <span className="w-4 text-center text-fgdim"><Icon icon={faUserAstronaut} /></span> {t('rail.teamOpenPage')}
                   </button>
                 </div>
@@ -1183,6 +1201,7 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
 export default function Rail({
   sessions,
   selectedId,
+  agentOpen,
   onSelect,
   onNew,
   onOpenSettings,
@@ -1271,8 +1290,19 @@ export default function Rail({
     window.addEventListener('mouseup', onUp);
   }, []);
 
-  const active = sessions.filter((s) => !s.archived && matches(s, q));
-  const archived = sessions.filter((s) => s.archived && matches(s, q));
+  // UX1: the rail marks WHAT IS ON SCREEN. While an agent surface is open, the
+  // selected thing is the AGENT — keeping the session row highlighted as well
+  // lit up two rows at once and read as "both are open".
+  const selectedRow = agentOpen ? null : selectedId;
+  // UX1: an agent's home chat is the בית tab of its agent surface, not a row
+  // here. It stays in the API, resumable and counted in the agent's ledger — it
+  // just stops competing with the work sessions for the same list. Everything
+  // below (search, folders, drag, archived) works off the filtered view; the
+  // Team section still gets the FULL list so an agent that is mid-turn in its
+  // home chat still reads as "working".
+  const workSessions = sessions.filter((s) => !s.metadata?.agentHome);
+  const active = workSessions.filter((s) => !s.archived && matches(s, q));
+  const archived = workSessions.filter((s) => s.archived && matches(s, q));
 
   let sections = [];
   if (mode === 'grouped') {
@@ -1292,7 +1322,7 @@ export default function Rail({
   // active sessions (not the search-filtered view) so drops/menu moves always
   // operate on the full model.
   const bySort = (a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9);
-  const allActive = sessions.filter((s) => !s.archived);
+  const allActive = workSessions.filter((s) => !s.archived);
   const folderById = new Map((folders || []).map((f) => [f.id, f]));
   const folderKids = new Map();
   const freeActive = [];
@@ -1537,7 +1567,7 @@ export default function Rail({
 
   const rowProps = (s) => ({
     session: s,
-    selected: s.id === selectedId,
+    selected: s.id === selectedRow,
     onSelect,
     menuOpen: menuFor === s.id,
     setMenuFor,
@@ -1773,7 +1803,7 @@ export default function Rail({
                       folder={entry.folder}
                       kids={kids}
                       controller={controller}
-                      selectedId={selectedId}
+                      selectedId={selectedRow}
                       onSelect={onSelect}
                       watchFor={watchFor}
                       over={sOver?.id === entry.id ? sOver : null}
@@ -1840,8 +1870,7 @@ export default function Rail({
             agents={agents}
             sessions={sessions}
             triggers={triggers}
-            selectedId={selectedId}
-            onSelect={onSelect}
+            agentOpen={agentOpen}
             onOpenAgent={onOpenAgent}
             open={teamOpen}
             onToggle={() => setTeamOpen((v) => !v)}
