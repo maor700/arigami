@@ -16,6 +16,17 @@ if (process.env.FAKE_CLAUDE_MODE === 'fail-envelope') {
   process.stdout.write(JSON.stringify({ is_error: true, result: process.env.FAKE_CLAUDE_RESULT || 'Not logged in · Please run /login' }));
   process.exit(1);
 }
+// F3 #7: fail with the revoked-token envelope on the FIRST call only (a marker
+// file records that it happened), succeed on the retry — so a test can prove
+// "refresh once, retry once with the new token".
+if (process.env.FAKE_CLAUDE_FAIL_ONCE_FILE) {
+  const fs = require('node:fs');
+  if (!fs.existsSync(process.env.FAKE_CLAUDE_FAIL_ONCE_FILE)) {
+    fs.writeFileSync(process.env.FAKE_CLAUDE_FAIL_ONCE_FILE, process.env.CLAUDE_CODE_OAUTH_TOKEN || '');
+    process.stdout.write(JSON.stringify({ is_error: true, result: 'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth access token has been revoked"}}' }));
+    process.exit(1);
+  }
+}
 const payload = {
   token: process.env.CLAUDE_CODE_OAUTH_TOKEN || null,
   apiKey: process.env.ANTHROPIC_API_KEY || null,

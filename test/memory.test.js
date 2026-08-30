@@ -135,7 +135,7 @@ test('getMemoryFile refuses path traversal outside the memory dir', () => {
   const dir = tmp();
   const r = runInChild(
     "const m=await import('./server/memory.ts');" +
-      "const ok=m.getMemoryFile('USER.md');" +
+      "const ok=m.getMemoryFile('journal/none.md');" +
       "const bad1=m.getMemoryFile('../../etc/passwd');" +
       "const bad2=m.getMemoryFile('/etc/passwd');" + // leading slash stripped → sandboxed under MEMORY_DIR, not escaped
       'emit({okErr:ok.error,bad1Err:bad1.error,bad2Err:bad2.error});',
@@ -143,7 +143,7 @@ test('getMemoryFile refuses path traversal outside the memory dir', () => {
   );
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
-  expect(o.okErr).toBe('no such file'); // valid path, just doesn't exist yet
+  expect(o.okErr).toBe('no such file'); // valid path, just doesn't exist yet (USER.md/MEMORY.md read as empty — F3 #4)
   expect(o.bad1Err).toBe('invalid path'); // '../' would escape MEMORY_DIR — refused
   expect(o.bad2Err).toBe('no such file'); // absolute path treated as relative, stays sandboxed, just doesn't exist
 });
@@ -338,4 +338,21 @@ test('every write is recorded in the append-only log with before/after, newest f
   expect(o.seqs).toEqual([2, 1]); // newest first
   expect(o.lastAfter).toMatch(/fact B/);
   expect(o.firstBefore).toBe('');
+});
+
+// F3 #4: a fresh instance has no USER.md / MEMORY.md yet — the Brain UI asks
+// for them on open, so they read as EMPTY docs (200), not 404 console errors.
+test('getMemoryFile on a fresh instance: USER.md/MEMORY.md → empty content (no error); other missing paths still error', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const m=await import('./server/memory.ts');" +
+      "emit({user:m.getMemoryFile('USER.md'),mem:m.getMemoryFile('MEMORY.md'),other:m.getMemoryFile('journal/2020-01-01.md'),esc:m.getMemoryFile('../state.json')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.user).toEqual({ path: 'USER.md', content: '' });
+  expect(o.mem).toEqual({ path: 'MEMORY.md', content: '' });
+  expect(o.other).toEqual({ error: 'no such file' });
+  expect(o.esc).toEqual({ error: 'invalid path' });
 });

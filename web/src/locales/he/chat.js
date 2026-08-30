@@ -73,6 +73,7 @@ export const strings = {
   'chat.dismissNoneTitle': 'התעלם — אף אחת מאלה',
   'chat.dismiss': 'התעלם',
   'chat.showEarlier': 'הצג קודמים ({n} מוסתרים)',
+  'chat.loadEarlier': 'טען הודעות קודמות',
   'chat.loadingTranscript': 'טוען תמליל…',
   'chat.noMessages': 'אין הודעות עדיין — כתוב משהו למטה.',
   'chat.working': 'עובד…',

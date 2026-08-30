@@ -45,6 +45,12 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --- now running as `node` ---
+# Hard guard (F3 #3): never run the host as root, whatever went wrong above —
+# Claude Code refuses bypassPermissions at uid 0 and every session would fail.
+if [ "$(id -u)" = "0" ]; then
+  echo "entrypoint: refusing to run the host as root (gosu drop failed)" >&2
+  exit 1
+fi
 
 # Trust the worktrees the agent creates.
 git config --global --add safe.directory '*' || true

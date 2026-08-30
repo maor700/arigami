@@ -15,7 +15,7 @@
 // per-session assignment (there is no session).
 import { spawn } from 'node:child_process';
 import { supervise, killTree } from './children.js';
-import { tokenForSession, getActiveId } from '../accounts.js';
+import { tokenForSession, getActiveId, getAccount } from '../accounts.js';
 import { cfg } from './config.js';
 import { auth } from '../auth.js';
 
@@ -24,7 +24,13 @@ function baseEnv(): NodeJS.ProcessEnv {
   return rest;
 }
 
-function accountEnv(): NodeJS.ProcessEnv {
+// Resolved AT CALL TIME (never cached across runs): the active account may be
+// switched, or its token refreshed by the oauth refresher, between two one-shots
+// — a token captured once at boot would go stale (F3 #7: "OAuth access token
+// has been revoked" from the episode hook right after a restart).
+function accountEnv(opts: OneShotOptions): NodeJS.ProcessEnv {
+  if (opts.apiKey) return { ANTHROPIC_API_KEY: opts.apiKey };
+  if (opts.token) return { CLAUDE_CODE_OAUTH_TOKEN: opts.token };
   try {
     const r = tokenForSession(getActiveId());
     return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
@@ -33,11 +39,38 @@ function accountEnv(): NodeJS.ProcessEnv {
   }
 }
 
+// What `claude -p` says when its bearer token is dead. Matched on the
+// --output-format json envelope's `.result` (plus stderr) of a failed run.
+const AUTH_FAILURE = /\b401\b|revoked|expired|invalid.?(?:token|grant)|not logged in|authentication.?(?:failed|error)|unauthori[sz]ed/i;
+export function isAuthFailure(reason: string): boolean {
+  return AUTH_FAILURE.test(reason || '');
+}
+
+// Try to renew the active account's access token (oauth-login accounts carry a
+// refresh token). Returns true when a NEW token is now stored — the caller
+// re-resolves it via accountEnv() on the retry.
+async function refreshActiveToken(): Promise<boolean> {
+  try {
+    const a = getAccount(getActiveId());
+    if (!a || a.type !== 'oauth-token' || !a.refreshToken) return false;
+    const o = await import('../oauth-login.js');
+    return !!(await (o as any).refreshOne(a.id));
+  } catch {
+    return false;
+  }
+}
+
 export interface OneShotOptions {
   model?: string; // default: 'sonnet'
   cwd?: string; // default: process.cwd()
   timeoutMs?: number; // default: 3 minutes
   tag?: string; // supervise() tag for the children.json record — default 'oneshot'
+  // Explicit credential for THIS run instead of the active account (used to
+  // verify a pasted token before it becomes an account — onboarding.ts).
+  token?: string;
+  apiKey?: string;
+  // Internal: set on the retry after a token refresh so we don't loop.
+  _retried?: boolean;
 }
 
 const STDERR_CAP = 20_000; // generous — this is for full diagnostic logging, not a UI-facing string
@@ -48,7 +81,24 @@ const STDERR_CAP = 20_000; // generous — this is for full diagnostic logging, 
 // wasn't that envelope). Rejects on a non-zero exit — the full stderr is always
 // logged via console.error first (not just a truncated snippet in the Error),
 // since auth/config failures like this one are otherwise invisible.
-export function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}): Promise<string> {
+//
+// F3 #7: when the run fails with an auth error (revoked/expired token — e.g.
+// the episode hook fired before the boot-time token refresh finished) and the
+// active account has a refresh token, refresh it once and retry once with the
+// freshly resolved token. Explicit `opts.token`/`opts.apiKey` runs never retry.
+export async function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}): Promise<string> {
+  try {
+    return await runOnce(prompt, opts);
+  } catch (e: any) {
+    const explicit = !!(opts.token || opts.apiKey);
+    if (opts._retried || explicit || !isAuthFailure(String(e?.message || ''))) throw e;
+    if (!(await refreshActiveToken())) throw e;
+    console.warn('[oneshot] auth failure — token refreshed, retrying once');
+    return runOnce(prompt, { ...opts, _retried: true });
+  }
+}
+
+function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
   const bin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
   const args = ['-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'json'];
   args.push('--model', opts.model || 'sonnet');
@@ -57,7 +107,7 @@ export function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}): Pro
       cwd: opts.cwd || process.cwd(),
       env: {
         ...baseEnv(),
-        ...accountEnv(),
+        ...accountEnv(opts),
         // C1: a one-shot has no session, so it gets the host-scoped internal
         // token — its MCP/curl calls back into the host still authenticate.
         ARIGAMI_URL: cfg.hostBase,

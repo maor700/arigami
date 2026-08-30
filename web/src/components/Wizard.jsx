@@ -136,12 +136,14 @@ function ClaudeStep({ step, refresh }) {
     setBusy(true);
     setErr(null);
     try {
+      // F3 #2: the server verifies the token with a real `claude -p` probe
+      // before storing it — a rejected token comes back as a 400 with the reason.
       await api.post('/onboarding/wizard/claude', { action: 'token', token: token.trim(), label: 'wizard' });
       setToken('');
       setMode(null);
       await refresh();
     } catch (e) {
-      setErr(e.message);
+      setErr(String(e.message || e).replace(/^HTTP \d+ — /, ''));
     } finally {
       setBusy(false);
     }
