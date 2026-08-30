@@ -861,11 +861,12 @@ function PushNotifications() {
 // (server/host-control.ts). Progress arrives as `host` bus events (store.js →
 // state.hostEvent); the reconnect after the restart is what ws.onclose/onopen
 // already do — we just toast "back" on the down→open transition.
-function hostPost(path, method = 'POST') {
+function hostPost(path, method = 'POST', body) {
+  const raw = body instanceof Blob;
   return fetch(`/__api${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Arigami-Confirm': 'yes' },
-    body: method === 'POST' ? '{}' : undefined,
+    headers: { 'Content-Type': raw ? 'application/gzip' : 'application/json', 'X-Arigami-Confirm': 'yes' },
+    body: method === 'POST' ? (raw ? body : JSON.stringify(body ?? {})) : undefined,
   }).then(async (r) => {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -884,6 +885,100 @@ function fmtUptime(sec) {
   if (m < 90) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d`;
+}
+
+// B4-full — Settings → Host → Export / Import (server/backup.ts). Export is a
+// plain download of GET /__api/host/export?mode=full|bundle (admin cookie);
+// import POSTs the chosen .tgz as a raw body. A full restore ends in a host
+// restart (same reconnect/toast path as the Restart buttons above).
+function BackupField({ disabled, onRestarting, reload }) {
+  const t = useT();
+  const [exporting, setExporting] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [force, setForce] = useState(false);
+  const fileRef = useRef(null);
+  const btn = 'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
+
+  const download = async (mode) => {
+    setExporting(mode);
+    try {
+      const r = await fetch(`/__api/host/export?mode=${mode}`);
+      if (!r.ok) {
+        const b = await r.json().catch(() => ({}));
+        throw new Error(b?.error || `HTTP ${r.status}`);
+      }
+      const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `arigami-${mode}.tgz`;
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) {
+      toastError(e?.message || String(e));
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const onFile = async (ev) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    const ok = await confirmDialog({
+      title: t('host.confirmImport.title'),
+      body: t('host.confirmImport.body', { file: file.name }),
+      confirmLabel: t('host.confirmImport.ok'),
+    });
+    if (!ok) return;
+    setImporting(true);
+    try {
+      const r = await hostPost(`/host/import${force ? '?force=1' : ''}`, 'POST', file);
+      if (r.kind === 'bundle') {
+        toast(t('host.importDoneBundle', { name: r.name, repos: r.repos?.length || 0, skills: r.skills?.length || 0, cron: r.cron?.length || 0 }));
+      } else if (r.restart) {
+        onRestarting?.();
+        toast(t('host.importDoneFull', { version: r.manifest?.version || '?', bak: r.backupDir || '—' }));
+      } else {
+        toast(t('host.importDoneFullNoRestart', { bak: r.backupDir || '—' }));
+      }
+      reload?.();
+    } catch (e) {
+      if (e?.status === 409 && /working/.test(e.message)) toastError(t('host.err.busy'));
+      else if (e?.status === 409 && /newer/.test(e.message)) toastError(t('host.err.newer'));
+      else if (e?.status === 403) toastError(t('host.err.forbidden'));
+      else toastError(e?.message || String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const off = disabled || importing || !!exporting;
+  return (
+    <Field label={t('host.backup')} hint={t('host.backup.hint')}>
+      <div className="flex flex-col items-end gap-1.5">
+        <span className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" disabled={off} onClick={() => download('full')} className={btn}>
+            {exporting === 'full' ? t('host.exporting') : t('host.exportFull')}
+          </button>
+          <button type="button" disabled={off} onClick={() => download('bundle')} className={btn}>
+            {exporting === 'bundle' ? t('host.exporting') : t('host.exportBundle')}
+          </button>
+          <button type="button" disabled={off} onClick={() => fileRef.current?.click()} className={btn}>
+            {importing ? t('host.importing') : t('host.import')}
+          </button>
+          <input ref={fileRef} type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" className="hidden" onChange={onFile} />
+        </span>
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={off} />
+          {t('host.importForce')}
+        </label>
+      </div>
+    </Field>
+  );
 }
 
 function HostCard() {
@@ -1036,6 +1131,7 @@ function HostCard() {
           )}
         </div>
       </Field>
+      <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} />
       {showLog && (log.length > 0 || upg?.log?.length > 0) && (
         <pre dir="ltr" className="thin-scroll mb-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">
           {(log.length ? log : upg.log).join('\n')}

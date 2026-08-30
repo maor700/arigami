@@ -183,3 +183,7 @@ Copy `profiles/bundles/solo-dev/`, change `profile.json.name`, add skills
 ```sh
 bin/host profile validate ./my-bundle
 ```
+
+## 4. Backup, restore, migration
+
+See [docs/BACKUP.md](BACKUP.md): `bin/host export --full|--bundle`, `bin/host import`, Settings → Host → Export / Import, and the laptop → VPS → Docker recipes.
