@@ -17,6 +17,7 @@ import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
 import * as caps from './capabilities.js';
+import * as agents from './agents.js';
 import {
   changesFor,
   changeDiff,
@@ -723,6 +724,139 @@ function resolveSetupsFor(capability: string, detail: string, human = true): num
     n++;
   }
   return n;
+}
+
+// ---- A1 agents ("צוות") ----------------------------------------------------------
+
+/**
+ * The {kind:'agent-card'} chat card (like SetupCard/MergeCard): create_agent /
+ * update_agent from a session render one. `confirm:true` (the default for
+ * create) posts a PENDING card with the draft — the human edits + confirms in
+ * the chat (POST /__api/agents with cardId) or cancels; nothing is written
+ * until then. Otherwise the change is applied at once and the card shows it.
+ */
+function handleAgentCard(res: ServerResponse, body: Record<string, unknown>): void {
+  const sessionId = String(body.session_id || '');
+  if (!sessionId || !state.getSession(sessionId)) return badRequest(res, `unknown session_id: ${sessionId}`);
+  const action = body.action === 'update' ? 'update' : 'create';
+  const draft = (body.draft && typeof body.draft === 'object' ? body.draft : {}) as agents.AgentInput;
+  const cardId = 'agc_' + nano();
+  if (action === 'update') {
+    const slug = String(body.slug || '');
+    const r = agents.updateAgent(slug, draft);
+    if (!r.ok) return json(res, { ok: false, error: r.error }, r.status || 400);
+    claude.appendChat(sessionId, { kind: 'agent-card', cardId, action, state: 'updated', agent: r.agent, patch: Object.keys(draft) });
+    return json(res, { ok: true, cardId, state: 'updated', agent: r.agent });
+  }
+  const confirm = body.confirm !== false;
+  if (confirm) {
+    // Validate what we can up front so the card never opens on a hopeless draft.
+    const name = String(draft.name || '').trim();
+    if (!name) return badRequest(res, 'name required');
+    const slug = String(draft.slug || agents.slugify(name));
+    if (!agents.SLUG_RE.test(slug)) return badRequest(res, `invalid slug "${slug}" — pass an explicit lowercase slug for non-Latin names`);
+    if (agents.getAgent(slug)) return json(res, { ok: false, error: `agent "${slug}" already exists — use update_agent` }, 409);
+    claude.appendChat(sessionId, { kind: 'agent-card', cardId, action, state: 'pending', draft: { ...draft, slug, name } });
+    return json(res, {
+      card: true, cardId, state: 'pending', slug,
+      hint: 'The human sees an Agent card in the chat and can edit + confirm or cancel it; you get a message when they decide. Do not create it again meanwhile.',
+    });
+  }
+  const r = agents.createAgent(draft);
+  if (!r.ok) return json(res, { ok: false, error: r.error }, r.status || 400);
+  claude.appendChat(sessionId, { kind: 'agent-card', cardId, action, state: 'created', agent: r.agent });
+  return json(res, { ok: true, cardId, state: 'created', agent: r.agent });
+}
+
+/** Close a pending agent card in the chat (+ tell the session what the human decided). */
+function settleAgentCard(sessionId: string, cardId: string, patch: Record<string, unknown>, note: string): void {
+  if (!sessionId || !cardId || !state.getSession(sessionId)) return;
+  claude.appendChat(sessionId, { kind: 'agent-card-update', cardId, ...patch });
+  try {
+    claude.sendMessage(sessionId, note);
+  } catch (e) {
+    console.error('[agents] card note failed:', (e as Error).message);
+  }
+}
+
+const AGENT_WIRE_KEYS = ['id', 'title', 'status', 'archived', 'createdAt', 'updatedAt', 'color'] as const;
+
+async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p: string, m: string): Promise<void> {
+  if (p === '/__api/agents' && m === 'GET') return json(res, { agents: agents.listAgentViews() });
+  if (p === '/__api/agents' && m === 'POST') {
+    const body = (await readBody(req)) as any;
+    const { cardId, sessionId, ...input } = body || {};
+    const r = agents.createAgent(input);
+    if (!r.ok) {
+      if (cardId && sessionId && state.getSession(String(sessionId)))
+        claude.appendChat(String(sessionId), { kind: 'agent-card-update', cardId, state: 'pending', error: r.error });
+      return json(res, { ok: false, error: r.error }, r.status || 400);
+    }
+    if (cardId && sessionId)
+      settleAgentCard(String(sessionId), String(cardId), { state: 'created', agent: r.agent, error: null },
+        `[host] The human confirmed the Agent card: "${r.agent.name}" ${r.agent.emoji} (slug: ${r.agent.slug}) now exists. ` +
+        `Start it with create_session({agent:"${r.agent.slug}", prompt}) or open its home chat (GET /__api/agents/${r.agent.slug}/home).`);
+    return json(res, r.agent, 201);
+  }
+  const cm = /^\/__api\/agents\/cards\/(agc_[A-Za-z0-9]+)\/cancel$/.exec(p);
+  if (cm && m === 'POST') {
+    const body = (await readBody(req)) as any;
+    settleAgentCard(String(body.sessionId || ''), cm[1], { state: 'cancelled' }, '[host] The human cancelled the Agent card — do not create the agent.');
+    return json(res, { ok: true });
+  }
+  const am = /^\/__api\/agents\/([a-z0-9][a-z0-9-]{0,39})(?:\/(home|activity))?$/.exec(p);
+  if (!am) return notFound(res);
+  const slug = am[1];
+  const sub = am[2];
+  const a = agents.getAgent(slug);
+  if (!a) return notFound(res, `unknown agent: ${slug}`);
+  if (!sub && m === 'GET') return json(res, a);
+  if (!sub && m === 'PATCH') {
+    const body = (await readBody(req)) as any;
+    const { homeSessionId: _h, slug: _s, createdAt: _c, ...patch } = body || {};
+    const r = agents.updateAgent(slug, patch);
+    return r.ok ? json(res, r.agent) : json(res, { ok: false, error: r.error }, r.status || 400);
+  }
+  if (!sub && m === 'DELETE') {
+    // The agent's sessions stay (they just lose the badge); its dir (memory, persona) is removed.
+    const r = agents.deleteAgent(slug);
+    return r.ok ? json(res, { ok: true }) : badRequest(res, r.error || 'delete failed');
+  }
+  if (sub === 'home' && m === 'GET') {
+    // Get-or-create the agent's home chat: one long-lived, worktree-less session for DMs.
+    let s = a.homeSessionId ? state.getSession(a.homeSessionId) : null;
+    let created = false;
+    if (s && s.archived) state.patchSession(s.id, { archived: false });
+    if (!s) {
+      s = state.createSession({
+        title: a.name,
+        cwd: (cfg as any).reposDir || cfg.defaultCwd,
+        metadata: { agent: a.slug, agentHome: true },
+        model: a.model || null,
+        color: a.color,
+      });
+      created = true;
+      agents.updateAgent(slug, { homeSessionId: s.id });
+      spawnSafe(s.id);
+    }
+    return json(res, { session: state.toWireSession(state.getSession(s.id)!), created }, created ? 201 : 200);
+  }
+  if (sub === 'activity' && m === 'GET') {
+    // Episodes are per session; the agent's activity = episodes of its sessions.
+    const memory = await import('./memory.js');
+    const mine = state.listSessions({ archived: true }).filter((s) => s.metadata?.agent === slug);
+    const ids = new Set(mine.map((s) => s.id));
+    const episodes = memory
+      .listMemory()
+      .filter((f) => f.scope === 'episode' && [...ids].some((id) => f.path.includes(id)))
+      .map((f) => ({ ...f, sessionId: [...ids].find((id) => f.path.includes(id)) || null }))
+      .sort((x, y) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
+    const sessions = mine
+      .map((s) => ({ ...Object.fromEntries(AGENT_WIRE_KEYS.map((k) => [k, (s as any)[k]])), claudeState: s.claude?.state || 'idle', home: s.id === a.homeSessionId }))
+      .sort((x: any, y: any) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
+    return json(res, { sessions, episodes });
+  }
+  return notFound(res);
 }
 
 async function handleSetupRequest(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
@@ -2106,6 +2240,13 @@ export async function handle(
     if (p === '/__mcp/setup-report' && m === 'POST') {
       return await handleSetupReport(res, await readBody(req));
     }
+    if (p === '/__mcp/agent-card' && m === 'POST') {
+      return handleAgentCard(res, await readBody(req));
+    }
+    // ---- A1 agents ("צוות") REST (server/agents.ts) ----
+    if (p === '/__api/agents' || p.startsWith('/__api/agents/')) {
+      return await handleAgents(req, res, u, p, m || 'GET');
+    }
     // ---- S1 JIT setup REST (server/capabilities.ts) ----
     if (p.startsWith('/__api/setup/') || p === '/__api/setup') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
@@ -3287,7 +3428,8 @@ export async function handle(
     // session/worker on this instance) ------------------------------------------
     if (p === '/__api/memory' && m === 'GET') {
       const memory = await import('./memory.js');
-      return json(res, { files: memory.listMemory(), bootstrap: memory.getMemoryBootstrap() });
+      const agent = u.searchParams.get('agent') || null;
+      return json(res, { files: memory.listMemory(agent), bootstrap: memory.getMemoryBootstrap(agent) });
     }
     if (p === '/__api/memory/write' && m === 'POST') {
       const memory = await import('./memory.js');
@@ -3299,6 +3441,7 @@ export async function handle(
         old_text: body.old_text,
         source: body.source || 'agent',
         sessionId: body.sessionId,
+        agent: body.agent || null, // A1: agent namespace (host-mcp defaults it from ARIGAMI_AGENT)
       });
       return r.ok ? json(res, r) : badRequest(res, r.error || 'invalid memory write');
     }
@@ -3309,6 +3452,7 @@ export async function handle(
           query: u.searchParams.get('query') || '',
           scope: u.searchParams.get('scope') || undefined,
           limit: Number(u.searchParams.get('limit')) || undefined,
+          agent: u.searchParams.get('agent') || null,
         }),
       });
     }
@@ -3549,6 +3693,17 @@ export async function handle(
           return json(res, caps.needsSetup(`repo:${hit ? hit.name : path.basename(want)}`, `open a session in ${body.cwd}`));
         }
       }
+      // A1: born from an agent — inherit its model (unless overridden), its
+      // rail color, stamp metadata.agent; the persona + agent memory go into the
+      // first turn in claude.js. An unknown agent is refused, never ignored.
+      let agent: agents.AgentView | null = null;
+      if (body.agent !== undefined && body.agent !== null && body.agent !== '') {
+        agent = agents.getAgent(String(body.agent));
+        if (!agent) return notFound(res, `unknown agent: ${body.agent}`);
+        if (!body.model && agent.model) body.model = agent.model;
+        body.metadata = { ...(body.metadata || {}), agent: agent.slug };
+        if (!body.title) body.title = agent.name;
+      }
       const s = state.createSession({
         title: body.title,
         cwd: body.cwd,
@@ -3556,6 +3711,7 @@ export async function handle(
         metadata: body.metadata,
         model: body.model,
         effort: body.effort,
+        color: agent?.color,
       });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into

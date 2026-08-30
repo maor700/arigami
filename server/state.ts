@@ -413,6 +413,7 @@ export function createSession({
   metadata,
   model,
   effort,
+  color,
 }: {
   title?: string;
   cwd?: string;
@@ -420,6 +421,7 @@ export function createSession({
   metadata?: Record<string, unknown>;
   model?: string | null;
   effort?: string | null;
+  color?: string | null; // A1: a session born from an agent takes the agent's color
 } = {}): Session {
   funnel.firstTime('session.first'); // K5 funnel — once per instance
   // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
@@ -438,7 +440,7 @@ export function createSession({
   const session: Session = {
     id: 'sess_' + nano(),
     title: (title || '').trim() || nextScratchName(),
-    color: cfg.palette[db.colorIndex++ % cfg.palette.length],
+    color: color || cfg.palette[db.colorIndex++ % cfg.palette.length],
     status: 'In Progress',
     cwd: cwd || cfg.defaultCwd,
     archived: false,

@@ -34,6 +34,33 @@ export const LOG_FILE = path.join(MEMORY_DIR, '.log.jsonl');
 export const PENDING_FILE = path.join(MEMORY_DIR, 'pending.json');
 export const DB_FILE = path.join(MEMORY_DIR, 'memory.sqlite');
 
+// ---- agent namespaces (A1, PRD-ARIGAMI-AGENTS §2) -----------------------------
+// An agent's memory lives OUTSIDE MEMORY_DIR, at $ARIGAMI_DIR/agents/<slug>/memory/
+// (MEMORY.md + journal/), so export/import of an agent carries it along. In the
+// index and in every API it is addressed by the virtual relative path
+// `agents/<slug>/MEMORY.md` / `agents/<slug>/journal/<day>.md` with FTS scope
+// `agent:<slug>`. USER.md (facts about the human) and episodes stay shared;
+// a session born from an agent sees USER.md + its own namespace and, unless it
+// asks explicitly, nothing of the shared MEMORY.md/journal — and vice versa.
+export const AGENTS_ROOT = path.join(ARIGAMI_DIR, 'agents');
+export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export const agentScope = (slug: string): string => `agent:${slug}`;
+const AGENT_REL_RE = /^agents\/([a-z0-9][a-z0-9-]{0,39})\/(.+)$/;
+
+/** Virtual relative path → absolute file path (agent paths map into the agent dir). */
+function resolveRel(rel: string): string {
+  const m = AGENT_REL_RE.exec(rel);
+  if (m) return path.join(AGENTS_ROOT, m[1], 'memory', m[2]);
+  return path.join(MEMORY_DIR, rel);
+}
+
+function normalizeAgent(agent?: string | null): string | null {
+  const a = String(agent || '').trim();
+  if (!a) return null;
+  if (!AGENT_SLUG_RE.test(a)) throw new Error(`invalid agent slug: ${a}`);
+  return a;
+}
+
 // ~4 chars/token, same rough heuristic used elsewhere for budget guards.
 export function estimateTokens(s: string): number {
   return Math.ceil((s || '').length / 4);
@@ -58,7 +85,13 @@ function readFileSafe(p: string): string {
 
 // ---- bootstrap injection (claude.js: once, at a fresh session's first turn) ---
 
-export function getMemoryBootstrap(): { userMd: string; memoryMd: string } {
+export function getMemoryBootstrap(agent?: string | null): { userMd: string; memoryMd: string; agentMd?: string; agent?: string } {
+  const slug = normalizeAgent(agent);
+  if (slug) {
+    // A session born from an agent boots with USER.md + the AGENT's MEMORY.md —
+    // not the shared MEMORY.md (namespace isolation; memory_search reaches it on demand).
+    return { userMd: readFileSafe(USER_MD), memoryMd: '', agentMd: readFileSafe(resolveRel(`agents/${slug}/MEMORY.md`)), agent: slug };
+  }
   return { userMd: readFileSafe(USER_MD), memoryMd: readFileSafe(MEMORY_MD) };
 }
 
@@ -171,10 +204,10 @@ export function undoLog(seq: number): WriteResult {
   const entry = getLog(1e9).find((e) => e.seq === seq);
   if (!entry) return { ok: false, error: 'no such log entry' };
   ensureDirs();
-  const full = path.join(MEMORY_DIR, entry.path);
+  const full = resolveRel(entry.path);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, entry.before);
-  reindexPath(entry.target === 'journal' ? 'journal' : (entry.target as any), entry.path, entry.before);
+  reindexPath(scopeForRel(entry.path, entry.target), entry.path, entry.before);
   const logged = appendLog({
     target: entry.target,
     action: 'undo',
@@ -246,14 +279,45 @@ function rebuildIndexFromDisk(): void {
       if (content.trim()) reindexPath(scope, path.relative(MEMORY_DIR, full), content);
     }
   }
+  // Agent namespaces (agents/<slug>/memory/{MEMORY.md,journal/*.md}).
+  for (const slug of agentSlugsOnDisk()) {
+    for (const rel of agentRelPaths(slug)) {
+      const content = readFileSafe(resolveRel(rel));
+      if (content.trim()) reindexPath(agentScope(slug), rel, content);
+    }
+  }
   // stderr, not stdout: some callers (tests, `claude -p` headless runs) treat
   // stdout as a single structured payload — this is a side-channel notice.
   console.error('[memory] FTS5 index rebuilt with the trigram tokenizer (Hebrew-prefix search fix)');
 }
 
+function agentSlugsOnDisk(): string[] {
+  try {
+    return fs.readdirSync(AGENTS_ROOT).filter((d) => AGENT_SLUG_RE.test(d));
+  } catch {
+    return [];
+  }
+}
+
+/** Every memory file of one agent as virtual relative paths (MEMORY.md first, then journal days). */
+function agentRelPaths(slug: string): string[] {
+  const out = [`agents/${slug}/MEMORY.md`];
+  try {
+    for (const f of fs.readdirSync(path.join(AGENTS_ROOT, slug, 'memory', 'journal')).filter((f) => f.endsWith('.md')).sort())
+      out.push(`agents/${slug}/journal/${f}`);
+  } catch { /* no journal yet */ }
+  return out;
+}
+
+/** The FTS scope a virtual path indexes under ('agent:<slug>' for agent paths). */
+function scopeForRel(rel: string, fallback: string): string {
+  const m = AGENT_REL_RE.exec(rel);
+  return m ? agentScope(m[1]) : fallback === 'journal' ? 'journal' : fallback;
+}
+
 // One row per file (v1: the whole store is a handful of small KB — file-level
 // granularity is plenty for FTS5 snippet quality at this scale).
-function reindexPath(scope: 'user' | 'memory' | 'journal' | 'episode', relPath: string, content: string): void {
+function reindexPath(scope: string, relPath: string, content: string): void {
   try {
     const d = db();
     d.run(`DELETE FROM memory_fts WHERE path = ?`, [relPath]);
@@ -285,12 +349,13 @@ export interface SearchHit {
   updatedAt: string;
 }
 
-export function searchMemory(opts: { query: string; scope?: string; limit?: number }): SearchHit[] {
+export function searchMemory(opts: { query: string; scope?: string; limit?: number; agent?: string | null }): SearchHit[] {
   const query = (opts.query || '').trim();
   if (!query) return [];
   const match = ftsQuery(query);
   if (!match) return [];
   const limit = Math.max(1, Math.min(50, opts.limit || 8));
+  const slug = normalizeAgent(opts.agent);
   // Overfetch on bm25 rank, then re-rank in JS so a hit containing the whole
   // query as one contiguous (case-insensitive) run — the closest thing to an
   // "exact match" once every term is a substring match — sorts before hits
@@ -299,8 +364,17 @@ export function searchMemory(opts: { query: string; scope?: string; limit?: numb
   let sql = `SELECT scope, path, updated_at, content, snippet(memory_fts, 3, '[', ']', '…', 12) AS snip FROM memory_fts WHERE memory_fts MATCH ?`;
   const params: (string | number)[] = [match];
   if (opts.scope) {
+    // An explicit scope wins ('agent:<slug>' reaches any namespace on purpose —
+    // the human's Brain UI / an explicit cross-agent lookup).
     sql += ` AND scope = ?`;
     params.push(opts.scope);
+  } else if (slug) {
+    // An agent's default view: the human (USER.md) + its own namespace + episodes.
+    sql += ` AND scope IN ('user', 'episode', ?)`;
+    params.push(agentScope(slug));
+  } else {
+    // The shared default view never leaks agent namespaces.
+    sql += ` AND scope NOT LIKE 'agent:%'`;
   }
   sql += ` ORDER BY rank LIMIT ?`;
   params.push(overfetch);
@@ -327,14 +401,16 @@ export function searchMemory(opts: { query: string; scope?: string; limit?: numb
 export function getMemoryFile(relPath: string): { path: string; content: string } | { error: string } {
   ensureDirs();
   const clean = String(relPath || '').replace(/^\/+/, '');
-  const full = path.resolve(MEMORY_DIR, clean);
-  if (full !== MEMORY_DIR && !full.startsWith(MEMORY_DIR + path.sep)) return { error: 'invalid path' };
+  const agentRel = AGENT_REL_RE.exec(clean);
+  const root = agentRel ? path.join(AGENTS_ROOT, agentRel[1], 'memory') : MEMORY_DIR;
+  const full = path.resolve(resolveRel(clean));
+  if (full !== root && !full.startsWith(root + path.sep)) return { error: 'invalid path' };
   try {
     if (!fs.statSync(full).isFile()) return { error: 'no such file' };
   } catch {
-    // The two root docs are created lazily on first write; on a fresh instance
-    // the UI asks for them before they exist → an empty doc (200), not a 404.
-    if (clean === 'USER.md' || clean === 'MEMORY.md') return { path: clean, content: '' };
+    // The root docs are created lazily on first write; on a fresh instance /
+    // agent the UI asks for them before they exist → an empty doc (200), not a 404.
+    if (clean === 'USER.md' || clean === 'MEMORY.md' || (agentRel && agentRel[2] === 'MEMORY.md')) return { path: clean, content: '' };
     return { error: 'no such file' };
   }
   return { path: clean, content: fs.readFileSync(full, 'utf8') };
@@ -352,6 +428,8 @@ export interface WriteMemoryArgs {
   old_text?: string;
   source?: string;
   sessionId?: string;
+  /** A1: write into this agent's namespace ('memory'/'journal' only; 'user' is always the shared USER.md). */
+  agent?: string | null;
 }
 
 export interface WriteResult {
@@ -376,8 +454,16 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
   if (target === 'journal' && action !== 'add')
     return { ok: false, error: 'journal is append-only — only action:"add" is supported' };
 
-  const relPath = target === 'user' ? 'USER.md' : target === 'memory' ? 'MEMORY.md' : journalRelPath();
-  const filePath = path.join(MEMORY_DIR, relPath);
+  let slug: string | null = null;
+  try {
+    slug = normalizeAgent(args.agent);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+  // USER.md is about the human — one file, shared by every agent.
+  const ns = slug && target !== 'user' ? `agents/${slug}/` : '';
+  const relPath = target === 'user' ? 'USER.md' : target === 'memory' ? `${ns}MEMORY.md` : ns + journalRelPath();
+  const filePath = resolveRel(relPath);
   const before = readFileSafe(filePath);
   const content = (args.content || '').trim();
 
@@ -425,7 +511,7 @@ export function writeMemory(args: WriteMemoryArgs): WriteResult {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, after);
   const entry = appendLog({ target, action, path: relPath, before, after, source, sessionId: args.sessionId });
-  reindexPath(target, relPath, after);
+  reindexPath(scopeForRel(relPath, target), relPath, after);
   return { ok: true, logSeq: entry.seq };
 }
 
@@ -592,7 +678,7 @@ export interface MemoryFileSummary {
   updatedAt: string | null;
 }
 
-export function listMemory(): MemoryFileSummary[] {
+export function listMemory(agent?: string | null): MemoryFileSummary[] {
   ensureDirs();
   const out: MemoryFileSummary[] = [];
   const stat = (p: string) => {
@@ -602,6 +688,17 @@ export function listMemory(): MemoryFileSummary[] {
       return null;
     }
   };
+  const slug = normalizeAgent(agent);
+  if (slug) {
+    // One agent's namespace only (the Agent page → זיכרון tab).
+    for (const rel of agentRelPaths(slug)) {
+      const full = resolveRel(rel);
+      const content = readFileSafe(full);
+      const st = stat(full);
+      out.push({ path: rel, scope: agentScope(slug), tokens: estimateTokens(content), updatedAt: st ? st.mtime.toISOString() : null });
+    }
+    return out;
+  }
   for (const [rel, full, scope] of [
     ['USER.md', USER_MD, 'user'],
     ['MEMORY.md', MEMORY_MD, 'memory'],

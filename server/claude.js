@@ -16,6 +16,7 @@ import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSet
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
+import { personaBlock } from './agents.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 
@@ -414,6 +415,9 @@ function spawnProc(s, resume) {
       // C1: per-session internal bearer token — host-mcp.js, skills' curl and
       // the review prompt authenticate with it; it dies with the session.
       ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+      // A1: the agent this session was born from — host-mcp.js defaults
+      // memory_write/memory_search to its namespace.
+      ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
       ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
       ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
       // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
@@ -436,6 +440,7 @@ function spawnProc(s, resume) {
   const p = {
     capabilitiesHint: capabilitiesHintCache, // F8: the connectable-capabilities line for the first turn
     hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
+    agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
     resume,
     spawnedAt: Date.now(),
@@ -1077,13 +1082,17 @@ refreshCapabilitiesHint().catch(() => {});
 
 function memoryBootstrapPrefix(p) {
   const identity = identityReminder(p?.capabilitiesHint || '');
-  const { userMd, memoryMd } = getMemoryBootstrap();
-  if (!userMd.trim() && !memoryMd.trim()) return URL_GUIDANCE + identity;
+  // A1: a session born from an agent gets the agent's persona block and boots
+  // with USER.md + the AGENT's MEMORY.md (its namespace), not the shared one.
+  const persona = p?.agent ? personaBlock(p.agent) : '';
+  const { userMd, memoryMd, agentMd } = getMemoryBootstrap(p?.agent || null);
+  if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return URL_GUIDANCE + identity + persona;
   let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not Claude Code's per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
+  if ((agentMd || '').trim()) block += `\n## MEMORY.md (agent ${p.agent})\n${agentMd.trim()}\n`;
   block += '</system-reminder>\n\n';
-  return URL_GUIDANCE + identity + block;
+  return URL_GUIDANCE + identity + persona + block;
 }
 
 function writeUserMessage(p, text, attachments = []) {
