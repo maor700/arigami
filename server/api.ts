@@ -71,7 +71,7 @@ interface PendingScreenRequest {
 // pending map, chat card + push, force-expire on session death.
 const SETUP_REQUEST_TIMEOUT_MS = Number(process.env.ARIGAMI_SETUP_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_SETUP_TIMEOUT_MS) : 15 * 60 * 1000; // env: tests only
 type SetupMode = 'auto' | 'manual' | 'ask';
-type SetupState = 'pending' | 'auto' | 'done' | 'skipped' | 'timeout' | 'failed';
+type SetupState = 'pending' | 'auto' | 'done' | 'skipped' | 'timeout' | 'failed'; // failed = auto attempt failed, card open in manual
 interface SetupResult {
   state: 'done' | 'skipped' | 'timeout' | 'auto';
   id: string;
@@ -92,6 +92,7 @@ interface PendingSetup {
   evidence: string | null;
   detail: string;
   createdAt: string;
+  lines: string[]; // agent narration (report_setup progress lines)
   timer: NodeJS.Timeout;
   // Agents blocked on this card (manual/ask). Empty in auto mode.
   waiters: Array<(r: SetupResult) => void>;
@@ -570,14 +571,20 @@ function answerScreenRequest(
 function setupCardPayload(e: PendingSetup): Record<string, unknown> {
   return {
     id: e.id,
+    requestId: e.id, // S2 keys the card by requestId (same value as id)
     capability: e.capability,
     why: e.why,
     mode: e.mode,
     state: e.state,
     evidence: e.evidence,
     detail: e.detail,
+    lines: e.lines,
   };
 }
+const identityView = (): { email: string } | null => {
+  const i = caps.readIdentity();
+  return i ? { email: i.email } : null;
+};
 
 // Every transition: one `setup-update` chat event (same id as the `setup`
 // card — the web merges by id) + a bus `setup` broadcast for non-chat views
@@ -585,12 +592,12 @@ function setupCardPayload(e: PendingSetup): Record<string, unknown> {
 function broadcastSetup(e: PendingSetup, extra: Record<string, unknown> = {}): void {
   const payload = { ...setupCardPayload(e), ...extra };
   claude.appendChat(e.sessionId, { kind: 'setup-update', ...payload });
-  broadcast({ type: 'setup', sessionId: e.sessionId, ...payload });
+  broadcast({ type: 'setup-update', sessionId: e.sessionId, ...payload });
 }
 
 function openSetupFor(sessionId: string, capability: string): PendingSetup | undefined {
   for (const e of pendingSetups.values())
-    if (e.sessionId === sessionId && e.capability === capability && (e.state === 'pending' || e.state === 'auto')) return e;
+    if (e.sessionId === sessionId && e.capability === capability && (e.state === 'pending' || e.state === 'auto' || e.state === 'failed')) return e;
   return undefined;
 }
 
@@ -607,7 +614,7 @@ function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', o
   import('./funnel.js').then((f) => f.emit(outcome === 'done' ? 'setup.completed' : 'setup.skipped', { capability: e.capability, mode: e.mode, ...(outcome === 'timeout' ? { timeout: true } : {}) })).catch(() => {});
   if (outcome === 'done') {
     caps.invalidateComposioCache();
-    if (e.mode === 'auto') caps.markIdentityProvider(e.capability);
+    if (e.mode === 'auto' && !opts.human) caps.markIdentityProvider(e.capability);
   }
   const result: SetupResult = { state: outcome, id: e.id, capability: e.capability, detail: e.detail, mode: e.mode, evidence: e.evidence };
   for (const w of e.waiters.splice(0)) w(result);
@@ -648,10 +655,13 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     // the card with both choices and blocks like manual.
     const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
     const id = 'setup_' + nano();
+    // Rule 3: no auto without a click. `mode` only PRESELECTS the card's
+    // switch; the agent blocks until the human clicks "Connect automatically"
+    // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
     const e: PendingSetup = {
       id, sessionId: sessionId!, capability, why, mode,
-      state: mode === 'auto' ? 'auto' : 'pending',
-      evidence: null, detail: check.detail, createdAt: new Date().toISOString(),
+      state: 'pending',
+      evidence: null, detail: check.detail, createdAt: new Date().toISOString(), lines: [],
       timer: setTimeout(() => {
         const cur = pendingSetups.get(id);
         if (cur) finishSetup(cur, 'timeout', { detail: 'timed out — nobody connected it in 15 minutes', human: false });
@@ -666,7 +676,7 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
       manual: cap.manual,
       autoCapable: cap.autoCapable,
       ...(cap.playbook ? { playbook: cap.playbook } : {}),
-      identity: !!caps.readIdentity(),
+      identity: identityView(),
     });
     broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
     caps.appendAudit({ sessionId: sessionId!, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
@@ -674,8 +684,9 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     pushIntervention(sessionId!, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
     entry = e;
   }
-  if (entry.mode === 'auto' && entry.state === 'auto') {
-    // The agent runs the playbook itself and closes the card with report_setup.
+  if (entry.state === 'auto') {
+    // The human already consented (start clicked); the agent runs the playbook
+    // itself and closes the card with report_setup.
     const r: SetupResult = { state: 'auto', id: entry.id, capability, detail: entry.detail, mode: 'auto', playbook: cap.playbook };
     return json(res, r);
   }
@@ -691,6 +702,14 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
   const entry: PendingSetup | undefined = (typeof body.id === 'string' ? pendingSetups.get(body.id) : undefined) ?? openSetupFor(sessionId, capability);
   const evidence = typeof body.evidence === 'string' && /^\/__artifacts\/[A-Za-z0-9_-]+\/?$/.test(body.evidence) ? body.evidence.replace(/\/?$/, '/') : null;
   const detail = String(body.detail || '').slice(0, 300);
+  const human = body.human === true;
+  // Progress narration (no `ok`): append a line to the open card, nothing else.
+  if (body.ok === undefined && typeof body.line === 'string') {
+    if (!entry) return json(res, { ok: true, closed: false, lines: [] });
+    entry.lines = [...entry.lines, body.line.slice(0, 200)].slice(-20);
+    broadcastSetup(entry);
+    return json(res, { ok: true, closed: false, id: entry.id, lines: entry.lines });
+  }
   if (!entry) {
     // Nothing open (already closed / expired) — still record what happened.
     caps.appendAudit({ sessionId, capability, mode: 'auto', result: body.ok ? 'done' : 'failed', evidence, human: false, detail });
@@ -698,34 +717,100 @@ async function handleSetupReport(res: ServerResponse, body: Record<string, unkno
     return json(res, { ok: true, closed: false });
   }
   if (body.ok) {
-    finishSetup(entry, 'done', { detail: detail || 'connected by the agent', evidence, human: false });
+    finishSetup(entry, 'done', { detail: detail || (human ? 'connected' : 'connected by the agent'), evidence, human });
     return json(res, { ok: true, closed: true, id: entry.id, state: 'done' });
   }
-  // Rule 5: failure → the card flips to manual with the reason; the human can finish it.
+  // Rule 5: failure → state 'failed', card open in manual with the reason; the human can finish it.
   entry.mode = 'manual';
-  entry.state = 'pending';
+  entry.state = 'failed';
   entry.detail = detail || 'automatic setup failed';
   if (evidence) entry.evidence = evidence;
   caps.appendAudit({ sessionId, capability: entry.capability, mode: 'auto', result: 'failed', evidence, human: false, detail: entry.detail });
   broadcastSetup(entry, { failed: true });
-  return json(res, { ok: true, closed: false, id: entry.id, state: 'pending', mode: 'manual' });
+  return json(res, { ok: true, closed: false, id: entry.id, state: 'failed', mode: 'manual' });
 }
 
-/** Human clicked Auto/Manual on the card. Switching to auto unblocks a waiting agent with state:'auto'. */
+/** Human flipped the Auto/Manual switch on the card — informational only (no consent yet). */
 function setSetupMode(id: string, mode: SetupMode): PendingSetup | null {
   const e = pendingSetups.get(id);
   if (!e) return null;
   const cap = caps.getCapability(e.capability);
   if (mode === 'auto' && !cap?.autoCapable) mode = 'manual';
   e.mode = mode;
-  e.state = mode === 'auto' ? 'auto' : 'pending';
+  if (e.state === 'auto' && mode !== 'auto') e.state = 'pending';
   broadcastSetup(e);
-  if (mode === 'auto') {
-    const r: SetupResult = { state: 'auto', id: e.id, capability: e.capability, detail: e.detail, mode: 'auto', playbook: cap?.playbook };
-    for (const w of e.waiters.splice(0)) w(r);
-    state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
-  }
   return e;
+}
+
+/** The consent click ("Connect automatically"): mode auto, state auto, and the blocked agent is released with {state:'auto'}. */
+function startSetupAuto(id: string): PendingSetup | { error: string } | null {
+  const e = pendingSetups.get(id);
+  if (!e) return null;
+  const cap = caps.getCapability(e.capability);
+  if (!cap?.autoCapable) return { error: `${e.capability} cannot be connected automatically` };
+  if (!caps.readIdentity()) return { error: 'connect a Google identity first' };
+  e.mode = 'auto';
+  e.state = 'auto';
+  e.lines = [];
+  broadcastSetup(e);
+  caps.appendAudit({ sessionId: e.sessionId, capability: e.capability, mode: 'auto', result: 'requested', evidence: null, human: true, detail: 'consent given' });
+  const r: SetupResult = { state: 'auto', id: e.id, capability: e.capability, detail: e.detail, mode: 'auto', playbook: cap.playbook };
+  for (const w of e.waiters.splice(0)) w(r);
+  state.setClaude(e.sessionId, { state: 'working', setupRequest: null } as any);
+  return e;
+}
+
+/** DELETE /__api/setup/:capability — disconnect a provider through its existing implementation. */
+async function disconnectCapability(capability: string): Promise<Record<string, unknown>> {
+  if (capability === 'identity') {
+    return { ok: caps.clearIdentity(), identity: null };
+  }
+  if (capability.startsWith('composio:')) {
+    const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
+    if (!key) throw new Error('Composio is not signed in');
+    const slug = capability.slice(9);
+    const hdr = { 'x-api-key': key, 'Content-Type': 'application/json' };
+    const r = await fetch('https://backend.composio.dev/api/v3.1/connected_accounts?limit=200', { headers: hdr });
+    const j = (await r.json()) as any;
+    if (!r.ok) throw new Error(j?.error?.message || `Composio ${r.status}`);
+    const ids = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug).map((c: any) => c.id);
+    for (const id of ids) await fetch(`https://backend.composio.dev/api/v3.1/connected_accounts/${id}`, { method: 'DELETE', headers: hdr });
+    caps.invalidateComposioCache();
+    return { ok: true, removed: ids.length };
+  }
+  if (capability === 'remote') {
+    const remote: any = await import('./remote.js');
+    return { ok: true, remote: remote.setRemote(false) };
+  }
+  if (capability === 'git') {
+    // Undo setGitToken: drop the github.com line from ~/.git-credentials and the env token.
+    const file = path.join(HOME, '.git-credentials');
+    try {
+      const kept = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l && !/@github\.com$/.test(l));
+      // The gate is "file exists" — an empty file would still read as authed.
+      if (kept.length) fs.writeFileSync(file, kept.join('\n') + '\n', { mode: 0o600 });
+      else fs.unlinkSync(file);
+    } catch {}
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    return { ok: true };
+  }
+  if (capability === 'whatsapp') {
+    const wb = await import('./whatsapp-bridge.js');
+    wb.stopBridge();
+    return { ok: true, status: wb.getBridgeStatus() };
+  }
+  if (capability === 'telemetry') {
+    const tm = await import('./telemetry.js');
+    return { ok: true, telemetry: tm.setEnabled(false) };
+  }
+  if (capability === 'desktop') {
+    updateScreenConfig({ enabled: false });
+    return { ok: true };
+  }
+  if (capability === 'claude') throw new Error('disconnect Claude from the Accounts view');
+  if (capability.startsWith('repo:')) throw new Error('remove repositories from Setup → repositories');
+  throw new Error(`${capability} has nothing to disconnect`);
 }
 
 export function expirePendingSetupRequests(sessionId: string, message = 'session ended'): void {
@@ -739,35 +824,47 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
   const action = String(body?.action || '');
   const ob = await import('./onboarding.js');
   let out: Record<string, unknown> = {};
+  // Payload conventions = S2's web/src/lib/setup-api.js:
+  //   token {token} · oauth {action:'start'|'code'|'cancel'|'poll'|'device', id?, code?}
+  //   qr {action:'connect'|'poll'} · toggle {enable} · repo {entry} · takeover {action:'verify', email?}
   if (capability === 'claude') {
+    const o: any = await import('./oauth-login.js');
     if (body?.token) out = await ob.setClaudeToken(String(body.token), body?.label ? String(body.label) : 'setup');
-    else if (action === 'oauth-start') { const o: any = await import('./oauth-login.js'); return { ok: true, oauth: o.startLogin({ label: body?.label }) }; }
-    else if (action === 'oauth-code' || body?.code) { const o: any = await import('./oauth-login.js'); out = await o.submitCode(body?.id, body?.code); }
-    else throw new Error('claude: pass {token} or {action:"oauth-start"} / {action:"oauth-code", id, code}');
+    else if (action === 'start' || action === 'oauth-start') return { ok: true, ...o.startLogin({ label: body?.label || 'setup' }) }; // {id, url, state}
+    else if (action === 'poll') return { ok: o.loginStatus(String(body?.id || ''))?.state === 'done', ...o.loginStatus(String(body?.id || '')) };
+    else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
+    else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
+    else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
   } else if (capability === 'git') {
+    const gl = await import('./git-login.js');
     if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);
-    else if (action === 'gh-login') { const gl = await import('./git-login.js'); return { ok: true, ghLogin: gl.startGhLogin() }; }
-    else if (action === 'gh-cancel') { const gl = await import('./git-login.js'); return { ok: true, ghLogin: gl.cancelGhLogin() }; }
-    else throw new Error('git: pass {token, host?} or {action:"gh-login"}');
+    else if (action === 'device' || action === 'start' || action === 'gh-login') return { ok: false, device: gl.startGhLogin() }; // {state, code, url, error}
+    else if (action === 'poll') { const d = gl.ghLoginStatus(); return { ok: d.state === 'done' || (await caps.statusOf(cap)).ok, device: d }; }
+    else if (action === 'cancel' || action === 'gh-cancel') return { ok: true, device: gl.cancelGhLogin() };
+    else throw new Error('git: pass {token, host?} or {action:"device"}');
   } else if (capability.startsWith('repo:')) {
     const name = capability.slice(5);
     const known = ob.listRepos().find((r) => r.name === name);
     if (!known) {
-      const url = String(body?.url || body?.source || '');
-      if (!url) throw new Error(`repo ${name} is not registered — pass {url}`);
-      ob.addRepo({ name, source: url } as any);
+      const entry = body?.entry && typeof body.entry === 'object' ? body.entry : null;
+      const url = String(entry?.source || body?.url || body?.source || '');
+      if (!url) throw new Error(`repo ${name} is not registered — pass {entry:{name, source}}`);
+      ob.addRepo({ ...(entry || {}), name: entry?.name || name, source: url } as any);
     }
-    out = { clone: ob.cloneRepo(name) };
+    out = { clone: ob.cloneRepo(known ? name : String(body?.entry?.name || name)) };
   } else if (capability === 'whatsapp') {
     const wb = await import('./whatsapp-bridge.js');
-    if (action === 'disconnect') { wb.stopBridge(); return { ok: true, status: wb.getBridgeStatus() }; }
+    if (action === 'disconnect') { wb.stopBridge(); return { ok: true, ...wb.getBridgeStatus() }; }
+    if (action === 'poll') return { ok: wb.getBridgeStatus().status === 'connected', ...wb.getBridgeStatus() };
     const { enqueueWake } = await import('./listeners.js');
     const sid = (req.headers['x-session-id'] as string) || 'ui';
     wb.startBridge(sid, enqueueWake).catch(console.error);
-    return { ok: true, status: wb.getBridgeStatus() };
+    return { ok: false, ...wb.getBridgeStatus() }; // {status:'starting'|'qr'|…, qr, qrUrl, user}
   } else if (capability.startsWith('composio:')) {
-    if (body?.key) { ob.setComposioKey(String(body.key)); caps.invalidateComposioCache(); }
-    if (action === 'connect' || !body?.key) {
+    const k = body?.key || body?.token;
+    if (k) { ob.setComposioKey(String(k)); caps.invalidateComposioCache(); }
+    if (action === 'poll') { caps.invalidateComposioCache(); return { ok: (await caps.statusOf(cap)).ok }; }
+    if (action === 'connect' || action === 'start' || !k) {
       // Same flow as POST /__api/composio/connect: managed auth config → redirect link.
       const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
       if (!key) throw new Error('Composio is not signed in — pass {key} or sign in via Settings → Integrations');
@@ -781,10 +878,14 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       const lj = (await link.json()) as any;
       if (!link.ok) throw new Error(lj?.error?.message || `Composio ${link.status}`);
       caps.invalidateComposioCache();
-      return { ok: true, redirectUrl: lj.redirect_url, connectionId: lj.connected_account_id };
+      return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id };
     }
   } else if (capability === 'identity') {
-    out = { identity: caps.writeIdentity({ email: String(body?.email || ''), chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }) };
+    // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
+    const email = String(body?.email || '').trim();
+    if (!email) throw new Error('identity: pass the Google account email that was signed in');
+    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined });
+    out = { identity, email: identity.email };
   } else if (capability === 'desktop') {
     const enable = body?.enable !== false;
     updateScreenConfig({ enabled: enable });
@@ -1651,7 +1752,7 @@ export async function handle(
       const me = (req as any).auth as import('./auth.js').Principal | null;
       const mayAct = auth.isAdmin(me) || me?.kind === 'session';
       const rest = p.slice('/__api/setup/'.length);
-      if (rest === 'capabilities' && m === 'GET') return json(res, await caps.capabilitiesStatus());
+      if (rest === 'capabilities' && m === 'GET') return json(res, { ...(await caps.capabilitiesStatus()), audit: caps.readAudit(50) });
       if (rest.startsWith('capabilities/') && m === 'GET') {
         const id = decodeURIComponent(rest.slice('capabilities/'.length));
         const cap = caps.getCapability(id);
@@ -1661,12 +1762,21 @@ export async function handle(
         return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap) } : r);
       }
       if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity() });
-      if (rest === 'identity' && m === 'DELETE') {
+      // DELETE /__api/setup/:capability — disconnect (identity or a provider) + audit.
+      if (m === 'DELETE' && rest && !rest.includes('/')) {
         if (!mayAct) return json(res, { error: 'admin only' }, 403);
-        const had = caps.readIdentity();
-        const ok = caps.clearIdentity();
-        if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability: 'identity', mode: 'manual', result: 'disconnected', evidence: null, human: true });
-        return json(res, { ok, identity: null });
+        const capability = decodeURIComponent(rest);
+        const cap = caps.getCapability(capability);
+        if (!cap) return badRequest(res, `unknown capability: ${capability}`);
+        const had = capability === 'identity' ? !!caps.readIdentity() : true;
+        try {
+          const out = await disconnectCapability(capability);
+          if (had) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'disconnected', evidence: null, human: true });
+          broadcast({ type: 'setup.changed', capability });
+          return json(res, { ...out, capability, status: await caps.statusOf(cap) });
+        } catch (e) {
+          return json(res, { ok: false, error: (e as Error).message, capability }, 400);
+        }
       }
       if (rest === 'connections' && m === 'GET') {
         const limit = Math.min(500, Math.max(1, Number(u.searchParams.get('limit')) || 50));
@@ -1677,7 +1787,7 @@ export async function handle(
         return json(res, { pending: [...pendingSetups.values()].filter((e) => !sid || e.sessionId === sid).map(setupCardPayload) });
       }
       // /__api/setup/:id/(skip|report|mode) — id = setup_…
-      const idm = /^(setup_[A-Za-z0-9_-]+)\/(skip|report|mode)$/.exec(rest);
+      const idm = /^(setup_[A-Za-z0-9_-]+)\/(skip|report|mode|start)$/.exec(rest);
       if (idm && m === 'POST') {
         if (!mayAct) return json(res, { error: 'admin only' }, 403);
         const e = pendingSetups.get(idm[1]);
@@ -1691,6 +1801,14 @@ export async function handle(
           const mode = body?.mode === 'auto' ? 'auto' : body?.mode === 'ask' ? 'ask' : 'manual';
           const out = setSetupMode(e.id, mode);
           return out ? json(res, { ok: true, ...setupCardPayload(out) }) : notFound(res, 'no pending setup');
+        }
+        if (idm[2] === 'start') {
+          // Consent click: the only path that turns a card auto and releases the agent.
+          if (body?.mode && body.mode !== 'auto') return badRequest(res, 'start is for mode:"auto" — manual connections POST the payload to /__api/setup/:capability');
+          const out = startSetupAuto(e.id);
+          if (!out) return notFound(res, 'no pending setup');
+          if ('error' in out) return json(res, { ok: false, error: out.error, ...setupCardPayload(e) }, 400);
+          return json(res, { ok: true, ...setupCardPayload(out) });
         }
         // report: same body as report_setup, for the card / skills that know the id.
         return await handleSetupReport(res, { ...body, session_id: e.sessionId, id: e.id, capability: e.capability });
@@ -1711,6 +1829,7 @@ export async function handle(
             if (!closed) caps.appendAudit({ sessionId: me?.kind === 'session' ? me.sessionId : null, capability, mode: 'manual', result: 'done', evidence: null, human: true, detail: status.detail });
             import('./funnel.js').then((f) => { if (!closed) f.emit('setup.completed', { capability, mode: 'manual' }); }).catch(() => {});
           }
+          if (status.ok) broadcast({ type: 'setup.changed', capability });
           return json(res, { ...out, capability, status, closed });
         } catch (e) {
           return json(res, { ok: false, error: (e as Error).message, capability }, 400);

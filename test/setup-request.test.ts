@@ -119,6 +119,7 @@ test('host start: workspace cwd created; capabilities listed; nothing pending', 
   const r = await api('GET', '/__api/setup/capabilities');
   expect(r.status).toBe(200);
   expect(r.json.identity).toBeNull();
+  expect(r.json.audit).toEqual([]);
   const ids = r.json.capabilities.map((c: any) => c.id);
   for (const id of ['identity', 'claude', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry', 'composio:gmail']) expect(ids).toContain(id);
   const desktop = r.json.capabilities.find((c: any) => c.id === 'desktop');
@@ -162,20 +163,24 @@ test('manual: request_setup blocks, card posted, human POSTs the payload → age
   expect(card.why).toBe('connect services for you');
   expect(card.evidence).toBeNull();
   expect(card.manual.kind).toBe('takeover');
-  expect(card.identity).toBe(false);
+  expect(card.identity).toBeNull();
+  expect(card.lines).toEqual([]);
   expect(card.id).toMatch(/^setup_/);
+  expect(card.requestId).toBe(card.id);
   const s = (await api('GET', `/__api/sessions/${sid}`)).json;
   expect(s.claude.state).toBe('awaiting-input');
   expect(s.claude.setupRequest).toEqual({ id: card.id, capability: 'identity' });
   expect((await api('GET', `/__api/setup/pending?session=${sid}`)).json.pending.map((p: any) => p.id)).toEqual([card.id]);
 
   // The connect-identity skill (or the human) lands the identity through the manual route.
-  const done = await api('POST', '/__api/setup/identity', { email: 'Someone@Example.com' });
+  expect((await api('POST', '/__api/setup/identity', { action: 'verify' })).status).toBe(400); // email required
+  const done = await api('POST', '/__api/setup/identity', { action: 'verify', email: 'Someone@Example.com' });
   expect(done.status).toBe(200);
   expect(done.json.ok).toBe(true);
   expect(done.json.status.ok).toBe(true);
   expect(done.json.closed).toBe(1);
   expect(done.json.identity.email).toBe('someone@example.com');
+  expect(done.json.email).toBe('someone@example.com');
 
   const result = await pending;
   expect(result.state).toBe('done');
@@ -185,6 +190,7 @@ test('manual: request_setup blocks, card posted, human POSTs the payload → age
   const upd = (await setupEvents(sid)).filter((e: any) => e.kind === 'setup-update');
   expect(upd.at(-1).state).toBe('done');
   expect(upd.at(-1).id).toBe(card.id);
+  expect(upd.at(-1).requestId).toBe(card.id);
   expect((await api('GET', `/__api/sessions/${sid}`)).json.claude.setupRequest).toBeNull();
 
   expect((await api('GET', '/__api/setup/identity')).json.identity.email).toBe('someone@example.com');
@@ -193,6 +199,7 @@ test('manual: request_setup blocks, card posted, human POSTs the payload → age
     ['identity', 'requested', false],
     ['identity', 'done', true],
   ]);
+  expect((await api('GET', '/__api/setup/capabilities')).json.audit).toEqual(audit);
   const funnel = readJsonl(path.join(dir, 'funnel.jsonl')).map((e) => e.name);
   expect(funnel).toContain('setup.requested');
   expect(funnel).toContain('setup.completed');
@@ -208,6 +215,7 @@ test('skip: human clicks "not now" → agent gets skipped; funnel setup.skipped'
   const pending = mcp('/__mcp/setup-request', { session_id: sid, capability: 'whatsapp', why: 'send a message', mode: 'auto' });
   const card = await until(async () => (await setupEvents(sid)).find((e: any) => e.kind === 'setup'));
   expect(card.mode).toBe('manual'); // auto requested but whatsapp is not autoCapable
+  expect(card.state).toBe('pending');
   expect(card.manual.kind).toBe('qr');
   const sk = await api('POST', `/__api/setup/${card.id}/skip`, { note: 'later' });
   expect(sk.json).toEqual({ ok: true, id: card.id, state: 'skipped' });
@@ -232,49 +240,73 @@ test('timeout: nobody answers → state timeout after ARIGAMI_SETUP_TIMEOUT_MS; 
   expect((await api('GET', `/__api/setup/pending?session=${sid}`)).json.pending).toEqual([]);
 });
 
-test('auto: identity present + autoCapable → returns auto immediately; report fail → manual; re-request attaches; report ok w/ evidence → done', async () => {
+test('auto: preselects only; consent click (/start) releases the agent with state auto; report fail → failed/manual; re-request attaches; report ok w/ evidence → done', async () => {
   const sid = await newSession('auto');
   const caps = (await api('GET', '/__api/setup/capabilities')).json;
   expect(caps.identity.email).toBe('someone@example.com');
   expect(caps.capabilities.find((c: any) => c.id === 'composio:gmail').defaultMode).toBe('auto');
 
-  const r = await mcp('/__mcp/setup-request', { session_id: sid, capability: 'composio:gmail', why: 'read your inbox' });
-  expect(r.state).toBe('auto');
-  expect(r.mode).toBe('auto');
-  expect(r.playbook).toBe('connect-composio');
-  expect(r.id).toMatch(/^setup_/);
-  const card = (await setupEvents(sid)).find((e: any) => e.kind === 'setup');
-  expect(card.state).toBe('auto');
-  expect(card.identity).toBe(true);
+  // Rule 3: mode auto at request time does NOT run anything — the agent blocks until the click.
+  const wait1 = mcp('/__mcp/setup-request', { session_id: sid, capability: 'composio:gmail', why: 'read your inbox' });
+  const card = await until(async () => (await setupEvents(sid)).find((e: any) => e.kind === 'setup'));
+  expect(card.mode).toBe('auto');
+  expect(card.state).toBe('pending');
+  expect(card.identity).toEqual({ email: 'someone@example.com' });
+  expect(card.playbook).toBe('connect-composio');
+  expect((await api('GET', `/__api/sessions/${sid}`)).json.claude.state).toBe('awaiting-input');
+  // The switch is informational: flipping it does not release the agent.
+  expect((await api('POST', `/__api/setup/${card.id}/mode`, { mode: 'manual' })).json.mode).toBe('manual');
+  expect((await api('POST', `/__api/setup/${card.id}/mode`, { mode: 'auto' })).json.state).toBe('pending');
+  expect((await api('GET', `/__api/sessions/${sid}`)).json.claude.state).toBe('awaiting-input');
+  // Consent click.
+  const st = await api('POST', `/__api/setup/${card.id}/start`, { mode: 'auto' });
+  expect(st.json).toMatchObject({ ok: true, requestId: card.id, mode: 'auto', state: 'auto' });
+  const r = await wait1;
+  expect(r).toMatchObject({ state: 'auto', id: card.id, mode: 'auto', playbook: 'connect-composio' });
   expect((await api('GET', `/__api/sessions/${sid}`)).json.claude.state).not.toBe('awaiting-input');
 
-  // Playbook failed → card flips to manual with the reason (rule 5).
-  const fail = await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: false, detail: 'consent screen asked for 2FA' });
-  expect(fail).toMatchObject({ ok: true, closed: false, id: r.id, state: 'pending', mode: 'manual' });
-  const flipped = (await setupEvents(sid)).at(-1);
-  expect(flipped).toMatchObject({ kind: 'setup-update', id: r.id, mode: 'manual', state: 'pending', detail: 'consent screen asked for 2FA', failed: true });
+  // Narration lines.
+  const ln = await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', line: 'Opening Composio…' });
+  expect(ln).toMatchObject({ ok: true, closed: false, id: card.id, lines: ['Opening Composio…'] });
+  expect((await setupEvents(sid)).at(-1)).toMatchObject({ kind: 'setup-update', requestId: card.id, lines: ['Opening Composio…'], state: 'auto' });
 
-  // Agent waits for the human on the SAME card; the human switches it back to auto → agent unblocked with state:auto.
-  const wait = mcp('/__mcp/setup-request', { session_id: sid, capability: 'composio:gmail', why: 'read your inbox' });
-  await until(async () => (await api('GET', `/__api/sessions/${sid}`)).json.claude.setupRequest?.id === r.id);
+  // Playbook failed → state failed, manual mode, reason (rule 5).
+  const fail = await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: false, detail: 'consent screen asked for 2FA' });
+  expect(fail).toMatchObject({ ok: true, closed: false, id: card.id, state: 'failed', mode: 'manual' });
+  expect((await setupEvents(sid)).at(-1)).toMatchObject({ kind: 'setup-update', requestId: card.id, mode: 'manual', state: 'failed', detail: 'consent screen asked for 2FA', failed: true });
+
+  // Agent waits on the SAME card; the human clicks start again → released.
+  const wait2 = mcp('/__mcp/setup-request', { session_id: sid, capability: 'composio:gmail', why: 'read your inbox' });
+  await until(async () => (await api('GET', `/__api/sessions/${sid}`)).json.claude.setupRequest?.id === card.id);
   expect((await setupEvents(sid)).filter((e: any) => e.kind === 'setup').length).toBe(1);
-  const sw = await api('POST', `/__api/setup/${r.id}/mode`, { mode: 'auto' });
-  expect(sw.json).toMatchObject({ ok: true, id: r.id, mode: 'auto', state: 'auto' });
-  const w = await wait;
-  expect(w).toMatchObject({ state: 'auto', id: r.id, playbook: 'connect-composio' });
+  await api('POST', `/__api/setup/${card.id}/start`, {});
+  expect(await wait2).toMatchObject({ state: 'auto', id: card.id });
 
   // Second attempt succeeds, with a screenshot as evidence.
   const ok = await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: true, evidence: '/__artifacts/abc123', detail: 'gmail ACTIVE' });
-  expect(ok).toMatchObject({ ok: true, closed: true, id: r.id, state: 'done' });
-  const last = (await setupEvents(sid)).at(-1);
-  expect(last).toMatchObject({ kind: 'setup-update', id: r.id, state: 'done', evidence: '/__artifacts/abc123/', detail: 'gmail ACTIVE' });
+  expect(ok).toMatchObject({ ok: true, closed: true, id: card.id, state: 'done' });
+  expect((await setupEvents(sid)).at(-1)).toMatchObject({ kind: 'setup-update', requestId: card.id, state: 'done', evidence: '/__artifacts/abc123/', detail: 'gmail ACTIVE' });
   const ident = (await api('GET', '/__api/setup/identity')).json.identity;
   expect(ident.providers['composio:gmail'].at).toBeTruthy();
   const audit = readJsonl(path.join(dir, 'connections.log')).filter((a) => a.capability === 'composio:gmail');
-  expect(audit.map((a) => a.result)).toEqual(['requested', 'failed', 'done']);
-  expect(audit.at(-1)).toMatchObject({ sessionId: sid, mode: 'auto', evidence: '/__artifacts/abc123/', human: false });
+  expect(audit.map((a) => [a.result, a.human])).toEqual([['requested', false], ['requested', true], ['failed', false], ['requested', true], ['done', false]]);
+  expect(audit.at(-1)).toMatchObject({ sessionId: sid, mode: 'auto', evidence: '/__artifacts/abc123/' });
   // Nothing open → a stray report is just audited.
   expect(await mcp('/__mcp/setup-report', { session_id: sid, capability: 'composio:gmail', ok: true })).toEqual({ ok: true, closed: false });
+});
+
+test('start is refused without consent prerequisites (non-auto capability); card report from the human closes with human:true', async () => {
+  const sid = await newSession('start-refused');
+  const pending = mcp('/__mcp/setup-request', { session_id: sid, capability: 'push', why: 'buzz you' });
+  const card = await until(async () => (await setupEvents(sid)).find((e: any) => e.kind === 'setup'));
+  const st = await api('POST', `/__api/setup/${card.id}/start`, { mode: 'auto' });
+  expect(st.status).toBe(400);
+  expect(st.json.ok).toBe(false);
+  expect((await api('POST', `/__api/setup/${card.id}/start`, { mode: 'manual' })).status).toBe(400);
+  const rep = await api('POST', `/__api/setup/${card.id}/report`, { ok: true, mode: 'manual', detail: 'subscribed on my phone', human: true });
+  expect(rep.json).toMatchObject({ ok: true, closed: true, state: 'done' });
+  expect((await pending).state).toBe('done');
+  expect(readJsonl(path.join(dir, 'connections.log')).at(-1)).toMatchObject({ capability: 'push', result: 'done', human: true, detail: 'subscribed on my phone' });
 });
 
 test('mode switch manual→auto is refused for non-auto capabilities; bad ids/sessions are 400/404', async () => {
@@ -302,12 +334,31 @@ test('session death expires its open setup cards (timeout, "session ended")', as
 
 test('identity disconnect: DELETE clears the file, audits, and flips defaultMode back to manual', async () => {
   const d = await api('DELETE', '/__api/setup/identity');
-  expect(d.json).toEqual({ ok: true, identity: null });
+  expect(d.json).toMatchObject({ ok: true, identity: null, capability: 'identity' });
+  expect(d.json.status.ok).toBe(false);
   expect((await api('GET', '/__api/setup/identity')).json.identity).toBeNull();
   const caps = (await api('GET', '/__api/setup/capabilities')).json;
   expect(caps.capabilities.find((c: any) => c.id === 'composio:gmail').defaultMode).toBe('manual');
   const audit = (await api('GET', '/__api/setup/connections')).json.audit;
   expect(audit.at(-1)).toMatchObject({ capability: 'identity', result: 'disconnected', human: true });
+});
+
+test('DELETE /__api/setup/:capability disconnects providers via their implementations (telemetry, git) and refuses the rest', async () => {
+  // git: seed a credential line, disconnect removes it and the gate goes red.
+  const cred = path.join(dir, 'home', '.git-credentials');
+  fs.writeFileSync(cred, 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz0123@github.com\n');
+  expect((await api('GET', '/__api/setup/capabilities/git')).json.ok).toBe(true);
+  const g = await api('DELETE', '/__api/setup/git');
+  expect(g.json).toMatchObject({ ok: true, capability: 'git' });
+  expect(g.json.status.ok).toBe(false);
+  expect(fs.existsSync(cred)).toBe(false); // the gate is "file exists" — an empty file must not survive
+  const t = await api('DELETE', '/__api/setup/telemetry');
+  expect(t.json).toMatchObject({ ok: true, capability: 'telemetry' });
+  expect((await api('DELETE', '/__api/setup/claude')).status).toBe(400);
+  expect((await api('DELETE', '/__api/setup/repo:x')).status).toBe(400);
+  expect((await api('DELETE', '/__api/setup/bogus')).status).toBe(400);
+  const audit = (await api('GET', '/__api/setup/connections')).json.audit;
+  expect(audit.filter((a: any) => a.result === 'disconnected').map((a: any) => a.capability)).toEqual(['identity', 'git', 'telemetry']);
 });
 
 test('wizard: minimal mode by default, mode route flips to full and back', async () => {

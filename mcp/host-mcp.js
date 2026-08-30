@@ -637,8 +637,8 @@ const TOOLS = [
       'Capability ids: identity (Google login in Chrome) · claude · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
       'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
       'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
-      'MANUAL/ASK: BLOCKS until the human connects it, skips it, or ~15 min pass → {state:"done"|"skipped"|"timeout", capability, detail, mode}. On "skipped"/"timeout" offer an alternative, never nag. ' +
-      'AUTO: returns {state:"auto", id, playbook} IMMEDIATELY — YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence) and finish with report_setup. ' +
+      'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
+      'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
       'If the capability is already connected you get {state:"done", already:true} at once. why: one short clause the card shows ("read your inbox").',
     inputSchema: obj(
       {
@@ -661,23 +661,25 @@ const TOOLS = [
     name: 'report_setup',
     description:
       'Close an AUTO setup you ran yourself (after request_setup returned state:"auto"). ok:true → the card turns green (with your screenshot if `evidence` is a published artifact path like "/__artifacts/<id>/") and the capability is re-checked; ' +
-      'ok:false → the card flips to MANUAL with `detail` as the reason so the human can finish it (you may call request_setup again to wait for them). Always call it — an unreported auto setup times out after 15 min.',
+      'ok:false → the card goes to state "failed" in MANUAL mode with `detail` as the reason so the human can finish it (call request_setup again to wait for them). ' +
+      'Progress: omit `ok` and pass `line` ("Opening Composio…") to append one narration line to the card (a few lines at most). Always close it — an unreported auto setup times out after 15 min.',
     inputSchema: obj(
       {
         capability: { type: 'string' },
-        ok: { type: 'boolean' },
+        ok: { type: 'boolean', description: 'Final outcome. Omit together with `line` for a progress update.' },
+        line: { type: 'string', description: 'Progress narration line (no ok) — shown on the card' },
         evidence: { type: 'string', description: 'Host-relative artifact path of the final screenshot, e.g. /__artifacts/abc123/' },
         detail: { type: 'string', description: 'Short outcome / failure reason (no secrets)' },
         id: { type: 'string', description: 'The setup id from request_setup (optional — capability alone resolves the open card)' },
         ...SID_PROP,
       },
-      ['capability', 'ok']
+      ['capability']
     ),
     run: (a) =>
       api('POST', '/__mcp/setup-report', {
         session_id: sid(a),
         capability: a.capability,
-        ok: !!a.ok,
+        ...(a.ok === undefined && a.line ? { line: a.line } : { ok: !!a.ok }),
         ...(a.evidence ? { evidence: a.evidence } : {}),
         ...(a.detail ? { detail: a.detail } : {}),
         ...(a.id ? { id: a.id } : {}),
