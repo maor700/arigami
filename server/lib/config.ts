@@ -138,6 +138,20 @@ export interface TelemetryConfig {
   endpoint: string;
 }
 
+// RES1 — the session supervisor (server/supervisor-loop.ts). One wall-clock tick
+// classifies every session and walks the recovery ladder. `stallMin` is "no
+// progress with something still owed"; `reportGraceMin` is how long a child may
+// sit terminal before the host synthesizes its report to the master;
+// `notifyEveryMin` is the re-notify cadence for a block only a human can clear.
+export interface SupervisorConfig {
+  enabled: boolean;
+  tickSec: number;
+  stallMin: number;
+  reportGraceMin: number;
+  notifyEveryMin: number;
+  maxRespawns: number;
+}
+
 export interface Config {
   port: number;
   // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
@@ -184,6 +198,14 @@ export interface Config {
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
   defaultModel: string | null;
+  // RES1 — the host-wide model ladder. When every pooled account has hit its
+  // limit, the supervisor drops one rung of this chain instead of stopping, and
+  // climbs back once the top rung's quota resets. An agent or a session may
+  // override it (session.claude.modelChain). See server/supervisor.ts.
+  modelChain: string[];
+  // RES1 — supervisor loop knobs. `enabled:false` turns the whole 30s tick off
+  // (the health model and /__api/health keep working, nothing is auto-recovered).
+  supervisor: SupervisorConfig;
   configDir?: string;
   configFile?: string;
   imgDir?: string;
@@ -275,6 +297,15 @@ export const DEFAULTS: Config = {
     endpoint: 'https://telemetry.arigami.dev/v1/events',
   },
   defaultModel: null,
+  modelChain: ['fable', 'sonnet', 'haiku'],
+  supervisor: {
+    enabled: true,
+    tickSec: 30,
+    stallMin: 10,
+    reportGraceMin: 2,
+    notifyEveryMin: 60,
+    maxRespawns: 2,
+  },
 };
 
 function deepMerge(
@@ -385,6 +416,18 @@ function envOverrides(): Partial<Config> {
   if (num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)) shot.screenshotRetentionDays = num(E.ARIGAMI_SCREENSHOT_RETENTION_DAYS)!;
   if (num(E.ARIGAMI_SCREENSHOT_MAX_MB)) shot.screenshotMaxMb = num(E.ARIGAMI_SCREENSHOT_MAX_MB)!;
   if (Object.keys(shot).length) o.screen = { ...(o.screen || DEFAULTS.screen), ...shot };
+  // RES1 — supervisor + model ladder. Every knob is env-overridable so an
+  // isolated-host test can run the 30s loop at 1s with a 3s stall threshold.
+  if (E.ARIGAMI_MODEL_CHAIN != null && E.ARIGAMI_MODEL_CHAIN !== '')
+    o.modelChain = E.ARIGAMI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  const sup: Partial<SupervisorConfig> = {};
+  if (E.ARIGAMI_SUPERVISOR != null && E.ARIGAMI_SUPERVISOR !== '')
+    sup.enabled = /^(1|true|yes|on)$/i.test(E.ARIGAMI_SUPERVISOR);
+  if (num(E.ARIGAMI_SUPERVISOR_TICK_SEC)) sup.tickSec = num(E.ARIGAMI_SUPERVISOR_TICK_SEC)!;
+  if (num(E.ARIGAMI_SUPERVISOR_STALL_MIN)) sup.stallMin = num(E.ARIGAMI_SUPERVISOR_STALL_MIN)!;
+  if (num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)) sup.reportGraceMin = num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)!;
+  if (num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)) sup.notifyEveryMin = num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)!;
+  if (Object.keys(sup).length) o.supervisor = { ...DEFAULTS.supervisor, ...sup };
   return o;
 }
 

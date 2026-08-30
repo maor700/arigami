@@ -47,6 +47,15 @@ interface ClaudeState {
   effort?: string | null; // user-picked `claude --effort` arg (null = default)
   accountId?: string | null; // account this session runs on (null = active account)
   model?: string; // model id reported by the running session (init event)
+  // RES1 — the model ladder. `modelChain` overrides the host default for this
+  // session (agent → config → supervisor.DEFAULT_MODEL_CHAIN); `modelRung` is
+  // where we currently sit in it (0 = the top rung the human picked) and
+  // `modelRestoreAt` is when the top rung's quota resets, so the supervisor can
+  // climb back. See server/supervisor.ts + docs/RESILIENCE.md §2.
+  modelChain?: string[] | null;
+  modelRung?: number;
+  modelRestoreAt?: string | null;
+  modelDowngradedFrom?: string | null; // the rung we dropped from (for the receipt)
   capabilities?: Record<string, unknown>;
   // Live MCP server health map — what the /mcp panel renders (see McpServerHealth).
   mcp?: { servers: Record<string, McpServerHealth>; checkedAt?: number | null } | null;
