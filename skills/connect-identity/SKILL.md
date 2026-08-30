@@ -63,13 +63,18 @@ shot / click / key / type / api / report) and `skills/_lib/chrome.sh`.
    state. Not signed in → one more `request_screen` with a more specific hint
    (rule 4), then give up.
 6. Persist the login for future sessions: `save_browser_logins()` (the host also
-   syncs automatically after a take-over, calling it is harmless).
+   syncs automatically after a take-over, calling it is harmless). When you run
+   as an AGENT (ARIGAMI_AGENT is set) this syncs into the agent's own profile
+   (`agents/<slug>/browser`) — pass `shared:true` only if the human asked to
+   share this Google login with every session.
 7. Register the identity with the host. The email is what the account page shows
    (top-right avatar → the address). Read it from the screenshot; if `$ARGUMENTS`
    gave an expected email and it differs, stop and `request_action` (wrong account
    vs. continue). Then:
    `connect.sh api POST /__api/setup/identity '{"email":"<email>","provider":"google","chromeProfile":"base"}'`
-   (S1 writes `$ARIGAMI_DIR/identity.json` — no secrets, the email only.)
+   (S1 writes `$ARIGAMI_DIR/identity.json` — no secrets, the email only. A2: from
+   an agent session the host writes the AGENT's `agents/<slug>/identity.json`
+   instead — owner `agent:<slug>`; omit `chromeProfile` then.)
 8. Evidence: `connect.sh shot final` → `publish_artifact({path:<png>, title:"identity — Google signed in"})`
    → `report_setup({capability:"identity", ok:true, evidence:"<artifact path>"})`.
    `capture_screen({caption:"Final state — Google signed in"})`.
