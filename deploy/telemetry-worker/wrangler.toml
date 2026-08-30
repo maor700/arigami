@@ -1,0 +1,19 @@
+# Cloudflare Worker for the opt-in Arigami telemetry endpoint (docs/TELEMETRY.md).
+#   npx wrangler deploy
+# Bind ONE or both stores below. Remove the block you don't use.
+name = "arigami-telemetry"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# Analytics Engine — free tier, SQL over the API. Recommended.
+[[analytics_engine_datasets]]
+binding = "TELEMETRY"
+dataset = "arigami_telemetry"
+
+# KV — keeps the last payload per instance id for 90 days (optional).
+# [[kv_namespaces]]
+# binding = "TELEMETRY_KV"
+# id = "<your-kv-namespace-id>"
+
+# Route it at your own domain, e.g.
+# routes = [{ pattern = "telemetry.example.com/*", zone_name = "example.com" }]

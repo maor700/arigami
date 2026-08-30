@@ -386,6 +386,7 @@ export function share(sessionId: string, aid: string, opts: { days?: number; lab
     warnings.push('share_url is host-relative — set ARIGAMI_PUBLIC_URL for an absolute link you can send outside the cockpit');
   const updated: Artifact = { ...artifact, shareExp: new Date(exp).toISOString(), shareNonce: nonce, shareVersion: artifact.version };
   upsertArtifact(sessionId, updated);
+  import('./funnel.js').then((f) => f.firstTime('share.first_link')).catch(() => {}); // K5 funnel
   return { share_url: url, path: rel, exp: updated.shareExp!, nonce, version: artifact.version, warnings };
 }
 

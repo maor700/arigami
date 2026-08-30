@@ -1222,6 +1222,29 @@ export async function handle(
     // it without CORS, and a careless curl can't trip it). When the caller is a
     // session (MCP passes X-Arigami-Session) only masters/controllers may act.
     // TODO(C1): replace both checks with the admin role on the session cookie.
+    // ---- D3 telemetry (server/telemetry.ts): status + "show what would be sent",
+    // toggle (admin), rotate the anonymous id (admin). Nothing here sends.
+    if (p === '/__api/telemetry' && m === 'GET') {
+      const tm = await import('./telemetry.js');
+      return json(res, await tm.status());
+    }
+    if (p === '/__api/telemetry' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const tm = await import('./telemetry.js');
+      const body = (await readBody(req)) as any;
+      if (typeof body?.enabled !== 'boolean') return badRequest(res, 'enabled must be a boolean');
+      tm.setEnabled(body.enabled);
+      try { (await import('./onboarding.js')).wizardAct('telemetry', 'complete'); } catch { /* wizard may not care */ }
+      return json(res, await tm.status());
+    }
+    if (p === '/__api/telemetry/rotate' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const tm = await import('./telemetry.js');
+      tm.forget();
+      return json(res, await tm.status());
+    }
     if (p === '/__api/version' && m === 'GET') {
       const v = await import('./version.js');
       return json(res, await v.getVersion({ refresh: u.searchParams.get('refresh') === '1' }));
@@ -1574,6 +1597,11 @@ export async function handle(
         if (step === 'integrations' && action === 'composio-key') {
           ob.setComposioKey(String(body?.key || ''));
           return json(res, { ok: true, wizard: ob.wizard() });
+        }
+        if (step === 'telemetry' && (action === 'enable' || action === 'disable')) {
+          const tm = await import('./telemetry.js');
+          const r = tm.setEnabled(action === 'enable');
+          return json(res, { telemetry: r, wizard: ob.wizardAct('telemetry', 'complete') });
         }
         if (step === 'health' && action === 'run') {
           const health = await ob.runHealth();

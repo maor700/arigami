@@ -1,7 +1,7 @@
 // B3 — אשף הרצה ראשונה (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'הגדרת Arigami',
-  'wizard.subtitle': 'שבעה צעדים קצרים. אפשר לדלג על רובם ולחזור אליהם מ״התקנה״ בהמשך.',
+  'wizard.subtitle': 'שמונה צעדים קצרים. אפשר לדלג על רובם ולחזור אליהם מ״התקנה״ בהמשך.',
   'wizard.stepOf': 'שלב {n} מתוך {total}',
   'wizard.back': 'חזרה',
   'wizard.next': 'המשך',
@@ -87,6 +87,16 @@ export const strings = {
   'wizard.repo.title': 'ריפוזיטורי ראשון',
   'wizard.repo.body': 'הוסף ריפוזיטורי לעבודה. GitHub או תיקייה מקומית — המארח שומר עותק מנוהל משלו.',
   'wizard.repo.have': 'רשומים: {names}',
+
+  'wizard.telemetry.title': 'עזרו לשפר את Arigami',
+  'wizard.telemetry.body': 'כבוי כברירת מחדל. אם תבחרו להצטרף, המארח ישלח כמה אבני-דרך אנונימיות כדי שנראה איפה אנשים נתקעים.',
+  'wizard.telemetry.sends': 'נשלח: שמות אבני-דרך + חותמות זמן (התקנה, סשן ראשון, עץ PM ראשון…), גרסה, מערכת הפעלה/ארכיטקטורה, Docker כן/לא, טווח מספר סשנים, מזהה מופע אקראי.',
+  'wizard.telemetry.never': 'לעולם לא: פרומפטים, קוד, נתיבים, שמות ריפו, מיילים, שמות מארח, כתובות IP.',
+  'wizard.telemetry.control': 'אפשר לשנות בכל רגע ב״הגדרות ← טלמטריה״; DO_NOT_TRACK=1 תמיד גובר.',
+  'wizard.telemetry.yes': 'כן, שלחו אבני-דרך אנונימיות',
+  'wizard.telemetry.no': 'לא, תודה',
+  'wizard.telemetry.on': 'הטלמטריה פעילה. תודה!',
+  'wizard.telemetry.off': 'הטלמטריה נשארת כבויה.',
 
   'wizard.health.title': 'בדיקת תקינות',
   'wizard.health.body': 'בודק ש-Claude עונה, שהדסקטופ פעיל ושכרום נפתח.',

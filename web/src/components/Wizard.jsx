@@ -1,6 +1,6 @@
 // B3 — first-run wizard. A LINEAR, mobile-friendly stepper over the one
 // onboarding state machine (server/onboarding.ts wizard()):
-//   pair → claude → git → profile → integrations → repo → health
+//   pair → claude → git → profile → integrations → repo → telemetry → health
 // Every step's status/skippability comes from GET /__api/onboarding/wizard;
 // this component holds no provisioning logic of its own — it calls the same
 // endpoints the Accounts / Setup / Settings views use, then re-reads the state.
@@ -501,7 +501,62 @@ function RepoStep({ step, refresh }) {
   );
 }
 
-// ---- step 7: health --------------------------------------------------------
+// ---- step 7: telemetry (D3) -------------------------------------------------
+// One question, off by default. "Yes" / "No thanks" both settle the step; the
+// preview is the exact JSON the host would POST (GET /__api/telemetry.preview).
+function TelemetryStep({ step, refresh }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const enabled = !!step.data?.enabled;
+  const reason = step.data?.reason;
+  const pinned = reason === 'dnt' || reason === 'env';
+  const decide = async (on) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.post('/onboarding/wizard/telemetry', { action: on ? 'enable' : 'disable' });
+      await refresh();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const show = async () => {
+    if (preview) { setPreview(null); return; }
+    try { setPreview((await api.get('/telemetry')).preview); } catch (e) { setErr(e.message); }
+  };
+  return (
+    <>
+      <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.telemetry.body')}</p>
+      <ul className="mt-2 list-disc ps-5 text-[12px] leading-relaxed text-fgdim">
+        <li>{t('wizard.telemetry.sends')}</li>
+        <li>{t('wizard.telemetry.never')}</li>
+        <li>{t('wizard.telemetry.control')}</li>
+      </ul>
+      {reason === 'dnt' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.dnt')}</div>}
+      {reason === 'env' && <div className="mt-3 text-[12px] text-fgdim">{t('telemetry.env', { state: enabled ? 'on' : 'off' })}</div>}
+      {step.status === 'ok' && !pinned && (
+        <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {enabled ? t('wizard.telemetry.on') : t('wizard.telemetry.off')}</div>
+      )}
+      {!pinned && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={enabled ? BTN2 : BTN} disabled={busy || enabled} onClick={() => decide(true)}>{t('wizard.telemetry.yes')}</button>
+          <button type="button" className={BTN2} disabled={busy || (step.status === 'ok' && !enabled)} onClick={() => decide(false)}>{t('wizard.telemetry.no')}</button>
+          <button type="button" className={BTN2} onClick={show}>{preview ? t('telemetry.hidePreview') : t('telemetry.preview')}</button>
+        </div>
+      )}
+      {preview && (
+        <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[10.5px] leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
+      )}
+      <ErrorBox err={err} />
+    </>
+  );
+}
+
+// ---- step 8: health --------------------------------------------------------
 function HealthStep({ step, refresh, onOpen }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -561,6 +616,7 @@ const STEP_TITLE = {
   profile: 'wizard.profile.title',
   integrations: 'wizard.integrations.title',
   repo: 'wizard.repo.title',
+  telemetry: 'wizard.telemetry.title',
   health: 'wizard.health.title',
 };
 
@@ -669,6 +725,7 @@ export default function Wizard({ onDone, onExit }) {
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}
             {step.id === 'repo' && <RepoStep step={step} refresh={refresh} />}
+            {step.id === 'telemetry' && <TelemetryStep step={step} refresh={refresh} />}
             {step.id === 'health' && <HealthStep step={step} refresh={refresh} onOpen={finish} />}
 
             <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-hair pt-4">

@@ -1,7 +1,7 @@
 // B3 — first-run wizard (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'Set up Arigami',
-  'wizard.subtitle': 'Seven short steps. You can skip most of them and come back from Setup later.',
+  'wizard.subtitle': 'Eight short steps. You can skip most of them and come back from Setup later.',
   'wizard.stepOf': 'Step {n} of {total}',
   'wizard.back': 'Back',
   'wizard.next': 'Continue',
@@ -88,6 +88,16 @@ export const strings = {
   'wizard.repo.body': 'Add a repository to work on. GitHub or a local folder — the host keeps its own managed copy.',
   'wizard.repo.have': 'Registered: {names}',
 
+  'wizard.telemetry.title': 'Help improve Arigami',
+  'wizard.telemetry.body': 'Off by default. If you opt in, this host sends a few anonymous milestones so we can see where people get stuck.',
+  'wizard.telemetry.sends': 'Sent: milestone names + timestamps (install, first session, first PM tree…), version, OS/arch, Docker yes/no, session count bucket, a random instance id.',
+  'wizard.telemetry.never': 'Never: prompts, code, paths, repo names, emails, hostnames, IPs.',
+  'wizard.telemetry.control': 'Change your mind any time in Settings → Telemetry; DO_NOT_TRACK=1 always wins.',
+  'wizard.telemetry.yes': 'Yes, send anonymous milestones',
+  'wizard.telemetry.no': 'No thanks',
+  'wizard.telemetry.on': 'Telemetry is on. Thank you!',
+  'wizard.telemetry.off': 'Telemetry stays off.',
+
   'wizard.health.title': 'Health check',
   'wizard.health.body': 'Checks that Claude answers, the desktop is up and Chrome can launch.',
   'wizard.health.run': 'Run checks',
@@ -103,5 +113,5 @@ export const strings = {
   'wizard.health.someFailed': 'Some required checks failed — you can still open the cockpit and fix them in Setup.',
 
   'launcher.setup.runWizard': 'Run setup wizard',
-  'launcher.setup.runWizardHint': 'Step-by-step first-run flow: Claude, Git, profile, integrations, repo, health.',
+  'launcher.setup.runWizardHint': 'Step-by-step first-run flow: Claude, Git, profile, integrations, repo, telemetry, health.',
 };

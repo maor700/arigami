@@ -1,0 +1,20 @@
+// D3 — כרטיס טלמטריה בהגדרות + מחרוזות משותפות לצעד באשף.
+export const strings = {
+  'telemetry.title': 'טלמטריה',
+  'telemetry.enable': 'שליחת אבני-דרך שימוש אנונימיות',
+  'telemetry.hint': 'כבוי כברירת מחדל. רק שמות אבני-דרך + חותמות זמן, גרסה, מערכת הפעלה/ארכיטקטורה, Docker כן/לא וטווח מספר סשנים — תחת מזהה אקראי. לעולם לא פרומפטים, נתיבים, שמות או שמות מארח.',
+  'telemetry.dnt': 'DO_NOT_TRACK=1 מוגדר — הטלמטריה כבויה ולא ניתן להפעיל אותה מכאן.',
+  'telemetry.env': 'נעול על {state} על-ידי ARIGAMI_TELEMETRY בסביבה.',
+  'telemetry.preview': 'מה יישלח',
+  'telemetry.showPreview': 'הצג מטען',
+  'telemetry.hidePreview': 'הסתר מטען',
+  'telemetry.lastSent': 'נשלח לאחרונה {when} · {n} אירועים חדשים ממתינים',
+  'telemetry.neverSent': 'עדיין לא נשלח דבר · {n} אירועים ממתינים',
+  'telemetry.id': 'מזהה מופע אנונימי',
+  'telemetry.id.hint': 'uuid אקראי ב-$ARIGAMI_DIR/telemetry-id. איפוס = מחיקת הנתונים שלכם: שום דבר לא מקשר בין המזהה הישן לחדש, והשורות הישנות פגות בקולט.',
+  'telemetry.rotate': 'איפוס מזהה',
+  'telemetry.rotate.confirmTitle': 'לאפס את המזהה האנונימי?',
+  'telemetry.rotate.confirmBody': 'המארח הזה יהפוך למופע אנונימי חדש לגמרי. אבני-דרך שכבר נשלחו נשארות מקושרות למזהה הישן עד שיפוגו.',
+  'telemetry.rotated': 'נוצר מזהה אנונימי חדש',
+  'telemetry.lastError': 'השליחה האחרונה נכשלה: {error}',
+};

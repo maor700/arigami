@@ -275,6 +275,10 @@ server.listen(cfg.port, cfg.bind, () => {
       // B3: `install.sh --unattended` → pre-complete every skippable wizard step
       // so the wizard is done the moment pairing lands (no UI on a headless box).
       import('./onboarding.js').then((ob) => { try { ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
+      // K5/D3: `install` = the first boot of this data dir; then arm the
+      // opt-in telemetry shipper (a no-op timer until someone opts in).
+      import('./funnel.js').then((f) => { try { f.firstTime('install'); } catch {} }).catch(() => {});
+      import('./telemetry.js').then((tm) => { try { tm.start(); } catch {} }).catch(() => {});
       // Keep OAuth-login accounts' 8h access tokens renewed from their refresh tokens.
       import('./oauth-login.js').then((o: any) => o.startTokenRefresher()).catch(() => {});
       return import('./usage.js').then((u: any) => u.startUsagePolling());

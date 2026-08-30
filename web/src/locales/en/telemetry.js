@@ -1,0 +1,20 @@
+// D3 — Settings → Telemetry card + shared strings used by the wizard step.
+export const strings = {
+  'telemetry.title': 'Telemetry',
+  'telemetry.enable': 'Send anonymous usage milestones',
+  'telemetry.hint': 'Off by default. Only funnel milestone names + timestamps, version, OS/arch, Docker yes/no and a session-count bucket — under a random id. Never prompts, paths, names or hostnames.',
+  'telemetry.dnt': 'DO_NOT_TRACK=1 is set — telemetry is off and cannot be enabled from here.',
+  'telemetry.env': 'Pinned {state} by ARIGAMI_TELEMETRY in the environment.',
+  'telemetry.preview': 'What would be sent',
+  'telemetry.showPreview': 'Preview payload',
+  'telemetry.hidePreview': 'Hide payload',
+  'telemetry.lastSent': 'Last sent {when} · {n} new event(s) pending',
+  'telemetry.neverSent': 'Nothing has been sent yet · {n} event(s) pending',
+  'telemetry.id': 'Anonymous instance id',
+  'telemetry.id.hint': 'A random uuid in $ARIGAMI_DIR/telemetry-id. Reset it to delete your data: nothing links the old id to the new one, and old rows expire on the collector.',
+  'telemetry.rotate': 'Reset ID',
+  'telemetry.rotate.confirmTitle': 'Reset the anonymous id?',
+  'telemetry.rotate.confirmBody': 'This host becomes a brand-new anonymous instance. Previously sent milestones stay attached to the old id until they expire.',
+  'telemetry.rotated': 'New anonymous id generated',
+  'telemetry.lastError': 'last send failed: {error}',
+};

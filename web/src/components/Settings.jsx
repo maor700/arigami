@@ -696,6 +696,7 @@ export default function Settings({ onClose }) {
           <ScreenShare />
           <PushNotifications />
           <BrainHeartbeat />
+          <TelemetryCard />
           <HostCard />
           <UsersCard />
         </div>
@@ -884,6 +885,56 @@ function fmtUptime(sec) {
   if (m < 90) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 48 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d`;
+}
+
+// D3 — opt-in telemetry: toggle, "preview payload" (the exact JSON the host
+// would POST next), and "reset anonymous ID" (= delete my data).
+function TelemetryCard() {
+  const t = useT();
+  const { auth } = useStore();
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
+  const admin = !!auth?.isAdmin || auth?.authMode === 'off';
+  const load = () => api.get('/telemetry').then(setSt).catch(() => setSt(null));
+  useEffect(() => { load(); }, []);
+  const run = async (fn) => {
+    setBusy(true);
+    try { setSt(await fn()); } catch (e) { toastError(e?.message || String(e)); } finally { setBusy(false); }
+  };
+  const toggle = (on) => run(() => api.post('/telemetry', { enabled: on }));
+  const rotate = async () => {
+    if (!(await confirmDialog({ title: t('telemetry.rotate.confirmTitle'), body: t('telemetry.rotate.confirmBody'), confirmLabel: t('telemetry.rotate') }))) return;
+    run(async () => { const r = await api.post('/telemetry/rotate', {}); toast(t('telemetry.rotated')); return r; });
+  };
+  const btn = 'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
+  const pinned = st && (st.reason === 'dnt' || st.reason === 'env');
+  return (
+    <>
+      <h3 className="mt-3 border-t border-hair pt-3 text-[11px] font-bold uppercase tracking-wide text-fgdim">
+        {t('telemetry.title')}
+      </h3>
+      <Field
+        label={t('telemetry.enable')}
+        hint={st?.reason === 'dnt' ? t('telemetry.dnt') : st?.reason === 'env' ? t('telemetry.env', { state: st.enabled ? 'on' : 'off' }) : t('telemetry.hint')}
+      >
+        <Toggle on={!!st?.enabled} disabled={!st || busy || !admin || pinned} onChange={toggle} />
+      </Field>
+      <Field label={t('telemetry.preview')} hint={st?.lastSentAt ? t('telemetry.lastSent', { when: new Date(st.lastSentAt).toLocaleString(), n: st.pending }) : t('telemetry.neverSent', { n: st?.pending ?? 0 })}>
+        <button type="button" className={btn} disabled={!st} onClick={() => setShow((v) => !v)}>{show ? t('telemetry.hidePreview') : t('telemetry.showPreview')}</button>
+      </Field>
+      {show && st?.preview && (
+        <pre dir="ltr" className="mb-2 max-h-[260px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[10.5px] leading-snug text-fg">{JSON.stringify(st.preview, null, 2)}</pre>
+      )}
+      <Field label={t('telemetry.id')} hint={t('telemetry.id.hint')}>
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-[10.5px] text-fgdim" dir="ltr">{st?.id ? st.id.slice(0, 8) + '…' : '…'}</span>
+          <button type="button" className={btn} disabled={!st || busy || !admin} onClick={rotate}>{t('telemetry.rotate')}</button>
+        </span>
+      </Field>
+      {st?.lastError && <div className="py-1 font-mono text-[10.5px] text-fgdim">{t('telemetry.lastError', { error: st.lastError })}</div>}
+    </>
+  );
 }
 
 function HostCard() {

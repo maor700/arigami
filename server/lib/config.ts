@@ -127,6 +127,17 @@ export interface AuthConfig {
   oidc?: OidcConfig;
 }
 
+// D3 — opt-in telemetry (server/telemetry.ts). OFF by default. `enabled`
+// ships the K5 funnel milestones (names + timestamps) plus version/os/arch/
+// docker to `endpoint`; env ARIGAMI_TELEMETRY=1|0 overrides the file and
+// DO_NOT_TRACK=1 forces it off regardless. `updateCheck` gates the daily
+// "is upstream ahead" fetch in server/version.ts (never sends anything).
+export interface TelemetryConfig {
+  enabled: boolean;
+  updateCheck: boolean;
+  endpoint: string;
+}
+
 export interface Config {
   port: number;
   // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
@@ -168,6 +179,7 @@ export interface Config {
   artifacts: ArtifactsConfig;
   share: ShareConfig;
   host: HostConfig;
+  telemetry: TelemetryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -255,6 +267,11 @@ export const DEFAULTS: Config = {
     drainTimeoutMs: 20_000,
     idleTimeoutMin: 30,
   },
+  telemetry: {
+    enabled: false,
+    updateCheck: false,
+    endpoint: 'https://telemetry.arigami.dev/v1/events',
+  },
   defaultModel: null,
 };
 
@@ -336,6 +353,13 @@ function envOverrides(): Partial<Config> {
   if (E.GROQ_API_KEY) o.groqApiKey = E.GROQ_API_KEY;
   if (E.COMPOSIO_API_KEY) o.composioApiKey = E.COMPOSIO_API_KEY;
   if (E.ARIGAMI_VOICE_LANG) o.voiceLang = E.ARIGAMI_VOICE_LANG;
+  if ((E.ARIGAMI_TELEMETRY != null && E.ARIGAMI_TELEMETRY !== '') || E.ARIGAMI_TELEMETRY_URL) {
+    o.telemetry = {
+      ...DEFAULTS.telemetry,
+      ...(E.ARIGAMI_TELEMETRY != null && E.ARIGAMI_TELEMETRY !== '' ? { enabled: /^(1|true|yes|on)$/i.test(E.ARIGAMI_TELEMETRY) } : {}),
+      ...(E.ARIGAMI_TELEMETRY_URL ? { endpoint: E.ARIGAMI_TELEMETRY_URL } : {}),
+    };
+  }
   if (E.ARIGAMI_SCREEN_ENABLED != null || E.ARIGAMI_VNC_HOST || E.ARIGAMI_VNC_PORT) {
     o.screen = {
       ...DEFAULTS.screen,
@@ -477,5 +501,18 @@ export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
   const out = { ...file, brain: next } as any;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
   cfg.brain = next;
+  return next;
+}
+
+// Persist a partial telemetry config (Settings toggle, wizard step, `bin/host`).
+// Same merge pattern as updateBrainConfig. Note: env ARIGAMI_TELEMETRY and
+// DO_NOT_TRACK still win at runtime — see server/telemetry.ts effective().
+export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): TelemetryConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: TelemetryConfig = { ...cfg.telemetry, ...patch };
+  const out = { ...file, telemetry: { ...(file.telemetry || {}), ...patch } } as any;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  cfg.telemetry = next;
   return next;
 }

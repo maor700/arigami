@@ -756,7 +756,7 @@ export function workspaceReady(): boolean {
 // stored alongside the records so restarts don't re-emit.
 // ===========================================================================
 
-export const WIZARD_STEPS = ['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'health'] as const;
+export const WIZARD_STEPS = ['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health'] as const;
 export type WizardStepId = (typeof WIZARD_STEPS)[number];
 export type WizardStatus = 'ok' | 'todo' | 'skipped' | 'blocked' | 'error' | 'running';
 
@@ -843,6 +843,8 @@ export interface WizardProbes {
   repos: () => string[];
   health: () => HealthResult | undefined;
   unattended: () => boolean;
+  // D3: what applies right now (config + ARIGAMI_TELEMETRY + DO_NOT_TRACK).
+  telemetry: () => { enabled: boolean; reason: 'dnt' | 'env' | 'config' };
 }
 
 const readTrim = (p: string): string | null => {
@@ -896,6 +898,13 @@ export const defaultProbes: WizardProbes = {
   repos: () => listRepos().map((r) => r.name),
   health: () => readOnboardingFile().health,
   unattended: () => process.env.ARIGAMI_UNATTENDED === '1',
+  telemetry: () => {
+    const dnt = /^(1|true|yes)$/i.test(String(process.env.DO_NOT_TRACK || ''));
+    const e = process.env.ARIGAMI_TELEMETRY;
+    if (dnt) return { enabled: false, reason: 'dnt' };
+    if (e != null && e !== '') return { enabled: /^(1|true|yes|on)$/i.test(e), reason: 'env' };
+    return { enabled: !!cfg.telemetry?.enabled, reason: 'config' };
+  },
 };
 
 // --- the machine ---------------------------------------------------------------
@@ -907,6 +916,7 @@ const TITLES: Record<WizardStepId, string> = {
   profile: 'Profile bundle',
   integrations: 'Integrations',
   repo: 'First repository',
+  telemetry: 'Help improve Arigami',
   health: 'Health check',
 };
 
@@ -917,6 +927,7 @@ const SKIPPABLE: Record<WizardStepId, boolean> = {
   profile: true,
   integrations: true,
   repo: true,
+  telemetry: true,
   health: true,
 };
 
@@ -940,6 +951,7 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
   const integ = p.integrations();
   const repos = p.repos();
   const health = p.health();
+  const tele = p.telemetry();
 
   const steps: WizardStep[] = [
     {
@@ -1004,6 +1016,24 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
       data: { repos },
     },
     {
+      // D3: opt-in only. 'ok' when the user decided (either way — a recorded
+      // 'complete' after "No thanks" is still a decision) or when it's
+      // already on; DO_NOT_TRACK / env pin it and skip the question.
+      id: 'telemetry',
+      title: TITLES.telemetry,
+      fixable: true,
+      skippable: SKIPPABLE.telemetry,
+      ...resolve('telemetry', tele.enabled || tele.reason !== 'config'),
+      detail: tele.reason === 'dnt'
+        ? 'DO_NOT_TRACK=1 — telemetry is off and cannot be enabled'
+        : tele.reason === 'env'
+          ? `pinned by ARIGAMI_TELEMETRY (${tele.enabled ? 'on' : 'off'})`
+          : tele.enabled
+            ? 'anonymous usage milestones are sent (Settings → Telemetry to review or turn off)'
+            : 'off — send anonymous funnel milestones (no prompts, paths or names) to help prioritise work',
+      data: { enabled: tele.enabled, reason: tele.reason },
+    },
+    {
       id: 'health',
       title: TITLES.health,
       fixable: true,
@@ -1014,7 +1044,7 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
     },
   ];
   // A running health job overrides the persisted result.
-  if (healthRunning) steps[6].status = 'running';
+  if (healthRunning) steps[steps.length - 1].status = 'running';
   return steps;
 }
 
