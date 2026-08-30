@@ -60,6 +60,8 @@ export const strings = {
   'launcher.connect.body':
     'Sync your assigned issues and enable filters. Opens a one-time Linear consent page; the token is stored only by the host (separate from Claude Code).',
   'launcher.connect.waiting': 'Waiting for authorization…',
+  'launcher.connect.agentsNote': 'Tickets use the cockpit’s own Linear grant. To give agents Linear tools, connect Linear separately:',
+  'launcher.connect.agentsLink': 'Settings → Connections',
   'launcher.connect.button': 'Connect Linear →',
 
   // ticket picker

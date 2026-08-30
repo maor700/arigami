@@ -1318,6 +1318,18 @@ function recordMcpConnection(owner: caps.Owner, spec: mcpCat.McpServerSpec, name
   return { connection, toolsAdded };
 }
 
+type McpLoginStatus = { state: string; url: string | null; error: string | null };
+
+/** `claude mcp login` prints the authorize URL a beat after it starts; wait for it. */
+async function waitForAuthUrl(name: string, timeoutMs = 20_000): Promise<McpLoginStatus> {
+  const t0 = Date.now();
+  for (;;) {
+    const st = mcpAuth.loginStatus(name) as McpLoginStatus;
+    if (st.url || st.state === 'error' || st.state === 'done' || Date.now() - t0 > timeoutMs) return st;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
 async function applyMcpSetup(slug: string, body: any, owner: caps.Owner): Promise<Record<string, unknown>> {
   const spec = mcpCat.mcpSpec(slug);
@@ -1348,18 +1360,23 @@ async function applyMcpSetup(slug: string, body: any, owner: caps.Owner): Promis
       mcpAuth.cancelLogin(name);
       return { ok: true, state: 'done', name, owner, connection, ...(toolsAdded ? { toolsAdded } : {}) };
     }
-    return { ...st, ok: false, name, owner };
+    return { ...st, ok: false, name, owner, url: st.url };
   }
   if (action === 'code' || action === 'paste' || body?.code || body?.url) {
     const r = mcpAuth.submitRedirect(name, String(body?.code || body?.url || ''));
     if (!r.ok) throw new Error(r.error || 'could not hand the redirect URL to the login');
     return { ...r, ok: false, name, owner }; // the caller polls; the exchange takes a moment
   }
-  // start (default): register the server, then run `claude mcp login --no-browser`.
+  // start (default): register the server, then run `claude mcp login --no-browser`
+  // and WAIT for the authorize URL it prints — the caller (card or playbook) has
+  // nothing to do until then, and both would otherwise have to invent a second
+  // poll just to learn where to send the human.
   const add = await mcpAuth.addServer(name, url, { scope, cwd });
   if (!add.ok) throw new Error(add.output || add.error || `could not register ${spec.title}`);
-  const st = mcpAuth.startLogin(name, cwd) as { state: string; url: string | null; error: string | null };
+  mcpAuth.startLogin(name, cwd);
+  const st = await waitForAuthUrl(name);
   if (st.state === 'error') throw new Error(st.error || 'could not start the MCP login');
+  if (!st.url) throw new Error(`${spec.title}: the sign-in did not print an authorize URL — is Claude Code >= 2.1.191 on this host?`);
   return { ...st, ok: false, id: name, name, url: st.url, owner, domains: spec.domains, docs: spec.docs };
 }
 

@@ -57,6 +57,13 @@ function fakeInstance(dir: string) {
   w('mcp-logs.txt', 'root-level log (F4 #7)');
   w('wa-logs.txt', 'root-level log (F4 #7)');
   w('uploads/keep-logs.txt', 'an upload that merely ends in -logs.txt — must survive');
+  // M1: connection RECORDS are portable (names/URLs), the OAuth grants behind
+  // them are not — a `.credentials.json` anywhere under the instance dir is a
+  // machine-local plaintext secret and must never reach an archive.
+  w('mcp-connections.json', JSON.stringify([{ cap: 'mcp:linear', slug: 'linear', name: 'linear', url: 'https://mcp.linear.app/mcp', auth: 'oauth', at: '2026-08-30T00:00:00.000Z' }]));
+  w('agents/sales/connections.json', JSON.stringify([{ cap: 'mcp:notion', slug: 'notion', name: 'notion--sales', url: 'https://mcp.notion.com/mcp', auth: 'oauth', at: '2026-08-30T00:00:00.000Z' }]));
+  w('.credentials.json', JSON.stringify({ mcpOAuth: { 'linear|abc': { accessToken: 'mcp-token-FAKE-NOT-REAL' } } }));
+  w('claude-config/.credentials.json', JSON.stringify({ mcpOAuth: { 'linear|abc': { accessToken: 'mcp-token-FAKE-NOT-REAL' } } }));
   return dir;
 }
 
@@ -123,6 +130,12 @@ test('full export: manifest at the root, secrets kept as-is, run/chrome/logs/.ba
   expect(entries).toContain('uploads/keep-logs.txt');
   expect(entries).not.toContain('mcp-logs.txt');
   expect(entries).not.toContain('wa-logs.txt');
+  // M1 (§4.5): mcpOAuth grants are machine-local plaintext — excluded wherever
+  // they sit. The ownership records ride along; they hold no secret and the
+  // capability check simply reports "needs authentication" on the new machine.
+  expect(entries.filter((e) => e.endsWith('.credentials.json'))).toEqual([]);
+  expect(entries).toContain('mcp-connections.json');
+  expect(entries).toContain('agents/sales/connections.json');
   for (const bad of entries) {
     expect(bad.startsWith('run/') || bad === 'run').toBe(false);
     expect(bad.startsWith('chrome-sessions') || bad.startsWith('chrome-base') || bad.startsWith('logs') || bad.startsWith('tmp')).toBe(false);

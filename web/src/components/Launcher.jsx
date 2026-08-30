@@ -659,6 +659,13 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
 
 // Live "Connect Linear" banner — kicks off the server-side OAuth flow, opens the
 // consent page, and polls status until the host has tokens.
+//
+// M1: this is the TICKET LIST's own Linear grant (server/linear-mcp.ts), not the
+// agent-facing one. Agents get Linear through the generic native-MCP card in
+// Settings → Connections, which is a separate grant on purpose: two independent
+// OAuth clients must not share one refresh token (rotation would revoke the
+// other's). The note below says so, so nobody wonders why they connected Linear
+// once and the other place still says "not connected".
 function ConnectLinear({ onConnected }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -714,6 +721,10 @@ function ConnectLinear({ onConnected }) {
         {busy ? t('launcher.connect.waiting') : t('launcher.connect.button')}
       </button>
       {err && <div className="mt-2 text-[10.5px] text-danger">{err}</div>}
+      <div className="mt-2 text-[10.5px] leading-snug text-fgdim">
+        {t('launcher.connect.agentsNote')}{' '}
+        <a href="#/settings/connections/mcp" className="underline hover:text-fg">{t('launcher.connect.agentsLink')}</a>
+      </div>
     </div>
   );
 }

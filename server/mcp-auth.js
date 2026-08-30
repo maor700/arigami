@@ -171,6 +171,13 @@ export function startLogin(name, cwd, opts = {}) {
     if (f.waits && !code) {
       // A loopback server that waited then exited cleanly = authorization landed.
       f.state = 'done';
+    } else if (code && f.pasted) {
+      // M1: we handed a redirect URL over and `claude` still exited non-zero —
+      // the exchange was rejected (stale code, wrong `state`, revoked consent).
+      // Without this the generic "printed a URL, so keep waiting" branch below
+      // would leave the card spinning on a login that is already dead.
+      f.state = 'error';
+      f.error = stripAnsi(f.buf).split('\n').map((s) => s.trim()).filter(Boolean).slice(-1)[0] || 'the redirect URL was rejected';
     } else if (f.url) {
       // Connector that printed a URL and exited: go authorize in the browser.
       f.state = 'awaiting';
@@ -212,7 +219,7 @@ export function submitRedirect(name, url) {
   const f = logins.get(name);
   if (!f || !f.child || f.child.killed) return { ok: false, ...loginStatus(name), error: 'no login in progress' };
   const u = String(url || '').trim();
-  if (!/^https?:\/\/[^\s]+[?&]code=/.test(u)) return { ok: false, ...publicLogin(f), error: 'paste the full redirect URL (…/callback?code=…)' };
+  if (!/^https?:\/\/[^\s]+[?&]code=[^&\s]+/.test(u)) return { ok: false, ...publicLogin(f), error: 'paste the full redirect URL (…/callback?code=…)' };
   try {
     f.child.stdin.write(u + '\n');
   } catch (e) {
