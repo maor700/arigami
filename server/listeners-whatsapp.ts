@@ -5,6 +5,7 @@
 // delivery at a fraction of the cost of a model polling itself.
 
 import { DatabaseSync } from 'node:sqlite';
+import { WA_DB_PATH } from './whatsapp-bridge.js';
 
 export interface WhatsAppWatermark extends Record<string, unknown> {
   since: string; // ISO timestamp — only messages with timestamp > since are new
@@ -17,7 +18,7 @@ interface WhatsAppRow {
   content: string;
 }
 
-const DEFAULT_DB_PATH = '/home/arigami/.local/lib/whatsapp-mcp/data/whatsapp.db';
+const DEFAULT_DB_PATH = WA_DB_PATH;
 
 // Returns new incoming messages since watermark.since, optionally filtered to a specific group.
 export function fetchWhatsappMessages(

@@ -1,0 +1,96 @@
+# B2: build + publish the arigami image to GHCR.
+#   push to master  → ghcr.io/maor700/arigami:latest + :sha-<7>
+#   tag v X.Y.Z     → ghcr.io/maor700/arigami:X.Y.Z + :X.Y + :sha-<7>
+# amd64 + arm64 via buildx/QEMU. Smoke-tests the amd64 image before pushing.
+name: Release image
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Spec §0.1(8) / B2: a public `latest` is only legal with auth on by default.
+  # Fail the whole release if server/lib/config.ts's default auth mode is not
+  # `pairing` — nobody should be able to ship an open image by accident.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: default auth mode must be pairing
+        run: |
+          if ! grep -Eq "^\s*mode:\s*'pairing'," server/lib/config.ts; then
+            echo "::error::server/lib/config.ts default auth mode is not 'pairing' — refusing to publish"; exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: sh scripts/check-public-readiness.sh
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=arigami
+            org.opencontainers.image.licenses=Apache-2.0
+
+      # amd64 only, loaded into the local daemon, for the smoke test below.
+      - name: build amd64 (smoke)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE }}:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: smoke — host answers, pairing on, desktop up
+        run: |
+          set -eux
+          docker run -d --name smoke --shm-size 1g -p 127.0.0.1:3099:3099 \
+            -e ARIGAMI_BIND=0.0.0.0 ${IMAGE}:smoke
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3099/__api/config >/tmp/cfg.json 2>/dev/null && break; sleep 2
+          done
+          cat /tmp/cfg.json; echo
+          grep -q '"authMode":"pairing"' /tmp/cfg.json
+          docker logs smoke 2>&1 | grep -q 'pairing code'
+          docker exec smoke sh -c 'pgrep -x Xvfb && pgrep -x x11vnc'
+          docker exec smoke sh -c '"$CHROME_BIN" --no-sandbox --headless --version'
+          docker rm -f smoke
+
+      - name: build + push amd64/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

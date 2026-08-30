@@ -88,6 +88,11 @@ linuxOnly('global desktop: skipped for non-default instance, disabled screen, mi
   expect((await gd({ vncHost: '10.0.0.5' })).reason).toMatch(/remote/);
 });
 
+linuxOnly('global desktop: ARIGAMI_GLOBAL_DESKTOP=1 opts a non-default instance in (Docker: /data/.arigami)', async () => {
+  // Past the instance check → the next probe (missing Xvfb) is what stops it.
+  expect((await gd({ isDefaultInstance: false, env: { ARIGAMI_GLOBAL_DESKTOP: '1' }, which: () => null })).reason).toMatch(/Xvfb/);
+});
+
 linuxOnly('global desktop: when everything is free it spawns Xvfb :99 then x11vnc on loopback', async () => {
   const spawned = [];
   // Fake spawn: record args, and pretend the X socket appears / port opens by

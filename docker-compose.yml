@@ -1,31 +1,52 @@
-# Local single-node run of arigami on Docker.
+# Single-node run of arigami on Docker.
 #
 # This mirrors the eventual K8s shape on purpose: ONE container, ONE named
 # volume (= the PVC), config from an env file (= a Secret). There is no second
 # replica — the listeners scheduler in server/state.ts is a singleton and the
 # sessions write git worktrees; two of these on the same volume corrupt state.
 #
-#   cp docker/.env.example .env   # fill in ANTHROPIC_API_KEY at minimum
-#   docker compose up --build
+#   cp docker/.env.example .env   # Claude auth (see the file)
+#   docker compose up -d          # pulls ghcr.io/maor700/arigami:latest
+#   docker compose logs -f arigami   # prints the one-time pairing code
 #   open http://localhost:3199/__host/
 #
+# Pin a release with ARIGAMI_TAG=0.1.0 (or sha-<7>) in .env.
+#
+# Building the image yourself (developers) — the `build` profile:
+#   docker compose --profile build build     # tags the same image name locally
+#   docker compose up -d                     # then runs it as usual
+#
 # TLS (C2): add ARIGAMI_DOMAIN + ARIGAMI_PUBLIC_URL to .env, then
-#   docker compose --profile tls up --build
+#   docker compose --profile tls up -d
 # → Caddy on :80/:443 with a Let's Encrypt certificate, proxying to the
 # arigami container over the compose network. See docs/TLS.md.
 
+x-arigami: &arigami
+  image: ghcr.io/maor700/arigami:${ARIGAMI_TAG:-latest}
+  environment:
+    ARIGAMI_PORT: "3199"
+    ARIGAMI_BIND: "0.0.0.0"
+    # Caddy is NOT a loopback peer from inside this container, so the
+    # X-Forwarded-Proto rule (trustProxy, loopback-only) can't apply here;
+    # the https origin comes from ARIGAMI_PUBLIC_URL in .env instead.
+    ARIGAMI_TRUST_PROXY: "0"
+  env_file:
+    - .env
+  volumes:
+    - arigami-data:/data
+  # Chrome (the VNC desktop + Playwright) crashes on the default 64MB /dev/shm.
+  # With --no-sandbox (added automatically inside the container) no extra
+  # capabilities are needed.
+  shm_size: "1gb"
+
 services:
   arigami:
-    build: .
-    image: arigami:local
+    <<: *arigami
     container_name: arigami
-    # Port 3199 (not 3099): a natively installed host (bin/host install) already owns
-    # localhost:3099.  localhost:3099 = native/local host | localhost:3199 = container.
-    # The container runs on 3199 INTERNALLY too (ARIGAMI_PORT) — not just the
-    # host-side map — so self-built URLs like the Linear OAuth redirect_uri
-    # (http://localhost:<port>/__api/linear/oauth/callback) point back at the
-    # container, not the native host. Otherwise the callback lands on :3099 and
-    # the in-memory OAuth `state` never matches → "OAuth state mismatch".
+    # Port 3199 on the host: a natively installed host (bin/host install) may
+    # already own localhost:3099. The container listens on 3199 INTERNALLY too
+    # (ARIGAMI_PORT) so self-built URLs (OAuth redirect_uri) point back at the
+    # container, not at a native host on :3099.
     # Published on the host's LOOPBACK only (C1 fail-closed, SPEC §7.9): reach
     # it from other machines through `tailscale serve` or the `tls` profile
     # below, never by exposing this port. Inside the container the host binds
@@ -33,21 +54,22 @@ services:
     # (pairing cookie) stays on — config.ts refuses 0.0.0.0 with auth off.
     ports:
       - "127.0.0.1:3199:3199"
-    environment:
-      ARIGAMI_PORT: "3199"
-      ARIGAMI_BIND: "0.0.0.0"
-      # Caddy is NOT a loopback peer from inside this container, so the
-      # X-Forwarded-Proto rule (trustProxy, loopback-only) can't apply here;
-      # the https origin comes from ARIGAMI_PUBLIC_URL in .env instead.
-      ARIGAMI_TRUST_PROXY: "0"
-    env_file:
-      - .env
-    volumes:
-      - arigami-data:/data
     restart: unless-stopped
-    # Chromium (Playwright, for visual ticket skills) crashes on the default
-    # 64MB /dev/shm — give it room.
-    shm_size: "1gb"
+
+  # --- local image build — only with `docker compose --profile build build` ---
+  # Same image name/tag as the service above, so a local build shadows the
+  # registry image. Never started as a second host: its command exits at once.
+  arigami-build:
+    <<: *arigami
+    profiles: [build]
+    build:
+      context: .
+      args:
+        # WHATSAPP_MCP_REF: <commit>   # override the pinned whatsapp-mcp checkout
+    container_name: arigami-build
+    entrypoint: ["/bin/true"]
+    command: []
+    restart: "no"
 
   # --- TLS edge (C2) — only with `docker compose --profile tls up` ---------
   # Caddy with the caddy-ratelimit module (deploy/caddy/Dockerfile). To use

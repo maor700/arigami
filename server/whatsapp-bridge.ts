@@ -12,10 +12,20 @@ import * as path from 'node:path';
 
 type WakeFn = (sessionId: string, text: string, key: string) => void;
 
-export const WA_MCP_DIR = '/home/arigami/.local/lib/whatsapp-mcp';
+import * as os from 'node:os';
+
+// Where the whatsapp-mcp checkout lives (B2). Native installs keep the legacy
+// ~/.local/lib/whatsapp-mcp; the Docker image clones it at build time into
+// /opt/whatsapp-mcp and sets ARIGAMI_WA_MCP_DIR. The Baileys auth state is
+// hardcoded upstream to <checkout>/auth_info, so in the image the entrypoint
+// symlinks that directory onto the /data volume. The message DB + status file
+// (WHATSAPP_MCP_DATA_DIR upstream) can be moved independently with
+// ARIGAMI_WA_DATA_DIR — the image points it at /data/.arigami/whatsapp/data.
+export const WA_MCP_DIR = process.env.ARIGAMI_WA_MCP_DIR
+  || path.join(os.homedir(), '.local/lib/whatsapp-mcp');
 export const WA_ENTRY = path.join(WA_MCP_DIR, 'src/bridge-entry.ts');
 export const WA_AUTH_DIR = path.join(WA_MCP_DIR, 'auth_info');
-export const WA_DATA_DIR = path.join(WA_MCP_DIR, 'data');
+export const WA_DATA_DIR = process.env.ARIGAMI_WA_DATA_DIR || path.join(WA_MCP_DIR, 'data');
 export const WA_DB_PATH = path.join(WA_DATA_DIR, 'whatsapp.db');
 const STATUS_FILE = path.join(WA_DATA_DIR, 'bridge-status.json');
 
