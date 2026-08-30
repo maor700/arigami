@@ -18,8 +18,17 @@ async function handle(res) {
     } catch {
       /* ignore */
     }
-    const err = new Error(`HTTP ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ''}`);
+    // F8: a JSON {error} body is the human-facing message — never show raw
+    // JSON in a card ("{"ok":false,"error":"token rejected…"}").
+    let message = detail.slice(0, 200);
+    let body = null;
+    try {
+      body = JSON.parse(detail);
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch { /* plain text */ }
+    const err = new Error(`HTTP ${res.status}${message ? ` — ${message}` : ''}`);
     err.status = res.status;
+    err.body = body;
     throw err;
   }
   try {
