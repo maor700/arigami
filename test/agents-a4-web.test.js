@@ -74,9 +74,9 @@ test('parseMentions: @slug / @Name anywhere, unknown @tokens and emails stay tex
   const r = composer.parseMentions('@mila please write the launch email, cc @Reachard for facts', AGENTS);
   expect(r.agents.map((a) => a.slug)).toEqual(['mila', 'reachard']);
   expect(r.text).toBe('please write the launch email, cc for facts');
-  const none = composer.parseMentions('mail dana@example.com at @2pm', AGENTS);
+  const none = composer.parseMentions('mail sam@example.com at @2pm', AGENTS);
   expect(none.agents).toEqual([]);
-  expect(none.text).toBe('mail dana@example.com at @2pm');
+  expect(none.text).toBe('mail sam@example.com at @2pm');
   const dup = composer.parseMentions('@mila and @mila again', AGENTS);
   expect(dup.agents.length).toBe(1);
   expect(dup.text).toBe('and again');

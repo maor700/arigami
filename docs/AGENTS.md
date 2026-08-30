@@ -385,7 +385,7 @@ two-word command the palette regex admits.
 
 Typing `@` (at the start, or after whitespace/punctuation) at the end of the text opens the
 **mention palette** (agents from the store: avatar, `@slug`, name, skills; ↑↓ ↵ esc, tap on
-mobile). `@slug` and `@Name` both resolve; `dana@example.com` and `@2pm` stay text.
+mobile). `@slug` and `@Name` both resolve; `sam@example.com` and `@2pm` stay text.
 
 Sending a message that mentions agents (and has text left after the tokens are stripped) does
 **not** send it to the current session — the host routes it, one `delegate` call per agent:
