@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
+import { errText } from '../lib/errors.js';
 import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
@@ -953,8 +954,10 @@ function ChatFooter({ session }) {
   const sendingRef = useRef(false);
   const send = async () => {
     if (sendingRef.current) return;
-    const t = text.trim();
-    if (!t && !attachments.length) return;
+    // NOTE: `t` is the i18n function in this component — the composer text is
+    // `draft` (it used to shadow `t`, so nothing here could be translated).
+    const draft = text.trim();
+    if (!draft && !attachments.length) return;
     sendingRef.current = true;
     const sentAttachments = attachments;
     // Prepend the quoted message as a blockquote so the model sees context.
@@ -962,21 +965,26 @@ function ChatFooter({ session }) {
       ? `> ${quoted.text.split('\n').join('\n> ')}\n\n`
       : '';
     // A4: slash-commands / @mentions the host answers itself (see lib/composer.js).
-    const resolved = resolveSubmission(t, { skills, agents });
+    const resolved = resolveSubmission(draft, { skills, agents });
     if (resolved.type !== 'plain' && resolved.type !== 'skill') {
       setText('');
       try {
         await runHostCommand(resolved.type === 'mention' ? { ...resolved, text: quotedPrefix + resolved.text } : resolved);
       } catch (e) {
-        setText(t);
-        toastError(e);
+        // A5 (#10): a FAILED command must never go back into the box. It used to
+        // be restored there, so the next thing the human typed was appended to it
+        // and Enter silently re-ran the same failing slash line instead of sending
+        // a message. Say what happened; put the text back only if they ask.
+        toastError(t('chat.commandFailed', { msg: errText(e) }), {
+          action: { label: t('chat.commandRestore'), onClick: () => { setText(draft); focusInput(); } },
+        });
       } finally {
         sendingRef.current = false;
       }
       return;
     }
     // A skill slash (/plan …) is rewritten to its plugin command (/arigami:dispatch …).
-    const fullText = quotedPrefix + (resolved.type === 'skill' ? resolved.text : t);
+    const fullText = quotedPrefix + (resolved.type === 'skill' ? resolved.text : draft);
     const payload = { text: fullText, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
     setLastSent(session.id, { text: fullText, attachments: sentAttachments });
     setText('');
@@ -984,9 +992,12 @@ function ChatFooter({ session }) {
     setQuoted(null);
     try {
       await api.post(`/sessions/${session.id}/message`, payload);
-    } catch {
-      setText(t); // restore on failure
+    } catch (e) {
+      // Restore the draft — but SAY why it came back (a refused turn used to look
+      // like Enter did nothing at all): a budget 429 renders localized (A5 #11).
+      setText(draft);
       setAttachments(sentAttachments);
+      toastError(e);
     } finally {
       sendingRef.current = false;
     }

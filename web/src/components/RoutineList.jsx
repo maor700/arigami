@@ -4,17 +4,21 @@
 // props, SSR-testable) + container (RoutinePanel — GET /__api/agents/:slug/routine,
 // re-read whenever the store's triggers/listeners change). Enable / disable /
 // run now / delete go through the existing trigger routes; listeners are
-// cancelled through their session's route. ADDING a job is done in chat: the
-// button opens a fresh session born from the agent with a prefilled prompt.
+// cancelled through their session's route.
+//
+// A5 (#8 + trip-up #2): adding a job no longer forces a chat. The form here is the
+// direct path (POST /__api/triggers {type:'cron', agent}); "Add via chat" opens the
+// agent's EXISTING home chat with a prefilled draft instead of spawning a fresh
+// session (and another cold start) on every click.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { useStore } from '../lib/store.js';
+import { useStore, setDraft } from '../lib/store.js';
 import { relTime } from '../lib/time.js';
-import { toastError } from '../lib/toast.js';
+import { toastError, toastSuccess } from '../lib/toast.js';
 import * as setupApi from '../lib/setup-api.js';
-import { faPlay, faTrash, faComments, faClock, faSatelliteDish } from '@fortawesome/free-solid-svg-icons';
+import { faPlay, faTrash, faComments, faClock, faSatelliteDish, faPlus } from '@fortawesome/free-solid-svg-icons';
 
 const btn = 'cursor-pointer rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40';
 
@@ -30,7 +34,41 @@ export function untilTime(ms, t) {
   return t('time.in', { t: v });
 }
 
-export function RoutineList({ agent, data, busy = false, onToggle, onRun, onDelete, onCancelListener, onAdd }) {
+/** The inline "add a scheduled job" form — schedule + prompt, nothing else. */
+export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
+  const t = useT();
+  const [kind, setKind] = useState('cron');
+  const [value, setValue] = useState('0 7 * * *');
+  const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const field = 'w-full rounded-md border border-border bg-transparent px-2 py-1 font-mono text-[11px] text-fg';
+  const submit = (e) => {
+    e?.preventDefault?.();
+    if (!prompt.trim() || !value.trim()) return;
+    onCreate?.({ name: name.trim() || prompt.trim().slice(0, 48), prompt: prompt.trim(), schedule: { kind, value: value.trim() } });
+  };
+  return (
+    <form data-routine-form={agent.slug} onSubmit={submit} className="mb-2 flex flex-col gap-1.5 rounded-[8px] border border-hair p-2">
+      <div className="flex items-center gap-1.5">
+        <select aria-label={t('agent.routine.form.kind')} value={kind} onChange={(e) => setKind(e.target.value)} className={`${field} w-auto cursor-pointer`}>
+          <option value="cron">{t('agent.routine.form.kindCron')}</option>
+          <option value="interval">{t('agent.routine.form.kindInterval')}</option>
+          <option value="at">{t('agent.routine.form.kindAt')}</option>
+        </select>
+        <input dir="ltr" data-routine-schedule value={value} onChange={(e) => setValue(e.target.value)} placeholder={t(`agent.routine.form.ph.${kind}`)} aria-label={t('agent.routine.form.schedule')} className={`${field} flex-1`} />
+      </div>
+      <input dir="auto" data-routine-name value={name} onChange={(e) => setName(e.target.value)} placeholder={t('agent.routine.form.name')} aria-label={t('agent.routine.form.name')} className={field} />
+      <textarea dir="auto" data-routine-prompt rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t('agent.routine.form.prompt', { name: agent.name })} aria-label={t('agent.routine.form.prompt', { name: agent.name })} className={`${field} resize-y`} />
+      <div className="flex items-center gap-1.5">
+        <button type="submit" data-routine-save disabled={busy || !prompt.trim() || !value.trim()} className={btn}>{t('agent.routine.form.save')}</button>
+        <button type="button" onClick={onCancel} className={btn}>{t('agent.routine.form.cancel')}</button>
+        <span className="text-[10px] text-fgdim">{t('agent.routine.form.hint')}</span>
+      </div>
+    </form>
+  );
+}
+
+export function RoutineList({ agent, data, busy = false, adding = false, onToggle, onRun, onDelete, onCancelListener, onAdd, onAddViaChat, onCreate, onCancelAdd }) {
   const t = useT();
   const cron = data?.cron || [];
   const listeners = (data?.listeners || []).filter((l) => l.status !== 'stopped');
@@ -39,8 +77,10 @@ export function RoutineList({ agent, data, busy = false, onToggle, onRun, onDele
       <div className="rounded-[10px] border border-hair p-3">
         <div className="mb-2 flex items-center gap-2">
           <span className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faClock} /> {t('agent.routine.cron')} · {cron.length}</span>
-          <button type="button" data-routine-add onClick={onAdd} className={`ms-auto ${btn}`}><Icon icon={faComments} /> {t('agent.routine.add')}</button>
+          <button type="button" data-routine-add onClick={onAdd} className={`ms-auto ${btn}`}><Icon icon={faPlus} /> {t('agent.routine.addForm')}</button>
+          <button type="button" data-routine-add-chat onClick={onAddViaChat} className={btn}><Icon icon={faComments} /> {t('agent.routine.add')}</button>
         </div>
+        {adding && <AddRoutineForm agent={agent} busy={busy} onCreate={onCreate} onCancel={onCancelAdd} />}
         {cron.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.routine.empty')}</div>}
         {cron.map((c) => (
           <div key={c.id} data-routine-cron={c.id} data-enabled={c.enabled ? '1' : '0'} className={`flex items-center gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0 ${c.enabled ? '' : 'opacity-60'}`}>
@@ -84,6 +124,7 @@ export default function RoutinePanel({ agent, onOpenSession }) {
   const { triggers, listeners } = useStore();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
   const load = useCallback(() => {
     setupApi.agentRoutine(agent.slug).then(setData).catch((e) => toastError(String(e?.message || e)));
   }, [agent.slug]);
@@ -92,11 +133,29 @@ export default function RoutinePanel({ agent, onOpenSession }) {
     setBusy(true);
     try { await fn(); load(); } catch (e) { toastError(e?.body?.error || e?.message || String(e)); } finally { setBusy(false); }
   };
-  const add = async () => {
+  // A5 (#8): the agent's EXISTING home chat, with the ask prefilled in its
+  // composer — one click used to spawn a brand-new session (and cold start).
+  const addViaChat = async () => {
     try {
-      const s = await api.post('/sessions', { agent: agent.slug, title: t('agent.routine.addTitle', { name: agent.name }), prompt: t('agent.routine.addPrompt', { name: agent.name }) });
-      if (s?.id) onOpenSession?.(s.id);
-    } catch (e) { toastError(e?.message || String(e)); }
+      const r = await api.get(`/agents/${agent.slug}/home`);
+      const sid = r?.session?.id;
+      if (!sid) return;
+      setDraft(sid, { text: t('agent.routine.addPrompt', { name: agent.name }) });
+      onOpenSession?.(sid);
+    } catch (e) { toastError(e?.body?.error || e?.message || String(e)); }
+  };
+  const create = async (input) => {
+    setBusy(true);
+    try {
+      await api.post('/triggers', { type: 'cron', agent: agent.slug, ...input });
+      setAdding(false);
+      toastSuccess(t('agent.routine.form.created', { name: input.name }));
+      load();
+    } catch (e) {
+      toastError(e?.body?.error || e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
   };
   if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
   return (
@@ -104,7 +163,11 @@ export default function RoutinePanel({ agent, onOpenSession }) {
       agent={agent}
       data={data}
       busy={busy}
-      onAdd={add}
+      adding={adding}
+      onAdd={() => setAdding((v) => !v)}
+      onAddViaChat={addViaChat}
+      onCreate={create}
+      onCancelAdd={() => setAdding(false)}
       onToggle={(c) => run(() => api.patch(`/triggers/${c.id}`, { enabled: !c.enabled }))()}
       onRun={(c) => run(() => api.post(`/triggers/${c.id}/run`, {}))()}
       onDelete={(c) => { if (window.confirm(t('agent.routine.deleteConfirm', { name: c.name }))) run(() => api.del(`/triggers/${c.id}`))(); }}
