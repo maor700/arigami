@@ -50,7 +50,16 @@ export const TMP_DIR = path.join(ARIGAMI_DIR, 'tmp');
  */
 export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-plugin', 'tmp', 'backups', 'node_modules'];
 // A2: an agent's persistent Chrome profile is a cache like chrome-base (cookies, huge) — never exported.
-const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser'];
+// M1 (RESEARCH-ARIGAMI-NATIVE-MCP §4.5): Claude Code's `.credentials.json` holds
+// the `mcpOAuth` grants in PLAINTEXT and they are bound to this machine's
+// loopback OAuth flow — a restore elsewhere could not use them and an archive is
+// not encrypted. It lives in $CLAUDE_CONFIG_DIR (outside $ARIGAMI_DIR) today; the
+// glob keeps it out even if a future layout puts a Claude config under the
+// instance dir. The ownership records (agents/<slug>/connections.json,
+// mcp-connections.json) DO travel — they are names and URLs, no secrets, and the
+// capability check re-reports "needs authentication" on the new machine.
+export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json'];
+const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser', ...CREDENTIAL_GLOBS];
 /** Root-level only (F4 #7): `mcp-logs.txt`, `wa-logs.txt` … are logs that don't live under logs/. */
 export const ROOT_EXCLUDE_GLOBS = ['./*-logs.txt'];
 

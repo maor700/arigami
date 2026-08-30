@@ -14,6 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { which, HOME } from './lib/platform.js';
+import { MCP_CATALOG, connectableMcp, mcpSpec, grantName, grantToolPattern } from './mcp-catalog.js';
+import * as mcpConn from './mcp-connections.js';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import * as ob from './onboarding.js';
@@ -23,7 +25,18 @@ import * as ob from './onboarding.js';
 // ---------------------------------------------------------------------------
 
 export type ManualKind = 'token' | 'oauth' | 'qr' | 'toggle' | 'repo' | 'takeover';
-export type Playbook = 'connect-identity' | 'connect-composio' | 'connect-claude' | 'connect-tailscale' | 'connect-github';
+export type Playbook = 'connect-identity' | 'connect-composio' | 'connect-claude' | 'connect-tailscale' | 'connect-github' | 'connect-mcp';
+
+/**
+ * M1 — WHERE a connection's tokens live and who the calls go through:
+ *   native-mcp  the vendor's own remote MCP server, OAuth straight from Claude
+ *               Code (token in the host's `.credentials.json`, no broker).
+ *   composio    brokered by Composio (token in Composio's cloud, calls proxied).
+ *   local       this host (a Google login in its Chrome, the WhatsApp bridge,
+ *               gh credentials, the desktop…) — nothing leaves the machine.
+ * The Connections hub orders the sections by this: native first, Composio after.
+ */
+export type Provider = 'native-mcp' | 'composio' | 'local';
 
 export interface CheckResult {
   ok: boolean;
@@ -50,6 +63,8 @@ export interface Capability {
   title: string;
   // Group for Settings → Connections / doctor output.
   group: 'core' | 'code' | 'messaging' | 'integrations' | 'machine' | 'host';
+  // M1: which provider backs it (native-mcp / composio / local).
+  provider: Provider;
   check: () => CheckResult | Promise<CheckResult>;
   manual: ManualSpec;
   // May the agent connect it itself (machine-work playbook) once a Google
@@ -65,6 +80,7 @@ export interface CapabilityStatus {
   id: string;
   title: string;
   group: Capability['group'];
+  provider: Provider;
   ok: boolean;
   detail: string;
   data?: Record<string, unknown>;
@@ -97,11 +113,16 @@ export const needsSetup = (capability: string, why: string, hint = 'call request
 export const isNeedsSetup = (x: unknown): x is NeedsSetup =>
   !!x && typeof x === 'object' && typeof (x as any).needs_setup === 'string';
 
-// Static ids. `repo:<name>` and `composio:<toolkit>` are dynamic (see resolve()).
+// Static ids. `repo:<name>`, `composio:<toolkit>` and `mcp:<service>` are
+// dynamic (see getCapability()).
 export const STATIC_CAPABILITY_IDS = ['identity', 'claude', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry'] as const;
-// Toolkits we always list even before anyone asked for them.
-export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar', 'slack', 'linear', 'notion', 'github'] as const;
-const CAP_ID_RE = /^(identity|claude|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40})$/;
+// M1: what Composio still brokers for us. Linear/Notion/GitHub moved to their
+// vendors' own MCP servers (mcp:*), and `whatsapp` was never our WhatsApp —
+// Composio's toolkit is the Business Cloud API, ours is the local bridge.
+export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'] as const;
+// M1: native remote-MCP services listed even before anyone asked for them.
+export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
+const CAP_ID_RE = /^(identity|claude|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------
@@ -127,7 +148,14 @@ export function parseOwner(v: unknown): Owner | null {
 export const ownerSlug = (owner: Owner | null | undefined): string | null => (owner && AGENT_OWNER_RE.exec(owner)?.[1]) || null;
 /** The owner a session acts for: 'agent:<slug>' when born from an agent (metadata.agent), else 'global'. */
 export const ownerForAgent = (agentSlug: unknown): Owner => (typeof agentSlug === 'string' && agentSlug ? `agent:${agentSlug}` : GLOBAL_OWNER);
-export const isOwnable = (id: string): boolean => id === 'identity' || id.startsWith('composio:');
+export const isOwnable = (id: string): boolean => id === 'identity' || id.startsWith('composio:') || id.startsWith('mcp:');
+
+/** M1 — the provider behind a capability id. */
+export function providerOf(id: string): Provider {
+  if (id.startsWith('mcp:')) return 'native-mcp';
+  if (id.startsWith('composio:')) return 'composio';
+  return 'local';
+}
 
 // ---------------------------------------------------------------------------
 // Identity ($ARIGAMI_DIR/identity.json) — no secrets, ever.
@@ -276,6 +304,11 @@ export interface CapabilityProbes {
   // Entries: '<toolkit>' for the host's accounts (user_id 'default'), and
   // 'agent:<slug>:<toolkit>' for an agent-owned account (A2, user_id = owner).
   composioConnected: () => Promise<Set<string> | null>;
+  // M1: Claude Code's own MCP state — which grant names hold a live token and
+  // which server names are configured. Read from files, so this is offline.
+  mcp: () => mcpConn.McpState;
+  // M1: the connection records this host wrote for an owner (never secrets).
+  mcpConnections: (owner: Owner) => mcpConn.McpConnection[];
 }
 
 // Connected-accounts probe: one network call, cached — a tool that checks
@@ -408,6 +441,8 @@ export const defaultProbes: CapabilityProbes = {
   telemetry: () => ob.defaultProbes.telemetry(),
   composioKey: () => !!(cfg.composioApiKey || process.env.COMPOSIO_API_KEY),
   composioConnected: fetchComposioConnected,
+  mcp: () => mcpConn.readMcpState(),
+  mcpConnections: (owner) => mcpConn.readConnections(owner),
 };
 
 // ---------------------------------------------------------------------------
@@ -422,6 +457,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'identity',
       title: 'Google identity (Chrome)',
       group: 'core',
+      provider: 'local',
       check: () => {
         // A2: the agent's own identity first (its Chrome profile), then the shared one.
         const own = p.identity(owner);
@@ -440,6 +476,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'claude',
       title: 'Claude',
       group: 'core',
+      provider: 'local',
       check: () => {
         const c = p.claude();
         if (!c.cli) return { ok: false, detail: 'Claude Code CLI not found on PATH — install it first (npm i -g @anthropic-ai/claude-code)', data: { cli: false } };
@@ -459,6 +496,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'git',
       title: 'Git / GitHub',
       group: 'code',
+      provider: 'local',
       check: () => {
         const g = p.git();
         return g.authed
@@ -479,6 +517,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'whatsapp',
       title: 'WhatsApp',
       group: 'messaging',
+      provider: 'local',
       check: () => {
         const w = p.whatsapp();
         return w.status === 'connected'
@@ -493,6 +532,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'desktop',
       title: 'Desktop (browser / screen)',
       group: 'machine',
+      provider: 'local',
       check: () => {
         const d = p.desktop();
         if (!d.enabled) return { ok: false, detail: 'screen share is disabled (server profile) — enable it to let the agent drive a browser', data: { enabled: false } };
@@ -508,6 +548,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'push',
       title: 'Push notifications',
       group: 'host',
+      provider: 'local',
       check: () =>
         p.push()
           ? { ok: true, detail: 'a device is subscribed' }
@@ -520,6 +561,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'remote',
       title: 'Remote access (Tailscale)',
       group: 'host',
+      provider: 'local',
       check: () => {
         const r = p.remote();
         if (!r.available) return { ok: false, detail: r.reason || 'Tailscale is not installed', data: { available: false } };
@@ -535,6 +577,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       id: 'telemetry',
       title: 'Anonymous telemetry',
       group: 'host',
+      provider: 'local',
       check: () => {
         const t = p.telemetry();
         return t.enabled
@@ -553,6 +596,7 @@ function repoCapability(name: string, p: CapabilityProbes): Capability {
     id: `repo:${name}`,
     title: `Repository ${name}`,
     group: 'code',
+    provider: 'local',
     check: () => {
       const r = p.repos().find((x) => x.name === name);
       if (!r) return { ok: false, detail: `${name} is not registered — provide its git URL`, data: { registered: false } };
@@ -577,6 +621,7 @@ function composioCapability(toolkit: string, p: CapabilityProbes, owner: Owner =
     id: `composio:${slug}`,
     title: `${slug[0].toUpperCase()}${slug.slice(1)} (via Composio)`,
     group: 'integrations',
+    provider: 'composio',
     check: async () => {
       if (!p.composioKey()) return { ok: false, detail: 'Composio is not connected — sign in to Composio first', data: { hasKey: false } };
       const set = await p.composioConnected();
@@ -599,12 +644,75 @@ function composioCapability(toolkit: string, p: CapabilityProbes, owner: Owner =
   };
 }
 
+/**
+ * M1 — a native remote-MCP service (`mcp:<slug>`). One shape for every vendor in
+ * mcp-catalog.ts; the only per-service data is that catalog row.
+ *
+ * Connected means: this owner (or, for an agent, the host) has a connection
+ * record AND the grant behind it is still usable — a stored OAuth token for
+ * `auth:'oauth'`, a configured header server for `auth:'bearer'`. Both facts are
+ * read from files, so the check is offline and safe to call on every refresh.
+ */
+function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): Capability {
+  const s = slug.toLowerCase();
+  const spec = mcpSpec(s);
+  const title = spec ? spec.title : `${s[0].toUpperCase()}${s.slice(1)}`;
+  const name = grantName(s, owner);
+  return {
+    id: `mcp:${s}`,
+    title,
+    group: 'integrations',
+    provider: 'native-mcp',
+    check: () => {
+      if (!spec) return { ok: false, detail: `${s} is not in the native MCP catalog` };
+      if (spec.auth === 'oauth-byo-client')
+        return { ok: false, detail: `${title} has no dynamic client registration — it needs an OAuth app of your own (client id + secret)`, data: { auth: spec.auth, url: spec.url, docs: spec.docs } };
+      const state = p.mcp();
+      const own = p.mcpConnections(owner).find((c) => c.cap === `mcp:${s}`);
+      const shared = owner === GLOBAL_OWNER ? null : p.mcpConnections(GLOBAL_OWNER).find((c) => c.cap === `mcp:${s}`);
+      for (const [conn, from] of [[own, owner] as const, [shared, GLOBAL_OWNER] as const]) {
+        if (!conn) continue;
+        if (!mcpConn.grantLive(conn.name, conn.auth || spec.auth, state)) continue;
+        return {
+          ok: true,
+          owner: from,
+          detail: `${conn.name}${from !== owner ? ' (shared)' : ''}`,
+          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
+        };
+      }
+      const stale = own || shared;
+      return {
+        ok: false,
+        detail: stale ? `${stale.name} needs authentication again` : `not connected — authorize ${title} once`,
+        data: { name, url: spec.url, auth: spec.auth, docs: spec.docs, tools: grantToolPattern(name), ...(spec.readonlyUrl ? { readonlyUrl: spec.readonlyUrl } : {}), ...(spec.note ? { note: spec.note } : {}), ...(stale ? { stale: true } : {}) },
+      };
+    },
+    manual:
+      spec?.auth === 'bearer'
+        ? {
+            kind: 'token',
+            fields: [{ name: 'token', label: `${title} token`, secret: true }],
+            help: spec.tokenFrom === 'gh' ? 'Leave empty to reuse the token `gh auth login` already stored on this host.' : `A token with access to ${title}.`,
+          }
+        : {
+            kind: 'oauth',
+            help: `Opens ${title}'s own consent screen. The token is stored on this host — no third party in between.`,
+          },
+    autoCapable: spec?.auth === 'oauth',
+    ...(spec?.auth === 'oauth' ? { playbook: 'connect-mcp' as Playbook } : {}),
+    events: [...SETUP_EVENTS, 'mcp-auth'],
+  };
+}
+
 /** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits. */
 export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Capability[] {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
   const repos = p.repos().map((r) => repoCapability(r.name, p));
   const toolkits = [...new Set([...KNOWN_COMPOSIO_TOOLKITS, ...seenToolkits])].map((t) => composioCapability(t, p, owner));
-  return [...staticCapabilities(p, owner), ...repos, ...toolkits];
+  // M1: native cards come first — they are the recommended path for anything
+  // the vendors host themselves; Composio is the fallback broker below them.
+  const native = MCP_CATALOG.map((sv) => mcpCapability(sv.slug, p, owner));
+  return [...staticCapabilities(p, owner), ...repos, ...native, ...toolkits];
 }
 
 // Toolkits somebody asked about (request_setup / check) join the listing.
@@ -619,6 +727,7 @@ export function getCapability(id: string, probes: Partial<CapabilityProbes> = {}
     seenToolkits.add(id.slice(9).toLowerCase());
     return composioCapability(id.slice(9), p, owner);
   }
+  if (id.startsWith('mcp:')) return mcpCapability(id.slice(4), p, owner);
   return staticCapabilities(p, owner).find((c) => c.id === id) ?? null;
 }
 
@@ -652,6 +761,7 @@ export async function statusOf(cap: Capability, probes: Partial<CapabilityProbes
     id: cap.id,
     title: cap.title,
     group: cap.group,
+    provider: cap.provider,
     ok: r.ok,
     detail: r.detail,
     ...(r.data ? { data: r.data } : {}),
