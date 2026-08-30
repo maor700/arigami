@@ -202,8 +202,13 @@ when something the cockpit renders actually changed.
 - **Rail**: a health dot on every row. The badges beside it already said
   "working" and "needs you"; what the dot adds is the two states nothing showed
   before — a session the host is failing to recover, and one that has gone quiet
-  with work still owed. Above the list, the **"ממתין לך (n)"** pill expands into
-  the queue; clicking a row selects that session.
+  with work still owed. A waiting item shows quietly, in place: a small static
+  badge (no pulse) on the row it actually blocks — the agent's row when the
+  session was born from one, otherwise the session's own row; the badge's title
+  names what is blocked and the one action that unblocks it, and shows a count
+  once more than one thing is waiting on that row. The full queue survives as a
+  muted number next to the sessions header, which expands into the same list;
+  clicking a row selects that session.
 - **Settings → מארח → בריאות**: the computed state of every live session, the
   account/model quota picture (who is quarantined and until when, which sessions
   are a rung below their model, with a "back on `<model>`" button), and the last
@@ -251,3 +256,9 @@ session may override both (`POST /__api/sessions/:id/model`).
 - `test/supervisor-web.test.js` — the Health panel's markup in both locales, the
   store's health map, and a check that both dictionaries carry every key the UI
   builds at runtime (which the static scan in `i18n-keys.test.js` cannot see).
+- `test/rail-waiting-web.test.js` — the rail's markup for a waiting item: the
+  badge lands on the agent's row when the session carries one, otherwise on the
+  session's own row; the count shows only once more than one thing is waiting
+  on that row; the aggregated count next to the sessions header is a plain
+  number with the sentence only in its accessible name, not visible text; and
+  no `pulse-yellow` anywhere in any of it.
