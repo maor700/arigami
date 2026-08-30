@@ -109,6 +109,7 @@ export function publish(sessionId: string, opts: PublishOpts): PublishResult {
   const s = getSession(sessionId);
   if (!s) throw new PublishError(`no such session: ${sessionId}`, 404);
   if (!opts.path || typeof opts.path !== 'string') throw new PublishError('path required');
+  import('./funnel.js').then((f) => f.firstTime('artifact.first_publish')).catch(() => {});
   const title = String(opts.title || '').trim();
   if (!title) throw new PublishError('title required');
   const base = opts.cwd || s.cwd || process.cwd();

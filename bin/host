@@ -239,6 +239,15 @@ doctor() {
   [ -f "$DIR/run/pairing-code" ] && echo "  pairing code pending: $(y "$(cat "$DIR/run/pairing-code")")"
   [ -f "$DIR/pending-profile" ] && echo "  profile pending: $(y "$(cat "$DIR/pending-profile")") $(d "(host profile apply pending)")"
   echo
+  # B3 — the SAME state machine the cockpit wizard and the funnel read
+  # (server/onboarding.ts wizard()); computed in-process, no host needed.
+  dl "onboarding (B3 wizard):"
+  if command -v bun >/dev/null 2>&1; then
+    ARIGAMI_DIR="$DIR" ARIGAMI_PORT="$PORT" bun "$ROOT/server/onboarding.ts" doctor 2>/dev/null || yl "  (could not compute — run: bun install)"
+  else
+    yl "  (bun not found)"
+  fi
+  echo
   dl "runtime:"
   echo "  manager: $(manager_name)"
   if systemd_managed; then

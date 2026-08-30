@@ -36,6 +36,7 @@ import BrainView from './components/BrainView.jsx';
 import AccountsView from './components/AccountsView.jsx';
 import IntegrationsView from './components/IntegrationsView.jsx';
 import Setup from './components/Setup.jsx';
+import Wizard from './components/Wizard.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
 import QuickSwitcher from './components/QuickSwitcher.jsx';
 import ShortcutsHelp from './components/ShortcutsHelp.jsx';
@@ -82,6 +83,7 @@ function parseHash(hash) {
     case 'skills': return { view: 'skills' };
     case 'brain': return { view: 'brain' };
     case 'setup': return { view: 'setup' };
+    case 'wizard': return { view: 'home', wizard: true };
     case 'accounts': return { view: 'accounts', add: seg[1] === 'add' };
     case 'integrations': return { view: 'integrations' };
     case 'new':
@@ -188,7 +190,18 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
   );
 }
 
+// C1: signed out → the Login page replaces the whole cockpit (the store
+// doesn't boot / connect until afterLogin()). undefined = still checking.
+// The switch lives in its own component so the cockpit's hooks never change
+// count between renders (auth flipping undefined → null mid-mount used to throw
+// React #300 "rendered fewer hooks" and blank the page).
 export default function App() {
+  const storeState = useStore();
+  if (storeState.auth === null) return <Login info={storeState.authInfo} />;
+  return <Cockpit />;
+}
+
+function Cockpit() {
   const t = useT();
   const storeState = useStore();
   // C1: signed out → the Login page replaces the whole cockpit (the store
@@ -208,6 +221,15 @@ export default function App() {
   const [skillsOpen, setSkillsOpen] = useState(initial.view === 'skills');
   const [brainOpen, setBrainOpen] = useState(initial.view === 'brain');
   const [setupOpen, setSetupOpen] = useState(initial.view === 'setup');
+  // B3: first-run wizard. null = not decided yet (we ask the host once after
+  // login); true = show it full-pane; false = dismissed / done for this tab.
+  const [wizardOpen, setWizardOpen] = useState(initial.wizard ? true : null);
+  useEffect(() => {
+    if (wizardOpen !== null || !storeState.auth) return; // only once signed in (a 401 here would sign us out)
+    if (sessionStorage.getItem('arigami.wizardDismissed')) { setWizardOpen(false); return; }
+    api.get('/onboarding/wizard').then((v) => setWizardOpen(!v?.done)).catch(() => setWizardOpen(false));
+  }, [wizardOpen, storeState.auth]);
+  const closeWizard = () => { sessionStorage.setItem('arigami.wizardDismissed', '1'); setWizardOpen(false); };
   const [accountsOpen, setAccountsOpen] = useState(initial.view === 'accounts');
   const [integrationsOpen, setIntegrationsOpen] = useState(initial.view === 'integrations');
   const [accountsAddIntent, setAccountsAddIntent] = useState(initial.view === 'accounts' && !!initial.add);
@@ -714,8 +736,10 @@ export default function App() {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
   } else if (integrationsOpen) {
     main = <IntegrationsView onClose={() => setIntegrationsOpen(false)} />;
+  } else if (wizardOpen) {
+    main = <Wizard onDone={closeWizard} onExit={closeWizard} />;
   } else if (setupOpen) {
-    main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} />;
+    main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} onRunWizard={() => { setSetupOpen(false); sessionStorage.removeItem('arigami.wizardDismissed'); setWizardOpen(true); }} />;
   } else if (accountsOpen) {
     main = <AccountsView onClose={() => setAccountsOpen(false)} initialAdd={accountsAddIntent} />;
   } else if (launcher) {

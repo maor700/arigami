@@ -259,3 +259,71 @@ trigger spawn a full Claude session just to clone+install.
 - **No repos / node_modules / secrets baked into the image** — they're volume/Secret state.
 - **No hardcoded Acme assumptions in the core** — Acme is a profile.
 - **No relay in the core** — class-B OAuth is profile-scoped, container-only.
+
+## 12. First-run wizard (B3) — one state machine, three consumers (K5)
+
+`server/onboarding.ts` → `wizard()` is the **single** source of truth for
+"how far is this host set up". Three things read it and nothing else measures
+setup: the cockpit **Wizard** (`web/src/components/Wizard.jsx`), **`bin/host
+doctor`** (runs `bun server/onboarding.ts doctor` in-process, no host needed)
+and the **funnel** (`server/funnel.ts`, shipped by D3 when the user opts in).
+
+### Steps (linear, in this order)
+
+| id | probe (live, no network) | fixable in the wizard by | skippable |
+|---|---|---|---|
+| `pair` | an admin exists in `users.json` (C1) | Login.jsx pairing / "Pair another device" | no |
+| `claude` | CLI on PATH **and** a credential (account, keychain, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) | PKCE sign-in (`/__api/accounts/oauth/*`) or paste token (`POST wizard/claude {action:'token'}`) | no |
+| `git` | `GH_TOKEN` / `~/.git-credentials` / `gh` hosts.yml | PAT (`{action:'token'}` → `~/.git-credentials`, 0600) or `gh auth login --web` under the pty bridge (`{action:'gh-login'}`, device code + URL surfaced) | yes |
+| `profile` | `$ARIGAMI_DIR/profile.json` provenance | `POST /__api/profiles/apply {source}` (B1); `$ARIGAMI_DIR/pending-profile` is preselected | yes ("Start blank") |
+| `integrations` | informational (composio key / whatsapp status / tailscale) | Composio key (`{action:'composio-key'}`), WhatsApp QR (`/__api/whatsapp/*`, status file now carries `qr`), Tailscale (`/__api/remote`) | yes (Continue = complete) |
+| `repo` | `repos.json` non-empty | existing AddRepo | yes |
+| `health` | last `runHealth()` result ok | `POST /__api/onboarding/health` — `claude -p` ping (required), desktop `xdpyinfo` (required iff screen enabled), Chrome `--version` (required iff desktop), WhatsApp (info) | yes |
+
+Status resolution is **probe-first**: a passing probe is `ok` regardless of
+what was recorded; otherwise the record in `$ARIGAMI_DIR/onboarding.json`
+(`{status:'complete'|'skipped', at, by:'user'|'auto'|'unattended'}`) decides;
+otherwise `todo` (`blocked` when the Claude CLI is missing). `done` = every
+step `ok` or `skipped`; `current` = the first step that is neither.
+
+### REST
+
+- `GET /__api/onboarding/wizard` → `{steps[], current, done, completedAt?, unattended, ghLogin}`
+- `POST /__api/onboarding/wizard/:step {action}` (admin) — `complete` | `skip` | `reset`, plus the step-specific fixers listed above. Secrets are consumed and never echoed.
+- `POST /__api/onboarding/wizard/reset` (admin) — forget every decision ("Run setup wizard" in Setup).
+- `POST /__api/onboarding/health` (admin) — run the checks, persist the result.
+
+### UI entry
+
+`App.jsx` asks `GET /__api/onboarding/wizard` once after login; `done:false` →
+the Wizard replaces the main pane (dismissable per tab; `#/wizard` deep link;
+Setup → "Run setup wizard" reopens it after a reset). he/en, RTL-aware, phone-width.
+
+### Unattended (`install.sh --unattended`)
+
+The installer writes `ARIGAMI_UNATTENDED=1` into `$ARIGAMI_DIR/env` next to any
+tokens. At boot `unattendedPrecomplete()` marks every still-open *skippable*
+step `skipped (by:'unattended')`; tokens in the env satisfy `claude`/`git`
+probes by themselves. Pairing is never auto-completed — the wizard is `done`
+the moment the first pairing lands, so the UI never shows it.
+
+## 13. Funnel events (`server/funnel.ts`)
+
+Always appended locally to `$ARIGAMI_DIR/funnel.jsonl` (one JSON object per
+line, `{name, at, ...props}`); nothing leaves the box unless D3 telemetry is
+opted in, and D3 ships **names + timestamps only**.
+
+| event | when | props |
+|---|---|---|
+| `onboarding.step` | a wizard step's status changed (once per transition; the last emitted status is stored in `onboarding.json`) | `step`, `status` |
+| `onboarding.done` | `done` flipped to true | — |
+| `session.first` | first session ever created | — |
+| `pm.first_tree` | a master got its second child (≥2) | — |
+| `screen.first_request` | first `request_screen` | — |
+| `skill.first_applied` | first skill proposal applied | — |
+| `artifact.first_publish` | first `publish_artifact` | — |
+
+`firstTime(name)` is idempotent across restarts (`$ARIGAMI_DIR/funnel-first.json`).
+Every event is also broadcast on the ws bus (`{type:'funnel', event}`; step
+transitions additionally as `{type:'onboarding.step', step, status, at}`) so the
+Wizard re-reads live. `ARIGAMI_FUNNEL_QUIET=1` (tests, `doctor`) skips the bus.

@@ -9,12 +9,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
 import { hasCredentials } from './accounts.js';
+import * as funnel from './funnel.js';
 
 const CONFIG_DIR = cfg.configDir as string;
 const REPOS_FILE = path.join(CONFIG_DIR, 'repos.json');
@@ -735,4 +736,541 @@ export function workspaceReady(): boolean {
   return names.some((n) =>
     steps.filter((s) => s.scope === `repo:${n}`).every((s) => s.status === 'ok')
   );
+}
+
+// ===========================================================================
+// B3 / K5 — the first-run WIZARD state machine.
+//
+// One linear flow: pair → claude → git → profile → integrations → repo → health.
+// Every step has a live PROBE (filesystem / env / config — never a network
+// call except the explicit health run) and a persisted RECORD in
+// $ARIGAMI_DIR/onboarding.json ({status:'complete'|'skipped', at, by}). The
+// effective status is probe-first: a step whose probe passes is `ok` no matter
+// what the record says; otherwise the record decides (skipped / complete),
+// otherwise it's `todo`. The wizard UI, `bin/host doctor` and the funnel all
+// read wizard() — there is no second source of truth.
+//
+// Every status transition emits exactly one `onboarding.step {step,status,at}`
+// funnel event (funnel.ts → $ARIGAMI_DIR/funnel.jsonl) and the same object on
+// the ws bus as {type:'onboarding.step'}; the last emitted status per step is
+// stored alongside the records so restarts don't re-emit.
+// ===========================================================================
+
+export const WIZARD_STEPS = ['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'health'] as const;
+export type WizardStepId = (typeof WIZARD_STEPS)[number];
+export type WizardStatus = 'ok' | 'todo' | 'skipped' | 'blocked' | 'error' | 'running';
+
+export interface WizardStep {
+  id: WizardStepId;
+  title: string;
+  status: WizardStatus;
+  fixable: boolean; // the UI can turn it green without leaving the wizard
+  skippable: boolean;
+  detail?: string;
+  // Step-specific live facts the UI renders (never secrets).
+  data?: Record<string, unknown>;
+  // Who satisfied it, when (from the record) — only when not probe-derived.
+  by?: 'user' | 'auto' | 'unattended';
+  at?: string;
+}
+
+export interface WizardView {
+  steps: WizardStep[];
+  current: WizardStepId | null; // first step that is neither ok nor skipped
+  done: boolean;
+  completedAt?: string;
+  unattended: boolean;
+}
+
+export interface HealthCheck {
+  id: 'claude' | 'desktop' | 'chrome' | 'whatsapp';
+  ok: boolean;
+  required: boolean;
+  detail: string;
+}
+export interface HealthResult {
+  ok: boolean; // every REQUIRED check passed
+  at: string;
+  checks: HealthCheck[];
+}
+
+interface StepRecord {
+  status: 'complete' | 'skipped';
+  at: string;
+  by: 'user' | 'auto' | 'unattended';
+}
+interface OnboardingFile {
+  version: 1;
+  steps: Partial<Record<WizardStepId, StepRecord>>;
+  emitted: Partial<Record<WizardStepId, WizardStatus>>;
+  health?: HealthResult;
+  done?: boolean;
+  completedAt?: string;
+}
+
+export const ONBOARDING_FILE = path.join(CONFIG_DIR, 'onboarding.json');
+export const PENDING_PROFILE_FILE = path.join(CONFIG_DIR, 'pending-profile');
+const PROVENANCE_FILE = path.join(CONFIG_DIR, 'profile.json');
+
+export function readOnboardingFile(): OnboardingFile {
+  try {
+    const j = JSON.parse(fs.readFileSync(ONBOARDING_FILE, 'utf8'));
+    if (j && typeof j === 'object' && j.version === 1)
+      return { steps: {}, emitted: {}, ...j } as OnboardingFile;
+  } catch {
+    /* absent / malformed → fresh */
+  }
+  return { version: 1, steps: {}, emitted: {} };
+}
+
+function writeOnboardingFile(f: OnboardingFile): void {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(ONBOARDING_FILE, JSON.stringify(f, null, 2) + '\n');
+}
+
+// --- probes -----------------------------------------------------------------
+// Injectable so the state machine is unit-testable without a host, gh, or a
+// Claude login on the test box. Defaults are the real filesystem/env probes.
+
+export interface WizardProbes {
+  hasAdmin: () => boolean;
+  claudeCli: () => boolean;
+  claudeAuth: () => boolean;
+  gitAuth: () => boolean;
+  profileApplied: () => string | null; // applied bundle name
+  pendingProfile: () => string | null;
+  integrations: () => { composio: boolean; whatsapp: string; tailscale: boolean };
+  repos: () => string[];
+  health: () => HealthResult | undefined;
+  unattended: () => boolean;
+}
+
+const readTrim = (p: string): string | null => {
+  const s = safeRead(p).trim();
+  return s || null;
+};
+
+const ghCliAuthed = (): boolean =>
+  fs.existsSync(path.join(HOME, '.config', 'gh', 'hosts.yml')) ||
+  fs.existsSync(path.join(HOME, '.config', 'gh', 'hosts.yaml'));
+
+export const defaultProbes: WizardProbes = {
+  hasAdmin: () => {
+    // users.json is C1's store; any admin role = paired. Read directly so this
+    // works from the CLI (`bun server/onboarding.ts doctor`) with no host.
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'users.json'), 'utf8'));
+      const users = Array.isArray(j) ? j : Array.isArray(j?.users) ? j.users : [];
+      return users.some((u: any) => u && u.role === 'admin');
+    } catch {
+      return false;
+    }
+  },
+  claudeCli: () => onPath('claude'),
+  claudeAuth: () => claudeAuthed(),
+  gitAuth: () => gitAuthed() || ghCliAuthed(),
+  profileApplied: () => {
+    try {
+      const j = JSON.parse(fs.readFileSync(PROVENANCE_FILE, 'utf8'));
+      return typeof j?.name === 'string' ? j.name : null;
+    } catch {
+      return null;
+    }
+  },
+  pendingProfile: () => readTrim(PENDING_PROFILE_FILE),
+  integrations: () => {
+    let whatsapp = 'unknown';
+    try {
+      const WA_STATUS = '/home/arigami/.local/lib/whatsapp-mcp/data/bridge-status.json';
+      const j = JSON.parse(fs.readFileSync(WA_STATUS, 'utf8'));
+      whatsapp = typeof j?.status === 'string' ? j.status : 'disconnected';
+    } catch {
+      whatsapp = 'disconnected';
+    }
+    return {
+      composio: !!(cfg.composioApiKey || process.env.COMPOSIO_API_KEY),
+      whatsapp,
+      tailscale: !!which('tailscale'),
+    };
+  },
+  repos: () => listRepos().map((r) => r.name),
+  health: () => readOnboardingFile().health,
+  unattended: () => process.env.ARIGAMI_UNATTENDED === '1',
+};
+
+// --- the machine ---------------------------------------------------------------
+
+const TITLES: Record<WizardStepId, string> = {
+  pair: 'Pair this device',
+  claude: 'Connect Claude',
+  git: 'Git / GitHub access',
+  profile: 'Profile bundle',
+  integrations: 'Integrations',
+  repo: 'First repository',
+  health: 'Health check',
+};
+
+const SKIPPABLE: Record<WizardStepId, boolean> = {
+  pair: false,
+  claude: false,
+  git: true,
+  profile: true,
+  integrations: true,
+  repo: true,
+  health: true,
+};
+
+function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
+  const rec = (id: WizardStepId): StepRecord | undefined => file.steps[id];
+  // probe-ok wins; else the record; else todo.
+  const resolve = (id: WizardStepId, probeOk: boolean, fallback: WizardStatus = 'todo'): Pick<WizardStep, 'status' | 'by' | 'at'> => {
+    if (probeOk) return { status: 'ok' };
+    const r = rec(id);
+    if (r?.status === 'skipped') return { status: 'skipped', by: r.by, at: r.at };
+    if (r?.status === 'complete') return { status: 'ok', by: r.by, at: r.at };
+    return { status: fallback };
+  };
+
+  const admin = p.hasAdmin();
+  const cli = p.claudeCli();
+  const cauth = p.claudeAuth();
+  const gauth = p.gitAuth();
+  const applied = p.profileApplied();
+  const pending = p.pendingProfile();
+  const integ = p.integrations();
+  const repos = p.repos();
+  const health = p.health();
+
+  const steps: WizardStep[] = [
+    {
+      id: 'pair',
+      title: TITLES.pair,
+      fixable: true,
+      skippable: SKIPPABLE.pair,
+      ...resolve('pair', admin),
+      detail: admin ? 'an admin is paired' : 'enter the pairing code printed by the host',
+    },
+    {
+      id: 'claude',
+      title: TITLES.claude,
+      fixable: cli,
+      skippable: SKIPPABLE.claude,
+      ...resolve('claude', cli && cauth, cli ? 'todo' : 'blocked'),
+      detail: !cli
+        ? 'Claude Code CLI not found on PATH — install it first (npm i -g @anthropic-ai/claude-code)'
+        : cauth
+          ? 'signed in'
+          : 'sign in with Claude (PKCE) or paste a token',
+      data: { cli, authed: cauth },
+    },
+    {
+      id: 'git',
+      title: TITLES.git,
+      fixable: true,
+      skippable: SKIPPABLE.git,
+      ...resolve('git', gauth),
+      detail: gauth ? 'git credentials present' : 'paste a GitHub token or sign in with gh — needed only for private repos',
+      data: { gh: !!which('gh') },
+    },
+    {
+      id: 'profile',
+      title: TITLES.profile,
+      fixable: true,
+      skippable: SKIPPABLE.profile,
+      ...resolve('profile', !!applied),
+      detail: applied ? `applied: ${applied}` : pending ? `pending: ${pending} (staged by the installer)` : 'pick a bundle, or start blank',
+      data: { applied, pending },
+    },
+    {
+      id: 'integrations',
+      title: TITLES.integrations,
+      fixable: true,
+      skippable: SKIPPABLE.integrations,
+      ...resolve('integrations', false),
+      detail: [
+        integ.composio ? 'composio ✓' : 'composio –',
+        `whatsapp ${integ.whatsapp}`,
+        integ.tailscale ? 'tailscale ✓' : 'tailscale –',
+      ].join(' · '),
+      data: { ...integ },
+    },
+    {
+      id: 'repo',
+      title: TITLES.repo,
+      fixable: true,
+      skippable: SKIPPABLE.repo,
+      ...resolve('repo', repos.length > 0),
+      detail: repos.length ? repos.join(', ') : 'add a repository to work on',
+      data: { repos },
+    },
+    {
+      id: 'health',
+      title: TITLES.health,
+      fixable: true,
+      skippable: SKIPPABLE.health,
+      ...resolve('health', !!health?.ok),
+      detail: health ? (health.ok ? `passed ${health.at}` : `failed: ${health.checks.filter((c) => !c.ok && c.required).map((c) => c.id).join(', ')}`) : 'not run yet',
+      data: { health: health ?? null },
+    },
+  ];
+  // A running health job overrides the persisted result.
+  if (healthRunning) steps[6].status = 'running';
+  return steps;
+}
+
+const settled = (s: WizardStatus): boolean => s === 'ok' || s === 'skipped';
+
+/**
+ * Compute the wizard view, emitting one funnel event per changed step status.
+ * Pure w.r.t. `probes`; persists only the `emitted` map / done flag.
+ */
+export function wizard(probes: Partial<WizardProbes> = {}): WizardView {
+  const p: WizardProbes = { ...defaultProbes, ...probes };
+  const file = readOnboardingFile();
+  const steps = computeSteps(file, p);
+  let dirty = false;
+  for (const s of steps) {
+    if (file.emitted[s.id] !== s.status) {
+      file.emitted[s.id] = s.status;
+      dirty = true;
+      emitStep(s.id, s.status);
+    }
+  }
+  const done = steps.every((s) => settled(s.status));
+  if (done && !file.done) {
+    file.done = true;
+    file.completedAt = new Date().toISOString();
+    dirty = true;
+    funnel.emit('onboarding.done', {});
+  } else if (!done && file.done) {
+    file.done = false;
+    delete file.completedAt;
+    dirty = true;
+  }
+  if (dirty) writeOnboardingFile(file);
+  const current = steps.find((s) => !settled(s.status))?.id ?? null;
+  return { steps, current, done, completedAt: file.completedAt, unattended: p.unattended() };
+}
+
+function emitStep(step: WizardStepId, status: WizardStatus): void {
+  const ev = funnel.emit('onboarding.step', { step, status });
+  if (process.env.ARIGAMI_FUNNEL_QUIET !== '1')
+    import('./bus.js').then((b: any) => b.broadcast({ type: 'onboarding.step', step, status, at: ev.at })).catch(() => {});
+}
+
+export type WizardAction = 'complete' | 'skip' | 'reset';
+
+/** Record a user decision for a step. Throws on an illegal action. */
+export function wizardAct(step: string, action: WizardAction, by: StepRecord['by'] = 'user', probes: Partial<WizardProbes> = {}): WizardView {
+  if (!(WIZARD_STEPS as readonly string[]).includes(step)) throw new Error(`unknown wizard step: ${step}`);
+  const id = step as WizardStepId;
+  const file = readOnboardingFile();
+  if (action === 'skip') {
+    if (!SKIPPABLE[id]) throw new Error(`step ${id} cannot be skipped`);
+    file.steps[id] = { status: 'skipped', at: new Date().toISOString(), by };
+  } else if (action === 'complete') {
+    file.steps[id] = { status: 'complete', at: new Date().toISOString(), by };
+  } else if (action === 'reset') {
+    delete file.steps[id];
+    if (id === 'health') delete file.health;
+  } else {
+    throw new Error(`unknown wizard action: ${String(action)}`);
+  }
+  writeOnboardingFile(file);
+  return wizard(probes);
+}
+
+/** "Run setup wizard" again: forget every decision (probes still decide). */
+export function wizardReset(probes: Partial<WizardProbes> = {}): WizardView {
+  const file = readOnboardingFile();
+  file.steps = {};
+  delete file.health;
+  writeOnboardingFile(file);
+  return wizard(probes);
+}
+
+/**
+ * `install.sh --unattended` (B1): the env file carries ARIGAMI_UNATTENDED=1 plus
+ * whatever tokens the operator had. Steps whose probes are satisfied by those
+ * values are green by themselves; every SKIPPABLE step still open is marked
+ * skipped (by:'unattended') so the wizard is done the moment pairing lands and
+ * the UI never shows it. Pairing itself is never auto-completed.
+ */
+export function unattendedPrecomplete(probes: Partial<WizardProbes> = {}): WizardView | null {
+  const p: WizardProbes = { ...defaultProbes, ...probes };
+  if (!p.unattended()) return null;
+  const view = wizard(probes);
+  const file = readOnboardingFile();
+  let changed = false;
+  for (const s of view.steps) {
+    if (settled(s.status) || !SKIPPABLE[s.id]) continue;
+    file.steps[s.id] = { status: 'skipped', at: new Date().toISOString(), by: 'unattended' };
+    changed = true;
+  }
+  if (changed) writeOnboardingFile(file);
+  return wizard(probes);
+}
+
+// --- health -----------------------------------------------------------------------
+
+let healthRunning = false;
+
+export interface HealthDeps {
+  claudePing?: () => Promise<string>;
+  desktopDisplay?: () => string | null; // ':99' when a desktop is configured
+  chromeVersion?: () => string | null;
+  whatsapp?: () => string;
+  screenEnabled?: () => boolean;
+}
+
+function chromeVersionSync(): string | null {
+  const bins = [process.env.CHROME_BIN, process.env.ARIGAMI_CHROME_BIN, 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']
+    .filter((b): b is string => !!b);
+  for (const b of bins) {
+    const bin = b.includes('/') ? b : which(b);
+    if (!bin) continue;
+    try {
+      const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+      if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+function desktopUpSync(display: string): boolean {
+  const xdpy = which('xdpyinfo');
+  if (!xdpy) {
+    // No xdpyinfo: the X socket is the next best evidence.
+    const n = display.replace(/^:/, '').split('.')[0];
+    return fs.existsSync(`/tmp/.X11-unix/X${n}`);
+  }
+  try {
+    return spawnSync(xdpy, ['-display', display], { encoding: 'utf8', timeout: 5000 }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function runHealth(deps: HealthDeps = {}): Promise<HealthResult> {
+  if (healthRunning) throw new Error('health check already running');
+  healthRunning = true;
+  const checks: HealthCheck[] = [];
+  try {
+    // 1) Claude one-shot — the only check that spends a (tiny) request.
+    const ping = deps.claudePing ?? (async () => {
+      const os = await import('./lib/oneshot.js');
+      return os.runClaudeOneShot('Reply with exactly the single word: pong', { timeoutMs: 90_000, tag: 'wizard-health' });
+    });
+    try {
+      const out = (await ping()).trim();
+      checks.push({ id: 'claude', ok: true, required: true, detail: out.slice(0, 80) || 'ok' });
+    } catch (e) {
+      checks.push({ id: 'claude', ok: false, required: true, detail: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
+    }
+    // 2) Desktop — required only when screen is enabled in config.
+    const screenOn = deps.screenEnabled ? deps.screenEnabled() : !!cfg.screen?.enabled;
+    const display = deps.desktopDisplay ? deps.desktopDisplay() : screenOn ? cfg.screen?.display || ':99' : null;
+    if (!display) checks.push({ id: 'desktop', ok: true, required: false, detail: 'screen disabled (server profile)' });
+    else {
+      const up = desktopUpSync(display);
+      checks.push({ id: 'desktop', ok: up, required: screenOn, detail: up ? `display ${display} up` : `display ${display} not reachable` });
+    }
+    // 3) Chrome — required only with a desktop.
+    const cv = deps.chromeVersion ? deps.chromeVersion() : chromeVersionSync();
+    checks.push({ id: 'chrome', ok: !!cv, required: !!display, detail: cv || 'no Chrome/Chromium binary found' });
+    // 4) WhatsApp — informational.
+    const wa = deps.whatsapp ? deps.whatsapp() : defaultProbes.integrations().whatsapp;
+    checks.push({ id: 'whatsapp', ok: wa === 'connected', required: false, detail: wa });
+  } finally {
+    healthRunning = false;
+  }
+  const result: HealthResult = { ok: checks.every((c) => c.ok || !c.required), at: new Date().toISOString(), checks };
+  const file = readOnboardingFile();
+  file.health = result;
+  writeOnboardingFile(file);
+  return result;
+}
+
+// --- fixers used by the wizard's POST actions ----------------------------------------
+
+/** Git PAT → ~/.git-credentials (same shape as the container entrypoint) + GH_TOKEN for gh. */
+export function setGitToken(token: string, host = 'github.com'): { ok: true; file: string } {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9_\-.]{20,}$/.test(t)) throw new Error('that does not look like a GitHub token');
+  if (!/^[a-z0-9.-]+$/i.test(host)) throw new Error('invalid host');
+  const file = path.join(HOME, '.git-credentials');
+  const line = `https://x-access-token:${t}@${host}`;
+  const existing = safeRead(file).split('\n').filter((l) => l && !l.endsWith(`@${host}`));
+  fs.writeFileSync(file, [...existing, line].join('\n') + '\n', { mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    /* ignore */
+  }
+  try {
+    spawnSync('git', ['config', '--global', 'credential.helper', 'store'], { timeout: 5000 });
+  } catch {
+    /* git missing — the credentials file is still useful once it is installed */
+  }
+  process.env.GH_TOKEN = t;
+  return { ok: true, file };
+}
+
+/** Composio key → config.json (same place the Integrations view's CLI-login writes). */
+export function setComposioKey(key: string): { ok: true } {
+  const k = String(key || '').trim();
+  if (k.length < 8) throw new Error('composio key too short');
+  const configPath = (cfg as any).configFile as string;
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    /* fresh */
+  }
+  data.composioApiKey = k;
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
+  (cfg as any).composioApiKey = k;
+  return { ok: true };
+}
+
+/**
+ * Pasted Anthropic credential. An OAuth token (sk-ant-oat…) becomes an account
+ * (accounts.js — what sessions actually use); an API key (sk-ant-api…) is
+ * stored in $ARIGAMI_DIR/secrets.env as ANTHROPIC_API_KEY and exported into
+ * this process so the gate turns green now, not after a restart.
+ */
+export async function setClaudeToken(token: string, label?: string): Promise<{ ok: true; kind: 'oauth' | 'api-key' }> {
+  const t = String(token || '').trim();
+  if (!t || /\s/.test(t) || t.length < 20) throw new Error('paste the whole token (no spaces)');
+  if (/^sk-ant-api/.test(t)) {
+    const sec = await import('./lib/secrets.js');
+    const file = sec.SECRETS_ENV;
+    const lines = safeRead(file).split('\n').filter((l) => l && !l.startsWith('ANTHROPIC_API_KEY='));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, [...lines, `ANTHROPIC_API_KEY=${t}`].join('\n') + '\n', { mode: 0o600 });
+    process.env.ANTHROPIC_API_KEY = t;
+    return { ok: true, kind: 'api-key' };
+  }
+  const acc = await import('./accounts.js');
+  (acc as any).addTokenAccount({ label: label || 'wizard', token: t });
+  return { ok: true, kind: 'oauth' };
+}
+
+// --- doctor (CLI) ------------------------------------------------------------------------
+// `bin/host doctor` → `bun server/onboarding.ts doctor` — same steps, same
+// statuses, no host needed (the funnel is left untouched: ARIGAMI_FUNNEL_QUIET).
+
+export function formatDoctor(view: WizardView): string {
+  const mark: Record<WizardStatus, string> = { ok: '✓', skipped: '–', todo: '○', blocked: '⊘', error: '✗', running: '…' };
+  const lines = view.steps.map((s) => `  ${mark[s.status]} ${s.id.padEnd(13)} ${s.status.padEnd(8)} ${s.detail || ''}`);
+  lines.push(view.done ? `  wizard: done${view.completedAt ? ` (${view.completedAt})` : ''}` : `  wizard: current step → ${view.current}`);
+  return lines.join('\n');
+}
+
+if (import.meta.main && process.argv[2] === 'doctor') {
+  process.env.ARIGAMI_FUNNEL_QUIET = '1';
+  console.log(formatDoctor(wizard()));
 }

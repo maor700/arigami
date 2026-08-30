@@ -288,6 +288,7 @@ async function handleScreenRequest(
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
   const requestId = 'scrn_' + nano();
+  (await import('./funnel.js')).firstTime('screen.first_request');
   const prompt = String(body.prompt || '');
   // Optional context shown on the card: why the agent is blocked and what
   // exactly the human should complete. Unknown reasons collapse to 'other'.
@@ -1516,6 +1517,71 @@ export async function handle(
     if (p === '/__api/onboarding/status' && m === 'GET') {
       const ob = await import('./onboarding.js');
       return json(res, ob.status());
+    }
+    // ---- B3 wizard (one state machine: wizard UI = bin/host doctor = funnel) ----
+    if (p === '/__api/onboarding/wizard' && m === 'GET') {
+      const ob = await import('./onboarding.js');
+      const gl = await import('./git-login.js');
+      const view = ob.wizard();
+      return json(res, { ...view, ghLogin: gl.ghLoginStatus() });
+    }
+    if (p === '/__api/onboarding/wizard/reset' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const ob = await import('./onboarding.js');
+      return json(res, ob.wizardReset());
+    }
+    if (p === '/__api/onboarding/health' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const ob = await import('./onboarding.js');
+      try {
+        const health = await ob.runHealth();
+        return json(res, { health, wizard: ob.wizard() });
+      } catch (e) {
+        return badRequest(res, (e as Error).message);
+      }
+    }
+    if (p.startsWith('/__api/onboarding/wizard/') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const ob = await import('./onboarding.js');
+      const step = decodeURIComponent(p.slice('/__api/onboarding/wizard/'.length));
+      const body = (await readBody(req)) as any;
+      const action = String(body?.action || '');
+      try {
+        // Generic decisions.
+        if (action === 'complete' || action === 'skip' || action === 'reset')
+          return json(res, ob.wizardAct(step, action));
+        // Step-specific fixers. Secrets are consumed here and never echoed.
+        if (step === 'claude' && action === 'token') {
+          const r = await ob.setClaudeToken(String(body?.token || ''), body?.label ? String(body.label) : undefined);
+          return json(res, { ...r, wizard: ob.wizard() });
+        }
+        if (step === 'git' && action === 'token') {
+          const r = ob.setGitToken(String(body?.token || ''), body?.host ? String(body.host) : undefined);
+          return json(res, { ok: r.ok, wizard: ob.wizard() });
+        }
+        if (step === 'git' && action === 'gh-login') {
+          const gl = await import('./git-login.js');
+          return json(res, { ghLogin: gl.startGhLogin(), wizard: ob.wizard() });
+        }
+        if (step === 'git' && action === 'gh-cancel') {
+          const gl = await import('./git-login.js');
+          return json(res, { ghLogin: gl.cancelGhLogin(), wizard: ob.wizard() });
+        }
+        if (step === 'integrations' && action === 'composio-key') {
+          ob.setComposioKey(String(body?.key || ''));
+          return json(res, { ok: true, wizard: ob.wizard() });
+        }
+        if (step === 'health' && action === 'run') {
+          const health = await ob.runHealth();
+          return json(res, { health, wizard: ob.wizard() });
+        }
+        return badRequest(res, `unknown action ${JSON.stringify(action)} for step ${step}`);
+      } catch (e) {
+        return badRequest(res, (e as Error).message);
+      }
     }
     if (p === '/__api/onboarding/repos' && m === 'GET') {
       const ob = await import('./onboarding.js');

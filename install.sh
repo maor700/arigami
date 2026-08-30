@@ -371,6 +371,8 @@ write_env() {
   fi
   local tmp; tmp="$(mktemp)"
   [ -f "$ENV_FILE" ] && cat "$ENV_FILE" >"$tmp"
+  # B3: tells the host to pre-complete the first-run wizard (skippable steps).
+  export ARIGAMI_UNATTENDED=1; keys+=(ARIGAMI_UNATTENDED)
   for k in "${keys[@]}"; do
     v="${!k:-}"; [ -n "$v" ] || continue
     grep -v "^$k=" "$tmp" >"$tmp.n" || true; mv "$tmp.n" "$tmp"

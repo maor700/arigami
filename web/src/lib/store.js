@@ -25,6 +25,7 @@ let state = {
   // object = GET /__api/auth/me ({user, principal, isAdmin, authMode, hasAdmin, oidc}).
   auth: undefined,
   authInfo: null, // {authMode, hasAdmin, oidc} — known even when signed out
+  wizardTick: 0, // B3: bumps on every onboarding.step bus event (Wizard.jsx re-reads)
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
@@ -720,6 +721,9 @@ function handleEvent(msg) {
   }
 
   switch (kind) {
+    case 'onboarding.step':
+      setState({ wizardTick: Date.now() });
+      break;
     case 'state':
       replaceSnapshot(msg.sessions ?? payload?.sessions);
       if (Array.isArray(msg.folders ?? payload?.folders))

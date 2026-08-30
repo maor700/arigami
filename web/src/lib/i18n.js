@@ -20,11 +20,13 @@ import { strings as brainEn } from '../locales/en/brain.js';
 import { strings as brainHe } from '../locales/he/brain.js';
 import { strings as hostEn } from '../locales/en/host.js';
 import { strings as hostHe } from '../locales/he/host.js';
+import { strings as wizardEn } from '../locales/en/wizard.js';
+import { strings as wizardHe } from '../locales/he/wizard.js';
 
 // Core (settings/common) + per-module fragments. Fragments are authored per
 // area so localization work never collides on one file.
-const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn };
-const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe };
+const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn, ...wizardEn };
+const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe, ...wizardHe };
 
 const DICTS = { en, he };
 
