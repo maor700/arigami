@@ -100,6 +100,8 @@ export const isCapabilityId = (id: unknown): id is string => typeof id === 'stri
 
 export const IDENTITY_FILE = path.join(ARIGAMI_DIR, 'identity.json');
 export const AUDIT_FILE = path.join(ARIGAMI_DIR, 'connections.log');
+// F6: open setup cards survive a host restart (server/api.ts persists them here).
+export const SETUP_PENDING_FILE = path.join(ARIGAMI_DIR, 'setup-pending.json');
 
 export interface Identity {
   email: string;
@@ -171,7 +173,8 @@ export interface AuditEntry {
   sessionId: string | null;
   capability: string;
   mode: 'auto' | 'manual' | 'ask' | 'none';
-  result: 'requested' | 'done' | 'failed' | 'skipped' | 'timeout' | 'disconnected';
+  // 'already' = the agent asked and it was connected already (no card shown).
+  result: 'requested' | 'already' | 'done' | 'failed' | 'skipped' | 'timeout' | 'disconnected';
   evidence: string | null; // '/__artifacts/<id>/' or null
   human: boolean; // did a human act (paste / click / take over)?
   detail?: string;
@@ -253,6 +256,38 @@ async function fetchComposioConnected(): Promise<Set<string> | null> {
     // Keep a stale answer rather than flapping to "unknown" on a blip.
     return composioCache?.slugs ?? null;
   }
+}
+
+/**
+ * F6: a retried OAuth flow leaves stale connected accounts behind (INITIALIZING /
+ * INITIATED / FAILED / EXPIRED) next to the one that reached ACTIVE. Once an
+ * ACTIVE account exists for `slug`, delete the others for that toolkit.
+ * Never touches ACTIVE accounts and never other toolkits. Returns what it did.
+ */
+export async function pruneComposioOrphans(slug: string, opts: { fetchImpl?: typeof fetch } = {}): Promise<{ active: number; removed: string[]; skipped: boolean }> {
+  const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
+  const f = opts.fetchImpl || fetch;
+  slug = slug.toLowerCase();
+  if (!key) return { active: 0, removed: [], skipped: true };
+  const hdr = { 'x-api-key': key, 'Content-Type': 'application/json' };
+  const r = await f('https://backend.composio.dev/api/v3.1/connected_accounts?limit=200', { headers: hdr, signal: AbortSignal.timeout(8000) });
+  const j = (await r.json()) as any;
+  if (!r.ok) throw new Error(j?.error?.message || `Composio ${r.status}`);
+  const mine = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug);
+  const active = mine.filter((c: any) => c.status === 'ACTIVE').length;
+  if (!active) return { active: 0, removed: [], skipped: true };
+  const removed: string[] = [];
+  for (const c of mine) {
+    if (c.status === 'ACTIVE' || !c.id) continue;
+    try {
+      const d = await f(`https://backend.composio.dev/api/v3.1/connected_accounts/${c.id}`, { method: 'DELETE', headers: hdr, signal: AbortSignal.timeout(8000) });
+      if (d.ok) removed.push(String(c.id));
+    } catch {
+      /* best effort — the next successful connection prunes again */
+    }
+  }
+  if (removed.length) invalidateComposioCache();
+  return { active, removed, skipped: false };
 }
 
 const desktopProbe = (): { enabled: boolean; display: string | null; up: boolean } => {

@@ -41,6 +41,11 @@ export const strings = {
   'setup.card.skipped': 'Skipped — the agent will suggest an alternative',
   'setup.card.timeout': 'No answer — the agent moved on',
   'setup.card.failedManual': 'Automatic connection failed. You can finish it manually below.',
+  // live status line (F6) — so nobody has to type "connected" in the chat
+  'setup.card.waiting': 'The agent is waiting for you',
+  'setup.card.connecting': 'The agent is connecting…',
+  'setup.card.completed': 'Completed',
+  'setup.card.identityHint': 'When you see your Google Account page with your name — click Done.',
 
   'setup.mode.auto': 'Automatic',
   'setup.mode.manual': 'Manual',
@@ -124,7 +129,9 @@ export const strings = {
   // TakeoverStep (identity)
   'setup.takeover.step1': 'Open the agent’s screen and sign in to Google in its Chrome.',
   'setup.takeover.step2': 'Type your password / 2FA yourself — the agent never sees them.',
-  'setup.takeover.step3': 'Close the screen and press Verify; the host records only your email.',
+  'setup.takeover.step3': 'Click Done in the screen view when you see your account page with your name — the host records only your email.',
+  'setup.takeover.modalDone': 'Done — I’m signed in',
+  'setup.takeover.noAccount': 'No Google account detected in the agent’s browser yet — finish signing in, or type the email on the card.',
   'setup.takeover.open': 'Open the agent’s screen',
   'setup.takeover.emailPlaceholder': 'Google email (optional — detected when possible)',
   'setup.takeover.verify': 'I’m signed in — verify',

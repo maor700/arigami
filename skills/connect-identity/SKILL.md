@@ -34,7 +34,8 @@ shot / click / key / type / api / report) and `skills/_lib/chrome.sh`.
 1. `export CONNECT_ALLOW="accounts.google.com myaccount.google.com google.com"`.
 2. Open the account page — this is where a signed-in profile shows its avatar,
    and a signed-out one shows the login form:
-   `skills/_lib/connect.sh open "https://myaccount.google.com/"`
+   `skills/_lib/connect.sh open "https://myaccount.google.com/"` (`open` also
+   navigates a Chrome that is already running — it never leaves the old page up)
    then `connect.sh wait-url 'google\.com' 30` and `connect.sh shot first` — view it
    (`Read` the PNG) and `capture_screen({caption:"Google account page loaded"})`.
 3. **Already signed in?** (avatar + name on myaccount, URL stays on
@@ -53,7 +54,10 @@ shot / click / key / type / api / report) and `skills/_lib/chrome.sh`.
      hint:   "Sign in (password + 2FA if asked). When you see your Google Account page with your name, click Done."
    })
    ```
-   Do nothing on the machine while it blocks.
+   Do nothing on the machine while it blocks. The host resolves the open identity
+   card itself when the human clicks Done and a Google account is detected in the
+   session's Chrome (`POST /__api/setup/identity` becomes a no-op then) — a
+   `{state:"skipped"}` only ever means the human clicked "Not now".
 5. After Done: `capture_screen({caption:"After human login"})`, `connect.sh nav "https://myaccount.google.com/"`,
    `wait-url 'myaccount\.google\.com' 30`, `shot verify` and confirm the signed-in
    state. Not signed in → one more `request_screen` with a more specific hint

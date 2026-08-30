@@ -80,6 +80,10 @@ body {
 .pulse-yellow {
   animation: host-pulse 1.6s ease-in-out infinite;
 }
+/* F6: a Setup card waiting for the human — a slow, subtle ring on the whole card */
+.setup-waiting {
+  animation: host-pulse 2.6s ease-in-out infinite;
+}
 
 @keyframes host-pulse-green {
   0%,

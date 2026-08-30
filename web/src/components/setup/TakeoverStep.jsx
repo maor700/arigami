@@ -14,7 +14,7 @@ import * as setupApi from '../../lib/setup-api.js';
 import { BTN, BTN2, INPUT, ErrorBox, OkLine, useAction } from './shared.jsx';
 import { faDisplay } from '@fortawesome/free-solid-svg-icons';
 
-export default function TakeoverStep({ capability = 'identity', sessionId, onDone }) {
+export default function TakeoverStep({ capability = 'identity', sessionId, requestId, onDone }) {
   const t = useT();
   const s = useStore();
   const [email, setEmail] = useState('');
@@ -22,13 +22,17 @@ export default function TakeoverStep({ capability = 'identity', sessionId, onDon
   const { busy, err, run } = useAction();
   const req = sessionId ? openScreenRequest(s, sessionId) : null;
 
+  // F6: with a live screen-request the modal's Done answers it and the host
+  // resolves this card itself (identity probe); without one the modal gets a
+  // setup context whose Done runs the same verify — "Not now" on the card is
+  // the only way to skip.
   const open = () => {
     if (req) openScreenTakeover(sessionId, req.requestId);
-    else setScreenModal(sessionId ? { sessionId } : true);
+    else setScreenModal(sessionId ? { sessionId, setupId: requestId || null, capability } : true);
   };
   const verify = () =>
     run(async () => {
-      const r = await setupApi.connect(capability, { action: 'verify', ...(email.trim() ? { email: email.trim() } : {}) });
+      const r = await setupApi.connect(capability, { action: 'verify', ...(sessionId ? { sessionId } : {}), ...(email.trim() ? { email: email.trim() } : {}) });
       if (r && r.ok === false) throw new Error(r.error || r.detail || t('setup.takeover.notSignedIn'));
       setResult(r);
       onDone?.(r);

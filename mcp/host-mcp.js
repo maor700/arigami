@@ -639,7 +639,7 @@ const TOOLS = [
       'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
       'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
       'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
-      'If the capability is already connected you get {state:"done", already:true} at once. why: one short clause the card shows ("read your inbox").',
+      'If the capability is already connected you get {state:"done", already:true} at once (one audit line is still written). why: one short clause the card shows ("read your inbox"); defaults to the capability title.',
     inputSchema: obj(
       {
         capability: { type: 'string', description: 'Registry id, e.g. "composio:gmail", "repo:my-app", "whatsapp"' },
@@ -662,7 +662,8 @@ const TOOLS = [
     description:
       'Close an AUTO setup you ran yourself (after request_setup returned state:"auto"). ok:true → the card turns green (with your screenshot if `evidence` is a published artifact path like "/__artifacts/<id>/") and the capability is re-checked; ' +
       'ok:false → the card goes to state "failed" in MANUAL mode with `detail` as the reason so the human can finish it (call request_setup again to wait for them). ' +
-      'Progress: omit `ok` and pass `line` ("Opening Composio…") to append one narration line to the card (a few lines at most). Always close it — an unreported auto setup times out after 15 min.',
+      'Progress: omit `ok` and pass `line` ("Opening Composio…") to append one narration line to the card (a few lines at most). Always close it — an unreported auto setup times out after 15 min. ' +
+      'A card that was closed by a timeout / session restart is reopened and updated by your report ({closed:true}); {closed:false, reason:"skipped by the human"} means the human clicked "Not now" — do not retry.',
     inputSchema: obj(
       {
         capability: { type: 'string' },
@@ -689,7 +690,7 @@ const TOOLS = [
     name: 'check_setup',
     description:
       'Cheap probe: is a capability connected right now? Returns {ok:true, detail} or the needs_setup shape {needs_setup, why, hint}. ' +
-      'Use it BEFORE calling a provider MCP tool that cannot report needs_setup itself (e.g. Composio Gmail tools: check_setup({capability:"composio:gmail", why:"read your inbox"})). Cached ~60s for Composio.',
+      'Use it BEFORE calling a provider MCP tool that cannot report needs_setup itself (e.g. Composio Gmail tools: check_setup({capability:"composio:gmail", why:"read your inbox"})). Cached ~60s for Composio. `why` defaults to the capability title.',
     inputSchema: obj({ capability: { type: 'string' }, why: { type: 'string' }, ...SID_PROP }, ['capability']),
     run: (a) => api('GET', `/__api/setup/capabilities/${encodeURIComponent(a.capability)}?why=${encodeURIComponent(a.why || '')}`),
   },

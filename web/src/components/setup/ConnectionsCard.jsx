@@ -161,7 +161,7 @@ export default function ConnectionsCard() {
                   <span>{fmtWhen(a.at)}</span>
                   <span className="font-bold text-fg">{a.capability}</span>
                   <span>{a.mode}</span>
-                  <span className={a.result === 'ok' || a.result === 'done' ? 'text-[#2f7d4f]' : a.result === 'failed' ? 'text-[#9c3b33]' : ''}>{a.result}</span>
+                  <span className={a.result === 'ok' || a.result === 'done' || a.result === 'already' ? 'text-[#2f7d4f]' : a.result === 'failed' ? 'text-[#9c3b33]' : ''}>{a.result}</span>
                   {a.human ? <span>human</span> : null}
                   {a.evidence && <a href={a.evidence} target="_blank" rel="noopener noreferrer" className="underline">{t('setup.auto.evidence')}</a>}
                 </div>

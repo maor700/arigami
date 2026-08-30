@@ -20,7 +20,7 @@ import { stepFor } from './index.js';
 import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
 import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
 import { Pill, ErrorBox } from './shared.jsx';
-import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 
 export const TERMINAL = new Set(['done', 'failed', 'skipped', 'timeout']);
 
@@ -132,6 +132,7 @@ export default function SetupCard({ sessionId, event }) {
     capability,
     manual,
     sessionId,
+    requestId: event.requestId,
     onDone: manualDone,
     ...(manual.kind === 'toggle' ? { enabled: !!event.enabled } : {}),
     ...(manual.kind === 'repo' ? { have: event.have || [] } : {}),
@@ -145,18 +146,32 @@ export default function SetupCard({ sessionId, event }) {
     timeout: t('setup.card.timeout', { name: title }),
   }[phase];
 
+  // F6: one live status line the owner can trust instead of typing "connected" in chat.
+  const waiting = phase === 'pending' || phase === 'failed';
+  const statusLine = waiting ? t('setup.card.waiting') : phase === 'auto' ? t('setup.card.connecting') : phase === 'done' ? t('setup.card.completed') : null;
+
   return (
-    <div data-setup-phase={phase} className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
+    <div data-setup-phase={phase} className={`my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3 ${waiting ? 'setup-waiting' : ''}`}>
       <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
         {!terminal && <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />}
         <span dir="auto" className="font-bold text-[var(--term-accent-strong)]">
           {t('setup.card.needs', { name: title })}
-          {event.why ? <span className="font-normal"> — {event.why}</span> : null}
+          {event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}
         </span>
         <span className="ms-auto"><Pill status={phase} /></span>
       </div>
+      {statusLine && (
+        <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold ${phase === 'done' ? 'text-[#2f7d4f]' : 'text-[var(--term-accent-fg)]'}`}>
+          {waiting && <span className="pulse-yellow inline-block h-[6px] w-[6px] rounded-full bg-brand" />}
+          {phase === 'auto' && <Icon icon={faCircleNotch} spin />}
+          {phase === 'done' && <Icon icon={faCheck} />}
+          <span>{statusLine}</span>
+        </div>
+      )}
       {capFamily(capability) === 'identity' && !terminal && (
-        <div dir="auto" className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">{t('setup.card.identityIntro')}</div>
+        <div dir="auto" className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
+          {t('setup.card.identityIntro')} <span className="font-semibold text-[var(--term-accent-fg)]">{t('setup.card.identityHint')}</span>
+        </div>
       )}
 
       {terminal && (
@@ -178,6 +193,7 @@ export default function SetupCard({ sessionId, event }) {
           <AutoConnect
             sessionId={sessionId}
             state="auto"
+            header={false}
             lines={event.lines || []}
             detail={event.detail}
             onManual={() => changeMode('manual')}

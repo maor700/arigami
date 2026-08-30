@@ -27,3 +27,31 @@ export function mergeChatEvents(existing, snapshot) {
   });
   return [...snapshot, ...extra];
 }
+
+// F6: a persisted chat holds the {kind:'setup'} card AND every `setup-update`
+// the host appended for it (same requestId). Live, store.js patches the card
+// in place; on (re)load the snapshot must be folded the same way, otherwise
+// a reloaded page shows a done card as "needs you" again. Updates carry the
+// FULL narration list (the last one wins); the update rows themselves are
+// dropped — nothing renders them.
+export function foldSetupUpdates(events) {
+  if (!Array.isArray(events) || !events.some((e) => e?.kind === 'setup-update')) return events;
+  const out = [];
+  const cardAt = new Map(); // requestId -> index in `out`
+  for (const e of events) {
+    if (e?.kind === 'setup') {
+      cardAt.set(e.requestId ?? e.id, out.length);
+      out.push(e);
+      continue;
+    }
+    if (e?.kind === 'setup-update') {
+      const idx = cardAt.get(e.requestId ?? e.id);
+      if (idx == null) continue; // update without its card in this page — nothing to show
+      const { kind: _k, requestId: _r, ts: _ts, seq: _seq, ...patch } = e;
+      out[idx] = { ...out[idx], ...patch };
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
+}

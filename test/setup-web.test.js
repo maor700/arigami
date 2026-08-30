@@ -173,3 +173,47 @@ test('store: setup-update patches the card in place and appends narration lines'
   store.patchLocalChat('sess', 'setup', 'nope', { state: 'done' });
   expect(store.getState().chats.sess.length).toBe(1);
 });
+
+// F6 — the live status line + waiting pulse, and the identity card's "when to
+// click Done" hint, in both locales; done shows "Completed", never a pulse.
+test('SetupCard (F6): status line per phase, waiting pulse, identity Done hint (he/en)', () => {
+  for (const [lang, waiting, connecting, completed, hint] of [
+    ['en', 'The agent is waiting for you', 'The agent is connecting…', 'Completed', 'When you see your Google Account page with your name — click Done.'],
+    ['he', 'הסוכן ממתין לך', 'הסוכן מחבר…', 'הושלם', 'כשאתה רואה את דף החשבון עם השם שלך — לחץ Done.'],
+  ]) {
+    prefs.setPrefs({ language: lang });
+    const id = { kind: 'setup', requestId: 'r9', capability: 'identity', why: 'sign in', autoCapable: false, identity: null, manual: { kind: 'takeover' } };
+    const pending = render(h(SetupCard, { sessionId: 's1', event: { ...id, state: 'pending' } }));
+    expect(pending).toContain('setup-waiting');
+    expect(pending).toContain('data-setup-status="pending"');
+    expect(pending).toContain(waiting);
+    expect(pending).toContain(hint);
+    const gm = { kind: 'setup', requestId: 'r10', capability: 'composio:gmail', why: 'inbox', autoCapable: true, identity: { email: 'u@x.test' } };
+    const auto = render(h(SetupCard, { sessionId: 's1', event: { ...gm, state: 'auto', lines: ['Opening Composio…'] } }));
+    expect(auto).toContain('data-setup-status="auto"');
+    expect(auto).toContain(connecting);
+    expect(auto).toContain('Opening Composio…');
+    expect(auto).not.toContain('setup-waiting');
+    const done = render(h(SetupCard, { sessionId: 's1', event: { ...gm, state: 'done' } }));
+    expect(done).toContain('data-setup-status="done"');
+    expect(done).toContain(completed);
+    expect(done).not.toContain('setup-waiting');
+    expect(done).not.toContain(hint);
+    const skipped = render(h(SetupCard, { sessionId: 's1', event: { ...id, state: 'skipped' } }));
+    expect(skipped).not.toContain('data-setup-status=');
+    expect(skipped).not.toContain('setup-waiting');
+  }
+});
+
+// F6 — setup-update carries the FULL narration list; the store must not
+// duplicate it (a delta from an old host is still appended).
+test('store: setup-update lines replace when the host sends the full list, append for a delta', () => {
+  const sid = 'lines-1';
+  store.injectLocalChat(sid, { kind: 'setup', ts: 1, requestId: 'L1', capability: 'composio:gmail', state: 'auto', lines: [] });
+  store.patchLocalChat(sid, 'setup', 'L1', { lines: ['a'] });
+  store.patchLocalChat(sid, 'setup', 'L1', { lines: ['a', 'b'] });
+  store.patchLocalChat(sid, 'setup', 'L1', { lines: ['a', 'b'] }); // repeated full list → no dup
+  store.patchLocalChat(sid, 'setup', 'L1', { lines: ['c'] }); // delta
+  const card = store.getState().chats[sid].find((e) => e.requestId === 'L1');
+  expect(card.lines).toEqual(['a', 'b', 'c']);
+});

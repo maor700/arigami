@@ -24,15 +24,18 @@ export function EvidenceLink({ sessionId, evidence, title }) {
   );
 }
 
-export default function AutoConnect({ sessionId, state = 'auto', lines = [], detail = '', evidence = null, onManual, onCancel }) {
+// `header={false}` when the card already shows its own live status line (F6).
+export default function AutoConnect({ sessionId, state = 'auto', lines = [], detail = '', evidence = null, onManual, onCancel, header = true }) {
   const t = useT();
   const running = state === 'auto';
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[var(--term-accent-fg)]">
-        {running ? <Icon icon={faCircleNotch} spin /> : state === 'done' ? <span className="text-[#2f7d4f]"><Icon icon={faCheck} /></span> : <span className="text-[#9c3b33]"><Icon icon={faXmark} /></span>}
-        <span>{t(running ? 'setup.auto.running' : state === 'done' ? 'setup.auto.done' : 'setup.auto.failed')}</span>
-      </div>
+      {header && (
+        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[var(--term-accent-fg)]">
+          {running ? <Icon icon={faCircleNotch} spin /> : state === 'done' ? <span className="text-[#2f7d4f]"><Icon icon={faCheck} /></span> : <span className="text-[#9c3b33]"><Icon icon={faXmark} /></span>}
+          <span>{t(running ? 'setup.auto.running' : state === 'done' ? 'setup.auto.done' : 'setup.auto.failed')}</span>
+        </div>
+      )}
       {lines.length > 0 && (
         <ol dir="auto" className="max-h-[160px] overflow-auto rounded-[8px] border border-[var(--term-accent-border)] px-3 py-2 font-mono text-[10.5px] leading-relaxed text-[var(--term-accent-dim)]">
           {lines.slice(-30).map((l, i) => <li key={i}>› {l}</li>)}

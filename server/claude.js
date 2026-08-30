@@ -12,7 +12,7 @@ import { isWin, which, extraBinDirs, pidAlive, HOME } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
 import { broadcast } from './bus.js';
-import { expirePendingPermissions, expirePendingScreenRequests, expirePendingSetupRequests } from './api.js';
+import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
@@ -1341,7 +1341,7 @@ export function interrupt(id) {
 function reapSessionOnExit(id, reason) {
   expirePendingPermissions(id, reason);
   expirePendingScreenRequests(id, reason);
-  expirePendingSetupRequests(id, reason);
+  detachPendingSetupRequests(id, reason); // F6: cards stay open across a restart
   const sess = getSession(id);
   if (sess && (sess.bg || []).some((b) => b.status === 'running')) {
     setBg(id, sess.bg.map((b) => (b.status === 'running' ? { ...b, status: 'exited', endedAt: Date.now() } : b)));
