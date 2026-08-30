@@ -437,8 +437,10 @@ function spawnProc(s, resume) {
   // under supervision so that tree dies with the host instead of outliving it
   // holding the inherited listen socket.
   supervise(child, `session:${s.id}`);
+  const agentSlug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
-    capabilitiesHint: capabilitiesHintCache, // F8: the connectable-capabilities line for the first turn
+    capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
     hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
@@ -1056,24 +1058,32 @@ export function identityReminder(hint) {
 // The "connectable" line is probed in the background (capability checks are
 // async — Composio, files, processes) and cached, so the first user message
 // — often written in the same tick as the spawn — never waits on it.
-let capabilitiesHintCache = '';
-export async function refreshCapabilitiesHint() {
+// A2: cached PER OWNER — a session born from an agent sees the agent's own
+// connections (identity / composio resolved agent-first, "(shared)" when it
+// fell back). The global line refreshes every minute; an agent's line is
+// refreshed in the background whenever one of its sessions spawns.
+const capabilitiesHintCache = new Map(); // owner → line
+let capabilitiesHintCacheGlobal = '';
+export async function refreshCapabilitiesHint(owner = 'global') {
   try {
     const caps = await import('./capabilities.js');
-    const { capabilities } = await caps.capabilitiesStatus();
+    const { capabilities } = await caps.capabilitiesStatus({}, owner);
     const missing = capabilities.filter((c) => !c.ok && c.id !== 'telemetry' && c.id !== 'push' && c.id !== 'remote').map((c) => c.id);
-    const connected = capabilities.filter((c) => c.ok).map((c) => c.id);
-    capabilitiesHintCache =
-      (connected.length ? `Connected now: ${connected.join(', ')}. ` : '') +
+    const connected = capabilities.filter((c) => c.ok).map((c) => (c.ownable && owner !== 'global' && c.resolvedFrom === 'global' ? `${c.id} (shared)` : c.id));
+    const line =
+      (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
       (missing.length
         ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
         : '');
+    capabilitiesHintCache.set(owner, line);
+    if (owner === 'global') capabilitiesHintCacheGlobal = line;
   } catch (e) {
     console.error('[claude] capabilities hint:', e.message);
   }
-  return capabilitiesHintCache;
+  return capabilitiesHintCache.get(owner) || '';
 }
-export const capabilitiesHint = () => capabilitiesHintCache;
+/** The first-turn line for an owner — the agent's own if probed already, else the global one. */
+export const capabilitiesHint = (owner = 'global') => capabilitiesHintCache.get(owner) || capabilitiesHintCacheGlobal;
 refreshCapabilitiesHint().catch(() => {});
 {
   const t = setInterval(() => refreshCapabilitiesHint().catch(() => {}), 60_000);

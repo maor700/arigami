@@ -30,6 +30,9 @@ export interface CheckResult {
   detail: string;
   // Live facts the card can render (never secrets): qr data-url, user, urls…
   data?: Record<string, unknown>;
+  // A2: where an OK answer came from — 'agent:<slug>' (the agent's own
+  // connection) or 'global' (the shared one an agent session fell back to).
+  owner?: Owner;
 }
 
 export interface ManualSpec {
@@ -71,6 +74,13 @@ export interface CapabilityStatus {
   events: string[];
   // Effective default mode for a request_setup on this capability right now.
   defaultMode: 'auto' | 'manual';
+  // A2: can this capability be owned by an agent at all (identity, composio:*)?
+  ownable: boolean;
+  // A2: the owner the status was resolved FOR, and where it resolved FROM.
+  // For an agent owner: 'agent:<slug>' when the agent's own connection is up,
+  // 'global' when it fell back to the shared one (or the capability is host-level).
+  owner: Owner;
+  resolvedFrom: Owner | null; // null = not connected anywhere
 }
 
 /** The tool result every wrapped MCP/REST tool returns instead of throwing. */
@@ -95,6 +105,31 @@ const CAP_ID_RE = /^(identity|claude|git|whatsapp|desktop|push|remote|telemetry|
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------
+// A2 — owners. A connection belongs to the host ('global') or to one agent
+// ('agent:<slug>', PRD-ARIGAMI-AGENTS §3 A2). Only capabilities that carry
+// real per-identity state are ownable: `identity` (the Google login in the
+// agent's own Chrome profile → $ARIGAMI_DIR/agents/<slug>/identity.json) and
+// `composio:*` (a Composio connected account with user_id = the owner).
+// Everything else (claude, git, whatsapp, desktop, push, remote, telemetry,
+// repo:*) is host-level and resolves to 'global' for every owner. A session
+// born from an agent resolves the agent's connection FIRST, then the global.
+// ---------------------------------------------------------------------------
+
+export type Owner = string; // 'global' | 'agent:<slug>'
+export const GLOBAL_OWNER: Owner = 'global';
+const AGENT_OWNER_RE = /^agent:([a-z0-9][a-z0-9-]{0,39})$/;
+/** Normalise an owner value: ''/undefined/'global' → 'global'; 'agent:<slug>' kept; anything else → null (invalid). */
+export function parseOwner(v: unknown): Owner | null {
+  if (v === undefined || v === null || v === '' || v === GLOBAL_OWNER) return GLOBAL_OWNER;
+  const str = String(v).trim();
+  return AGENT_OWNER_RE.test(str) ? str : null;
+}
+export const ownerSlug = (owner: Owner | null | undefined): string | null => (owner && AGENT_OWNER_RE.exec(owner)?.[1]) || null;
+/** The owner a session acts for: 'agent:<slug>' when born from an agent (metadata.agent), else 'global'. */
+export const ownerForAgent = (agentSlug: unknown): Owner => (typeof agentSlug === 'string' && agentSlug ? `agent:${agentSlug}` : GLOBAL_OWNER);
+export const isOwnable = (id: string): boolean => id === 'identity' || id.startsWith('composio:');
+
+// ---------------------------------------------------------------------------
 // Identity ($ARIGAMI_DIR/identity.json) — no secrets, ever.
 // ---------------------------------------------------------------------------
 
@@ -114,9 +149,15 @@ export interface Identity {
 const SECRET_RE = /(sk-ant-|ghp_|github_pat_|xox[abp]-|eyJ[A-Za-z0-9_-]{20,}|password|secret|token)/i;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}$/;
 
-export function readIdentity(): Identity | null {
+/** identity.json of an owner: the global one, or $ARIGAMI_DIR/agents/<slug>/identity.json (A2). */
+export function identityFile(owner: Owner = GLOBAL_OWNER): string {
+  const slug = ownerSlug(owner);
+  return slug ? path.join(ARIGAMI_DIR, 'agents', slug, 'identity.json') : IDENTITY_FILE;
+}
+
+export function readIdentity(owner: Owner = GLOBAL_OWNER): Identity | null {
   try {
-    const j = JSON.parse(fs.readFileSync(IDENTITY_FILE, 'utf8'));
+    const j = JSON.parse(fs.readFileSync(identityFile(owner), 'utf8'));
     if (j && typeof j === 'object' && typeof j.email === 'string') return { providers: {}, ...j } as Identity;
   } catch {
     /* absent / malformed */
@@ -125,8 +166,8 @@ export function readIdentity(): Identity | null {
 }
 
 /** Write (or merge into) identity.json. Refuses anything that smells like a secret. */
-export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: 'google' }): Identity {
-  const cur = readIdentity();
+export function writeIdentity(patch: { email?: string; chromeProfile?: string; provider?: 'google' }, owner: Owner = GLOBAL_OWNER): Identity {
+  const cur = readIdentity(owner);
   const email = String(patch.email ?? cur?.email ?? '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new Error('identity: a valid email is required');
   for (const v of Object.values(patch)) {
@@ -136,33 +177,35 @@ export function writeIdentity(patch: { email?: string; chromeProfile?: string; p
     email,
     provider: 'google',
     connectedAt: cur?.email === email ? cur.connectedAt : new Date().toISOString(),
-    chromeProfile: patch.chromeProfile || cur?.chromeProfile || 'base',
+    // A2: an agent's identity lives in the agent's own Chrome profile.
+    chromeProfile: patch.chromeProfile || cur?.chromeProfile || (ownerSlug(owner) ? owner : 'base'),
     providers: cur?.providers || {},
   };
-  fs.mkdirSync(ARIGAMI_DIR, { recursive: true });
-  fs.writeFileSync(IDENTITY_FILE, JSON.stringify(id, null, 2) + '\n', { mode: 0o600 });
+  const file = identityFile(owner);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(id, null, 2) + '\n', { mode: 0o600 });
   return id;
 }
 
 /** Record that `capability` was connected through the identity (auto playbook). */
-export function markIdentityProvider(capability: string): Identity | null {
-  const cur = readIdentity();
+export function markIdentityProvider(capability: string, owner: Owner = GLOBAL_OWNER): Identity | null {
+  const cur = readIdentity(owner);
   if (!cur) return null;
   cur.providers[capability] = { at: new Date().toISOString() };
-  fs.writeFileSync(IDENTITY_FILE, JSON.stringify(cur, null, 2) + '\n', { mode: 0o600 });
+  fs.writeFileSync(identityFile(owner), JSON.stringify(cur, null, 2) + '\n', { mode: 0o600 });
   return cur;
 }
 
-export function clearIdentity(): boolean {
+export function clearIdentity(owner: Owner = GLOBAL_OWNER): boolean {
   try {
-    fs.unlinkSync(IDENTITY_FILE);
+    fs.unlinkSync(identityFile(owner));
     return true;
   } catch {
     return false;
   }
 }
 
-export const identityConnected = (): boolean => !!readIdentity();
+export const identityConnected = (owner: Owner = GLOBAL_OWNER): boolean => !!readIdentity(owner);
 
 // ---------------------------------------------------------------------------
 // Audit ($ARIGAMI_DIR/connections.log — JSONL, append-only)
@@ -178,10 +221,12 @@ export interface AuditEntry {
   evidence: string | null; // '/__artifacts/<id>/' or null
   human: boolean; // did a human act (paste / click / take over)?
   detail?: string;
+  owner?: Owner; // A2: 'agent:<slug>' when the connection belongs to an agent; absent = global
 }
 
 export function appendAudit(e: Omit<AuditEntry, 'at'> & { at?: string }): AuditEntry {
   const entry: AuditEntry = { at: e.at || new Date().toISOString(), ...e } as AuditEntry;
+  if (!entry.owner || entry.owner === GLOBAL_OWNER) delete entry.owner;
   if (entry.detail && SECRET_RE.test(entry.detail) && !/needs|missing|not /i.test(entry.detail)) delete entry.detail;
   try {
     fs.mkdirSync(ARIGAMI_DIR, { recursive: true });
@@ -192,17 +237,19 @@ export function appendAudit(e: Omit<AuditEntry, 'at'> & { at?: string }): AuditE
   return entry;
 }
 
-/** Newest last. */
-export function readAudit(limit = 50): AuditEntry[] {
+/** Newest last. `owner` filters to one owner's lines ('global' = lines without an owner). */
+export function readAudit(limit = 50, owner?: Owner): AuditEntry[] {
   try {
     const lines = fs.readFileSync(AUDIT_FILE, 'utf8').split('\n').filter(Boolean);
-    return lines.slice(-limit).flatMap((l) => {
+    const all = lines.flatMap((l) => {
       try {
         return [JSON.parse(l) as AuditEntry];
       } catch {
         return [];
       }
     });
+    const mine = owner ? all.filter((e) => (e.owner || GLOBAL_OWNER) === owner) : all;
+    return mine.slice(-limit);
   } catch {
     return [];
   }
@@ -214,7 +261,8 @@ export function readAudit(limit = 50): AuditEntry[] {
 // ---------------------------------------------------------------------------
 
 export interface CapabilityProbes {
-  identity: () => Identity | null;
+  // A2: called with the owner being resolved ('global' or 'agent:<slug>').
+  identity: (owner?: Owner) => Identity | null;
   claude: () => { cli: boolean; authed: boolean };
   git: () => { authed: boolean; gh: boolean };
   repos: () => Array<{ name: string; present: boolean; dir: string; source: string }>;
@@ -225,6 +273,8 @@ export interface CapabilityProbes {
   telemetry: () => { enabled: boolean; reason: string };
   composioKey: () => boolean;
   // Connected toolkits (ACTIVE connected accounts). null = unknown (no key / offline).
+  // Entries: '<toolkit>' for the host's accounts (user_id 'default'), and
+  // 'agent:<slug>:<toolkit>' for an agent-owned account (A2, user_id = owner).
   composioConnected: () => Promise<Set<string> | null>;
 }
 
@@ -247,9 +297,14 @@ async function fetchComposioConnected(): Promise<Set<string> | null> {
     });
     if (!r.ok) throw new Error(`composio ${r.status}`);
     const j = (await r.json()) as any;
-    const slugs = new Set<string>(
-      (j.items || []).filter((c: any) => c.status === 'ACTIVE').map((c: any) => String(c.toolkit?.slug || '').toLowerCase()).filter(Boolean)
-    );
+    const slugs = new Set<string>();
+    for (const c of j.items || []) {
+      if (c.status !== 'ACTIVE') continue;
+      const slug = String(c.toolkit?.slug || '').toLowerCase();
+      if (!slug) continue;
+      const uid = String(c.user_id ?? c.entity_id ?? '');
+      slugs.add(AGENT_OWNER_RE.test(uid) ? `${uid}:${slug}` : slug);
+    }
     composioCache = { at: now, slugs, keyed: true };
     return slugs;
   } catch {
@@ -264,7 +319,7 @@ async function fetchComposioConnected(): Promise<Set<string> | null> {
  * ACTIVE account exists for `slug`, delete the others for that toolkit.
  * Never touches ACTIVE accounts and never other toolkits. Returns what it did.
  */
-export async function pruneComposioOrphans(slug: string, opts: { fetchImpl?: typeof fetch } = {}): Promise<{ active: number; removed: string[]; skipped: boolean }> {
+export async function pruneComposioOrphans(slug: string, opts: { fetchImpl?: typeof fetch; owner?: Owner } = {}): Promise<{ active: number; removed: string[]; skipped: boolean }> {
   const key = cfg.composioApiKey || process.env.COMPOSIO_API_KEY || '';
   const f = opts.fetchImpl || fetch;
   slug = slug.toLowerCase();
@@ -273,7 +328,8 @@ export async function pruneComposioOrphans(slug: string, opts: { fetchImpl?: typ
   const r = await f('https://backend.composio.dev/api/v3.1/connected_accounts?limit=200', { headers: hdr, signal: AbortSignal.timeout(8000) });
   const j = (await r.json()) as any;
   if (!r.ok) throw new Error(j?.error?.message || `Composio ${r.status}`);
-  const mine = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug);
+  const owner = opts.owner || GLOBAL_OWNER;
+  const mine = (j.items || []).filter((c: any) => String(c.toolkit?.slug || '').toLowerCase() === slug && composioOwnerOf(c) === owner);
   const active = mine.filter((c: any) => c.status === 'ACTIVE').length;
   if (!active) return { active: 0, removed: [], skipped: true };
   const removed: string[] = [];
@@ -289,6 +345,12 @@ export async function pruneComposioOrphans(slug: string, opts: { fetchImpl?: typ
   if (removed.length) invalidateComposioCache();
   return { active, removed, skipped: false };
 }
+
+/** The owner a Composio connected account belongs to (its user_id / entity_id). */
+export const composioOwnerOf = (c: any): Owner => {
+  const uid = String(c?.user_id ?? c?.entity_id ?? '');
+  return AGENT_OWNER_RE.test(uid) ? uid : GLOBAL_OWNER;
+};
 
 const desktopProbe = (): { enabled: boolean; display: string | null; up: boolean } => {
   const enabled = !!cfg.screen?.enabled;
@@ -354,16 +416,19 @@ export const defaultProbes: CapabilityProbes = {
 
 const SETUP_EVENTS = ['setup', 'onboarding.step'];
 
-function staticCapabilities(p: CapabilityProbes): Capability[] {
+function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): Capability[] {
   return [
     {
       id: 'identity',
       title: 'Google identity (Chrome)',
       group: 'core',
       check: () => {
-        const id = p.identity();
+        // A2: the agent's own identity first (its Chrome profile), then the shared one.
+        const own = p.identity(owner);
+        const id = own || (owner !== GLOBAL_OWNER ? p.identity(GLOBAL_OWNER) : null);
+        const from: Owner = own ? owner : GLOBAL_OWNER;
         return id
-          ? { ok: true, detail: `signed in as ${id.email}`, data: { email: id.email, connectedAt: id.connectedAt, providers: Object.keys(id.providers) } }
+          ? { ok: true, owner: from, detail: `signed in as ${id.email}${from !== owner ? ' (shared)' : ''}`, data: { email: id.email, connectedAt: id.connectedAt, providers: Object.keys(id.providers), owner: from } }
           : { ok: false, detail: 'sign in to Google once on the session desktop — the agent can then connect other services itself' };
       },
       manual: { kind: 'takeover', help: 'The agent opens accounts.google.com on its desktop and hands the screen to you; you sign in, click Done.' },
@@ -506,7 +571,7 @@ function repoCapability(name: string, p: CapabilityProbes): Capability {
   };
 }
 
-function composioCapability(toolkit: string, p: CapabilityProbes): Capability {
+function composioCapability(toolkit: string, p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): Capability {
   const slug = toolkit.toLowerCase();
   return {
     id: `composio:${slug}`,
@@ -516,8 +581,10 @@ function composioCapability(toolkit: string, p: CapabilityProbes): Capability {
       if (!p.composioKey()) return { ok: false, detail: 'Composio is not connected — sign in to Composio first', data: { hasKey: false } };
       const set = await p.composioConnected();
       if (set === null) return { ok: false, detail: 'could not reach Composio to verify the connection', data: { hasKey: true, unknown: true } };
+      // A2: the agent's own connected account (user_id = owner) first, then the host's.
+      if (owner !== GLOBAL_OWNER && set.has(`${owner}:${slug}`)) return { ok: true, owner, detail: 'connected', data: { hasKey: true, owner } };
       return set.has(slug)
-        ? { ok: true, detail: 'connected', data: { hasKey: true } }
+        ? { ok: true, owner: GLOBAL_OWNER, detail: owner !== GLOBAL_OWNER ? 'connected (shared)' : 'connected', data: { hasKey: true, owner: GLOBAL_OWNER } }
         : { ok: false, detail: `${slug} is not connected in Composio — authorize it`, data: { hasKey: true } };
     },
     manual: {
@@ -533,44 +600,54 @@ function composioCapability(toolkit: string, p: CapabilityProbes): Capability {
 }
 
 /** All capabilities currently worth listing: statics + every registered repo + known/seen toolkits. */
-export function listCapabilities(probes: Partial<CapabilityProbes> = {}): Capability[] {
+export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Capability[] {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
   const repos = p.repos().map((r) => repoCapability(r.name, p));
-  const toolkits = [...new Set([...KNOWN_COMPOSIO_TOOLKITS, ...seenToolkits])].map((t) => composioCapability(t, p));
-  return [...staticCapabilities(p), ...repos, ...toolkits];
+  const toolkits = [...new Set([...KNOWN_COMPOSIO_TOOLKITS, ...seenToolkits])].map((t) => composioCapability(t, p, owner));
+  return [...staticCapabilities(p, owner), ...repos, ...toolkits];
 }
 
 // Toolkits somebody asked about (request_setup / check) join the listing.
 const seenToolkits = new Set<string>();
 
 /** Resolve one id (dynamic ids are built on demand). null = not a valid id. */
-export function getCapability(id: string, probes: Partial<CapabilityProbes> = {}): Capability | null {
+export function getCapability(id: string, probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Capability | null {
   if (!isCapabilityId(id)) return null;
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
   if (id.startsWith('repo:')) return repoCapability(id.slice(5), p);
   if (id.startsWith('composio:')) {
     seenToolkits.add(id.slice(9).toLowerCase());
-    return composioCapability(id.slice(9), p);
+    return composioCapability(id.slice(9), p, owner);
   }
-  return staticCapabilities(p).find((c) => c.id === id) ?? null;
+  return staticCapabilities(p, owner).find((c) => c.id === id) ?? null;
 }
 
 // AUTO_CAPABLE — the ids the agent may connect itself once an identity exists.
 export const AUTO_CAPABLE = (id: string): boolean => !!getCapability(id)?.autoCapable;
 
-/** Effective default `mode` for a request_setup right now. */
-export function defaultMode(cap: Capability, probes: Partial<CapabilityProbes> = {}): 'auto' | 'manual' {
+/**
+ * A2: the identity an auto playbook would drive: for an agent owner, the
+ * AGENT's own Google identity (its Chrome profile is what the playbook uses) —
+ * the shared one does not count; for global, the host's.
+ */
+export function identityForAuto(owner: Owner = GLOBAL_OWNER, probes: Partial<CapabilityProbes> = {}): Identity | null {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
-  return cap.autoCapable && !!p.identity() ? 'auto' : 'manual';
+  return p.identity(owner);
 }
 
-export async function statusOf(cap: Capability, probes: Partial<CapabilityProbes> = {}): Promise<CapabilityStatus> {
+/** Effective default `mode` for a request_setup right now. */
+export function defaultMode(cap: Capability, probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): 'auto' | 'manual' {
+  return cap.autoCapable && !!identityForAuto(owner, probes) ? 'auto' : 'manual';
+}
+
+export async function statusOf(cap: Capability, probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Promise<CapabilityStatus> {
   let r: CheckResult;
   try {
     r = await cap.check();
   } catch (e) {
     r = { ok: false, detail: `check failed: ${(e as Error).message}` };
   }
+  const ownable = isOwnable(cap.id);
   return {
     id: cap.id,
     title: cap.title,
@@ -582,25 +659,28 @@ export async function statusOf(cap: Capability, probes: Partial<CapabilityProbes
     autoCapable: cap.autoCapable,
     ...(cap.playbook ? { playbook: cap.playbook } : {}),
     events: cap.events,
-    defaultMode: defaultMode(cap, probes),
+    defaultMode: defaultMode(cap, probes, owner),
+    ownable,
+    owner,
+    resolvedFrom: r.ok ? (ownable ? r.owner || GLOBAL_OWNER : GLOBAL_OWNER) : null,
   };
 }
 
-/** GET /__api/setup/capabilities payload. */
-export async function capabilitiesStatus(probes: Partial<CapabilityProbes> = {}): Promise<{ identity: Identity | null; capabilities: CapabilityStatus[] }> {
+/** GET /__api/setup/capabilities payload (`?owner=agent:<slug>` resolves for that agent — A2). */
+export async function capabilitiesStatus(probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Promise<{ owner: Owner; identity: Identity | null; sharedIdentity: Identity | null; capabilities: CapabilityStatus[] }> {
   const p: CapabilityProbes = { ...defaultProbes, ...probes };
-  const caps = listCapabilities(probes);
-  const capabilities = await Promise.all(caps.map((c) => statusOf(c, probes)));
-  return { identity: p.identity(), capabilities };
+  const caps = listCapabilities(probes, owner);
+  const capabilities = await Promise.all(caps.map((c) => statusOf(c, probes, owner)));
+  return { owner, identity: p.identity(owner), sharedIdentity: owner === GLOBAL_OWNER ? null : p.identity(GLOBAL_OWNER), capabilities };
 }
 
 /** `{ok:true}` or the needs_setup shape — the one helper every wrapper uses. */
-export async function ensure(id: string, why: string, probes: Partial<CapabilityProbes> = {}): Promise<{ ok: true; detail: string } | NeedsSetup> {
-  const cap = getCapability(id, probes);
+export async function ensure(id: string, why: string, probes: Partial<CapabilityProbes> = {}, owner: Owner = GLOBAL_OWNER): Promise<{ ok: true; detail: string; owner?: Owner } | NeedsSetup> {
+  const cap = getCapability(id, probes, owner);
   if (!cap) return needsSetup(id, why, `unknown capability ${id} — use one of the registry ids`);
   try {
     const r = await cap.check();
-    if (r.ok) return { ok: true, detail: r.detail };
+    if (r.ok) return { ok: true, detail: r.detail, owner: r.owner || GLOBAL_OWNER };
   } catch {
     /* treat as missing */
   }

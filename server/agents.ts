@@ -12,7 +12,8 @@
 //   memory/      MEMORY.md + journal/ — the agent's memory namespace
 //                (memory.ts: scope 'agent:<slug>'; the agent sees USER.md + own)
 //   assets/      brand/style references the session is told about (listed only)
-//   browser/     reserved for A2 (persistent Chrome profile)
+//   browser/     the agent's persistent Chrome profile (A2, lib/chrome.ts) — never exported
+//   identity.json the agent's own Google identity (A2, capabilities.ts) — no secrets
 //
 // No per-agent private skills (user decision): `skills` are NAMES of shared
 // skills (shipped pack or $ARIGAMI_DIR/skills), validated to exist.
@@ -306,7 +307,9 @@ export function personaBlock(slug: string): string {
     lines.push('', `## Assets (brand/style references): ${a.assets.map((f) => path.join(assetsDir(a.slug), f)).join(', ')}`);
   lines.push(
     '',
-    `## Memory: memory_write/memory_search default to YOUR namespace (agent:${a.slug}); USER.md (facts about the human) is shared. Pass agent:"" to write the shared MEMORY.md instead.`
+    `## Memory: memory_write/memory_search default to YOUR namespace (agent:${a.slug}); USER.md (facts about the human) is shared. Pass agent:"" to write the shared MEMORY.md instead.`,
+    '',
+    `## Connections & browser (A2): your Chrome profile is your own (agents/${a.slug}/browser — logins persist across your sessions; save_browser_logins syncs into it, shared:true also into the host's base). request_setup for identity / composio:* connects to YOUR agent (owner agent:${a.slug}); the host's shared connection is used only as a fallback. cronjob({agent}) defaults to you — your runs are born from you.`
   );
   return `<system-reminder>\n${lines.join('\n')}\n</system-reminder>\n\n`;
 }
