@@ -361,9 +361,20 @@ export function listProfiles(): Profile[] {
     } catch {
       continue;
     }
-    for (const f of files) {
+    // Profile Bundles (K3, the primary form): <dir>/bundles/<name>/profile.json
+    // for the shipped tree, <dir>/<name>/profile.json for installed ones —
+    // listed first so a bundle wins over a thin <name>.json of the same name.
+    const bundleRoot = dir === SHIPPED_PROFILES ? path.join(dir, 'bundles') : dir;
+    let bundles: string[] = [];
+    try {
+      bundles = fs.readdirSync(bundleRoot).filter((n) => fs.existsSync(path.join(bundleRoot, n, 'profile.json')));
+    } catch {
+      /* no bundles dir */
+    }
+    const sources = [...bundles.map((n) => path.join(bundleRoot, n, 'profile.json')), ...files.map((f) => path.join(dir, f))];
+    for (const file of sources) {
       try {
-        const p = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Profile;
+        const p = JSON.parse(fs.readFileSync(file, 'utf8')) as Profile;
         if (p.name && !seen.has(p.name)) {
           seen.add(p.name);
           out.push(p);

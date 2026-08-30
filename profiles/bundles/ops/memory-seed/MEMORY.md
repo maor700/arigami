@@ -1,0 +1,3 @@
+- Ops profile: alerts enter through the signed custom webhook `alerts` (Settings → Webhooks → Custom); the oncall-triage skill is the only thing that reads them. Runbooks live in the `runbooks` repo, one Markdown file per procedure, executed only by the runbook-execute skill.
+- Escalation ladder: note in the incident session → push via request_action (a decision) → request_screen (a hand needed on the desktop). Never page for status.
+- Production credentials are never typed by the agent: at any login, 2FA or approval dialog the human takes over the screen.

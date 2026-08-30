@@ -1,7 +1,8 @@
 {
   "name": "ops",
+  "version": "0.1.0",
   "title": "Ops / automation",
-  "description": "No product repo — a cockpit for recurring operations: cron-driven sessions, listeners on inboxes and webhooks, browser jobs on the shared desktop that hand you the wheel at login/2FA/payment. Point it at an infra or runbook repo and let the project-manager skill fan work out.",
+  "description": "No product repo — a cockpit for an operations team: alerts arrive on a signed webhook, an on-call triage skill opens a child session per incident and escalates to the phone only when a human must decide, a runbook skill executes step-by-step on a real desktop and hands you the wheel at login/2FA, and a disabled daily health-digest cron.",
   "repos": [
     {
       "name": "runbooks",

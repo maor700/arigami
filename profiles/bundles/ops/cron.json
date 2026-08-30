@@ -1,0 +1,18 @@
+[
+  {
+    "name": "daily-health-digest",
+    "prompt": "Run the oncall-triage skill in digest mode: read the webhook events of the last 24 hours (GET /__api/webhooks/events?kind=custom/alerts), the runbook runs recorded in ./runs/, and the state of every session in this project folder. Publish a one-page digest as an artifact. Prefix the summary with [SILENT] if there were no alerts and no failed runs.",
+    "schedule": { "kind": "cron", "value": "0 8 * * *" },
+    "enabled": false,
+    "autonomous": true,
+    "deliver": { "push": true }
+  },
+  {
+    "name": "oncall-sweep",
+    "prompt": "Run the oncall-triage skill: check for webhook alert events since the last sweep and triage each new one. Reply [SILENT] if there is nothing new.",
+    "schedule": { "kind": "interval", "value": "5m" },
+    "enabled": false,
+    "autonomous": true,
+    "deliver": { "push": false }
+  }
+]

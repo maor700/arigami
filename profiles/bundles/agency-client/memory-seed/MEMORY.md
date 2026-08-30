@@ -1,0 +1,3 @@
+- Agency-client profile: this host serves ONE client. The client's context (who they are, what "done" means, who approves) lives in CLIENT.md at the root of the `app` repo's workspace — read it before any client-facing work. If it is missing, copy the template from this bundle's memory-seed/CLIENT.md and ask the human to fill it in.
+- Client-facing output (status reports, intake tickets) is written in the client's language and tone as set in CLIENT.md; internal notes stay in the agency's language.
+- Never send anything to the client automatically: reports and messages are published as artifacts/share links and the human decides who gets them.

@@ -31,9 +31,9 @@ bin/host start                   # → http://localhost:3099/__host/
 bin/host pair                    # prints the pairing code for the first sign-in
 ```
 
-Then open the cockpit, enter the pairing code, pick a profile
-(`solo-dev`, `agency-client`, `ops`) and let Setup walk you through Claude auth,
-git and your first repo. `install.sh --profile <bundle>` pre-selects one.
+Then open the cockpit, enter the pairing code, pick a profile bundle (see
+[Profiles](#profiles)) and let Setup walk you through Claude auth, git and
+your first repo. `install.sh --profile <bundle>` pre-selects one.
 Details: [docs/INSTALL.md](docs/INSTALL.md) · [docs/DOCKER.md](docs/DOCKER.md)
 · [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -57,6 +57,22 @@ billing.)
   facts and skill changes — all of it lands in *Pending* with a diff, undo and
   scan, and nothing is written until you approve. Fold the cockpit to your
   business with **profile bundles** (repos + skills + memory seed + cron).
+
+## Profiles
+
+A profile bundle folds the cockpit to a purpose — repos + skills + memory
+seed + cron, applied additively (new skills land in `$ARIGAMI_DIR/skills`,
+cron jobs start disabled). Shipped in [`profiles/bundles/`](profiles/bundles/):
+
+| bundle | one-liner |
+|---|---|
+| `solo-dev` | one developer, their own repos: a daily standup skill and a weekday cron |
+| `agency-client` | *Arigami folded to a client*: weekly status report as a shareable artifact, intake → ticket → child session, `CLIENT.md` template |
+| `ops` | ops team: signed alert webhook → incident session → decision on your phone; runbooks executed on a real desktop that hands you the wheel at login/2FA; daily digest |
+| `il-whatsapp-business` | Hebrew small business in WhatsApp: inbox triage that drafts replies and asks the owner before sending (never auto-sends), quote/appointment follow-ups, `BUSINESS.md` template |
+
+`install.sh --profile <name>` · `bin/host profile apply <name>` · Setup → Profile.
+Copy a bundle directory to make your own; see [docs/INSTALL.md](docs/INSTALL.md) §3.
 
 ## Why not …
 
