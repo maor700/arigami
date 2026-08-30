@@ -251,7 +251,7 @@ test('auto: preselects only; consent click (/start) releases the agent with stat
   const card = await until(async () => (await setupEvents(sid)).find((e: any) => e.kind === 'setup'));
   expect(card.mode).toBe('auto');
   expect(card.state).toBe('pending');
-  expect(card.identity).toEqual({ email: 'someone@example.com' });
+  expect(card.identity).toEqual({ email: 'someone@example.com', owner: 'global' });
   expect(card.playbook).toBe('connect-composio');
   expect((await api('GET', `/__api/sessions/${sid}`)).json.claude.state).toBe('awaiting-input');
   // The switch is informational: flipping it does not release the agent.

@@ -57,7 +57,7 @@ function ensureBase(dir = CHROME_BASE_DIR): void {
 // in-progress browsing (open tabs, a login mid-flow) survives a restart.
 // An agent's first-ever profile starts EMPTY (its own identity — it does not
 // inherit the shared base logins); later sessions of the agent inherit its own.
-function ensureSessionProfile(sessionId: string): string {
+export function ensureSessionProfile(sessionId: string): string {
   const dir = chromeSessionDir(sessionId);
   if (!fs.existsSync(dir)) {
     const seed = profileSeedFor(sessionId).dir;
