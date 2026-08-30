@@ -65,6 +65,13 @@ as_root() {
   elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then sudo "$@"
   else return 126; fi
 }
+
+# F8: a fresh host (no admin yet) prints its one-time pairing code right after
+# "host started" — the user should never have to dig through logs for it.
+pairing_hint() {
+  [ -f "$DIR/run/pairing-code" ] || return 0
+  echo "  pairing code: $(y "$(cat "$DIR/run/pairing-code")")   (enter it once in the cockpit → creates the admin)"
+}
 render_unit() { # render_unit <src> — substitutes the __TOKENS__ for this checkout
   sed -e "s#__ROOT__#$ROOT#g" -e "s#__USER__#$(id -un)#g" -e "s#__HOME__#$HOME#g" -e "s#__BUN_DIR__#$BUN_DIR#g" "$1"
 }
@@ -98,7 +105,7 @@ start() {
     as_root systemctl start "$UNIT_NAME" || { rl "systemctl start failed (need root/sudo?)"; return 1; }
     i=0
     while [ "$i" -lt 60 ]; do
-      if health; then echo "$(g "✓ host started") (systemd) → $URL"; return 0; fi
+      if health; then echo "$(g "✓ host started") (systemd) → $URL"; pairing_hint; return 0; fi
       sleep 0.25; i=$((i + 1))
     done
     echo "$(r "unit started but health check failed") — see: journalctl -u $UNIT_NAME"
@@ -110,7 +117,7 @@ start() {
     launchctl load "$PLIST" 2>/dev/null || true
     i=0
     while [ "$i" -lt 40 ]; do
-      if health; then echo "$(g "✓ host started") (launchd) → $URL"; return 0; fi
+      if health; then echo "$(g "✓ host started") (launchd) → $URL"; pairing_hint; return 0; fi
       sleep 0.15; i=$((i + 1))
     done
     echo "$(r "launchd agent loaded but health check failed") — see: host logs"
@@ -124,6 +131,7 @@ start() {
   while [ "$i" -lt 40 ]; do
     if health; then
       echo "$(g "✓ host started") (pid $pid) → $URL"
+      pairing_hint
       return 0
     fi
     if ! alive "$pid"; then

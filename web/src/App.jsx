@@ -228,8 +228,22 @@ function Cockpit() {
   useEffect(() => {
     if (wizardOpen !== null || !storeState.auth) return; // only once signed in (a 401 here would sign us out)
     if (sessionStorage.getItem('arigami.wizardDismissed')) { setWizardOpen(false); return; }
-    api.get('/onboarding/wizard').then((v) => setWizardOpen(!v?.done)).catch(() => setWizardOpen(false));
+    api.get('/onboarding/wizard').then((v) => {
+      if (v?.done) { setWizardOpen(false); return; }
+      // F8: minimal mode (the default) never opens the 8-step wizard — the
+      // front door is the Setup screen's "Connect Claude → Start" hero.
+      if (v?.mode !== 'full') { setWizardOpen(false); setSetupOpen(true); return; }
+      setWizardOpen(true);
+    }).catch(() => setWizardOpen(false));
   }, [wizardOpen, storeState.auth]);
+  // F8: "Start" from the wizard/hero — one session in the empty workspace, then straight into it.
+  const startFirstSession = async () => {
+    const s = await api.post('/sessions', { title: t('setup.minimal.sessionTitle'), permissionMode: 'bypassPermissions' });
+    sessionStorage.setItem('arigami.wizardDismissed', '1');
+    setWizardOpen(false);
+    setSetupOpen(false);
+    onCreated(s);
+  };
   const closeWizard = () => { sessionStorage.setItem('arigami.wizardDismissed', '1'); setWizardOpen(false); };
   const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
   const [addTabOpen, setAddTabOpen] = useState(false);
@@ -721,7 +735,7 @@ function Cockpit() {
   } else if (brainOpen) {
     main = <BrainView onClose={() => setBrainOpen(false)} />;
   } else if (wizardOpen) {
-    main = <Wizard onDone={closeWizard} onExit={closeWizard} />;
+    main = <Wizard onDone={closeWizard} onExit={closeWizard} onStart={startFirstSession} />;
   } else if (setupOpen) {
     main = <Setup onClose={() => setSetupOpen(false)} onCreated={(s) => { onCreated(s); setSetupOpen(false); }} onRunWizard={() => { setSetupOpen(false); sessionStorage.removeItem('arigami.wizardDismissed'); setWizardOpen(true); }} />;
   } else if (launcher) {
@@ -778,7 +792,7 @@ function Cockpit() {
         config={config}
         sessions={sessions}
         onCreated={onCreated}
-        onOpenLauncher={() => setLauncher({ mode: 'ticket' })}
+        onOpenLauncher={() => setLauncher({ mode: 'empty' })}
       />
     );
   }

@@ -396,7 +396,9 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
     }
   };
   const runWizard = async () => {
-    try { await api.post('/onboarding/wizard/reset'); } catch { /* not admin — the wizard still opens read-only */ }
+    // F8: flip onboarding.json to mode:'full' so the wizard lists every step;
+    // a reset would forget the pair/claude decisions already made.
+    try { await api.post('/onboarding/wizard/mode', { mode: 'full' }); } catch { /* not admin — the wizard still opens read-only */ }
     onRunWizard?.();
   };
 

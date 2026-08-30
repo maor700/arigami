@@ -1189,6 +1189,9 @@ function EmptyForm({ config, sessions, onCreated }) {
   const [options, setOptions] = useState(() => defaultSessionOptions(prefs, 'empty'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // F8: the defaults are fine for a first session — name, cwd, permission
+  // mode and skill/model/effort fold away behind "Advanced".
+  const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => {
     if (!cwd && config?.defaultCwd) setCwd(config.defaultCwd);
@@ -1254,6 +1257,21 @@ function EmptyForm({ config, sessions, onCreated }) {
   return (
     <div className="flex min-w-0 flex-1 justify-center overflow-y-auto">
       <div className="w-full max-w-[440px] px-6 py-7">
+        <div className="mb-1.5 text-[13px] font-bold text-fg">{t('launcher.empty.promptFirst')}</div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); create(); } }}
+          rows={3}
+          autoFocus
+          dir="auto"
+          placeholder={t('launcher.firstRun.placeholder')}
+          className="mb-3 w-full resize-y rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] leading-snug outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+        />
+        <button type="button" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
+          {advanced ? '▾' : '▸'} {t('launcher.empty.advanced')} <span className="font-normal">· {t('launcher.empty.advancedHint')}</span>
+        </button>
+        <div className={advanced ? '' : 'hidden'}>
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.empty.sessionName')}
         </div>
@@ -1262,7 +1280,6 @@ function EmptyForm({ config, sessions, onCreated }) {
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && create()}
           placeholder={t('launcher.empty.namePlaceholder')}
-          autoFocus
           className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
         />
         <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-fgdim">
@@ -1313,17 +1330,7 @@ function EmptyForm({ config, sessions, onCreated }) {
           onApply={setOptions}
         />
 
-        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          {t('launcher.plan.startingPrompt')}{' '}
-          <span className="text-fgdim/70 normal-case">{t('launcher.empty.startingPromptHint')}</span>
         </div>
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          rows={4}
-          placeholder={t('launcher.empty.promptPlaceholder')}
-          className="mb-5 w-full resize-y rounded-[9px] border-[1.5px] border-border px-3 py-[9px] text-[11.5px] leading-snug outline-none placeholder:text-fgdim focus:border-ink"
-        />
 
         {error && <div className="mb-3 text-[11px] text-danger">{error}</div>}
         <YellowButton className="w-full rounded-[9px] py-2.5" disabled={busy} onClick={create}>
@@ -2040,7 +2047,19 @@ function TriggerTab() {
 export default function Launcher({ config, sessions, onClose, onCreated, onNeedsSetup, initialMode }) {
   const t = useT();
   const prefs = usePrefs();
-  const [mode, setMode] = useState(initialMode || 'ticket');
+  // F8: "From a ticket" only exists once Linear is connected — a new user does
+  // not know what Linear is. Until then the launcher opens on the empty form.
+  const [linear, setLinear] = useState(null); // null = unknown yet
+  useEffect(() => {
+    let alive = true;
+    api.get('/linear/status').then((r) => { if (alive) setLinear(!!r?.connected); }).catch(() => { if (alive) setLinear(false); });
+    return () => { alive = false; };
+  }, []);
+  const [mode, setModeRaw] = useState(initialMode || 'empty');
+  const setMode = (m) => setModeRaw(m);
+  useEffect(() => {
+    if (linear === false && mode === 'ticket') setModeRaw('empty');
+  }, [linear, mode]);
   const [selected, setSelected] = useState(null);
   const [permMode, setPermMode] = useState('bypassPermissions');
   const [busy, setBusy] = useState(false);
@@ -2183,6 +2202,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         <Wave />
         <span className="text-sm font-bold">{t('launcher.header.title')}</span>
         <span className="ml-3.5 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
+          {linear && (
           <button
             type="button"
             onClick={() => setMode('ticket')}
@@ -2192,10 +2212,11 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
           >
             {t('launcher.header.fromTicket')}
           </button>
+          )}
           <button
             type="button"
             onClick={() => setMode('empty')}
-            className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
+            className={`cursor-pointer px-[11px] py-1 text-[11px] ${linear ? 'border-l-[1.5px] border-ink ' : ''}${
               mode === 'empty' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
             }`}
           >

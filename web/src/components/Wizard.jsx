@@ -327,7 +327,7 @@ const STEP_TITLE = {
 };
 
 // ---- the stepper -----------------------------------------------------------
-export default function Wizard({ onDone, onExit }) {
+export default function Wizard({ onDone, onExit, onStart }) {
   const t = useT();
   const lang = currentLang();
   const [view, setView] = useState(null);
@@ -356,9 +356,17 @@ export default function Wizard({ onDone, onExit }) {
     if (wizardTick) refresh();
   }, [wizardTick, refresh]);
 
-  const steps = view?.steps || [];
+  // F8: in minimal mode only the required steps (pair, claude) are listed;
+  // once done we show a Start panel instead of jumping back to step 1.
+  const steps = (view?.steps || []).filter((s) => view?.mode === 'full' || !Array.isArray(view?.required) || view.required.includes(s.id));
+  const finished = !!view?.done && idx === null;
   const cur = idx ?? Math.max(0, steps.findIndex((s) => s.id === view?.current));
-  const step = steps[cur];
+  const step = finished ? null : steps[cur];
+  const [starting, setStarting] = useState(false);
+  const start = async () => {
+    setStarting(true);
+    try { await onStart?.(); } catch (e) { setErr(e.message); setStarting(false); }
+  };
 
   const act = async (action) => {
     try {
@@ -394,7 +402,7 @@ export default function Wizard({ onDone, onExit }) {
           <button type="button" onClick={toggleLang} className="ms-auto rounded-[6px] border border-border px-2 py-0.5 text-[11px] text-fgdim hover:border-ink hover:text-fg">{t('wizard.lang')}</button>
           <button type="button" onClick={onExit} title={t('wizard.exitHint')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
         </div>
-        <p className="mb-4 text-[12px] text-fgdim">{t('wizard.subtitle')}</p>
+        <p className="mb-4 text-[12px] text-fgdim">{t('wizard.subtitle', { n: steps.length })}</p>
 
         {/* stepper rail */}
         <ol className="mb-4 flex flex-wrap gap-1.5">
@@ -450,8 +458,18 @@ export default function Wizard({ onDone, onExit }) {
             </div>
           </div>
         )}
-        {view?.done && (
-          <div className="mt-3 text-center text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')}</div>
+        {finished && (
+          <div className={`${CARD} px-5 py-5 text-center`}>
+            <div className="text-[13px] font-bold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')}</div>
+            <p className="mt-1 text-[12px] text-fgdim">{t('setup.minimal.startBody')}</p>
+            <button type="button" className={`${BTN} mt-3`} disabled={starting || !onStart} onClick={start}>
+              {starting ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
+            </button>
+            <div className="mt-3"><button type="button" onClick={() => setIdx(0)} className="cursor-pointer text-[11px] text-fgdim underline hover:text-fg">{t('wizard.reviewSteps')}</button></div>
+          </div>
+        )}
+        {view?.done && !finished && (
+          <div className="mt-3 text-center text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')} · <button type="button" onClick={() => setIdx(null)} className="cursor-pointer underline">{t('setup.minimal.startBtn')}</button></div>
         )}
       </div>
     </div>

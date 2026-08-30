@@ -133,6 +133,16 @@ COPY --from=web /app/web/dist ./web/dist
 #     desktop autostart (=1 opts in although /data/.arigami is not ~/.arigami);
 #     ARIGAMI_WA_* point the WhatsApp bridge at the build-time checkout and at
 #     the volume for its DB. ---
+# F8: what Settings → Host shows in a container (no git checkout inside):
+# the image ref, the commit it was built from, and that docker is the supervisor
+# (compose: restart: unless-stopped → exit 0 = restart).
+ARG ARIGAMI_IMAGE=arigami:local
+ARG ARIGAMI_COMMIT=
+ARG ARIGAMI_BRANCH=
+ENV ARIGAMI_IMAGE=${ARIGAMI_IMAGE} \
+    ARIGAMI_COMMIT=${ARIGAMI_COMMIT} \
+    ARIGAMI_BRANCH=${ARIGAMI_BRANCH} \
+    ARIGAMI_SUPERVISOR=docker
 ENV HOME=/data/home \
     ARIGAMI_PORT=3099 \
     ARIGAMI_DIR=/data/.arigami \

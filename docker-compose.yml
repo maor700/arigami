@@ -67,9 +67,12 @@ services:
     profiles: [build]
     build:
       context: .
-      # To override the pinned whatsapp-mcp checkout add
-      #   args: { WHATSAPP_MCP_REF: <commit> }
-      # (an EMPTY `args:` is invalid — compose requires a mapping).
+      # Stamps for Settings → Host (there is no .git inside the image).
+      # To override the pinned whatsapp-mcp checkout add WHATSAPP_MCP_REF here.
+      args:
+        ARIGAMI_IMAGE: ghcr.io/maor700/arigami:${ARIGAMI_TAG:-latest}
+        ARIGAMI_COMMIT: ${ARIGAMI_COMMIT:-}
+        ARIGAMI_BRANCH: ${ARIGAMI_BRANCH:-}
     container_name: arigami-build
     entrypoint: ["/bin/true"]
     command: []

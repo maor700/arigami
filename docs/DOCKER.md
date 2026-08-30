@@ -18,10 +18,21 @@ docker compose logs -f arigami   # prints the one-time pairing code
 open http://localhost:3199/__host/
 ```
 
-The first page asks for the **pairing code** from the logs (also
+The first page asks for the **pairing code** from the logs
+(`docker compose logs arigami`, or mint a new one with
 `docker compose exec arigami bin/host pair`); that creates the admin and a
-session cookie. Then the setup wizard walks you through Claude auth, git and a
-first repo.
+session cookie. Then the minimal setup asks for exactly one thing — Claude
+auth (see below) — and **Start** opens the first session in the empty
+`/data/repos` workspace. Git, WhatsApp, Gmail… connect from the chat when the
+agent needs them.
+
+**Settings → Host in a container** shows the image ref (`ARIGAMI_IMAGE`,
+stamped by the compose build) and the commit it was built from
+(`ARIGAMI_COMMIT` / `ARIGAMI_BRANCH` build args — set them in `.env` when you
+build locally), supervisor `docker (restart: unless-stopped)`, and replaces
+the git-based *Upgrade* with the two commands that do it here:
+`docker compose pull && docker compose up -d`. *Restart* works: the host exits
+0 and the restart policy brings the container back.
 
 Pin a version with `ARIGAMI_TAG=0.1.0` (or `sha-<7>`) in `.env`. Tags follow
 the release workflow: every push to `master` → `latest` + `sha-…`, every
@@ -56,7 +67,14 @@ first — all end up on the `/data` volume:
 2. **Cockpit PKCE flow** — open Setup → Claude → *Connect*. The host shows an
    authorize link, you approve it in your own browser, paste the code back;
    the host stores the refresh token in `accounts.json` on the volume and
-   refreshes it itself. Works with no TTY and no localhost callback.
+   refreshes it itself. Works with no TTY and no localhost callback. When the
+   approval happens in the **session's own Chrome** (the `connect-claude`
+   playbook or a take-over) the host reads the code straight from the
+   `…/oauth/code/callback?code=…` tab over the browser's loopback DevTools
+   port and finishes the exchange by itself — nothing to paste through VNC.
+   "Can't paste? Read the code from the browser" on the card does the same on
+   demand, and the take-over modal has a *Type into the desktop* field for any
+   other text your clipboard can't carry across.
 3. **Interactive fallback** —
    `docker compose exec -it -u node arigami claude setup-token` and follow the
    prompts (the terminal gives it the TTY it needs).

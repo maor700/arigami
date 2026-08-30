@@ -96,6 +96,9 @@ export const strings = {
   'setup.oauth.deviceCode': 'הקלד את הקוד הזה בדף שנפתח:',
   'setup.oauth.waiting': 'ממתין לאישור…',
   'setup.oauth.waitingConsent': 'ממתין שתאשר בטאב השני…',
+  'setup.oauth.readBrowser': 'לא מצליח להדביק? נקרא את הקוד מהדפדפן',
+  'setup.oauth.readBrowserHint': 'אחרי שאישרת בדפדפן של הסוכן, המכונה קוראת את הקוד מדף ה-callback בשבילך.',
+  'setup.oauth.readBrowserMissing': 'הדפדפן של הסוכן עדיין לא הגיע לדף ה-callback — אשר קודם ואז נסה שוב.',
   'setup.oauth.noUrl': 'המכונה לא החזירה קישור התחברות.',
 
   'setup.qr.connect': 'הצג קוד QR',

@@ -120,7 +120,10 @@ export const strings = {
   'launcher.empty.promptPlaceholder':
     'ההודעה הראשונה שתישלח לסשן בהתחלה. חובה ל״מאוחר יותר״ אלא אם נבחרה מיומנות.',
   'launcher.empty.deferRequired': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות סשן ריק.',
-  'launcher.empty.createEmpty': 'יצירת סשן ריק ←',
+  'launcher.empty.createEmpty': 'התחל ←',
+  'launcher.empty.advanced': 'מתקדם',
+  'launcher.empty.advancedHint': 'שם · תיקיית עבודה · הרשאות · סקיל, מודל ומאמץ',
+  'launcher.empty.promptFirst': 'מה הסשן הזה צריך לעשות?',
   'launcher.empty.addToPending': 'הוספה ל-Pending',
   'launcher.empty.deferTitle': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות',
 
@@ -239,8 +242,18 @@ export const strings = {
   // first run
   'launcher.firstRun.pasteError': 'הדביקו כתובת Linear או מזהה כמו ENG-16498.',
   'launcher.firstRun.createError': 'לא ניתן היה ליצור את הסשן — {msg}',
-  'launcher.firstRun.heading': 'מה בונים?',
-  'launcher.firstRun.sub': 'הדביקו כרטיס Linear כדי להתחיל את הסשן הראשון שלכם.',
+  'launcher.firstRun.heading': 'מה תרצה שאעשה?',
+  'launcher.firstRun.sub': 'תאר במילים שלך — הסוכן יודע לגלוש ולצלם אתרים, לקרוא ולשלוח וואטסאפ, לעבוד על ריפואים, ולחבר Gmail, יומן ועוד ברגע שהוא צריך.',
+  'launcher.firstRun.placeholder': 'למשל: תפתח את ynet.co.il ותצלם לי את דף הבית',
+  'launcher.firstRun.emptyError': 'כתוב מה לעשות, או בחר אחת מההצעות.',
+  'launcher.firstRun.chip.screenshot': 'צלם לי אתר',
+  'launcher.firstRun.chip.screenshot.prompt': 'תפתח את https://example.com בדפדפן ותראה לי צילום מסך של הדף.',
+  'launcher.firstRun.chip.whatsapp': 'חבר וואטסאפ',
+  'launcher.firstRun.chip.whatsapp.prompt': 'תחבר את הוואטסאפ שלי ותראה לי את השיחות האחרונות.',
+  'launcher.firstRun.chip.clone': 'שכפל ריפו',
+  'launcher.firstRun.chip.clone.prompt': 'תשכפל את הריפו הזה לתוך ה-workspace ותן לי סיור קצר בו: <הדבק כתובת git>',
+  'launcher.firstRun.advanced': 'מתקדם: מכרטיס, מטריגר, או עם אפשרויות',
+  'launcher.firstRun.legacySub': 'הדביקו כרטיס Linear כדי להתחיל את הסשן הראשון שלכם.',
   'launcher.firstRun.createTitle': 'יצירת סשן',
   'launcher.firstRun.browse': 'או עיינו בכרטיסים / התחילו סשן ריק',
 

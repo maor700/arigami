@@ -180,14 +180,19 @@ export default function Host() {
           <div className="flex flex-col items-end gap-1">
             <span className="font-mono text-[11.5px] text-fg" dir="ltr">{ver ? `v${ver.version} · ${ver.commit || '?'}${ver.branch ? ` · ${ver.branch}` : ''}` : '…'}</span>
             <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
-              {ver && (ver.ahead === null ? t('host.noUpstream') : ver.ahead > 0 ? <span className="text-[#CE8324]">{t('host.updateAvailable', { n: ver.ahead })}</span> : t('host.upToDate'))}
+              {ver && !st?.docker && (ver.ahead === null ? t('host.noUpstream') : ver.ahead > 0 ? <span className="text-[#CE8324]">{t('host.updateAvailable', { n: ver.ahead })}</span> : t('host.upToDate'))}
               <button type="button" disabled={checking} onClick={check} className="cursor-pointer underline disabled:opacity-50">{checking ? t('host.checking') : t('host.check')}</button>
             </span>
           </div>
         </Field>
+        {st?.docker && (
+          <Field label={t('host.image')} hint={t('host.image.hint')}>
+            <span className="font-mono text-[11.5px] text-fg" dir="ltr">{st.image || ver?.image || 'docker'}</span>
+          </Field>
+        )}
         <Field label={t('host.manager')} hint={t('host.manager.hint')}>
           <span className="font-mono text-[11.5px] text-fg" dir="ltr">
-            {st ? `${st.manager} · ${t('host.uptime', { t: fmtUptime(st.uptimeSec) })}${st.busySessions ? ` · ${t('host.busy', { n: st.busySessions })}` : ''}` : '…'}
+            {st ? `${st.manager === 'docker' ? t('host.docker.manager') : st.manager} · ${t('host.uptime', { t: fmtUptime(st.uptimeSec) })}${st.busySessions ? ` · ${t('host.busy', { n: st.busySessions })}` : ''}` : '…'}
           </span>
         </Field>
         <Field label={t('host.restart')} hint={t('host.restart.hint')} wrap>
@@ -203,6 +208,14 @@ export default function Host() {
             {phase === 'exiting' && <span className={warn}>{t('host.restarting')}</span>}
           </div>
         </Field>
+        {st?.docker ? (
+          <Field label={t('host.upgrade')} hint={t('host.docker.upgradeHint')} wrap>
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-[11px] text-fgdim">{t('host.docker.upgrade')}</span>
+              <code dir="ltr" className="rounded-[6px] border border-hair bg-bg px-2 py-1 font-mono text-[10.5px] select-all">docker compose pull && docker compose up -d</code>
+            </div>
+          </Field>
+        ) : (
         <Field label={t('host.upgrade')} hint={st && !st.allowUpgrade ? t('host.upgradeDisabled') : t('host.upgrade.hint')} wrap>
           <div className="flex flex-col items-end gap-1.5">
             <span className="flex items-center gap-2">
@@ -215,6 +228,7 @@ export default function Host() {
             )}
           </div>
         </Field>
+        )}
         {showLog && (log.length > 0 || upg?.log?.length > 0) && (
           <pre dir="ltr" className="thin-scroll my-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
         )}

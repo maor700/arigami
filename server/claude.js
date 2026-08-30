@@ -397,11 +397,12 @@ function spawnProc(s, resume) {
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
   ];
   const cwd = untildify(s.cwd) || HOME;
+  const accountEnvSnapshot = accountEnv(s);
   const child = spawn(CLAUDE_BIN, args, {
     cwd,
     env: {
       ...baseEnv(),
-      ...accountEnv(s),
+      ...accountEnvSnapshot,
       ARIGAMI_SESSION_ID: s.id,
       // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
       // to reach THIS host. It is never a link for a human — the host hands out
@@ -433,6 +434,8 @@ function spawnProc(s, resume) {
   // holding the inherited listen socket.
   supervise(child, `session:${s.id}`);
   const p = {
+    capabilitiesHint: capabilitiesHintCache, // F8: the connectable-capabilities line for the first turn
+    hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     child,
     resume,
     spawnedAt: Date.now(),
@@ -754,18 +757,40 @@ function tryAutoSwitch(id, text) {
 // outlives one token lifetime starts failing auth on every turn until
 // something respawns it. Detected the same way tryAutoSwitch detects a
 // subscription-limit hit: from the structured `result` event's error text.
-const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again/i;
+// F8: also the CLI's own "Not logged in · Please run /login" — the human cannot
+// run /login in the cockpit; the answer is a `claude` Setup card.
+export const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again|not logged in|please run \/login/i;
 const authRecovering = new Set(); // guards against re-entrant recovery per session
+
+async function openClaudeSetupCard(id, why) {
+  const [api, caps] = await Promise.all([import('./api.js'), import('./capabilities.js')]);
+  const cap = caps.getCapability('claude');
+  if (!cap) return;
+  api.openSetupCard(id, cap, why, 'manual', 'not signed in');
+}
 
 async function tryAuthRecover(id, text) {
   if (authRecovering.has(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
+  // F8: the session was spawned before a Claude account existed (fresh
+  // install: "New session" first, Connect Claude second) and an account
+  // resolves NOW → just respawn with it and replay the turn.
+  const p = record(id);
+  if (p && !p.hadToken && accountEnv(s).CLAUDE_CODE_OAUTH_TOKEN) {
+    authRecovering.add(id);
+    const lastMsg = [...(p.sent || [])].pop();
+    appendChat(id, { kind: 'system', text: '⟳ Claude account connected — restarted the session with it' });
+    restart(id, { silent: true });
+    const t = setTimeout(() => { try { if (lastMsg) sendMessage(id, lastMsg); } catch {} }, 900);
+    if (t.unref) t.unref();
+    setTimeout(() => authRecovering.delete(id), 5000);
+    return;
+  }
   if (!resolveRefreshToken(accountId)) {
-    appendChat(id, {
-      kind: 'error',
-      text: 'Authentication error, and this account has no refresh token to recover automatically — please re-authenticate it.',
-    });
+    // Nothing to refresh: open the Connect-Claude card right here in the chat
+    // (paste the code / a token) instead of a dead-end error.
+    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in — connect one to continue').catch(() => {});
     return;
   }
   authRecovering.add(id);
@@ -1001,20 +1026,70 @@ export const URL_GUIDANCE =
   'Need a port for a dev server? call allocate_port (or set_metadata({patch:{needs_server:true}})) and use $PORT / the returned port.\n' +
   '</system-reminder>\n\n';
 
-function memoryBootstrapPrefix() {
+// F8: who the agent is and what it can do — so the first answer introduces
+// Arigami (browser, WhatsApp, mail, sessions, triggers…) in the human's
+// language instead of "I am Claude, I write code". The connectable list is
+// probed at spawn (capabilitiesHint) and names the capabilities that are NOT
+// connected yet, so the agent knows they exist and asks (request_setup)
+// rather than answering "I have no access to WhatsApp".
+export function identityReminder(hint) {
+  return (
+    '<system-reminder>\n' +
+    'You are the agent inside Arigami — the human\'s self-hosted cockpit (this session is one of its sessions). ' +
+    'Introduce yourself as Arigami\'s agent, not as "Claude"; answer in the language the human writes in. ' +
+    'What you can do here: browse and screenshot websites on this session\'s own desktop (open the browser, capture_screen, publish_artifact); ' +
+    'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
+    'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
+    'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
+    'and hand the desktop over to the human (request_screen) for logins. ' +
+    'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
+    (hint ? `\n${hint}\n` : '') +
+    '</system-reminder>\n\n'
+  );
+}
+
+// The "connectable" line is probed in the background (capability checks are
+// async — Composio, files, processes) and cached, so the first user message
+// — often written in the same tick as the spawn — never waits on it.
+let capabilitiesHintCache = '';
+export async function refreshCapabilitiesHint() {
+  try {
+    const caps = await import('./capabilities.js');
+    const { capabilities } = await caps.capabilitiesStatus();
+    const missing = capabilities.filter((c) => !c.ok && c.id !== 'telemetry' && c.id !== 'push' && c.id !== 'remote').map((c) => c.id);
+    const connected = capabilities.filter((c) => c.ok).map((c) => c.id);
+    capabilitiesHintCache =
+      (connected.length ? `Connected now: ${connected.join(', ')}. ` : '') +
+      (missing.length
+        ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
+        : '');
+  } catch (e) {
+    console.error('[claude] capabilities hint:', e.message);
+  }
+  return capabilitiesHintCache;
+}
+export const capabilitiesHint = () => capabilitiesHintCache;
+refreshCapabilitiesHint().catch(() => {});
+{
+  const t = setInterval(() => refreshCapabilitiesHint().catch(() => {}), 60_000);
+  if (t.unref) t.unref();
+}
+
+function memoryBootstrapPrefix(p) {
+  const identity = identityReminder(p?.capabilitiesHint || '');
   const { userMd, memoryMd } = getMemoryBootstrap();
-  if (!userMd.trim() && !memoryMd.trim()) return URL_GUIDANCE;
+  if (!userMd.trim() && !memoryMd.trim()) return URL_GUIDANCE + identity;
   let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not Claude Code's per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
   block += '</system-reminder>\n\n';
-  return URL_GUIDANCE + block;
+  return URL_GUIDANCE + identity + block;
 }
 
 function writeUserMessage(p, text, attachments = []) {
   const content = [];
   let txt = text || '';
-  if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix() + txt;
+  if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
   if (attachments.length) {
     const list = attachments.map((a) => `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`).join('\n');
     txt += (txt ? '\n\n' : '') + `📎 Attached ${attachments.length} file(s) — read them as needed:\n${list}`;

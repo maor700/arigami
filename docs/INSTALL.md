@@ -95,6 +95,17 @@ behind `tailscale serve` or Caddy (`ARIGAMI_PUBLIC_URL`) — the host itself
 stays on loopback. `bin/host doctor` is the health screen; `bin/host pair`
 mints a new code.
 
+What follows the code is the **minimal setup** (F8): one screen — *Connect
+Claude* (authorize link + paste the code, or a token) → **Start**, which opens
+the first session in the empty `$ARIGAMI_DIR/workspace`. `onboarding.json`
+records `mode:"minimal"`; nothing else is asked up front — GitHub, WhatsApp,
+Gmail, remote access connect from the chat the moment the agent needs them
+(see CONNECT.md). "Run full setup" (small link) switches to `mode:"full"` and
+opens the 8-step wizard. The first screen of the cockpit is a single question
+("What would you like me to do?") with three suggestions — screenshot a site,
+connect WhatsApp, clone a repo; ticket/trigger launchers live behind *Advanced*
+and the Linear tab only appears once Linear is connected.
+
 ### Update
 
 ```sh

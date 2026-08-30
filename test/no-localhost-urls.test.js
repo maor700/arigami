@@ -16,6 +16,7 @@ const ALLOW = [
   ['server/lib/public-url.ts', 'cfg.hostBase ||'], // absoluteUrl() loopback fallback
   ['server/claude.js', 'ARIGAMI_URL: cfg.hostBase ||'], // internal env for the agent
   ['server/claude.js', 'pass http://localhost:$PORT'], // guidance: give it to open_tab, not the human
+  ['server/lib/chrome-cdp.ts', '/json/list'], // F8: loopback DevTools port of the session Chrome — host-internal
   ['server/index.ts', '[host] arigami up on'], // boot log line
   ['server/linear-mcp.ts', 'fallbackOrigin = ()'], // OAuth redirect_uri must be absolute
   ['server/proxy.ts', 'req.headers.host ||'], // request-URL parsing base

@@ -35,11 +35,18 @@ Server side: `server/oauth-login.js` via `POST /__api/accounts/oauth/start|code`
      connected click *Continue with Google* and pick the identity email in the
      chooser; if a password/2FA/email-code screen follows, or there is no identity:
      `capture_screen`, `request_screen({prompt:"Connecting your Claude account — claude.ai asks you to sign in.", reason:"login", hint:"Sign in, click Authorize on the next page, wait for the page that shows a code, then click Done."})`.
-4. After Authorize (yours or the human's): `wait-url 'platform\.claude\.com/oauth/code/callback' 60`.
-   The callback URL carries `?code=…&state=…`. Take the values from
-   `connect.sh url` (the page also displays them as `CODE#STATE` — the URL is the
-   reliable source; the screenshot is only a fallback).
-5. Exchange: `connect.sh api POST /__api/accounts/oauth/code '{"id":"<id>","code":"<code>#<state>"}'`
+4. After Authorize (yours or the human's): the host itself watches THIS
+   session's Chrome (connect.sh sends `X-Arigami-Session`, so the flow started
+   in step 1 is bound to your desktop) and, the moment the
+   `platform.claude.com/oauth/code/callback?code=…&state=…` tab appears, exchanges
+   the code by itself — nobody pastes anything. Poll
+   `connect.sh api GET "/__api/accounts/oauth/status?id=<id>"` every ~3 s (≤ 90 s)
+   until `state:"done"`.
+5. Fallback (status still `awaiting-code` although the callback page is on
+   screen): `connect.sh api POST /__api/accounts/oauth/read-browser '{"id":"<id>"}'`
+   (the host reads the tab list / History again); if that also fails, take the
+   values from `connect.sh url` and exchange manually:
+   `connect.sh api POST /__api/accounts/oauth/code '{"id":"<id>","code":"<code>#<state>"}'`
    → `{ok:true, account:{…}}`. `ok:false` → read `error`; "state mismatch" means the
    page belongs to an older attempt → restart from step 1 (attempt 2).
 6. Verify: `connect.sh api GET "/__api/accounts/oauth/status?id=<id>"` → `state:"done"`.

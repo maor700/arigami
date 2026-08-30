@@ -1108,6 +1108,12 @@ export function wizard(probes: Partial<WizardProbes> = {}): WizardView {
   // Minimal mode (S1): done = every REQUIRED step settled; optional steps
   // never block and are connected just-in-time from the chat (request_setup).
   const mode = getOnboardingMode();
+  // F8: record the effective mode in onboarding.json so a fresh install is
+  // visibly `mode:'minimal'` (the file used to carry no mode at all).
+  if (file.mode !== mode) {
+    file.mode = mode;
+    dirty = true;
+  }
   const required = requiredSteps(mode);
   const isRequired = (id: WizardStepId): boolean => required.includes(id);
   const done = steps.every((s) => !isRequired(s.id) || settled(s.status));

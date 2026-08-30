@@ -743,42 +743,8 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true };
     return json(res, r);
   }
-  // Re-request on an open card (e.g. after a failed auto → manual): attach.
-  let entry = openSetupFor(sessionId!, capability);
-  if (!entry) {
-    const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
-    const def = caps.defaultMode(cap);
-    // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
-    // the card with both choices and blocks like manual.
-    const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
-    const id = 'setup_' + nano();
-    // Rule 3: no auto without a click. `mode` only PRESELECTS the card's
-    // switch; the agent blocks until the human clicks "Connect automatically"
-    // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
-    const e: PendingSetup = {
-      id, sessionId: sessionId!, capability, why, mode,
-      state: 'pending',
-      evidence: null, detail: check.detail, createdAt: new Date().toISOString(), lines: [],
-      timer: setupTimer(id, new Date().toISOString()),
-      waiters: [],
-    };
-    pendingSetups.set(id, e);
-    persistPendingSetups();
-    claude.appendChat(sessionId!, {
-      kind: 'setup',
-      ...setupCardPayload(e),
-      title: cap.title,
-      manual: cap.manual,
-      autoCapable: cap.autoCapable,
-      ...(cap.playbook ? { playbook: cap.playbook } : {}),
-      identity: identityView(),
-    });
-    broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
-    caps.appendAudit({ sessionId: sessionId!, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
-    import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
-    pushIntervention(sessionId!, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
-    entry = e;
-  }
+  const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
+  const entry = openSetupCard(sessionId!, cap, why, requested, check.detail);
   if (entry.state === 'auto') {
     // The human already consented (start clicked); the agent runs the playbook
     // itself and closes the card with report_setup.
@@ -788,6 +754,52 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   state.setClaude(sessionId!, { state: 'awaiting-input', setupRequest: { id: entry.id, capability } } as any);
   const result = await new Promise<SetupResult>((resolve) => entry.waiters.push(resolve));
   json(res, result);
+}
+
+/**
+ * Open (or attach to) the Setup card for a capability in a session's chat —
+ * the core of request_setup, also used by the host itself (F8: a session whose
+ * Claude account turns out to be signed out gets a `claude` card instead of
+ * a dead-end "please run /login").
+ */
+export function openSetupCard(sessionId: string, cap: caps.Capability, why: string, requested?: SetupMode, detail = ''): PendingSetup {
+  const capability = cap.id;
+  // Re-request on an open card (e.g. after a failed auto → manual): attach.
+  let entry = openSetupFor(sessionId, capability);
+  if (!entry) {
+    const def = caps.defaultMode(cap);
+    // 'auto' is only honoured when the capability is auto-capable; 'ask' shows
+    // the card with both choices and blocks like manual.
+    const mode: SetupMode = requested === 'auto' ? (cap.autoCapable ? 'auto' : 'manual') : requested ?? def;
+    const id = 'setup_' + nano();
+    // Rule 3: no auto without a click. `mode` only PRESELECTS the card's
+    // switch; the agent blocks until the human clicks "Connect automatically"
+    // (POST /:id/start → {state:'auto'}), connects it manually, or skips.
+    const e: PendingSetup = {
+      id, sessionId, capability, why, mode,
+      state: 'pending',
+      evidence: null, detail, createdAt: new Date().toISOString(), lines: [],
+      timer: setupTimer(id, new Date().toISOString()),
+      waiters: [],
+    };
+    pendingSetups.set(id, e);
+    persistPendingSetups();
+    claude.appendChat(sessionId, {
+      kind: 'setup',
+      ...setupCardPayload(e),
+      title: cap.title,
+      manual: cap.manual,
+      autoCapable: cap.autoCapable,
+      ...(cap.playbook ? { playbook: cap.playbook } : {}),
+      identity: identityView(),
+    });
+    broadcast({ type: 'setup', sessionId, ...setupCardPayload(e) });
+    caps.appendAudit({ sessionId, capability, mode, result: 'requested', evidence: null, human: false, detail: why });
+    import('./funnel.js').then((f) => { f.emit('setup.requested', { capability, mode }); f.firstTime('setup.first_request'); }).catch(() => {});
+    pushIntervention(sessionId, 'action', why ? `${cap.title}: ${why}` : cap.title, `needs ${cap.title}`);
+    entry = e;
+  }
+  return entry;
 }
 
 async function handleSetupReport(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
@@ -960,8 +972,10 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
   if (capability === 'claude') {
     const o: any = await import('./oauth-login.js');
     if (body?.token) out = await ob.setClaudeToken(String(body.token), body?.label ? String(body.label) : 'setup');
-    else if (action === 'start' || action === 'oauth-start') return { ok: true, ...o.startLogin({ label: body?.label || 'setup' }) }; // {id, url, state}
+    else if (action === 'start' || action === 'oauth-start') return { ok: true, ...o.startLogin({ label: body?.label || 'setup', sessionId: body?.sessionId ? String(body.sessionId) : (req.headers['x-arigami-session'] as string) || null }) }; // {id, url, state}
     else if (action === 'poll') return { ok: o.loginStatus(String(body?.id || ''))?.state === 'done', ...o.loginStatus(String(body?.id || '')) };
+    // F8: "can't paste? read the code from the browser" — the take-over desktop's Chrome has the callback URL.
+    else if (action === 'read-browser') out = await o.readCodeFromBrowser(String(body?.id || ''), body?.sessionId ? String(body.sessionId) : (req.headers['x-arigami-session'] as string) || null);
     else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
     else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
     else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
@@ -1521,11 +1535,14 @@ function allocatePort(): number | null {
 // tears it all down. Throws when git refuses (the spawn fails loudly).
 async function hostWorktree(
   master: any,
-  o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null }
+  o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null; parentDir?: string | null }
 ): Promise<{ dir: string; branch: string; base: string; metadata: Record<string, unknown> }> {
+  // F8 (F7 follow-up): the repo is the one the CALLER named (`cwd` /
+  // metadata.repo), falling back to the master's own checkout — a master whose
+  // cwd is a plain workspace folder can still spawn a full child on a repo.
   const parentDir =
-    (untildify((master.metadata?.worktree as string) || master.cwd) as string) || HOME;
-  const info = await worktreeInfo(master);
+    o.parentDir || (untildify((master.metadata?.worktree as string) || master.cwd) as string) || HOME;
+  const info = await worktreeInfo({ cwd: parentDir } as any);
   const r = await provisionChildWorktree({
     parentDir,
     subtask: o.subtask,
@@ -1621,6 +1638,12 @@ function countFullChildren(): number {
     ).length;
 }
 
+/** The repo a child worktree forks from: the caller's `cwd`, else `metadata.repo`, else the master's checkout. */
+export function childRepoDir(body: any, masterDir: string): string {
+  const named = body?.cwd ? String(body.cwd) : body?.metadata?.repo ? String(body.metadata.repo) : '';
+  return (untildify(named) as string) || masterDir;
+}
+
 async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
   const master = state.getSession(masterId);
   if (!master) throw new Error(`unknown master session: ${masterId}`);
@@ -1653,6 +1676,7 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
         : !!subtask;
   if (wantWt) {
     const r = await hostWorktree(master, {
+      parentDir: childRepoDir(body, parentDir),
       subtask: sanitizeSubtask(subtask),
       dir: typeof wantWt === 'string' ? wantWt : null,
       base: body.base ? String(body.base) : null,
@@ -2962,7 +2986,14 @@ export async function handle(
     if (p === '/__api/accounts/oauth/start' && m === 'POST') {
       const o = await import('./oauth-login.js');
       const body = (await readBody(req)) as any;
-      return json(res, (o as any).startLogin({ label: body?.label }));
+      // F8: a session id (body or the MCP caller header) lets the host finish the
+      // exchange itself by reading the callback URL from that session's Chrome.
+      return json(res, (o as any).startLogin({ label: body?.label, sessionId: body?.sessionId || (req.headers['x-arigami-session'] as string) || null }));
+    }
+    if (p === '/__api/accounts/oauth/read-browser' && m === 'POST') {
+      const o = await import('./oauth-login.js');
+      const body = (await readBody(req)) as any;
+      return json(res, await (o as any).readCodeFromBrowser(body?.id, body?.sessionId || (req.headers['x-arigami-session'] as string) || null));
     }
     if (p === '/__api/accounts/oauth/status' && m === 'GET') {
       const o = await import('./oauth-login.js');
@@ -3091,6 +3122,13 @@ export async function handle(
       const s = await import('./slack.js');
       s.disconnect();
       return json(res, { ok: true });
+    }
+    // F8: the host-mcp `whatsapp` tool — needs_setup when the bridge is not
+    // connected, else proxied to the WhatsApp MCP server (server/whatsapp-proxy.ts).
+    if (p === '/__api/whatsapp/tool' && m === 'POST') {
+      const wp = await import('./whatsapp-proxy.js');
+      const body = (await readBody(req)) as any;
+      return json(res, await wp.callWhatsapp(String(body?.tool || ''), body?.args && typeof body.args === 'object' ? body.args : {}, body?.why ? String(body.why) : undefined));
     }
     if (p === '/__api/whatsapp/status' && m === 'GET') {
       const wb = await import('./whatsapp-bridge.js');
@@ -3910,6 +3948,23 @@ export async function handle(
     if (sub === 'browser/sync-logins' && m === 'POST') {
       const r = await chrome.syncProfileToBase(id);
       return json(res, r);
+    }
+    // F8: the take-over modal's "type into the desktop" field — the human's
+    // clipboard does not cross VNC, so text typed in the cockpit is inserted
+    // into whatever has focus on the session desktop (CDP, else XTEST).
+    if (sub === 'desktop/type' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      try {
+        const cdp = await import('./lib/chrome-cdp.js');
+        return json(res, await cdp.typeIntoDesktop(id, String(body?.text || ''), body?.enter ? 'Enter' : undefined));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    // F8: the session's real browser tabs (urls only) — what the PKCE reader sees.
+    if (sub === 'browser/tabs' && m === 'GET') {
+      const cdp = await import('./lib/chrome-cdp.js');
+      return json(res, { tabs: (await cdp.listTabs(id)).map((t) => ({ url: t.url, title: t.title, type: t.type })) });
     }
     // ---- Published artifacts (A1) — publish_artifact tool + card buttons ----
     if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));

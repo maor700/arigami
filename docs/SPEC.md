@@ -1001,9 +1001,38 @@ mode 0600, never a secret (writer refuses token-looking values).
 
 ### Minimal onboarding mode (default)
 `onboarding.json.mode` ('minimal' default, 'full'; env `ARIGAMI_ONBOARDING_MODE`). `wizard()` →
-`{…, mode, required:['pair','claude']}`; `done` = every REQUIRED step settled; `current` = first
+`{…, mode, required:['pair','claude']}` and **persists the effective `mode`** into the file (F8) so a
+fresh install reads `mode:"minimal"`; `done` = every REQUIRED step settled; `current` = first
 unsettled required step. Optional steps stay `todo` without blocking. `cfg.defaultCwd` defaults to
 `$ARIGAMI_DIR/workspace`, created on host start, so "Connect Claude → Start" opens a session with zero repos.
+
+Web contract (F8): after pairing, `!done && mode!=='full'` routes to the Setup screen's hero
+(Connect Claude → Start) — the 8-step wizard opens only in `mode:'full'` ("Run full setup" POSTs
+`/__api/onboarding/wizard/mode {mode:'full'}`, never a reset). In the wizard, `done` renders a Start
+panel (creates the first session, navigates to it) instead of falling back to step 1; only
+`required` steps are listed in minimal mode. First screen with zero sessions = one prompt box +
+three chips (screenshot a site / connect WhatsApp / clone a repo) + "Advanced"; the launcher's ticket
+tab exists only when Linear is connected; Pending/Triggers/Usage rail items appear once a session exists.
+
+### WhatsApp just-in-time (F8)
+host-mcp exposes one `whatsapp({tool, args, why})` tool (list_chats, list_messages, search_contacts,
+search_messages, get_chat, get_message_context, get_recent_messages, send_message) →
+`POST /__api/whatsapp/tool`. Bridge not `connected` → the `needs_setup:"whatsapp"` shape (→
+request_setup → QR card); connected → proxied to the WhatsApp MCP server (`server/whatsapp-proxy.ts`,
+stdio client, spawned lazily from `ARIGAMI_WA_MCP_DIR`). The first turn of every session carries an
+identity reminder ("the agent inside Arigami", answer in the human's language) plus the cached
+connectable-capabilities line (`refreshCapabilitiesHint()` in claude.js), so the model knows WhatsApp,
+Gmail… exist before they are connected.
+
+### Claude PKCE without pasting (F8)
+Session Chrome starts with `--remote-debugging-port=0` (loopback; port in `<profile>/DevToolsActivePort`).
+`server/lib/chrome-cdp.ts` lists real tabs / inserts text; `oauth-login.js` binds a flow to the
+session that started it (`X-Arigami-Session` / `sessionId`) and polls that browser for the
+`platform.claude.com/oauth/code/callback?code=…&state=…` tab, exchanging automatically.
+`POST /__api/accounts/oauth/read-browser {id, sessionId?}` (= setup action `read-browser`) does it on
+demand; `POST /__api/sessions/:id/desktop/type {text, enter?}` types into the desktop (CDP
+`Input.insertText`, XTEST fallback). Acceptance #1 (pair → Connect Claude → Start < 60 s) and #4
+(WhatsApp QR card from "read my WhatsApp") are covered by `test/f8-fresh-setup.test.ts`.
 
 ### Funnel
 `setup.requested {capability, mode}` · `setup.completed {capability, mode}` · `setup.skipped {capability, mode, timeout?}` · `setup.first_request` (once).
