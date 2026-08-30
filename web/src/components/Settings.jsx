@@ -267,10 +267,12 @@ function Segmented({ value, options, onChange }) {
   );
 }
 
-function Field({ label, hint, children }) {
+function Field({ label, hint, children, wrap = false }) {
+  // `wrap`: a wide control (several buttons) drops under the label instead of
+  // squeezing it into a one-word column (F4 #6).
   return (
-    <div className="flex items-center gap-4 border-b border-hair py-4">
-      <div className="min-w-0 flex-1">
+    <div className={`flex items-center gap-4 border-b border-hair py-4${wrap ? ' flex-wrap' : ''}`}>
+      <div className="min-w-[9rem] flex-1">
         <div className="text-[13px] font-bold text-fg">{label}</div>
         {hint && <div className="mt-0.5 text-[11.5px] text-fgdim">{hint}</div>}
       </div>
@@ -947,13 +949,14 @@ function BackupField({ disabled, onRestarting, reload }) {
   const [exporting, setExporting] = useState(null);
   const [importing, setImporting] = useState(false);
   const [force, setForce] = useState(false);
+  const [memory, setMemory] = useState(true);
   const fileRef = useRef(null);
   const btn = 'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
 
   const download = async (mode) => {
     setExporting(mode);
     try {
-      const r = await fetch(`/__api/host/export?mode=${mode}`);
+      const r = await fetch(`/__api/host/export?mode=${mode}${mode === 'bundle' && !memory ? '&memory=0' : ''}`);
       if (!r.ok) {
         const b = await r.json().catch(() => ({}));
         throw new Error(b?.error || `HTTP ${r.status}`);
@@ -990,7 +993,7 @@ function BackupField({ disabled, onRestarting, reload }) {
       const r = await hostPost(`/host/import${force ? '?force=1' : ''}`, 'POST', file);
       if (r.kind === 'bundle') {
         toast(t('host.importDoneBundle', { name: r.name, repos: r.repos?.length || 0, skills: r.skills?.length || 0, cron: r.cron?.length || 0 }));
-      } else if (r.restart) {
+      } else if (r.restart?.scheduled) {
         onRestarting?.();
         toast(t('host.importDoneFull', { version: r.manifest?.version || '?', bak: r.backupDir || '—' }));
       } else {
@@ -1009,7 +1012,7 @@ function BackupField({ disabled, onRestarting, reload }) {
 
   const off = disabled || importing || !!exporting;
   return (
-    <Field label={t('host.backup')} hint={t('host.backup.hint')}>
+    <Field label={t('host.backup')} hint={t('host.backup.hint')} wrap>
       <div className="flex flex-col items-end gap-1.5">
         <span className="flex flex-wrap items-center justify-end gap-2">
           <button type="button" disabled={off} onClick={() => download('full')} className={btn}>
@@ -1023,6 +1026,11 @@ function BackupField({ disabled, onRestarting, reload }) {
           </button>
           <input ref={fileRef} type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" className="hidden" onChange={onFile} />
         </span>
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+          <input type="checkbox" checked={memory} onChange={(e) => setMemory(e.target.checked)} disabled={off} />
+          {t('host.exportMemory')}
+        </label>
+        {memory && <div className="max-w-[28rem] text-end font-mono text-[10.5px] text-amber-500">{t('host.exportMemory.warn')}</div>}
         <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
           <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={off} />
           {t('host.importForce')}

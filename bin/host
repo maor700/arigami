@@ -363,6 +363,7 @@ export_cmd() {
     case "$1" in
       --full|--bundle) mode="$1" ;;
       --include|--name) extra+=("$1" "$2"); shift ;;
+      --no-memory) extra+=("$1") ;;
       *) out="$1" ;;
     esac
     shift
@@ -376,10 +377,15 @@ export_cmd() {
       ;;
     --bundle)
       out="${out:-arigami-bundle-$(date -u +%Y%m%dT%H%M%SZ)}"
-      ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" export --bundle "$out" "${extra[@]}" || return 1
+      # backup.ts reports memoryWarning:true (and prints its own stderr warning) when USER.md/MEMORY.md went in
+      res="$(ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" export --bundle "$out" "${extra[@]}")" || return 1
+      printf '%s\n' "$res"
       dl "  no secrets/accounts/chat inside. Apply elsewhere: host profile apply <dir>  (or host import <file.tgz>)"
+      if printf '%s' "$res" | grep -q '"memoryWarning": true'; then
+        yl "  memory-seed/ carries your USER.md / MEMORY.md (personal profile + notes) — review before sharing, or: host export --bundle --no-memory"
+      fi
       ;;
-    *) echo "usage: host export --full [out.tgz] [--include a,b] | host export --bundle [out-dir|out.tgz] [--name name]"; return 1 ;;
+    *) echo "usage: host export --full [out.tgz] [--include a,b] | host export --bundle [out-dir|out.tgz] [--name name] [--no-memory]"; return 1 ;;
   esac
 }
 
@@ -409,7 +415,7 @@ import_cmd() {
         -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'X-Arigami-Confirm: yes' \
         -H 'content-type: application/gzip' --data-binary "@$file" || return 1
       echo
-      dl "  the host restarts itself (supervisor) — or run: host restart"
+      dl "  with a supervisor the host restarts itself; the reply says restart.scheduled:false otherwise — then: host restart"
       return 0
     fi
     rl "host is running: a full restore replaces $DIR under it."
@@ -522,7 +528,7 @@ case "${1:-status}" in
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|export --full|--bundle [out]|import <file.tgz>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

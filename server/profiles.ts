@@ -31,6 +31,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
 import { tilde } from './lib/platform.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -71,6 +72,8 @@ export interface BundleManifest {
 
 export interface BundleCron {
   name: string;
+  /** stable identity across export/import hops ("<bundle>/<slug>"); derived from the bundle name when absent */
+  key?: string;
   prompt: string;
   schedule: { kind: 'cron' | 'interval' | 'at'; value: string };
   enabled?: boolean;
@@ -484,15 +487,36 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     }
   }
 
-  // 4. cron → triggers (disabled unless enabled:true on a trusted bundle)
+  // 4. cron → triggers (disabled unless enabled:true on a trusted bundle).
+  // Idempotent (F4 #2): a trigger is identified by its bundleKey ("<bundle>/
+  // <slug>", carried through export → import), falling back to the tagged
+  // name and then to an untagged same-name+same-prompt trigger (hand-made,
+  // exported, imported back). A match is UPDATED (prompt/schedule/name), never
+  // duplicated; its enabled state is left alone.
   if (!opts.skipCron && b.cron.length) {
     const tr = await import('./triggers.js');
-    const existing = tr.listTriggers().filter((t: any) => t.type === 'cron');
+    const existing = tr.listTriggers().filter((t: any) => t.type === 'cron') as any[];
+    const claimed = new Set<string>();
     for (const c of b.cron) {
       const tag = `[${b.manifest.name}] ${c.name || 'cron'}`;
-      const found = existing.find((t: any) => t.name === tag);
+      const key = typeof c.key === 'string' && c.key ? c.key : cronBundleKey(b.manifest.name, c.name || 'cron');
+      const plain = String(c.name || 'cron').replace(CRON_TAG_RE, '');
+      const found =
+        existing.find((t) => !claimed.has(t.id) && t.bundleKey === key) ||
+        existing.find((t) => !claimed.has(t.id) && t.name === tag) ||
+        existing.find((t) => !claimed.has(t.id) && !t.bundleKey && String(t.name).replace(CRON_TAG_RE, '') === plain && String(t.prompt).trim() === String(c.prompt).trim());
       if (found) {
-        report.cron.push({ id: found.id, name: tag, enabled: !!(found as any).enabled });
+        claimed.add(found.id);
+        try {
+          const patch: Record<string, unknown> = { bundleKey: key };
+          if (String(found.prompt).trim() !== String(c.prompt).trim()) patch.prompt = c.prompt;
+          if (found.schedule?.kind !== c.schedule.kind || String(found.schedule?.value ?? '') !== String(c.schedule.value)) patch.schedule = { kind: c.schedule.kind, value: String(c.schedule.value) };
+          if (found.name !== tag && !/^\[/.test(String(found.name))) patch.name = tag; // adopt the tag on a hand-made trigger, keep an earlier bundle's tag
+          const t = tr.patchTrigger(found.id, patch) || found;
+          report.cron.push({ id: t.id, name: t.name, enabled: !!t.enabled });
+        } catch (e) {
+          report.errors.push(`cron "${tag}": ${(e as Error).message}`);
+        }
         continue;
       }
       try {
@@ -503,7 +527,9 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
           sessionMode: c.sessionMode,
           deliver: c.deliver,
           autonomous: !!c.autonomous && b.trusted,
+          bundleKey: key,
         });
+        claimed.add(t.id);
         const enabled = c.enabled === true && b.trusted;
         if (!enabled) tr.patchTrigger(t.id, { enabled: false });
         report.cron.push({ id: t.id, name: tag, enabled });

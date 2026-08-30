@@ -54,6 +54,9 @@ function fakeInstance(dir: string) {
   w('chrome-base/Default/Cookies', 'cookies');
   w('logs/host.log', 'log');
   w('config.json.bak-1', '{}');
+  w('mcp-logs.txt', 'root-level log (F4 #7)');
+  w('wa-logs.txt', 'root-level log (F4 #7)');
+  w('uploads/keep-logs.txt', 'an upload that merely ends in -logs.txt — must survive');
   return dir;
 }
 
@@ -79,7 +82,10 @@ test('assertSafeEntries refuses absolute and parent-escaping paths', () => {
 
 test('bundleCronFromTrigger strips the bundle tag, existing:<session> mode and personal delivery', () => {
   const c = bk.bundleCronFromTrigger({ name: '[old-bundle] morning', prompt: 'hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, sessionMode: 'existing:s1', deliver: { push: true, whatsapp: '1@s.whatsapp.net', master: 's1' } });
-  expect(c).toEqual({ name: 'morning', prompt: 'hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } });
+  expect(c).toEqual({ name: 'morning', key: 'exported-host/morning', prompt: 'hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } });
+  // a trigger that came from a bundle keeps that bundle's key, whatever the export is called
+  expect(bk.bundleCronFromTrigger({ name: '[solo-dev] standup', prompt: 'x', schedule: { kind: 'cron', value: '0 9 * * 1-5' }, bundleKey: 'solo-dev/standup' }, 'team-x').key).toBe('solo-dev/standup');
+  expect(bk.cronBundleKey('exported-host', '[old] Morning Report!')).toBe('exported-host/morning-report');
   expect(bk.bundleCronFromTrigger({ name: 'x', prompt: 'p', schedule: { kind: 'interval', value: 3600 }, sessionMode: 'isolated' }).sessionMode).toBe('isolated');
 }, 60_000);
 
@@ -114,6 +120,9 @@ test('full export: manifest at the root, secrets kept as-is, run/chrome/logs/.ba
   expect(entries).toContain(bk.MANIFEST_NAME);
   for (const f of ['config.json', 'accounts.json', 'secrets.env', 'users.json', 'chat/s1.jsonl', 'memory/USER.md', 'skills/exported-skill/SKILL.md', 'uploads/a.txt', 'state.json', 'triggers.json'])
     expect(entries).toContain(f);
+  expect(entries).toContain('uploads/keep-logs.txt');
+  expect(entries).not.toContain('mcp-logs.txt');
+  expect(entries).not.toContain('wa-logs.txt');
   for (const bad of entries) {
     expect(bad.startsWith('run/') || bad === 'run').toBe(false);
     expect(bad.startsWith('chrome-sessions') || bad.startsWith('chrome-base') || bad.startsWith('logs') || bad.startsWith('tmp')).toBe(false);
@@ -164,7 +173,7 @@ test('bundle export: profile.json + skills + memory-seed + cron + README, and NO
   expect(o.manifest.repos).toEqual([{ name: 'demo-app', source: 'github.com/example/demo-app', branch: 'main', installCmd: 'bun install' }]);
   expect(o.manifest.settings).toEqual({ defaultModel: 'sonnet', voiceLang: 'en' });
   expect(JSON.stringify(o.manifest)).not.toMatch(/FAKE|gsk_|ck_|someone/);
-  expect(o.cron).toEqual([{ name: 'morning', prompt: 'say hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } }]);
+  expect(o.cron).toEqual([{ name: 'morning', key: 'exported-host/morning', prompt: 'say hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } }]);
   expect(o.seed.user).toContain('Prefers tabs');
 
   // files on disk: whole skill dir copied, nothing else leaked
@@ -191,6 +200,58 @@ test('bundle export: profile.json + skills + memory-seed + cron + README, and NO
   const entries = tarList(tgz);
   for (const f of ['accounts.json', 'secrets.json', 'secrets.env', 'users.json', 'config.json', 'state.json', 'sessions.json']) expect(entries).not.toContain(f);
   expect(entries).toContain('profile.json');
+}, 60_000);
+
+test('bundle export: name is exported-host (or --name) — never the last applied bundle\'s provenance; --no-memory drops memory-seed/', () => {
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  // an instance that had "il-whatsapp-business" applied last
+  fs.writeFileSync(path.join(dir, 'profile.json'), JSON.stringify({ name: 'il-whatsapp-business', title: 'IL WA', appliedAt: 'x' }));
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts'); const fs = await import('node:fs');
+     const a = bk.exportBundle({ out: ${JSON.stringify(path.join(tmp(), 'a'))} }); const b = bk.exportBundle({ out: ${JSON.stringify(path.join(tmp(), 'b'))}, name: 'My Setup!' }); const c = bk.exportBundle({ out: ${JSON.stringify(path.join(tmp(), 'c'))}, memory: false });
+     const cron = JSON.parse(fs.readFileSync(a.dir + '/cron.json', 'utf8'));
+     emit({ a: { name: a.name, mf: JSON.parse(fs.readFileSync(a.dir + '/profile.json', 'utf8')), seed: a.memorySeed, warn: a.memoryWarning, readme: fs.readFileSync(a.dir + '/README.md', 'utf8'), cron },
+            b: b.name, c: { seed: c.memorySeed, warn: c.memoryWarning, hasDir: fs.existsSync(c.dir + '/memory-seed'), readme: fs.readFileSync(c.dir + '/README.md', 'utf8') } });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  const { a, b, c } = r.out[0];
+  expect(a.name).toBe('exported-host');
+  expect(a.mf.name).toBe('exported-host');
+  expect(a.mf.title).not.toBe('IL WA');
+  expect(b).toBe('my-setup');
+  expect(a.seed).toEqual(['USER.md', 'MEMORY.md']);
+  expect(a.warn).toBe(true);
+  expect(a.readme).toMatch(/review before sharing/);
+  expect(a.cron).toEqual([expect.objectContaining({ name: 'morning', key: 'exported-host/morning' })]);
+  expect(c.seed).toEqual([]);
+  expect(c.warn).toBe(false);
+  expect(c.hasDir).toBe(false);
+  expect(c.readme).not.toMatch(/review before sharing/);
+}, 60_000);
+
+test('full export of a multi-MB dir returns promptly (file finish before tar close must not hang)', () => {
+  // F4 #1: on a big archive the write stream finished BEFORE tar's close
+  // settled `done`; the CLI then awaited a 'finish' that had already fired.
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+  for (let i = 0; i < 4; i++) fs.writeFileSync(path.join(dir, 'uploads', `blob${i}.bin`), Buffer.from(Array.from({ length: 2 * 1024 * 1024 }, () => (Math.random() * 256) | 0)));
+  const out = path.join(tmp(), 'big.tgz');
+  const tgz = path.join(tmp(), 'bundle.tgz');
+  const t0 = Date.now();
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts'); const tr = await import('./server/triggers.ts'); tr.load();
+     const m = await bk.exportFullToFile(${JSON.stringify(out)});
+     const b = bk.exportBundle({ cron: tr.listTriggers() }); const t = bk.tarDir(b.dir, 'bundle.tgz');
+     const code = await bk.exportToFile(t, ${JSON.stringify(tgz)}); t.cleanup();
+     emit({ kind: m.kind, code });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ kind: 'arigami-backup', code: 0 });
+  expect(Date.now() - t0).toBeLessThan(20_000); // the child harness times out at 30 s; the old code hung forever
+  expect(fs.statSync(out).size).toBeGreaterThan(4 * 1024 * 1024);
+  expect(bk.detectArchive(tgz).kind).toBe('bundle');
 }, 60_000);
 
 test('bundle export refuses to write inside $ARIGAMI_DIR (other than tmp/)', () => {
@@ -257,6 +318,38 @@ test('round-trip: an exported bundle applies on a clean instance (repos, skill p
   );
   expect(r3.ok).toBe(true);
   expect(r3.out[0]).toEqual(['morning']);
+}, 60_000);
+
+test('round-trip is idempotent for cron: apply → export → import into the SAME instance leaves the trigger count unchanged', () => {
+  const dir = fakeInstance(path.join(tmp(), 'inst')); // has one hand-made cron "[old-bundle] morning"
+  const bundle = path.join(tmp(), 'bundle');
+  const r = runInChild(
+    `const pf = await import('./server/profiles.ts'); const tr = await import('./server/triggers.ts'); const bk = await import('./server/backup.ts'); tr.load();
+     const cron = () => tr.listTriggers().filter(t => t.type === 'cron').map(t => ({ name: t.name, key: t.bundleKey, enabled: t.enabled, prompt: t.prompt })).sort((a, b) => a.name.localeCompare(b.name));
+     // 1. apply the shipped solo-dev bundle → +1 trigger "[solo-dev] standup"
+     const a1 = await pf.applySource('solo-dev'); const after1 = cron();
+     // 2. export this instance, 3. import the export back into the same instance
+     const b = bk.exportBundle({ out: ${JSON.stringify(bundle)}, cron: tr.listTriggers() });
+     const a2 = await pf.applySource(b.dir); const after2 = cron();
+     // 4. and once more, with a changed schedule in the bundle → update in place
+     const fs = await import('node:fs'); const cj = JSON.parse(fs.readFileSync(b.dir + '/cron.json', 'utf8'));
+     cj.find(c => c.name === 'standup').schedule.value = '0 10 * * 1-5'; fs.writeFileSync(b.dir + '/cron.json', JSON.stringify(cj));
+     const a3 = await pf.applySource(b.dir); const after3 = cron(); tr.flush();
+     emit({ errs: [...a1.errors, ...a2.errors, ...a3.errors], after1, after2, after3, exported: cj.map(c => ({ name: c.name, key: c.key })), sched: tr.listTriggers().find(t => t.name === '[solo-dev] standup').schedule.value, prov: JSON.parse(fs.readFileSync(${JSON.stringify(path.join(dir, 'profile.json'))}, 'utf8')).name });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  const o = r.out[0];
+  expect(o.errs).toEqual([]);
+  expect(o.after1.map((c: any) => c.name)).toEqual(['[old-bundle] morning', '[solo-dev] standup']);
+  expect(o.after1.find((c: any) => c.name === '[solo-dev] standup').key).toBe('solo-dev/standup');
+  expect(o.exported).toEqual([{ name: 'morning', key: 'exported-host/morning' }, { name: 'standup', key: 'solo-dev/standup' }]);
+  // re-import: same two triggers, nothing added; the hand-made one picked up a bundleKey, tags were kept
+  expect(o.after2.map((c: any) => c.name)).toEqual(['[old-bundle] morning', '[solo-dev] standup']);
+  expect(o.after2.map((c: any) => c.key)).toEqual(['exported-host/morning', 'solo-dev/standup']);
+  expect(o.after3.length).toBe(2);
+  expect(o.sched).toBe('0 10 * * 1-5'); // updated in place
+  expect(o.prov).toBe('exported-host');
 }, 60_000);
 
 // ---- import -------------------------------------------------------------------------------------

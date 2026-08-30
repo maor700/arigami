@@ -117,15 +117,29 @@ test('no supervisor → NoSupervisorError (409), state untouched', () => {
   expect(h.exits).toEqual([]);
 });
 
-test('detectManager: env precedence', () => {
-  expect(detectManager({})).toBe('none');
-  expect(detectManager({ INVOCATION_ID: 'abc' })).toBe('systemd');
-  expect(detectManager({ PM2_HOME: '/x/.pm2' })).toBe('pm2');
-  expect(detectManager({ pm_id: '0' })).toBe('pm2');
-  expect(detectManager({ XPC_SERVICE_NAME: 'io.arigami.host' })).toBe('launchd');
-  expect(detectManager({ XPC_SERVICE_NAME: '0' })).toBe('none');
-  expect(detectManager({ ARIGAMI_SUPERVISOR: 'none', INVOCATION_ID: 'abc' })).toBe('none');
-  expect(detectManager({ ARIGAMI_SUPERVISOR: 'systemd', PM2_HOME: '/x' })).toBe('systemd');
+test('detectManager: env precedence, and the env alone is not enough — THIS process must be the supervisor\'s child (F4 #3)', () => {
+  const shell = { ppid: 4242, parentCommand: '/bin/bash' };
+  expect(detectManager({}, shell)).toBe('none');
+  // inherited pm2/systemd env in a process started from a shell → none
+  expect(detectManager({ PM2_HOME: '/x/.pm2', pm_id: '0' }, shell)).toBe('none');
+  expect(detectManager({ INVOCATION_ID: 'abc' }, shell)).toBe('none');
+  // real supervisors
+  expect(detectManager({ INVOCATION_ID: 'abc' }, { ppid: 1, parentCommand: '/sbin/init' })).toBe('systemd');
+  expect(detectManager({ INVOCATION_ID: 'abc' }, { ppid: 900, parentCommand: '/lib/systemd/systemd --user' })).toBe('systemd');
+  expect(detectManager({ PM2_HOME: '/x/.pm2' }, { ppid: 77, parentCommand: 'PM2 v5.4.2: God Daemon (/home/x/.pm2)' })).toBe('pm2');
+  expect(detectManager({ pm_id: '0' }, { ppid: 77, parentCommand: 'node /usr/lib/node_modules/pm2/lib/Daemon.js' })).toBe('pm2');
+  // pm2 env but parent is not pm2 → none
+  expect(detectManager({ pm_id: '0' }, { ppid: 77, parentCommand: 'bun server/index.ts' })).toBe('none');
+  if (process.platform === 'darwin') {
+    expect(detectManager({ XPC_SERVICE_NAME: 'io.arigami.host' }, { ppid: 1, parentCommand: '/sbin/launchd' })).toBe('launchd');
+    expect(detectManager({ XPC_SERVICE_NAME: 'io.arigami.host' }, shell)).toBe('none');
+  }
+  expect(detectManager({ XPC_SERVICE_NAME: '0' }, { ppid: 1 })).toBe('none');
+  // explicit override still wins both ways
+  expect(detectManager({ ARIGAMI_SUPERVISOR: 'none', INVOCATION_ID: 'abc' }, { ppid: 1 })).toBe('none');
+  expect(detectManager({ ARIGAMI_SUPERVISOR: 'systemd', PM2_HOME: '/x' }, shell)).toBe('systemd');
+  // the default (this test process) is a bun child of the test runner, never a supervisor
+  expect(detectManager({ PM2_HOME: '/x', pm_id: '1', INVOCATION_ID: 'q', ARIGAMI_SUPERVISOR: '' })).toBe('none');
 });
 
 test('isDirtyStatus: tracked changes are dirty, untracked-only is clean', () => {

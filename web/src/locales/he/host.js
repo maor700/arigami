@@ -45,6 +45,8 @@ export const strings = {
   'host.exportBundle': 'הורד חבילת פרופיל',
   'host.exporting': 'מכין…',
   'host.import': 'ייבוא…',
+  'host.exportMemory': 'חבילה: לכלול זרע זיכרון (USER.md / MEMORY.md)',
+  'host.exportMemory.warn': 'החבילה כוללת את USER.md / MEMORY.md — הפרופיל וההערות שלך. לעבור עליהם לפני שיתוף.',
   'host.importForce': 'בכוח (גם כשסשנים עובדים)',
   'host.confirmImport.title': 'לשחזר את הגיבוי הזה?',
   'host.confirmImport.body': '{file} — גיבוי מלא מחליף את תיקיית הנתונים (הנוכחית נשמרת כ-.bak עם חותמת זמן) והמארח מופעל מחדש; חבילת פרופיל מוחלת בתוספת (ריפוזיטוריז, סקילים כהצעות, זרע זיכרון, cron כבויים).',

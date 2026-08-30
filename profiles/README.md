@@ -21,3 +21,10 @@ Your own bundles go in `$ARIGAMI_DIR/profiles/<name>/` (default
 `<name>.json` manifest (repos only) is still accepted in either directory.
 Nothing private belongs in this directory — bundles are generic templates
 with `<placeholder>` repo sources.
+
+**Exported bundles are different.** `bin/host export --bundle` (Settings →
+Host → *Download profile bundle*) snapshots *your* instance, and its
+`memory-seed/` is your own `USER.md` + `MEMORY.md` — a personal profile, not
+a template. Review them or export with `--no-memory` before sharing such a
+bundle; the CLI and the Settings card both warn when they went in. See
+`docs/BACKUP.md` §Sharing a setup.

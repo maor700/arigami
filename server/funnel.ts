@@ -39,8 +39,8 @@ function broadcastSafe(ev: FunnelEvent): void {
     .catch(() => {});
 }
 
-export function emit(name: string, props: Record<string, unknown> = {}): FunnelEvent {
-  const ev: FunnelEvent = { name, at: new Date().toISOString(), ...props };
+export function emit(name: string, props: Record<string, unknown> = {}, at?: string): FunnelEvent {
+  const ev: FunnelEvent = { name, at: at || new Date().toISOString(), ...props };
   try {
     fs.mkdirSync(ARIGAMI_DIR, { recursive: true });
     fs.appendFileSync(FUNNEL_FILE, JSON.stringify(ev) + '\n');
@@ -67,11 +67,33 @@ function readFirst(): Record<string, string> {
   }
 }
 
+/**
+ * When `install` is first recorded on a data dir that already has history
+ * (the funnel-first file arrived with an upgrade), date it at the earliest
+ * known event — or the data dir's birth time — so the funnel keeps its order
+ * (F4 #5). Returns undefined for "now".
+ */
+export function backdatedInstallAt(events: FunnelEvent[] = readEvents(), dir = ARIGAMI_DIR, now = Date.now()): string | undefined {
+  let earliest = Infinity;
+  for (const e of events) {
+    const t = Date.parse(String(e?.at || ''));
+    if (Number.isFinite(t) && t < earliest) earliest = t;
+  }
+  if (!Number.isFinite(earliest)) {
+    try {
+      const st = fs.statSync(dir);
+      const b = st.birthtimeMs > 0 ? st.birthtimeMs : NaN;
+      if (Number.isFinite(b)) earliest = b;
+    } catch {}
+  }
+  return Number.isFinite(earliest) && earliest < now ? new Date(earliest).toISOString() : undefined;
+}
+
 /** Emit `name` once per instance lifetime. Returns true only the first time. */
 export function firstTime(name: string, props: Record<string, unknown> = {}): boolean {
   const seen = readFirst();
   if (seen[name]) return false;
-  const ev = emit(name, props);
+  const ev = emit(name, props, name === 'install' ? backdatedInstallAt() : undefined);
   seen[name] = ev.at;
   try {
     fs.mkdirSync(ARIGAMI_DIR, { recursive: true });

@@ -26,7 +26,7 @@
 // auth lands, gate these behind the admin role and drop the header dance.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import * as state from './state.js';
@@ -36,14 +36,47 @@ export type Manager = 'systemd' | 'launchd' | 'pm2' | 'none';
 export type RestartWhen = 'now' | 'idle';
 export type Phase = 'idle' | 'pending-idle' | 'draining' | 'exiting';
 
-/** Who will respawn us after exit. Pure over the env so it's testable. */
-export function detectManager(env: NodeJS.ProcessEnv = process.env): Manager {
+/**
+ * What the parent of `pid` is running (first argv[0] basename + args on
+ * Linux via /proc, `ps` elsewhere). '' when unknown.
+ */
+export function parentCommand(ppid: number = process.ppid): string {
+  if (!ppid || ppid < 1) return '';
+  try {
+    if (process.platform === 'linux') return fs.readFileSync(`/proc/${ppid}/cmdline`).toString('utf8').split('\0').filter(Boolean).join(' ');
+  } catch {}
+  try {
+    const r = spawnSync('ps', ['-o', 'command=', '-p', String(ppid)], { encoding: 'utf8', timeout: 2000 });
+    return r.status === 0 ? String(r.stdout || '').trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Who will respawn us after exit. Pure over (env, ppid, parent command) so
+ * it's testable. F4 #3: the env alone lies — `pm_id`/`PM2_HOME`/`INVOCATION_ID`
+ * are inherited by every grandchild of a supervised host (a second instance
+ * started from a session's shell, say), so a supervisor only counts when
+ * THIS process's parent is that supervisor: pm2's God daemon, systemd
+ * (pid 1 or the `systemd --user` manager), launchd (pid 1 on macOS).
+ * `ARIGAMI_SUPERVISOR=<name|none>` still overrides (the shipped units set it).
+ */
+export function detectManager(
+  env: NodeJS.ProcessEnv = process.env,
+  proc: { ppid?: number; parentCommand?: string } = {},
+): Manager {
   const forced = (env.ARIGAMI_SUPERVISOR || '').toLowerCase();
   if (forced === 'systemd' || forced === 'launchd' || forced === 'pm2') return forced;
   if (forced === 'none') return 'none';
-  if (env.INVOCATION_ID) return 'systemd'; // set by systemd for every service
-  if (env.PM2_HOME || env.pm_id !== undefined) return 'pm2';
-  if (env.XPC_SERVICE_NAME && env.XPC_SERVICE_NAME !== '0') return 'launchd';
+  const ppid = proc.ppid ?? process.ppid;
+  const parent = (proc.parentCommand ?? parentCommand(ppid)).toLowerCase();
+  const head = parent.split(/\s+/).slice(0, 4); // only the program + first args count, not a shell's whole script text
+  const isSystemd = ppid === 1 || /(^|\/)systemd$/.test(head[0] || '');
+  const isPm2 = /^pm2\b/.test(parent) || parent.includes('god daemon') || head.some((t) => /(^|\/)(pm2|pm2-runtime)$|\/pm2\/(lib|bin)\//.test(t));
+  if (env.INVOCATION_ID && isSystemd) return 'systemd'; // set by systemd for every service
+  if ((env.PM2_HOME || env.pm_id !== undefined) && isPm2) return 'pm2';
+  if (env.XPC_SERVICE_NAME && env.XPC_SERVICE_NAME !== '0' && process.platform === 'darwin' && ppid === 1) return 'launchd';
   return 'none';
 }
 

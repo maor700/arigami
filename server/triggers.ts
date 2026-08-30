@@ -77,6 +77,7 @@ export interface CronTrigger {
   sessionMode: string; // 'isolated' | 'existing:<sessionId>'
   deliver: CronDeliver;
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
+  bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
   lastRun: number | null; // ms epoch of the last fire attempt
@@ -553,6 +554,7 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
     }
   } else {
     if (typeof patch.prompt === 'string' && patch.prompt.trim()) t.prompt = patch.prompt.trim();
+    if (typeof patch.bundleKey === 'string' && patch.bundleKey) t.bundleKey = patch.bundleKey;
     if (typeof patch.sessionMode === 'string') {
       const sm = patch.sessionMode;
       if (sm !== 'isolated' && !(sm.startsWith('existing:') && sm.length > 'existing:'.length))
@@ -564,7 +566,8 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
     if (patch.schedule && typeof patch.schedule === 'object') {
       const s = patch.schedule as { kind?: string; value?: string };
       const schedule = { kind: s.kind, value: String(s.value ?? '') } as Schedule;
-      cronSchedule.validateSchedule(schedule, Date.parse(t.createdAt)); // throws on bad input
+      const from = Date.parse(t.createdAt);
+      cronSchedule.validateSchedule(schedule, Number.isFinite(from) ? from : Date.now()); // throws on bad input
       t.schedule = schedule;
     }
   }
@@ -723,6 +726,7 @@ export async function createCronTrigger(input: {
   sessionMode?: string;
   deliver?: CronDeliver;
   autonomous?: boolean;
+  bundleKey?: string;
   createdBySessionId?: string;
 }): Promise<CronTrigger> {
   // Guard against runaway scheduling loops (lesson from OpenClaw #21775 /
@@ -760,6 +764,7 @@ export async function createCronTrigger(input: {
       master: input.deliver?.master || undefined,
     },
     autonomous: !!input.autonomous,
+    ...(input.bundleKey ? { bundleKey: String(input.bundleKey) } : {}),
     createdAt,
     createdBySessionId: input.createdBySessionId || null,
     lastRun: null,
