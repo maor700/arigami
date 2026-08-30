@@ -4203,6 +4203,12 @@ export async function handle(
             if (port) body.metadata.port = port;
           }
         }
+        // UX1: `agentHome` is minted by ensureHomeSession alone — set_metadata
+        // must not be able to hide a session from the Sessions section.
+        if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
+          const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
+          body.metadata = rest;
+        }
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);

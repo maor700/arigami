@@ -345,18 +345,9 @@ function HomeTab({ agent, onOpenSession }) {
  * with its state and what it cost. The home chat is not a run — it is the tab
  * next door.
  */
-export function RunsTab({ agent, onOpenSession }) {
+export function RunsList({ sessions, onOpenSession }) {
   const t = useT();
-  const [data, setData] = useState(null);
-  useEffect(() => {
-    let stop = false;
-    api.get(`/agents/${agent.slug}/activity?range=30d&limit=1`)
-      .then((d) => { if (!stop) setData(d); })
-      .catch(() => { if (!stop) setData({ sessions: [] }); });
-    return () => { stop = true; };
-  }, [agent.slug, agent.updatedAt]);
-  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
-  const runs = (data.sessions || []).filter((s) => !s.home);
+  const runs = (sessions || []).filter((s) => !s.home);
   return (
     <div data-agent-runs className="flex flex-col gap-3">
       <div className="text-[11.5px] text-fgdim">{t('agent.oneLiner')}</div>
@@ -377,10 +368,30 @@ export function RunsTab({ agent, onOpenSession }) {
   );
 }
 
-/** The persona's first real line — the one-line "who is this" under the name. */
+/** The container — the agent's sessions come from the activity endpoint. */
+export function RunsTab({ agent, onOpenSession }) {
+  const t = useT();
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    // limit=1 — the ledger rows belong to the פעילות tab; we only want sessions[].
+    api.get(`/agents/${agent.slug}/activity?range=30d&limit=1`)
+      .then((d) => { if (!stop) setData(d); })
+      .catch(() => { if (!stop) setData({ sessions: [] }); });
+    return () => { stop = true; };
+  }, [agent.slug, agent.updatedAt]);
+  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  return <RunsList sessions={data.sessions} onOpenSession={onOpenSession} />;
+}
+
+/**
+ * The persona's first real line — the one-line "who is this" under the name.
+ * A markdown heading ("# who") is a label, not a description: skipped.
+ */
 export const personaLine = (persona) => {
   for (const raw of String(persona || '').split('\n')) {
-    const line = raw.replace(/^[#>\-*\s]+/, '').trim();
+    if (/^\s*#/.test(raw)) continue;
+    const line = raw.replace(/^[>\-*\s]+/, '').trim();
     if (line) return line.length > 120 ? `${line.slice(0, 119)}…` : line;
   }
   return '';
