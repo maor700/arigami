@@ -9,6 +9,7 @@ import ArtifactCard from './ArtifactCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
+import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -735,63 +736,6 @@ function ScreenRequestCard({ sessionId, event }) {
   );
 }
 
-// host.request_action — rendered inline in the transcript (not pinned under the
-// input). Buttons are human-click-only; the answer is delivered as a message.
-function ActionCard({ sessionId, action }) {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  if (!action || !Array.isArray(action.buttons)) return null;
-  const answer = async (value) => {
-    setBusy(true);
-    try { await api.post(`/sessions/${sessionId}/action/answer`, { value }); } catch { setBusy(false); }
-  };
-  // Escape hatch: none of the options fit (or the prompt is stale) — clear the
-  // sticky bar and keep chatting. The tool call already returned, so this
-  // doesn't leave the model waiting.
-  const dismiss = async () => {
-    setBusy(true);
-    try { await api.post(`/sessions/${sessionId}/action/dismiss`, {}); } catch { setBusy(false); }
-  };
-  const btnClass = (style) =>
-    style === 'primary'
-      ? 'border-ink bg-brand text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]'
-      : style === 'danger'
-        ? 'border-danger bg-danger text-white'
-        : 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] text-[var(--term-accent-strong)] hover:border-brand';
-  return (
-    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.actionNeeded')}</span>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={dismiss}
-          title={t('chat.dismissNoneTitle')}
-          aria-label={t('chat.dismiss')}
-          className="ml-auto cursor-pointer rounded px-1.5 text-[13px] leading-none text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] disabled:opacity-40"
-        >
-          <Icon icon={faXmark} />
-        </button>
-      </div>
-      <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{action.prompt}</div>
-      <div className="mt-2.5 flex flex-wrap gap-2">
-        {action.buttons.map((b, i) => (
-          <button
-            key={i}
-            type="button"
-            disabled={busy}
-            onClick={() => answer(b.value)}
-            className={`cursor-pointer rounded-[7px] border-[1.5px] px-3.5 py-1.5 text-[11.5px] font-bold disabled:opacity-50 ${btnClass(b.style)}`}
-          >
-            {b.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ---------- the pane ------------------------------------------------------ */
 
 // Memoized: the store keeps every settled event's object identity stable and
@@ -818,6 +762,8 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <ResultLine event={event} />;
     case 'error':
       return <ErrorLine event={event} />;
+    case 'action-auto':
+      return <ActionAutoLine event={event} />;
     case 'system':
       return <SystemLine event={event} />;
     case 'permission-request': {

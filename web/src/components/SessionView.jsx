@@ -20,6 +20,7 @@ import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems } from './SlashCommands.jsx';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls from './TermControls.jsx';
+import { ActionBar } from './ActionCard.jsx';
 
 // Built-in "Changes" tab id — distinguishes it from agent-opened tabs.
 export const CHANGES_TAB_ID = '__changes';
@@ -605,58 +606,6 @@ function ListenersPanel({ session, initialId, onClose }) {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ---------- action bar (host.request_action) ------------------------------ */
-
-function actionBtnClass(style) {
-  if (style === 'primary')
-    return 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-[7px] text-[12.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]';
-  if (style === 'danger')
-    return 'cursor-pointer rounded-lg border-[1.5px] border-danger bg-danger px-3.5 py-[7px] text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23]';
-  return 'cursor-pointer rounded-lg border-[1.5px] border-[#cdbb66] bg-white px-3 py-[7px] text-xs text-[#6b5d20] hover:bg-[#fffdf2]';
-}
-
-export function ActionBar({ session }) {
-  const t = useT();
-  const action = session.action;
-  const [busy, setBusy] = useState(false);
-  if (!action || !Array.isArray(action.buttons)) return null;
-  const answer = async (value) => {
-    setBusy(true);
-    try {
-      await api.post(`/sessions/${session.id}/action/answer`, { value });
-    } catch {
-      /* bar clears via WS echo on success */
-    }
-    setBusy(false);
-  };
-  return (
-    <div className="flex shrink-0 flex-wrap items-center gap-3 border-t-2 border-ink bg-chip px-3.5 py-2.5">
-      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-ink bg-brand text-xs">
-        <Icon icon={faCheck} />
-      </span>
-      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
-        {action.prompt}{' '}
-        <span className="font-mono text-[10px] text-[#8a7a2f]">
-          {t('rail.revealedBy')}
-        </span>
-      </span>
-      <span className="ms-auto flex shrink-0 items-center gap-2">
-        {action.buttons.map((b, i) => (
-          <button
-            key={i}
-            type="button"
-            disabled={busy}
-            onClick={() => answer(b.value)}
-            className={`${actionBtnClass(b.style)} disabled:opacity-50`}
-          >
-            {b.label}
-          </button>
-        ))}
-      </span>
     </div>
   );
 }

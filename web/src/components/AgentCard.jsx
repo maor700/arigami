@@ -16,7 +16,8 @@ import { useModels } from '../lib/models.js';
 import { toastError } from '../lib/toast.js';
 import { faCheck, faXmark, faUserAstronaut, faCircleNotch, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
-export const TOOL_FAMILIES = ['desktop', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers'];
+// A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
+export const TOOL_FAMILIES = ['desktop', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web'];
 
 const btnPrimary = 'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
 const btnSecondary = 'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';

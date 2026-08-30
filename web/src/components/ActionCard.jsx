@@ -1,0 +1,169 @@
+// host.request_action UI — shared by the transcript card (ChatPane) and the
+// sticky bar (SessionView). A3: an action raised by a session born from an
+// agent carries `agent` {slug,name,emoji,color} + `kind`; the card shows the
+// agent avatar/name and the "auto-approve this kind from now on" toggle, which
+// rides along the answer (`autoApprove:true` → agent.json autoApprove). An
+// action the host answered itself shows up as an `action-auto` receipt line.
+// Kept DOM-free (no ScreenView/noVNC) so it renders in the bun test harness.
+import { useState } from 'react';
+import { api } from '../lib/api.js';
+import { Icon } from '../lib/icons.js';
+import { useT } from '../lib/i18n.js';
+import { AgentAvatar } from './AgentCard.jsx';
+import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
+
+// The transcript card — rendered inline (not pinned under the input). Buttons
+// are human-click-only; the answer is delivered as a message.
+export function ActionCard({ sessionId, action }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  // A3: "auto-approve this kind from now on" — only meaningful for an action
+  // raised by an agent session WITH a kind (stored in agent.json autoApprove).
+  const [auto, setAuto] = useState(false);
+  if (!action || !Array.isArray(action.buttons)) return null;
+  const canAuto = !!(action.agent && action.kind);
+  const answer = async (value) => {
+    setBusy(true);
+    try { await api.post(`/sessions/${sessionId}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) }); } catch { setBusy(false); }
+  };
+  // Escape hatch: none of the options fit (or the prompt is stale) — clear the
+  // sticky bar and keep chatting. The tool call already returned, so this
+  // doesn't leave the model waiting.
+  const dismiss = async () => {
+    setBusy(true);
+    try { await api.post(`/sessions/${sessionId}/action/dismiss`, {}); } catch { setBusy(false); }
+  };
+  const btnClass = (style) =>
+    style === 'primary'
+      ? 'border-ink bg-brand text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]'
+      : style === 'danger'
+        ? 'border-danger bg-danger text-white'
+        : 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] text-[var(--term-accent-strong)] hover:border-brand';
+  return (
+    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
+      <div className="flex items-center gap-2 font-mono text-[11px]">
+        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.actionNeeded')}</span>
+        {action.agent && (
+          <span data-action-agent={action.agent.slug} className="flex items-center gap-1 rounded-full border border-[var(--term-accent-border)] px-1.5 py-px text-[10px] text-[var(--term-accent-fg)]">
+            <AgentAvatar agent={action.agent} size={14} />
+            <span dir="auto">{action.agent.name}</span>
+          </span>
+        )}
+        {action.kind && <span className="rounded-full bg-[var(--term-accent-border)] px-1.5 py-px font-mono text-[9.5px] text-[var(--term-accent-fg)]">{action.kind}</span>}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={dismiss}
+          title={t('chat.dismissNoneTitle')}
+          aria-label={t('chat.dismiss')}
+          className="ml-auto cursor-pointer rounded px-1.5 text-[13px] leading-none text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] disabled:opacity-40"
+        >
+          <Icon icon={faXmark} />
+        </button>
+      </div>
+      <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{action.prompt}</div>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {action.buttons.map((b, i) => (
+          <button
+            key={i}
+            type="button"
+            disabled={busy}
+            onClick={() => answer(b.value)}
+            className={`cursor-pointer rounded-[7px] border-[1.5px] px-3.5 py-1.5 text-[11.5px] font-bold disabled:opacity-50 ${btnClass(b.style)}`}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+      {canAuto && (
+        <label data-action-auto className="mt-2.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--term-accent-fg)]">
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
+          {t('chat.actionAutoApprove', { kind: action.kind, agent: action.agent.name })}
+        </label>
+      )}
+    </div>
+  );
+}
+
+// A3: the host answered a request_action itself (the kind is in the agent's
+// autoApprove list) — a one-line receipt in the transcript.
+export function ActionAutoLine({ event }) {
+  const t = useT();
+  return (
+    <div data-action-auto-line className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+      {event.agent && <AgentAvatar agent={event.agent} size={14} />}
+      <span className="font-bold">{t('chat.actionAutoApproved', { kind: event.actionKind || '' })}</span>
+      <span dir="auto" className="min-w-0 truncate">{event.prompt}</span>
+      <span className="ms-auto rounded bg-[var(--term-accent-border)] px-1.5">{event.label || event.value}</span>
+    </div>
+  );
+}
+
+/* ---------- the sticky bar (SessionView) ---------------------------------- */
+
+export function actionBtnClass(style) {
+  if (style === 'primary')
+    return 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-[7px] text-[12.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]';
+  if (style === 'danger')
+    return 'cursor-pointer rounded-lg border-[1.5px] border-danger bg-danger px-3.5 py-[7px] text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23]';
+  return 'cursor-pointer rounded-lg border-[1.5px] border-[#cdbb66] bg-white px-3 py-[7px] text-xs text-[#6b5d20] hover:bg-[#fffdf2]';
+}
+
+export function ActionBar({ session }) {
+  const t = useT();
+  const action = session.action;
+  const [busy, setBusy] = useState(false);
+  const [auto, setAuto] = useState(false); // A3: auto-approve this kind from now on
+  if (!action || !Array.isArray(action.buttons)) return null;
+  const canAuto = !!(action.agent && action.kind);
+  const answer = async (value) => {
+    setBusy(true);
+    try {
+      await api.post(`/sessions/${session.id}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) });
+    } catch {
+      /* bar clears via WS echo on success */
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-t-2 border-ink bg-chip px-3.5 py-2.5">
+      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-ink bg-brand text-xs">
+        <Icon icon={faCheck} />
+      </span>
+      {action.agent && (
+        <span data-action-agent={action.agent.slug} className="flex shrink-0 items-center gap-1 rounded-full border border-hair bg-panel px-1.5 py-px text-[10.5px] text-fg">
+          <AgentAvatar agent={action.agent} size={14} />
+          <span dir="auto">{action.agent.name}</span>
+          {action.kind && <span className="font-mono text-[9.5px] text-fgdim">· {action.kind}</span>}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
+        {action.prompt}{' '}
+        <span className="font-mono text-[10px] text-[#8a7a2f]">
+          {t('rail.revealedBy')}
+        </span>
+      </span>
+      <span className="ms-auto flex shrink-0 flex-wrap items-center gap-2">
+        {canAuto && (
+          <label data-action-auto className="flex cursor-pointer items-center gap-1 text-[10.5px] text-[#6b5d20]">
+            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
+            {t('chat.actionAutoApproveShort')}
+          </label>
+        )}
+        {action.buttons.map((b, i) => (
+          <button
+            key={i}
+            type="button"
+            disabled={busy}
+            onClick={() => answer(b.value)}
+            className={`${actionBtnClass(b.style)} disabled:opacity-50`}
+          >
+            {b.label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
