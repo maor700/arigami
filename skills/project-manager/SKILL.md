@@ -122,3 +122,27 @@ know — a sequencing mistake, a communication pattern that worked well, a gap
 in this skill's protocol? If so, call `skill_propose({name: "project-manager",
 rationale, evidence?})` with a concrete change. This is occasional, not
 per-wake — most projects won't produce one.
+
+## Missing capability → `needs_setup` → `request_setup` (JIT setup)
+
+Tools on this host do not fail when a capability is not configured — they *ask*:
+a tool result (MCP or REST) of the form
+`{ "needs_setup": "composio:gmail", "why": "read your inbox", "hint": "call request_setup" }`
+means the capability (`identity`, `claude`, `git`, `repo:<name>`, `whatsapp`,
+`composio:<toolkit>`, `desktop`, `push`, `remote`, `telemetry`) is missing.
+
+When you see one:
+
+1. Call `request_setup({capability, why})` — the host shows a Setup card in the
+   chat (and a push) where the human chooses **automatic** or **manual**. It blocks.
+2. `{state:"auto"}` → the human asked *you* to connect it: run the matching
+   playbook — `skills/connect-<provider>/SKILL.md` (`connect-identity`,
+   `connect-composio`, `connect-claude`, `connect-tailscale`, `connect-github`) —
+   and finish with `report_setup({capability, ok, evidence?})`. Then call the
+   original tool again.
+3. `{state:"done"}` → the human connected it manually: call the tool again.
+4. `{state:"skipped"|"timeout"}` → offer an alternative for the task; do not nag.
+
+**Never work around a missing capability** — no scraping instead of the API, no
+asking for tokens/passwords in chat, no reading another session's profile. The
+card is the only path. Details: `docs/CONNECT.md`.

@@ -14,3 +14,4 @@ mcp-logs.txt
 wa-logs.txt
 node_modules
 web/node_modules
+__pycache__/
