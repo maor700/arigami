@@ -3,6 +3,7 @@ import { api } from '../lib/api.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { Truncate } from './Truncate.jsx';
+import { MergePill, MergePanel } from './MergeCard.jsx';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faCheck, faFolderTree, faRotateRight, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
@@ -113,6 +114,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
             → {worker.id}
           </button>
           {worker.branch && <Chip>{worker.branch}</Chip>}
+          <MergePill session={{ metadata: { branch: worker.branch, review: worker.review, merged: worker.merged } }} compact />
           {worker.claude_state !== 'dead' && (
             <button
               type="button"
@@ -149,6 +151,12 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
               ))}
             </div>
           )}
+        </div>
+      )}
+      {/* F7: the master's one-click merge of an approved child */}
+      {worker && worker.review?.state === 'approved' && !worker.merged && (
+        <div className="mt-2 border-t border-hair pt-2">
+          <MergePanel sessionId={worker.id} session={{ id: worker.id, metadata: { branch: worker.branch, review: worker.review, merged: worker.merged } }} dense />
         </div>
       )}
     </div>

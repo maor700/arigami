@@ -4,6 +4,7 @@ import { toastError, toastSuccess } from '../lib/toast.js';
 import { Truncate } from './Truncate.jsx';
 import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
+import { MergePill, MergePanel } from './MergeCard.jsx';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
@@ -512,6 +513,7 @@ export default function ChangesTab({ session, active }) {
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
         {desktop && data?.branch && <Truncate text={data.branch} className="max-w-[140px] font-mono text-[10.5px] text-fgdim" />}
+        <MergePill session={session} compact={!desktop} />
         {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{t('chat.filesCount', { n: files.length })}</span>}
         {desktop && expl && (
           <span
@@ -611,6 +613,12 @@ export default function ChangesTab({ session, active }) {
         </div>
       </div>
 
+      {/* F7: approved → the Merge control lives with the diff it approves */}
+      {session.metadata?.review?.state === 'approved' && !session.metadata?.merged && (
+        <div className="shrink-0 border-b border-hair bg-panel px-3.5 py-1.5">
+          <MergePanel session={session} dense />
+        </div>
+      )}
       {noWorktree ? (
         <div className="flex flex-1 items-center justify-center font-mono text-[11px] text-fgdim">
           {data?.error ? String(data.error) : t('chat.noWorktreeChanges')}

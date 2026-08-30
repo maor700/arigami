@@ -74,7 +74,9 @@ const TOOLS = [
       metadata: { type: 'object' },
       kind: { type: 'string', enum: ['mutating', 'readonly', 'full'], description: 'Spawn as your child: thin dispatch worker (mutating/readonly) or full regular session (full)' },
       subtask: { type: 'string', description: 'ORCHESTRATION.json node id this worker owns (names its branch/worktree)' },
-      base: { type: 'string', description: 'Mutating only: branch/ref to fork the worktree off (default = your current branch)' },
+      base: { type: 'string', description: 'Branch/ref to fork the worktree off (default = your current branch)' },
+      worktree: { type: ['boolean', 'string'], description: 'full only: true (default when `subtask` is given) → the HOST creates <reposDir>/<repo>-wt-<subtask> on branch <prefix>/<subtask>-<id> off `base`, stamps metadata.worktree/branch/base/cleanup and starts the child IN it (its Changes tab works at once; after human approval you merge it with merge_session). A string = explicit worktree path. false → the child provisions itself (legacy).' },
+      branch_prefix: { type: 'string', description: 'full+worktree only: branch prefix (default "child")' },
       needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
       needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
     }),
@@ -91,6 +93,8 @@ const TOOLS = [
         if (a.subtask) body.subtask = a.subtask;
         if (a.base) body.base = a.base;
         if (a.needs_server) body.needsServer = true;
+        if (a.worktree !== undefined) body.worktree = a.worktree;
+        if (a.branch_prefix) body.branchPrefix = a.branch_prefix;
       }
       const s = await api('POST', '/__api/sessions', body);
       if (s.deferred) return { deferred: true, reason: s.reason || 'at-capacity' };
@@ -102,6 +106,26 @@ const TOOLS = [
       // callers that fetch it from the host box itself.
       const url = `${PUBLIC_PATH}?session=${encodeURIComponent(s.id)}`;
       return { id: s.id, url, url_internal: `${HOST}${url}` };
+    },
+  },
+  {
+    name: 'merge_session',
+    description:
+      'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any claude turn. ' +
+      'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
+      'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
+      'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
+      'aborted and you get {conflict:true, files:[…]} (plus a chat line) — resolve with the human, never force. ' +
+      'Success: {ok, sha, hint} — the merge runs NO project gates: run tsc/tests/build on the base yourself, then push. ' +
+      'delete_branch:true also removes the child\'s worktree (a checked-out branch cannot be deleted).',
+    inputSchema: obj({
+      session_id: { type: 'string', description: 'The child session whose branch to merge' },
+      strategy: { type: 'string', enum: ['no-ff', 'squash'], description: 'default no-ff (a merge commit); squash = one commit on base' },
+      delete_branch: { type: 'boolean', description: 'After a successful merge run the child\'s cleanup (removes its worktree + branch)' },
+    }, ['session_id']),
+    run: async (a) => {
+      const body = { strategy: a.strategy || 'no-ff', deleteBranch: !!a.delete_branch };
+      return api('POST', `/__api/sessions/${a.session_id}/merge`, body);
     },
   },
   {

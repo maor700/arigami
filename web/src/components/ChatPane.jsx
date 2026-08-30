@@ -7,6 +7,7 @@ import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
 import ArtifactCard from './ArtifactCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
+import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { agoTime } from '../lib/time.js';
@@ -838,6 +839,10 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // S2: host.request_setup — "the agent needs <capability>" with the
       // auto/manual decision (see setup/SetupCard.jsx).
       return <SetupCard sessionId={sessionId} event={event} />;
+    case 'merge':
+      // F7: host-executed merge result (merged / conflict) — in the child and
+      // mirrored into its master.
+      return <MergeEvent event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }
@@ -853,6 +858,8 @@ const REVEAL = 300;
 
 export default function ChatPane({ sessionId, events, working, action, loading, awaiting }) {
   const t = useT();
+  // F7: the merge panel keys off metadata.review/merged (wire form is enough).
+  const session = useStore().sessions.find((s) => s.id === sessionId) || null;
   const scrollRef = useRef(null);
   const stickRef = useRef(true);
   // Scrolled away from the bottom → show the floating "jump to latest" button.
@@ -1047,6 +1054,11 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           return out;
         })()}
         {action && <ActionCard sessionId={sessionId} action={action} />}
+        {/* F7: after the human approved, the merge is one click — here, at the
+            end of the transcript, until it's merged. */}
+        {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (
+          <MergePanel session={session} dark />
+        )}
         {working && (
           <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">
             <span className="host-spinner h-3 w-3" />

@@ -74,6 +74,13 @@ POST   /__api/sessions                       {title?, cwd?, prompt?, permissionM
 GET    /__api/sessions/:id                   → session
 PATCH  /__api/sessions/:id                   {title?|color?|status?|metadata?(merge)|progress?|archived?}
 DELETE /__api/sessions/:id                   ?runCleanup=true → runs metadata.cleanup cmds first
+POST   /__api/sessions                       {master, kind:'full', subtask?, worktree?:true|'<path>'|false, base?, branchPrefix?}
+                                              F7: worktree (default true when subtask given) → host makes
+                                              <reposDir>/<repo>-wt-<subtask> on <prefix>/<subtask>-<id> off base,
+                                              stamps metadata.worktree/branch/base/cleanup, child cwd = worktree
+GET    /__api/sessions/:id/merge/status      → {branch, base, approved, merged, conflict, canMerge, reason, dirtyFiles, ahead}   (F7)
+POST   /__api/sessions/:id/merge             {strategy?:'no-ff'|'squash', deleteBranch?, runCleanup?, force?(admin)}
+                                              → {ok, sha, hint} | 409 {conflict:true, files} | 409 {error, reason} | 403   (F7, host-executed)
 POST   /__api/sessions/:id/tabs              {type,title,url?,format?,body?,compare?,badge?,color?} → tab
 PATCH  /__api/sessions/:id/tabs/:tabId       {title?|url?|body?|badge?|color?|compare?}
 DELETE /__api/sessions/:id/tabs/:tabId
@@ -184,7 +191,49 @@ skill_propose({name, content?, patch?, rationale, evidence?, session_id?}) → p
    // skill_proposal_id to point the master at a proposal filed this task.
 ```
 
+merge_session({session_id, strategy?:'no-ff'|'squash', delete_branch?}) → {ok, sha, hint} | {conflict, files} | error   (F7)
+   // Masters/controllers only (the child itself gets 403). See "Merge after approval".
+
 Action-bar answers come ONLY from a human click in the UI.
+
+## Merge after approval (F7 — server/merge.ts, MergeCard.jsx)
+
+Responsibility is fixed and never ambiguous:
+
+1. **The child never merges.** A full child (or dispatch worker) works on the
+   branch the host made for it (`metadata.branch` in `metadata.worktree`), commits,
+   and ends with `request_review` / `report_to_master`.
+2. **The human approves.** A local review verdict `approve` (Changes tab) or the
+   `✓ Verified` button of `request_review` on a session whose `metadata.branch` ≠
+   base stamps `metadata.review = {state:'approved', at, by}` (broadcast as a
+   normal `session-updated`). Nothing else can stamp it.
+3. **After approval the merge is one click for the human OR one tool call for the
+   master/PM** — `POST /__api/sessions/:id/merge` (web: the Merge button on the
+   review panel / Changes tab / master's Orchestration card) or `merge_session`.
+   The HOST runs the git merge in the base checkout (the master's worktree/cwd,
+   else the repo's main worktree): `git merge --no-ff` (or `--squash` + commit)
+   with a generated message. It refuses when the base checkout has tracked
+   modifications, when `base` is not what is checked out there, or when the
+   branch is not approved (`force:true` is admin-only). On a conflict it aborts,
+   records `metadata.mergeConflict = {files, at}`, posts a `{kind:'merge',
+   state:'conflict'}` chat card to the child AND the master ("merge conflict —
+   resolve"), and returns `{conflict:true, files}`. On success it records
+   `metadata.merged = {sha, at, by, strategy, base}` and appends a
+   `{kind:'merge', state:'merged'}` card to both.
+4. **Merge runs no project gates.** The response carries `hint`: run tsc / tests /
+   build on the base, then push. That is the merger's job (the PM after
+   `merge_session`, the human after the click).
+5. `deleteBranch` / `delete_branch` runs the session's recorded cleanup after a
+   successful merge (worktree removed first — a checked-out branch cannot be
+   deleted). Deleting the session with `runCleanup=true` does the same.
+
+Web: `metadata.review.state==='approved' && !metadata.merged` renders the Merge
+panel (strategy select · "delete branch & worktree" · Merge, disabled with the
+host's `reason` when it can't merge) at the end of the chat and above the
+Changes diff; the Changes header shows an "Approved · not merged" / "Merged
+<sha>" / "Merge conflict" pill; the master's Orchestration cards show the same
+pill for each child.
+
 
 ## Memory (server/memory.ts — $ARIGAMI_DIR/memory/)
 
