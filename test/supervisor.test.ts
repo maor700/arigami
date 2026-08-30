@@ -188,6 +188,13 @@ describe('decide — one case per row of the ladder', () => {
     expect(decide({ view: view(v), watermark: d.next, thresholds: th }).action).not.toBe('synthesize-report');
   });
 
+  test('a child spawned but never tasked is NOT reported for', () => {
+    // Its controller may be about to hand it its first job; a synthesized
+    // "done" would close a worker that has not started.
+    const d = run({ master: 'm', reported: false, hadTurn: false, lastActivityAt: ago(60 * 60_000) });
+    expect(d.action).not.toBe('synthesize-report');
+  });
+
   test('a child still inside the grace window is left alone', () => {
     expect(run({ master: 'm', reported: false, lastActivityAt: ago(30_000) }).action).toBe('none');
   });
@@ -264,6 +271,48 @@ describe('the hard rule: a WAITING_HUMAN session is never touched', () => {
       }
     });
   }
+});
+
+describe('a persisted escalation (metadata.supervisor) behaves like an in-memory one', () => {
+  // claude.js escalates on its own at the bottom rung of the model ladder, long
+  // before the supervisor's watermark knows anything about it — so the flag
+  // lives on the session, survives a host restart, and both paths read it.
+  const th2 = { ...th };
+  test('it reads BLOCKED_SYSTEM with the recorded reason, whatever the last error text was', () => {
+    const cl = classify(view({ escalated: true, escalatedReason: 'bottom rung, no quota left' }), th2);
+    expect(cl.state).toBe('BLOCKED_SYSTEM');
+    expect(cl.reason).toBe('bottom rung, no quota left');
+  });
+
+  test('the ladder is not walked again on a fresh watermark', () => {
+    const d = decide({
+      view: view({ escalated: true, escalatedReason: 'bottom rung, no quota left', claudeState: 'dead' }),
+      watermark: wm(),
+      thresholds: th2,
+    });
+    expect(['none', 'notify-human']).toContain(d.action);
+    expect(d.next.respawns).toBe(0);
+  });
+
+  test('it still climbs back when the quota it was escalated for resets', () => {
+    const d = decide({
+      view: view({ escalated: true, modelRung: 2, modelRestoreAt: new Date(ago(1000)).toISOString() }),
+      watermark: wm(),
+      thresholds: th2,
+    });
+    expect(d.action).toBe('model-restore');
+  });
+
+  test('it produces a `system` row in the queue', () => {
+    const row = waitingRow(
+      view({ escalated: true, escalatedReason: 'bottom rung, no quota left' }),
+      th2,
+      new Date(ago(1000)).toISOString(),
+      { escalated: true, detail: 'bottom rung, no quota left' }
+    )!;
+    expect(row.kind).toBe('system');
+    expect(row.unblock).toBe('fix');
+  });
 });
 
 describe('escalation is terminal until something moves', () => {

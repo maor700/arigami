@@ -59,10 +59,13 @@ function HealthDot({ health }) {
   const t = useT();
   if (!health) return null;
   const color = HEALTH_COLOR[health.dot] || HEALTH_COLOR.grey;
+  // An escalated session is not one the host is still working on — it is one it
+  // gave up on, which is a different thing to tell the human.
+  const label = health.escalated ? t('waiting.what.system') : t(`rail.health.${health.state}`);
   return (
     <span
-      title={`${t(`rail.health.${health.state}`)} · ${health.reason}`}
-      aria-label={t(`rail.health.${health.state}`)}
+      title={`${label} · ${health.reason}`}
+      aria-label={label}
       className="inline-block h-[6px] w-[6px] shrink-0 rounded-full align-middle"
       style={{ background: color }}
     />

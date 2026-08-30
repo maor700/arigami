@@ -52,7 +52,12 @@ interface Tracked {
   reason: string;
   since: number; // when the session entered this health state
   escalated: boolean;
-  lastActivityAt: number;
+  /**
+   * The chat seq of the last real turn we accounted for. NOT updatedAt: our own
+   * receipts and metadata writes bump that, so an escalated session would look
+   * like it had recovered on the very next tick.
+   */
+  lastTurnSeq: number;
 }
 
 const tracked = new Map<string, Tracked>();
@@ -60,7 +65,7 @@ const tracked = new Map<string, Tracked>();
 function trackOf(id: string): Tracked {
   let t = tracked.get(id);
   if (!t) {
-    t = { watermark: freshWatermark(), health: 'IDLE_OK', reason: 'idle', since: Date.now(), escalated: false, lastActivityAt: 0 };
+    t = { watermark: freshWatermark(), health: 'IDLE_OK', reason: 'idle', since: Date.now(), escalated: false, lastTurnSeq: 0 };
     tracked.set(id, t);
   }
   return t;
@@ -159,6 +164,9 @@ export function viewOf(s: Session, now = Date.now()): SessionView {
     mcpRequired: mcpRequired(s, down),
     modelRung: ladder.rung,
     modelRestoreAt: ladder.restoreAt,
+    hadTurn: claude.lastTurnSeq(s.id) > 0,
+    escalated: !!md.supervisor?.escalated,
+    escalatedReason: md.supervisor?.reason || undefined,
     master: (md.master as string) || null,
     reported: !!result?.state && ['done', 'blocked', 'error'].includes(String(result.state)),
     waitingOn,
@@ -415,16 +423,32 @@ export async function sweep({ act = false }: { act?: boolean } = {}): Promise<He
     const t = trackOf(s.id);
     const v = viewOf(s, th.now);
 
-    // Real progress since the last tick clears the ladder counters — a session
-    // that recovered must not carry its failure history into the next incident.
-    if ((v.lastActivityAt || 0) > t.lastActivityAt) {
-      if (v.claudeState === 'working' || v.claudeState === 'idle') t.watermark = resetOnProgress(t.watermark);
-      t.lastActivityAt = v.lastActivityAt || 0;
-      if (t.escalated && v.claudeState !== 'dead') t.escalated = false;
+    // A turn that actually finished, with no error left behind, is the only
+    // thing that clears the ladder counters — a session that recovered must not
+    // carry its failure history into the next incident, and one we handed to a
+    // human must not look recovered just because we wrote a receipt into it.
+    const turnSeq = v.hadTurn ? claude.lastTurnSeq(s.id) : 0;
+    if (turnSeq > t.lastTurnSeq) {
+      t.lastTurnSeq = turnSeq;
+      if (!v.lastErrorClass && v.claudeState !== 'dead') {
+        t.watermark = resetOnProgress(t.watermark);
+        t.escalated = false;
+        // The escalation is over: clear the persisted flag too, so the session
+        // leaves the "waiting for you" queue and the rail dot goes back to normal.
+        if (v.escalated) {
+          patchSession(s.id, { metadata: { supervisor: null } });
+          v.escalated = false;
+          v.escalatedReason = undefined;
+        }
+      }
     }
 
+    if (v.escalated) t.escalated = true;
     const cl = classify(v, th);
     if (cl.state !== t.health) {
+      // Entering WAITING_HUMAN: the card/request that put it there pushed its own
+      // notification, so start the re-notify clock now instead of buzzing twice.
+      if (cl.state === 'WAITING_HUMAN') t.watermark = { ...t.watermark, lastNotifyAt: th.now };
       t.health = cl.state;
       t.reason = cl.reason;
       t.since = th.now;
@@ -445,7 +469,6 @@ export async function sweep({ act = false }: { act?: boolean } = {}): Promise<He
       }
     }
 
-    const ladder = claude.ladderState(s.id);
     rows.push({
       sessionId: s.id,
       title: s.title,
@@ -454,8 +477,10 @@ export async function sweep({ act = false }: { act?: boolean } = {}): Promise<He
       dot: HEALTH_DOT[cl.state],
       since: new Date(t.since).toISOString(),
       ...(t.escalated ? { escalated: true } : {}),
-      model: ladder.model,
-      modelRung: ladder.rung,
+      // What the session actually runs on — null means "the CLI's own default".
+      // Never the head of its chain: that is only where it WOULD start.
+      model: s.claude?.modelChoice || null,
+      modelRung: v.modelRung || 0,
     });
 
     // Prefer the precise timestamp when the card itself carries one.

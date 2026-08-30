@@ -59,8 +59,18 @@ export interface SessionView {
   modelRung?: number; // index into the effective chain (0 = top rung)
   modelRestoreAt?: string | null; // ISO: when the top rung's quota resets
 
+  /**
+   * The host already gave up on this one and handed it to a human
+   * (metadata.supervisor.escalated). Persisted, not in-memory, so it survives a
+   * host restart and so the recoveries claude.js performs on its own (the
+   * bottom rung of the model ladder) land in the same place.
+   */
+  escalated?: boolean;
+  escalatedReason?: string;
+
   // --- orchestration
   master?: string | null; // metadata.master — this session owes that one a report
+  hadTurn?: boolean; // the session has actually run at least one turn
   reported?: boolean; // metadata.result exists with a terminal state
   waitingOn?: { sessionId: string; since: string; what: string } | null;
   waitingOnChildKnows?: boolean; // the child has the ask (pending queue / recent task)
@@ -123,6 +133,9 @@ export function classify(v: SessionView, th: Thresholds): Classification {
   if (v.claudeState === 'awaiting-input') return { state: 'WAITING_HUMAN', reason: 'awaiting-input' };
 
   // ---- BLOCKED_SYSTEM — nothing a person owes us; the host has to act
+  // An escalation stays visible until something actually moves: the last error
+  // text is not a reliable signal once the host has written its own line over it.
+  if (v.escalated) return { state: 'BLOCKED_SYSTEM', reason: v.escalatedReason || 'escalated' };
   if (DEAD_STATES.has(v.claudeState || '')) return { state: 'BLOCKED_SYSTEM', reason: 'proc-dead' };
   if (BUSY_STATES.has(v.claudeState || '') && v.procAlive === false)
     return { state: 'BLOCKED_SYSTEM', reason: 'proc-dead' };
@@ -237,7 +250,7 @@ export function decide(input: {
   // Re-notify on the cadence (the escalation itself counts as the first push, so
   // the next one is an hour out), but never walk the ladder again: that is what
   // turns a one-off failure into a nudge loop.
-  if (w.escalatedAt && (v.lastActivityAt || 0) <= w.escalatedAt) {
+  if (v.escalated || (w.escalatedAt && (v.lastActivityAt || 0) <= w.escalatedAt)) {
     if (th.now - w.lastNotifyAt >= th.notifyEveryMs)
       return { action: 'notify-human', health: cl.state, reason: cl.reason, next: bump(w, { lastNotifyAt: th.now }) };
     return none();
@@ -248,6 +261,9 @@ export function decide(input: {
   if (
     v.master &&
     !v.reported &&
+    // A child that was spawned but never tasked has nothing to report — a
+    // controller may well be about to hand it its first job.
+    v.hadTurn !== false &&
     !w.reportSynthesized &&
     (cl.state === 'IDLE_OK' || cl.state === 'STALLED') &&
     idleMs >= th.reportGraceMs

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { isWin, which, extraBinDirs, pidAlive, HOME } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
-import { cfg, CHAT_DIR, getSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
+import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
@@ -862,10 +862,15 @@ function parseResetAt(text) {
 // RES1 — one line in $ARIGAMI_DIR/incidents.jsonl per automatic recovery, so
 // Settings → מארח → בריאות can answer "what did the host do while I slept".
 // Never allowed to fail the recovery it is describing.
-function recordIncident(id, action, detail = {}, outcome = 'ok') {
+function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
   try {
-    appendIncident({ sessionId: id, action, health: 'BLOCKED_SYSTEM', outcome, detail });
+    appendIncident({ sessionId: id, action, health: 'BLOCKED_SYSTEM', reason, outcome, detail });
     broadcast({ type: 'incident', sessionId: id, action, outcome });
+    // An escalation here is the same event the supervisor records for the ones it
+    // handles: stamp it on the session so it shows red on the rail and lands in
+    // the "waiting for you" queue instead of quietly looking idle.
+    if (outcome === 'escalated')
+      patchSession(id, { metadata: { supervisor: { escalated: true, at: new Date().toISOString(), reason, after: detail.after || null } } });
   } catch {}
 }
 
@@ -968,6 +973,22 @@ export function restoreModel(id) {
  * terminal signal: a successful result (or a newer user message) means the
  * session recovered and there is nothing to classify.
  */
+/**
+ * RES1 — the chat seq of the last real TURN signal (a user message or a finished
+ * result). The supervisor uses it as "did anything actually move", which
+ * session.updatedAt cannot answer: the supervisor's own receipts and metadata
+ * writes bump updatedAt, so an escalated session would look like it had
+ * recovered on the very next tick.
+ */
+export function lastTurnSeq(id) {
+  const evs = getChat(id, 0) || [];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const k = evs[i].kind;
+    if (k === 'user' || k === 'result') return evs[i].seq || 0;
+  }
+  return 0;
+}
+
 export function lastTurnError(id) {
   const evs = getChat(id, 0) || [];
   for (let i = evs.length - 1; i >= 0; i--) {
@@ -999,7 +1020,7 @@ function tryAutoSwitch(id, text) {
     // model chain. Only the BOTTOM rung with no quota left is a human's problem.
     const stepped = downgradeModel(id, { resetAt, why: 'all accounts limited' });
     if (stepped.ok) {
-      recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, resetAt });
+      recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, resetAt }, 'ok', 'all accounts limited');
       return;
     }
     if (stepped.reason !== 'bottom') return; // a downgrade is already in flight
@@ -1007,7 +1028,7 @@ function tryAutoSwitch(id, text) {
       kind: 'error',
       text: 'All accounts have hit their limit and the model ladder is at its bottom rung. Add another account, or wait for one to reset.',
     });
-    recordIncident(id, 'escalate', { after: 'model-ladder', resetAt }, 'escalated');
+    recordIncident(id, 'escalate', { after: 'model-ladder', resetAt }, 'escalated', 'bottom rung, no quota left');
     return;
   }
   switchingSessions.add(id);
@@ -1029,7 +1050,7 @@ function tryAutoSwitch(id, text) {
     switchingSessions.delete(id);
     return;
   }
-  recordIncident(id, 'account-switch', { from: cur?.label || curId, to: next.label, resetAt });
+  recordIncident(id, 'account-switch', { from: cur?.label || curId, to: next.label, resetAt }, 'ok', 'account limit');
   // Replay the failed turn on the fresh account once the resumed proc is up.
   const t = setTimeout(() => {
     try { if (lastMsg) sendMessage(id, lastMsg); } catch {} finally { switchingSessions.delete(id); }
@@ -1099,11 +1120,11 @@ async function tryAuthRecover(id, text) {
     const ok = await refreshOne(accountId);
     if (!ok) {
       appendChat(id, { kind: 'error', text: 'Authentication error — token refresh failed. Please re-authenticate this account.' });
-      recordIncident(id, 'refresh-auth', { accountId }, 'failed');
+      recordIncident(id, 'refresh-auth', { accountId }, 'failed', 'token expired');
       return;
     }
     appendChat(id, { kind: 'system', text: '⟳ authentication expired — refreshed the token and restarted the session' });
-    recordIncident(id, 'refresh-auth', { accountId });
+    recordIncident(id, 'refresh-auth', { accountId }, 'ok', 'token expired');
     restart(id, { silent: true }); // respawns, re-reading the just-refreshed token
     // Replay the failed turn once the resumed proc is up.
     const t = setTimeout(() => {
@@ -1277,8 +1298,8 @@ function handleEvent(id, j) {
           // No reset time to parse here — an unavailable/overloaded model says
           // nothing about quota. Fall back to cfg.supervisor.modelBackoffMin.
           const stepped = downgradeModel(id, { resetAt: null, why: 'model unavailable' });
-          if (stepped.ok) recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, cause: 'unavailable' });
-          else if (stepped.reason === 'bottom') recordIncident(id, 'escalate', { after: 'model-ladder', cause: 'unavailable' }, 'escalated');
+          if (stepped.ok) recordIncident(id, 'model-down', { from: stepped.from, to: stepped.model, cause: 'unavailable' }, 'ok', 'model unavailable');
+          else if (stepped.reason === 'bottom') recordIncident(id, 'escalate', { after: 'model-ladder', cause: 'unavailable' }, 'escalated', 'model unavailable, bottom rung');
         }
         // Queued prompts: with auto-play on, a finished turn plays the next one.
         if (!j.is_error) scheduleAutoPlay(id);

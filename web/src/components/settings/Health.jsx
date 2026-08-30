@@ -75,7 +75,9 @@ export default function Health() {
                 </span>
                 <span className="flex shrink-0 items-center gap-2 font-mono text-[10px] text-fgdim">
                   {r.model && <span>{r.modelRung ? `↓ ${r.model}` : r.model}</span>}
-                  <span>{t(`rail.health.${r.state}`)}</span>
+                  {/* An escalated session is NOT one the host is still working
+                      on — say so, or the row reads as "wait, it's handled". */}
+                  <span>{r.escalated ? t('waiting.what.system') : t(`rail.health.${r.state}`)}</span>
                   <span>{relTime(r.since)}</span>
                 </span>
               </div>
