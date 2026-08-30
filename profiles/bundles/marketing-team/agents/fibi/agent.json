@@ -8,7 +8,8 @@
     "campaign-brief"
   ],
   "tools": [
-    "web"
+    "web",
+    "publish"
   ],
   "budget": {
     "tokensPerDay": 250000

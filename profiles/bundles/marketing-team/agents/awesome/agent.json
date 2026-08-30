@@ -9,7 +9,8 @@
   ],
   "tools": [
     "sessions",
-    "triggers"
+    "triggers",
+    "publish"
   ],
   "budget": {
     "tokensPerDay": 400000
