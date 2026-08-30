@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3 + A4 + A5
+# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -540,9 +540,11 @@ structured `budget` object (`{slug, name, cap, usedTokens, exceeded, resetsAt}`)
 
 `--disallowedTools mcp__<server>` only denies *calls*; the schemas were still listed (a leaked
 capability map, tokens and latency on tools that can never run). When an allowlist reaches into no
-external server (`strictMcpFor`), the spawn adds `--strict-mcp-config` — only the arigami server of
-the host's own `--mcp-config` is loaded. An agent that *does* need one (e.g. `gmail`) keeps the old
-per-call filtering.
+external server (`strictMcpFor`), the spawn adds `--strict-mcp-config` — only what the host itself
+passes in `--mcp-config` is loaded. That includes the agent's **own M1 grants** (`mcpConfigFor`
+injects them), so strict never takes an agent's own connection away; a grant its allowlist does not
+name is denied by name in `--disallowedTools`, as before. An agent that *does* need an external
+server (e.g. `gmail`) keeps the old per-call filtering.
 
 ## #8 / trip-up #2 — the Routine tab
 
@@ -587,3 +589,42 @@ auto-approve, a turn refused with 429 after the warning and never reaching the m
   crossed finishes (that is the "one final warning" by design).
 - `--strict-mcp-config` is all-or-nothing per session: an agent that needs one external server still
   loads all of them and relies on the hook.
+- Merged after M1: the two features meet in `policyArgs` / `mcpConfigFor` — see the `--strict-mcp-config`
+  bullet under **M1** below for what strict does and does not hide.
+
+---
+
+# M1 — native remote-MCP connections per agent
+
+Full picture (provider per service, the spike results, export rules):
+[INTEGRATIONS.md](INTEGRATIONS.md). What matters for an agent:
+
+- An agent's connection to a vendor-hosted MCP server is its **own OAuth grant**,
+  named `<service>--<slug>` (the server name is what identifies a grant — the same
+  URL under another name is a different grant with a different vendor identity).
+  `sales` connecting Linear gets `linear--sales`, not the host's `linear`.
+- It is recorded in `$ARIGAMI_DIR/agents/<slug>/connections.json`
+  (`[{cap, slug, name, url, auth, at, byIdentity}]` — names and URLs, never a
+  token) and shown in the Connections hub under **שייך ל**.
+- Registration uses `local` scope with the agent's directory as `cwd`, so no other
+  agent's session sees the server; the host injects it into the owner's sessions
+  with `--mcp-config`, under the grant name.
+- Resolution is agent-first, then the host's shared grant — the same rule A2 uses
+  for `identity` and `composio:*`. A capability status says which one answered
+  (`resolvedFrom`), and the card says "(shared)" when it fell back.
+- Its tools are `mcp__<service>--<slug>__*`. When the agent has a **tools
+  allowlist**, connecting a service adds that pattern to it (and the response says
+  `toolsAdded`): A3 denies whole MCP servers no pattern reaches, so a connection
+  the agent could not then call would be a trap. Disconnecting does **not** remove
+  the pattern — that would be editing the agent behind the human's back.
+- `--strict-mcp-config` is used only where it takes nothing away (A5 #7): a session
+  whose allowlist reaches into **no** external MCP server. The agent's own grants ride
+  in the host's `--mcp-config` (`mcpConfigFor`), so strict never hides them — what it
+  drops is the user's global servers (WhatsApp bridge, Composio gateway), which that
+  allowlist could not call anyway. An agent that *does* name an external server keeps
+  the old behaviour: everything loads and the allowlist takes tools away.
+  Isolation between agents is still the local scope; taking tools away is the allowlist.
+
+Composio connections keep working exactly as in A2 — the connected account is
+keyed by `user_id = agent:<slug>` — so an agent can own a native Linear grant and
+a brokered Gmail account at the same time.

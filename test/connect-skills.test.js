@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { MCP_CATALOG } from '../server/mcp-catalog.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = path.join(ROOT, 'skills');
@@ -24,8 +25,14 @@ const APPROVED_DOMAINS = new Set([
   'login.tailscale.com', 'tailscale.com',
   'github.com',
   'slack.com', 'linear.app', 'notion.so',
+  // M1: connect-mcp may open any vendor in the native MCP catalog — the set is
+  // the catalog itself, so adding a service stays a data change. `localhost` is
+  // the OAuth loopback `claude mcp login` listens on (its own process on this
+  // machine); it is never shown to a human as a link.
+  'localhost',
+  ...MCP_CATALOG.flatMap((s) => s.domains),
 ]);
-const CAPABILITY_RE = /^(identity|claude|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>)$/;
+const CAPABILITY_RE = /^(identity|claude|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>|mcp:<service>)$/;
 
 function frontmatter(content) {
   const m = content.match(/^---\n([\s\S]*?)\n---/);
@@ -40,8 +47,18 @@ function frontmatter(content) {
 
 const playbooks = fs.readdirSync(SKILLS).filter((d) => d.startsWith('connect-')).sort();
 
-test('the five JIT-setup playbooks ship', () => {
-  expect(playbooks).toEqual(['connect-claude', 'connect-composio', 'connect-github', 'connect-identity', 'connect-tailscale']);
+test('the six JIT-setup playbooks ship', () => {
+  expect(playbooks).toEqual(['connect-claude', 'connect-composio', 'connect-github', 'connect-identity', 'connect-mcp', 'connect-tailscale']);
+});
+
+// M1: connect-mcp is the ONE playbook for every native remote-MCP vendor — its
+// allowlist must therefore cover the whole catalog, or a catalog row would ship
+// a service the playbook is not allowed to open.
+test('connect-mcp declares every catalog vendor domain', () => {
+  const fm = frontmatter(fs.readFileSync(path.join(SKILLS, 'connect-mcp', 'SKILL.md'), 'utf8'));
+  const declared = new Set(fm.allowlist.split(/\s+/).filter(Boolean));
+  for (const d of MCP_CATALOG.flatMap((s) => s.domains)) expect(declared.has(d)).toBe(true);
+  expect(declared.has('localhost')).toBe(true);
 });
 
 for (const name of playbooks) {

@@ -60,6 +60,8 @@ export const strings = {
   'launcher.connect.body':
     'סנכרנו את המשימות המשויכות אליכם והפעילו סינון. נפתח דף אישור חד-פעמי של Linear; הטוקן נשמר רק אצל ה-host (בנפרד מ-Claude Code).',
   'launcher.connect.waiting': 'ממתין להרשאה…',
+  'launcher.connect.agentsNote': 'הכרטיסים משתמשים בחיבור Linear של הקוקפיט עצמו. כדי לתת לסוכנים כלים של Linear, חבר את Linear בנפרד:',
+  'launcher.connect.agentsLink': 'הגדרות ← חיבורים',
   'launcher.connect.button': 'חיבור Linear ←',
 
   // ticket picker

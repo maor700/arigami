@@ -1,7 +1,8 @@
 # Connecting services just-in-time (`connect-*` playbooks)
 
 Arigami starts with the minimum — pairing and one Claude account. Everything
-else (Gmail via Composio, GitHub, Tailscale remote access, a repo, WhatsApp…)
+else (Linear/Notion/Sentry over their own MCP servers, Gmail via Composio,
+GitHub, Tailscale remote access, a repo, WhatsApp…)
 is connected **from inside the chat, the moment a task needs it**. This
 document covers the agent-driven half of that: what is automated, where the
 human is still required, and the security model. The server/UI half
@@ -33,6 +34,7 @@ human can flip it. Nothing runs automatically without that click.
 | Capability | Skill | Automated by the agent | Human needed when |
 |---|---|---|---|
 | `identity` | `connect-identity` | open the Google account page, detect state, sync the login to the shared Chrome base profile, register the email with the host | **always the first time** — the password/2FA are typed by the human in Take-over |
+| `mcp:<service>` | `connect-mcp` | start `claude mcp login <grant> --no-browser` on the host, open the vendor's own authorize URL, approve with the connected identity, let the loopback callback land (or paste the redirect URL back), poll until the grant is live | vendor login page / 2FA, a workspace or org the card did not name, an admin-approval wall |
 | `composio:<toolkit>` | `connect-composio` | fetch the Composio redirect URL, open it, pick the identity account, "unverified app → Advanced → continue", Allow, poll until ACTIVE | provider login page (Slack/Notion/Linear), any password/2FA, redirect outside the allowlist |
 | `claude` | `connect-claude` | mint the PKCE authorize URL, click Authorize when claude.ai is signed in, read the code from the callback URL, POST it for exchange | claude.ai login (password / email code) |
 | `remote` | `connect-tailscale` | `tailscale login` URL, Google SSO with the identity account, Connect device, enable `serve` via REST | password/2FA, non-Google SSO, `sudo`, tailnet without HTTPS certs, admin approval |
@@ -65,8 +67,13 @@ screenshot moments and the hand-over protocol.
    `platform.claude.com`, `console.anthropic.com`, `backend.composio.dev`,
    `composio.dev`, `login.tailscale.com`, `tailscale.com`, `github.com`, plus the
    provider domain of a non-Google Composio toolkit (`slack.com`, `linear.app`,
-   `notion.so`). `test/connect-skills.test.js` fails if a playbook lists
-   anything outside this set.
+   `notion.so`), and — for `connect-mcp` — the vendor domains of
+   `server/mcp-catalog.ts` plus `localhost`: the loopback that
+   `claude mcp login` listens on for the OAuth callback is a process on THIS
+   machine, never a link handed to a human. Today that is `api.githubcopilot.com`, `app.asana.com`, `asana.com`, `atlassian.com`, `cloudflare.com`, `figma.com`, `id.atlassian.com`, `linear.app`, `mcp.asana.com`, `mcp.atlassian.com`, `mcp.cloudflare.com`, `mcp.figma.com`, `mcp.linear.app`, `mcp.notion.com`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.supabase.com`, `mcp.vercel.com`, `notion.com`, `notion.so`, `sentry.dev`, `sentry.io`, `stripe.com`, `supabase.com`, `vercel.com`.
+   `test/connect-skills.test.js` fails if a playbook lists anything outside this
+   set, and it derives the MCP part from the catalog so adding a service stays a
+   data change.
 3. **Consent before automation.** The card states exactly what will happen
    ("the agent will open Google's consent page for Gmail and click Allow with
    account X"); the agent only runs after the human clicks *Connect

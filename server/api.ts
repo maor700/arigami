@@ -20,6 +20,9 @@ import * as caps from './capabilities.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
 import * as ledger from './agent-ledger.js';
+import * as mcpCat from './mcp-catalog.js';
+import * as mcpConn from './mcp-connections.js';
+import * as mcpAuth from './mcp-auth.js';
 import {
   changesFor,
   changeDiff,
@@ -1227,6 +1230,20 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     caps.invalidateComposioCache();
     return { ok: true, removed: ids.length };
   }
+  if (capability.startsWith('mcp:')) {
+    // M1: drop the OAuth grant at the vendor's side (`claude mcp logout`), then
+    // the server registration, then our ownership record. The agent's tools
+    // allowlist keeps the pattern — removing it would silently edit the agent.
+    const slug = capability.slice(4);
+    const spec = mcpCat.mcpSpec(slug);
+    const rec = mcpConn.findConnection(owner, capability);
+    const name = rec?.name || mcpCat.grantName(slug, owner);
+    const { scope, cwd } = mcpScope(owner);
+    if ((rec?.auth || spec?.auth) !== 'bearer') await mcpAuth.logout(name, cwd);
+    await mcpAuth.removeServer(name, { scope, cwd });
+    mcpAuth.cancelLogin(name);
+    return { ok: true, removed: mcpConn.removeConnection(owner, capability), name, owner };
+  }
   if (capability === 'remote') {
     const remote: any = await import('./remote.js');
     return { ok: true, remote: remote.setRemote(false) };
@@ -1288,6 +1305,120 @@ loadPendingSetups();
 
 /** A2: Composio `user_id` for an owner — the host's accounts stay under 'default'. */
 const composioUserId = (owner: caps.Owner): string => (owner === caps.GLOBAL_OWNER ? 'default' : owner);
+
+
+// ---------------------------------------------------------------------------
+// M1 — native remote MCP (`mcp:<service>`), the generic connect path.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a grant is registered. The host's own connections go to `user` scope so
+ * every session sees them (today's behaviour for the user's servers). An
+ * agent's go to `local` scope with the agent's own directory as cwd, so no
+ * OTHER agent's session ever sees the grant; the owner's sessions get it
+ * injected explicitly by claude.js under the same name (spike: a --mcp-config
+ * server only reuses a credential when the NAME matches).
+ */
+function mcpScope(owner: caps.Owner): { scope: 'user' | 'local'; cwd?: string } {
+  const slug = caps.ownerSlug(owner);
+  if (!slug) return { scope: 'user' };
+  const dir = agents.agentDir(slug);
+  fs.mkdirSync(dir, { recursive: true });
+  return { scope: 'local', cwd: dir };
+}
+
+/** The GitHub token the host already owns (`gh auth token`) — never stored by us. */
+function ghAuthToken(): string {
+  if (!which('gh')) return '';
+  const r = Bun.spawnSync(['gh', 'auth', 'token'], { stdout: 'pipe', stderr: 'ignore' });
+  return r.exitCode === 0 ? new TextDecoder().decode(r.stdout).trim() : '';
+}
+
+/**
+ * A grant reached "connected": write the ownership record (names/URLs only) and,
+ * for an agent that HAS a tools allowlist, add the grant's tool pattern to it —
+ * the human just asked for this service on this agent's behalf, and an allowlist
+ * that silently drops the tools they just connected is a trap (A3 denies whole
+ * MCP servers no pattern reaches).
+ */
+function recordMcpConnection(owner: caps.Owner, spec: mcpCat.McpServerSpec, name: string, url: string): { connection: mcpConn.McpConnection; toolsAdded: string | null } {
+  const identity = caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER);
+  const connection = mcpConn.recordConnection(owner, { cap: `mcp:${spec.slug}`, slug: spec.slug, name, url, auth: spec.auth, byIdentity: identity?.email ?? null });
+  let toolsAdded: string | null = null;
+  const slug = caps.ownerSlug(owner);
+  if (slug) {
+    const a = agents.getAgent(slug);
+    const pattern = mcpCat.grantToolPattern(name);
+    if (a && a.tools?.length && !a.tools.includes(pattern)) {
+      agents.updateAgent(slug, { tools: [...a.tools, pattern] });
+      toolsAdded = pattern;
+    }
+  }
+  caps.markIdentityProvider(`mcp:${spec.slug}`, owner);
+  return { connection, toolsAdded };
+}
+
+type McpLoginStatus = { state: string; url: string | null; error: string | null };
+
+/** `claude mcp login` prints the authorize URL a beat after it starts; wait for it. */
+async function waitForAuthUrl(name: string, timeoutMs = 20_000): Promise<McpLoginStatus> {
+  const t0 = Date.now();
+  for (;;) {
+    const st = mcpAuth.loginStatus(name) as McpLoginStatus;
+    if (st.url || st.state === 'error' || st.state === 'done' || Date.now() - t0 > timeoutMs) return st;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
+async function applyMcpSetup(slug: string, body: any, owner: caps.Owner): Promise<Record<string, unknown>> {
+  const spec = mcpCat.mcpSpec(slug);
+  if (!spec) throw new Error(`${slug} is not in the native MCP catalog`);
+  if (spec.auth === 'oauth-byo-client') throw new Error(`${spec.title} needs an OAuth client of your own (no dynamic registration) — not connectable from here yet`);
+  const action = String(body?.action || '');
+  const name = mcpCat.grantName(spec.slug, owner);
+  const url = body?.readonly && spec.readonlyUrl ? spec.readonlyUrl : spec.url;
+  const { scope, cwd } = mcpScope(owner);
+
+  // --- bearer (GitHub PAT): no browser at all -------------------------------
+  if (spec.auth === 'bearer') {
+    if (action === 'poll') return { ok: mcpConn.grantLive(name, 'bearer'), name, owner };
+    const token = String(body?.token || '').trim() || (spec.tokenFrom === 'gh' ? ghAuthToken() : '');
+    if (!token) throw new Error(spec.tokenFrom === 'gh' ? 'no GitHub token on this host — sign in with gh first, or paste a token' : `paste a ${spec.title} token`);
+    const r = await mcpAuth.addServerWithHeader(name, url, spec.headerName || 'Authorization', `${spec.headerPrefix ?? 'Bearer '}${token}`, { scope, cwd });
+    if (!r.ok) throw new Error(r.output || r.error || `could not register ${spec.title}`);
+    const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
+    return { ok: true, name, owner, connection, ...(toolsAdded ? { toolsAdded } : {}) };
+  }
+
+  // --- OAuth ----------------------------------------------------------------
+  if (action === 'cancel') return { ok: true, ...mcpAuth.cancelLogin(name) };
+  if (action === 'poll' || action === 'status') {
+    const st = mcpAuth.loginStatus(name) as { state: string; url: string | null; error: string | null };
+    if (mcpConn.grantLive(name, 'oauth')) {
+      const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
+      mcpAuth.cancelLogin(name);
+      return { ok: true, state: 'done', name, owner, connection, ...(toolsAdded ? { toolsAdded } : {}) };
+    }
+    return { ...st, ok: false, name, owner, url: st.url };
+  }
+  if (action === 'code' || action === 'paste' || body?.code || body?.url) {
+    const r = mcpAuth.submitRedirect(name, String(body?.code || body?.url || ''));
+    if (!r.ok) throw new Error(r.error || 'could not hand the redirect URL to the login');
+    return { ...r, ok: false, name, owner }; // the caller polls; the exchange takes a moment
+  }
+  // start (default): register the server, then run `claude mcp login --no-browser`
+  // and WAIT for the authorize URL it prints — the caller (card or playbook) has
+  // nothing to do until then, and both would otherwise have to invent a second
+  // poll just to learn where to send the human.
+  const add = await mcpAuth.addServer(name, url, { scope, cwd });
+  if (!add.ok) throw new Error(add.output || add.error || `could not register ${spec.title}`);
+  mcpAuth.startLogin(name, cwd);
+  const st = await waitForAuthUrl(name);
+  if (st.state === 'error') throw new Error(st.error || 'could not start the MCP login');
+  if (!st.url) throw new Error(`${spec.title}: the sign-in did not print an authorize URL — is Claude Code >= 2.1.191 on this host?`);
+  return { ...st, ok: false, id: name, name, url: st.url, owner, domains: spec.domains, docs: spec.docs };
+}
 
 /** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
 async function applyManualSetup(capability: string, body: any, req: IncomingMessage, owner: caps.Owner = caps.GLOBAL_OWNER): Promise<Record<string, unknown>> {
@@ -1355,6 +1486,8 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       caps.invalidateComposioCache();
       return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id, owner };
     }
+  } else if (capability.startsWith('mcp:')) {
+    return await applyMcpSetup(capability.slice(4), body, owner);
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
