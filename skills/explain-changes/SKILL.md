@@ -23,11 +23,25 @@ omit `dir` (defaults to auto-detect).
 
 ## Comparison base
 
-By default you explain the **uncommitted** changes (working tree vs `HEAD`). If
-the user asks to compare against something else — "explain what changed vs main",
-"…vs commit abc1234", "…since branch X" — use that ref as the base: diff against
-it, and pass it as `base` to the MCP tool so the Changes tab opens on that
-comparison. Base `HEAD` (or omitted) = uncommitted.
+By default you explain the **uncommitted** changes (working tree vs `HEAD`) —
+unless the Changes tab is already open on a different mode (check
+`GET /__api/sessions/:id/changes` with no `mode` — the host defaults it to
+`work` for a session running in a host-managed child worktree, since that's
+the view that actually shows what a dispatch child did). If the user asks to
+compare against something else — "explain what changed vs main", "…vs commit
+abc1234", "…since branch X" — use that ref as the base: diff against it, and
+pass both `base` and `mode` to the MCP tool so the Changes tab opens on the
+comparison you actually explained:
+
+- `mode: "uncommitted"`, base `HEAD` (or omitted) — working tree vs HEAD.
+- `mode: "work"`, base = the session's own fork point (`metadata.base` — a
+  LOCAL ref; never substitute `origin/<base>`, which can be behind) — this
+  session's `base..HEAD` plus its working tree, i.e. everything it actually did.
+- `mode: "pr"`, base = the repo's default branch — for comparing against an
+  upstream PR target.
+
+Always pass `mode` explicitly — omitting it makes the host guess from `base`
+alone, which can only ever land on `uncommitted` or `pr`, never `work`.
 
 ## Steps
 
@@ -62,7 +76,8 @@ comparison. Base `HEAD` (or omitted) = uncommitted.
    ```
    mcp__arigami__set_changes_explanation({
      language: "<language name>",
-     base:     "<ref>",   // omit or "HEAD" for uncommitted; else the compared branch/commit
+     base:     "<ref>",              // omit or "HEAD" for uncommitted; else the compared branch/commit
+     mode:     "uncommitted"|"work"|"pr",  // always pass this explicitly — see "Comparison base"
      files:    [{ path, summary }, ...],
      features: [{ title, summary, files: ["path", ...], details? }, ...],
    })

@@ -1812,23 +1812,32 @@ function runHeadless(s, prompt, onExit) {
 }
 
 // Shell snippet that reads the right diff for the mode. PR = working tree vs the
-// merge-base with the default branch; uncommitted = working tree vs HEAD.
-const diffCmds = (mode) =>
+// merge-base with the default branch; work = working tree vs the merge-base with
+// the session's stamped metadata.base (a LOCAL ref — never origin/<base>, which
+// may be behind); uncommitted = working tree vs HEAD.
+const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+const diffCmds = (mode, base) =>
   mode === 'pr'
     ? 'BASE=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD origin/master 2>/dev/null || echo HEAD); ' +
       'git diff --stat "$BASE"; git diff "$BASE"; git ls-files --others --exclude-standard'
-    : 'git status --porcelain=v1; git diff HEAD; git ls-files --others --exclude-standard';
+    : mode === 'work' && base
+      ? `BASE=$(git merge-base HEAD ${shq(base)} 2>/dev/null || echo HEAD); ` +
+        'git diff --stat "$BASE"; git diff "$BASE"; git ls-files --others --exclude-standard'
+      : 'git status --porcelain=v1; git diff HEAD; git ls-files --others --exclude-standard';
 
 // Explain the session's changes in the Changes tab — an independent, read-only
 // one-shot run. Self-contained prompt (does not depend on discovering a plugin
-// skill) that REQUIRES the MCP write as its only deliverable. mode: 'uncommitted'|'pr'.
+// skill) that REQUIRES the MCP write as its only deliverable. mode: 'uncommitted'|'pr'|'work'.
 export function explainChanges(id, mode) {
   const s = getSession(id);
   if (!s) throw new Error(`no such session: ${id}`);
+  const base = mode === 'work' ? s.metadata?.base || null : null;
   const baseNote =
     mode === 'pr'
-      ? 'Pass base="<the BASE ref/sha you diffed against>" so the tab opens on the PR comparison.'
-      : 'Use base="HEAD" (uncommitted changes).';
+      ? 'Pass base="<the BASE ref/sha you diffed against>" and mode="pr" so the tab opens on the PR comparison.'
+      : mode === 'work'
+        ? `Pass base=${JSON.stringify(base || '<this branch\'s base>')} and mode="work" so the tab opens on this session's own-work comparison.`
+        : 'Use base="HEAD" (uncommitted changes) and mode="uncommitted".';
   setChangesExplaining(id, mode); // live "explaining…" state for the Changes tab
   // Safety net: clear the running flag even if the proc is killed/hangs.
   const clear = () => setChangesExplaining(id, null);
@@ -1836,11 +1845,11 @@ export function explainChanges(id, mode) {
   runHeadless(
     s,
     `Explain this git worktree's changes for the host "Changes" tab. Work in the current directory. READ-ONLY — never modify, stage, commit, or push.\n\n` +
-      `1. Read the changes by running:\n   ${diffCmds(mode)}\n   Open untracked/new files to see what they add.\n` +
+      `1. Read the changes by running:\n   ${diffCmds(mode, base)}\n   Open untracked/new files to see what they add.\n` +
       `2. For each changed file, write 1–3 sentences: what changed and why.\n` +
       `3. Group related files into cross-file "features" (title, summary, the files it touches, optional details).\n` +
       `4. You MUST finish by calling the tool mcp__arigami__set_changes_explanation with arguments ` +
-      `{ language: "<the language the user converses in, e.g. \\"English\\" or \\"Hebrew\\">", base, files: [{path, summary}], features: [{title, summary, files, details}] }. ${baseNote}\n` +
+      `{ language: "<the language the user converses in, e.g. \\"English\\" or \\"Hebrew\\">", base, mode, files: [{path, summary}], features: [{title, summary, files, details}] }. ${baseNote}\n` +
       `This tool call is the ONLY deliverable — the explanation does not exist until it succeeds. If the diff is empty, call it with empty files and features, then stop.`,
     () => { clearTimeout(guard); clear(); }
   );
@@ -1852,13 +1861,14 @@ export function explainChanges(id, mode) {
 export function reviewChanges(id, mode) {
   const s = getSession(id);
   if (!s) throw new Error(`no such session: ${id}`);
+  const base = mode === 'work' ? s.metadata?.base || null : null;
   setAutoReviewing(id, mode); // live "reviewing…" state for the Changes tab
   const clear = () => setAutoReviewing(id, null);
   const guard = setTimeout(clear, 5 * 60 * 1000);
   runHeadless(
     s,
     `Review this git worktree's changes as a careful senior engineer. Work in the current directory. READ-ONLY — never modify, stage, commit, or push.\n\n` +
-      `1. Read the changes by running:\n   ${diffCmds(mode)}\n` +
+      `1. Read the changes by running:\n   ${diffCmds(mode, base)}\n` +
       `2. Find real problems only: bugs, edge cases, regressions, security/perf issues. Skip style nits.\n` +
       `3. You MUST finish by POSTing your findings (this is the ONLY deliverable). For each finding give the file path and, when it maps to a specific changed line, the NEW-file line number so it can attach inline:\n` +
       `   curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/review/suggestions" -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' -d '{"comments":[{"path":"<file>","line":<new-file line number, optional>,"body":"<the issue + a concrete suggested fix>"}]}'\n` +

@@ -5388,7 +5388,7 @@ export async function handle(
           res,
           claude.explainChanges(
             id,
-            body.mode === 'pr' ? 'pr' : 'uncommitted'
+            body.mode === 'pr' ? 'pr' : body.mode === 'work' ? 'work' : 'uncommitted'
           )
         );
       } catch (e) {
@@ -5398,8 +5398,12 @@ export async function handle(
     }
     if (sub === 'changes/explanation' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // The headless explain/review runs pass `mode` explicitly (they know
+      // which comparison they were asked for). Older callers only pass `base`
+      // — keep inferring from it for backward compatibility, but that
+      // inference can only ever land on 'pr'/'uncommitted', never 'work'.
       const mode =
-        body.mode === 'pr' || body.mode === 'uncommitted'
+        body.mode === 'pr' || body.mode === 'uncommitted' || body.mode === 'work'
           ? body.mode
           : !body.base || body.base === 'HEAD'
             ? 'uncommitted'
@@ -5481,7 +5485,7 @@ export async function handle(
             res,
             claude.reviewChanges(
               id,
-              body.mode === 'pr' ? 'pr' : 'uncommitted'
+              body.mode === 'pr' ? 'pr' : body.mode === 'work' ? 'work' : 'uncommitted'
             )
           );
         } catch (e) {
