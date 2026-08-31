@@ -169,17 +169,25 @@ function UserMsg({ event }) {
         {text}
         {atts.length > 0 && (
           <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-1.5' : ''}`}>
-            {atts.map((a, i) => (
-              <span
-                key={i}
-                title={a.archive?.dir || undefined}
-                className="inline-flex items-center gap-1 rounded-md border border-[var(--term-userborder)] bg-black/10 px-1.5 py-0.5 text-[10px]"
-              >
-                <Icon icon={a.archive ? faBoxArchive : a.isImage ? faImage : faFile} /> {a.name}
-                {a.archive && !a.archive.error && ` (${a.archive.entryCount})`}
-                {a.archive?.error && ` (${t('chat.archiveExtractFailed')})`}
-              </span>
-            ))}
+            {atts.map((a, i) => {
+              // ZIP3: entriesTotal > entryCount with no hard error means a
+              // partial extraction — show "N/M", not a bare count that reads
+              // as a clean success.
+              const partial = a.archive && !a.archive.error && a.archive.entriesTotal > 0 && a.archive.entriesTotal !== a.archive.entryCount;
+              const problem = a.archive && (a.archive.error || partial);
+              return (
+                <span
+                  key={i}
+                  title={a.archive?.dir || undefined}
+                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${problem ? 'border-danger text-danger' : 'border-[var(--term-userborder)]'} bg-black/10`}
+                >
+                  <Icon icon={a.archive ? faBoxArchive : a.isImage ? faImage : faFile} /> {a.name}
+                  {a.archive && !a.archive.error && !partial && ` (${a.archive.entryCount})`}
+                  {partial && ` (${a.archive.entryCount}/${a.archive.entriesTotal})`}
+                  {a.archive?.error && ` (${t('chat.archiveExtractFailed')})`}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>

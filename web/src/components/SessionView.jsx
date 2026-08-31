@@ -1194,16 +1194,22 @@ function ChatFooter({ session }) {
         <div className="mb-2 flex flex-wrap gap-2">
           {attachments.map((a, i) => {
             const archiveLike = a.archive || isArchiveName(a.name);
+            // ZIP3: a partial extraction (entriesTotal > entryCount, no hard
+            // error) must look like a problem, not a quiet success — the bug
+            // this fixes was a chip that reported 57/1335 as if nothing had
+            // gone wrong.
+            const archivePartial = !!(a.archive && !a.archive.error && a.archive.entriesTotal > 0 && a.archive.entriesTotal !== a.archive.entryCount);
+            const archiveProblem = !a.uploading && !!(a.failed || (a.archive && (a.archive.error || archivePartial)));
             return (
               <div
                 key={i}
                 title={a.archive?.dir || undefined}
-                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${a.failed ? 'border-danger bg-[#fdf6f5]' : 'border-border bg-bg'}`}
+                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${archiveProblem ? 'border-danger bg-[#fdf6f5]' : 'border-border bg-bg'}`}
               >
                 {a.type?.startsWith('image/') && a.dataBase64 ? (
                   <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
                 ) : (
-                  <span className={`text-[12px] ${a.failed ? 'text-danger' : 'text-fgdim'}`}>
+                  <span className={`text-[12px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
                     <Icon icon={archiveLike ? faBoxArchive : a.type?.startsWith('image/') ? faImage : faFile} />
                   </span>
                 )}
@@ -1216,12 +1222,14 @@ function ChatFooter({ session }) {
                     <span className="max-w-[160px] truncate font-mono text-[9px] text-danger">{t('rail.attachUploadFailed', { msg: a.error || '' })}</span>
                   )}
                   {!a.uploading && !a.failed && a.archive && (
-                    <span className="font-mono text-[9px] text-fgdim">
+                    <span className={`font-mono text-[9px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
                       {a.archive.error
                         ? t('rail.archiveExtractFailed')
-                        : a.archive.entryCount === 1
-                          ? t('rail.archiveOneEntry')
-                          : t('rail.archiveNEntries', { n: a.archive.entryCount })}
+                        : archivePartial
+                          ? t('rail.archivePartial', { n: a.archive.entryCount, total: a.archive.entriesTotal })
+                          : a.archive.entryCount === 1
+                            ? t('rail.archiveOneEntry')
+                            : t('rail.archiveNEntries', { n: a.archive.entryCount })}
                       {a.archive.rejectedCount > 0 && ` · ${t('rail.archiveRejected', { n: a.archive.rejectedCount })}`}
                     </span>
                   )}

@@ -254,6 +254,7 @@ export const strings = {
   'rail.attachUploadFailed': 'ההעלאה נכשלה: {msg}',
   'rail.archiveOneEntry': 'פריט אחד',
   'rail.archiveNEntries': '{n} פריטים',
+  'rail.archivePartial': '{n} מתוך {total}',
   'rail.archiveRejected': '{n} נדחו',
   'rail.archiveExtractFailed': 'החילוץ נכשל',
   'rail.slashCommandsCapabilities': 'פקודות slash ויכולות',
