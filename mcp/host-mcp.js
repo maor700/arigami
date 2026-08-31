@@ -765,6 +765,75 @@ const TOOLS = [
     inputSchema: obj({ shared: { type: 'boolean', description: 'Agent sessions only: ALSO sync into the shared chrome-base (default false)' }, ...SID_PROP }),
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, { shared: a.shared === true }),
   },
+  // BROWSE1: the `browser` family — actually DRIVE the session's own Chrome
+  // (own desktop, own profile, per-A2 agent identity), not just view it.
+  // open_tab/capture_screen (the `desktop` family) show a page; these
+  // navigate one. Built on the existing CDP/xdotool plumbing — no playwright.
+  // Human-in-the-loop: browser_type refuses to type into a password/OTP field
+  // or on a page showing a CAPTCHA — it returns needsHuman/hint instead; call
+  // request_screen. `domains` (A3) is enforced on browser_open/browser_navigate,
+  // same as open_tab.
+  {
+    name: 'browser_open',
+    description:
+      'Ensure this session has its own desktop + Chrome (allocating both on first use) and open a url in it, or just focus the existing browser if url is omitted. ' +
+      'Returns {ok, url, title, screenshot:{url,ts}|null} — a screenshot card is posted in the chat (this is the "first page loaded" moment the machine-work skill asks for). ' +
+      'Reuses the SAME running Chrome across calls (never spawns a second instance) — subsequent navigation is browser_navigate. ' +
+      'Refused outside the agent\'s `domains` allowlist, same as open_tab.',
+    inputSchema: obj({ url: { type: 'string', description: 'Omit to just ensure/focus the browser without navigating' }, ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/open`, { url: a.url }),
+  },
+  {
+    name: 'browser_navigate',
+    description:
+      'Navigate the session\'s existing browser tab to a new url (opens the browser first if it is not running yet — same as browser_open). ' +
+      'Waits for the page to finish loading. Returns {ok, url, title}. Refused outside the agent\'s `domains` allowlist. ' +
+      'Does not screenshot — call browser_snapshot when you actually need to look at the result (machine-work: fewer, meaningful captures, not one per navigation).',
+    inputSchema: obj({ url: { type: 'string' }, ...SID_PROP }, ['url']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/navigate`, { url: a.url }),
+  },
+  {
+    name: 'browser_snapshot',
+    description:
+      'Look at the current page: a screenshot card (posted in chat, deduped like capture_screen) PLUS the page\'s url, title and visible text (innerText, truncated). ' +
+      'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop and call request_screen instead of clicking/typing further. ' +
+      'This is the browser_* equivalent of capture_screen — use it at the required moments (first page, before/after a hand-over, the end), not after every click.',
+    inputSchema: obj({ caption: { type: 'string', description: 'What this snapshot shows (short, factual) — used as the screenshot caption.' }, ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/snapshot`, { caption: a.caption }),
+  },
+  {
+    name: 'browser_click',
+    description:
+      'Click on the page at viewport coordinates {x,y} (from a browser_snapshot screenshot), or find-and-click the smallest element whose visible text/label/placeholder contains `text` (a button, link, field label…). ' +
+      'Coordinates are PAGE viewport pixels (CDP Input), not screen pixels — do not use xdotool-style screen coordinates here. Returns {ok, x, y}; throws if `text` matches nothing.',
+    inputSchema: obj({
+      x: { type: 'number' }, y: { type: 'number' },
+      text: { type: 'string', description: 'Find-and-click by visible text instead of coordinates' },
+      ...SID_PROP,
+    }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/click`, { x: a.x, y: a.y, text: a.text }),
+  },
+  {
+    name: 'browser_type',
+    description:
+      'Type text into whatever has focus on the page (CDP Input.insertText, unicode ok), optionally pressing Enter after (`submit:true`). ' +
+      'REFUSES and returns {ok:false, needsHuman:true, reason, hint} instead of typing when the focused field looks like a password/OTP/2FA input, or the page shows a CAPTCHA — ' +
+      'call request_screen in that case, per the machine-work rule (never type credentials/codes yourself). Click the field first with browser_click if it is not already focused.',
+    inputSchema: obj({ text: { type: 'string' }, submit: { type: 'boolean', description: 'Press Enter after typing (default false)' }, ...SID_PROP }, ['text']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/type`, { text: a.text, submit: a.submit === true }),
+  },
+  {
+    name: 'browser_scroll',
+    description: 'Scroll the page by (dx,dy) CSS pixels (default dy:600, i.e. one screen down) at an optional (x,y) viewport origin (default page center).',
+    inputSchema: obj({ dx: { type: 'number' }, dy: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' }, ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/scroll`, { dx: a.dx, dy: a.dy, x: a.x, y: a.y }),
+  },
+  {
+    name: 'browser_close',
+    description: 'Close this session\'s Chrome (never touches any other session\'s browser or the shared desktop). Safe to call even if it is not running.',
+    inputSchema: obj({ ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/close`, {}),
+  },
   {
     name: 'memory_write',
     description:

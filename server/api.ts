@@ -16,6 +16,7 @@ import { shareTokens } from './share-token.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
+import * as browserActions from './lib/browser-actions.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
 import * as policy from './agent-policy.js';
@@ -3252,11 +3253,15 @@ export async function handle(
 
     if (p === '/__api/screen/status' && m === 'GET') {
       // Global (no ?session=) or a session's own machine, if it has one —
-      // whichever the sidebar icon / side panel is asking about.
+      // whichever the sidebar icon / side panel is asking about. `own` (T8c)
+      // tells the caller whether `available`/`display` describe THIS session's
+      // own desktop or the shared fallback — the machine side panel must never
+      // render the fallback as if it were the session's, see ScreenSidePanel.jsx.
       const sessionId = u.searchParams.get('session') || undefined;
+      const own = !!sessionId && !!(state.getSession(sessionId)?.metadata as any)?.screen?.vncPort;
       const target = desktops.screenTarget(sessionId);
       const available = !!cfg.screen?.enabled && (await probeVnc(target.vncHost, target.vncPort));
-      return json(res, { available, ...(sessionId ? { display: target.display } : {}) });
+      return json(res, { available, ...(sessionId ? { display: target.display, own } : {}) });
     }
     // Settings → screen: the VNC-auth password. Never echoed back — the UI
     // only learns whether one is set. Empty string clears it.
@@ -4894,6 +4899,22 @@ export async function handle(
         return json(res, { ok: false, error: `screenshot failed: ${(e as Error).message}` }, 503);
       }
     }
+    // BROWSE1: browser_open — like the legacy `browser` route below (same
+    // openChrome underneath) but ALSO navigates + screenshots + returns
+    // {url,title}, matching the browser_* tool contract in the spec.
+    if (sub === 'browser/open' && m === 'POST') {
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      const url = body?.url ? String(body.url) : undefined;
+      if (url) {
+        const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'browser_open', { url }, id);
+        if (!v.allow) return json(res, { error: v.reason }, 403);
+      }
+      try {
+        return json(res, await browserActions.open(id, url));
+      } catch (e) {
+        return json(res, { ok: false, error: `browser open failed: ${(e as Error).message}` }, 503);
+      }
+    }
     // Chrome helper (T8 §3): opens (or reports already-open) this session's
     // browser on its own desktop + profile copy. Used by skills/_lib/chrome.sh.
     if (sub === 'browser' && m === 'POST') {
@@ -4903,6 +4924,67 @@ export async function handle(
         return json(res, { ok: true, ...r });
       } catch (e) {
         return json(res, { ok: false, error: `browser open failed: ${(e as Error).message}` }, 503);
+      }
+    }
+    // BROWSE1: browser_* host tools — an agent with `browser` (or `desktop`)
+    // actually driving the session Chrome over CDP/xdotool (server/lib/
+    // browser-actions.ts), not just proxying a url into a cockpit iframe.
+    // Domain allowlist (A3) is enforced here, same as `tabs` does for open_tab.
+    if (sub === 'browser/navigate' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), 'browser_navigate', { url: body?.url }, id);
+      if (!v.allow) return json(res, { error: v.reason }, 403);
+      try {
+        return json(res, await browserActions.navigate(id, String(body?.url || '')));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 503);
+      }
+    }
+    if (sub === 'browser/snapshot' && m === 'POST') {
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        return json(res, await browserActions.snapshot(id, body?.caption ? String(body.caption).slice(0, 300) : undefined));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 503);
+      }
+    }
+    if (sub === 'browser/click' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      try {
+        return json(res, await browserActions.click(id, { x: body?.x, y: body?.y, text: body?.text }));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    if (sub === 'browser/type' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      try {
+        return json(res, await browserActions.type(id, String(body?.text || ''), body?.submit === true));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    if (sub === 'browser/scroll' && m === 'POST') {
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        return json(res, await browserActions.scroll(id, { x: body?.x, y: body?.y, dx: body?.dx, dy: body?.dy }));
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    if (sub === 'browser/close' && m === 'POST') {
+      return json(res, browserActions.close(id));
+    }
+    // T8c / BROWSE1: explicit allocation for the machine side panel's empty
+    // state — the same ensureDesktop() the browser_* tools and request_screen
+    // use lazily, exposed so the HUMAN can trigger "give this session its own
+    // machine" from a button instead of only the agent.
+    if (sub === 'screen/allocate' && m === 'POST') {
+      try {
+        const info = await desktops.ensureDesktop(id);
+        return json(res, { ok: true, display: info.display });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 503);
       }
     }
     // save_browser_logins(): sync this session's cookies/Login Data/Local

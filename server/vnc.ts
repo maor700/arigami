@@ -11,7 +11,7 @@
 import net from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
 import { cfg } from './state.js';
-import { screenTarget } from './lib/desktops.js';
+import { screenTarget, ensureDesktop } from './lib/desktops.js';
 
 // noVNC's RFB class opens the socket with `new WebSocket(url, ['binary'])`
 // and expects the server to select that subprotocol back — without it some
@@ -21,8 +21,16 @@ const wss = new WebSocketServer({
   handleProtocols: (protocols: Set<string>) => (protocols.has('binary') ? 'binary' : false),
 });
 
-wss.on('connection', (ws: WebSocket, req: any) => {
+wss.on('connection', async (ws: WebSocket, req: any) => {
   const sessionId = new URL(req.url || '/', 'http://localhost').searchParams.get('session');
+  // T8c / BROWSE1: an explicit ?session= must show THAT session's own machine,
+  // never silently fall back to the shared :99 desktop just because it hasn't
+  // been allocated yet — allocate it now (same lazy-alloc the agent's own
+  // request_screen/capture_screen trigger). Only a genuine allocation failure
+  // (screen sharing disabled, port range exhausted) falls through to
+  // screenTarget()'s global fallback below.
+  if (sessionId) { try { await ensureDesktop(sessionId); } catch { /* fall back below */ } }
+  if (ws.readyState !== 1 /* OPEN */) return; // client gone while we awaited allocation
   const { vncHost, vncPort } = screenTarget(sessionId);
   const tcp = net.connect(vncPort, vncHost);
 
