@@ -67,7 +67,7 @@ export const strings = {
   'agent.page.saveFailed': 'השמירה נכשלה: {err}',
   'agent.page.openHome': 'פתח צ׳אט בית',
   'agent.page.delete': 'מחק סוכן',
-  'agent.page.deleteConfirm': 'למחוק את הסוכן "{name}"? הפרסונה והזיכרון שלו יימחקו; הסשנים שלו נשארים.',
+  'agent.page.deleteConfirm': 'למחוק לצמיתות את "{name}"? יימחקו: צ׳אט הבית שלו, תזמוני ה-cron שנולדו ממנו, והפרסונה/זיכרון/פרופיל הדפדפן שלו. סשנים שכבר נוצרו ממנו יישארו — הם רק יאבדו את התג.',
   'agent.page.deleted': 'הסוכן נמחק',
   'agent.page.memoryDoc': 'MEMORY.md (מרחב הסוכן)',
   'agent.page.memoryHint': 'זה הזיכרון הפרטי של הסוכן — USER.md (עובדות עליך) משותף לכל הסוכנים.',

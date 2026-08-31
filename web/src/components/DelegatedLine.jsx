@@ -8,13 +8,34 @@
 // which is exactly the confusion this spec is about).
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
-import { toastError } from '../lib/toast.js';
+import { toastError, toastSuccess } from '../lib/toast.js';
 import { AgentAvatar } from './AgentCard.jsx';
 
 export const openSession = (id) => window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id } }));
 // `draftName` only matters for slug '__new__' (the AgentView create-mode surface) —
 // it prefills the name field so `/agent new <name>` doesn't lose what was typed.
 export const openAgent = (slug, tab, draftName) => window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug, tab, draftName } }));
+
+// UX4 — the one delete flow, shared by the rail's Team row menu and the agent
+// surface header, so both entry points ask the same question and do the same
+// thing (DELETE /agents/:slug: removes the agent's home chat + cron jobs born
+// from it + persona/memory/browser dir; work sessions stay, just lose the
+// badge — see server/api.ts DELETE /__api/agents/:slug). The rail has no
+// reference to the surface if it happens to be open on this agent, so success
+// is announced as an event instead of a callback — App.jsx closes the surface
+// if it's showing the agent that just went away.
+export async function deleteAgentConfirmed(agent, t) {
+  if (!window.confirm(t('agent.page.deleteConfirm', { name: agent.name }))) return false;
+  try {
+    await api.del(`/agents/${encodeURIComponent(agent.slug)}`);
+    toastSuccess(t('agent.page.deleted'));
+    window.dispatchEvent(new CustomEvent('host:agent-deleted', { detail: { slug: agent.slug } }));
+    return true;
+  } catch (e) {
+    toastError(e?.message || String(e));
+    return false;
+  }
+}
 
 const short = (s, n = 44) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s || '');
 

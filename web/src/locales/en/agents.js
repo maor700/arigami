@@ -67,7 +67,7 @@ export const strings = {
   'agent.page.saveFailed': 'Save failed: {err}',
   'agent.page.openHome': 'Open home chat',
   'agent.page.delete': 'Delete agent',
-  'agent.page.deleteConfirm': 'Delete agent "{name}"? Its persona and memory are removed; its sessions stay.',
+  'agent.page.deleteConfirm': 'Permanently delete "{name}"? This removes its home chat, cron jobs born from it, and its persona/memory/browser profile. Sessions already created from it stay — they just lose the badge.',
   'agent.page.deleted': 'Agent deleted',
   'agent.page.memoryDoc': 'MEMORY.md (agent namespace)',
   'agent.page.memoryHint': 'This is the agent’s own memory — USER.md (facts about you) is shared with every agent.',
