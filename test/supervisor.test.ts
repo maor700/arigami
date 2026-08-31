@@ -6,6 +6,7 @@ import {
   classify,
   decide,
   effectiveChain,
+  floorActivity,
   freshWatermark,
   nextRung,
   resetOnProgress,
@@ -102,6 +103,74 @@ describe('classify — the five health states', () => {
   test('every health state has a rail dot', () => {
     for (const s of ['RUNNING', 'IDLE_OK', 'WAITING_HUMAN', 'BLOCKED_SYSTEM', 'STALLED'] as Health[])
       expect(HEALTH_DOT[s]).toBeTruthy();
+  });
+});
+
+// SUP1: a controller/PM that is idle only because its children are still
+// working was misclassified STALLED and nudged — waiting on children IS the
+// controller's correct resting state. `owedButBusy` reproduces the shape that
+// actually mis-fired live: a session that is ALSO a worker of some higher
+// master (has not reported up yet) but is correctly quiet because the work it
+// owns right now belongs to its own children.
+describe('SUP1 — a controller waiting on its own children is IDLE_OK, not STALLED', () => {
+  const owedButBusy: Partial<SessionView> = { master: 'grandparent', reported: false, lastActivityAt: ago(20 * 60_000) };
+
+  test('a live (non-archived, non-terminal) child → IDLE_OK', () => {
+    const cl = classify(view({ ...owedButBusy, hasLiveChildren: true }), th);
+    expect(cl.state).toBe('IDLE_OK');
+    expect(cl.reason).toBe('waiting-on-children');
+  });
+
+  test('…and decide() never nudges, respawns or escalates it', () => {
+    const d = decide({ view: view({ ...owedButBusy, hasLiveChildren: true }), thresholds: th });
+    expect(d.action).toBe('none');
+  });
+
+  test('a waitingOn record the child has not answered yet → IDLE_OK', () => {
+    const waitingOn = { sessionId: 'c1', since: new Date(ago(60_000)).toISOString(), what: 'merge the branch' };
+    const cl = classify(view({ ...owedButBusy, waitingOn, waitingOnChildGone: false }), th);
+    expect(cl.state).toBe('IDLE_OK');
+    expect(cl.reason).toBe('waiting-on-child');
+  });
+
+  test('a waitingOn record whose child is gone does NOT shield it — still STALLED', () => {
+    const waitingOn = { sessionId: 'c1', since: new Date(ago(60_000)).toISOString(), what: 'merge the branch' };
+    const cl = classify(view({ ...owedButBusy, waitingOn, waitingOnChildGone: true }), th);
+    expect(cl.state).toBe('STALLED');
+  });
+
+  test('no live children and no waitingOn, quiet past the threshold → still a genuine STALLED', () => {
+    const cl = classify(view({ ...owedButBusy, hasLiveChildren: false }), th);
+    expect(cl.state).toBe('STALLED');
+    // reportSynthesized: true isolates the STALLED ladder step from the
+    // separate (and already-tested) synthesize-report rung ahead of it.
+    const d = decide({
+      view: view({ ...owedButBusy, hasLiveChildren: false }),
+      watermark: wm({ reportSynthesized: true }),
+      thresholds: th,
+    });
+    expect(d.action).toBe('nudge');
+  });
+
+  test('WAITING_HUMAN still wins over a live child', () => {
+    const cl = classify(view({ ...owedButBusy, hasLiveChildren: true, action: true }), th);
+    expect(cl.state).toBe('WAITING_HUMAN');
+  });
+});
+
+describe('floorActivity — a fresh stall window once owned work clears (SUP1 §3)', () => {
+  test('no owned-work floor recorded yet → activity passes through unchanged', () => {
+    expect(floorActivity(ago(999_000), 0)).toBe(ago(999_000));
+  });
+
+  test('real activity already newer than the floor → passes through unchanged', () => {
+    expect(floorActivity(ago(10_000), ago(60_000))).toBe(ago(10_000));
+  });
+
+  test('stale activity gets floored at the moment owned work was last observed', () => {
+    // A controller whose last child JUST finished must not be judged against
+    // hours-old transcript activity — it gets a fresh stall window from now.
+    expect(floorActivity(ago(60 * 60_000), ago(5_000))).toBe(ago(5_000));
   });
 });
 
