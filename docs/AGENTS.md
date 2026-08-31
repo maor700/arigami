@@ -251,7 +251,7 @@ until now) become real.
 
 ## Tool allowlist — `tools` (`server/agent-policy.ts`)
 
-Entries may be a **family** (the A1 checkboxes: `desktop`, `whatsapp`, `gmail`, `calendar`,
+Entries may be a **family** (the A1 checkboxes: `desktop`, `browser`, `whatsapp`, `gmail`, `calendar`,
 `drive`, `git`, `sessions`, `triggers`, `web`, `publish` — expanded by `FAMILIES`), a host tool name
 (`open_tab` / `mcp__arigami__open_tab`), an external MCP pattern (`mcp__composio-mcp__GMAIL_*`,
 `mcp__whatsapp`), or a Claude Code built-in (`Bash`, `Edit`, `WebFetch`). No `tools` = unrestricted.
@@ -275,20 +275,22 @@ Four layers, outer to inner:
    partial external allowlists (`GMAIL_*` but not `GOOGLEDRIVE_*`) and the domain allowlist real.
 3. **Host MCP filtering** — `mcp/host-mcp.js` asks `GET /__api/sessions/:id/policy?names=…` on
    `tools/list` and hides the arigami tools that are not allowed; a call to a hidden one is refused.
-4. **REST guards** — `POST /__api/sessions/:id/tabs {type:'url'}` (open_tab) refuses a URL outside
-   `domains` (403).
+4. **REST guards** — `POST /__api/sessions/:id/tabs {type:'url'}` (open_tab) and
+   `POST /__api/sessions/:id/browser/{open,navigate}` (BROWSE1) refuse a URL outside `domains` (403).
 
 Every denial is a `policy` line in the agent's ledger (below) and shows in the Activity tab.
 
 ## Domain allowlist — `domains`
 
 `example.com` matches itself and subdomains, `*.example.com` only subdomains, `*` everything;
-loopback and relative paths (dev servers, `/__pr/…`) always pass. Enforced on **`open_tab`** (REST)
-and **`WebFetch`** (hook, `tool_input.url`).
+loopback and relative paths (dev servers, `/__pr/…`) always pass. Enforced on **`open_tab`**,
+**`browser_open`/`browser_navigate`** (BROWSE1, REST) and **`WebFetch`** (hook, `tool_input.url`).
 
-**Not enforceable by the host, documented only:** pages the agent reaches by driving Chrome on the
-desktop (xdotool/typing a URL), `curl`/`wget` inside `Bash`, and requests external MCP servers make on
-their own. Keep `desktop`/`git` (Bash) out of `tools` when the domain list must be airtight.
+**Not enforceable by the host, documented only:** a page the agent reaches by `browser_click`ing a
+link or `browser_type`ing a URL into the address bar (once the tab is already open, nothing stops
+it navigating itself further — same limit xdotool always had), `curl`/`wget` inside `Bash`, and
+requests external MCP servers make on their own. Keep `desktop`/`browser`/`git` (Bash) out of
+`tools` when the domain list must be airtight.
 
 ## Daily token budget — `budget.tokensPerDay` (`server/agent-ledger.ts`)
 
@@ -845,3 +847,98 @@ a session or an agent-card).
   name), so a typo just 404s/`unknown-agent`s like any other host command.
 - Adoption is a single-slot "what ran before" — adopting three agents in a row
   without reverting only remembers the last swap, not the whole chain.
+
+---
+
+# BROWSE1 — an agent must be able to actually drive a browser
+
+Two gaps, found together: (1) `desktop`'s tools (`open_tab`/`capture_screen`/`request_screen`) let
+an agent **show** a page, none of them **drive** the session's own Chrome — the only documented way
+was `Bash` + `skills/_lib/chrome.sh`, and `Bash` lives in `git`, which a non-coding agent (`desktop`
++ `web`, no `git`) has no business holding; (2) the machine side panel could silently render the
+*shared* :99 desktop for a session that had no display of its own yet — the same failure mode T8 was
+built to prevent for `capture_screen`/`request_screen`, just missed in the panel's own WebSocket path.
+
+## 1 — the `browser` family
+
+`browser_open/navigate/snapshot/click/type/scroll/close` (`mcp/host-mcp.js`, REST under
+`/__api/sessions/:id/browser/*`, logic in `server/lib/browser-actions.ts`) drive the session's
+**own** Chrome (own desktop, own profile — A2 agent-seeded) over the **existing** CDP/xdotool
+plumbing — `server/lib/chrome.ts` (launch/profile), `server/lib/chrome-cdp.ts` (now exports
+`cdpCall`/`frontPage`/`pageNavigate`/`pageEvaluate`/`pageClick`/`pageScroll` alongside the F8
+take-over helpers it already had) and `screenshots.ts` (capture). No playwright, no new runtime
+dependency — the point of BROWSE1 was to replace the removed playwright MCP with something that
+reuses what the host already runs.
+
+- `browser_open({url?})` — `ensureDesktop` + `openChrome` (same as `skills/_lib/chrome.sh`), then
+  navigates and screenshots. Reuses the SAME running Chrome across calls, same as the shell helper.
+- `browser_navigate({url})` waits for `document.readyState === 'complete'` (best-effort, 15s) and
+  does **not** screenshot — machine-work's "required moments only" rule; call `browser_snapshot`
+  when you actually need to look.
+- `browser_snapshot()` — screenshot + `{url, title, text}` (`document.body.innerText`, 8000 chars)
+  + `{needsHuman, reason, hint}` (see below).
+- `browser_click({x,y}|{text})` — CDP `Input.dispatchMouseEvent` at **viewport** coordinates (not
+  xdotool screen coordinates); `{text}` finds the smallest matching clickable element via
+  `getBoundingClientRect` after `scrollIntoView`.
+- `browser_type({text, submit?})` — CDP `Input.insertText` (falls back to `xinput.py` XTEST when no
+  page target — same helper `typeIntoDesktop` already used for the take-over "type into the desktop"
+  field), then optionally `Enter`.
+- `browser_scroll({dx?,dy?,x?,y?})` — `Input.dispatchMouseEvent` `mouseWheel`.
+- `browser_close()` — `chrome.closeChrome`, this session's pid only (never `pkill`).
+
+**FAMILIES**: `browser` is its own checkbox AND folded into `desktop` (an agent that already ticked
+`desktop` gets browsing for free; `browser` alone grants driving without the rest of `desktop`).
+
+**Domains (A3)**: `browser_open`/`browser_navigate` are in `agent-policy.ts`'s `URL_TOOLS`, checked
+in the REST handler before any Chrome call (`policy.checkToolCall(…, 'browser_open'/'browser_navigate', {url})`)
+— same 403 shape as `open_tab`. What that check **cannot** see: navigation the agent causes by
+`browser_click`ing a link or `browser_type`ing into the address bar once a tab is open — same
+inherent gap `xdotool` always had (see the Domain allowlist section above).
+
+**Human-in-the-loop**: `humanGate()` (`browser-actions.ts`) runs a small `Runtime.evaluate` snippet
+that checks the focused element (`type==="password"`, `autocomplete` of `current-password` /
+`one-time-code`, or a name/id matching `otp|2fa|mfa|verification code`) and the page (a
+`recaptcha`/`hcaptcha`/`captcha`-named iframe or element). `browser_type` **refuses** to type when
+the gate fires — returns `{ok:false, needsHuman:true, reason, hint}` instead — and `browser_snapshot`
+always reports it so the agent notices *before* it tries. The hint is always "call `request_screen`",
+same rule the machine-work skill already states for `request_screen` itself.
+
+**F8 / Google sign-in rule, unaffected**: `openChrome()` already starts every session's Chrome with
+`--remote-debugging-port=0` (Chrome picks its own loopback port, writes it to `DevToolsActivePort`) —
+see [[session-chrome-cdp-google-block]] / [[facebook-browser-driving]]. `browser_*` reuses that SAME
+port through `chrome-cdp.ts`; there is no fixed/predictable port and no relaunch trick needed, because
+one was never needed for reading (only the OLD memory note's *pre-F8* recollection needed a relaunch).
+
+## 2 — the machine panel shows the SESSION's display, never the shared one silently
+
+- `GET /__api/screen/status?session=<id>` now returns `own` (`true` when
+  `session.metadata.screen.vncPort` is set) alongside `available`/`display` — the field
+  `ScreenSidePanel.jsx` uses to tell "this session's own machine" from "the shared-desktop values
+  `screenTarget()` falls back to when there's nothing allocated yet."
+- `POST /__api/sessions/:id/screen/allocate` — explicit `ensureDesktop(id)`, for the panel's empty
+  state's button (the same allocation `capture_screen`/`request_screen`/`browser_open` already do
+  lazily, now human-triggerable too).
+- `server/vnc.ts`'s `/__vnc` WebSocket bridge — the actual video path — now `ensureDesktop(sessionId)`
+  before connecting whenever `?session=` is given, instead of going straight to `screenTarget()`
+  (which silently returns the global `:99` target when nothing was allocated). Chosen over "refuse":
+  an explicit session id means the caller wants THAT session's machine, so give it one. Only a real
+  allocation failure (screen sharing off, port range exhausted) still falls through to the global
+  fallback — the pre-existing behaviour for that edge case.
+- `ScreenSidePanel.jsx` — no `ScreenView` (and therefore no `/__vnc?session=…` connection) is
+  rendered until `own` is known to be true; `own === false` renders `ScreenEmptyState` instead: "לסשן
+  הזה אין עדיין מכונה" + a button that calls `screen/allocate` + a clearly separate "המכונה המשותפת ←"
+  link that opens the existing global modal (`setScreenModal(true)`, no `sessionId` — always was a
+  distinct code path, just not distinctly *labelled*: the rail icon's title changed from "מסך"/"Screen"
+  to "המכונה המשותפת"/"Shared machine").
+
+## Tests
+
+`test/browse1-policy.test.ts` (family expansion incl. the `desktop` compatibility fold, domain
+allowlist on `browser_open`/`browser_navigate`, web `TOOL_FAMILIES` sync), `test/browse1-host.test.ts`
+(isolated host: `/policy` hides `browser_*` without the family and shows exactly them with it, 403
+outside `domains` before touching Chrome, clean 4xx from `/browser/*` with no browser open yet,
+`browser_close` always safe, `/screen/status` `own` before/after `metadata.screen` is set),
+`test/browse1-web.test.js` (`ScreenEmptyState` markup: the empty message, the allocate button, the
+distinctly-labelled shared-machine link). Real Chrome/Xvfb are not exercised in `bun test` (same
+boundary `chrome.ts`/`vnc.ts` already had zero coverage of) — verified live instead on an isolated
+instance (`allocate_port`), screenshotted, then torn down.
