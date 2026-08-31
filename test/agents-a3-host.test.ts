@@ -292,6 +292,17 @@ test('activity REST: entries per range with totals + budget; artifacts are logge
   expect(act.entries[0].ts >= act.entries[act.entries.length - 1].ts).toBe(true); // newest first
   expect(act.entries.some((e: any) => e.kind === 'artifact' && e.detail === 'Report')).toBe(true);
   expect(act.sessions.some((s: any) => s.id === botSession)).toBe(true);
+  // RES2: cost must round-trip through this exact REST surface — every 'turn'
+  // line the ledger wrote carries a real costUsd, the range totals sum it, and
+  // the per-session rollup (the "runs" tab) does too. A field-name mismatch
+  // between producer (claude.js) and any of these three consumers would render
+  // as a silent $0 here, not a crash — assert non-zero, not just present.
+  expect(act.totals.costUsd).toBeGreaterThan(0);
+  const turnEntries = act.entries.filter((e: any) => e.kind === 'turn');
+  expect(turnEntries.length).toBeGreaterThanOrEqual(4);
+  for (const e of turnEntries) expect(e.costUsd).toBeGreaterThan(0);
+  const botRun = act.sessions.find((s: any) => s.id === botSession);
+  expect(botRun.costUsd).toBeGreaterThan(0);
   expect((await api('GET', '/__api/agents/bot/activity?range=30d')).json.totals.tokens).toBe(act.totals.tokens);
   expect((await api('GET', '/__api/agents/free/activity')).json.totals).toMatchObject({ tokens: 0, turns: 0 });
 });
