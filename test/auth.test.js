@@ -241,6 +241,8 @@ describe('gate', () => {
     expect(page.headers.get('location')).toBe('/__host/');
     expect((await get('/some-proxied-asset.js')).status).toBe(401);
     expect((await get('/__artifacts/abc/index.html', { accept: 'text/html' })).status).toBe(302);
+    // ZIP: the streamed attachment upload is gated like any other session route.
+    expect((await get('/__api/sessions/sess_a/attachments')).status).toBe(401);
   });
   test('public allowlist passes without a credential and carries no principal', async () => {
     for (const p of ['/__api/auth/me', '/__api/config', '/__host/', '/__host/index.js', '/', '/__health', '/__poc-sw.js', '/__api/sms/inbound?body=x', '/__api/webhooks/sms', '/__api/webhooks/slack', '/__api/webhooks/github', '/__api/webhooks/custom/my-hook']) {
