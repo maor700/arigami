@@ -13,6 +13,41 @@ export const HARD_CAP = 200 * 1024 * 1024; // 200MB — matches the server's ATT
 
 export const shouldStream = (file) => file.size >= STREAM_THRESHOLD;
 
+// ZIP2: a streamed chip used to be tracked by object identity (`x === placeholder`)
+// — the first progress update already replaces the placeholder with a new
+// object, so every later update (more progress, done, fail) matched nothing
+// and the chip froze at whatever % the first event reported. `uid` is a
+// stable key that survives every replacement in the list.
+let uidSeq = 0;
+export const makeUid = () =>
+  (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${++uidSeq}-${Math.random()}`;
+
+/** The chip shown for a streamed upload from the moment it starts. */
+export const pendingAttachment = (file) => ({
+  uid: makeUid(),
+  name: file.name,
+  type: file.type || 'application/octet-stream',
+  size: file.size,
+  uploading: true,
+  progress: 0,
+});
+
+/** Applies one upload lifecycle event (progress/done/fail) to the attachment list, matched by `uid`. */
+export function applyUploadEvent(list, uid, event) {
+  return list.map((x) => {
+    if (x.uid !== uid) return x;
+    if (event.type === 'progress') return { ...x, progress: event.progress };
+    if (event.type === 'done') return { ...event.descriptor, uid, uploading: false };
+    if (event.type === 'fail') return { ...x, uploading: false, failed: true, error: event.error };
+    return x;
+  });
+}
+
+// ZIP2: a re-drag of a file already in the draft would otherwise spool a
+// second full copy server-side (and a third, and a fourth...) for no reason.
+export const isAlreadyAttached = (list, file) =>
+  list.some((a) => a.name === file.name && a.size === file.size && !a.failed);
+
 export const fileToBase64 = (file) =>
   new Promise((resolve) => {
     const r = new FileReader();

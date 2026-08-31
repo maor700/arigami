@@ -9,7 +9,7 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
-import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment } from '../lib/attachments.js';
+import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
@@ -979,9 +979,12 @@ function ChatFooter({ session }) {
   // descriptor comes back (with the extracted tree, for a zip/tar).
   const addFiles = async (fileList) => {
     const arr = Array.from(fileList || []);
-    const oversized = arr.filter((f) => f.size > HARD_CAP);
+    // ZIP2: a re-drag of a file already in the draft (same name+size) is
+    // dropped here instead of spooling another full copy server-side.
+    const fresh = arr.filter((f) => !isAlreadyAttached(attachments, f));
+    const oversized = fresh.filter((f) => f.size > HARD_CAP);
     for (const f of oversized) toastError(new Error(t('rail.attachTooLarge', { name: f.name })));
-    const accepted = arr.filter((f) => f.size <= HARD_CAP);
+    const accepted = fresh.filter((f) => f.size <= HARD_CAP);
     const small = accepted.filter((f) => !shouldStream(f));
     const big = accepted.filter(shouldStream);
 
@@ -992,19 +995,28 @@ function ChatFooter({ session }) {
       setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
     }
     for (const f of big) {
-      const placeholder = { name: f.name, type: f.type || 'application/octet-stream', size: f.size, uploading: true, progress: 0 };
+      const placeholder = pendingAttachment(f);
       setAttachments((a) => [...a, placeholder].slice(0, 10));
       try {
         const descriptor = await uploadAttachment(session.id, f, {
-          onProgress: (p) => setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, progress: p } : x))),
+          onProgress: (p) => setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'progress', progress: p })),
         });
-        setAttachments((a) => a.map((x) => (x === placeholder ? { ...descriptor, uploading: false } : x)));
+        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'done', descriptor }));
       } catch (e) {
-        setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, uploading: false, failed: true, error: errText(e) } : x)));
+        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'fail', error: errText(e) }));
       }
     }
   };
-  const removeAttachment = (i) => setAttachments((a) => a.filter((_, k) => k !== i));
+  const removeAttachment = (i) => {
+    // ZIP2: a streamed upload already landed on disk (has `.path`) — reclaim
+    // the spooled copy + extraction dir now that the chip is gone, instead of
+    // leaving it in ~/.arigami/uploads until someone cleans it up by hand.
+    const item = attachments[i];
+    if (item?.path && !item.uploading) {
+      api.del(`/sessions/${session.id}/attachments?path=${encodeURIComponent(item.path)}`).catch(() => {});
+    }
+    setAttachments((a) => a.filter((_, k) => k !== i));
+  };
 
   // Guards against a double-fire from the Enter-keydown handler and the Send
   // button's onClick landing in the same tick, before React re-renders to

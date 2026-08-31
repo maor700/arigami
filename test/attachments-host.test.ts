@@ -216,6 +216,44 @@ sys.stdout.buffer.write(buf.getvalue())
   expect(injected).toContain('2 entries');
 });
 
+test('ZIP2: DELETE .../attachments removes the spooled file and its extraction dir', async () => {
+  const py = Bun.spawnSync(['python3', '-c', `
+import zipfile, io
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr('a.txt', 'aaa')
+import sys
+sys.stdout.buffer.write(buf.getvalue())
+`]);
+  expect(py.exitCode).toBe(0);
+
+  const up = await fetch(`${base}/__api/sessions/${sid}/attachments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/zip', 'x-arigami-filename': 'removeme.zip' },
+    body: py.stdout,
+  });
+  expect(up.status).toBe(201);
+  const descriptor = await up.json();
+  expect(fs.existsSync(descriptor.path)).toBe(true);
+  expect(fs.existsSync(descriptor.archive.dir)).toBe(true);
+
+  const del = await fetch(`${base}/__api/sessions/${sid}/attachments?path=${encodeURIComponent(descriptor.path)}`, { method: 'DELETE' });
+  expect(del.status).toBe(200);
+  expect((await del.json()).ok).toBe(true);
+  expect(fs.existsSync(descriptor.path)).toBe(false);
+  expect(fs.existsSync(descriptor.archive.dir)).toBe(false);
+});
+
+test('ZIP2: DELETE .../attachments refuses a path outside this session\'s upload dir', async () => {
+  const outside = path.join(os.tmpdir(), `arigami-zip2-outside-${Date.now()}.txt`);
+  fs.writeFileSync(outside, 'do not delete me');
+  const del = await fetch(`${base}/__api/sessions/${sid}/attachments?path=${encodeURIComponent(outside)}`, { method: 'DELETE' });
+  expect(del.status).toBe(200);
+  expect((await del.json()).ok).toBe(false);
+  expect(fs.existsSync(outside)).toBe(true);
+  fs.rmSync(outside, { force: true });
+});
+
 test('an inline base64 archive (small enough for the JSON path) is described the same way', async () => {
   const py = Bun.spawnSync(['python3', '-c', `
 import zipfile, io, base64

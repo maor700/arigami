@@ -101,3 +101,82 @@ describe('uploadAttachment', () => {
     await expect(p).rejects.toThrow();
   });
 });
+
+// ZIP2 regression: the chip used to be tracked by object identity — the first
+// progress update already swaps the placeholder for a new object, so every
+// later event (more progress, done, fail) matched nothing and the chip froze
+// at whatever % the first event reported. These drive the same lifecycle
+// through the `uid`-keyed reducer and assert every step lands on the SAME entry.
+describe('applyUploadEvent', () => {
+  test('multiple progress events all update the same entry, by uid — not by object identity', () => {
+    const f = file('bundle.zip', attachments.STREAM_THRESHOLD + 1);
+    const placeholder = attachments.pendingAttachment(f);
+    let list = [placeholder];
+
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.1 });
+    expect(list[0]).not.toBe(placeholder); // confirms the update DOES replace the object...
+    expect(list[0].progress).toBe(0.1);
+
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.5 });
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.9 });
+    expect(list).toHaveLength(1);
+    expect(list[0].progress).toBe(0.9); // ...yet later events still find it, via uid
+    expect(list[0].uploading).toBe(true);
+  });
+
+  test('completion after several progress events replaces the entry with the descriptor', () => {
+    const f = file('bundle.zip', attachments.STREAM_THRESHOLD + 1);
+    const placeholder = attachments.pendingAttachment(f);
+    let list = [placeholder];
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.3 });
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.7 });
+
+    const descriptor = { name: 'bundle.zip', path: '/tmp/x/bundle.zip', type: 'application/zip', size: f.size, archive: { entryCount: 3 } };
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'done', descriptor });
+
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ ...descriptor, uploading: false });
+    expect(list[0].progress).toBeUndefined(); // the descriptor fully replaces the placeholder, no stale progress left over
+  });
+
+  test('a failure after progress events marks the same entry failed, not a stray one', () => {
+    const f = file('bundle.zip', attachments.STREAM_THRESHOLD + 1);
+    const placeholder = attachments.pendingAttachment(f);
+    let list = [{ name: 'other.txt', size: 5 }, placeholder];
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'progress', progress: 0.2 });
+    list = attachments.applyUploadEvent(list, placeholder.uid, { type: 'fail', error: 'HTTP 500' });
+
+    expect(list).toHaveLength(2);
+    expect(list[0]).toEqual({ name: 'other.txt', size: 5 }); // untouched
+    expect(list[1]).toMatchObject({ uploading: false, failed: true, error: 'HTTP 500' });
+  });
+
+  test('an event for an unknown uid changes nothing', () => {
+    const list = [attachments.pendingAttachment(file('a.zip', attachments.STREAM_THRESHOLD + 1))];
+    const next = attachments.applyUploadEvent(list, 'no-such-uid', { type: 'progress', progress: 0.5 });
+    expect(next).toEqual(list);
+  });
+
+  test('pendingAttachment mints a distinct uid per call', () => {
+    const a = attachments.pendingAttachment(file('a.zip', attachments.STREAM_THRESHOLD + 1));
+    const b = attachments.pendingAttachment(file('b.zip', attachments.STREAM_THRESHOLD + 1));
+    expect(a.uid).toBeTruthy();
+    expect(a.uid).not.toBe(b.uid);
+  });
+});
+
+describe('isAlreadyAttached', () => {
+  test('true for a name+size already in the list', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000 }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 177000000))).toBe(true);
+  });
+  test('false when the name or size differs', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000 }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 999))).toBe(false);
+    expect(attachments.isAlreadyAttached(list, file('other.zip', 177000000))).toBe(false);
+  });
+  test('a failed entry does not block re-attaching the same file', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000, failed: true }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 177000000))).toBe(false);
+  });
+});

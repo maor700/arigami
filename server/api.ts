@@ -4682,6 +4682,15 @@ export async function handle(
         try { if (file && fs.existsSync(file)) fs.rmSync(file, { force: true }); } catch {}
       }
     }
+    // ZIP2: a chip pulled off the composer before sending (or a dedup-skipped
+    // re-drag) reclaims its spooled copy + extraction dir instead of leaking
+    // disk until someone cleans ~/.arigami/uploads by hand.
+    if (sub === 'attachments' && m === 'DELETE') {
+      const target = u.searchParams.get('path') || '';
+      if (!target) return badRequest(res, 'path required');
+      const removed = claude.removeStreamedAttachment(id, target);
+      return json(res, { ok: removed });
+    }
     // Answer a client-side tool_use (AskUserQuestion) with a tool_result so the
     // blocked turn resumes immediately instead of stalling until the ~60s
     // question timeout (a plain message would be queued by the CLI meanwhile).
