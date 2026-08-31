@@ -161,7 +161,7 @@ export interface Artifact {
 interface ChangesExplanation {
   language: string | null;
   generatedAt: string;
-  mode: 'pr' | 'uncommitted';
+  mode: 'pr' | 'uncommitted' | 'work';
   identity?: string;
   files: unknown[];
   features: unknown[];
@@ -209,9 +209,9 @@ export interface Session {
   promptAutoPlay?: boolean;
   sortOrder?: number; // manual flat-mode rail order (set by reorderSessions)
   folderId?: string | null; // rail folder membership (null/absent = root)
-  changesExplaining?: 'pr' | 'uncommitted' | null;
+  changesExplaining?: 'pr' | 'uncommitted' | 'work' | null;
   changesExplanations?: Record<string, ChangesExplanation>;
-  autoReviewing?: 'pr' | 'uncommitted' | null;
+  autoReviewing?: 'pr' | 'uncommitted' | 'work' | null;
   review?: ReviewDraft;
   statusSummary?: StatusSummary | null;
   summarizing?: boolean; // a summary generation run is in flight (transient)
@@ -607,7 +607,7 @@ export function setChangesExplanation(
 ): Session | null {
   const s = getSession(id);
   if (!s) return null;
-  const m = mode === 'pr' ? 'pr' : 'uncommitted';
+  const m = mode === 'pr' ? 'pr' : mode === 'work' ? 'work' : 'uncommitted';
   if (!s.changesExplanations || typeof s.changesExplanations !== 'object')
     s.changesExplanations = {};
   (s.changesExplanations as Record<string, ChangesExplanation>)[m] =
@@ -624,7 +624,9 @@ export function setChangesExplaining(
   const s = getSession(id);
   if (!s) return null;
   s.changesExplaining =
-    mode === 'pr' || mode === 'uncommitted' ? (mode as 'pr' | 'uncommitted') : null;
+    mode === 'pr' || mode === 'uncommitted' || mode === 'work'
+      ? (mode as 'pr' | 'uncommitted' | 'work')
+      : null;
   broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;
 }
@@ -817,8 +819,8 @@ export function setAutoReviewing(id: string, mode?: string): Session | null {
   const s = getSession(id);
   if (!s) return null;
   s.autoReviewing =
-    mode === 'pr' || mode === 'uncommitted'
-      ? (mode as 'pr' | 'uncommitted')
+    mode === 'pr' || mode === 'uncommitted' || mode === 'work'
+      ? (mode as 'pr' | 'uncommitted' | 'work')
       : null;
   broadcast({ type: 'session-updated', session: toWireSession(s) });
   return s;

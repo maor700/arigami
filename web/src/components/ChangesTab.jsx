@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
+import { defaultChangesMode, explanationSwitchOffer, newestExplanation } from '../lib/changesMode.js';
 import { Truncate } from './Truncate.jsx';
 import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
@@ -232,8 +233,9 @@ export default function ChangesTab({ session, active }) {
   const [fileComposer, setFileComposer] = useState(false);
   const [listOpen, setListOpen] = useState(false); // mobile: file/feature list sheet
   const [fullscreen, setFullscreen] = useState(false); // mobile: file diff as a full-screen overlay
-  const [changesMode, setChangesMode] = useState('uncommitted'); // 'uncommitted' | 'pr'
+  const [changesMode, setChangesMode] = useState(() => defaultChangesMode(session)); // 'work' | 'uncommitted' | 'pr'
   const [refs, setRefs] = useState(null);
+  const [switchOffer, setSwitchOffer] = useState(null); // {mode, generatedAt} | null — an arrived explanation offered, never applied
 
   // ---- view navigation history (Back / Forward) --------------------------
   // A "view" is a feature write-up or a file diff. We keep a browser-style
@@ -279,24 +281,29 @@ export default function ChangesTab({ session, active }) {
   const hasReview = (session.review?.comments || []).length > 0;
   const fileExpl = (path) => (expl ? (expl.files || []).find((f) => f.path === path) : null);
 
-  // When a fresh explanation ARRIVES (an explain run just finished), switch the
-  // view to that mode so the result is visible. We baseline on mount so simply
-  // opening the tab never hijacks the user's chosen mode — only new writes do.
+  // When a fresh explanation ARRIVES (an explain run just finished) for a mode
+  // OTHER than the one being viewed, OFFER to switch — never apply it
+  // ourselves. The tab must not jump out from under someone mid-read; only an
+  // explicit click on the offer changes the view. We baseline on mount so
+  // simply opening the tab never raises an offer — only new writes do.
   const lastExpl = useRef(undefined);
+  const changesModeRef = useRef(changesMode);
+  changesModeRef.current = changesMode;
   useEffect(() => {
-    const newest = ['uncommitted', 'pr']
-      .map((m) => explanations[m])
-      .filter(Boolean)
-      .sort((a, b) => (b.generatedAt || '').localeCompare(a.generatedAt || ''))[0];
-    const g = newest?.generatedAt || null;
-    if (lastExpl.current === undefined) { lastExpl.current = g; return; } // mount baseline — no switch
-    if (g && g !== lastExpl.current) {
-      lastExpl.current = g;
-      setChangesMode(newest.mode === 'pr' ? 'pr' : 'uncommitted');
-      setFeatureIdx(null);
-    }
+    const offer = explanationSwitchOffer(explanations, changesModeRef.current, lastExpl.current);
+    lastExpl.current = newestExplanation(explanations)?.generatedAt || null;
+    if (offer) setSwitchOffer(offer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [explanations.uncommitted?.generatedAt, explanations.pr?.generatedAt]);
+  }, [explanations.work?.generatedAt, explanations.uncommitted?.generatedAt, explanations.pr?.generatedAt]);
+  // A manual mode switch (by the user, or by accepting the offer) makes any
+  // pending offer for that mode moot.
+  useEffect(() => { if (switchOffer?.mode === changesMode) setSwitchOffer(null); }, [changesMode, switchOffer]);
+  const acceptSwitchOffer = () => {
+    if (!switchOffer) return;
+    setChangesMode(switchOffer.mode);
+    setFeatureIdx(null);
+    setSwitchOffer(null);
+  };
 
   // available refs for the base picker
   useEffect(() => {
@@ -370,7 +377,10 @@ export default function ChangesTab({ session, active }) {
       .finally(() => setTimeout(() => setOpening(false), 1200));
   };
 
-  const modeQ = changesMode !== 'uncommitted' ? `mode=${encodeURIComponent(changesMode)}` : '';
+  // Always explicit — the server's default-mode guess (session has a
+  // worktree+base → 'work') only applies when `mode` is omitted entirely, and
+  // the client's own default (defaultChangesMode) must be what's actually shown.
+  const modeQ = `mode=${encodeURIComponent(changesMode)}`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -458,14 +468,32 @@ export default function ChangesTab({ session, active }) {
   // that covers the app chrome so the diff gets the whole screen.
   const fsActive = fullscreen && !desktop && !curFeature && !!selected;
 
-  // Modes: Uncommitted (HEAD) or PR (merge-base comparison)
+  // Modes: Work (this session's base..HEAD + working tree), Uncommitted (HEAD),
+  // or PR (merge-base comparison). Work only exists for a host-managed child
+  // worktree (F7: metadata.base + metadata.worktree) — a plain session never
+  // sees the button, so its tab behaves exactly as before this mode existed.
   const refData = refs && !refs.error ? refs : null;
   const prAvailable = refData?.available === true;
+  const workAvailable = !!(session.metadata?.base && session.metadata?.worktree);
 
   // The explanation stores the diff "identity" (a signature of the changes) it
   // was generated from. If the worktree has changed since, the explanation (and
   // any auto-review comments) describe a stale diff → show an "outdated" badge.
   const outdated = !!(expl && expl.identity && data?.identity && expl.identity !== data.identity);
+
+  // Empty-state text: distinguishes a real failure (error, from `data.error`)
+  // from a clean tree, from a branch with no commits at all yet, and names the
+  // base it compared against so "no changes" doesn't read as "nothing to see".
+  const baseLabel = data?.baseRef || data?.defaultBranch || null;
+  const emptyStateText = () => {
+    switch (data?.emptyReason) {
+      case 'no-worktree': return t('chat.noWorktreeChanges');
+      case 'no-repo': return t('chat.notAGitRepo');
+      case 'unborn': return t('chat.nothingCommittedYet');
+      case 'clean': return baseLabel ? t('chat.noChangesSince', { base: baseLabel }) : t('chat.noWorktreeChanges');
+      default: return data?.error ? String(data.error) : t('chat.noWorktreeChanges');
+    }
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
@@ -494,18 +522,24 @@ export default function ChangesTab({ session, active }) {
           </span>
         )}
         <div className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border">
-          {['uncommitted', 'pr'].map((m) => (
+          {(workAvailable ? ['work', 'uncommitted', 'pr'] : ['uncommitted', 'pr']).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => { setChangesMode(m); setFeatureIdx(null); setSelected(null); resetHistory(); }}
               disabled={m === 'pr' && !prAvailable}
-              title={m === 'pr' && !prAvailable ? t('chat.prNotAvailable') : (m === 'uncommitted' ? t('chat.compareHead') : t('chat.compareMain'))}
+              title={
+                m === 'pr' && !prAvailable
+                  ? t('chat.prNotAvailable')
+                  : m === 'work'
+                    ? t('chat.compareWork')
+                    : m === 'uncommitted' ? t('chat.compareHead') : t('chat.compareMain')
+              }
               className={`cursor-pointer px-2.5 py-0.5 font-mono text-[10px] ${
                 changesMode === m ? 'bg-chip font-bold text-fg' : 'bg-panel text-fgdim hover:text-fg'
               } ${m === 'pr' && !prAvailable ? 'opacity-40 cursor-not-allowed' : ''}`}
             >
-              {m === 'uncommitted' ? t('chat.uncommitted') : 'PR'}
+              {m === 'work' ? t('chat.work') : m === 'uncommitted' ? t('chat.uncommitted') : 'PR'}
             </button>
           ))}
         </div>
@@ -513,6 +547,16 @@ export default function ChangesTab({ session, active }) {
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
         {desktop && data?.branch && <Truncate text={data.branch} className="max-w-[140px] font-mono text-[10.5px] text-fgdim" />}
+        {desktop && (changesMode === 'work' || changesMode === 'pr') && data?.baseRef && (
+          <span
+            title={data.baseIsRemote ? t('chat.remoteBaseTitle', { base: data.baseRef }) : t('chat.comparedAgainstTitle', { base: data.baseRef })}
+            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9.5px] ${
+              data.baseIsRemote ? 'border-[#d98078] bg-danger/10 font-bold text-danger' : 'border-border bg-panel text-fgdim'
+            }`}
+          >
+            {data.baseIsRemote && <Icon icon={faTriangleExclamation} />} vs {data.baseRef}
+          </span>
+        )}
         <MergePill session={session} compact={!desktop} />
         {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{t('chat.filesCount', { n: files.length })}</span>}
         {desktop && expl && (
@@ -613,6 +657,20 @@ export default function ChangesTab({ session, active }) {
         </div>
       </div>
 
+      {/* A new explanation arrived for a mode we're not viewing — OFFER the
+          switch, never apply it: the tab must not jump under the user. */}
+      {switchOffer && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-chip/60 px-3.5 py-1.5 font-mono text-[11px] text-fg">
+          <Icon icon={faWandMagicSparkles} />
+          <span>{t('chat.explanationReadyFor', { mode: switchOffer.mode === 'work' ? t('chat.work') : switchOffer.mode === 'pr' ? 'PR' : t('chat.uncommitted') })}</span>
+          <button type="button" onClick={acceptSwitchOffer} className="ml-auto cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-panel px-2 py-0.5 font-bold hover:bg-chip">
+            {t('chat.showIt')}
+          </button>
+          <button type="button" onClick={() => setSwitchOffer(null)} title={t('chat.dismiss')} className="cursor-pointer text-fgdim hover:text-fg">
+            <Icon icon={faXmark} />
+          </button>
+        </div>
+      )}
       {/* F7: approved → the Merge control lives with the diff it approves */}
       {session.metadata?.review?.state === 'approved' && !session.metadata?.merged && (
         <div className="shrink-0 border-b border-hair bg-panel px-3.5 py-1.5">
@@ -621,7 +679,7 @@ export default function ChangesTab({ session, active }) {
       )}
       {noWorktree ? (
         <div className="flex flex-1 items-center justify-center font-mono text-[11px] text-fgdim">
-          {data?.error ? String(data.error) : t('chat.noWorktreeChanges')}
+          {emptyStateText()}
         </div>
       ) : loading && files.length === 0 ? (
         <div className="flex flex-1 items-center justify-center gap-2 font-mono text-[11px] text-fgdim">
@@ -690,6 +748,12 @@ export default function ChangesTab({ session, active }) {
                   >
                     <StatusChip status={f.status} />
                     {f.staged && <span title={t('chat.staged')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#3C9A4E]" />}
+                    {changesMode === 'work' && (f.committed || f.uncommitted) && (
+                      <span className="flex shrink-0 gap-[2px]">
+                        {f.committed && <span title={t('chat.committedMarker')} className="rounded-[3px] border border-[#8a8a8a] px-[3px] font-mono text-[8px] leading-[13px] text-fgdim">C</span>}
+                        {f.uncommitted && <span title={t('chat.uncommittedMarker')} className="rounded-[3px] border border-[#c9a227] px-[3px] font-mono text-[8px] leading-[13px] text-[#c9a227]">U</span>}
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">{baseName(f.path)}</span>
                     {cc > 0 && <span title={t('chat.commentsCount', { n: cc })} className="shrink-0 font-mono text-[9px] text-fgdim"><Icon icon={faComment} className="text-[8px]" />{cc}</span>}
                     {fileExpl(f.path) && <span title={t('chat.hasExplanation')} className="shrink-0 text-[9px] text-[#c9a227]"><Icon icon={faWandMagicSparkles} /></span>}
@@ -732,6 +796,10 @@ export default function ChangesTab({ session, active }) {
                       onSubmit={(body) => addComment({ kind: 'feature', key: curFeature.title, featureTitle: curFeature.title }, body)}
                     />
                   </div>
+                </div>
+              ) : !selected ? (
+                <div className="flex flex-1 items-center justify-center font-mono text-[11px] text-fgdim">
+                  {emptyStateText()}
                 </div>
               ) : (
                 <>

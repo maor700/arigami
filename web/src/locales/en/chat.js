@@ -92,14 +92,22 @@ export const strings = {
   'chat.back': 'Back (Alt+←)',
   'chat.forward': 'Forward (Alt+→)',
   'chat.uncommitted': 'Uncommitted',
+  'chat.work': 'Work',
   'chat.prNotAvailable': 'PR mode not available',
   'chat.compareHead': 'Compare against HEAD',
   'chat.compareMain': 'Compare against main branch',
+  'chat.compareWork': "Compare against this session's base — everything it did, committed or not",
   'chat.filesCount': '{n} files',
   'chat.explained': 'explained',
   'chat.explainedInLang': 'explained in {lang}',
   'chat.outdated': 'outdated',
   'chat.outdatedTitle': 'The worktree changed since this analysis was generated — re-run to refresh.',
+  'chat.remoteBaseTitle': 'Compared against {base} — the local branch was missing, so this may be behind',
+  'chat.comparedAgainstTitle': 'Compared against {base}',
+  'chat.explanationReadyFor': 'A new {mode} explanation is ready',
+  'chat.showIt': 'Show',
+  'chat.committedMarker': 'Committed',
+  'chat.uncommittedMarker': 'Not committed yet',
 
   // --- ChangesTab: desktop action buttons (lowercase) ---
   'chat.explainTitle': 'Explain these changes in plain language (read-only AI run, ~30–60s)',
@@ -119,6 +127,9 @@ export const strings = {
 
   // --- ChangesTab: empty / loading ---
   'chat.noWorktreeChanges': 'No worktree changes to show.',
+  'chat.notAGitRepo': 'Not a git repository.',
+  'chat.nothingCommittedYet': 'Nothing committed yet — this branch has no commits.',
+  'chat.noChangesSince': 'No changes vs {base}.',
   'chat.readingWorktree': 'reading worktree…',
 
   // --- ChangesTab: file/feature lists ---

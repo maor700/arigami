@@ -502,10 +502,12 @@ const TOOLS = [
       'with the files it touches and an optional longer "details" walkthrough. ' +
       'dir: optional text direction "rtl" | "ltr" | "auto" (default auto) — set "rtl" for Hebrew/Arabic/Farsi so it renders right-aligned. ' +
       'base: optional comparison ref the explanation is for — omit (or "HEAD") for uncommitted changes, or a branch/commit (e.g. "main", "abc1234") to explain what differs from it. ' +
-      'The Changes tab opens on this base. Read the matching diff first: GET /__api/sessions/:id/changes?base=<ref> and /changes/diff?path=&base=<ref>.',
+      'mode: optional, one of "uncommitted" | "pr" | "work" — pass this explicitly when you were told which mode to explain (e.g. "work", this session\'s own base..HEAD plus its working tree); without it the host guesses from `base` alone, which can never resolve to "work". ' +
+      'The Changes tab opens on this base. Read the matching diff first: GET /__api/sessions/:id/changes?mode=<mode> and /changes/diff?path=&mode=<mode>.',
     inputSchema: obj({
       language: { type: 'string', description: 'Human name of the explanation language, e.g. "Hebrew"' },
       base: { type: 'string', description: 'Comparison ref: "HEAD"/omit for uncommitted, or a branch/commit like "main"' },
+      mode: { type: 'string', enum: ['uncommitted', 'pr', 'work'], description: 'Which Changes-tab view this explanation is for' },
       files: {
         type: 'array',
         items: obj({ path: { type: 'string' }, summary: { type: 'string' }, dir: { type: 'string', enum: ['rtl', 'ltr', 'auto'] } }, ['path', 'summary']),
@@ -523,7 +525,7 @@ const TOOLS = [
       ...SID_PROP,
     }),
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/changes/explanation`, {
-      language: a.language, files: a.files, features: a.features, base: a.base,
+      language: a.language, files: a.files, features: a.features, base: a.base, mode: a.mode,
     }),
   },
   {

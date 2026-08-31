@@ -92,14 +92,22 @@ export const strings = {
   'chat.back': 'אחורה (Alt+←)',
   'chat.forward': 'קדימה (Alt+→)',
   'chat.uncommitted': 'לא מקומט',
+  'chat.work': 'עבודה',
   'chat.prNotAvailable': 'מצב PR אינו זמין',
   'chat.compareHead': 'השווה מול HEAD',
   'chat.compareMain': 'השווה מול הענף הראשי',
+  'chat.compareWork': 'השווה מול הבסיס של הסשן הזה — כל מה שהוא עשה, מקומט או לא',
   'chat.filesCount': '{n} קבצים',
   'chat.explained': 'הוסבר',
   'chat.explainedInLang': 'הוסבר ב{lang}',
   'chat.outdated': 'לא מעודכן',
   'chat.outdatedTitle': 'ה-worktree השתנה מאז שנוצר ניתוח זה — הרץ מחדש כדי לרענן.',
+  'chat.remoteBaseTitle': 'הושווה מול {base} — הענף המקומי לא נמצא, כך שזה עלול להיות לא מעודכן',
+  'chat.comparedAgainstTitle': 'הושווה מול {base}',
+  'chat.explanationReadyFor': 'הסבר {mode} חדש מוכן',
+  'chat.showIt': 'הצג',
+  'chat.committedMarker': 'מקומט',
+  'chat.uncommittedMarker': 'עדיין לא מקומט',
 
   // --- ChangesTab: desktop action buttons (lowercase) ---
   'chat.explainTitle': "הסבר שינויים אלה בשפה פשוטה (הרצת AI לקריאה בלבד, ~30–60 שנ')",
@@ -119,6 +127,9 @@ export const strings = {
 
   // --- ChangesTab: empty / loading ---
   'chat.noWorktreeChanges': 'אין שינויי worktree להצגה.',
+  'chat.notAGitRepo': 'זה לא מאגר git.',
+  'chat.nothingCommittedYet': 'עדיין לא קומט כלום — לענף הזה אין commits.',
+  'chat.noChangesSince': 'אין שינויים מול {base}.',
   'chat.readingWorktree': 'קורא worktree…',
 
   // --- ChangesTab: file/feature lists ---

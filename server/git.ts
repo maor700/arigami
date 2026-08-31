@@ -26,6 +26,12 @@ interface ChangesFile {
   staged: boolean;
   additions: number | null;
   deletions: number | null;
+  // 'work' mode only: whether this file's delta includes a committed part
+  // (differs between base and HEAD) and/or a working-tree part (unstaged,
+  // staged, or untracked). A file can be both — committed once, then edited
+  // again without a new commit.
+  committed?: boolean;
+  uncommitted?: boolean;
 }
 
 interface PRStatusResult {
@@ -33,6 +39,10 @@ interface PRStatusResult {
   branch: string | null;
   defaultBranch?: string | null;
   baseRef?: string | null;
+  // true when baseRef had to fall back to origin/<default> because no local
+  // ref of that name exists — the UI flags this so a stale remote base isn't
+  // silently trusted.
+  baseIsRemote?: boolean;
   mergeBase?: string;
   headSha?: string;
   ahead?: number;
@@ -43,20 +53,27 @@ interface PRStatusResult {
 interface ChangesForResult {
   worktree: string | null;
   branch: string | null;
-  mode: 'pr' | 'uncommitted';
+  mode: 'pr' | 'uncommitted' | 'work';
   files: ChangesFile[];
   baseRef?: string | null;
+  baseIsRemote?: boolean;
+  // 'work' mode only: whether baseRef came from the session's stamped
+  // metadata.base or the repo's ordinary default-branch resolution.
+  baseSource?: 'metadata' | 'default';
   defaultBranch?: string | null;
   mergeBase?: string;
   headSha?: string;
   ahead?: number;
   identity?: string;
+  // Distinguishes an empty file list: a real git/worktree failure (see
+  // `error`) vs. a clean tree vs. a branch with no commits yet at all.
+  emptyReason?: 'no-repo' | 'no-worktree' | 'unborn' | 'clean';
   error?: string;
 }
 
 interface ChangeDiffResult {
   path?: string;
-  mode?: 'pr' | 'uncommitted';
+  mode?: 'pr' | 'uncommitted' | 'work';
   diff?: string;
   error?: string;
 }
@@ -174,8 +191,17 @@ export function safeRelPath(relPath: string | null | undefined): string | null {
   return norm;
 }
 
-export function safeMode(mode: string | null | undefined): 'pr' | 'uncommitted' {
-  return mode === 'pr' ? 'pr' : 'uncommitted';
+// `s` lets an omitted mode default to 'work' for a host-managed child worktree
+// (metadata.base + metadata.worktree, stamped by F7's hostWorktree) — the only
+// view that shows what the child actually did. A plain session (no base) still
+// defaults to 'uncommitted', unchanged from before this mode existed.
+export function safeMode(
+  mode: string | null | undefined,
+  s?: Session
+): 'pr' | 'uncommitted' | 'work' {
+  if (mode === 'pr' || mode === 'uncommitted' || mode === 'work') return mode;
+  if (s?.metadata?.base && s?.metadata?.worktree) return 'work';
+  return 'uncommitted';
 }
 
 // ---- Helpers ----
@@ -190,6 +216,7 @@ function djb2(str: string): string {
 async function resolveBaseRef(cwd: string): Promise<{
   defaultBranch: string | null;
   baseRef: string | null;
+  baseIsRemote: boolean;
 }> {
   let def: string | null = null;
   const oh = await git(cwd, [
@@ -210,15 +237,55 @@ async function resolveBaseRef(cwd: string): Promise<{
       }
     }
   }
-  if (!def) return { defaultBranch: null, baseRef: null };
-  for (const cand of [`origin/${def}`, def]) {
+  if (!def) return { defaultBranch: null, baseRef: null, baseIsRemote: false };
+  // Prefer the LOCAL branch — even when it's ahead of origin, it's the truth
+  // on this host. Fall back to origin/<def> only when no local ref of that
+  // name exists, and say so (baseIsRemote) so a stale remote base is never
+  // silently trusted as if it were current.
+  if (
+    (await git(cwd, ['rev-parse', '--verify', '--quiet', def])).code === 0
+  ) {
+    return { defaultBranch: def, baseRef: def, baseIsRemote: false };
+  }
+  if (
+    (await git(cwd, ['rev-parse', '--verify', '--quiet', `origin/${def}`]))
+      .code === 0
+  ) {
+    return { defaultBranch: def, baseRef: `origin/${def}`, baseIsRemote: true };
+  }
+  return { defaultBranch: def, baseRef: null, baseIsRemote: false };
+}
+
+// 'work' mode's base: prefer the session's stamped metadata.base (a LOCAL ref
+// name — F7's hostWorktree records exactly what it branched off) over the
+// repo's ordinary default-branch resolution. Only fall back to origin/<base>
+// when the local ref is gone, and only fall back to the repo default when
+// metadata.base itself resolves nowhere (e.g. its branch was deleted).
+async function resolveWorkBase(
+  s: Session,
+  cwd: string
+): Promise<{
+  baseRef: string | null;
+  defaultBranch: string | null;
+  baseIsRemote: boolean;
+  baseSource: 'metadata' | 'default';
+}> {
+  const metaBase = s.metadata?.base ? String(s.metadata.base) : null;
+  if (metaBase) {
     if (
-      (await git(cwd, ['rev-parse', '--verify', '--quiet', cand])).code === 0
+      (await git(cwd, ['rev-parse', '--verify', '--quiet', metaBase])).code === 0
     ) {
-      return { defaultBranch: def, baseRef: cand };
+      return { baseRef: metaBase, defaultBranch: metaBase, baseIsRemote: false, baseSource: 'metadata' };
+    }
+    const remote = `origin/${metaBase}`;
+    if (
+      (await git(cwd, ['rev-parse', '--verify', '--quiet', remote])).code === 0
+    ) {
+      return { baseRef: remote, defaultBranch: metaBase, baseIsRemote: true, baseSource: 'metadata' };
     }
   }
-  return { defaultBranch: def, baseRef: null };
+  const d = await resolveBaseRef(cwd);
+  return { baseRef: d.baseRef, defaultBranch: d.defaultBranch, baseIsRemote: d.baseIsRemote, baseSource: 'default' };
 }
 
 // ---- PR & Changes ----
@@ -237,7 +304,7 @@ export async function prStatus(s: Session): Promise<PRStatusResult> {
     const branch =
       (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim() ||
       null;
-    const { defaultBranch, baseRef } = await resolveBaseRef(cwd);
+    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd);
     if (!baseRef)
       return { available: false, branch, defaultBranch, reason: 'no base branch' };
     const mergeBase = (await git(cwd, ['merge-base', baseRef, 'HEAD'])).out.trim();
@@ -247,6 +314,7 @@ export async function prStatus(s: Session): Promise<PRStatusResult> {
         branch,
         defaultBranch,
         baseRef,
+        baseIsRemote,
         reason: 'no common history',
       };
     const headSha = (await git(cwd, ['rev-parse', 'HEAD'])).out.trim();
@@ -254,18 +322,116 @@ export async function prStatus(s: Session): Promise<PRStatusResult> {
       Number(
         (await git(cwd, ['rev-list', '--count', `${mergeBase}..HEAD`])).out.trim()
       ) || 0;
-    return { available: true, branch, defaultBranch, baseRef, mergeBase, headSha, ahead };
+    return { available: true, branch, defaultBranch, baseRef, baseIsRemote, mergeBase, headSha, ahead };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
     return { available: false, branch: null, error: error.message };
   }
 }
 
+// Committed range: how `base` differs from `head` (name-status + numstat).
+// Shared by 'pr' mode (base = the default branch) and 'work' mode (base =
+// metadata.base).
+async function committedDiff(
+  cwd: string,
+  base: string,
+  head: string
+): Promise<ChangesFile[]> {
+  const stat = new Map<string, FileStat>();
+  for (const line of (await git(cwd, ['diff', '--numstat', base, head]))
+    .out.split('\n')) {
+    if (!line.trim()) continue;
+    const [a, d, ...rest] = line.split('\t');
+    stat.set(rest.join('\t'), {
+      additions: a === '-' ? null : Number(a) || 0,
+      deletions: d === '-' ? null : Number(d) || 0,
+    });
+  }
+  const files: ChangesFile[] = [];
+  for (const line of (await git(cwd, ['diff', '--name-status', base, head]))
+    .out.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const p = parts[parts.length - 1];
+    const n = stat.get(p);
+    files.push({
+      path: p,
+      status: parts[0][0],
+      staged: false,
+      additions: n ? n.additions : null,
+      deletions: n ? n.deletions : null,
+    });
+  }
+  return files;
+}
+
+// Working tree: unstaged + staged + untracked, vs HEAD/the index. Shared by
+// 'uncommitted' mode (the whole story) and 'work' mode (the part on top of
+// the committed range).
+async function workingTreeDiff(cwd: string): Promise<ChangesFile[]> {
+  const stat = new Map<string, FileStat>();
+  for (const args of [['diff', '--numstat'], ['diff', '--cached', '--numstat']]) {
+    const { out } = await git(cwd, args);
+    for (const line of out.split('\n')) {
+      if (!line.trim()) continue;
+      const [a, d, ...rest] = line.split('\t');
+      const p = rest.join('\t');
+      const prev = stat.get(p) || { additions: 0, deletions: 0 };
+      prev.additions = (prev.additions ?? 0) + (a === '-' ? 0 : Number(a) || 0);
+      prev.deletions = (prev.deletions ?? 0) + (d === '-' ? 0 : Number(d) || 0);
+      stat.set(p, prev);
+    }
+  }
+  const { out: porc } = await git(cwd, [
+    'status',
+    '--porcelain=v1',
+    '-uall',
+  ]);
+  const files: ChangesFile[] = [];
+  for (const line of porc.split('\n')) {
+    if (!line) continue;
+    const X = line[0];
+    const Y = line[1];
+    let p = line.slice(3);
+    if (p.includes(' -> ')) p = p.split(' -> ')[1];
+    const untracked = X === '?';
+    const staged = !untracked && X !== ' ';
+    const status = untracked ? '??' : staged ? X : Y;
+    const n = stat.get(p);
+    files.push({
+      path: p,
+      status,
+      staged,
+      additions: n ? n.additions : null,
+      deletions: n ? n.deletions : null,
+    });
+  }
+  return files;
+}
+
+function workingTreeIdentity(files: ChangesFile[]): string {
+  return djb2(
+    files
+      .map((f) => `${f.path}:${f.status}:${f.additions}:${f.deletions}`)
+      .join('|')
+  );
+}
+
+// null means "binary / unknown" (git prints "-" for numstat on binary files)
+// — keep that distinct from a real 0, so a binary file with further text-only
+// edits on top doesn't silently report 0 added/removed lines.
+function sumOrNull(a: number | null, b: number | null): number | null {
+  if (a == null && b == null) return null;
+  if (a == null) return b;
+  if (b == null) return a;
+  return a + b;
+}
+
 export async function changesFor(
   s: Session,
   mode: string | null | undefined
 ): Promise<ChangesForResult> {
-  const m = safeMode(mode);
+  const m = safeMode(mode, s);
   const cwd = untildify(
     (s.metadata?.worktree as string) || s.cwd
   );
@@ -276,6 +442,7 @@ export async function changesFor(
       mode: m,
       files: [],
       error: 'no worktree',
+      emptyReason: 'no-worktree',
     };
   try {
     if (
@@ -287,13 +454,18 @@ export async function changesFor(
         mode: m,
         files: [],
         error: 'not a git repository',
+        emptyReason: 'no-repo',
       };
     }
     const branch =
       (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim() ||
       null;
+    const hasCommits =
+      (await git(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'])).code === 0;
 
     if (m === 'pr') {
+      if (!hasCommits)
+        return { worktree: cwd, branch, mode: 'pr', files: [], emptyReason: 'unborn' };
       const st = await prStatus(s);
       if (!st.available) {
         return {
@@ -302,104 +474,109 @@ export async function changesFor(
           mode: 'pr',
           files: [],
           baseRef: st.baseRef || null,
+          baseIsRemote: st.baseIsRemote,
           defaultBranch: st.defaultBranch || null,
           error: st.reason || st.error || 'PR diff unavailable',
         };
       }
       const mb = st.mergeBase!;
-      const stat = new Map<string, FileStat>();
-      for (const line of (await git(cwd, ['diff', '--numstat', mb, 'HEAD']))
-        .out.split('\n')) {
-        if (!line.trim()) continue;
-        const [a, d, ...rest] = line.split('\t');
-        stat.set(rest.join('\t'), {
-          additions: a === '-' ? null : Number(a) || 0,
-          deletions: d === '-' ? null : Number(d) || 0,
-        });
-      }
-      const files: ChangesFile[] = [];
-      for (const line of (await git(cwd, ['diff', '--name-status', mb, 'HEAD']))
-        .out.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split('\t');
-        const p = parts[parts.length - 1];
-        const n = stat.get(p);
-        files.push({
-          path: p,
-          status: parts[0][0],
-          staged: false,
-          additions: n ? n.additions : null,
-          deletions: n ? n.deletions : null,
-        });
-      }
+      const files = await committedDiff(cwd, mb, 'HEAD');
       return {
         worktree: cwd,
         branch,
         mode: 'pr',
         files,
         baseRef: st.baseRef,
+        baseIsRemote: st.baseIsRemote,
         defaultBranch: st.defaultBranch,
         mergeBase: mb,
         headSha: st.headSha,
         ahead: st.ahead,
         identity: `pr:${mb}..${st.headSha}`,
+        emptyReason: files.length === 0 ? 'clean' : undefined,
       };
     }
 
-    const stat = new Map<string, FileStat>();
-    for (const args of [['diff', '--numstat'], ['diff', '--cached', '--numstat']]) {
-      const { out } = await git(cwd, args);
-      for (const line of out.split('\n')) {
-        if (!line.trim()) continue;
-        const [a, d, ...rest] = line.split('\t');
-        const p = rest.join('\t');
-        const prev = stat.get(p) || { additions: 0, deletions: 0 };
-        prev.additions = (prev.additions ?? 0) + (a === '-' ? 0 : Number(a) || 0);
-        prev.deletions = (prev.deletions ?? 0) + (d === '-' ? 0 : Number(d) || 0);
-        stat.set(p, prev);
+    if (m === 'work') {
+      if (!hasCommits)
+        return { worktree: cwd, branch, mode: 'work', files: [], emptyReason: 'unborn' };
+      const wb = await resolveWorkBase(s, cwd);
+      if (!wb.baseRef)
+        return {
+          worktree: cwd,
+          branch,
+          mode: 'work',
+          files: [],
+          defaultBranch: wb.defaultBranch,
+          error: 'no base branch',
+        };
+      const mergeBase = (await git(cwd, ['merge-base', wb.baseRef, 'HEAD'])).out.trim();
+      if (!mergeBase)
+        return {
+          worktree: cwd,
+          branch,
+          mode: 'work',
+          files: [],
+          baseRef: wb.baseRef,
+          baseIsRemote: wb.baseIsRemote,
+          baseSource: wb.baseSource,
+          defaultBranch: wb.defaultBranch,
+          error: 'no common history',
+        };
+      const headSha = (await git(cwd, ['rev-parse', 'HEAD'])).out.trim();
+      const ahead =
+        Number(
+          (await git(cwd, ['rev-list', '--count', `${mergeBase}..HEAD`])).out.trim()
+        ) || 0;
+
+      const committed = await committedDiff(cwd, mergeBase, 'HEAD');
+      const uncommitted = await workingTreeDiff(cwd);
+
+      const map = new Map<string, ChangesFile>();
+      for (const f of committed) map.set(f.path, { ...f, committed: true, uncommitted: false });
+      for (const f of uncommitted) {
+        const prev = map.get(f.path);
+        map.set(
+          f.path,
+          prev
+            ? {
+                ...prev,
+                uncommitted: true,
+                status: f.status, // the live status wins — it reflects the current tree
+                staged: f.staged,
+                additions: sumOrNull(prev.additions, f.additions),
+                deletions: sumOrNull(prev.deletions, f.deletions),
+              }
+            : { ...f, committed: false, uncommitted: true }
+        );
       }
+      const files = [...map.values()];
+      return {
+        worktree: cwd,
+        branch,
+        mode: 'work',
+        files,
+        baseRef: wb.baseRef,
+        baseIsRemote: wb.baseIsRemote,
+        baseSource: wb.baseSource,
+        defaultBranch: wb.defaultBranch,
+        mergeBase,
+        headSha,
+        ahead,
+        identity: `work:${mergeBase}..${headSha}:${workingTreeIdentity(uncommitted)}`,
+        emptyReason: files.length === 0 ? 'clean' : undefined,
+      };
     }
 
-    const { out: porc } = await git(cwd, [
-      'status',
-      '--porcelain=v1',
-      '-uall',
-    ]);
-    const files: ChangesFile[] = [];
-    for (const line of porc.split('\n')) {
-      if (!line) continue;
-      const X = line[0];
-      const Y = line[1];
-      let p = line.slice(3);
-      if (p.includes(' -> ')) p = p.split(' -> ')[1];
-      const untracked = X === '?';
-      const staged = !untracked && X !== ' ';
-      const status = untracked ? '??' : staged ? X : Y;
-      const n = stat.get(p);
-      files.push({
-        path: p,
-        status,
-        staged,
-        additions: n ? n.additions : null,
-        deletions: n ? n.deletions : null,
-      });
-    }
-    const identity =
-      'unc:' +
-      djb2(
-        files
-          .map(
-            (f) =>
-              `${f.path}:${f.status}:${f.additions}:${f.deletions}`
-          )
-          .join('|')
-      );
+    const files = await workingTreeDiff(cwd);
+    const identity = 'unc:' + workingTreeIdentity(files);
     return {
       worktree: cwd,
       branch,
       mode: 'uncommitted',
       files,
       identity,
+      emptyReason: files.length === 0 ? (hasCommits ? 'clean' : 'unborn') : undefined,
     };
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
@@ -425,7 +602,7 @@ export async function changeDiff(
   relPath: string | null | undefined,
   mode: string | null | undefined
 ): Promise<ChangeDiffResult> {
-  const m = safeMode(mode);
+  const m = safeMode(mode, s);
   const cwd = untildify(
     (s.metadata?.worktree as string) || s.cwd
   );
@@ -450,6 +627,25 @@ export async function changeDiff(
         safe,
       ]);
       return { path: safe, mode: 'pr', diff: out };
+    }
+    if (m === 'work') {
+      const wb = await resolveWorkBase(s, cwd);
+      if (!wb.baseRef) return { path: safe, mode: 'work', error: 'no base branch' };
+      const mergeBase = (await git(cwd, ['merge-base', wb.baseRef, 'HEAD'])).out.trim();
+      if (!mergeBase) return { path: safe, mode: 'work', error: 'no common history' };
+      // base vs the WORKING TREE (not HEAD) — this single diff already covers
+      // both the committed range and any uncommitted edits on top.
+      let { out } = await git(cwd, ['diff', mergeBase, '--', safe]);
+      if (!out.trim()) {
+        out = (await git(cwd, [
+          'diff',
+          '--no-index',
+          '--',
+          '/dev/null',
+          safe,
+        ])).out;
+      }
+      return { path: safe, mode: 'work', diff: out };
     }
     let { out } = await git(cwd, ['diff', 'HEAD', '--', safe]);
     if (!out.trim()) {
