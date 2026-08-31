@@ -156,6 +156,24 @@ describe('decide — one case per row of the ladder', () => {
     expect(d.action).toBe('none');
   });
 
+  // RES1 fix: a model-restore used to fire the instant the quota reset, even
+  // mid-turn — killing whatever was in flight with no replay. The ladder must
+  // never switch models under a session that is actively RUNNING; it waits.
+  test('the quota reset while a turn is in flight → do NOT climb back yet', () => {
+    for (const claudeState of ['working', 'restarting']) {
+      const d = run({ modelRung: 2, modelRestoreAt: new Date(ago(1000)).toISOString(), claudeState });
+      expect(d.action).not.toBe('model-restore');
+    }
+    // A queued-but-not-yet-started turn counts as RUNNING too (queued+autoPlay).
+    const q = run({ modelRung: 2, modelRestoreAt: new Date(ago(1000)).toISOString(), queued: 1, autoPlay: true });
+    expect(q.action).not.toBe('model-restore');
+  });
+
+  test('…and climbs back the moment it goes idle', () => {
+    const d = run({ modelRung: 2, modelRestoreAt: new Date(ago(1000)).toISOString(), claudeState: 'idle' });
+    expect(d.action).toBe('model-restore');
+  });
+
   test('an optional MCP server down → disable it and keep going', () => {
     const d = run({ mcpDown: ['playwright'] });
     expect(d.action).toBe('disable-mcp');
@@ -186,6 +204,47 @@ describe('decide — one case per row of the ladder', () => {
     expect(d.action).toBe('synthesize-report');
     expect(d.detail?.master).toBe('m');
     expect(decide({ view: view(v), watermark: d.next, thresholds: th }).action).not.toBe('synthesize-report');
+  });
+
+  // RES1 fix: idle-with-nothing-pending is the NORMAL gap between a working
+  // session's turns, not evidence it is done. Quiet past the grace window is
+  // only real evidence when WE did not just respawn it — a respawn's own
+  // capture+replay explains a short quiet gap on its own; synthesizing on top
+  // of it is exactly how the master got told "done" while a respawn was still
+  // replaying the interrupted turn.
+  test('quiet past the grace window right after WE respawned it → NOT synthesized yet', () => {
+    const v = { master: 'm', reported: false, lastActivityAt: ago(3 * 60_000) };
+    const w = { lastRespawnAt: ago(30_000) }; // we respawned it 30s ago, well inside the window
+    const d = run(v, w);
+    expect(d.action).not.toBe('synthesize-report');
+  });
+
+  test('…but once clear of that window with no further respawn, it IS synthesized', () => {
+    const v = { master: 'm', reported: false, lastActivityAt: ago(3 * 60_000) };
+    const w = { lastRespawnAt: ago(10 * 60_000) }; // long past — this respawn does not explain the quiet
+    const d = run(v, w);
+    expect(d.action).toBe('synthesize-report');
+  });
+
+  test('archived is terminal evidence on its own, no grace window needed', () => {
+    const v = { master: 'm', reported: false, archived: true, lastActivityAt: ago(1000) };
+    expect(run(v).action).toBe('synthesize-report');
+  });
+
+  // RES1 fix: a child whose respawn ladder gave up (proc genuinely dead, retries
+  // exhausted) used to sit escalated forever with its master never told anything
+  // — the synthesize-report branch was below the "already escalated" early
+  // return and never reached. The ladder giving up IS terminal evidence; the
+  // master must hear about it too, not just the human.
+  test('a child the ladder gave up on (escalated) still gets its master a report, once', () => {
+    const v = { master: 'm', reported: false, escalated: true, escalatedReason: 'proc-dead', claudeState: 'dead' };
+    const d = run(v);
+    expect(d.action).toBe('synthesize-report');
+    expect(d.detail?.master).toBe('m');
+    expect(d.detail?.terminal).toBe('escalated');
+    // Fires once — the next tick falls through to the ordinary escalation cadence.
+    const again = decide({ view: view(v), watermark: d.next, thresholds: th });
+    expect(again.action).not.toBe('synthesize-report');
   });
 
   test('a child spawned but never tasked is NOT reported for', () => {

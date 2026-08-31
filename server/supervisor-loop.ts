@@ -218,11 +218,17 @@ function notify(id: string, title: string, body: string): void {
  * the host CAN see — its status, branch and last words — record it as the
  * session's result (flagged `synthesized`) and wake the master with the same
  * thin pointer an explicit report would have produced.
+ *
+ * RES2: the host never claims 'done' on a child's behalf — it does not and
+ * cannot know whether the work actually finished (that is exactly the bug this
+ * fixes: a worker interrupted mid-file previously got reported 'done'). The
+ * state is unconditionally 'unknown'; the note says plainly that the child
+ * never reported and quotes its last words so the master can judge for itself.
  */
-function synthesizeReport(s: Session): { state: string; summary: string } {
+function synthesizeReport(s: Session, terminal?: string): { state: string; summary: string } {
   const md = (s.metadata || {}) as Record<string, any>;
   const dead = s.claude?.state === 'dead';
-  const state = dead ? 'error' : 'done';
+  const state = 'unknown';
   let lastWords = '';
   try {
     const evs = (claude.getChat(s.id, 0) || []) as any[];
@@ -236,18 +242,19 @@ function synthesizeReport(s: Session): { state: string; summary: string } {
     /* no transcript */
   }
   const parts = [
-    `[host-synthesized] the worker reached a terminal state without calling report_to_master.`,
+    `[host-synthesized] this worker did NOT call report_to_master — the host does not know whether the work finished.`,
     `status: ${s.status || '—'}${dead ? ' (its claude process died)' : ''}`,
+    terminal ? `why we stopped waiting: ${terminal}` : null,
     md.branch ? `branch: ${md.branch}` : null,
     md.worktree ? `worktree: ${md.worktree}` : null,
-    lastWords ? `last words: ${lastWords}` : null,
+    lastWords ? `last words (may be mid-task, not a conclusion): ${lastWords}` : 'last words: (none found)',
   ].filter(Boolean);
   const summary = parts.join('\n');
   const result = {
     state,
     summary,
     artifacts: [],
-    note: 'synthesized by the host supervisor',
+    note: 'synthesized by the host supervisor — the child never reported; treat as unknown, not done',
     reportedAt: new Date().toISOString(),
     synthesized: true,
   };
@@ -333,14 +340,15 @@ async function run(s: Session, d: Decision): Promise<void> {
     }
     case 'synthesize-report': {
       const master = String(d.detail?.master || '');
-      const r = synthesizeReport(s);
-      receipt(id, `⤷ finished without reporting — the host sent your master (${master}) a summary of where you got to`);
+      const terminal = d.detail?.terminal ? String(d.detail.terminal) : undefined;
+      const r = synthesizeReport(s, terminal);
+      receipt(id, `⤷ you did not report_to_master — the host told your master (${master}) it does not know whether this finished`);
       try {
         const listeners = await import('./listeners.js');
         const subtask = (s.metadata?.subtask as string) || s.title;
         listeners.enqueueWake(
           master,
-          `worker ${id} (${subtask}) → ${r.state} [host-synthesized: it never called report_to_master]\n${r.summary}`,
+          `worker ${id} (${subtask}) did NOT report_to_master — host-synthesized, state: ${r.state}\n${r.summary}`,
           `report:${id}`
         );
         clearWaitingOn(master, id);

@@ -86,7 +86,11 @@ export interface Classification {
 export interface Thresholds {
   now: number;
   stallMs: number; // no progress for this long → STALLED (when something is owed)
-  reportGraceMs: number; // a child idle this long without a report → synthesize
+  // A child idle this long without a report → synthesize (RES2: minutes, not
+  // seconds — idle-with-no-pending is the NORMAL gap between a working
+  // session's turns, so this has to comfortably outlast a respawn+replay
+  // cycle, not just outlast one tick).
+  reportGraceMs: number;
   notifyEveryMs: number; // re-notify the human about the same block at most this often
   maxRespawns: number; // consecutive respawn failures before escalating
   maxAuthRetries: number; // consecutive auth-refresh failures before escalating
@@ -95,7 +99,7 @@ export interface Thresholds {
 
 export const DEFAULT_THRESHOLDS: Omit<Thresholds, 'now'> = {
   stallMs: 10 * 60_000,
-  reportGraceMs: 2 * 60_000,
+  reportGraceMs: 5 * 60_000,
   notifyEveryMs: 60 * 60_000,
   maxRespawns: 2,
   maxAuthRetries: 2,
@@ -183,6 +187,13 @@ export interface Watermark {
   lastRedeliverAt: number;
   /** When we handed this session to a human. Cleared by the next real progress. */
   escalatedAt: number;
+  /**
+   * RES2: last time WE respawned this session's claude proc (respawn,
+   * refresh-auth, model-down, model-restore). synthesize-report's "long quiet
+   * period" evidence must not fire inside this window — a respawn's own
+   * capture+replay explains the quiet, it is not the child finishing.
+   */
+  lastRespawnAt: number;
 }
 
 export const freshWatermark = (): Watermark => ({
@@ -194,6 +205,7 @@ export const freshWatermark = (): Watermark => ({
   reportSynthesized: false,
   lastRedeliverAt: 0,
   escalatedAt: 0,
+  lastRespawnAt: 0,
 });
 
 export interface Decision {
@@ -243,14 +255,36 @@ export function decide(input: {
   // Climbing back only makes sense if the top rung can actually run: with every
   // pooled account still quarantined it would be downgraded again on the next
   // turn, and the session would flap between rungs.
-  if ((v.modelRung || 0) > 0 && shouldRestoreModel(v.modelRestoreAt, th.now) && v.accountsAvailable !== false)
-    return { action: 'model-restore', health: cl.state, reason: 'quota-reset', next: w };
+  // RES2: unlike a downgrade (forced by a hard limit, mid-turn or not), a restore
+  // is discretionary — nothing needs the top rung back THIS second. Defer it
+  // until the session is not RUNNING, so it never respawns and kills an in-flight
+  // turn; claude.js's restoreModel still captures+replays the last message as a
+  // second line of defense, but not switching mid-turn at all is the real fix.
+  if (
+    (v.modelRung || 0) > 0 &&
+    shouldRestoreModel(v.modelRestoreAt, th.now) &&
+    v.accountsAvailable !== false &&
+    cl.state !== 'RUNNING'
+  )
+    return { action: 'model-restore', health: cl.state, reason: 'quota-reset', next: bump(w, { lastRespawnAt: th.now }) };
 
   // Already handed to a human and nothing has moved since — the ladder is over.
   // Re-notify on the cadence (the escalation itself counts as the first push, so
   // the next one is an hour out), but never walk the ladder again: that is what
   // turns a one-off failure into a nudge loop.
   if (v.escalated || (w.escalatedAt && (v.lastActivityAt || 0) <= w.escalatedAt)) {
+    // The ladder gave up (respawn/auth-refresh/model-ladder all exhausted) —
+    // that IS terminality evidence (§2: a real signal, not mere idleness). A
+    // master still owed a report gets one now, marked 'unknown' — the host
+    // never claims 'done' on a child's behalf.
+    if (v.master && !v.reported && v.hadTurn !== false && !w.reportSynthesized)
+      return {
+        action: 'synthesize-report',
+        health: cl.state,
+        reason: 'child-terminal-without-report',
+        detail: { master: v.master, terminal: 'escalated' },
+        next: bump(w, { reportSynthesized: true }),
+      };
     if (th.now - w.lastNotifyAt >= th.notifyEveryMs)
       return { action: 'notify-human', health: cl.state, reason: cl.reason, next: bump(w, { lastNotifyAt: th.now }) };
     return none();
@@ -258,6 +292,13 @@ export function decide(input: {
 
   // A child that reached a terminal state without report_to_master (§3): the
   // master is never left guessing. Fires once per session (reportSynthesized).
+  // RES2: idle-with-no-pending is the NORMAL state between a working session's
+  // turns, so idleness alone is not evidence — require one of:
+  //  - the session is explicitly archived/stopped, or
+  //  - it has been quiet for the FULL grace window AND we ourselves did not
+  //    respawn it inside that window (a respawn's capture+replay explains a
+  //    short quiet gap; it is not the child finishing).
+  const quietWithoutOurRespawn = idleMs >= th.reportGraceMs && th.now - w.lastRespawnAt >= th.reportGraceMs;
   if (
     v.master &&
     !v.reported &&
@@ -266,13 +307,13 @@ export function decide(input: {
     v.hadTurn !== false &&
     !w.reportSynthesized &&
     (cl.state === 'IDLE_OK' || cl.state === 'STALLED') &&
-    idleMs >= th.reportGraceMs
+    (v.archived || quietWithoutOurRespawn)
   )
     return {
       action: 'synthesize-report',
       health: cl.state,
       reason: 'child-terminal-without-report',
-      detail: { master: v.master },
+      detail: { master: v.master, terminal: v.archived ? 'archived' : 'quiet' },
       next: bump(w, { reportSynthesized: true }),
     };
 
@@ -308,12 +349,12 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
 
   if (cl.reason === 'proc-dead')
     return w.respawns < th.maxRespawns
-      ? out('respawn', bump(w, { respawns: w.respawns + 1 }))
+      ? out('respawn', bump(w, { respawns: w.respawns + 1, lastRespawnAt: th.now }))
       : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'respawn', attempts: w.respawns }, true);
 
   if (cl.reason === 'auth')
     return w.authRetries < th.maxAuthRetries
-      ? out('refresh-auth', bump(w, { authRetries: w.authRetries + 1 }))
+      ? out('refresh-auth', bump(w, { authRetries: w.authRetries + 1, lastRespawnAt: th.now }))
       : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'refresh-auth', attempts: w.authRetries }, true);
 
   // The account pool is exhausted — the account switch in claude.js already ran
@@ -321,7 +362,7 @@ function blocked(v: SessionView, cl: Classification, w: Watermark, th: Threshold
   // bottom rung with no quota left is a human's problem.
   if (cl.reason === 'accounts-exhausted')
     return (v.modelRungsLeft || 0) > 0
-      ? out('model-down', w, { rungsLeft: v.modelRungsLeft })
+      ? out('model-down', bump(w, { lastRespawnAt: th.now }), { rungsLeft: v.modelRungsLeft })
       : out('escalate', bump(w, { escalatedAt: th.now, lastNotifyAt: th.now }), { after: 'model-ladder' }, true);
 
   if (cl.reason === 'mcp-down')

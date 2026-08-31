@@ -120,6 +120,15 @@ process.stdin.on('data',(d)=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){cons
     out({type:'result',subtype:'error',session_id:sid,is_error:true,result:'authentication_error: OAuth token revoked',duration_ms:5,num_turns:1,total_cost_usd:cost});
     continue;
   }
+  if(txt.includes('SLOW')){
+    // RES2: stays 'working' for a couple seconds — the window a test forces a
+    // supervisor-initiated respawn (model-restore) into, to prove it replays.
+    setTimeout(()=>{cost+=0.01;
+      out({type:'assistant',message:{role:'assistant',content:[{type:'text',text:'ok: '+txt.slice(-40)}],usage:{input_tokens:10,output_tokens:5,cache_creation_input_tokens:0,cache_read_input_tokens:0}}});
+      out({type:'result',subtype:'success',session_id:sid,is_error:false,result:'ok',duration_ms:2500,num_turns:1,total_cost_usd:cost});
+    },2500);
+    continue;
+  }
   cost+=0.01;
   out({type:'assistant',message:{role:'assistant',content:[{type:'text',text:'ok: '+txt.slice(-40)}],usage:{input_tokens:10,output_tokens:5,cache_creation_input_tokens:0,cache_read_input_tokens:0}}});
   out({type:'result',subtype:'success',session_id:sid,is_error:false,result:'ok',duration_ms:5,num_turns:1,total_cost_usd:cost});
@@ -298,6 +307,47 @@ test('an unavailable model drops a rung too, and the supervisor climbs back when
   expect(incidents().some((i) => i.sessionId === sid && i.action === 'model-restore' && i.outcome === 'ok')).toBe(true);
 }, 90000);
 
+test('a supervisor-initiated model change mid-turn respawns but replays the interrupted message — never drops it', async () => {
+  // Reproduces the RES1 incident this fixes: a model-restore firing while a
+  // turn is genuinely in flight must not silently kill it. Two independent
+  // guards now exist — server/supervisor.ts defers model-restore until the
+  // session is idle, and claude.js's restoreModel captures+replays the last
+  // message as a second line of defense. This drives the SAME code path the
+  // supervisor's own automatic restore uses (POST /model/restore →
+  // claude.restoreModel), deliberately timed to land mid-turn, so it exercises
+  // that second line of defense directly rather than racing the supervisor's tick.
+  const sid = (await api('POST', '/__api/sessions', { title: 'mid-turn', cwd: ws, model: 'fable' })).json.id;
+  await until(async () => spawns(sid).length >= 1);
+  await api('POST', `/__api/sessions/${sid}/message`, { text: 'MODELGONE please' });
+  await until(async () => {
+    const s = await session(sid);
+    return s.claude?.modelChoice === 'sonnet' && s.claude?.state === 'idle' ? s : null;
+  }, 25000);
+  const spawnsBefore = spawns(sid).length;
+
+  // A turn the stub deliberately keeps 'working' on for ~2.5s.
+  await api('POST', `/__api/sessions/${sid}/message`, { text: 'please go SLOW' });
+  expect((await session(sid)).claude?.state).toBe('working');
+
+  const back = await api('POST', `/__api/sessions/${sid}/model/restore`);
+  expect(back.status).toBe(200);
+  expect(back.json.model).toBe('fable');
+
+  // It respawned with --resume on the restored top rung...
+  await until(async () => spawns(sid).length > spawnsBefore);
+  const latest = spawns(sid)[spawns(sid).length - 1];
+  expect(latest).toContain('--resume');
+  expect(modelOf(latest)).toBe('fable');
+  expect((await session(sid)).claude?.modelRung).toBe(0);
+  // …and the interrupted "please go SLOW" turn was replayed and actually
+  // answered — not left as the worker's silent last words with no report.
+  const txt = await until(async () => {
+    const t = await chatText(sid);
+    return /ok: .*SLOW/.test(t) ? t : null;
+  }, 20000);
+  expect(txt).toMatch(/ok: .*SLOW/);
+}, 60000);
+
 test('a child that goes terminal without report_to_master gets its report synthesized', async () => {
   const master = (await api('POST', '/__api/sessions', { title: 'master', cwd: ws })).json.id;
   const child = (
@@ -311,13 +361,15 @@ test('a child that goes terminal without report_to_master gets its report synthe
   await until(async () => (await session(child)).claude?.state === 'idle');
 
   // It never calls report_to_master. The host builds the report from what it CAN
-  // see and wakes the master with the same thin pointer.
+  // see and wakes the master with the same thin pointer — but RES2: it never
+  // claims the work is 'done' on the child's behalf, only that it doesn't know.
   const result = await until(async () => (await session(child)).metadata?.result || null, 25000);
-  expect(result.state).toBe('done');
+  expect(result.state).toBe('unknown');
   expect(result.synthesized).toBe(true);
-  expect(result.summary).toContain('without calling report_to_master');
+  expect(result.summary).toContain('did NOT call report_to_master');
   expect(result.summary).toContain('child/do-the-thing');
-  expect(await chatText(child)).toMatch(/finished without reporting/);
+  expect(result.summary).toMatch(/last words.*ok: /); // quotes the child's own last words, not a made-up conclusion
+  expect(await chatText(child)).toMatch(/you did not report_to_master/);
   await until(async () => /host-synthesized/.test(await chatText(master)), 20000);
   expect(incidents().some((i) => i.sessionId === child && i.action === 'synthesize-report' && i.outcome === 'ok')).toBe(true);
 }, 60000);

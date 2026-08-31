@@ -958,13 +958,33 @@ export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
   return { ok: true, model: nxt.model, from };
 }
 
-/** Climb back to the top rung (the supervisor calls this once the quota reset). */
+/**
+ * Climb back to the top rung (the supervisor calls this once the quota reset,
+ * or the human does by hand via the model picker's "back on <model>").
+ * RES2: the supervisor now defers the automatic call until the session is idle
+ * (server/supervisor.ts decide()), and the human only ever clicks this while
+ * idle too — so in the overwhelming common case there is no in-flight turn to
+ * lose, and nothing should be replayed (`record(id).sent` never clears, so its
+ * last entry is often a message from a turn that already finished cleanly;
+ * blindly replaying it would resend a stale duplicate). Only when the session
+ * is ACTUALLY mid-turn at the moment we abort it — the race the idle-gate is
+ * meant to close, closed here as a second line of defense — do we capture and
+ * replay, exactly like downgradeModel/tryAutoSwitch.
+ */
 export function restoreModel(id) {
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
+  const wasWorking = getSession(id)?.claude?.state === 'working';
+  const lastMsg = wasWorking ? [...(record(id)?.sent || [])].pop() : null;
   appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
   restartWith(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null });
+  if (!lastMsg) return top;
+  // Replay the turn that was actually interrupted, once the resumed proc is up.
+  const t = setTimeout(() => {
+    try { sendMessage(id, lastMsg); } catch {}
+  }, 900);
+  if (t.unref) t.unref();
   return top;
 }
 
