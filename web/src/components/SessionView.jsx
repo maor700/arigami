@@ -9,7 +9,7 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
-import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment } from '../lib/attachments.js';
+import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
@@ -992,15 +992,15 @@ function ChatFooter({ session }) {
       setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
     }
     for (const f of big) {
-      const placeholder = { name: f.name, type: f.type || 'application/octet-stream', size: f.size, uploading: true, progress: 0 };
+      const placeholder = pendingAttachment(f);
       setAttachments((a) => [...a, placeholder].slice(0, 10));
       try {
         const descriptor = await uploadAttachment(session.id, f, {
-          onProgress: (p) => setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, progress: p } : x))),
+          onProgress: (p) => setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'progress', progress: p })),
         });
-        setAttachments((a) => a.map((x) => (x === placeholder ? { ...descriptor, uploading: false } : x)));
+        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'done', descriptor }));
       } catch (e) {
-        setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, uploading: false, failed: true, error: errText(e) } : x)));
+        setAttachments((a) => applyUploadEvent(a, placeholder.uid, { type: 'fail', error: errText(e) }));
       }
     }
   };
