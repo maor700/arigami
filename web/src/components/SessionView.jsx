@@ -9,10 +9,11 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
+import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUp, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
@@ -968,21 +969,40 @@ function ChatFooter({ session }) {
     focusInput();
   };
 
+  const isArchiveName = (name) => /\.(zip|tar|tar\.gz|tgz)$/i.test(name || '');
+
   // ---- attachments (file picker / drag-drop / paste) ----
-  const MAX_FILE = 20 * 1024 * 1024; // 20MB/file (body cap is 32MB)
-  const fileToB64 = (file) =>
-    new Promise((resolve) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result).split(',')[1] || '');
-      r.onerror = () => resolve('');
-      r.readAsDataURL(file);
-    });
+  // ZIP: anything under STREAM_THRESHOLD still rides inline as base64 in the
+  // message body; at/past it, it streams to .../attachments first (needed for
+  // archives — the 32MB JSON body cap made anything but a small screenshot
+  // fail outright) and the chip tracks upload progress until the server's
+  // descriptor comes back (with the extracted tree, for a zip/tar).
   const addFiles = async (fileList) => {
-    const arr = Array.from(fileList || []).filter((f) => f.size <= MAX_FILE);
-    const read = await Promise.all(
-      arr.map(async (f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size, dataBase64: await fileToB64(f) }))
-    );
-    setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
+    const arr = Array.from(fileList || []);
+    const oversized = arr.filter((f) => f.size > HARD_CAP);
+    for (const f of oversized) toastError(new Error(t('rail.attachTooLarge', { name: f.name })));
+    const accepted = arr.filter((f) => f.size <= HARD_CAP);
+    const small = accepted.filter((f) => !shouldStream(f));
+    const big = accepted.filter(shouldStream);
+
+    if (small.length) {
+      const read = await Promise.all(
+        small.map(async (f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size, dataBase64: await fileToBase64(f) }))
+      );
+      setAttachments((a) => [...a, ...read.filter((x) => x.dataBase64)].slice(0, 10));
+    }
+    for (const f of big) {
+      const placeholder = { name: f.name, type: f.type || 'application/octet-stream', size: f.size, uploading: true, progress: 0 };
+      setAttachments((a) => [...a, placeholder].slice(0, 10));
+      try {
+        const descriptor = await uploadAttachment(session.id, f, {
+          onProgress: (p) => setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, progress: p } : x))),
+        });
+        setAttachments((a) => a.map((x) => (x === placeholder ? { ...descriptor, uploading: false } : x)));
+      } catch (e) {
+        setAttachments((a) => a.map((x) => (x === placeholder ? { ...x, uploading: false, failed: true, error: errText(e) } : x)));
+      }
+    }
   };
   const removeAttachment = (i) => setAttachments((a) => a.filter((_, k) => k !== i));
 
@@ -996,6 +1016,10 @@ function ChatFooter({ session }) {
     // `draft` (it used to shadow `t`, so nothing here could be translated).
     const draft = text.trim();
     if (!draft && !attachments.length) return;
+    if (attachments.some((a) => a.uploading || a.failed)) {
+      toastError(new Error(t('rail.attachStillUploading')));
+      return;
+    }
     sendingRef.current = true;
     const sentAttachments = attachments;
     // Prepend the quoted message as a blockquote so the model sees context.
@@ -1023,7 +1047,10 @@ function ChatFooter({ session }) {
     }
     // A skill slash (/plan …) is rewritten to its plugin command (/arigami:dispatch …).
     const fullText = quotedPrefix + (resolved.type === 'skill' ? resolved.text : draft);
-    const payload = { text: fullText, attachments: sentAttachments.map(({ name, type, dataBase64 }) => ({ name, type, dataBase64 })) };
+    const payload = {
+      text: fullText,
+      attachments: sentAttachments.map(({ name, type, dataBase64, path }) => (path ? { name, type, path } : { name, type, dataBase64 })),
+    };
     setLastSent(session.id, { text: fullText, attachments: sentAttachments });
     setText('');
     setAttachments([]);
@@ -1153,24 +1180,51 @@ function ChatFooter({ session }) {
 
       {attachments.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {attachments.map((a, i) => (
-            <div key={i} className="flex items-center gap-1.5 rounded-md border border-border bg-bg py-1 pe-1 ps-1.5">
-              {a.type.startsWith('image/') ? (
-                <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
-              ) : (
-                <span className="text-[12px]"><Icon icon={faFile} /></span>
-              )}
-              <span className="max-w-[140px] truncate font-mono text-[10.5px] text-fg">{a.name}</span>
-              <button
-                type="button"
-                onClick={() => removeAttachment(i)}
-                title={t('rail.remove')}
-                className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[10px] text-fgdim hover:bg-hair hover:text-danger"
+          {attachments.map((a, i) => {
+            const archiveLike = a.archive || isArchiveName(a.name);
+            return (
+              <div
+                key={i}
+                title={a.archive?.dir || undefined}
+                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${a.failed ? 'border-danger bg-[#fdf6f5]' : 'border-border bg-bg'}`}
               >
-                <Icon icon={faXmark} />
-              </button>
-            </div>
-          ))}
+                {a.type?.startsWith('image/') && a.dataBase64 ? (
+                  <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
+                ) : (
+                  <span className={`text-[12px] ${a.failed ? 'text-danger' : 'text-fgdim'}`}>
+                    <Icon icon={archiveLike ? faBoxArchive : a.type?.startsWith('image/') ? faImage : faFile} />
+                  </span>
+                )}
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="max-w-[160px] truncate font-mono text-[10.5px] text-fg">{a.name}</span>
+                  {a.uploading && (
+                    <span className="font-mono text-[9px] text-fgdim">{t('rail.attachUploading', { pct: Math.round((a.progress || 0) * 100) })}</span>
+                  )}
+                  {a.failed && (
+                    <span className="max-w-[160px] truncate font-mono text-[9px] text-danger">{t('rail.attachUploadFailed', { msg: a.error || '' })}</span>
+                  )}
+                  {!a.uploading && !a.failed && a.archive && (
+                    <span className="font-mono text-[9px] text-fgdim">
+                      {a.archive.error
+                        ? t('rail.archiveExtractFailed')
+                        : a.archive.entryCount === 1
+                          ? t('rail.archiveOneEntry')
+                          : t('rail.archiveNEntries', { n: a.archive.entryCount })}
+                      {a.archive.rejectedCount > 0 && ` · ${t('rail.archiveRejected', { n: a.archive.rejectedCount })}`}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(i)}
+                  title={t('rail.remove')}
+                  className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[10px] text-fgdim hover:bg-hair hover:text-danger"
+                >
+                  <Icon icon={faXmark} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1257,7 +1311,7 @@ function ChatFooter({ session }) {
           type="button"
           title={t('rail.send')}
           onClick={send}
-          disabled={!text.trim() && !attachments.length}
+          disabled={(!text.trim() && !attachments.length) || attachments.some((a) => a.uploading)}
           className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-border bg-bg text-sm text-fgdim hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-40"
         >
           <Icon icon={faArrowUp} />

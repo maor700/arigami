@@ -24,6 +24,7 @@ import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
 import { appendIncident } from './incidents.js';
+import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
 // first apply) needs no restart for sessions to see user skills.
@@ -1322,25 +1323,151 @@ function handleEvent(id, j) {
 // worktree, so they never show up in git/the Changes tab) and referenced by
 // absolute path so the agent can Read them; images are also embedded as image
 // blocks so the model sees them immediately.
-const UPLOADS_DIR = path.join(path.dirname(CHAT_DIR), 'uploads');
+export const UPLOADS_DIR = path.join(path.dirname(CHAT_DIR), 'uploads');
+export const UPLOAD_SPOOL_DIR = path.join(UPLOADS_DIR, '.tmp');
+
+// ZIP: a .zip/.tar/.tar.gz attachment used to leave the model with one opaque
+// path — it had to Read (or shell out to unzip) the blob itself before it saw
+// what was inside. Detect by magic bytes (never the extension alone), extract
+// next to the original file, and write a manifest sidecar so a pre-uploaded
+// (streamed) archive and an inline base64 one build the exact same summary.
+function extractIfArchive(file) {
+  let buf;
+  try {
+    buf = fs.readFileSync(file);
+  } catch {
+    return null;
+  }
+  const kind = detectArchiveKind(buf);
+  if (!kind) return null;
+  const destDir = `${file}.d`;
+  const base = {
+    kind,
+    dir: destDir,
+    entryCount: 0,
+    totalSize: 0,
+    truncated: false,
+    tree: [],
+    rejected: [],
+    rejectedCount: 0,
+  };
+  try {
+    const manifest = extractArchive(buf, destDir, kind);
+    const info = {
+      ...base,
+      entryCount: manifest.entryCount,
+      totalSize: manifest.totalSize,
+      truncated: manifest.truncated,
+      tree: formatTree(manifest, 40),
+      rejected: manifest.rejected.slice(0, 20),
+      rejectedCount: manifest.rejected.length,
+    };
+    fs.writeFileSync(`${file}.manifest.json`, JSON.stringify(info));
+    return info;
+  } catch (e) {
+    console.error('[attach] archive extraction failed:', e.message);
+    return { ...base, dir: null, error: e.message };
+  }
+}
 
 function saveAttachments(id, attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return [];
   const dir = path.join(UPLOADS_DIR, id);
   const out = [];
   for (const a of attachments) {
-    if (!a?.name || !a?.dataBase64) continue;
+    if (!a?.name) continue;
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      const safe = String(a.name).replace(/[^\w.-]+/g, '_').slice(-90);
-      const file = path.join(dir, `${Date.now()}-${safe}`);
-      fs.writeFileSync(file, Buffer.from(a.dataBase64, 'base64'));
-      out.push({ name: a.name, path: file, type: a.type || '', isImage: /^image\//.test(a.type || ''), dataBase64: a.dataBase64 });
+      if (a.dataBase64) {
+        fs.mkdirSync(dir, { recursive: true });
+        const safe = String(a.name).replace(/[^\w.-]+/g, '_').slice(-90);
+        const file = path.join(dir, `${Date.now()}-${safe}`);
+        fs.writeFileSync(file, Buffer.from(a.dataBase64, 'base64'));
+        const archive = extractIfArchive(file);
+        out.push({
+          name: a.name,
+          path: file,
+          type: a.type || '',
+          isImage: /^image\//.test(a.type || ''),
+          dataBase64: a.dataBase64,
+          ...(archive ? { archive } : {}),
+        });
+      } else if (typeof a.path === 'string') {
+        // Pre-uploaded via the streamed endpoint (POST .../attachments) — only
+        // trust a path that endpoint itself produced, inside this session's
+        // own upload dir; anything else is silently dropped.
+        const real = path.resolve(a.path);
+        if (real !== dir && !real.startsWith(dir + path.sep)) {
+          console.error('[attach] rejected out-of-tree path:', a.path);
+          continue;
+        }
+        if (!fs.existsSync(real)) continue;
+        let archive = null;
+        const manifestFile = `${real}.manifest.json`;
+        if (fs.existsSync(manifestFile)) {
+          try {
+            archive = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+          } catch { /* ignore a corrupt sidecar — describe the file plainly */ }
+        }
+        out.push({
+          name: a.name,
+          path: real,
+          type: a.type || '',
+          isImage: /^image\//.test(a.type || ''),
+          ...(archive ? { archive } : {}),
+        });
+      }
     } catch (e) {
       console.error('[attach] save failed:', e.message);
     }
   }
   return out;
+}
+
+const humanSize = (n) => (n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1024 / 1024).toFixed(1)}MB`);
+
+/** One list line per attachment — a rich, indented block for archives, a plain path for everything else. */
+function describeAttachment(a) {
+  if (!a.archive) return `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`;
+  const ar = a.archive;
+  if (ar.error) return `- 📦 ${a.name} → extraction failed: ${ar.error} (original kept at ${a.path})`;
+  let block = `- 📦 ${a.name} → extracted to ${ar.dir} (${ar.entryCount} entries, ${humanSize(ar.totalSize)})`;
+  if (ar.tree.length) block += `\n  tree:\n` + ar.tree.map((l) => `  ${l}`).join('\n');
+  if (ar.rejectedCount) {
+    const shown = ar.rejected.slice(0, 10).map((r) => `${r.name} (${r.reason})`).join(', ');
+    const extra = ar.rejectedCount > 10 ? `, +${ar.rejectedCount - 10} more` : '';
+    block += `\n  ⚠ ${ar.rejectedCount} entr${ar.rejectedCount === 1 ? 'y' : 'ies'} rejected: ${shown}${extra}`;
+  }
+  if (ar.truncated) block += `\n  (extraction stopped early — the archive exceeded the size/entry-count cap)`;
+  return block;
+}
+
+/**
+ * A raw upload spooled by the streamed endpoint (server/api.ts POST
+ * .../attachments) — moved into this session's uploads dir, extracted if it's
+ * an archive, and described the same way an inline attachment would be.
+ */
+export function receiveStreamedAttachment(id, tmpFile, name, type) {
+  const dir = path.join(UPLOADS_DIR, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = String(name || 'file').replace(/[^\w.-]+/g, '_').slice(-90);
+  const file = path.join(dir, `${Date.now()}-${safe}`);
+  try {
+    fs.renameSync(tmpFile, file);
+  } catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    fs.copyFileSync(tmpFile, file);
+    fs.rmSync(tmpFile, { force: true });
+  }
+  const size = fs.statSync(file).size;
+  const archive = extractIfArchive(file);
+  return {
+    name: name || safe,
+    path: file,
+    type: type || '',
+    size,
+    isImage: /^image\//.test(type || ''),
+    ...(archive ? { archive } : {}),
+  };
 }
 
 // Memory M1.3: inject the USER.md+MEMORY.md snapshot into a session's very
@@ -1437,7 +1564,7 @@ function writeUserMessage(p, text, attachments = []) {
   let txt = text || '';
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
   if (attachments.length) {
-    const list = attachments.map((a) => `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`).join('\n');
+    const list = attachments.map(describeAttachment).join('\n');
     txt += (txt ? '\n\n' : '') + `📎 Attached ${attachments.length} file(s) — read them as needed:\n${list}`;
   }
   if (txt) content.push({ type: 'text', text: txt });
@@ -1476,7 +1603,17 @@ export function sendMessage(id, text, attachments = [], { system = false } = {})
   appendChat(id, {
     kind: 'user',
     text,
-    ...(saved.length ? { attachments: saved.map((a) => ({ name: a.name, isImage: a.isImage })) } : {}),
+    ...(saved.length
+      ? {
+          attachments: saved.map((a) => ({
+            name: a.name,
+            isImage: a.isImage,
+            ...(a.archive
+              ? { archive: { kind: a.archive.kind, entryCount: a.archive.entryCount, rejectedCount: a.archive.rejectedCount, error: a.archive.error, dir: a.archive.dir } }
+              : {}),
+          })),
+        }
+      : {}),
   });
   setClaude(id, { state: 'working' });
   writeUserMessage(p, text, saved);

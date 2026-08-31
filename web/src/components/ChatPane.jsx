@@ -19,6 +19,7 @@ import { useT, dirOf } from '../lib/i18n.js';
 import {
   faArrowDown,
   faArrowRotateRight,
+  faBoxArchive,
   faCheck,
   faChevronDown,
   faChevronUp,
@@ -171,9 +172,12 @@ function UserMsg({ event }) {
             {atts.map((a, i) => (
               <span
                 key={i}
+                title={a.archive?.dir || undefined}
                 className="inline-flex items-center gap-1 rounded-md border border-[var(--term-userborder)] bg-black/10 px-1.5 py-0.5 text-[10px]"
               >
-                <Icon icon={a.isImage ? faImage : faFile} /> {a.name}
+                <Icon icon={a.archive ? faBoxArchive : a.isImage ? faImage : faFile} /> {a.name}
+                {a.archive && !a.archive.error && ` (${a.archive.entryCount})`}
+                {a.archive?.error && ` (${t('chat.archiveExtractFailed')})`}
               </span>
             ))}
           </div>

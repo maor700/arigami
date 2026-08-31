@@ -1,6 +1,7 @@
 export const strings = {
   // --- ChatPane ---
   'chat.you': 'אתה',
+  'chat.archiveExtractFailed': 'החילוץ נכשל',
   'chat.thinking': 'חושב',
   'chat.more': 'עוד',
   'chat.less': 'פחות',

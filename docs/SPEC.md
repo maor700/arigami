@@ -138,6 +138,43 @@ Client → server: none (use REST). Reconnect = full state replay.
   {kind:'user'|'assistant-text'|'tool-use'|'tool-result'|'thinking'|'result'|'error', …}.
   Persist to ~/.arigami/chat/<id>.jsonl (append).
 
+## Attachments (server/archive.js, claude.js saveAttachments/writeUserMessage — ZIP)
+
+- **Two upload paths**, chosen client-side by size (`web/src/lib/attachments.js`,
+  `STREAM_THRESHOLD = 8MB`): smaller files ride inline as base64 in
+  `POST /__api/sessions/:id/message` (`attachments: [{name, type, dataBase64}]`,
+  32MB JSON body cap); anything at/past the threshold streams first via
+  `POST /__api/sessions/:id/attachments` (raw body + `Content-Type` +
+  `X-Arigami-Filename` header, or `multipart/form-data` — a 200MB hard cap,
+  `ARIGAMI_ATTACHMENT_MAX_BYTES` env override for tests) and returns a
+  descriptor `{name, path, type, size, isImage, archive?}`; the composer then
+  sends `{name, type, path}` in the `.../message` call instead of resending
+  bytes. Saved files live under `$ARIGAMI_DIR/uploads/<sessionId>/`.
+- **Archive extraction.** `saveAttachments` sniffs every saved attachment by
+  magic bytes (never the extension) for zip / tar / tar.gz / tgz and, on a
+  match, extracts next to the original file into `<file>.d/` via the hardened
+  extractor in `server/archive.js`, writing a `<file>.manifest.json` sidecar.
+  The extractor is central-directory-driven for zip (never trusts a local
+  header's size/method) and rejects, per entry: path traversal (`..`,
+  absolute paths), symlinks, encrypted entries, and anything past
+  `MAX_ENTRIES` (2000), `MAX_ENTRY_UNCOMPRESSED` (100MB),
+  `MAX_TOTAL_UNCOMPRESSED` (200MB), or `MAX_COMPRESSION_RATIO` (100:1,
+  zip-bomb guard) — zlib's `maxOutputLength` enforces the last two without a
+  manual byte-counter. Rejected entries are skipped, not fatal; a
+  structurally corrupt archive throws (the original file is kept either way).
+- **What the model sees.** Instead of one opaque path, the injected
+  `📎 Attached N file(s)` line gives an archive its own block: the extraction
+  dir, entry/rejected counts, total size, a short tree (first 40 entries then
+  `+N more`, `formatTree()`), and up to 10 rejected entries with their reason
+  code. Non-archive attachments still get a plain `- name → path` line;
+  images are still embedded as image blocks when their bytes are available
+  (base64 path only — a streamed image has a path but no inline bytes).
+- **UI.** The composer chip shows upload progress while streaming, a 📦 icon
+  + entry/rejected counts once an archive extracts (dir on hover), or the
+  upload error if it failed; Send is disabled mid-upload and refuses (with a
+  toast) while a failed attachment is still in the draft. The persisted chat
+  bubble (`ChatPane.jsx`) shows the same 📦 + entry count.
+
 ## MCP tools (mcp/host-mcp.js — stdio, thin HTTP shim)
 
 Session-scoped tools resolve the session from ARIGAMI_SESSION_ID env; tools
