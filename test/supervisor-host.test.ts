@@ -120,6 +120,11 @@ process.stdin.on('data',(d)=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){cons
     out({type:'result',subtype:'error',session_id:sid,is_error:true,result:'authentication_error: OAuth token revoked',duration_ms:5,num_turns:1,total_cost_usd:cost});
     continue;
   }
+  if(txt.includes('HANG')){
+    // SUP1: stays 'working' forever (never emits a result) — stands in for a
+    // child that is genuinely still busy, well past any stall threshold.
+    continue;
+  }
   if(txt.includes('SLOW')){
     // RES2: stays 'working' for a couple seconds — the window a test forces a
     // supervisor-initiated respawn (model-restore) into, to prove it replays.
@@ -373,6 +378,45 @@ test('a child that goes terminal without report_to_master gets its report synthe
   await until(async () => /host-synthesized/.test(await chatText(master)), 20000);
   expect(incidents().some((i) => i.sessionId === child && i.action === 'synthesize-report' && i.outcome === 'ok')).toBe(true);
 }, 60000);
+
+test('SUP1: a controller with a live child is IDLE_OK and never nudged, even though it owes its OWN master a report', async () => {
+  // Reproduces the shape that actually mis-fired live (incidents.jsonl,
+  // action "nudge", reason "610s"/"626s" on a CONTROLLER/PM session): a
+  // session that is itself a worker of some higher master (has not reported
+  // up yet) but is correctly quiet because the work it owns right now belongs
+  // to its own still-working child.
+  const grandparent = (await api('POST', '/__api/sessions', { title: 'grandparent', cwd: ws })).json.id;
+  const controller = (
+    await api('POST', '/__api/sessions', { title: 'nested-controller', cwd: ws, metadata: { master: grandparent } })
+  ).json.id;
+  await api('POST', `/__api/sessions/${controller}/message`, { text: 'hello' });
+  await until(async () => (await session(controller)).claude?.state === 'idle');
+
+  const child = (
+    await api('POST', '/__api/sessions', { title: 'busy-child', cwd: ws, metadata: { master: controller } })
+  ).json.id;
+  // Keeps the child 'working' well past the 3s stall threshold — it never reports.
+  await api('POST', `/__api/sessions/${child}/message`, { text: 'please HANG' });
+  await until(async () => (await session(child)).claude?.state === 'working');
+
+  const row = await until(async () => {
+    const h = (await api('GET', '/__api/health')).json;
+    return (h.sessions || []).find((r: any) => r.sessionId === controller) || null;
+  });
+  expect(row.state).toBe('IDLE_OK');
+
+  const spawnsBefore = spawns(controller).length;
+  // Several supervisor ticks past the 3s stall threshold.
+  await sleep(6000);
+
+  const mine = incidents().filter((i) => i.sessionId === controller);
+  expect(mine.filter((i) => ['nudge', 'respawn', 'escalate', 'synthesize-report'].includes(i.action))).toEqual([]);
+  expect(spawns(controller).length).toBe(spawnsBefore);
+  expect(await chatText(controller)).not.toMatch(/host supervisor/);
+
+  const h2 = (await api('GET', '/__api/health')).json;
+  expect((h2.sessions || []).find((r: any) => r.sessionId === controller)?.state).toBe('IDLE_OK');
+}, 30000);
 
 test('a WAITING_HUMAN session is never nudged, respawned or downgraded', async () => {
   const sid = (await api('POST', '/__api/sessions', { title: 'blocked-on-me', cwd: ws })).json.id;

@@ -75,6 +75,13 @@ export interface SessionView {
   waitingOn?: { sessionId: string; since: string; what: string } | null;
   waitingOnChildKnows?: boolean; // the child has the ask (pending queue / recent task)
   waitingOnChildGone?: boolean; // the child no longer exists
+  /**
+   * At least one other session has metadata.master === this id, is not
+   * archived, and has not reported yet (SUP1). A controller with live
+   * children is waiting on work it legitimately owns — quiet is its correct
+   * resting state, not a stall.
+   */
+  hasLiveChildren?: boolean;
 }
 
 export interface Classification {
@@ -115,8 +122,20 @@ function owesWork(v: SessionView): boolean {
   // A queue only counts as owed when auto-play promised to run it. A queue the
   // human parked with auto-play OFF is theirs to release, not ours to nudge.
   if ((v.queued || 0) > 0 && v.autoPlay) return true;
-  if (v.waitingOn && !v.waitingOnChildGone) return true; // a master mid-orchestration
   return false;
+}
+
+/**
+ * SUP1 §3: the loop tracks the last tick a session owned live work (a live
+ * child, or an un-cleared waitingOn) and floors `lastActivityAt` at that
+ * moment. Otherwise the INSTANT that work clears, the session is judged
+ * against however stale its real transcript activity happens to be — which
+ * for a controller that dispatched children hours ago and hasn't said a word
+ * since is already well past the stall threshold, firing a nudge on the very
+ * next tick instead of giving it a fresh stall window.
+ */
+export function floorActivity(lastActivityAt: number, ownedWorkUntil: number): number {
+  return ownedWorkUntil && lastActivityAt < ownedWorkUntil ? ownedWorkUntil : lastActivityAt;
 }
 
 /**
@@ -152,6 +171,13 @@ export function classify(v: SessionView, th: Thresholds): Classification {
   const idleMs = v.lastActivityAt ? Math.max(0, th.now - v.lastActivityAt) : 0;
   if (BUSY_STATES.has(v.claudeState || '')) return { state: 'RUNNING', reason: v.claudeState! };
   if ((v.queued || 0) > 0 && idleMs <= th.stallMs) return { state: 'RUNNING', reason: 'queued' };
+
+  // ---- IDLE_OK — waiting on work it legitimately owns. A controller/PM that is
+  // quiet only because its children (or a child it explicitly tasked) are still
+  // working is in its correct resting state; nudging it wastes a turn and
+  // interrupts nobody but itself (SUP1 — docs/RESILIENCE.md §1).
+  if (v.hasLiveChildren) return { state: 'IDLE_OK', reason: 'waiting-on-children' };
+  if (v.waitingOn && !v.waitingOnChildGone) return { state: 'IDLE_OK', reason: 'waiting-on-child' };
 
   // ---- STALLED — only when something is actually owed. A plain human chat that
   // is simply idle is IDLE_OK: nudging the user's own session would be noise.
@@ -298,7 +324,13 @@ export function decide(input: {
   //  - it has been quiet for the FULL grace window AND we ourselves did not
   //    respawn it inside that window (a respawn's capture+replay explains a
   //    short quiet gap; it is not the child finishing).
+  // SUP1: a session that is itself busy running its OWN children (or waiting
+  // on one it explicitly tasked) is not "quiet with nothing happening" — it is
+  // legitimately mid-orchestration, same as the STALLED guard above. Archived
+  // stays terminal evidence on its own regardless: if it stopped running,
+  // whatever children it had are not its problem anymore.
   const quietWithoutOurRespawn = idleMs >= th.reportGraceMs && th.now - w.lastRespawnAt >= th.reportGraceMs;
+  const legitimatelyBusy = !!v.hasLiveChildren || !!(v.waitingOn && !v.waitingOnChildGone);
   if (
     v.master &&
     !v.reported &&
@@ -307,7 +339,7 @@ export function decide(input: {
     v.hadTurn !== false &&
     !w.reportSynthesized &&
     (cl.state === 'IDLE_OK' || cl.state === 'STALLED') &&
-    (v.archived || quietWithoutOurRespawn)
+    (v.archived || (quietWithoutOurRespawn && !legitimatelyBusy))
   )
     return {
       action: 'synthesize-report',

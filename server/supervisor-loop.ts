@@ -24,6 +24,7 @@ import { broadcast } from './bus.js';
 import {
   classify,
   decide,
+  floorActivity,
   freshWatermark,
   resetOnProgress,
   waitingRow,
@@ -58,6 +59,15 @@ interface Tracked {
    * like it had recovered on the very next tick.
    */
   lastTurnSeq: number;
+  /**
+   * The last tick this session was legitimately waiting on owned work (a live
+   * child, or a waitingOn pointer not yet cleared). 0 = never observed. SUP1:
+   * once that work clears, this becomes the floor for lastActivityAt — so a
+   * controller whose last child JUST finished gets a full fresh stall window
+   * before it is nudged, instead of being judged against however stale its own
+   * transcript activity happens to be.
+   */
+  ownedWorkUntil: number;
 }
 
 const tracked = new Map<string, Tracked>();
@@ -65,7 +75,15 @@ const tracked = new Map<string, Tracked>();
 function trackOf(id: string): Tracked {
   let t = tracked.get(id);
   if (!t) {
-    t = { watermark: freshWatermark(), health: 'IDLE_OK', reason: 'idle', since: Date.now(), escalated: false, lastTurnSeq: 0 };
+    t = {
+      watermark: freshWatermark(),
+      health: 'IDLE_OK',
+      reason: 'idle',
+      since: Date.now(),
+      escalated: false,
+      lastTurnSeq: 0,
+      ownedWorkUntil: 0,
+    };
     tracked.set(id, t);
   }
   return t;
@@ -128,11 +146,32 @@ function childKnows(w: { sessionId: string; since: string }): { knows: boolean; 
   return { knows: updated > since, gone: false };
 }
 
+/** True when a session's `metadata.result` records a terminal state. */
+function isReported(s: Session): boolean {
+  const result = (s.metadata as any)?.result as { state?: string } | undefined;
+  return !!result?.state && ['done', 'blocked', 'error'].includes(String(result.state));
+}
+
+/**
+ * Every session id that has at least one live child right now: another
+ * non-archived session with metadata.master === that id which has not
+ * reported yet (SUP1). Computed once per sweep over the same list the sweep
+ * already iterates — dispatch workers and full project children are both
+ * discovered the same way, via metadata.master.
+ */
+function liveChildParents(sessions: Session[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of sessions) {
+    const master = (s.metadata as any)?.master as string | undefined;
+    if (master && !isReported(s)) out.add(master);
+  }
+  return out;
+}
+
 /** Everything supervisor.ts needs about one session, read from live sources. */
-export function viewOf(s: Session, now = Date.now()): SessionView {
+export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): SessionView {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   const md = (s.metadata || {}) as Record<string, any>;
-  const result = md.result as { state?: string } | undefined;
   const down = mcpDownOf(s);
   const ladder = claude.ladderState(s.id);
   const errClass = claude.lastTurnError(s.id);
@@ -168,8 +207,9 @@ export function viewOf(s: Session, now = Date.now()): SessionView {
     escalated: !!md.supervisor?.escalated,
     escalatedReason: md.supervisor?.reason || undefined,
     master: (md.master as string) || null,
-    reported: !!result?.state && ['done', 'blocked', 'error'].includes(String(result.state)),
+    reported: isReported(s),
     waitingOn,
+    hasLiveChildren,
     ...(know ? { waitingOnChildKnows: know.knows, waitingOnChildGone: know.gone } : {}),
   };
 }
@@ -425,11 +465,22 @@ export async function sweep({ act = false }: { act?: boolean } = {}): Promise<He
   const rows: HealthRow[] = [];
   const waiting: WaitingRow[] = [];
   const live = new Set<string>();
+  const sessions = listSessions({ archived: false });
+  const withLiveChildren = liveChildParents(sessions);
 
-  for (const s of listSessions({ archived: false })) {
+  for (const s of sessions) {
     live.add(s.id);
     const t = trackOf(s.id);
-    const v = viewOf(s, th.now);
+    const v = viewOf(s, th.now, withLiveChildren.has(s.id));
+
+    // SUP1: while this session owns live work (a live child, or a waitingOn
+    // pointer it hasn't heard back on), the floor tracks "now" — so the moment
+    // that work clears, the session is judged against a fresh stall window
+    // instead of however stale its own transcript activity happens to be. A
+    // controller whose child JUST reported must not be nudged on the very next
+    // tick just because it hadn't said anything itself in the meantime.
+    if (v.hasLiveChildren || (v.waitingOn && !v.waitingOnChildGone)) t.ownedWorkUntil = th.now;
+    v.lastActivityAt = floorActivity(v.lastActivityAt || 0, t.ownedWorkUntil);
 
     // A turn that actually finished, with no error left behind, is the only
     // thing that clears the ladder counters — a session that recovered must not

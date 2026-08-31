@@ -48,10 +48,21 @@ the thing from being annoying:
   session can be both blocked on a person *and* broken. The person wins, so
   nothing below can auto-recover it out from under them.
 - **`STALLED` only applies when something is actually owed** — a worker that
-  never reported, a controller mid-orchestration, or a queue that auto-play
-  promised to run. A plain human chat that is simply idle is `IDLE_OK` forever;
-  nudging the user's own session would be noise. A queue the human parked with
-  auto-play **off** is theirs to release, not ours to nudge.
+  never reported, or a queue that auto-play promised to run. A plain human chat
+  that is simply idle is `IDLE_OK` forever; nudging the user's own session
+  would be noise. A queue the human parked with auto-play **off** is theirs to
+  release, not ours to nudge.
+- **A controller mid-orchestration is `IDLE_OK`, not `STALLED` — even if it
+  also owes a report of its own** (SUP1). At least one live (non-archived,
+  non-terminal) child (discovered via `metadata.master`), or an un-cleared
+  `waitingOn` pointer, means the work it owns right now belongs to someone
+  else; being quiet while they work is its correct resting state, not a stall.
+  A controller with **no** live children and **no** `waitingOn` that goes quiet
+  past the threshold is still genuinely `STALLED`. The moment the last live
+  child clears, the loop floors the controller's activity clock at that
+  instant (`floorActivity`), so it gets a full fresh stall window instead of
+  being judged against however stale its own transcript happens to be — a
+  child reporting must never itself trigger a nudge on the next tick.
 
 ---
 
@@ -68,7 +79,8 @@ the affected session and a line in `$ARIGAMI_DIR/incidents.jsonl`.
 | **model ladder** | drop one rung of the session's `modelChain`, announce it, keep working; climb back after the reset | bottom rung, still limited → hand to the human |
 | MCP server down | disable that server for the session, tell the model, continue | the session genuinely needs it → hand to the human |
 | `STALLED`, nothing owed to a human | nudge: *"continue; if blocked, report why"* | still stalled → respawn → hand to the human |
-| child terminal, master unaware | synthesize the report from the child's state and wake the master | — |
+| a controller with a live child, or an un-cleared `waitingOn` | none — `IDLE_OK`, not `STALLED` (SUP1) | — |
+| child terminal, master unaware | synthesize the report from the child's state and wake the master — skipped while the master itself owns a live child or an un-cleared `waitingOn` (SUP1) | — |
 | master waiting on a child that never got the ask | re-deliver the ask to the child | — |
 | a block only a human can clear | re-notify (push), at most hourly, deduped | — |
 | agent over its daily budget | `WAITING_HUMAN` by design (A3/A5) — surfaced with "raise the cap" | — |
