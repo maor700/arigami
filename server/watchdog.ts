@@ -24,7 +24,11 @@ export interface WatchdogDecision {
   nextWatermark: WorkerWatermark;
 }
 
-const TERMINAL = new Set(['done', 'blocked', 'error']);
+// RES2: 'unknown' is the state server/supervisor-loop.ts's synthesize-report
+// writes when the host reports on a child's behalf — the host already decided
+// no further auto-recovery applies (a human/master has been informed), so this
+// watchdog must not also treat it as still-active and fire a redundant stall.
+const TERMINAL = new Set(['done', 'blocked', 'error', 'unknown']);
 
 // Decide what (if anything) the watchdog should do about a worker this tick.
 // - retire: the worker reached a terminal state via its own report — the explicit
