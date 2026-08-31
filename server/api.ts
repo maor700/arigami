@@ -293,7 +293,7 @@ function spoolUpload(req: IncomingMessage, dir: string): Promise<string> {
 // raw body (Content-Type + X-Arigami-Filename header, what the composer's XHR
 // sends — it needs upload.onprogress, which fetch can't give) or a normal
 // multipart/form-data single-file post, so curl -F works too.
-const ATTACHMENT_MAX_BYTES = 200 * 1024 * 1024;
+const ATTACHMENT_MAX_BYTES = Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) > 0 ? Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) : 200 * 1024 * 1024; // env: tests only
 
 function spoolAttachment(
   req: IncomingMessage,
@@ -307,7 +307,23 @@ function spoolAttachment(
     const bm = /boundary=("?)([^";]+)\1/i.exec(ct);
     const out = fs.createWriteStream(file);
     let total = 0;
-    const fail = (e: Error) => { try { out.destroy(); fs.rmSync(file, { force: true }); } catch {} reject(e); };
+    let settled = false;
+    // Never req.destroy() on an over-cap upload — an abrupt socket teardown
+    // reads on the client as ECONNRESET instead of the 413 we want it to see.
+    // Just stop writing bytes and drain the rest of the body so the server
+    // can still respond normally on the same connection.
+    const fail = (e: Error) => {
+      if (settled) return;
+      settled = true;
+      try { out.destroy(); fs.rmSync(file, { force: true }); } catch {}
+      req.resume();
+      reject(e);
+    };
+    const succeed = (v: { file: string; filename: string; contentType: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
     const tooBig = () => Object.assign(new Error(`upload exceeds the ${maxBytes}-byte cap`), { status: 413 });
     req.on('error', fail);
     out.on('error', fail);
@@ -317,11 +333,12 @@ function spoolAttachment(
       try { filename = rawName ? decodeURIComponent(String(rawName)) : 'upload'; } catch { filename = String(rawName); }
       const contentType = ct || 'application/octet-stream';
       req.on('data', (c: Buffer) => {
+        if (settled) return;
         total += c.length;
-        if (total > maxBytes) { req.destroy(); fail(tooBig()); }
+        if (total > maxBytes) { req.unpipe(out); fail(tooBig()); return; }
       });
       req.pipe(out);
-      out.on('finish', () => resolve({ file, filename, contentType }));
+      out.on('finish', () => succeed({ file, filename, contentType }));
       return;
     }
     // multipart/form-data — the same small streaming parser as spoolUpload
@@ -365,16 +382,16 @@ function spoolAttachment(
       }
     };
     req.on('data', (c: Buffer) => {
-      if (done) return;
+      if (done || settled) return;
       total += c.length;
-      if (total > maxBytes) { req.destroy(); return fail(tooBig()); }
+      if (total > maxBytes) { fail(tooBig()); return; }
       buf = Buffer.concat([buf, c]);
       feed();
     });
     req.on('end', () => {
-      if (!done) { if (inFile) out.write(buf); out.end(); }
+      if (!done && !settled) { if (inFile) out.write(buf); out.end(); }
     });
-    out.on('finish', () => (inFile ? resolve({ file, filename, contentType }) : fail(new Error('multipart body has no file part'))));
+    out.on('finish', () => (inFile ? succeed({ file, filename, contentType }) : fail(new Error('multipart body has no file part'))));
   });
 }
 
