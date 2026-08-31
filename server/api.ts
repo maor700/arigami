@@ -286,6 +286,98 @@ function spoolUpload(req: IncomingMessage, dir: string): Promise<string> {
   });
 }
 
+// ---- ZIP: streamed attachment upload ---------------------------------------
+// The composer's base64-in-JSON path (POST .../message) is capped at ~8MB by
+// the client and 32MB by readBody — fine for a screenshot, useless for a repo
+// export. Anything at or past that threshold streams here instead: either a
+// raw body (Content-Type + X-Arigami-Filename header, what the composer's XHR
+// sends — it needs upload.onprogress, which fetch can't give) or a normal
+// multipart/form-data single-file post, so curl -F works too.
+const ATTACHMENT_MAX_BYTES = 200 * 1024 * 1024;
+
+function spoolAttachment(
+  req: IncomingMessage,
+  dir: string,
+  maxBytes: number
+): Promise<{ file: string; filename: string; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    const ct = String(req.headers['content-type'] || '');
+    const bm = /boundary=("?)([^";]+)\1/i.exec(ct);
+    const out = fs.createWriteStream(file);
+    let total = 0;
+    const fail = (e: Error) => { try { out.destroy(); fs.rmSync(file, { force: true }); } catch {} reject(e); };
+    const tooBig = () => Object.assign(new Error(`upload exceeds the ${maxBytes}-byte cap`), { status: 413 });
+    req.on('error', fail);
+    out.on('error', fail);
+    if (!bm) {
+      const rawName = req.headers['x-arigami-filename'];
+      let filename = 'upload';
+      try { filename = rawName ? decodeURIComponent(String(rawName)) : 'upload'; } catch { filename = String(rawName); }
+      const contentType = ct || 'application/octet-stream';
+      req.on('data', (c: Buffer) => {
+        total += c.length;
+        if (total > maxBytes) { req.destroy(); fail(tooBig()); }
+      });
+      req.pipe(out);
+      out.on('finish', () => resolve({ file, filename, contentType }));
+      return;
+    }
+    // multipart/form-data — the same small streaming parser as spoolUpload
+    // above, but this one also captures the file part's own filename/type.
+    const boundary = Buffer.from(`\r\n--${bm[2]}`);
+    let buf = Buffer.alloc(0);
+    let inFile = false;
+    let done = false;
+    let filename = 'upload';
+    let contentType = 'application/octet-stream';
+    const feed = () => {
+      for (;;) {
+        if (done) return;
+        if (!inFile) {
+          const hdrEnd = buf.indexOf('\r\n\r\n');
+          if (hdrEnd < 0) return;
+          const hdr = buf.slice(0, hdrEnd).toString('latin1');
+          const fn = /filename="([^"]*)"/i.exec(hdr);
+          if (!fn) {
+            const next = buf.indexOf(boundary, hdrEnd);
+            if (next < 0) return;
+            buf = buf.slice(next + boundary.length);
+            continue;
+          }
+          filename = fn[1];
+          const ctm = /content-type:\s*([^\r\n]+)/i.exec(hdr);
+          if (ctm) contentType = ctm[1].trim();
+          inFile = true;
+          buf = buf.slice(hdrEnd + 4);
+        }
+        const end = buf.indexOf(boundary);
+        if (end >= 0) {
+          out.write(buf.slice(0, end));
+          done = true;
+          out.end();
+          return;
+        }
+        const keep = boundary.length;
+        if (buf.length > keep) { out.write(buf.slice(0, buf.length - keep)); buf = buf.slice(buf.length - keep); }
+        return;
+      }
+    };
+    req.on('data', (c: Buffer) => {
+      if (done) return;
+      total += c.length;
+      if (total > maxBytes) { req.destroy(); return fail(tooBig()); }
+      buf = Buffer.concat([buf, c]);
+      feed();
+    });
+    req.on('end', () => {
+      if (!done) { if (inFile) out.write(buf); out.end(); }
+    });
+    out.on('finish', () => (inFile ? resolve({ file, filename, contentType }) : fail(new Error('multipart body has no file part'))));
+  });
+}
+
 async function handleHostImport(
   req: IncomingMessage,
   res: ServerResponse,
@@ -4554,6 +4646,24 @@ export async function handle(
         return json(res, { error: error.message, ...(error.budget ? { budget: error.budget } : {}) }, error.status || 500);
       }
       return json(res, { ok: true });
+    }
+    // ZIP: the streamed sibling of .../message — the composer uploads a large
+    // file (archives especially) here FIRST and gets back a descriptor (with
+    // the archive tree, if it extracted one); the actual send still goes
+    // through .../message, referencing this path instead of re-sending bytes.
+    if (sub === 'attachments' && m === 'POST') {
+      let file = '';
+      try {
+        const spooled = await spoolAttachment(req, claude.UPLOAD_SPOOL_DIR, ATTACHMENT_MAX_BYTES);
+        file = spooled.file;
+        const descriptor = claude.receiveStreamedAttachment(id, spooled.file, spooled.filename, spooled.contentType);
+        return json(res, { ok: true, ...descriptor }, 201);
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { error: err.message }, err.status || 500);
+      } finally {
+        try { if (file && fs.existsSync(file)) fs.rmSync(file, { force: true }); } catch {}
+      }
     }
     // Answer a client-side tool_use (AskUserQuestion) with a tool_result so the
     // blocked turn resumes immediately instead of stalling until the ~60s
