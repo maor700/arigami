@@ -665,6 +665,19 @@ function Cockpit() {
     return () => window.removeEventListener('host:open-agent', onOpen);
   }, []);
 
+  // UX4: an agent was deleted (rail Team menu or the surface's own header) —
+  // if its surface happens to be open, it just went missing from under the
+  // user, so close it (AgentView.jsx has its own onDeleted → onClose for the
+  // case where the delete happened from inside the surface itself; this
+  // covers the rail, which has no reference to the surface to close it with).
+  useEffect(() => {
+    const onDeleted = (e) => {
+      if (e.detail?.slug && agentOpen === e.detail.slug) setAgentOpen(null);
+    };
+    window.addEventListener('host:agent-deleted', onDeleted);
+    return () => window.removeEventListener('host:agent-deleted', onDeleted);
+  }, [agentOpen]);
+
   // Push notification click → navigate to the right session and scroll to event.
   useEffect(() => {
     const onMessage = (e) => {

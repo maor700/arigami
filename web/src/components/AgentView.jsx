@@ -30,6 +30,7 @@ import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
 import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
 import { AgentHomeChat } from './SessionView.jsx';
+import { deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject } from '@fortawesome/free-solid-svg-icons';
 
 export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs'];
@@ -74,11 +75,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       setBusy(false);
     }
   };
-  const discard = async () => {
-    if (isNew) { onDeleted?.(); return; }
-    if (!window.confirm(t('agent.page.deleteConfirm', { name: agent.name }))) return;
-    try { await api.del(`/agents/${agent.slug}`); toastSuccess(t('agent.page.deleted')); onDeleted?.(); } catch (e) { toastError(e?.message || String(e)); }
-  };
+  const cancelDraft = () => onDeleted?.();
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-[10px] border border-hair p-3">
@@ -159,9 +156,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" data-agent-save onClick={save} disabled={busy || !form.name.trim()} className={btnBrand}>{t(isNew ? 'agent.page.create' : 'agent.page.save')}</button>
         {!isNew && <button type="button" onClick={onOpenHome} className={btn}><Icon icon={faComments} /> {t('agent.page.openHome')}</button>}
-        <button type="button" data-agent-discard onClick={discard} className={isNew ? btn : `${btn} ms-auto text-danger`}>
-          {isNew ? t('agent.page.cancel') : (<><Icon icon={faTrash} /> {t('agent.page.delete')}</>)}
-        </button>
+        {isNew && <button type="button" data-agent-discard onClick={cancelDraft} className={`${btn} ms-auto`}>{t('agent.page.cancel')}</button>}
       </div>
     </div>
   );
@@ -550,6 +545,22 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
             </div>
             {persona && <div dir="auto" className="mt-0.5 line-clamp-2 text-[11.5px] text-fgdim">{persona}</div>}
           </div>
+          {/* UX4: the whole-entity destructive action lives in the header, not
+              buried as an anonymous trailing button at the bottom of פרסונה —
+              it's reachable from every tab and on mobile, same header the
+              agent's rail row menu's delete item leads back to. */}
+          {agent && !isNew && (
+            <button
+              type="button"
+              data-agent-delete
+              onClick={async () => { if (await deleteAgentConfirmed(agent, t)) onClose(); }}
+              title={t('agent.page.delete')}
+              aria-label={t('agent.page.delete')}
+              className="shrink-0 cursor-pointer rounded px-1.5 py-1 text-[13px] text-fgdim hover:bg-danger/10 hover:text-danger"
+            >
+              <Icon icon={faTrash} />
+            </button>
+          )}
           <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
             <Icon icon={faXmark} />
           </button>

@@ -1171,7 +1171,30 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     return r.ok ? json(res, r.agent) : json(res, { ok: false, error: r.error }, r.status || 400);
   }
   if (!sub && m === 'DELETE') {
-    // The agent's sessions stay (they just lose the badge); its dir (memory, persona) is removed.
+    // UX4: work sessions born from the agent stay (they just lose the badge —
+    // applyAgentToSession/personaBlock both degrade gracefully for an unknown
+    // slug). Two things do NOT get to outlive the agent, though:
+    //  - its home chat (UX1: unreachable without the agent surface to open it
+    //    from, so keeping it around would just be an orphaned session nobody
+    //    can find) — torn down the same way DELETE /sessions/:id does;
+    //  - cron jobs born FROM it — firing one after the agent is gone throws
+    //    "unknown agent" out of applyAgentToSession on every tick (see
+    //    fireCron's isolated branch), i.e. a routine that fails forever
+    //    instead of a session that just lost its badge.
+    const triggers = await import('./triggers.js');
+    for (const c of triggers.listTriggers().filter((x: any) => x.type === 'cron' && x.agent === slug))
+      triggers.deleteTrigger(c.id);
+    if (a.homeSessionId && state.getSession(a.homeSessionId)) {
+      const hid = a.homeSessionId;
+      claude.kill(hid);
+      expirePendingSetupRequests(hid, 'agent deleted');
+      chrome.closeChrome(hid);
+      await chrome.syncProfileToBase(hid).catch(() => {});
+      if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(hid);
+      desktops.releaseDesktop(hid);
+      artifacts.removeSession(hid);
+      state.deleteSession(hid);
+    }
     const r = agents.deleteAgent(slug);
     return r.ok ? json(res, { ok: true }) : badRequest(res, r.error || 'delete failed');
   }

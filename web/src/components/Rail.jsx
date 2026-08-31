@@ -14,7 +14,7 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
-import { openAgent } from './DelegatedLine.jsx';
+import { openAgent, deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
 import { useT } from '../lib/i18n.js';
@@ -44,6 +44,7 @@ import {
   faRotateRight,
   faTableCells,
   faToolbox,
+  faTrash,
   faTriangleExclamation,
   faUserAstronaut,
   faXmark,
@@ -563,6 +564,14 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
                   </button>
                   <button type="button" onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'persona'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[11.5px] text-fg hover:bg-chip">
                     <span className="w-4 text-center text-fgdim"><Icon icon={faUserAstronaut} /></span> {t('rail.teamOpenPage')}
+                  </button>
+                  <button
+                    type="button"
+                    data-agent-menu-delete
+                    onClick={async () => { setMenuFor(null); await deleteAgentConfirmed(a, t); }}
+                    className="mt-1 flex w-full cursor-pointer items-center gap-2 rounded border-t border-hair px-2 py-1.5 pt-2 text-start text-[11.5px] text-danger hover:bg-danger/10"
+                  >
+                    <span className="w-4 text-center"><Icon icon={faTrash} /></span> {t('agent.page.delete')}
                   </button>
                 </div>
               )}
