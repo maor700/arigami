@@ -164,3 +164,19 @@ describe('applyUploadEvent', () => {
     expect(a.uid).not.toBe(b.uid);
   });
 });
+
+describe('isAlreadyAttached', () => {
+  test('true for a name+size already in the list', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000 }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 177000000))).toBe(true);
+  });
+  test('false when the name or size differs', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000 }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 999))).toBe(false);
+    expect(attachments.isAlreadyAttached(list, file('other.zip', 177000000))).toBe(false);
+  });
+  test('a failed entry does not block re-attaching the same file', () => {
+    const list = [{ name: 'bundle.zip', size: 177000000, failed: true }];
+    expect(attachments.isAlreadyAttached(list, file('bundle.zip', 177000000))).toBe(false);
+  });
+});

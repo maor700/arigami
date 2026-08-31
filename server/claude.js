@@ -1490,6 +1490,28 @@ export function receiveStreamedAttachment(id, tmpFile, name, type) {
   };
 }
 
+// ZIP2: a chip removed from the composer before sending (retracted drag, or a
+// duplicate the dedup guard would otherwise re-spool) still has its bytes
+// sitting in this session's uploads dir — same out-of-tree guard as
+// saveAttachments() above, so this can only ever delete inside UPLOADS_DIR/<id>/.
+export function removeStreamedAttachment(id, filePath) {
+  const dir = path.join(UPLOADS_DIR, id);
+  const real = path.resolve(String(filePath || ''));
+  if (real !== dir && !real.startsWith(dir + path.sep)) return false;
+  let removed = false;
+  for (const p of [real, `${real}.d`, `${real}.manifest.json`]) {
+    try {
+      if (fs.existsSync(p)) {
+        fs.rmSync(p, { recursive: true, force: true });
+        removed = true;
+      }
+    } catch (e) {
+      console.error('[attach] remove failed:', e.message);
+    }
+  }
+  return removed;
+}
+
 // Memory M1.3: inject the USER.md+MEMORY.md snapshot into a session's very
 // first turn only (fresh claude session, nothing sent yet on this proc) — never
 // mid-conversation, so the prompt-cache prefix stays stable. A --resume proc

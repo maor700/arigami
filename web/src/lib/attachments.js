@@ -43,6 +43,11 @@ export function applyUploadEvent(list, uid, event) {
   });
 }
 
+// ZIP2: a re-drag of a file already in the draft would otherwise spool a
+// second full copy server-side (and a third, and a fourth...) for no reason.
+export const isAlreadyAttached = (list, file) =>
+  list.some((a) => a.name === file.name && a.size === file.size && !a.failed);
+
 export const fileToBase64 = (file) =>
   new Promise((resolve) => {
     const r = new FileReader();
