@@ -688,6 +688,10 @@ function connect() {
     // On a genuine reconnect (not the first open), refill any chat events that
     // were emitted while the socket was down.
     if (reconnected) refetchLoadedChats();
+    // RES1: `health` only broadcasts on CHANGE, so a queue that emptied while
+    // the socket was down is never re-announced — the rail would keep showing
+    // a waiting badge for something already resolved until a full reload.
+    if (reconnected) loadHealth();
   };
   ws.onclose = () => {
     setState({ conn: 'down' });
