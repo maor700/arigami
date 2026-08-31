@@ -45,6 +45,7 @@ export const strings = {
 
   // tool families (allowlist checkboxes)
   'agent.tool.desktop': 'דפדפן / מסך',
+  'agent.tool.browser': 'ניווט בדפדפן (בלי שאר "דפדפן / מסך")',
   'agent.tool.whatsapp': 'וואטסאפ',
   'agent.tool.gmail': 'Gmail',
   'agent.tool.calendar': 'יומן',
