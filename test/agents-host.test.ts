@@ -221,3 +221,44 @@ test('activity lists the agent sessions (home flagged); delete removes the dir a
   const list = (await api('GET', '/__api/sessions?archived=true')).json;
   expect(list.some((s: any) => s.metadata?.agent === 'marketing-lead')).toBe(true);
 });
+
+// UX4: "can't delete an existing agent" — the rail's Team menu and the surface
+// header both now call this same endpoint. Its job grew from "remove the
+// dir" to also tearing down the two things that don't get to outlive the
+// agent: the home chat (unreachable without the agent surface to open it
+// from) and cron jobs born from it (which would otherwise throw "unknown
+// agent" out of applyAgentToSession on every future fire — see fireCron).
+test('delete: also removes the home chat session and cron jobs born from the agent; a work session survives, still carrying the (now stale) agent slug', async () => {
+  const c = await api('POST', '/__api/agents', { name: 'Gone', slug: 'gone', persona: 'x' });
+  expect(c.status).toBe(201);
+  const home = await api('GET', '/__api/agents/gone/home');
+  expect(home.status).toBe(201);
+  const homeId = home.json.session.id;
+  const work = await api('POST', '/__api/sessions', { agent: 'gone', cwd: path.join(dir, 'workspace') });
+  expect(work.status).toBe(201);
+  const workId = work.json.id;
+  const cron = await api('POST', '/__api/triggers', {
+    type: 'cron', name: 'gone cron', prompt: 'x', schedule: { kind: 'interval', value: '1d' }, agent: 'gone',
+  });
+  expect(cron.status).toBe(201);
+  const otherCron = await api('POST', '/__api/triggers', {
+    type: 'cron', name: 'unrelated', prompt: 'x', schedule: { kind: 'interval', value: '1d' },
+  });
+  expect(otherCron.status).toBe(201);
+
+  const del = await api('DELETE', '/__api/agents/gone');
+  expect(del.json.ok).toBe(true);
+  expect(fs.existsSync(path.join(dir, 'agents/gone'))).toBe(false);
+
+  expect((await api('GET', `/__api/sessions/${homeId}`)).status).toBe(404);
+  const triggers = (await api('GET', '/__api/triggers')).json;
+  expect(triggers.some((t: any) => t.id === cron.json.id)).toBe(false);
+  expect(triggers.some((t: any) => t.id === otherCron.json.id)).toBe(true); // untouched, no agent
+
+  const w = await api('GET', `/__api/sessions/${workId}`);
+  expect(w.status).toBe(200);
+  expect(w.json.metadata.agent).toBe('gone');
+
+  // deleting an unknown agent still 404s (no side effects to worry about)
+  expect((await api('DELETE', '/__api/agents/gone')).status).toBe(404);
+});
