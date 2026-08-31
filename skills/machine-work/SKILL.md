@@ -16,15 +16,36 @@ over**, complete it, click **Done**, and you continue.
 
 | Tool | When |
 |---|---|
+| `browser_open({url?})` / `browser_navigate({url})` | open or move to a page in YOUR session's own Chrome. `browser_open` also screenshots (the "first page loaded" moment). |
+| `browser_snapshot({caption?})` | screenshot + `{url, title, text}` of the current page, plus `{needsHuman, reason, hint}` — check this before clicking/typing further |
+| `browser_click({x,y}\|{text})` | click by viewport coordinates (from a snapshot screenshot) or by visible text |
+| `browser_type({text, submit?})` | type into the focused field. Refuses (returns `needsHuman:true`) on a password/OTP field or a CAPTCHA — see §3 |
+| `browser_scroll({dx?,dy?})` | scroll the page |
+| `browser_close()` | close this session's browser (safe even if not running) |
 | `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
 | `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
 | `save_browser_logins()` | sync this session's Chrome cookies/logins back to the shared base profile — usually automatic (see "Your own machine" below), call directly if you want it sooner |
 | `set_status_summary` / `set_progress` | running status — do NOT use request_action for status |
 
-`capture_screen` is provided by the host MCP (`arigami`). If it is missing in
-this session, say so once and continue without screenshots — do not improvise
-your own screenshot pipeline.
+`capture_screen` and `browser_*` are provided by the host MCP (`arigami`) under the `desktop` and
+`browser` tool families respectively (an agent's allowlist may grant one without the other — see
+`docs/AGENTS.md` "Tool allowlist"). If a tool you need is missing in this session, say so once and
+continue without it — do not improvise a Bash/xdotool workaround, and do not claim you have no way
+to look at a page just because `open_tab`/`WebFetch` alone can't drive a real browser: `browser_*` is
+the tool-only way to do that, with no `Bash`/`git` required.
+
+**`browser_*` vs `capture_screen`/`open_tab`**: `open_tab` shows the human a page (a cockpit iframe
+tab) — it does not let you read or act on it. `capture_screen`/`request_screen` show/hand over the
+whole desktop. `browser_*` is what you use to actually LOOK at and DRIVE a real site yourself —
+navigate, read the page text, click, type. Prefer it over `Bash` + `skills/_lib/chrome.sh` even when
+you do have `Bash` — it is the same underlying browser, with no shell-escaping or coordinate-mapping
+to get wrong, and it works for agents that only have `browser`/`desktop`, not `git`.
+
+`browser_navigate`/`browser_open` are refused outside the agent's `domains` allowlist (the same
+403 `open_tab` gets) — if you're blocked there, that's a real allowlist decision, not a bug; say
+so and ask the human (`request_action`) rather than working around it via `browser_type`ing a URL
+into the address bar.
 
 ## Showing things to the human (links)
 
@@ -108,7 +129,12 @@ submitted yet", "Error: card declined".
 ### 3. Blocked → hand over with `request_screen`
 When you reach a step only the human can do:
 
-1. `capture_screen` first (required moment #2 — the card shows where you are).
+If you're driving with `browser_*`: `browser_type` refuses on its own when the focused field looks
+like a password/OTP input or the page shows a CAPTCHA (`{ok:false, needsHuman:true, reason, hint}`),
+and `browser_snapshot` reports the same `{needsHuman, reason, hint}` proactively — don't wait to be
+refused, check it. Either way the next step is the same: `request_screen`, never typing it yourself.
+
+1. `capture_screen` (or `browser_snapshot`) first (required moment #2 — the card shows where you are).
 2. Post one short line in chat: what you were doing and why you stopped.
 3. Call:
    ```

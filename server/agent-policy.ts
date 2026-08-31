@@ -51,8 +51,17 @@ export const HOST_SERVER = 'arigami';
 export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
 
 /** A1 tool FAMILIES (the checkboxes) → concrete tool names / patterns. */
+// BROWSE1: an agent with `desktop` but no way to actually DRIVE the session
+// Chrome (open_tab only proxies a url into a cockpit iframe) had no path to
+// "look at" a real site — see docs/AGENTS.md. `browser` is its own checkbox
+// AND folded into `desktop` for compatibility (an agent already ticked
+// `desktop` gets browsing for free; a NEW agent can also grant just `browser`
+// without the rest of desktop's tools).
+const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close'];
+
 export const FAMILIES: Record<string, string[]> = {
-  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins'],
+  desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', ...BROWSER_TOOLS],
+  browser: [...BROWSER_TOOLS],
   whatsapp: ['whatsapp', 'mcp__whatsapp__*', 'mcp__composio-mcp__WHATSAPP_*'],
   gmail: ['mcp__composio-mcp__GMAIL_*'],
   calendar: ['mcp__composio-mcp__GOOGLECALENDAR_*'],
@@ -205,6 +214,9 @@ export function domainMatches(pattern: string, host: string): boolean {
   return host === p || host.endsWith('.' + p);
 }
 
+/** URL-carrying tools the host can see and therefore gate on `domains` (A3). */
+export const URL_TOOLS = new Set(['WebFetch', 'open_tab', 'browser_open', 'browser_navigate']);
+
 /** Relative paths and loopback (dev servers, the cockpit's own routes) are always allowed. */
 export function domainAllowed(p: Policy | null, url: string): boolean {
   if (!p || p.domains === null) return true;
@@ -249,7 +261,7 @@ export function checkToolCall(p: Policy | null, toolName: string, input: unknown
   let reason: string | undefined;
   if (!toolAllowed(p, toolName)) {
     reason = `tool "${name}" is not in agent ${p.slug}'s allowlist (${(p.tools || []).join(', ')}) — ask the human (request_action) instead of working around it${denialHint(p.slug, name)}`;
-  } else if ((name === 'WebFetch' || name === 'open_tab') && !domainAllowed(p, urlOf(input))) {
+  } else if (URL_TOOLS.has(name) && !domainAllowed(p, urlOf(input))) {
     reason = `domain "${hostOf(urlOf(input))}" is not in agent ${p.slug}'s allowed domains (${(p.domains || []).join(', ')})`;
   }
   if (!reason) return { allow: true };

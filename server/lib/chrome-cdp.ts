@@ -84,7 +84,7 @@ export async function findUrl(sessionId: string, re: RegExp): Promise<{ url: str
 }
 
 /** One CDP command on a page target over its debugger socket. */
-async function cdpCall(wsUrl: string, method: string, params: Record<string, unknown>, timeoutMs = 3000): Promise<any> {
+export async function cdpCall(wsUrl: string, method: string, params: Record<string, unknown>, timeoutMs = 3000): Promise<any> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     const t = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('cdp timeout')); }, timeoutMs);
@@ -101,6 +101,59 @@ async function cdpCall(wsUrl: string, method: string, params: Record<string, unk
       } catch (e) { clearTimeout(t); reject(e as Error); }
     };
   });
+}
+
+/** The front (most recently focused) real page tab, or throws — every browser_* action needs one. */
+export async function frontPage(sessionId: string): Promise<ChromeTab> {
+  const tabs = await listTabs(sessionId);
+  const page = tabs.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
+  if (!page) throw new Error('no open page for this session — call browser_open first');
+  return page;
+}
+
+/** Poll document.readyState until 'complete' or timeoutMs elapses (best-effort — a slow page doesn't fail the call). */
+async function waitForLoad(wsUrl: string, timeoutMs: number): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const r = await cdpCall(wsUrl, 'Runtime.evaluate', { expression: 'document.readyState', returnByValue: true });
+      if (r?.result?.value === 'complete') return;
+    } catch { /* page navigating — keep polling */ }
+    if (Date.now() - start > timeoutMs) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/** Navigate the front tab and wait for it to finish loading. Returns the settled url/title. */
+export async function pageNavigate(sessionId: string, url: string, timeoutMs = 15000): Promise<{ url: string; title: string }> {
+  const page = await frontPage(sessionId);
+  await cdpCall(page.webSocketDebuggerUrl!, 'Page.navigate', { url });
+  await waitForLoad(page.webSocketDebuggerUrl!, timeoutMs);
+  const after = (await listTabs(sessionId)).find((t) => t.id === page.id) || page;
+  return { url: after.url, title: after.title };
+}
+
+/** Run JS in the front tab and return its value (returnByValue) — throws on a page exception. */
+export async function pageEvaluate(sessionId: string, expression: string): Promise<any> {
+  const page = await frontPage(sessionId);
+  const r = await cdpCall(page.webSocketDebuggerUrl!, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: false });
+  if (r?.exceptionDetails) throw new Error(r.exceptionDetails.text || 'page evaluate failed');
+  return r?.result?.value;
+}
+
+/** Synthetic left click at viewport coordinates (x,y) — CDP Input, not xdotool, so it targets the PAGE, not the screen. */
+export async function pageClick(sessionId: string, x: number, y: number): Promise<void> {
+  const page = await frontPage(sessionId);
+  const ws = page.webSocketDebuggerUrl!;
+  await cdpCall(ws, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await cdpCall(ws, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await cdpCall(ws, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+
+/** Synthetic mouse-wheel scroll at viewport coordinates (x,y). */
+export async function pageScroll(sessionId: string, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+  const page = await frontPage(sessionId);
+  await cdpCall(page.webSocketDebuggerUrl!, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY });
 }
 
 function xinputType(display: string, text: string): Promise<void> {

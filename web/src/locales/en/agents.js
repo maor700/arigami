@@ -45,6 +45,7 @@ export const strings = {
 
   // tool families (allowlist checkboxes)
   'agent.tool.desktop': 'Browser / desktop',
+  'agent.tool.browser': 'Drive a browser (without the rest of "Browser / desktop")',
   'agent.tool.whatsapp': 'WhatsApp',
   'agent.tool.gmail': 'Gmail',
   'agent.tool.calendar': 'Calendar',

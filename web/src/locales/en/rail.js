@@ -9,7 +9,7 @@ export const strings = {
 
   // ---- Rail.jsx: session row ----
   'rail.summary': 'Tap for summary',
-  'rail.screen': 'Screen',
+  'rail.screen': 'Shared machine',
   'rail.screenConnecting': 'Connecting…',
   'rail.screenDisconnected': 'Disconnected',
   'rail.screenError': 'Connection failed',

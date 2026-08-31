@@ -6,9 +6,10 @@
 // opens the interactive ScreenModal (the same one the rail icon opens) with
 // this request's context, and "Cancel" ends the request with takenOver:false.
 // Desktop-only: on phones the inline card is the whole story.
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
+import { api } from '../lib/api.js';
 import {
   cancelScreenRequest,
   openScreenRequest,
@@ -19,7 +20,63 @@ import {
 } from '../lib/store.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faDisplay, faExpand, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import { faDisplay, faExpand, faChevronRight, faCirclePlus } from '@fortawesome/free-solid-svg-icons';
+
+// T8c / BROWSE1: this panel must show the SESSION's own machine, never the
+// shared one just because none was allocated yet (that's how one session
+// ends up watching/clicking inside another's browser — see
+// SPEC-ARIGAMI-BROWSER-FOR-AGENTS.md #2). So it does NOT connect ScreenView
+// (and therefore never opens /__vnc?session=…) until it knows the session
+// actually has its own desktop — an explicit empty state offers to allocate
+// one instead. A pending request_screen already means the host allocated one
+// server-side (see server/vnc.ts's own ensureDesktop), so that case skips
+// straight to connected.
+function useOwnDesktop(sessionId, hasRequest) {
+  const [own, setOwn] = useState(hasRequest ? true : null); // null = unknown yet
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!sessionId) return;
+    if (hasRequest) { setOwn(true); return; }
+    let stop = false;
+    api.get(`/screen/status?session=${encodeURIComponent(sessionId)}`)
+      .then((r) => { if (!stop) setOwn(!!r?.own); })
+      .catch(() => { if (!stop) setOwn(false); });
+    return () => { stop = true; };
+  }, [sessionId, hasRequest]);
+  const allocate = useCallback(async () => {
+    if (!sessionId || busy) return;
+    setBusy(true);
+    try {
+      await api.post(`/sessions/${sessionId}/screen/allocate`);
+      setOwn(true);
+    } catch {
+      /* leave the empty state up — the button stays clickable to retry */
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId, busy]);
+  return { own, busy, allocate };
+}
+
+// Extracted so it's directly testable (renderToStaticMarkup) without the
+// async useOwnDesktop effect that decides WHEN to show it.
+export function ScreenEmptyState({ busy, onAllocate, onViewShared }) {
+  const t = useT();
+  const btnPrimary =
+    'flex-1 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
+  return (
+    <div data-screen-empty-state className="flex aspect-[16/10] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-hair px-3 text-center">
+      <span className="text-[18px] text-fgdim"><Icon icon={faDisplay} /></span>
+      <span className="font-mono text-[10.5px] text-fgdim">{t('screen.noMachine')}</span>
+      <button type="button" disabled={busy} onClick={onAllocate} className={btnPrimary + ' flex-none'}>
+        <Icon icon={faCirclePlus} /> {t('screen.allocate')}
+      </button>
+      <button type="button" onClick={onViewShared} className="cursor-pointer font-mono text-[10px] text-fgdim underline hover:text-fg">
+        {t('screen.viewShared')}
+      </button>
+    </div>
+  );
+}
 
 export default function ScreenSidePanel({ session }) {
   const t = useT();
@@ -28,6 +85,7 @@ export default function ScreenSidePanel({ session }) {
   const [busy, setBusy] = useState(false);
   const onStatusChange = useCallback((st) => setStatus(st), []);
   const req = openScreenRequest(s, session?.id);
+  const { own, busy: allocBusy, allocate } = useOwnDesktop(session?.id, !!req);
 
   const takeOver = () => req && openScreenTakeover(session.id, req.requestId);
   // Enlarge while a request is open IS a takeover (the modal is interactive,
@@ -100,10 +158,19 @@ export default function ScreenSidePanel({ session }) {
         <div className="border-b border-hair px-3 py-1.5 font-mono text-[10.5px] text-fgdim">{t('screen.watching')}</div>
       )}
 
-      {/* 16:10-ish box; the view scales the desktop to fit. Always view-only. */}
-      <div className="px-3 pt-2">
-        <ScreenView priority={SCREEN_PRIORITY.panel} viewOnly sessionId={session?.id} onStatusChange={onStatusChange} className="aspect-[16/10] w-full rounded-lg" />
-      </div>
+      {/* T8c: no ScreenView (and no /__vnc connection) until this session is
+          known to have its own machine — an explicit empty state instead of
+          silently showing the shared desktop. */}
+      {own === false ? (
+        <div className="px-3 pt-2">
+          <ScreenEmptyState busy={allocBusy} onAllocate={allocate} onViewShared={() => setScreenModal(true)} />
+        </div>
+      ) : (
+        // 16:10-ish box; the view scales the desktop to fit. Always view-only.
+        <div className="px-3 pt-2">
+          <ScreenView priority={SCREEN_PRIORITY.panel} viewOnly sessionId={session?.id} onStatusChange={onStatusChange} className="aspect-[16/10] w-full rounded-lg" />
+        </div>
+      )}
 
       {req && (
         <div className="flex items-center gap-2 px-3 py-2.5">
