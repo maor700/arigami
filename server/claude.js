@@ -23,6 +23,7 @@ import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
+import { resolveCtxWindow } from './lib/ctx-window.js';
 import { appendIncident } from './incidents.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
@@ -752,16 +753,6 @@ export async function checkMcp(id, force = false) {
 // Normalized kinds: user | assistant-text | tool-use | tool-result | thinking
 //                   | result | error (+ permission-request/answer from api.js)
 
-// Context window per model. Opus 4.8 ships a 1M window by default; sonnet/haiku
-// are 200k. An explicit `[1m]` tag always wins.
-function ctxWindowFor(model = '') {
-  const m = String(model).toLowerCase();
-  if (m.includes('[1m]')) return 1_000_000;
-  if (m.includes('opus')) return 1_000_000;
-  if (m.includes('fable') || m.includes('mythos')) return 1_000_000;
-  return 200_000;
-}
-
 // Each assistant message echoes the token accounting for the request that
 // produced it. cache_read + cache_creation + input ≈ the prompt currently
 // occupying the model's context window (output isn't part of the next turn's
@@ -774,13 +765,17 @@ function updateUsage(id, u) {
   const output = u.output_tokens || 0;
   const ctxTokens = cacheRead + cacheCreation + input;
   if (ctxTokens <= 0) return; // skip empty/partial usage blocks
-  let ctxWindow = ctxWindowFor(getSession(id)?.claude?.model);
+  const resolved = resolveCtxWindow(getSession(id)?.claude?.model);
+  let ctxWindow = resolved.window;
+  let ctxAssumed = resolved.assumed;
   // A prompt can never exceed its real window — if the measured tokens beat our
-  // guess, the guess is wrong (unrecognized model id): step up to the 1M tier.
-  if (ctxTokens > ctxWindow) ctxWindow = 1_000_000;
+  // resolved window, the resolution was wrong (or genuinely unknown): step up
+  // to the 1M tier and keep it flagged assumed since we still don't know the
+  // model's real ceiling, just that it's bigger than we thought.
+  if (ctxTokens > ctxWindow) { ctxWindow = 1_000_000; ctxAssumed = true; }
   const ctxPct = Math.min(100, Math.round((ctxTokens / ctxWindow) * 100));
   setClaude(id, {
-    usage: { ctxTokens, ctxWindow, ctxPct, breakdown: { cacheRead, cacheCreation, input, output } },
+    usage: { ctxTokens, ctxWindow, ctxPct, ctxAssumed, breakdown: { cacheRead, cacheCreation, input, output } },
   });
 }
 
@@ -2059,7 +2054,7 @@ export function setAutoCompact(id, pct) {
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
   if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);
-  const tokens = Math.round(ctxWindowFor(s?.claude?.model) * (p / 100));
+  const tokens = Math.round(resolveCtxWindow(s?.claude?.model).window * (p / 100));
   return restartWith(id, { autoCompactPct: p, autoCompactTokens: tokens });
 }
 

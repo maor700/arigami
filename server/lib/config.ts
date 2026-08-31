@@ -205,6 +205,12 @@ export interface Config {
   // climbs back once the top rung's quota resets. An agent or a session may
   // override it (session.claude.modelChain). See server/supervisor.ts.
   modelChain: string[];
+  // CTX1 — manual escape hatch for a model id server/lib/ctx-window.ts doesn't
+  // recognize (new release, custom proxy id…): tokens per model id/alias,
+  // lower-cased. Checked before the built-in table; env
+  // CLAUDE_CODE_MAX_CONTEXT_TOKENS (global, matches the `claude` CLI's own var)
+  // is the fallback when a model has no entry here.
+  ctxWindowOverrides: Record<string, number>;
   // RES1 — supervisor loop knobs. `enabled:false` turns the whole 30s tick off
   // (the health model and /__api/health keep working, nothing is auto-recovered).
   supervisor: SupervisorConfig;
@@ -300,6 +306,7 @@ export const DEFAULTS: Config = {
   },
   defaultModel: null,
   modelChain: ['fable', 'sonnet', 'haiku'],
+  ctxWindowOverrides: {},
   supervisor: {
     enabled: true,
     tickSec: 30,

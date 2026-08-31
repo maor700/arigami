@@ -68,6 +68,7 @@ export const strings = {
   'dialogs.ctxFreshInput': 'Fresh input',
   'dialogs.ctxFreeSpace': 'Free space',
   'dialogs.contextWindow': 'Context window',
+  'dialogs.ctxWindowAssumed': 'assumed',
   'dialogs.autoCompactWhenReaches': 'Auto-compact when context reaches',
   'dialogs.ctxAutoCompactRestartNote': 'Applied as a claude CLI flag — changing this restarts the session.',
   'dialogs.compactNow': 'Compact now',

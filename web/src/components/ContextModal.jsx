@@ -49,6 +49,9 @@ export default function ContextModal({ session, usage, onClose }) {
   };
 
   const win = usage?.ctxWindow || 200000;
+  // No usage yet (no turn sent this spawn) means we haven't seen the real
+  // window either — treat that the same as an explicitly assumed one.
+  const assumed = usage ? !!usage.ctxAssumed : true;
   const used = usage?.ctxTokens || 0;
   const bd = usage?.breakdown || {};
   const pct = Math.min(100, usage?.ctxPct ?? Math.round((used / win) * 100));
@@ -82,7 +85,7 @@ export default function ContextModal({ session, usage, onClose }) {
           <div className="text-[15px] font-bold">{t('dialogs.contextWindow')}</div>
           <div className="flex items-center gap-2 font-mono text-[11px] text-fgdim">
             <span className="font-bold" style={{ color: contextColor(pct) }}>{pct}%</span>
-            <span>{fmtTokens(used)} / {fmtTokens(win)}</span>
+            <span>{fmtTokens(used)} / {fmtTokens(win)}{assumed ? ` (${t('dialogs.ctxWindowAssumed')})` : ''}</span>
           </div>
         </div>
 
