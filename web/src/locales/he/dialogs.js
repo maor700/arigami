@@ -68,6 +68,7 @@ export const strings = {
   'dialogs.ctxFreshInput': 'קלט חדש',
   'dialogs.ctxFreeSpace': 'שטח פנוי',
   'dialogs.contextWindow': 'חלון הקשר',
+  'dialogs.ctxWindowAssumed': 'משוער',
   'dialogs.autoCompactWhenReaches': 'דחיסה אוטומטית כשההקשר מגיע ל-',
   'dialogs.ctxAutoCompactRestartNote': 'מיושם כדגל של claude CLI — שינוי הערך יפעיל מחדש את הסשן.',
   'dialogs.compactNow': 'דחוס עכשיו',
