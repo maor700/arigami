@@ -1,6 +1,7 @@
 export const strings = {
   // --- ChatPane ---
   'chat.you': 'you',
+  'chat.archiveExtractFailed': 'extraction failed',
   'chat.thinking': 'thinking',
   'chat.more': 'more',
   'chat.less': 'less',
