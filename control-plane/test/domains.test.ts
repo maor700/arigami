@@ -40,3 +40,23 @@ describe('domain allow-list', () => {
     expect(domainAllowed('alice@example.com', [' @example.com '])).toBe(true);
   });
 });
+
+describe('open signup ("*")', () => {
+  test('a bare "*" allows any domain', () => {
+    expect(domainAllowed('anyone@wherever.example', ['*'])).toBe(true);
+    expect(domainAllowed('someone@consumer-idp.example', ['*'])).toBe(true);
+  });
+
+  test('"*" alongside real domains still allows everything (not domain-limited)', () => {
+    expect(domainAllowed('anyone@wherever.example', ['example.com', '*'])).toBe(true);
+  });
+
+  test('still rejects malformed input even in open mode — "*" allows any DOMAIN, not a missing one', () => {
+    expect(domainAllowed('', ['*'])).toBe(false);
+    expect(domainAllowed('not-an-email', ['*'])).toBe(false);
+  });
+
+  test('without "*", a real domain list is still exclusive as before', () => {
+    expect(domainAllowed('mallory@evil.com', ['example.com'])).toBe(false);
+  });
+});

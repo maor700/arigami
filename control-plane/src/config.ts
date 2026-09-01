@@ -24,6 +24,11 @@ export interface Config {
   oidcIssuer: string;
   oidcClientId: string;
   oidcClientSecret: string;
+  // Comma-separated domains, e.g. "example.com,example.org". Empty = nobody
+  // can sign up (safe default). A literal "*" entry = open signup — anyone
+  // who authenticates with the configured OIDC provider gets in, regardless
+  // of email domain (see domains.ts). Meant for the solo-operator/demo case
+  // that has no company domain to gate on.
   allowedEmailDomains: string[];
 
   // Org config (PRD §2 "Customisation"): what a freshly provisioned tenant

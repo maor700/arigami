@@ -93,6 +93,23 @@ carried in a short-lived HttpOnly cookie, not server-side storage):
    state-machine validation as everything else (a 409, not a crash, if the
    action doesn't apply to the tenant's current state).
 
+### Two supported signup modes
+
+- **Company** — `ALLOWED_EMAIL_DOMAINS=example.com[,example.org]`, any
+  standards-compliant OIDC IdP (Okta, Entra, a company's own). Only emails
+  on those domains get in; everyone else's callback 403s before a user row
+  is ever created.
+- **Open / solo operator** — `ALLOWED_EMAIL_DOMAINS=*`, `CP_OIDC_ISSUER`
+  pointed at a consumer IdP (`https://accounts.google.com` is the standard
+  one; GitHub also speaks OIDC). No company domain required — register an
+  OAuth client for yourself in the Google Cloud Console (a personal Google
+  account is enough, ~5 minutes, no organisation), and "Sign in with
+  Google" IS the signup form: anyone with a Google account can authenticate
+  and gets a tenant. This is still real authentication, not an open door —
+  Google verified the email — there is just no allow-list narrowing WHICH
+  authenticated emails may in. Useful for a demo or a personal
+  multi-project setup where "who's allowed" isn't a domain question at all.
+
 ## Provisioner
 
 `src/provisioner.ts`, four functions, all operating on one tenant row at a
@@ -277,7 +294,7 @@ All read once at boot (`src/config.ts`):
 | `CP_COOKIE_DAYS` | `30` | session cookie lifetime |
 | `CP_TRUST_PROXY` | `false` | honour `X-Forwarded-Proto` (only meaningful behind a TLS-terminating proxy) |
 | `CP_OIDC_ISSUER` / `CP_OIDC_CLIENT_ID` / `CP_OIDC_CLIENT_SECRET` | — | the company IdP; OIDC is off (login 500s) until issuer+clientId are set |
-| `ALLOWED_EMAIL_DOMAINS` | — | comma-separated; **empty allows nobody**, not everybody |
+| `ALLOWED_EMAIL_DOMAINS` | — | comma-separated; **empty allows nobody**, not everybody. A literal `*` entry means **open signup** — anyone who authenticates with the configured OIDC provider gets in, any email domain. Meant for a solo operator / demo with no company domain to gate on: point `CP_OIDC_ISSUER` at Google (or GitHub), set `ALLOWED_EMAIL_DOMAINS=*`, and "sign in with Google" is the entire signup flow — still real authentication (Google verified the email), just no domain allow-list on top of it. |
 | `CP_ORG_DOMAIN` | `localtest.me` | tenants live at `u-<id>.<this>` |
 | `CP_URL_SCHEME` | `https` | `http` only makes sense for a local/k3d proof with no TLS in-cluster |
 | `CP_IMAGE_REPOSITORY` | `ghcr.io/maor700/arigami` | what image every new tenant gets |
