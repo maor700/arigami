@@ -40,6 +40,8 @@ export const strings = {
   'rail.dropToGroup': 'Drop sessions here to group them',
   'rail.expandFolder': 'Expand folder',
   'rail.collapseFolder': 'Collapse folder',
+  'rail.managerChip': 'Manager',
+  'rail.parentOf': 'Part of {name}',
   'rail.projectFolderHint': 'Project folder — click the name to open its controller',
   'rail.controllerNeedsInput': 'The project controller needs your input',
   'rail.controllerRestarting': 'Controller restarting…',
