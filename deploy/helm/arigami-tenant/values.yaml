@@ -74,6 +74,24 @@ persistence:
   accessModes:
     - ReadWriteOnce
   size: 30Gi
+  # K8S-3 (§6, "storage class reality"): "" = the cluster's default class —
+  # the sane default, because it's the one an operator has actually thought
+  # about. BUT check what that default IS before a real deployment:
+  #
+  #   - NODE-LOCAL classes (k3s/k3d `local-path`, `hostPath`, plain `local`
+  #     PVs) bind the volume to ONE node's disk. The pod is then pinned to
+  #     that node forever (volume node affinity): a node drain/failure leaves
+  #     the pod Pending, not rescheduled, and the tenant's data is only as
+  #     durable as that single node. Acceptable for a single-node pilot box
+  #     (docs/K8S-OPERATIONS.md "Dedicated box"), NOT for a multi-node
+  #     cluster.
+  #   - A real deployment wants RWO on a NETWORK-ATTACHED class (EBS/gp3,
+  #     GCE-PD, Ceph RBD, Longhorn, …) so the pod can follow the volume to
+  #     any node. RWO is fine — the volume is only ever mounted by one pod.
+  #   - Also check the class's reclaimPolicy: `Delete` means "delete the
+  #     tenant namespace = delete the data" (the intended model, docs/K8S.md
+  #     §8); set a `Retain` class here instead if tenant data must survive a
+  #     mistaken namespace delete.
   storageClassName: ""
 
 # Chrome (VNC desktop + Playwright) needs a real /dev/shm — the container
@@ -109,9 +127,23 @@ serviceAccount:
   automountServiceAccountToken: false
 
 # Namespace-wide caps (PRD-ARIGAMI-K8S.md §2: "Tenant = namespace. ResourceQuota
-# + LimitRange + NetworkPolicy (deny cross-tenant)"). Sized around the one pod
-# this chart runs, plus a little headroom for a future backup Job (K8S-3) —
-# NOT a second Arigami replica.
+# + LimitRange + NetworkPolicy (deny cross-tenant)").
+#
+# K8S-3 (§5) DECISION — a tenant is EXACTLY ONE POD, on purpose. The
+# `requests` caps below equal the StatefulSet pod's own requests, so there is
+# ZERO headroom for any second pod in the namespace (proved live in
+# docs/K8S.md "§5 smoke test": even a busybox prober is rejected by the
+# quota). That is the security posture: a compromised tenant cannot schedule
+# extra pods in its own namespace. Everything operational fits inside the one
+# pod anyway — support access is `kubectl exec` (docs/K8S-OPERATIONS.md), and
+# K8S-3 backups run the in-pod export CLI via exec, not a Job/CronJob.
+#
+# If you deliberately want room for a throwaway debug pod (e.g. a network
+# prober while diagnosing an incident), either patch the quota temporarily
+# (`kubectl -n u-<id> patch resourcequota … `) or install with the headroom
+# preset — the values below plus one small pod:
+#   requests: {cpu: 1250m, memory: 2304Mi}   # pod's 1/2Gi + 250m/256Mi spare
+# and know that you are trading away the "no second pod, ever" guarantee.
 resourceQuota:
   enabled: true
   requests:

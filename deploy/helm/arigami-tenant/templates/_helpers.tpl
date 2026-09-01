@@ -68,6 +68,21 @@ otherwise — e.g. for the plain k3d/localtest.me mechanics proof.
 {{- printf "%s://%s" $scheme (include "arigami-tenant.ingressHost" .) -}}
 {{- end -}}
 
+{{/*
+Image reference. K8S-3: the control-plane pins tenants to a DIGEST
+(`desired_digest`, e.g. "sha256:ab…") — a digest is joined with `@`, a plain
+tag with `:`. Without this, `image.tag=sha256:…` would render the invalid
+"repo:sha256:…" and every provision/upgrade with a pinned digest would fail
+at pull time.
+*/}}
+{{- define "arigami-tenant.imageRef" -}}
+{{- if hasPrefix "sha256:" .Values.image.tag -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.tag -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "arigami-tenant.secretName" -}}
 {{- if .Values.existingSecret -}}
 {{- .Values.existingSecret -}}

@@ -37,7 +37,7 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: arigami
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "arigami-tenant.imageRef" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
