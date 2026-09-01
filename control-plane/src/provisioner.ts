@@ -76,6 +76,14 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
     '--set-string', `env.ARIGAMI_BUNDLE=${cfg.arigamiBundle}`,
     '--wait', '--timeout', `${cfg.helmTimeoutSec}s`,
   ];
+  // K8S-3: the per-tenant handoff secret rides in as chart `secretEnv`, so the
+  // chart renders it into the tenant's own Secret and the pod reads it as an
+  // env var — this is what lets a user who signed in here land in their
+  // workspace without a pairing code (src/handoff.ts). Trade-off stated in
+  // values.yaml: `--set` values are also stored in Helm's release Secret, so
+  // an org that wants the secret to exist in exactly one place should switch
+  // the chart to `existingSecret` and create it out-of-band.
+  if (t.handoff_secret) args.push('--set-string', `secretEnv.ARIGAMI_HANDOFF_SECRET=${t.handoff_secret}`);
   if (cfg.helmExtraValuesFile) args.push('-f', cfg.helmExtraValuesFile);
 
   const res = await run(args, { timeoutMs: (cfg.helmTimeoutSec + 30) * 1000 });

@@ -7,6 +7,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { loadConfig } from '../src/config.js';
 import { openDb, createStore, type Tenant } from '../src/db.js';
 import { createApp, type Provisioner } from '../src/server.js';
+import { EMPTY_SNAPSHOT } from '../src/progress.js';
 
 function fakeProvisioner() {
   const calls: string[] = [];
@@ -69,16 +70,40 @@ describe('GET /', () => {
     store.createUser('user-1', 'bob@example.com', 'user');
     const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('starting');
+    // K8S-3: the wait is a live progress view, not a meta-refresh line.
+    const page = await res.text();
+    expect(page).toContain('Setting up your workspace');
+    expect(page).toContain('/api/progress');
     await tick();
     expect(calls).toContain('provision:user-1');
     expect(store.findTenantBySubject('user-1')?.state).toBe('running');
   });
 
-  test('a running tenant redirects straight to its URL', async () => {
+  // K8S-3: a running tenant is entered SIGNED IN — the user authenticated here
+  // seconds ago, so the control-plane mints a one-shot handoff instead of
+  // dropping them on the tenant's pairing screen.
+  test('a running tenant redirects into a one-shot sign-in on its URL', async () => {
     const { app, store } = setup();
     store.createUser('user-1', 'bob@example.com', 'user');
     const t = store.createTenant('user-1', 'bob@example.com', { desiredDigest: 'sha256:test' });
+    store.setTenantState(t.subject, 'running');
+    const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(`http://${t.ns}.example.test`);
+    expect(loc.pathname).toBe('/__api/auth/handoff');
+    const token = loc.searchParams.get('t')!;
+    // it names THIS user, is short-lived, and is not the secret itself
+    const payload = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8'));
+    expect(payload.email).toBe('bob@example.com');
+    expect(payload.exp - Date.now()).toBeLessThanOrEqual(2 * 60_000);
+    expect(res.headers.get('location')).not.toContain(t.handoff_secret);
+  });
+
+  test('a tenant from before the handoff existed still works — plain URL, pairing screen', async () => {
+    const { app, store } = setup();
+    store.createUser('user-1', 'bob@example.com', 'user');
+    const t = store.createTenant('user-1', 'bob@example.com', { desiredDigest: 'sha256:test', handoffSecret: '' });
     store.setTenantState(t.subject, 'running');
     const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
     expect(res.status).toBe(302);
@@ -213,6 +238,7 @@ function setupK8s3() {
   const adminOps: AdminOps = {
     async backupTenant(_cfg, t) { backupCalls.push(t.ns); return { name: 'arigami-backup-x.tgz', bytes: 123 }; },
     listBackups: () => [{ name: 'arigami-backup-x.tgz', bytes: 123, mtimeMs: 1700000000000 }],
+    async podSnapshot() { return { ...EMPTY_SNAPSHOT }; },
   };
   const app = createApp(cfg, store, p, () => {}, adminOps);
   const admin = () => { store.createUser('adm', 'root@example.com', 'admin'); return cookieFor(store, 'adm'); };

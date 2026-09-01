@@ -9,7 +9,7 @@ import { upgradeTenant, UpgradeBlockedError, UpgradeRolledBackError, UpgradeFail
 const tenant = (over: Partial<Tenant> = {}): Tenant => ({
   subject: 's1', email: 'a@b.c', ns: 'u-abc', release: 'u-abc',
   desired_digest: 'digest-b', running_digest: 'digest-a', ring: 'stable',
-  state: 'running', created_at: '', last_seen_at: '', ...over,
+  state: 'running', created_at: '', last_seen_at: '', handoff_secret: 'test-handoff-secret-16+', ...over,
 });
 
 function deps(over: Partial<UpgradeDeps> = {}): { d: UpgradeDeps; calls: string[] } {

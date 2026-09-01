@@ -5,6 +5,8 @@ import * as tpl from './templates.js';
 import { canTransition } from './state-machine.js';
 import { tenantUrl } from './provisioner.js';
 import * as backupMod from './backup.js';
+import { signInUrl } from './handoff.js';
+import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -17,11 +19,14 @@ export interface Provisioner {
 export interface AdminOps {
   backupTenant(cfg: Config, t: Tenant): Promise<{ name: string; bytes: number }>;
   listBackups(cfg: Config, ns: string): { name: string; bytes: number; mtimeMs: number }[];
+  /** live pod state behind the progress page; injected so tests need no cluster */
+  podSnapshot(cfg: Config, t: Tenant): Promise<PodSnapshot>;
 }
 
 const realAdminOps: AdminOps = {
   backupTenant: (cfg, t) => backupMod.backupTenant(cfg, t),
   listBackups: (cfg, ns) => backupMod.listBackups(cfg, ns),
+  podSnapshot: (cfg, t) => podSnapshot(cfg, t),
 };
 
 // A digest ("sha256:<hex>") or an image tag — the only two things the chart's
@@ -109,8 +114,31 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         );
         return html(tpl.startingPage());
       }
-      if (t.state === 'running') return redirect(tenantUrl(cfg, t.ns));
+      // K8S-3: land the user INSIDE their workspace. They authenticated here
+      // moments ago against the org IdP; making them hunt for a pairing code
+      // that only exists inside the pod was the single worst step of the
+      // flow. `signInUrl` mints a one-shot, short-lived, email-bound token the
+      // tenant redeems for a session cookie (src/handoff.ts, server/handoff.ts).
+      if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
       return html(tpl.unavailablePage(t.state));
+    }
+
+    // Feeds the progress view on the starting page. Returns the SAME shape
+    // whatever happens, so the page never has to handle an error envelope;
+    // `redirect` is only ever present once the tenant is genuinely ready.
+    if (url.pathname === '/api/progress') {
+      if (!principal) return json({ phase: 'unavailable', steps: [], title: 'Signed out', detail: 'Sign in again to continue.', slow: false, failed: true }, 401);
+      const t = store.findTenantBySubject(principal.subject);
+      if (!t) return json({ phase: 'queued', steps: [], title: 'Setting up your workspace', detail: 'Getting started…', slow: false, failed: false });
+      const snap = t.state === 'provisioning' || t.state === 'dormant'
+        ? await adminOps.podSnapshot(cfg, t).catch(() => EMPTY_SNAPSHOT)
+        : EMPTY_SNAPSHOT;
+      const elapsed = Math.max(0, Date.now() - Date.parse(t.created_at || '') || 0);
+      const p = stepsFor(t.state, snap, elapsed, cfg.orgName);
+      return json({
+        ...p,
+        ...(p.phase === 'ready' ? { redirect: signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email) } : {}),
+      });
     }
 
     if (url.pathname === '/admin') {

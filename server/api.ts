@@ -13,6 +13,7 @@ import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
+import * as handoff from './handoff.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import * as chrome from './lib/chrome.js';
@@ -2712,6 +2713,36 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
     auth.logout(req);
     auth.clearCookie(res, req);
     return json(res, { ok: true });
+  }
+  // K8S-3: orchestrator handoff — the control-plane already authenticated this
+  // user against the company IdP and provisioned this tenant, so it can mint a
+  // short-lived single-use token instead of making them find a pairing code
+  // that only exists inside the pod (server/handoff.ts). Public route (every
+  // /__api/auth/* path is), but it opens nothing without ARIGAMI_HANDOFF_SECRET.
+  if (p === '/__api/auth/handoff' && m === 'GET') {
+    const r = handoff.consume(String(u.searchParams.get('t') || ''));
+    if (!r.ok) {
+      res.writeHead(r.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(
+        `<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px">` +
+          `<h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/">Continue to this workspace</a></p>`,
+      );
+      return;
+    }
+    // This tenant belongs to the one user the orchestrator named: reuse their
+    // row if they have signed in before, else create it. Admin because it is
+    // their own instance — the same role `pair()` grants for the same reason.
+    const user = auth.findByEmail(r.payload.email) || auth.createUser(r.payload.email, 'admin');
+    const ws = auth.createWebSession(user.id, String(req.headers['user-agent'] || ''));
+    // Land on the cockpit, not back on this URL: the spent token must not sit
+    // in the address bar to be re-shared or re-loaded.
+    res.writeHead(302, {
+      location: '/__host/',
+      'set-cookie': [auth.cookieHeader(ws.token, Math.floor((ws.exp - Date.now()) / 1000), req)],
+      'cache-control': 'no-store',
+    });
+    res.end();
+    return;
   }
   if (p === '/__api/auth/oidc/start' && m === 'GET') {
     if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
