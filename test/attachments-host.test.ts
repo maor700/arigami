@@ -1,7 +1,7 @@
 // ZIP: end-to-end against an isolated host — the streamed upload endpoint
 // (auth, wrong session, size cap) and the inline base64 path both land the
 // same archive summary in the turn the model actually sees.
-import { test, expect, beforeAll, afterAll } from 'bun:test';
+import { test, expect, beforeAll, afterAll, describe } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -280,4 +280,151 @@ sys.stdout.write(base64.b64encode(buf.getvalue()).decode())
   expect(injected).toContain('📦 inline.zip');
   expect(injected).toContain('1 entr'); // "1 entry rejected" — traversal caught
   expect(injected).toMatch(/rejected/);
+});
+
+// ZIP3: the real-world bug this covers — a Windows-produced zip, 1335
+// entries, every one backslash-separated — only got 57 of 1335 entries out
+// before the fix, and the chat card didn't say so. These exercise the fix
+// through the actual HTTP pipeline (upload endpoint → extraction → the text
+// the model receives), not just the extractor function directly. A second,
+// dedicated host is used here — the shared one above runs with a 2KB
+// attachment cap (to cheaply exercise the 413 path) that a several-hundred-
+// entry zip can't fit under regardless of entry count.
+describe('ZIP3: end-to-end on a dedicated isolated host (real attachment size cap)', () => {
+  let host2: ChildProcess;
+  let base2: string;
+  let sid2: string;
+
+  beforeAll(async () => {
+    // A separate ARIGAMI_DIR/HOME — two host processes can't share a
+    // hostlock. Same `stub` binary and `stdinLogDir` as the shared host
+    // above (both absolute paths baked in at creation time), so the same
+    // stdin-log inspection helpers work unchanged.
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ZIP3-host2-'));
+    const home2 = path.join(dir2, 'home');
+    fs.mkdirSync(home2, { recursive: true });
+    const stub2 = path.join(dir, 'claude-stub.js');
+    const port = await freePort();
+    base2 = `http://127.0.0.1:${port}`;
+    host2 = spawn('bun', ['server/index.ts'], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HOME: home2,
+        ARIGAMI_DIR: dir2,
+        ARIGAMI_PORT: String(port),
+        ARIGAMI_AUTH: 'off',
+        ARIGAMI_SCREEN_ENABLED: '0',
+        ARIGAMI_CLAUDE_BIN: stub2,
+        ARIGAMI_WA_DATA_DIR: path.join(dir2, 'wa'),
+        ARIGAMI_TELEMETRY: '0',
+        ARIGAMI_DEFAULT_CWD: ws,
+        COMPOSIO_API_KEY: '',
+        GH_TOKEN: '',
+        GITHUB_TOKEN: '',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let log2 = '';
+    host2.stdout!.on('data', (d) => (log2 += d));
+    host2.stderr!.on('data', (d) => (log2 += d));
+    try {
+      await until(async () => {
+        try {
+          return (await fetch(base2 + '/__api/config')).ok;
+        } catch {
+          return false;
+        }
+      }, 30000);
+    } catch {
+      throw new Error(`second host did not come up: ${log2.slice(-1500)}`);
+    }
+    const r = await fetch(base2 + '/__api/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'zip3-test', cwd: ws }),
+    });
+    sid2 = (await r.json()).id;
+  }, 40000);
+
+  afterAll(() => {
+    try {
+      host2?.kill('SIGTERM');
+    } catch {}
+  });
+
+  test('a streamed 1100-entry backslash-separated (Windows) zip extracts completely', async () => {
+    const py = Bun.spawnSync(['python3', '-c', `
+import zipfile, io
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for i in range(1100):
+        zf.writestr(f'proj\\\\group{i % 20}\\\\file{i}.txt', f'content {i}')
+import sys
+sys.stdout.buffer.write(buf.getvalue())
+`]);
+    expect(py.exitCode).toBe(0);
+
+    const up = await fetch(`${base2}/__api/sessions/${sid2}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'x-arigami-filename': 'winbundle.zip' },
+      body: py.stdout,
+    });
+    expect(up.status).toBe(201);
+    const descriptor = await up.json();
+    expect(descriptor.archive.error).toBeUndefined();
+    expect(descriptor.archive.entriesTotal).toBe(1100);
+    expect(descriptor.archive.entryCount).toBe(1100);
+    expect(descriptor.archive.rejectedCount).toBe(0);
+    expect(fs.readFileSync(path.join(descriptor.archive.dir, 'proj/group7/file7.txt'), 'utf8')).toBe('content 7');
+    expect(fs.readFileSync(path.join(descriptor.archive.dir, 'proj/group19/file1099.txt'), 'utf8')).toBe('content 1099');
+  });
+
+  test('a partial extraction is described honestly in the injected turn text, not as a clean success', async () => {
+    const py = Bun.spawnSync(['python3', '-c', `
+import zipfile, io
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr('ok1.txt', 'fine1')
+    zf.writestr('conflict/', '')
+    zf.writestr('conflict', 'this collides with the directory above')
+    zf.writestr('ok2.txt', 'fine2')
+import sys
+sys.stdout.buffer.write(buf.getvalue())
+`]);
+    expect(py.exitCode).toBe(0);
+
+    const up = await fetch(`${base2}/__api/sessions/${sid2}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'x-arigami-filename': 'partial.zip' },
+      body: py.stdout,
+    });
+    expect(up.status).toBe(201);
+    const descriptor = await up.json();
+    expect(descriptor.archive.entriesTotal).toBe(4);
+    expect(descriptor.archive.entryCount).toBe(3); // the colliding "conflict" file entry was rejected
+    expect(descriptor.archive.rejectedCount).toBe(1);
+
+    const sent = await fetch(`${base2}/__api/sessions/${sid2}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: 'partial archive',
+        attachments: [{ name: descriptor.name, type: descriptor.type, path: descriptor.path }],
+      }),
+    });
+    expect(sent.status).toBe(200);
+    const injected = await until(() => {
+      const f = path.join(stdinLogDir, `${sid2}.jsonl`);
+      if (!fs.existsSync(f)) return Promise.resolve(null);
+      const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+      if (!lines.length) return Promise.resolve(null);
+      const j = JSON.parse(lines[lines.length - 1]);
+      const t = (j.message?.content || []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
+      return Promise.resolve(t.includes('partial archive') ? t : null);
+    });
+    // "3 of 4 entries", never a bare "3 entries" that reads as complete
+    expect(injected).toContain('3 of 4 entries');
+    expect(injected).toMatch(/rejected/);
+  });
 });

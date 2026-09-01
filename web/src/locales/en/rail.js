@@ -254,6 +254,7 @@ export const strings = {
   'rail.attachUploadFailed': 'Upload failed: {msg}',
   'rail.archiveOneEntry': '1 entry',
   'rail.archiveNEntries': '{n} entries',
+  'rail.archivePartial': '{n} of {total}',
   'rail.archiveRejected': '{n} rejected',
   'rail.archiveExtractFailed': 'Extraction failed',
   'rail.slashCommandsCapabilities': 'Slash commands & capabilities',

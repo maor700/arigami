@@ -1360,6 +1360,7 @@ function extractIfArchive(file) {
     kind,
     dir: destDir,
     entryCount: 0,
+    entriesTotal: 0,
     totalSize: 0,
     truncated: false,
     tree: [],
@@ -1371,11 +1372,12 @@ function extractIfArchive(file) {
     const info = {
       ...base,
       entryCount: manifest.entryCount,
+      entriesTotal: manifest.entriesTotal,
       totalSize: manifest.totalSize,
       truncated: manifest.truncated,
       tree: formatTree(manifest, 40),
       rejected: manifest.rejected.slice(0, 20),
-      rejectedCount: manifest.rejected.length,
+      rejectedCount: manifest.rejectedTotal,
     };
     fs.writeFileSync(`${file}.manifest.json`, JSON.stringify(info));
     return info;
@@ -1445,7 +1447,8 @@ function describeAttachment(a) {
   if (!a.archive) return `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`;
   const ar = a.archive;
   if (ar.error) return `- 📦 ${a.name} → extraction failed: ${ar.error} (original kept at ${a.path})`;
-  let block = `- 📦 ${a.name} → extracted to ${ar.dir} (${ar.entryCount} entries, ${humanSize(ar.totalSize)})`;
+  const countStr = ar.entriesTotal && ar.entriesTotal !== ar.entryCount ? `${ar.entryCount} of ${ar.entriesTotal} entries` : `${ar.entryCount} entries`;
+  let block = `- 📦 ${a.name} → extracted to ${ar.dir} (${countStr}, ${humanSize(ar.totalSize)})`;
   if (ar.tree.length) block += `\n  tree:\n` + ar.tree.map((l) => `  ${l}`).join('\n');
   if (ar.rejectedCount) {
     const shown = ar.rejected.slice(0, 10).map((r) => `${r.name} (${r.reason})`).join(', ');
@@ -1646,7 +1649,17 @@ export function sendMessage(id, text, attachments = [], { system = false } = {})
             name: a.name,
             isImage: a.isImage,
             ...(a.archive
-              ? { archive: { kind: a.archive.kind, entryCount: a.archive.entryCount, rejectedCount: a.archive.rejectedCount, error: a.archive.error, dir: a.archive.dir } }
+              ? {
+                  archive: {
+                    kind: a.archive.kind,
+                    entryCount: a.archive.entryCount,
+                    entriesTotal: a.archive.entriesTotal,
+                    rejectedCount: a.archive.rejectedCount,
+                    rejected: a.archive.rejected,
+                    error: a.archive.error,
+                    dir: a.archive.dir,
+                  },
+                }
               : {}),
           })),
         }
