@@ -348,7 +348,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
       className="group relative mb-0.5 flex cursor-pointer items-start gap-[9px] rounded-[7px] p-2"
       style={{
         background: selected ? tint(color) : undefined,
-        borderLeft: `4px solid ${selected ? color : 'transparent'}`,
+        borderInlineStart: `4px solid ${selected ? color : 'transparent'}`,
       }}
     >
       {tip.tip}
@@ -585,7 +585,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
               onClick={() => onOpenAgent?.(a.slug, 'home')}
               title={t('agent.oneLiner')}
               className="group relative mb-0.5 flex cursor-pointer items-center gap-[9px] rounded-[7px] p-2"
-              style={{ background: surfaceOpen ? tint(a.color) : undefined, borderLeft: `4px solid ${surfaceOpen ? a.color : 'transparent'}` }}
+              style={{ background: surfaceOpen ? tint(a.color) : undefined, borderInlineStart: `4px solid ${surfaceOpen ? a.color : 'transparent'}` }}
             >
               <AgentAvatar agent={a} size={20} />
               <span className="min-w-0 flex-1">
@@ -845,8 +845,10 @@ function FolderRow({
       style={
         isProject
           ? {
+              // No inner colour bar here: the group card around this header already
+              // draws one in the same colour (RAIL1), and a second line looked like a
+              // stray strip — most obviously when the folder has no children yet.
               background: ctlSelected ? tint(ctlColor) : undefined,
-              borderLeft: `4px solid ${ctlSelected ? ctlColor : 'transparent'}`,
             }
           : undefined
       }
