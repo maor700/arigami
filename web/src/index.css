@@ -111,6 +111,16 @@ body {
 }
 
 /* thin scrollbars in the rail + terminal */
+/* Directional glyphs (the child "↳" marker, a collapsed caret) point at the
+   START of the line, so under RTL they have to mirror. Sideways icons only —
+   never apply this to text. */
+.mirror-rtl {
+  display: inline-block;
+}
+[dir='rtl'] .mirror-rtl {
+  transform: scaleX(-1);
+}
+
 .thin-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(127, 127, 127, 0.35) transparent;
