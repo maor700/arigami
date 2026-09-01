@@ -1,0 +1,21 @@
+apiVersion: v2
+name: arigami-tenant
+description: >-
+  One Arigami instance for one tenant on Kubernetes: a StatefulSet(1) on a
+  single RWO PVC, namespace-scoped isolation (ResourceQuota, LimitRange,
+  NetworkPolicy) and a per-tenant Ingress host. See docs/K8S.md and
+  PRD-ARIGAMI-K8S.md (wave K8S-1) for the design this chart implements.
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/maor700/arigami
+sources:
+  - https://github.com/maor700/arigami
+keywords:
+  - arigami
+  - agent
+  - claude-code
+  - stateful-singleton
+maintainers:
+  - name: arigami
+    url: https://github.com/maor700/arigami

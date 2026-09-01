@@ -1,0 +1,30 @@
+{{- if .Values.networkPolicy.enabled -}}
+# Deny cross-tenant traffic (PRD-ARIGAMI-K8S.md §2). Every tenant namespace
+# gets one of these: ingress is allowed only from pods in the SAME namespace
+# and from the ingress controller's namespace — a pod in another tenant's
+# namespace gets nothing, even though the cluster network is flat. Egress is
+# left open (git clone, the Anthropic API, WhatsApp, OIDC discovery…); that
+# does not undo the isolation because every OTHER tenant's ingress policy
+# refuses the connection on the receiving end regardless of what this pod
+# tries to send.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-deny-cross-tenant
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.ingressNamespace }}
+  egress:
+    - {}
+{{- end -}}

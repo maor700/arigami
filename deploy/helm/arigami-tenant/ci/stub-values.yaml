@@ -1,0 +1,56 @@
+# Overrides used ONLY to prove the chart's mechanics on a disposable k3d
+# cluster (K8S-1, PRD-ARIGAMI-K8S.md §4.3) with a throwaway stub image
+# instead of the real 2.89GB arigami image — see docs/K8S.md. Never used
+# against a real tenant.
+image:
+  repository: arigami-stub
+  tag: k8s1
+  pullPolicy: IfNotPresent
+
+command: ["busybox"]
+args: ["httpd", "-f", "-v", "-p", "3099", "-h", "/www"]
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: 32Mi
+  limits:
+    cpu: "250m"
+    memory: 64Mi
+
+resourceQuota:
+  requests:
+    cpu: "200m"
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+  storageRequests: 1Gi
+
+persistence:
+  size: 200Mi
+
+shm:
+  sizeLimit: 32Mi
+
+ingress:
+  className: traefik
+  domain: localtest.me
+
+networkPolicy:
+  ingressNamespace: kube-system
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+terminationGracePeriodSeconds: 5
+
+probes:
+  startup:
+    periodSeconds: 2
+    failureThreshold: 15

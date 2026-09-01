@@ -1,0 +1,17 @@
+arigami tenant "{{ .Values.tenant.id }}" installed as {{ include "arigami-tenant.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+Watch it come up:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+  kubectl -n {{ .Release.Namespace }} logs -f {{ include "arigami-tenant.fullname" . }}-0
+
+Public URL (once DNS + the ingress controller are wired up):
+  {{ include "arigami-tenant.publicUrl" . }}
+
+Without a real ingress controller/DNS in front of you, reach it directly:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "arigami-tenant.fullname" . }} 3099:{{ .Values.service.port }}
+
+{{- if .Values.env.ARIGAMI_BUNDLE }}
+This tenant's first boot applies the bundle: {{ .Values.env.ARIGAMI_BUNDLE }}
+{{- else }}
+No ARIGAMI_BUNDLE set — this tenant starts blank, same as a fresh install.
+{{- end }}

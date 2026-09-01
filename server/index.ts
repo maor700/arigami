@@ -32,6 +32,27 @@ try {
   try { fs.mkdirSync(cfg.defaultCwd, { recursive: true }); } catch {}
 } catch {}
 
+// K8S-1 (PRD-ARIGAMI-K8S.md §2): a provisioner customises a fresh instance by
+// setting ARIGAMI_BUNDLE=<source> in the pod env — no wizard, no host bearer
+// to call POST /__api/profiles/apply with. Must land before the trigger
+// scheduler starts below (so the bundle's own cron jobs are live from tick
+// one) and before server.listen() (so a readiness probe never sees "up"
+// before the tenant's harness is configured). Errors are logged, not thrown —
+// same as every other bootstrap step here: a bad ARIGAMI_BUNDLE shouldn't
+// brick the pod.
+if (process.env.ARIGAMI_BUNDLE) {
+  try {
+    const pf = await import('./profiles.js');
+    const tr = await import('./triggers.js');
+    tr.load();
+    const rep = await pf.applyBundleEnv();
+    tr.flush();
+    if (rep) console.log(`[host] ARIGAMI_BUNDLE applied: "${rep.name}"${rep.errors.length ? ` (${rep.errors.length} errors)` : ''}`);
+  } catch (e) {
+    console.error('[host] ARIGAMI_BUNDLE apply failed:', (e as Error)?.message);
+  }
+}
+
 interface ProxyModule {
   createProxy: (opts: any) => any;
   hasTarget?: (req: IncomingMessage) => boolean;

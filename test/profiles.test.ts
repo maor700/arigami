@@ -219,6 +219,43 @@ test('pending-profile hand-off: setPending → resolveSource("pending") → clea
   expect(r.out[0].after).toBe(null);
 });
 
+// ---- ARIGAMI_BUNDLE (K8S-1: first-boot hook for a provisioner with no wizard/bearer) ----
+
+test('applyBundleEnv: no ARIGAMI_BUNDLE ⇒ null, no-op', () => {
+  const adir = tmp();
+  const r = runInChild(
+    "const pf=await import('./server/profiles.ts');const rep=await pf.applyBundleEnv();emit({rep});",
+    { ARIGAMI_DIR: adir, ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].rep).toBe(null);
+});
+
+test('applyBundleEnv: ARIGAMI_BUNDLE set on a fresh dir ⇒ applies once; a second boot is a no-op', () => {
+  const adir = tmp();
+  const bdir = writeBundle(tmp(), { name: 'env-bundle', memory: '- from env bundle\n' });
+  const r1 = runInChild(
+    "const pf=await import('./server/profiles.ts');const tr=await import('./server/triggers.ts');tr.load();" +
+      'const rep=await pf.applyBundleEnv();tr.flush();' +
+      'emit({rep,prov:pf.readProvenance()});',
+    { ARIGAMI_DIR: adir, ARIGAMI_BUNDLE: bdir, ARIGAMI_PORT: '', ARIGAMI_STATE_FILE: path.join(adir, 'state.json') }
+  );
+  if (!r1.ok) throw new Error(r1.error);
+  expect(r1.out[0].rep.name).toBe('env-bundle');
+  expect(r1.out[0].rep.errors).toEqual([]);
+  expect(r1.out[0].prov.name).toBe('env-bundle');
+
+  // "restart" — profile.json already exists ⇒ applyBundleEnv must not reapply
+  // (no duplicate history entry, no re-clone/re-append).
+  const r2 = runInChild(
+    "const pf=await import('./server/profiles.ts');const rep=await pf.applyBundleEnv();emit({rep,prov:pf.readProvenance()});",
+    { ARIGAMI_DIR: adir, ARIGAMI_BUNDLE: bdir, ARIGAMI_PORT: '' }
+  );
+  if (!r2.ok) throw new Error(r2.error);
+  expect(r2.out[0].rep).toBe(null);
+  expect(r2.out[0].prov.history).toEqual([]);
+});
+
 test('invalid bundle is refused by applyBundle before touching anything', () => {
   const adir = tmp();
   const bdir = writeBundle(tmp(), { name: 'BAD', memory: '- x\n' });

@@ -1,0 +1,72 @@
+# A worked example for a REAL tenant on the REAL image — layer this over
+# values.yaml:
+#
+#   helm install u-abc123 deploy/helm/arigami-tenant -n u-abc123 \
+#     --create-namespace -f deploy/helm/arigami-tenant/values-real.yaml \
+#     --set tenant.id=abc123 \
+#     --set ingress.domain=<org-domain> \
+#     --set-file secretEnv.CLAUDE_CODE_OAUTH_TOKEN=./claude-token.txt
+#
+# This file is NOT what K8S-1 ran on k3d — that used a throwaway stub image
+# (ci/stub-values.yaml) because the real image is 2.89GB and the box proving
+# these mechanics had ~4.9GB free disk (PRD-ARIGAMI-K8S.md §6). Everything
+# below is the documented-but-unrun smoke test: pin an exact tag, point
+# ingress.domain at a real wildcard-TLS domain, and run the checklist in
+# docs/K8S.md "§5 smoke test (documented, not run)" once a box with >10GB
+# free disk is available.
+
+image:
+  repository: ghcr.io/maor700/arigami
+  # Pin a real release tag (or sha-<7>), never `latest`, for anything beyond
+  # a one-off smoke test — see docs/K8S.md "Upgrades" for why (Recreate
+  # semantics mean the tag you install is the tag that stays until the next
+  # `helm upgrade`, there is no separate rolling image-update mechanism yet).
+  tag: latest
+  pullPolicy: IfNotPresent
+
+ingress:
+  enabled: true
+  className: nginx
+  domain: "<org-domain>"
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    # WebSocket (the cockpit's /__ws, the desktop's /__vnc bridge) needs
+    # long-lived connections, not just a big timeout — nginx keeps them alive
+    # on Upgrade headers by default, no extra annotation needed; the two
+    # above just stop a slow claude turn's HTTP response from being cut off.
+  tls:
+    enabled: true
+    # Leave empty to let cert-manager mint "<fullname>-tls" from the
+    # ClusterIssuer above; set explicitly to reuse a wildcard cert Secret
+    # instead (*.{{ ingress.domain }}), which is cheaper at fleet scale.
+    secretName: ""
+
+persistence:
+  storageClassName: "" # set to your cluster's RWO-capable default (e.g. a CSI block storage class)
+
+# PRD-measured sizing (PRD-ARIGAMI-K8S.md §2) — repeated here explicitly
+# rather than left implicit in values.yaml, since this is the file an
+# operator actually deploys from.
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "4"
+    memory: 8Gi
+
+# Secrets: prefer an operator-managed Secret (external-secrets, sealed-secrets,
+# or the provisioner writing one directly) over secretEnv below, which is
+# fine for a one-off smoke test but puts token material in a values file /
+# shell history if you pass it with --set.
+# existingSecret: "u-abc123-arigami-creds"
+secretEnv: {}
+# CLAUDE_CODE_OAUTH_TOKEN: "" # `claude setup-token` on a laptop (docs/DOCKER.md)
+# GH_TOKEN: ""
+# ARIGAMI_OIDC_CLIENT_SECRET: ""
+
+env:
+  TZ: "UTC"
+  ARIGAMI_BUNDLE: "" # e.g. https://github.com/<org>/arigami-profile-bundle
