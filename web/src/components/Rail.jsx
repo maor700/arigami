@@ -845,10 +845,11 @@ function FolderRow({
       style={
         isProject
           ? {
-              // No inner colour bar here: the group card around this header already
-              // draws one in the same colour (RAIL1), and a second line looked like a
-              // stray strip — most obviously when the folder has no children yet.
+              // RAIL2 — the group's colour now lives only here, in the header
+              // (icon tint + selected-row treatment), same as any other session
+              // row; the wrapping container below carries no colour of its own.
               background: ctlSelected ? tint(ctlColor) : undefined,
+              borderInlineStart: `4px solid ${ctlSelected ? ctlColor : 'transparent'}`,
             }
           : undefined
       }
@@ -866,7 +867,8 @@ function FolderRow({
         <Icon icon={collapsed ? faCaretRight : faCaretDown} />
       </button>
       <span
-        className="mt-[2px] shrink-0 text-[12px] text-fgdim"
+        className={`mt-[2px] shrink-0 text-[12px] ${isProject ? '' : 'text-fgdim'}`}
+        style={isProject ? { color: ctlColor } : undefined}
         title={isProject ? t('rail.projectFolderHint') : undefined}
       >
         <Icon icon={isProject ? faFolderTree : faFolder} />
@@ -1925,20 +1927,14 @@ export default function Rail({
               const kids = (folderKids.get(entry.id) || []).filter(
                 (s) => s.id !== controller?.id
               );
-              // RAIL1: header + children share one rounded, tinted container —
-              // the card IS the containment signal (no hairline). Plain
-              // folders (no controller) get a neutral panel tint instead of
-              // the controller's colour.
-              const groupColor = controller?.color || '#9a9a9a';
+              // RAIL2: the group's colour now lives only in FolderRow's own
+              // header (icon tint + selected-row treatment) — no card fill or
+              // border here, so 8+ folder colours never wash the whole rail.
               const intoWhole = sOver?.id === entry.id && sOver.zone === 'into';
               return (
                 <div
                   key={entry.id}
-                  className={`mb-1 rounded-[10px] p-[3px] ${intoWhole ? 'ring-2 ring-brand' : ''}`}
-                  style={{
-                    background: controller ? tint(groupColor, '0f') : 'var(--color-panel)',
-                    borderInlineStart: `2px solid ${groupColor}`,
-                  }}
+                  className={`mb-1 rounded-[10px] ${intoWhole ? 'ring-2 ring-brand ring-inset' : ''}`}
                 >
                   <div
                     draggable
