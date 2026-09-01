@@ -256,6 +256,30 @@ test('applyBundleEnv: ARIGAMI_BUNDLE set on a fresh dir ⇒ applies once; a seco
   expect(r2.out[0].prov.history).toEqual([]);
 });
 
+test('applyBundleEnv: the env bundle is TRUSTED — skills auto-applied, enabled cron stays enabled (K8S-3)', () => {
+  const adir = tmp();
+  const bdir = writeBundle(tmp(), {
+    name: 'org-bundle',
+    skill: { name: 'org-skill', content: SKILL },
+    cron: [{ name: 'org-cron', prompt: 'do the org thing', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true }],
+  });
+  const r = runInChild(
+    "const pf=await import('./server/profiles.ts');const tr=await import('./server/triggers.ts');tr.load();" +
+      'const rep=await pf.applyBundleEnv();tr.flush();' +
+      "const fs=require('node:fs');const trig=JSON.parse(fs.readFileSync(process.env.ARIGAMI_DIR+'/triggers.json','utf8'));" +
+      "emit({skills:rep.skills,cron:rep.cron,skillOnDisk:fs.existsSync(process.env.ARIGAMI_DIR+'/skills/org-skill/SKILL.md'),trig});",
+    { ARIGAMI_DIR: adir, ARIGAMI_BUNDLE: bdir, ARIGAMI_PORT: '', ARIGAMI_STATE_FILE: path.join(adir, 'state.json') }
+  );
+  if (!r.ok) throw new Error(r.error);
+  // An EXTERNAL bundle would stage the skill as a pending proposal and force
+  // the cron disabled; the env-supplied bundle is the platform operator's —
+  // skills land active, enabled cron actually runs (docs/K8S.md ARIGAMI_BUNDLE).
+  expect(r.out[0].skills).toEqual([{ name: 'org-skill', status: 'applied' }]);
+  expect(r.out[0].skillOnDisk).toBe(true);
+  expect(r.out[0].cron.length).toBe(1);
+  expect(r.out[0].cron[0].enabled).toBe(true);
+});
+
 test('invalid bundle is refused by applyBundle before touching anything', () => {
   const adir = tmp();
   const bdir = writeBundle(tmp(), { name: 'BAD', memory: '- x\n' });

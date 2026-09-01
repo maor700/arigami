@@ -737,7 +737,17 @@ export async function applyBundleEnv(): Promise<ApplyReport | null> {
   const source = process.env.ARIGAMI_BUNDLE;
   if (!source) return null;
   if (fs.existsSync(PROVENANCE_FILE)) return null;
-  return applySource(source);
+  // K8S-3: the env-supplied bundle is TRUSTED — same level as a shipped one.
+  // Whoever set this env var controls the pod spec / machine (the org's
+  // control-plane, a `docker run -e` operator) and could ship anything
+  // anyway; the pending-proposal gate exists to protect a user from bundles
+  // handed to them mid-flight, not from their own platform operator. This is
+  // what makes an org tenant boot with the company's skills ACTIVE and its
+  // cron jobs (marked enabled) actually running, instead of a cockpit full
+  // of approval prompts on first sign-in.
+  const r = resolveSource(source);
+  const b = loadBundle(r.dir, r.source);
+  return applyBundle({ ...b, trusted: true });
 }
 
 // ---- CLI (bin/host profile …) -------------------------------------------------
