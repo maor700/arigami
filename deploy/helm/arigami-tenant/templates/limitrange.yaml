@@ -1,0 +1,20 @@
+{{- if .Values.limitRange.enabled -}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-limits
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | quote }}
+        memory: {{ .Values.limitRange.defaultRequest.memory | quote }}
+      default:
+        cpu: {{ .Values.limitRange.default.cpu | quote }}
+        memory: {{ .Values.limitRange.default.memory | quote }}
+      max:
+        cpu: {{ .Values.limitRange.maxLimit.cpu | quote }}
+        memory: {{ .Values.limitRange.maxLimit.memory | quote }}
+{{- end -}}

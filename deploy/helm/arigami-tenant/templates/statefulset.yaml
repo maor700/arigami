@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  # Never RollingUpdate-with-surge (that's a Deployment concept): a
+  # StatefulSet already maintains "at most one pod per ordinal" at all times,
+  # so with replicas:1 there is never a moment with two pods against the same
+  # PVC — the invariant docs/DOCKER.md calls "strategy: Recreate (not
+  # RollingUpdate)" for this stateful singleton. RollingUpdate is the only
+  # meaningful updateStrategy for a StatefulSet (the alternative, OnDelete,
+  # would need a human/operator to delete the pod by hand on every upgrade).
+  updateStrategy:
+    type: RollingUpdate
+  serviceName: {{ include "arigami-tenant.fullname" . }}-headless
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "arigami-tenant.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arigami-tenant.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "arigami-tenant.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: arigami
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: ARIGAMI_PORT
+              value: {{ .Values.service.port | quote }}
+            # Loopback-only is the local/native default (server/lib/config.ts
+            # validateAuthBind) — inside a pod the Service can't reach that,
+            # so this MUST be 0.0.0.0. Safe: cfg.auth.mode defaults to
+            # 'pairing', and validateAuthBind refuses 0.0.0.0 with auth off.
+            - name: ARIGAMI_BIND
+              value: "0.0.0.0"
+            - name: ARIGAMI_PUBLIC_URL
+              value: {{ include "arigami-tenant.publicUrl" . | quote }}
+            # The ingress controller is not a loopback peer of this pod (same
+            # reasoning as docker-compose.yml's caddy/tls profile) — trusting
+            # X-Forwarded-* here would let anyone spoof it. TLS is terminated
+            # at the Ingress; ARIGAMI_PUBLIC_URL above is what makes cookies
+            # Secure and OAuth redirects come out https.
+            - name: ARIGAMI_TRUST_PROXY
+              value: "0"
+            - name: TZ
+              value: {{ .Values.env.TZ | quote }}
+            {{- if .Values.env.ARIGAMI_BUNDLE }}
+            - name: ARIGAMI_BUNDLE
+              value: {{ .Values.env.ARIGAMI_BUNDLE | quote }}
+            {{- end }}
+            {{- range .Values.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- if or .Values.secretEnv .Values.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ include "arigami-tenant.secretName" . }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shm.sizeLimit }}
+        {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "arigami-tenant.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- if .Values.persistence.storageClassName }}
+        storageClassName: {{ .Values.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

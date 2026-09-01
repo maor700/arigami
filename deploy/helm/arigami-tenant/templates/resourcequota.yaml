@@ -1,0 +1,20 @@
+{{- if .Values.resourceQuota.enabled -}}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}-quota
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.requests.cpu | quote }}
+    requests.memory: {{ .Values.resourceQuota.requests.memory | quote }}
+    limits.cpu: {{ .Values.resourceQuota.limits.cpu | quote }}
+    limits.memory: {{ .Values.resourceQuota.limits.memory | quote }}
+    requests.storage: {{ .Values.resourceQuota.storageRequests | quote }}
+    pods: {{ .Values.resourceQuota.pods | quote }}
+    services: {{ .Values.resourceQuota.services | quote }}
+    secrets: {{ .Values.resourceQuota.secrets | quote }}
+    configmaps: {{ .Values.resourceQuota.configmaps | quote }}
+    persistentvolumeclaims: {{ .Values.resourceQuota.persistentVolumeClaims | quote }}
+{{- end -}}

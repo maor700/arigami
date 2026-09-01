@@ -1,0 +1,33 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "arigami-tenant.fullname" . }}
+  labels:
+    {{- include "arigami-tenant.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ include "arigami-tenant.ingressHost" . }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" (include "arigami-tenant.fullname" .)) }}
+  {{- end }}
+  rules:
+    - host: {{ include "arigami-tenant.ingressHost" . }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "arigami-tenant.fullname" . }}
+                port:
+                  name: http
+{{- end -}}

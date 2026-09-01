@@ -1,0 +1,194 @@
+# Default values for arigami-tenant. See README.md for a value-by-value
+# explanation and docs/K8S.md for the design this implements (PRD-ARIGAMI-K8S.md
+# wave K8S-1).
+#
+# One release = one tenant = one namespace. Install with:
+#   kubectl create namespace u-<id>
+#   helm install u-<id> deploy/helm/arigami-tenant -n u-<id> -f values-real.yaml \
+#     --set tenant.id=<id> --set ingress.domain=<org-domain>
+
+tenant:
+  # Short, DNS-label-safe tenant id. Used to derive the Ingress host
+  # (u-<id>.<ingress.domain>) and object names when nameOverride is unset.
+  id: "demo"
+
+image:
+  repository: ghcr.io/maor700/arigami
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# [{name: <Secret name>}] — only needed if the image is pulled from a private
+# registry (the public ghcr.io/maor700/arigami image needs none).
+imagePullSecrets: []
+
+# Override the image's own ENTRYPOINT/CMD — only ever needed to run a
+# throwaway stub image for the k3d mechanics proof (ci/stub-values.yaml).
+# Leave both empty for the real arigami image.
+command: []
+args: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# docker/entrypoint.sh starts as root ON PURPOSE — first boot chowns the fresh
+# PVC to the `node` user, then the entrypoint drops to it itself via `gosu`
+# before anything else runs (docs/DOCKER.md "Desktop + Chrome"). Forcing
+# `runAsNonRoot: true` here would break that on every fresh PVC, so this chart
+# leaves the pod's user to the image's own entrypoint rather than fighting it.
+# Both are still free to tighten for a non-Arigami (stub/test) image.
+podSecurityContext: {}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+
+# Arigami is a STATEFUL SINGLETON (server/state.ts: the listeners scheduler,
+# session registry and git worktrees all live on the one PVC) — never run two
+# pods against the same volume. The only sane values here are 1 (running) and
+# 0 (scaled-to-zero / dormant, K8S-3). Do not raise this past 1.
+replicaCount: 1
+
+# server/index.ts SIGTERM handler flushes state + triggers (sync fs writes,
+# fast) then kills every child process and exits — see docs/K8S.md
+# "Graceful shutdown, honestly" for the full trace. It does NOT itself wait for
+# an in-flight claude turn; that wait (cfg.host.drainTimeoutMs, default 20s)
+# only happens on a cockpit-initiated restart, before SIGTERM is even sent.
+# 30s gives the fast path headroom on slower network-attached PVC storage
+# without pretending a raw SIGTERM (pod eviction/rollout/scale-down) will wait
+# out a running turn — it won't, today.
+terminationGracePeriodSeconds: 30
+
+# Sizing measured on the live host, 2026-09-01 (PRD-ARIGAMI-K8S.md §2): idle
+# ≈150MB; one active session ≈1-1.3GB; a heavy user 2.5-3.5GB. Requests cover
+# idle-to-one-session; limits cover a heavy user with headroom before OOMKill
+# (the #1 K8s-only failure mode for this app — docs/DOCKER.md §K8s).
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "4"
+    memory: 8Gi
+
+persistence:
+  enabled: true
+  # ReadWriteOnce only: single pod, single writer (SQLite, worktrees). Never RWX.
+  accessModes:
+    - ReadWriteOnce
+  size: 30Gi
+  storageClassName: ""
+
+# Chrome (VNC desktop + Playwright) needs a real /dev/shm — the container
+# default is a tiny 64MB tmpfs. docker-compose.yml gives it `shm_size: 1gb`;
+# the Kubernetes equivalent is a memory-backed emptyDir (counts against the
+# pod's memory limit, same as docs/DOCKER.md's compose note).
+shm:
+  sizeLimit: 1Gi
+
+service:
+  type: ClusterIP
+  port: 3099
+
+ingress:
+  enabled: true
+  className: ""
+  # Public origin: https://u-<tenant.id>.<domain>. Leave host empty to derive
+  # it from tenant.id + domain (the common case); set host directly to
+  # override entirely.
+  domain: "<org-domain>"
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # Arigami never talks to the Kubernetes API today — no controller, no
+  # in-pod kubectl. Keep the token out of the filesystem entirely.
+  automountServiceAccountToken: false
+
+# Namespace-wide caps (PRD-ARIGAMI-K8S.md §2: "Tenant = namespace. ResourceQuota
+# + LimitRange + NetworkPolicy (deny cross-tenant)"). Sized around the one pod
+# this chart runs, plus a little headroom for a future backup Job (K8S-3) —
+# NOT a second Arigami replica.
+resourceQuota:
+  enabled: true
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "6"
+    memory: 10Gi
+  pods: "6"
+  services: "2"
+  secrets: "10"
+  configmaps: "10"
+  persistentVolumeClaims: "2"
+  storageRequests: 32Gi
+
+# Defaults for any container in the namespace that doesn't set its own
+# resources (the StatefulSet always does; this is a safety net for anything
+# ancillary — a future CronJob, a debug pod).
+limitRange:
+  enabled: true
+  defaultRequest:
+    cpu: 250m
+    memory: 256Mi
+  default:
+    cpu: "1"
+    memory: 512Mi
+  maxLimit:
+    cpu: "4"
+    memory: 8Gi
+
+# Deny cross-tenant traffic (PRD-ARIGAMI-K8S.md §2): a pod in this namespace
+# only accepts ingress from its own namespace and from the ingress controller
+# — never from another tenant's namespace, even though every tenant shares the
+# same cluster network. Egress is left open (git clone, the Anthropic API,
+# WhatsApp, OIDC discovery…) except that it's still confined by the fact that
+# every OTHER tenant's ingress policy refuses cross-namespace traffic too — so
+# open egress here does not undo the isolation.
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  ingressNamespaceLabelKey: kubernetes.io/metadata.name
+
+# Health: server/index.ts serves an unauthenticated `{ok:true}` at /__health
+# (server/auth.ts isPublicPath) — NOT /__api/health, which requires a session
+# and would make every probe a 401. See docs/K8S.md "Probes: which endpoint".
+probes:
+  path: /__health
+  # First boot may run ARIGAMI_BUNDLE (a git clone + skills/memory/cron
+  # application) before the server ever starts listening (server/index.ts) —
+  # the startup probe's budget must cover that, not the steady-state ones.
+  startup:
+    periodSeconds: 5
+    failureThreshold: 60 # 5 minutes
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+env:
+  TZ: "UTC"
+  # K8S-1 (server/profiles.ts applyBundleEnv): a git URL (or a name shipped in
+  # the image under profiles/bundles/<name>) applied once, on this tenant's
+  # first boot. Empty = no bundle, tenant starts blank like a fresh install.
+  ARIGAMI_BUNDLE: ""
+
+# Extra plain (non-secret) env vars, e.g. ARIGAMI_VOICE_LANG. [{name, value}]
+extraEnv: []
+
+# Secret material (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY / GH_TOKEN /
+# ARIGAMI_OIDC_CLIENT_SECRET…). Set `secretEnv` to have the chart create a
+# Secret from these values (fine for a disposable/test tenant; for a real org
+# prefer `existingSecret` pointing at a Secret the provisioner (or
+# external-secrets/sealed-secrets) already created, so nothing sensitive ever
+# goes through `helm install --set` or lands in a values file on disk).
+secretEnv: {}
+existingSecret: ""
