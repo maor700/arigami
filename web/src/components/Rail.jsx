@@ -1718,11 +1718,11 @@ export default function Rail({
   // One draggable session row (used by every view). Always draggable so a
   // session can be dropped into a chat composer as a reference; the reorder
   // targets only wire up in flat mode, where the layout is manual.
-  // RAIL1: `mark` ('↳') + `groupColor` (the row's start-tick) render a child
+  // RAIL1: `mark` ('↳') renders a child
   // as belonging to its folder card even scanning fast; `parent` (from
   // `parentInfoFor`) is the opposite case — a row shown OUTSIDE its group,
   // which gets a small chip naming that group instead.
-  const sessionRowEl = (s, { mark, groupColor, parent } = {}) => {
+  const sessionRowEl = (s, { mark, parent } = {}) => {
     const zone = sOver?.id === s.id ? sOver.zone : null;
     const before = zone === 'before';
     const after = zone === 'after';
@@ -1746,7 +1746,8 @@ export default function Rail({
         <div
           data-rowbody
           className={mark ? 'flex items-start gap-1' : undefined}
-          style={groupColor ? { borderInlineStart: `2px solid ${groupColor}`, paddingInlineStart: '6px' } : undefined}
+          /* RAIL1 follow-up: no per-child connecting strip — the group card already
+             carries its own colour bar and the children are indented under it. */
         >
           {mark && (
             <span
@@ -1990,7 +1991,7 @@ export default function Rail({
                   </div>
                   {!entry.folder.collapsed && (
                     <div className="mb-0.5 ps-4">
-                      {kids.map((s) => sessionRowEl(s, { groupColor, mark: '↳' }))}
+                      {kids.map((s) => sessionRowEl(s, { mark: '↳' }))}
                       {kids.length === 0 && (
                         <div className="px-2 py-1.5 text-[10px] text-fgdim italic">
                           {t('rail.emptyFolderDrop')}
