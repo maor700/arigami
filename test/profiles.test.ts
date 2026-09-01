@@ -219,6 +219,52 @@ test('pending-profile hand-off: setPending → resolveSource("pending") → clea
   expect(r.out[0].after).toBe(null);
 });
 
+// K8S-3: a bundle on a STATIC file host (git dumb-HTTP — no shallow support)
+// must still resolve; gitClone falls back from --depth 1 to a full clone.
+// The file server runs in its OWN process: both runInChild and gitClone are
+// spawnSync, which blocks whichever event loop they run on.
+test('resolveSource clones a dumb-HTTP (static file) bundle repo', async () => {
+  const src = writeBundle(tmp(), { name: 'dumb-http-bundle', memory: '- via dumb http\n' });
+  const work = tmp();
+  const bare = path.join(work, 'dumb-http-bundle.git');
+  const git = (args: string[], cwd: string) => {
+    const r = require('node:child_process').spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    if (r.status !== 0) throw new Error(r.stderr);
+  };
+  git(['init', '-q', '-b', 'main'], src);
+  git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A'], src);
+  git(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x'], src);
+  git(['clone', '-q', '--bare', src, bare], work);
+  git(['update-server-info'], bare);
+
+  const port = 49000 + Math.floor(Math.random() * 5000);
+  const serverScript =
+    "const path=require('node:path');const fs=require('node:fs');const root=process.argv[1];" +
+    'Bun.serve({port:Number(process.argv[2]),fetch(req){' +
+    "const p=path.normalize(path.join(root,decodeURIComponent(new URL(req.url).pathname)));" +
+    "if(!p.startsWith(root)||!fs.existsSync(p)||fs.statSync(p).isDirectory())return new Response('nf',{status:404});" +
+    'return new Response(Bun.file(p));}});';
+  const srv = Bun.spawn(['bun', '-e', serverScript, work, String(port)], { stdout: 'ignore', stderr: 'ignore' });
+  try {
+    let up = false;
+    for (let i = 0; i < 50 && !up; i++) {
+      up = await fetch(`http://127.0.0.1:${port}/dumb-http-bundle.git/info/refs`).then((r) => r.ok).catch(() => false);
+      if (!up) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(up).toBe(true);
+    const adir = tmp();
+    const r = runInChild(
+      "const pf=await import('./server/profiles.ts');const r=pf.resolveSource(process.env.TEST_BUNDLE_URL);emit({fetched:r.fetched,hasManifest:require('node:fs').existsSync(r.dir+'/profile.json')});",
+      { ARIGAMI_DIR: adir, ARIGAMI_PORT: '', TEST_BUNDLE_URL: `http://127.0.0.1:${port}/dumb-http-bundle.git` }
+    );
+    if (!r.ok) throw new Error(r.error);
+    expect(r.out[0].fetched).toBe(true);
+    expect(r.out[0].hasManifest).toBe(true);
+  } finally {
+    srv.kill();
+  }
+}, 30000);
+
 // ---- ARIGAMI_BUNDLE (K8S-1: first-boot hook for a provisioner with no wizard/bearer) ----
 
 test('applyBundleEnv: no ARIGAMI_BUNDLE ⇒ null, no-op', () => {

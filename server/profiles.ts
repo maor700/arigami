@@ -350,11 +350,20 @@ export interface ResolvedSource {
 
 function gitClone(url: string, dest: string): void {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const r = spawnSync('git', ['clone', '--depth', '1', '--quiet', url, dest], {
-    encoding: 'utf8',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    timeout: 120_000,
-  });
+  const attempt = (args: string[]) =>
+    spawnSync('git', ['clone', ...args, '--quiet', url, dest], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      timeout: 120_000,
+    });
+  let r = attempt(['--depth', '1']);
+  // K8S-3: a bundle can live on a static file host (dumb HTTP transport —
+  // git's fallback protocol; e.g. a bare repo behind any web server), which
+  // cannot serve shallow clones. Bundles are small — retry full.
+  if (r.status !== 0 && /shallow/i.test(r.stderr || '')) {
+    fs.rmSync(dest, { recursive: true, force: true });
+    r = attempt([]);
+  }
   if (r.status !== 0) throw new Error(`git clone failed: ${(r.stderr || r.stdout || '').trim().split('\n').pop() || 'unknown error'}`);
 }
 

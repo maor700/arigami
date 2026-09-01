@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 CLUSTER="${CLUSTER:-arigami-k8s3}"
 RUN_DIR="${RUN_DIR:-$PWD/data/pilot}"
 
-for name in control-plane mock-idp bundle-server; do
+for name in control-plane mock-idp bundle-server; do  # bundle-server: legacy pidfile from the pre-in-cluster variant
   if [ -f "$RUN_DIR/$name.pid" ]; then
     pid="$(cat "$RUN_DIR/$name.pid")"
     kill "$pid" 2>/dev/null && echo "[$name] stopped (pid $pid)" || echo "[$name] not running"
