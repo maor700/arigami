@@ -40,6 +40,19 @@ export function tenantUrl(cfg: Config, ns: string): string {
   return `${cfg.urlScheme}://u-${id}.${cfg.orgDomain}`;
 }
 
+// The chart's object name prefix (StatefulSet, pod ordinal 0, Services) is
+// `arigami-<tenant.id>` — templates/_helpers.tpl's `fullname` builds it
+// straight from `.Values.tenant.id`, NOT from `.Release.Name` (proved live:
+// `helm install u-demo … --set tenant.id=demo` produces pod
+// `arigami-demo-0`, docs/K8S.md). The tenants table's `release` column is
+// the HELM release name (what `helm upgrade`/`uninstall` take) — a
+// different string from this. Conflating the two here was a real bug caught
+// by the k3d integration test: suspend/resume `kubectl scale
+// statefulset/<release>` targeted a StatefulSet that doesn't exist.
+export function fullname(ns: string): string {
+  return `arigami-${ns.replace(/^u-/, '')}`;
+}
+
 // Idempotent: `helm upgrade --install` on the same release name/values is a
 // no-op apply, not a duplicate install — re-running this for a tenant that
 // is already `running` does not disturb its live pod (no template field the
@@ -50,9 +63,15 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
   const args = [
     'helm', 'upgrade', '--install', t.release, cfg.helmChartPath,
     '--namespace', t.ns, '--create-namespace',
-    '--set', `tenant.id=${t.ns.replace(/^u-/, '')}`,
+    // --set-string, not --set: tenant.id and image.tag are hex/short ids
+    // that can be all-digits (e.g. a sha256 prefix like "7021319228"), and
+    // plain --set parses a numeric-looking value as an int64 — which then
+    // renders as "%!s(int64=...)" wherever the chart does `printf "...-%s"
+    // .Values.tenant.id` (templates/_helpers.tpl), breaking every derived
+    // object name. Found live on the very first k3d run of this provisioner.
+    '--set-string', `tenant.id=${t.ns.replace(/^u-/, '')}`,
     '--set', `image.repository=${cfg.imageRepository}`,
-    '--set', `image.tag=${t.desired_digest}`,
+    '--set-string', `image.tag=${t.desired_digest}`,
     '--set', `ingress.domain=${cfg.orgDomain}`,
     '--set-string', `env.ARIGAMI_BUNDLE=${cfg.arigamiBundle}`,
     '--wait', '--timeout', `${cfg.helmTimeoutSec}s`,
@@ -91,11 +110,11 @@ export async function deleteTenant(cfg: Config, t: Tenant): Promise<void> {
 // Admin "suspend" action (dormancy mechanics proved in K8S-1 §7; the
 // AUTOMATION that decides when to do this is K8S-3 — this is just the lever).
 export async function suspendTenant(cfg: Config, t: Tenant): Promise<void> {
-  const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${t.release}`, '--replicas=0']);
+  const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${fullname(t.ns)}`, '--replicas=0']);
   if (res.code !== 0) throw new ProvisionError(`scale-to-zero failed for ${t.ns} (exit ${res.code})`, res.stderr);
 }
 
 export async function resumeTenant(cfg: Config, t: Tenant): Promise<void> {
-  const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${t.release}`, '--replicas=1']);
+  const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${fullname(t.ns)}`, '--replicas=1']);
   if (res.code !== 0) throw new ProvisionError(`scale-up failed for ${t.ns} (exit ${res.code})`, res.stderr);
 }
