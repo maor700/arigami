@@ -26,6 +26,10 @@ x-arigami: &arigami
   environment:
     ARIGAMI_PORT: "3199"
     ARIGAMI_BIND: "0.0.0.0"
+    # Clock: the container is UTC unless you say otherwise. Set TZ (e.g.
+    # Asia/Jerusalem) in .env so cron routines, the daily budget reset and every
+    # desktop/browser the host spawns all agree with your local day.
+    TZ: "${TZ:-UTC}"
     # Caddy is NOT a loopback peer from inside this container, so the
     # X-Forwarded-Proto rule (trustProxy, loopback-only) can't apply here;
     # the https origin comes from ARIGAMI_PUBLIC_URL in .env instead.

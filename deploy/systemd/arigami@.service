@@ -19,6 +19,8 @@ Environment=HOME=__HOME__
 Environment=ARIGAMI_DIR=/srv/arigami/%i
 Environment=ARIGAMI_INSTANCE=%i
 Environment=ARIGAMI_SUPERVISOR=systemd
+# Clock: leave unset to follow the host's /etc/localtime, or pin it here
+# (Environment=TZ=Asia/Jerusalem). Everything the host spawns inherits it.
 Environment=PATH=__BUN_DIR__:__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/srv/arigami/%i/env
 ExecStartPre=/bin/mkdir -p /srv/arigami/%i
