@@ -100,6 +100,69 @@ function WaitingBadge({ items, t }) {
   );
 }
 
+// RAIL1 — a per-child rollup that survives a collapsed folder: one dot per
+// kid (capped), coloured by its own state, so the header still answers "what's
+// happening in here" without opening it. `needsAttention`/waiting map to the
+// same amber as the row's own `?`/`!` badges; working reuses the brand blue.
+function StateDots({ kids }) {
+  if (!kids?.length) return null;
+  const shown = kids.slice(0, 8);
+  return (
+    <span className="flex items-center gap-[3px]" aria-hidden="true">
+      {shown.map((s) => {
+        const attn = needsAttention(s);
+        const working = ['working', 'restarting'].includes(s.claude?.state);
+        const color = attn ? '#CE8324' : working ? '#2C6BD6' : '#9a9a9a';
+        return (
+          <span
+            key={s.id}
+            className="h-[5px] w-[5px] shrink-0 rounded-full"
+            style={{ background: color }}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+// RAIL1 §4/§5 — "out of context, say the parent". A small pill naming
+// whichever folder/controller a session belongs to, shown wherever a row
+// renders OUTSIDE its own group's card (search, grouped-by-status, a PM
+// child sitting free at root) — `info` comes from `parentInfoFor`. Clicking
+// it selects the parent (a plain folder with no controller has nothing
+// selectable, so it renders as inert text instead of a button).
+function ParentChip({ info, onSelect, t }) {
+  if (!info) return null;
+  const cls =
+    'flex min-w-0 max-w-[130px] shrink-0 items-center gap-1 truncate rounded-full border border-border px-1.5 py-px font-mono text-[9px] text-fgdim';
+  const inner = (
+    <>
+      <Dot color={info.color} size={7} className="shrink-0" />
+      <span className="min-w-0 truncate">{info.label}</span>
+    </>
+  );
+  if (!info.targetId) {
+    return (
+      <span className={cls} title={t('rail.parentOf', { name: info.label })}>
+        {inner}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(info.targetId);
+      }}
+      title={t('rail.parentOf', { name: info.label })}
+      className={`${cls} cursor-pointer hover:text-fg`}
+    >
+      {inner}
+    </button>
+  );
+}
+
 function statusSort(a, b) {
   const ia = STATUS_ORDER.indexOf(a);
   const ib = STATUS_ORDER.indexOf(b);
@@ -255,7 +318,7 @@ function useHoverTip(text) {
   return { ref, show, hide, toggle, tip };
 }
 
-function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting }) {
+function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting, muted }) {
   const t = useT();
   const color = session.color || '#c4c4c4';
   const label = session.metadata?.ticket || session.title || session.id;
@@ -292,11 +355,11 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
       {agent ? <AgentAvatar agent={{ ...agent, color }} size={16} className="mt-px" /> : <Dot color={color} className="mt-0.5" />}
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <Truncate text={label} className="font-mono text-[11.5px] font-bold" />
+          <Truncate text={label} className={`font-mono text-[11.5px] ${muted ? 'font-semibold' : 'font-bold'}`} />
           {port != null && (
             <span className="shrink-0 font-mono text-[10px] text-fgdim">:{port}</span>
           )}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          <span className="me-auto flex shrink-0 items-center gap-1.5">
             {watch && (
               <span
                 title={
@@ -528,7 +591,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
                   <Truncate text={a.name} className="font-mono text-[11.5px] font-bold" />
-                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <span className="me-auto flex shrink-0 items-center gap-1.5">
                     {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
                     {working ? (
                       <span title={t('rail.teamWorking')} className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]">
@@ -611,7 +674,7 @@ function DropLine({ pos, gap = 0 }) {
 // measuring it would move the zone boundaries under the cursor and cause the
 // indicator to jitter. The stable body keeps the zone rock-steady while the
 // space animates open.
-function dropZone(e, withInto = false) {
+export function dropZone(e, withInto = false) {
   const body = e.currentTarget.querySelector('[data-rowbody]') || e.currentTarget;
   const r = body.getBoundingClientRect();
   const rel = (e.clientY - r.top) / Math.max(1, r.height);
@@ -620,7 +683,7 @@ function dropZone(e, withInto = false) {
 }
 
 // Reorder helper: move `from` so it sits before/after `target` in `ids`.
-function insertAt(ids, from, target, zone) {
+export function insertAt(ids, from, target, zone) {
   const next = ids.filter((x) => x !== from);
   const ti = next.indexOf(target);
   if (ti < 0) return ids;
@@ -809,7 +872,19 @@ function FolderRow({
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <Truncate text={folder.name} className="min-w-0 flex-1 text-[11.5px] font-bold" />
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* Collapsed + something pending already crowds this row with the
+              rollup pill below — the chip's job (say why this row differs) is
+              done by the icon+tint then; skip it so the name keeps its room. */}
+          {isProject && !(collapsed && (attention || waitingHidden)) && (
+            <span className="shrink-0 rounded-full border border-border px-1 font-mono text-[8.5px] leading-[13px] text-fgdim">
+              {t('rail.managerChip')}
+            </span>
+          )}
+          <span className="me-auto flex shrink-0 items-center gap-1.5">
+            {/* The rollup pill below already says "! · ? · N" once something's
+                pending — showing dots too is redundant and starves the title
+                of width, so dots only appear when there's nothing to flag. */}
+            {!attention && !waitingHidden && <StateDots kids={kids} />}
             {ctlAttention ? (
               <span
                 title={t('rail.controllerNeedsInput')}
@@ -1199,7 +1274,7 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
     : null;
 
   return (
-    <div ref={ref} className="relative ml-auto">
+    <div ref={ref} className="relative me-auto">
       <button
         ref={btnRef}
         type="button"
@@ -1358,6 +1433,7 @@ export default function Rail({
   const bySort = (a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9);
   const allActive = workSessions.filter((s) => !s.archived);
   const folderById = new Map((folders || []).map((f) => [f.id, f]));
+  const sessionById = new Map(allActive.map((s) => [s.id, s]));
   const folderKids = new Map();
   const freeActive = [];
   for (const s of allActive) {
@@ -1379,6 +1455,28 @@ export default function Rail({
       .sort(bySort)
       .map((s) => ({ type: 'session', id: s.id, session: s, ord: s.sortOrder ?? 1e9 })),
   ].sort((a, b) => a.ord - b.ord);
+
+  // RAIL1 §4/§5 — "out of context, say the parent". A session reads as a
+  // child inside its own folder's card (the ↳ marker + tick); everywhere else
+  // (search, grouped-by-status, or a PM child sitting free at root) nothing
+  // says whose it is. Prefer the folder (the visible group), then fall back to
+  // metadata.master (the PM/controller that spawned it, for children with no
+  // folder at all) — a session can't be foldered AND unfoldered, so these
+  // never conflict.
+  const parentInfoFor = (s) => {
+    if (s.folderId && folderById.has(s.folderId)) {
+      const f = folderById.get(s.folderId);
+      const ctl = f.controllerSessionId ? sessionById.get(f.controllerSessionId) : null;
+      return { label: f.name, color: ctl?.color || '#9a9a9a', targetId: f.controllerSessionId || null };
+    }
+    if (s.metadata?.master) {
+      const m = sessionById.get(String(s.metadata.master));
+      if (m && m.id !== s.id) {
+        return { label: m.metadata?.ticket || m.title || m.id, color: m.color, targetId: m.id };
+      }
+    }
+    return null;
+  };
 
   // Selecting a session hidden inside a collapsed folder (search hit, deep
   // link) auto-expands the folder so the selection is visible.
@@ -1599,7 +1697,7 @@ export default function Rail({
     else setFolderDialog({ type: 'delete', folder, kids });
   };
 
-  const rowProps = (s) => ({
+  const rowProps = (s, { muted } = {}) => ({
     session: s,
     selected: s.id === selectedRow,
     onSelect,
@@ -1614,12 +1712,17 @@ export default function Rail({
     watch: watchFor(s.id),
     health: health?.[s.id],
     waiting: waitingBySession.get(s.id),
+    muted,
   });
 
   // One draggable session row (used by every view). Always draggable so a
   // session can be dropped into a chat composer as a reference; the reorder
   // targets only wire up in flat mode, where the layout is manual.
-  const sessionRowEl = (s, { crumb } = {}) => {
+  // RAIL1: `mark` ('↳') + `groupColor` (the row's start-tick) render a child
+  // as belonging to its folder card even scanning fast; `parent` (from
+  // `parentInfoFor`) is the opposite case — a row shown OUTSIDE its group,
+  // which gets a small chip naming that group instead.
+  const sessionRowEl = (s, { mark, groupColor, parent } = {}) => {
     const zone = sOver?.id === s.id ? sOver.zone : null;
     const before = zone === 'before';
     const after = zone === 'after';
@@ -1640,13 +1743,27 @@ export default function Rail({
       >
         {before && <DropLine pos="before" gap={GAP} />}
         {/* data-rowbody: the fixed-height slice dropZone measures (see dropZone) */}
-        <div data-rowbody>
-          {crumb && (
-            <div className="flex items-center gap-1 px-2 pt-1 text-[9px] text-fgdim">
-              <Icon icon={faFolder} /> <span className="min-w-0 truncate">{crumb}</span>
-            </div>
+        <div
+          data-rowbody
+          className={mark ? 'flex items-start gap-1' : undefined}
+          style={groupColor ? { borderInlineStart: `2px solid ${groupColor}`, paddingInlineStart: '6px' } : undefined}
+        >
+          {mark && (
+            <span
+              dir="ltr"
+              className="mt-[9px] shrink-0 whitespace-nowrap font-mono text-[10px] leading-none text-fgdim"
+            >
+              {mark}
+            </span>
           )}
-          <Row {...rowProps(s)} />
+          <div className="min-w-0 flex-1">
+            {parent && (
+              <div className="px-2 pt-1">
+                <ParentChip info={parent} onSelect={onSelect} t={t} />
+              </div>
+            )}
+            <Row {...rowProps(s, { muted: !!mark })} />
+          </div>
         </div>
         {after && <DropLine pos="after" gap={GAP} />}
       </div>
@@ -1745,7 +1862,7 @@ export default function Rail({
               title={title}
               onClick={() => setMode(key)}
               className={`cursor-pointer px-[9px] py-[3px] text-[11px] leading-none ${
-                i ? 'border-l border-border' : ''
+                i ? 'border-s border-border' : ''
               } ${mode === key ? 'bg-ink text-white' : 'bg-panel text-fgdim'}`}
             >
               <Icon icon={glyph} />
@@ -1764,7 +1881,7 @@ export default function Rail({
           sections.map((sec) => (
             <div key={sec.label}>
               {sec.hasHeader && <GroupHeader label={sec.label} count={sec.items.length} />}
-              {sec.items.map((s) => sessionRowEl(s))}
+              {sec.items.map((s) => sessionRowEl(s, { parent: parentInfoFor(s) }))}
             </div>
           ))
         ) : q ? (
@@ -1790,19 +1907,13 @@ export default function Rail({
                   </span>
                 </div>
               ))}
-            {active.map((s) =>
-              sessionRowEl(s, {
-                crumb:
-                  s.folderId && folderById.has(s.folderId)
-                    ? folderById.get(s.folderId).name
-                    : undefined,
-              })
-            )}
+            {active.map((s) => sessionRowEl(s, { parent: parentInfoFor(s) }))}
           </>
         ) : (
           <>
             {rootEntries.map((entry) => {
-              if (entry.type !== 'folder') return sessionRowEl(entry.session);
+              if (entry.type !== 'folder')
+                return sessionRowEl(entry.session, { parent: parentInfoFor(entry.session) });
               // In a project folder the controller has no row of its own — the
               // header embodies it — so it's filtered out of the member list.
               const controller = entry.folder.controllerSessionId
@@ -1811,8 +1922,21 @@ export default function Rail({
               const kids = (folderKids.get(entry.id) || []).filter(
                 (s) => s.id !== controller?.id
               );
+              // RAIL1: header + children share one rounded, tinted container —
+              // the card IS the containment signal (no hairline). Plain
+              // folders (no controller) get a neutral panel tint instead of
+              // the controller's colour.
+              const groupColor = controller?.color || '#9a9a9a';
+              const intoWhole = sOver?.id === entry.id && sOver.zone === 'into';
               return (
-                <div key={entry.id}>
+                <div
+                  key={entry.id}
+                  className={`mb-1 rounded-[10px] p-[3px] ${intoWhole ? 'ring-2 ring-brand' : ''}`}
+                  style={{
+                    background: controller ? tint(groupColor, '0f') : 'var(--color-panel)',
+                    borderInlineStart: `2px solid ${groupColor}`,
+                  }}
+                >
                   <div
                     draggable
                     onDragStart={(e) => onFDragStart(e, entry.id)}
@@ -1865,8 +1989,8 @@ export default function Rail({
                     />
                   </div>
                   {!entry.folder.collapsed && (
-                    <div className="mb-0.5 ml-[13px] border-l border-hair pl-1">
-                      {kids.map((s) => sessionRowEl(s))}
+                    <div className="mb-0.5 ps-4">
+                      {kids.map((s) => sessionRowEl(s, { groupColor, mark: '↳' }))}
                       {kids.length === 0 && (
                         <div className="px-2 py-1.5 text-[10px] text-fgdim italic">
                           {t('rail.emptyFolderDrop')}

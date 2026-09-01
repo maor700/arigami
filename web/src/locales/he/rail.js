@@ -40,6 +40,8 @@ export const strings = {
   'rail.dropToGroup': 'גררו סשנים לכאן כדי לקבץ אותם',
   'rail.expandFolder': 'הרחבת תיקייה',
   'rail.collapseFolder': 'כיווץ תיקייה',
+  'rail.managerChip': 'מנהל',
+  'rail.parentOf': 'שייך ל{name}',
   'rail.projectFolderHint': 'תיקיית פרויקט — לחצו על השם כדי לפתוח את הבקר שלה',
   'rail.controllerNeedsInput': 'בקר הפרויקט דורש את הקלט שלך',
   'rail.controllerRestarting': 'הבקר מופעל מחדש…',
