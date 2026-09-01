@@ -55,3 +55,5 @@ while (Date.now() < deadline) {
 }
 console.error(`[live-pilot] ${email}: timed out after ${timeoutSec}s (last: ${last})`);
 process.exit(1);
+
+export {};
