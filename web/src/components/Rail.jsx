@@ -544,7 +544,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
           title={hiddenWaiting ? t('rail.waitingInsideClick', { n: hiddenWaiting }) : t('agent.oneLiner')}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]"
         >
-          <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
+          <span className={`text-[9px] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
           <span className={`font-mono text-[9.5px] ${hiddenWaiting ? 'font-bold text-fg' : 'text-fgdim'}`}>
             {list.length}
@@ -862,9 +862,11 @@ function FolderRow({
           e.stopPropagation();
           onToggle();
         }}
-        className="mt-[3px] w-3 shrink-0 cursor-pointer text-center text-[8px] leading-none text-fgdim hover:text-fg"
+        className="-my-1 -ms-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-[11px] leading-none text-fgdim hover:text-fg"
       >
-        <Icon icon={collapsed ? faCaretRight : faCaretDown} />
+        <span className={collapsed ? 'mirror-rtl' : undefined}>
+          <Icon icon={collapsed ? faCaretRight : faCaretDown} />
+        </span>
       </button>
       <span
         className={`mt-[2px] shrink-0 text-[12px] ${isProject ? '' : 'text-fgdim'}`}
@@ -1137,7 +1139,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-[7px]"
           title={open ? t('rail.collapse') : t('rail.expand')}
         >
-          <span className="text-[8px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretRight} /></span>
+          <span className={`text-[9px] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
           <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
             {t('rail.pendingTasks')}
           </span>
@@ -1755,8 +1757,8 @@ export default function Rail({
         >
           {mark && (
             <span
-              dir="ltr"
-              className="mt-[9px] shrink-0 whitespace-nowrap font-mono text-[10px] leading-none text-fgdim"
+              aria-hidden="true"
+              className="mirror-rtl mt-[9px] shrink-0 whitespace-nowrap font-mono text-[10px] leading-none text-fgdim"
             >
               {mark}
             </span>
@@ -2048,7 +2050,7 @@ export default function Rail({
               onClick={() => setArchivedOpen((v) => !v)}
               className="flex w-full cursor-pointer items-center gap-[7px] px-1.5 pt-[9px] pb-1"
             >
-              <span className="text-[8px] text-fgdim"><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
+              <span className={`text-[9px] text-fgdim ${archivedOpen ? '' : 'mirror-rtl'}`}><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
               <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
                 {t('rail.archived')}
               </span>
