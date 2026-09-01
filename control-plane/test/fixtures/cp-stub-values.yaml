@@ -1,0 +1,53 @@
+# Layered onto every helm upgrade --install the K8S-2 integration test runs
+# (provisioner.ts's helmExtraValuesFile). image.repository/tag are NOT set
+# here — the provisioner passes those via --set, which must win, so keeping
+# them out of this file avoids a flag-ordering footgun. Mirrors
+# deploy/helm/arigami-tenant/ci/stub-values.yaml (K8S-1) with its own image
+# block removed.
+command: ["busybox"]
+args: ["httpd", "-f", "-v", "-p", "3099", "-h", "/www"]
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: 32Mi
+  limits:
+    cpu: "250m"
+    memory: 64Mi
+
+resourceQuota:
+  requests:
+    cpu: "200m"
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+  storageRequests: 1Gi
+
+persistence:
+  size: 200Mi
+
+shm:
+  sizeLimit: 32Mi
+
+ingress:
+  className: traefik
+  domain: localtest.me
+
+networkPolicy:
+  ingressNamespace: kube-system
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+terminationGracePeriodSeconds: 5
+
+probes:
+  startup:
+    periodSeconds: 2
+    failureThreshold: 15
