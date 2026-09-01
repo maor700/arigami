@@ -724,6 +724,22 @@ export async function applySource(source: string, opts: ApplyOptions = {}): Prom
   return applyBundle(b, opts);
 }
 
+// K8S-1 (PRD-ARIGAMI-K8S.md §2/§4.1): a Kubernetes provisioner (or anyone
+// launching the image with no TTY at all — a plain `docker run -e
+// ARIGAMI_BUNDLE=…`) has no wizard and no host bearer token to call
+// `POST /__api/profiles/apply` with, so env is the only channel it has. This
+// is the same `applySource` the wizard/CLI use, just triggered by env instead
+// of a human — and gated on PROVENANCE_FILE so it only ever fires on a truly
+// fresh $ARIGAMI_DIR: once a bundle (this one, a different one via `host
+// profile apply`, or the wizard) has landed, later restarts are a no-op, the
+// same way `--unattended` precompletion only runs once (onboarding.ts).
+export async function applyBundleEnv(): Promise<ApplyReport | null> {
+  const source = process.env.ARIGAMI_BUNDLE;
+  if (!source) return null;
+  if (fs.existsSync(PROVENANCE_FILE)) return null;
+  return applySource(source);
+}
+
 // ---- CLI (bin/host profile …) -------------------------------------------------
 // bun server/profiles.ts list|validate <src>|apply <src> [--skip-cron] [--force]|pending <src>|current
 if (import.meta.main) {
