@@ -57,6 +57,19 @@ body,
   margin: 0;
 }
 
+/* App height. `dvh` tracks the collapsing browser chrome on phones (100vh
+   doesn't); lib/viewport.js overrides this inline with the visual-viewport
+   height while the on-screen keyboard is up, since iOS shrinks neither vh
+   nor dvh for the keyboard. */
+:root {
+  --app-height: 100vh;
+}
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
+}
+
 body {
   font-family: var(--font-sans);
   color: var(--hb-fg);

@@ -871,8 +871,9 @@ function Cockpit() {
 
   if (storeState.auth === null) return <Login info={storeState.authInfo} />;
 
+  // --app-height, not h-screen: 100vh ignores the mobile keyboard (lib/viewport.js)
   return (
-    <div className="flex h-screen overflow-hidden bg-bg font-sans text-fg">
+    <div className="flex h-[var(--app-height)] overflow-hidden bg-bg font-sans text-fg">
       {/* mobile drawer backdrop */}
       {railOpen && (
         <div
