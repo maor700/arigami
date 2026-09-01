@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { isWin, which, extraBinDirs, pidAlive, HOME } from './lib/platform.js';
+import { isWin, pidAlive, HOME } from './lib/platform.js';
+import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
 import { broadcast } from './bus.js';
@@ -46,41 +47,21 @@ function baseEnv() {
 // The host is often launched from a thin-PATH context (launchd, a GUI app, a
 // non-login shell) where the npm/bun global bin that holds `claude` isn't on
 // PATH — `spawn('claude')` then dies with `ENOENT … posix_spawn 'claude'` and
-// every new session fails to start. Resolve an absolute path to the CLI once at
-// boot, and enrich the process PATH with the usual user bin dirs so claude and
-// everything it shells out to (git/node/bun) resolve too.
-const EXTRA_BINS = extraBinDirs();
-
-function resolveClaudeBin() {
-  const override = process.env.ARIGAMI_CLAUDE_BIN;
-  if (override && fs.existsSync(override)) return override;
-  // which() honours PATHEXT, so this finds claude.exe / claude.cmd on Windows.
-  const found = which('claude', EXTRA_BINS);
-  if (found) return found;
-  // Last resort (POSIX only): ask the user's login shell where claude is —
-  // covers version managers (nvm/asdf/volta) that only put it on PATH there.
-  if (!isWin) {
-    try {
-      const shell = process.env.SHELL || '/bin/zsh';
-      const r = Bun.spawnSync([shell, '-lc', 'command -v claude'], { stdout: 'pipe', stderr: 'ignore' });
-      const out = new TextDecoder().decode(r.stdout).trim().split('\n').filter(Boolean).pop();
-      if (out && fs.existsSync(out)) return out;
-    } catch { /* ignore */ }
-  }
-  return 'claude'; // let spawn try PATH resolution and surface ENOENT if truly absent
-}
-
-export const CLAUDE_BIN = resolveClaudeBin();
+// every new session fails to start. Resolve an absolute path to the CLI (and
+// keep re-resolving it — lib/claude-bin.js — so an update or reinstall is
+// picked up without a restart), and enrich the process PATH with the usual
+// user bin dirs so claude and everything it shells out to (git/node/bun)
+// resolve too.
+export const CLAUDE_BIN = claudeBin(); // boot-time answer; spawns call claudeBin() for the current one
 
 // Enrich the server PATH once (idempotent) so every spawn — ours and claude's —
-// sees the user bin dirs. Publish the resolved bin so sibling spawners
-// (mcp-auth) use the same absolute path.
+// sees the user bin dirs. claudeBin() publishes the resolved bin as
+// ARIGAMI_CLAUDE_BIN so sibling spawners (mcp-auth) use the same absolute path.
 {
   const parts = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   const seen = new Set(parts);
   for (const d of EXTRA_BINS) if (!seen.has(d)) { parts.push(d); seen.add(d); }
   process.env.PATH = parts.join(path.delimiter);
-  if (CLAUDE_BIN !== 'claude') process.env.ARIGAMI_CLAUDE_BIN = CLAUDE_BIN;
   if (CLAUDE_BIN === 'claude')
     console.warn('[claude] could not resolve the `claude` CLI on PATH — set ARIGAMI_CLAUDE_BIN or add it to PATH, or new sessions will fail to start');
 }
@@ -477,7 +458,7 @@ function spawnProc(s, resume) {
   ];
   const cwd = untildify(s.cwd) || HOME;
   const accountEnvSnapshot = accountEnv(s);
-  const child = spawn(CLAUDE_BIN, args, {
+  const child = spawn(claudeBin(), args, {
     cwd,
     env: {
       ...baseEnv(),
@@ -1780,7 +1761,7 @@ const headless = new Set();
 function runHeadless(s, prompt, onExit) {
   const cwd = untildify(s.metadata?.worktree || s.cwd) || HOME;
   const child = spawn(
-    CLAUDE_BIN,
+    claudeBin(),
     [
       '-p', prompt,
       '--permission-mode', 'bypassPermissions', // one-shot, no prompts; prompt enforces read-only

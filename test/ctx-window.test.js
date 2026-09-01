@@ -38,6 +38,11 @@ test('known table: fable-5 resolves to 1M', () => {
   expect(resolve('claude-fable-5')).toEqual({ window: 1_000_000, assumed: false, source: 'table' });
 });
 
+test('known table: fable-5-1 (and any later fable point release) resolves to 1M via the family match', () => {
+  expect(resolve('claude-fable-5-1')).toEqual({ window: 1_000_000, assumed: false, source: 'table' });
+  expect(resolve('claude-fable-5-1[1m]')).toEqual({ window: 1_000_000, assumed: false, source: 'tag' });
+});
+
 test('known table: haiku-4.5 resolves to 200k, not assumed', () => {
   const r = resolve('claude-haiku-4-5-20251001');
   expect(r).toEqual({ window: 200_000, assumed: false, source: 'table' });

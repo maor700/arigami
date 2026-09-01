@@ -11,36 +11,43 @@
 // with the CLI, so an upgrade is exactly when it goes stale. Without that key a
 // day-old cache keeps advertising the previous release's models (and hides new
 // ones) until the TTL lapses or someone hits refresh.
+//
+// The version is that of the binary lib/claude-bin.js resolves NOW, not the one
+// the host found at boot: a CLI reinstalled to a different path (npm -g next to
+// a native install) would otherwise keep answering with the old binary's list —
+// even on manual refresh — until the host was restarted.
 import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg } from './state.js';
 import { supervise } from './lib/children.js';
+import { claudeBin, RECHECK_MS } from './lib/claude-bin.js';
 
 const STORE = path.join(cfg.configDir, 'models.json');
 const TTL_MS = 24 * 60 * 60 * 1000; // once/day
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const VERSION_TIMEOUT_MS = 5_000;
-const VERSION_TTL_MS = 60_000; // re-probe at most once a minute
-const CLAUDE_BIN = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
+const VERSION_TTL_MS = RECHECK_MS; // re-probe at most once a minute (same cadence as the bin re-resolve)
 
-let cache = { models: [], fetchedAt: 0, cliVersion: null };
+let cache = { models: [], fetchedAt: 0, cliVersion: null, cliBin: null };
 let inflight = null;
-let verCache = { value: null, at: 0 };
+let verCache = { bin: null, value: null, at: 0 };
 
 // `claude --version` → "2.1.241 (Claude Code)" → "2.1.241". ~120ms, memoised for
-// a minute. Resolves null (never rejects) if the probe fails, which callers read
-// as "can't tell" — the cache is then left alone rather than thrown away.
-function cliVersion() {
-  if (verCache.value && Date.now() - verCache.at < VERSION_TTL_MS) return Promise.resolve(verCache.value);
+// a minute per binary path. Resolves null (never rejects) if the probe fails,
+// which callers read as "can't tell" — the cache is then left alone rather than
+// thrown away. `force` skips the memo (and re-resolves the binary).
+function cliVersion(force = false) {
+  const bin = claudeBin({ force });
+  if (!force && verCache.value && verCache.bin === bin && Date.now() - verCache.at < VERSION_TTL_MS) return Promise.resolve(verCache.value);
   return new Promise((resolve) => {
-    execFile(CLAUDE_BIN, ['--version'], { timeout: VERSION_TIMEOUT_MS }, (err, stdout) => {
+    execFile(bin, ['--version'], { timeout: VERSION_TIMEOUT_MS }, (err, stdout) => {
       if (err) {
         console.error('[models] version probe failed:', err.message);
         return resolve(null);
       }
       const v = String(stdout).trim().split(/\s+/)[0] || null;
-      verCache = { value: v, at: Date.now() };
+      verCache = { bin, value: v, at: Date.now() };
       resolve(v);
     });
   });
@@ -68,7 +75,7 @@ function persist() {
 function fetchFromCli() {
   return new Promise((resolve, reject) => {
     const child = spawn(
-      process.env.ARIGAMI_CLAUDE_BIN || 'claude',
+      claudeBin(),
       ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--print', ''],
       { stdio: ['pipe', 'pipe', 'pipe'] }
     );
@@ -132,9 +139,12 @@ export async function getModels(force = false) {
     console.log(`[models] claude ${cache.cliVersion || '(unknown)'} → ${ver}, refetching model list`);
   }
   if (inflight) return inflight;
+  // A manual refresh is the human saying "I know it changed": re-resolve the
+  // binary and re-probe its version instead of trusting the minute-old memo.
+  const ver = cliVersion(force);
   inflight = fetchFromCli()
     .then(async (models) => {
-      cache = { models, fetchedAt: Date.now(), cliVersion: await cliVersion() };
+      cache = { models, fetchedAt: Date.now(), cliVersion: await ver, cliBin: claudeBin() };
       persist();
       return cache;
     })
