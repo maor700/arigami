@@ -346,29 +346,101 @@ dominated by reclaimable page cache — `available` never went below 1.5GB).
 Nothing here touched the live `arigami` process, host iptables, or ran
 `docker system/volume prune`.
 
-## §5 smoke test — documented, not run
+## §5 smoke test — run for real, on the real image (2026-09-01, follow-up)
 
-`values-real.yaml` is the worked overlay for the real
-`ghcr.io/maor700/arigami` image. **Not run**: the box above had 3.6-4.7GB
-free disk through the run; `PRD-ARIGAMI-K8S.md` §6 requires >10GB free before
-pulling the 2.89GB image, and pulling it here risked tripping the same disk
-floor that would force a teardown mid-test. The checklist for whenever that
-headroom exists:
+The first pass of this doc left this section "documented, not run" because
+the box only had 3.6-4.7GB free disk against the PRD's >10GB-before-pulling
+rule. Two things changed before re-running it:
 
-1. `kubectl create namespace u-<id> && helm install u-<id>
-   deploy/helm/arigami-tenant -n u-<id> -f deploy/helm/arigami-tenant/values-real.yaml
-   --set tenant.id=<id> --set ingress.domain=<org-domain> --wait --timeout 300s`
-   (5 minutes: the real image's first boot installs the Playwright MCP
-   registration and may run `ARIGAMI_BUNDLE`, both slower than the stub).
-2. `kubectl -n u-<id> logs -f arigami-<id>-0` — expect the same
-   `[host] arigami up on http://0.0.0.0:3099 …` line `docs/DOCKER.md` shows
-   for the Docker path, plus the one-time pairing code.
-3. `kubectl -n u-<id> port-forward svc/arigami-<id> 3099:3099` and open
-   `/__host/` — the pairing screen should load (same UI as
-   `docs/DOCKER.md` "Run").
-4. Repeat proofs 3-8 above unchanged (PVC survival, ingress, NetworkPolicy,
-   scale-to-zero) against the real image — none of that mechanics is
-   image-specific.
-5. `kubectl -n u-<id> exec arigami-<id>-0 -- ps -eo user,comm` — confirm
-   `bun`/`Xvfb`/`x11vnc` run as `node`, not root, matching the container
-   contract in `docs/DOCKER.md` "Desktop + Chrome".
+1. **Disk headroom.** `/tmp` had accumulated ~9.7GB of scratch worktrees from
+   already-completed, already-merged tasks (`arigami-<code>-<hash>`, none
+   held open by any live process — checked via `/proc/*/fd`, `/proc/*/cwd`
+   *and* `ss -xlp` for listening Unix sockets before deleting anything, since
+   the last check alone would have missed live IPC sockets like
+   `/tmp/cc-socks`), plus 3.4GB of an unrelated root-owned tool cache
+   (`/root/.cache`, `/root/.npm` — no root-owned application process was
+   running to hold it). Freeing both, with the specific live paths protected
+   and verified still alive afterward, took free disk from ~4.2GB to 18GB.
+2. **`ghcr.io/maor700/arigami` turned out not to be pullable at all** —
+   `docker pull` returned `unauthorized`, and the GitHub API 404s the repo
+   unauthenticated. The repo/package isn't public yet (pre-release), not a
+   disk problem. Built the same image locally instead, from this
+   worktree's own `Dockerfile` at commit `1d5dbb3`
+   (`docker build -t ghcr.io/maor700/arigami:k8s1-smoketest .`) — **2.89GB**,
+   matching the PRD's number exactly — and `k3d image import`ed it, same as
+   the stub. `deploy/helm/arigami-tenant/ci/real-image-k3d-values.yaml` layers
+   the k3d-specific bits (no nginx/cert-manager here) onto `values-real.yaml`.
+
+```
+$ helm install u-real deploy/helm/arigami-tenant -n u-real \
+    -f deploy/helm/arigami-tenant/ci/real-image-k3d-values.yaml \
+    --set tenant.id=real --wait --timeout 300s
+STATUS: deployed   # took 12.6s, not anywhere near the 5-minute startup budget
+```
+
+### Boot log — the real host, in a pod
+
+```
+$ kubectl -n u-real logs arigami-real-0
+[host] instance /data/.arigami#3099 (isolated: /data/.arigami)
+[host] arigami up on http://0.0.0.0:3099 (pid 1, auth: pairing, public: http://u-real.localtest.me)
+[auth] no admin yet — pairing code: ZEL8-5ZFA  (also in /data/.arigami/run/pairing-code; or run: bin/host pair)
+[triggers] scheduler started
+[supervisor] disabled by config — health is still computed on demand
+[host] global desktop up on :99 (vnc :5900)
+```
+Exactly the line `docs/DOCKER.md` shows for the Docker path, plus confirmation
+the host really is `pid 1` in the container (relevant to "Graceful shutdown,
+honestly" above — there's no init process forwarding the signal, `bun` gets
+SIGTERM directly). `/__host/` over `kubectl port-forward` served the real
+cockpit HTML (pairing screen), and `/__health` returned `{"ok":true}`.
+
+### Non-root, for real
+
+```
+$ kubectl -n u-real exec arigami-real-0 -- ps -eo user,pid,comm
+USER         PID COMMAND
+node           1 bun
+node          58 Xvfb
+node          62 openbox
+node          64 tint2
+node          65 x11vnc
+root         109 ps
+```
+(`ps` itself shows root only because a bare `kubectl exec` — like a bare
+`docker compose exec` — drops into the root shell `docker/entrypoint.sh`
+leaves around for first-boot chown; every process the host actually spawned
+is `node`, matching `docs/DOCKER.md` "Desktop + Chrome".)
+
+### Proofs 4/7/8 repeated against the real image — same results
+
+- **PVC survival**: wrote a marker, `kubectl delete pod`, marker present
+  after the real image reboots (first-boot chown skipped the second time —
+  `/data/.chowned` already there — and the SAME pairing code came back from
+  `/data/.arigami/run/pairing-code`, not just the marker file).
+- **Ingress**: `curl -H "Host: u-real.localtest.me" http://<node-ip>:<traefik-nodeport>/__health` → `{"ok":true}`; wrong host → `404`.
+- **NetworkPolicy A/B/C**: same-namespace and `kube-system` (the ingress
+  namespace) reach `arigami-real-0:3099`; a pod in a different tenant
+  namespace (`u-other-real`) gets `wget: ... exit code 4` (network
+  failure) — blocked, not merely slow. (The default `ResourceQuota`
+  actually left **zero** headroom for a same-namespace prober pod — its
+  `requests.cpu`/`requests.memory` cap is sized to fit exactly the one real
+  pod's own request, so proving "A" needed a temporary `kubectl patch
+  resourcequota` bump. That's a feature, not a bug: it means a compromised
+  tenant can't spin up extra pods in its own namespace by default either.)
+- **Scale-to-zero → back**: `kubectl scale --replicas=0` then `=1`; pod comes
+  back, `/data/marker.txt` and the pairing code both intact.
+
+One new, minor, honest finding: on `kubectl delete namespace`, `kubectl get
+pv` immediately afterward showed the PV as `Released`, not gone —
+`local-path-provisioner`'s reclaim is an async controller (it runs a cleanup
+job that `rm -rf`s the hostpath, then deletes the PV object), not instant.
+The stub run's `docs/K8S.md` §8 evidence happened to be captured after that
+controller had already finished; this run's teardown (`k3d cluster delete`)
+made it moot by removing the whole node before checking again. On a real
+cluster with a real CSI driver this is worth confirming rather than assuming
+gone-on-return.
+
+Teardown: `k3d cluster delete arigami-k8s1-real`, `docker rmi` on the built
+image + the two k3d support images, all removed by name. `docker ps -a` /
+`docker images` both empty afterward; disk back to 14GB free.

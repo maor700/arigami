@@ -1,0 +1,22 @@
+# K8S-1 §5 smoke test, actually run (docs/K8S.md): the real image, built
+# locally from this repo's own Dockerfile (ghcr.io/maor700/arigami isn't
+# publicly pullable yet — the repo 404s unauthenticated, i.e. not released),
+# k3d-imported, deployed with this chart's REAL entrypoint/probes/resources —
+# only the k3d-specific bits (no nginx/cert-manager here) differ from
+# values-real.yaml.
+image:
+  repository: ghcr.io/maor700/arigami
+  tag: k8s1-smoketest
+  pullPolicy: IfNotPresent
+
+ingress:
+  className: traefik
+  domain: localtest.me
+  tls:
+    enabled: false
+
+networkPolicy:
+  ingressNamespace: kube-system
+
+persistence:
+  size: 2Gi
