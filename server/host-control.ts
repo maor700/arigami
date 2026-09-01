@@ -279,6 +279,24 @@ export function busySessions(): number {
   return state.listSessions({ archived: true }).filter((s) => s.claude?.state === 'working').length;
 }
 
+/** Is this a loopback peer (the only caller /__health tells more than {ok} to)? */
+export function isLoopback(remoteAddress: string | undefined): boolean {
+  const a = String(remoteAddress || '');
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
+/**
+ * K8S-3: the public `/__health` body. Loopback callers (a `kubectl exec` from
+ * the control-plane, bin/host on the same box) additionally get
+ * `busySessions` — the same "a claude turn is in flight" count the restart
+ * drain uses — so an orchestrator can hold an upgrade until the tenant is
+ * idle WITHOUT this activity signal being visible through the ingress to the
+ * open internet (the probe endpoint is unauthenticated by design).
+ */
+export function healthBody(remoteAddress: string | undefined, busy: () => number = busySessions): { ok: true; busySessions?: number } {
+  return isLoopback(remoteAddress) ? { ok: true, busySessions: busy() } : { ok: true };
+}
+
 /** index.ts registers "stop accepting" here (server.close()). */
 export function setDrainHandler(fn: () => void): void { drainHandler = fn; }
 
