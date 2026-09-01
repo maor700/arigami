@@ -150,6 +150,12 @@ export function createStore(db: Database) {
   function setRunningDigest(subject: string, digest: string): void {
     db.query('UPDATE tenants SET running_digest = ? WHERE subject = ?').run(digest, subject);
   }
+  // K8S-3: what the reconcile loop converges the tenant TOWARD. Set by the
+  // admin page / CLI; the loop upgrades when running_digest differs (and the
+  // tenant has no turn in flight).
+  function setDesiredDigest(subject: string, digest: string): void {
+    db.query('UPDATE tenants SET desired_digest = ? WHERE subject = ?').run(digest, subject);
+  }
   function touchLastSeen(subject: string): void {
     db.query('UPDATE tenants SET last_seen_at = ? WHERE subject = ?').run(now(), subject);
   }
@@ -181,7 +187,7 @@ export function createStore(db: Database) {
 
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
-    findTenantBySubject, listTenants, createTenant, setTenantState, setRunningDigest, touchLastSeen,
+    findTenantBySubject, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
     createSession, findSession, deleteSession,
   };
 }

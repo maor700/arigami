@@ -46,6 +46,13 @@ export interface Config {
   helmExtraValuesFile: string; // optional extra -f layered on every install (e.g. a k3d/stub overlay)
   helmTimeoutSec: number;
   ingressClassName: string;
+
+  // K8S-3 — reconcile / upgrades / backups
+  tenantPort: number; // the port the tenant host listens on in-pod (chart service.port)
+  reconcileSec: number; // 0 = reconcile loop off (tests, one-shot CLI use)
+  backupDir: string; // where per-tenant backup archives land on the control-plane's own disk
+  backupIntervalSec: number; // 0 = no scheduled backups (on-demand only)
+  backupKeep: number; // newest N archives kept per tenant
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -74,5 +81,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     helmExtraValuesFile: env.CP_HELM_EXTRA_VALUES || '',
     helmTimeoutSec: Number(env.CP_HELM_TIMEOUT_SEC || 120),
     ingressClassName: env.CP_INGRESS_CLASS || '',
+
+    tenantPort: Number(env.CP_TENANT_PORT || 3099),
+    reconcileSec: Number(env.CP_RECONCILE_SEC ?? 60),
+    backupDir: env.CP_BACKUP_DIR || path.join(process.cwd(), 'data', 'backups'),
+    backupIntervalSec: Number(env.CP_BACKUP_INTERVAL_SEC ?? 86_400),
+    backupKeep: Number(env.CP_BACKUP_KEEP || 7),
   };
 }

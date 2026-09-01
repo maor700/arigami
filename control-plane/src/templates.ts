@@ -23,6 +23,8 @@ function shell(title: string, body: string): string {
   .state-archived { background: #eee; }
   .state-deleted { background: #f8d7da; }
   form.inline { display: inline; }
+  .pending { color: #b26a00; font-weight: 600; }
+  input { padding: 4px 6px; font-size: 12px; }
 </style></head><body>${body}</body></html>`;
 }
 
@@ -54,31 +56,52 @@ export function unavailablePage(state: string): string {
   );
 }
 
-export function adminPage(tenants: Tenant[], adminEmail: string): string {
+export function adminPage(
+  tenants: Tenant[],
+  adminEmail: string,
+  backups: Record<string, { count: number; newestMs: number | null }> = {},
+): string {
   const rows = tenants
-    .map(
-      (t) => `<tr>
+    .map((t) => {
+      const b = backups[t.ns];
+      const digest =
+        t.desired_digest && t.desired_digest !== t.running_digest
+          ? `${esc(t.running_digest || '—')} <span class="pending">→ ${esc(t.desired_digest)}</span>`
+          : esc(t.running_digest || t.desired_digest || '—');
+      return `<tr>
       <td>${esc(t.email)}</td>
       <td>${esc(t.ns)}</td>
       <td><span class="state state-${esc(t.state)}">${esc(t.state)}</span></td>
       <td>${esc(t.last_seen_at)}</td>
-      <td>${esc(t.running_digest || t.desired_digest || '—')}</td>
+      <td>${digest}${t.state !== 'deleted' ? digestForm(t.subject) : ''}</td>
+      <td>${b ? `${b.count}${b.newestMs ? ` <small>(${esc(new Date(b.newestMs).toISOString().slice(0, 16))}Z)</small>` : ''}` : '0'}
+        ${t.state === 'running' ? backupForm(t.subject) : ''}</td>
       <td>
         ${t.state === 'running' ? suspendForm(t.subject) : ''}
         ${t.state === 'dormant' ? resumeForm(t.subject) : ''}
         ${t.state !== 'deleted' ? deleteForm(t.subject) : ''}
       </td>
-    </tr>`,
-    )
+    </tr>`;
+    })
     .join('\n');
   return shell(
     'Tenants — Arigami admin',
     `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/auth/logout">Sign out</a></p>
+     <p><small>Image changes converge on the next reconcile tick, and only while the tenant has no
+     turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
      <table>
-       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image</th><th>Actions</th></tr></thead>
-       <tbody>${rows || '<tr><td colspan="6">No tenants yet.</td></tr>'}</tbody>
+       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image (running → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
+       <tbody>${rows || '<tr><td colspan="7">No tenants yet.</td></tr>'}</tbody>
      </table>`,
   );
+}
+
+function digestForm(subject: string): string {
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/digest">
+    <input name="digest" placeholder="tag or sha256:…" size="14"><button type="submit">Set</button></form>`;
+}
+function backupForm(subject: string): string {
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/backup"><button type="submit">Backup now</button></form>`;
 }
 
 function suspendForm(subject: string): string {
