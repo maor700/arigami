@@ -223,6 +223,6 @@ test('healthBody: busySessions for loopback peers only', () => {
   expect(hc.healthBody('127.0.0.1', busy)).toEqual({ ok: true, busySessions: 3 });
   expect(hc.healthBody('::1', busy)).toEqual({ ok: true, busySessions: 3 });
   expect(hc.healthBody('::ffff:127.0.0.1', busy)).toEqual({ ok: true, busySessions: 3 });
-  expect(hc.healthBody('10.42.0.7', busy)).toEqual({ ok: true });
+  expect(hc.healthBody('203.0.113.9', busy)).toEqual({ ok: true });
   expect(hc.healthBody(undefined, busy)).toEqual({ ok: true });
 });
