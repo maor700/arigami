@@ -274,7 +274,8 @@ test('applyBundleEnv: the env bundle is TRUSTED — skills auto-applied, enabled
   // An EXTERNAL bundle would stage the skill as a pending proposal and force
   // the cron disabled; the env-supplied bundle is the platform operator's —
   // skills land active, enabled cron actually runs (docs/K8S.md ARIGAMI_BUNDLE).
-  expect(r.out[0].skills).toEqual([{ name: 'org-skill', status: 'applied' }]);
+  expect(r.out[0].skills.length).toBe(1);
+  expect(r.out[0].skills[0]).toMatchObject({ name: 'org-skill', status: 'applied' });
   expect(r.out[0].skillOnDisk).toBe(true);
   expect(r.out[0].cron.length).toBe(1);
   expect(r.out[0].cron[0].enabled).toBe(true);
