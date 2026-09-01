@@ -224,3 +224,16 @@ extraEnv: []
 # goes through `helm install --set` or lands in a values file on disk).
 secretEnv: {}
 existingSecret: ""
+
+# K8S-3 (follow-on): when the control-plane provisions this tenant it also sets
+# `secretEnv.ARIGAMI_HANDOFF_SECRET` — a per-tenant HMAC key that lets it sign
+# a one-shot, short-lived, email-bound sign-in so a user it already
+# authenticated lands INSIDE the cockpit instead of on the pairing screen
+# (docs/CONTROL-PLANE.md "Landing the user IN their workspace"). Leave it unset
+# for a standalone install: with no secret the tenant rejects every handoff
+# token and pairing behaves exactly as it always has.
+#
+# Note the same trade-off `secretEnv` carries everywhere: values passed with
+# `--set` are also stored in Helm's own release Secret. An org that wants this
+# key to exist in exactly one place should create the Secret out-of-band and
+# point `existingSecret` at it instead.

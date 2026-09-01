@@ -451,6 +451,86 @@ now" button. `src/cli.ts` is the scriptable/operator surface:
 | `CP_BACKUP_DIR` | `./data/backups` | per-tenant archives, on the control-plane's disk |
 | `CP_BACKUP_INTERVAL_SEC` | `86400` | scheduled backup age threshold; `0` = on-demand only |
 | `CP_BACKUP_KEEP` | `7` | newest N archives kept per tenant |
+| `CP_ORG_NAME` | `your organisation` | shown on the waiting page ("Applying …'s setup") |
+
+### Landing the user IN their workspace (K8S-3 follow-on, 2026-09-02)
+
+Driving the pilot by hand surfaced two rough edges that no test would have
+caught, because both are about what the wait FEELS like:
+
+**The pairing screen had to go.** A tenant is a fresh Arigami, and a fresh
+Arigami asks for a one-time pairing code — possession of the code proves you
+can read the server's filesystem (`server/auth.ts`). In an orchestrated fleet
+that proof is both redundant (the control-plane authenticated this person
+against the company IdP seconds ago) and impossible (the code is inside a pod
+the user cannot get a shell on). So:
+
+- `control-plane/src/handoff.ts` mints a token — `base64url(payload).base64url(HMAC)`,
+  the same wire format as K2's share tokens — naming the user's email, with a
+  2-minute life and a random `jti`.
+- The tenant redeems it at `GET /__api/auth/handoff?t=…` (`server/handoff.ts`,
+  `server/api.ts`): verify signature → create-or-reuse the user row for that
+  email → session cookie → 302 to `/__host/`. The user lands inside.
+- The secret is per tenant, generated at tenant creation (`tenants.handoff_secret`)
+  and injected into the pod as chart `secretEnv.ARIGAMI_HANDOFF_SECRET`.
+
+What keeps this from being a skeleton key, and why each part is there:
+
+| control | why |
+|---|---|
+| no secret in env ⇒ every token rejected | a standalone host is byte-for-byte as safe as before this existed |
+| single-use `jti`, **persisted** to `$ARIGAMI_DIR/handoff-used.json` | a token in a browser history / proxy log is already spent, and a pod restart must not re-open it |
+| `MAX_TTL_MS` enforced by the VERIFIER (10 min) | a buggy or compromised minter still cannot issue a long-lived key |
+| token names one email | a leaked token cannot admit a different person |
+| per-tenant secret | tenant A's token is worthless against tenant B (asserted in `test/handoff-contract.test.ts`) |
+| refuse if the spend cannot be recorded | never silently downgrade to replayable |
+
+Two implementations exist on purpose (this service imports nothing from
+`server/`), so the format is a cross-codebase contract —
+`test/handoff-contract.test.ts` in the ROOT suite imports both and pins it in
+both directions. Coverage: `test/handoff.test.ts` (tamper, wrong secret,
+expiry, over-long life, replay, pruning) and `test/handoff-host.test.ts`
+(the route against a REAL host running `ARIGAMI_AUTH=pairing`: cookie works,
+replay 403s with no cookie, wrong secret gets nothing, and the unauthenticated
+API stays 401).
+
+**The wait became legible.** The old starting page was
+`<meta http-equiv="refresh" content="4">` and one sentence. Now
+`src/progress.ts` reads real state — pod phase, container waiting reason, and
+the host's own `ARIGAMI_BUNDLE applied` log line — and `stepsFor()` (pure,
+fully unit-tested) turns it into named steps the page ticks through while an
+elapsed timer runs:
+
+```
+✓ Your account
+✓ Reserving your private space
+◐ Fetching the workspace image      ← "First-time setups take the longest here."
+  Applying <org>'s setup
+  Starting your workspace
+```
+
+Rules it follows, deliberately: a step only advances on something Kubernetes
+actually reported (no invented percentages); phases we cannot distinguish are
+ONE honest step; `ImagePullBackOff`/`CrashLoopBackOff` end the spinner and say
+an administrator is needed; and passing `SLOW_MS` only adds "this is taking
+longer than usual" — it never fakes progress or declares failure. `configure`
+precedes `start` because the bundle really is applied before the host listens
+(`server/index.ts`). The page polls `GET /api/progress` and navigates itself
+the moment the tenant is ready, to a redirect the server minted — so "ready"
+and "signed in" are the same step for the user. `<noscript>` keeps the old
+meta-refresh.
+
+Preview without a cluster: `bun test/fixtures/preview-starting.ts out.html`
+renders the shipped page and the real `stepsFor` output with replayed timing.
+
+New env: `CP_ORG_NAME` (default `your organisation`) — the name shown in
+"Applying …'s setup".
+
+**Not proven live yet.** Everything above is unit- and route-tested, and the
+page was rendered and reviewed; the end-to-end "sign in → watch the steps →
+land inside the cockpit" run needs a cluster, and this box had no RAM headroom
+left for one at the time (the demo cluster is under the project controller's
+stand-down). That run is the remaining verification.
 
 ### K8S-3 proof on k3d (2026-09-01)
 
