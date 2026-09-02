@@ -47,6 +47,11 @@ const spawns = () => (fs.existsSync(SPAWN_LOG) ? fs.readFileSync(SPAWN_LOG, 'utf
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const wakes: string[] = [];
 const wake = (_sid: string, text: string) => { wakes.push(text); };
+// WA1: the bridge's console.error IS the host log (pm2 error log) — capture it.
+const hostLog: string[] = [];
+const realErr = console.error;
+const captureLog = () => { hostLog.length = 0; console.error = (...a: unknown[]) => { hostLog.push(a.map(String).join(' ')); }; };
+const releaseLog = () => { console.error = realErr; };
 
 beforeAll(async () => {
   wb = await import('../server/whatsapp-bridge.js');
@@ -96,6 +101,7 @@ test('B20: one process — start, tool calls through the same pid, logs in the d
 test('B20: a fast-dying process is restarted with backoff, then given up on (no infinite respawn)', async () => {
   const before = spawns();
   process.env.FAKE_WA_MODE = 'crash';
+  captureLog();
   try {
     await wb.startBridge('sess_test', wake);
     await until(() => wb.getBridgeStatus().reason === 'crash-loop', 20000);
@@ -105,7 +111,12 @@ test('B20: a fast-dying process is restarted with backoff, then given up on (no 
     expect(wb.ownedPid()).toBeNull();
     expect(wb.getBridgeStatus().status).toBe('disconnected');
     expect((await wp.callWhatsapp('list_chats')) as any).toMatchObject({ needs_setup: 'whatsapp' });
+    // WA1: the child's stderr and its exit code reach the host log — before, the
+    // bridge spawned with stderr:'ignore' and logged only "exited after Ns".
+    expect(hostLog.filter((l) => l.includes('[wa-mcp] fake main.ts: crashing on purpose')).length).toBe(3);
+    expect(hostLog.filter((l) => l.includes('[wa-bridge]') && l.includes('exit code 1')).length).toBe(3);
   } finally {
+    releaseLog();
     delete process.env.FAKE_WA_MODE;
   }
   // an explicit start resets the strike count and recovers once the cause is gone
@@ -210,4 +221,81 @@ test('B20: ~/.claude.json legacy per-session registration is retired once, backe
   expect(wb.isLegacyWhatsappServer({ command: 'node', args: ['/x/some-other-mcp/main.ts'] })).toBe(false);
   expect(wb.isLegacyWhatsappServer({ type: 'http', url: 'https://x' })).toBe(false);
   expect(wb.isLegacyWhatsappServer(null)).toBe(false);
+});
+
+test('WA1: a logged-out pairing (WhatsApp 401) is not retried; Connect/Show QR moves it aside and shows a QR; a scan → connected for every session', async () => {
+  // Regression for 2026-09-02: the host respawned main.ts against creds WhatsApp
+  // had unlinked (401 on every login), main.ts exits before the QR step, the
+  // reason was in wa-logs.txt only, and "Show QR" showed nothing.
+  const creds = path.join(MCP_DIR, 'auth_info', 'creds.json');
+  expect(fs.existsSync(creds)).toBe(true);
+  const before = spawns();
+  process.env.FAKE_WA_MODE = 'logged-out';
+  captureLog();
+  try {
+    await wb.startBridge('sess_test', wake);
+    await until(() => wb.getBridgeStatus().reason === 'logged-out', 20000);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(spawns() - before).toBe(1); // ONE attempt — a dead pairing is never retried
+    expect(wb.ownedPid()).toBeNull();
+    expect(wb.getBridgeStatus()).toMatchObject({ status: 'disconnected', reason: 'logged-out' });
+    expect(wb.pairingLoggedOut()).toBe(true);
+    expect(fs.existsSync(creds)).toBe(true); // nothing touched auth_info by itself
+    // the reason is in the host log, read back from the child's own log for that pid
+    expect(hostLog.some((l) => l.includes('[wa-bridge]') && l.includes('reason: loggedOut') && l.includes('logged this device out'))).toBe(true);
+    expect(wakes.some((w) => w.includes('logged this device out'))).toBe(true);
+    // the capability every session reads says why, and the tool says needs_setup
+    const caps = await import('../server/capabilities.js');
+    const st = await caps.statusOf(caps.getCapability('whatsapp')!);
+    expect(st.ok).toBe(false);
+    expect(st.detail).toContain('Show QR');
+    expect((st as any).data?.reason).toBe('logged-out');
+    expect((await wp.callWhatsapp('list_chats')) as any).toMatchObject({ needs_setup: 'whatsapp' });
+    // boot and internal restarts do not touch it either
+    expect((await wb.autoStartBridge()).started).toBe(false);
+    expect((await wb.autoStartBridge()).reason).toMatch(/^logged-out/);
+    await wb.startBridge('sess_test', wake, { internal: true });
+    await until(() => wb.getBridgeStatus().reason === 'logged-out', 20000);
+    expect(spawns() - before).toBe(2);
+    expect(fs.existsSync(creds)).toBe(true);
+  } finally {
+    releaseLog();
+    delete process.env.FAKE_WA_MODE;
+  }
+
+  // Settings → Connections → Show QR (POST /whatsapp/connect → startBridge {repair:true}):
+  // the dead auth_info is moved aside (kept), main.ts pairs afresh → QR
+  wakes.length = 0;
+  await wb.startBridge('sess_ui', wake, { repair: true });
+  await until(() => wb.getBridgeStatus().status === 'qr', 20000);
+  const backups = fs.readdirSync(MCP_DIR).filter((n) => n.startsWith('auth_info.logged-out-'));
+  expect(backups.length).toBe(1);
+  expect(fs.existsSync(path.join(MCP_DIR, backups[0], 'creds.json'))).toBe(true); // kept, not deleted
+  expect(fs.existsSync(creds)).toBe(false);
+  expect(wb.isPaired()).toBe(false);
+  const q = wb.getBridgeStatus();
+  expect(q.qr).toMatch(/^https:\/\/quickchart\.io\/qr\?text=fake-qr-/);
+  expect(q.qrUrl).toBe(q.qr);
+  expect(q.reason).toBeUndefined();
+  await until(() => wakes.some((w) => w.includes('QR ready')));
+  expect(spawns() - before).toBe(3);
+  const caps = await import('../server/capabilities.js');
+  expect((await caps.statusOf(caps.getCapability('whatsapp')!)).detail).toContain('scan the QR');
+
+  // the human scans → connected; a NEW session's capability probe reads connected (no re-pair)
+  fs.writeFileSync(path.join(DATA_DIR, 'fake-scanned'), '');
+  await until(() => wb.getBridgeStatus().status === 'connected');
+  expect(fs.existsSync(creds)).toBe(true);
+  expect(wb.isPaired()).toBe(true);
+  expect(wb.pairingLoggedOut()).toBe(false);
+  const fresh = await caps.statusOf(caps.getCapability('whatsapp')!);
+  expect(fresh.ok).toBe(true);
+  expect(fresh.detail).toContain('Fake User');
+  expect(((await wp.callWhatsapp('list_chats', { limit: 1 })) as any).ok).toBe(true);
+  expect(spawns() - before).toBe(3); // still the one process
+
+  wb.stopBridge();
+  await until(() => wb.getBridgeStatus().status === 'disconnected');
+  fs.rmSync(path.join(DATA_DIR, 'fake-scanned'), { force: true });
+  for (const b of backups) fs.rmSync(path.join(MCP_DIR, b), { recursive: true, force: true });
 });

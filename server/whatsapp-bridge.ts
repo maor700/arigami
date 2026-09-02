@@ -44,6 +44,11 @@ export const WA_AUTH_DIR = path.join(WA_MCP_DIR, 'auth_info');
 export const WA_DATA_DIR = process.env.ARIGAMI_WA_DATA_DIR || path.join(WA_MCP_DIR, 'data');
 export const WA_DB_PATH = path.join(WA_DATA_DIR, 'whatsapp.db');
 const STATUS_FILE = path.join(WA_DATA_DIR, 'bridge-status.json');
+// main.ts writes its fatal ("Connection closed. Reason: loggedOut") to these,
+// never to stderr — the bridge reads them back to say WHY a process died (WA1).
+const WA_LOG_FILE = path.join(WA_DATA_DIR, 'wa-logs.txt');
+const MCP_LOG_FILE = path.join(WA_DATA_DIR, 'mcp-logs.txt');
+const STDERR_MAX_LINES = 200; // of the child's stderr forwarded per spawn
 
 // How the checkout is run: `npx tsx <main.ts>` natively and in the image (tsx is
 // global there). Tests point this at `bun` with a fake main.ts.
@@ -61,6 +66,8 @@ const MAX_FAST_EXITS = 3;
 const CONNECT_TIMEOUT_MS = 90_000; // main.ts fetches the Baileys version before it serves MCP
 
 export type BridgeStatus = 'disconnected' | 'starting' | 'qr' | 'connected';
+/** Why the bridge is 'disconnected' and not trying: crash-loop (3 fast exits), logged-out (WhatsApp 401 — the pairing is dead), not-installed. */
+export type BridgeReason = 'crash-loop' | 'logged-out' | 'not-installed';
 
 // ---- status file ------------------------------------------------------------
 
@@ -70,7 +77,7 @@ interface StatusFile {
   qrUrl?: string | null;
   pid?: number | null;
   ts?: number;
-  reason?: string;
+  reason?: BridgeReason | string;
 }
 
 function readStatusFile(): StatusFile {
@@ -146,6 +153,79 @@ export function isBridgeRunning(): boolean {
 
 export function isPaired(): boolean {
   return fs.existsSync(path.join(WA_AUTH_DIR, 'creds.json'));
+}
+
+/** Last ~64KB of a file ('' when unreadable). */
+function tailOf(file: string, bytes = 64 * 1024): string {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, bytes);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Why the WhatsApp process (pid) died, from ITS pino logs in the data dir —
+ * main.ts exits on `Connection closed. Reason: loggedOut` / `connectionReplaced`
+ * with nothing on stderr, so this is the only place the reason exists.
+ * Returns the Baileys DisconnectReason name ('loggedOut', 'connectionReplaced',
+ * …) or the last fatal message; null when the logs say nothing for that pid.
+ */
+export function childExitReason(pid: number | null, since = 0): string | null {
+  // Under `npx tsx` the pid we hold is the wrapper's; pino logs the node
+  // grandchild's — so the pid alone cannot select the lines. Lines written
+  // since this spawn (same box, same clock) are ours; the pid is a bonus.
+  const mine = (l: string) => {
+    if (pid && (l.includes(`"pid":${pid},`) || l.includes(`"pid":${pid}}`))) return true;
+    const m = /"time":"([^"]+)"/.exec(l);
+    return !!m && Date.parse(m[1]) >= since - 2000;
+  };
+  let reason: string | null = null;
+  for (const l of [...tailOf(WA_LOG_FILE).split('\n'), ...tailOf(MCP_LOG_FILE).split('\n')]) {
+    if (!mine(l)) continue;
+    const m = /Connection closed\. Reason: (\w+)/.exec(l);
+    if (m) reason = m[1];
+    else if (/"level":60/.test(l)) { try { reason = String(JSON.parse(l).msg || reason); } catch {} }
+  }
+  return reason;
+}
+
+/**
+ * The last process reported WhatsApp logged this device out (401) and nobody
+ * paired again since (creds.json is not newer than that verdict). A dead
+ * pairing is never retried — WhatsApp will answer 401 forever.
+ */
+export function pairingLoggedOut(): boolean {
+  const s = readStatusFile();
+  if (s.reason !== 'logged-out') return false;
+  try {
+    const m = fs.statSync(path.join(WA_AUTH_DIR, 'creds.json')).mtimeMs;
+    return !(s.ts && m > s.ts);
+  } catch {
+    return false; // no creds at all → plain "unpaired", the QR path handles it
+  }
+}
+
+/**
+ * Move a logged-out auth_info aside (timestamped, kept — never deleted) so the
+ * next main.ts has no creds and pairs afresh, i.e. shows a QR. Only called for
+ * an explicit human/UI start ({repair:true}); never by a restart or autostart.
+ */
+export function retirePairing(): string | null {
+  if (!fs.existsSync(WA_AUTH_DIR)) return null;
+  const dest = `${WA_AUTH_DIR}.logged-out-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  fs.renameSync(WA_AUTH_DIR, dest);
+  console.error(`[wa-bridge] the pairing was logged out by WhatsApp — moved ${WA_AUTH_DIR} to ${dest} (kept, not deleted); the next start pairs afresh (QR)`);
+  return dest;
 }
 
 export function whatsappMcpInstalled(): boolean {
@@ -225,22 +305,38 @@ function scheduleRestart(delay: number): void {
   if (restartTimer.unref) restartTimer.unref();
 }
 
-function onProcessGone(): void {
+type ExitInfo = { code: number | null; signal: string | null } | null;
+
+function onProcessGone(pid: number | null, exit: ExitInfo): void {
   transport = null;
   clientReady = null;
   if (stopping) return;
   const lived = Date.now() - spawnedAt;
+  const reason = childExitReason(pid, spawnedAt);
+  const how = `pid ${pid ?? '?'}, ${exit ? (exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`) : 'exit'}${reason ? `, reason: ${reason}` : ''}, after ${Math.round(lived / 1000)}s`;
+  if (reason === 'loggedOut') {
+    // WhatsApp answered 401: the phone unlinked this device (or the server
+    // revoked it). The creds are dead — respawning just repeats the 401 every
+    // 5s. Stop, say so, and wait for a human to pair again (Show QR).
+    fastExits = 0;
+    console.error(`[wa-bridge] WhatsApp process exited (${how}) — WhatsApp logged this device out; NOT retrying the dead pairing. Re-pair from Settings → Connections (Show QR) or call request_setup`);
+    writeStatusFile({ status: 'disconnected', pid: null, reason: 'logged-out' });
+    _lastKnownStatus = 'disconnected';
+    stopStatusPoll();
+    if (_lastWakeFn && _lastSessionId) _lastWakeFn(_lastSessionId, '⚠️ WhatsApp logged this device out — the pairing must be redone (Settings → Connections → Show QR, or request_setup).', `wa:logged-out:${_lastSessionId}`);
+    return;
+  }
   if (lived < FAST_EXIT_MS) fastExits += 1; else fastExits = 0;
   if (fastExits >= MAX_FAST_EXITS) {
-    // Logged-out creds, a conflicting foreign client, a broken checkout — a
-    // restart will not fix any of these. Say so and wait for a human/agent.
-    console.error(`[wa-bridge] WhatsApp process exited ${fastExits}× within ${Math.round(FAST_EXIT_MS / 1000)}s of starting — giving up (re-pair from Settings → Connections or call request_setup)`);
+    // A conflicting foreign client, a broken checkout, a missing dependency —
+    // a restart will not fix any of these. Say so and wait for a human/agent.
+    console.error(`[wa-bridge] WhatsApp process exited (${how}) — ${fastExits}× within ${Math.round(FAST_EXIT_MS / 1000)}s of starting, giving up (re-pair from Settings → Connections or call request_setup)`);
     writeStatusFile({ status: 'disconnected', pid: null, reason: 'crash-loop' });
     stopStatusPoll();
     return;
   }
   const delay = RESTART_DELAY_MS * 3 ** (fastExits ? fastExits - 1 : 0);
-  console.error(`[wa-bridge] WhatsApp process exited after ${Math.round(lived / 1000)}s — restarting in ${Math.round(delay / 1000)}s`);
+  console.error(`[wa-bridge] WhatsApp process exited (${how}) — restarting in ${Math.round(delay / 1000)}s`);
   scheduleRestart(delay);
 }
 
@@ -249,7 +345,7 @@ function onProcessGone(): void {
  * throws for the usual reasons; the status file / getBridgeStatus() carries
  * the outcome ({status:'disconnected', reason}).
  */
-export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: boolean } = {}): Promise<void> {
+export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: boolean; repair?: boolean } = {}): Promise<void> {
   if (sessionId !== _lastSessionId) _notifiedConnected = false; // new session → re-notify
   _lastSessionId = sessionId;
   _lastWakeFn = wake;
@@ -276,6 +372,12 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
       return;
     }
     if (ownedPid()) return; // raced with a concurrent start
+    // An explicit human start on a pairing WhatsApp has logged out: move it
+    // aside so this process pairs afresh and the QR shows. Internal restarts
+    // and the boot autostart never do this — only the Connect / Show QR path.
+    if (opts.repair && pairingLoggedOut()) {
+      try { retirePairing(); } catch (e) { console.error(`[wa-bridge] could not move the logged-out auth_info aside: ${(e as Error).message}`); }
+    }
     // Write starting state immediately so the UI reflects it
     writeStatusFile({ status: 'starting', pid: null });
     _lastKnownStatus = 'starting';
@@ -288,12 +390,32 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
       args: [...RUNNER.slice(1), WA_MAIN],
       env: { ...(process.env as Record<string, string>), WHATSAPP_MCP_DATA_DIR: WA_DATA_DIR, NODE_PATH: path.join(WA_MCP_DIR, 'node_modules') },
       cwd: WA_MCP_DIR,
-      stderr: 'ignore',
+      stderr: 'pipe',
+    });
+    // The child's stderr goes to the host log (pm2 error log), line by line,
+    // capped per spawn so a chatty process cannot flood it.
+    let stderrLines = 0;
+    let stderrRest = '';
+    t.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrRest += String(chunk);
+      const parts = stderrRest.split('\n');
+      stderrRest = parts.pop() || '';
+      for (const line of parts) {
+        if (!line.trim()) continue;
+        stderrLines += 1;
+        if (stderrLines <= STDERR_MAX_LINES) console.error(`[wa-mcp] ${line.slice(0, 2000)}`);
+        else if (stderrLines === STDERR_MAX_LINES + 1) console.error('[wa-mcp] … further stderr from this process suppressed');
+      }
     });
     const c = new Client({ name: 'arigami-host', version: '0.2.0' });
     transport = t;
     spawnedAt = Date.now();
-    c.onclose = () => { if (transport === t) onProcessGone(); };
+    let exitInfo: ExitInfo = null;
+    let childPid: number | null = null;
+    c.onclose = () => {
+      if (stderrRest.trim() && stderrLines < STDERR_MAX_LINES) console.error(`[wa-mcp] ${stderrRest.slice(0, 2000)}`);
+      if (transport === t) onProcessGone(childPid ?? t.pid, exitInfo);
+    };
     t.onerror = () => {};
     c.onerror = () => {};
     clientReady = (async () => {
@@ -314,7 +436,17 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
       return c;
     })();
     // the pid is known as soon as the transport started (connect() spawns synchronously)
-    queueMicrotask(() => { if (t.pid) ownPids.add(t.pid); });
+    const hook = () => {
+      if (!t.pid) return;
+      childPid = t.pid;
+      ownPids.add(t.pid);
+      // exit code/signal for the host log: the SDK only surfaces 'close', so read
+      // its child directly (best effort — a missing field just logs "exit").
+      const proc = (t as any)._process as import('node:child_process').ChildProcess | undefined;
+      proc?.once?.('exit', (code: number | null, signal: string | null) => { exitInfo = { code, signal }; });
+    };
+    hook();
+    queueMicrotask(hook);
     clientReady.catch(() => {});
   })();
 }
@@ -366,6 +498,9 @@ export function autoStartBridge(wake: WakeFn = () => {}): Promise<{ started: boo
   if (process.env.ARIGAMI_WA_AUTOSTART === '0') return Promise.resolve({ started: false, reason: 'ARIGAMI_WA_AUTOSTART=0' });
   if (!whatsappMcpInstalled()) return Promise.resolve({ started: false, reason: 'whatsapp-mcp not installed' });
   if (!isPaired()) return Promise.resolve({ started: false, reason: 'not paired' });
+  // The last verdict was WhatsApp's 401 and nobody paired since: a start would
+  // only repeat it. The UI's Connect / Show QR ({repair:true}) is the way out.
+  if (pairingLoggedOut()) return Promise.resolve({ started: false, reason: 'logged-out — WhatsApp unlinked this device; re-pair from Settings → Connections (Show QR)' });
   return startBridge('ui', wake).then(() => ({ started: !!ownedPid(), reason: ownedPid() ? 'spawned' : (getBridgeStatus().reason || 'held by another process') }));
 }
 
