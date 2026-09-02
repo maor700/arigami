@@ -64,3 +64,10 @@ test('B18: diff code rows are forced LTR (the cockpit document is RTL in Hebrew)
     expect(html).not.toMatch(/<div class="[^"]*font-mono text-\[11px\][^"]*"[^>]*style="background/); // no row without dir
   }
 });
+
+test('B5: the rail scrolls the selected session row into view', () => {
+  const rail = src('components/Rail.jsx');
+  expect(rail).toContain('data-session-row={session.id}');
+  expect(rail).toMatch(/querySelector\(`\[data-session-row="\$\{selectedId\}"\]`\)/);
+  expect(rail).toContain("scrollIntoView({ block: 'nearest' })");
+});

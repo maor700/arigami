@@ -343,6 +343,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   return (
     <div
       ref={tip.ref}
+      data-session-row={session.id}
       {...hoverProps}
       onClick={() => onSelect(session.id)}
       className="group relative mb-0.5 flex cursor-pointer items-start gap-[9px] rounded-[7px] p-2"
@@ -1492,6 +1493,23 @@ export default function Rail({
     if (f?.collapsed) api.patch(`/folders/${f.id}`, { collapsed: false }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+  // B5: keep the selected row visible — a session created from the launcher
+  // lands at the bottom of a long list (y=914 in a 693px window) with nothing
+  // scrolling to it. Retry briefly: the row may render a beat after the id.
+  const selectedRowMounted = !!selectedId && sessions.some((s) => s.id === selectedId);
+  useEffect(() => {
+    if (!selectedRowMounted || typeof document === 'undefined') return;
+    let tries = 0;
+    let timer = null;
+    const tick = () => {
+      const el = document.querySelector(`[data-session-row="${selectedId}"]`);
+      if (el) { try { el.scrollIntoView({ block: 'nearest' }); } catch {} return; }
+      if (++tries < 8) timer = setTimeout(tick, 60);
+    };
+    tick();
+    return () => { if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, selectedRowMounted]);
 
   // Flat-mode drag-to-reorder (disabled while searching — the list is filtered).
   const canDragSessions = mode === 'flat' && !q;
