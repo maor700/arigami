@@ -214,3 +214,15 @@ test('startUpgrade: 409 without a supervisor, 403 when host.allowUpgrade=false â
   if (!r2.ok) throw new Error(r2.error);
   expect(r2.out[0].nosup).toBe(409);
 });
+
+// K8S-3: /__health tells loopback callers (kubectl exec, bin/host) the busy
+// count so an orchestrator can gate upgrades on "no turn in flight" â€” and
+// tells everyone else (the ingress / open internet) nothing but {ok}.
+test('healthBody: busySessions for loopback peers only', () => {
+  const busy = () => 3;
+  expect(hc.healthBody('127.0.0.1', busy)).toEqual({ ok: true, busySessions: 3 });
+  expect(hc.healthBody('::1', busy)).toEqual({ ok: true, busySessions: 3 });
+  expect(hc.healthBody('::ffff:127.0.0.1', busy)).toEqual({ ok: true, busySessions: 3 });
+  expect(hc.healthBody('203.0.113.9', busy)).toEqual({ ok: true });
+  expect(hc.healthBody(undefined, busy)).toEqual({ ok: true });
+});

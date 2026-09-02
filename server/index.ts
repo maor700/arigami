@@ -17,7 +17,7 @@ import { claimHost, releaseHost } from './lib/hostlock.js';
 import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
 import * as artifacts from './artifacts.js';
-import { setDrainHandler } from './host-control.js';
+import { setDrainHandler, healthBody } from './host-control.js';
 import { validateAuthBind } from './lib/config.js';
 import { auth } from './auth.js';
 // K2: share-token gate for cookie-less artifact links (see auth.ts ShareGate).
@@ -157,7 +157,9 @@ const server = http.createServer(
     if (auth.gate(req, res)) return;
     if (pathname === '/__health') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ok: true }));
+      // K8S-3: loopback callers also get busySessions (host-control.healthBody)
+      // — the tenant-upgrade idle gate; never exposed through the ingress.
+      res.end(JSON.stringify(healthBody(req.socket.remoteAddress)));
       return;
     }
     if (pathname.startsWith('/__api/') || pathname.startsWith('/__mcp/')) {

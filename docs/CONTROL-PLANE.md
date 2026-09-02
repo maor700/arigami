@@ -3,9 +3,11 @@
 Wave K8S-2 (`PRD-ARIGAMI-K8S.md` §2/§5) ships `control-plane/`: a small,
 separately-deployable bun service that turns "an employee signs in with the
 company IdP" into "their own running Arigami tenant", by rendering
-`deploy/helm/arigami-tenant/` (K8S-1) into a namespace per user. Out of scope
-here: the reconcile loop, dormancy *automation*, rings, and quotas UI — see
-"What's deliberately not here yet" below (K8S-3).
+`deploy/helm/arigami-tenant/` (K8S-1) into a namespace per user. K8S-3 (see
+"K8S-3 — reconcile, upgrades, backups" below) added the reconcile loop,
+no-turn-in-flight-gated upgrades with rollback, and per-tenant
+backup/restore. Still out of scope: dormancy *automation* (K8S-5), rings,
+quotas UI — see "What's deliberately not here yet" at the end.
 
 ## Why this shape
 
@@ -62,9 +64,10 @@ provisioner, on a successful `helm upgrade --install`) and the two admin
 actions in the tenant table (`suspend` → `dormant`, `delete` → `deleted`,
 plus `resume` → `running`, including automatically on a dormant tenant's
 next sign-in). `dormant → archived` is a legal edge in the schema — the PRD
-asked for the column and the state — but nothing AUTOMATES it yet; that's
-explicitly K8S-3 (dormancy automation / reconcile). A legal edge existing is
-not the same as something driving it today.
+asked for the column and the state — but nothing AUTOMATES it yet; dormancy
+automation moved to K8S-5 (K8S-3 shipped the reconcile loop for UPGRADES and
+backups only). A legal edge existing is not the same as something driving it
+today.
 
 ## OIDC signup
 
@@ -125,7 +128,7 @@ time:
   --wait`; "not found" on either is treated as success (idempotent delete).
 - **`suspendTenant`** / **`resumeTenant`** — `kubectl scale
   statefulset/<fullname> --replicas=0`/`1` (the dormancy *lever*; the
-  *automation* that decides when to pull it is K8S-3).
+  *automation* that decides when to pull it moved to K8S-5).
 
 ### A real bug this caught (and why it's worth reading)
 
@@ -332,20 +335,345 @@ skip`); `RUN_K3D_TESTS=1 bun test test/provisioner.k3d.test.ts` for the live
 proof (needs docker + k3d/kubectl/helm on `PATH`, ~30s, creates and deletes
 its own `arigami-cp-k8s2` cluster).
 
-## What's deliberately NOT in here yet (K8S-3)
+## K8S-3 — reconcile, upgrades, backups (2026-09-01)
 
-- **Reconcile loop.** Nothing today notices that `desired_digest !=
-  running_digest` and rolls a tenant forward on its own — an admin (or a
-  future automated caller) has to re-trigger `provisionTenant` explicitly.
-  There is also no "only upgrade when no session is in flight" check the
-  PRD's §2 describes.
+Wave K8S-3 (`SPEC-ARIGAMI-K8S3.md`) makes a tenant correct, operable and
+upgradable **while it simply stays running** — dormancy/scale-to-zero moved
+to K8S-5 by explicit user decision. What landed here:
+
+### The idle gate: "no turn in flight", reused not reinvented
+
+The host already knows when it is busy: `server/host-control.ts
+busySessions()` — sessions whose claude turn is in flight, the same count the
+cockpit's restart-drain uses. K8S-3 exposes it on the already-public
+`/__health` endpoint **to loopback callers only** (`healthBody()`): a
+`kubectl exec <pod> -- curl 127.0.0.1:3099/__health` sees
+`{ok:true,busySessions:N}`, while the same URL through the ingress still
+answers exactly `{ok:true}` — tenant activity is never visible to the open
+internet through the probe path. Both halves verified live (see evidence).
+
+The control-plane reads it with `tenantBusySessions()` (`src/provisioner.ts`)
+— `kubectl exec` + loopback curl, because the control-plane machine has
+kubectl access but is not necessarily on the tenants' ingress network. The
+check **fails closed**: an unreachable tenant or a pre-K8S-3 image (no
+`busySessions` field) throws, and no upgrade/restore happens.
+
+### Upgrades (§2): desired_digest → running_digest, with rollback
+
+`src/upgrade.ts` — pure orchestration, every path unit-tested
+(`test/upgrade.test.ts`) and every path also driven live on k3d:
+
+```
+busy? ──yes──▶ UpgradeBlockedError (reconcile retries next tick)
+  │no
+record helm revision ─▶ helm upgrade (new digest) ─▶ verify /__health
+  │ok                                                  │fail
+done (running_digest := desired)          helm rollback to recorded revision
+                                          ─▶ delete stuck pod ─▶ rollout status
+                                          ─▶ verify /__health ─▶ UpgradeRolledBackError
+```
+
+Notes an operator should actually know:
+
+- The rollback deletes the pod outright after `helm rollback` — a pod stuck
+  in `ImagePullBackOff` on the bad image can pin a StatefulSet rollout
+  (`rollbackTenant`, src/provisioner.ts); this is the standard stuck-STS
+  escape hatch, made automatic.
+- **A StatefulSet upgrade replaces the pod** — the tenant is DOWN from the
+  moment the old pod terminates until the new one is Ready, and a FAILED
+  upgrade extends that outage to `CP_HELM_TIMEOUT_SEC` + rollback time
+  (~6 min in the live proof). That is why the busy gate matters: nobody's
+  turn is in flight when it starts. The PVC (all state) is untouched either
+  way.
+- The busy check closes the common case, not every race: a turn that starts
+  in the seconds between the check and the pod's SIGTERM is killed like any
+  external restart (docs/K8S.md "Graceful shutdown, honestly"). A host-side
+  quiesce mode would close it fully — future work, stated here rather than
+  implied away.
+- After a rollback, the tenant is **parked**: `desired_digest` is reset to
+  `running_digest` so the loop doesn't flap the tenant through the same bad
+  digest forever. An operator sets a new digest to retry. (`src/reconcile.ts`)
+- `image.tag=sha256:…` digests render as `repo@sha256:…` since K8S-3
+  (chart `imageRef` helper); the k3d proof uses tags-as-digests because the
+  image never leaves the local store (no registry to digest-pin against).
+
+### The reconcile loop
+
+`src/reconcile.ts`, in the same process (sqlite stays single-writer): every
+`CP_RECONCILE_SEC` (default 60s) each `running` tenant with
+`desired_digest != running_digest` gets an upgrade attempt — busy tenants
+are skipped and retried next tick, so "upgrade when the user goes idle"
+falls out of the loop with no extra machinery. Ticks never overlap; tenants
+are handled sequentially. The same tick takes scheduled backups (below).
+K8S-2's "nothing notices desired != running" gap is closed.
+
+### Backups & restore (§3): the EXISTING export/import, orchestrated
+
+`src/backup.ts` reuses `server/backup.ts` (B4-full) unchanged:
+
+- **Backup** = `kubectl exec … gosu node:node bun server/backup.ts export
+  --full` in-pod, then `kubectl cp` the archive to
+  `CP_BACKUP_DIR/<ns>/arigami-backup-<stamp>.tgz` on the control-plane's own
+  disk — NOT the tenant's PVC; a backup living on the volume it protects
+  dies with it. Pruned to `CP_BACKUP_KEEP` (default 7) per tenant. On-demand
+  from the admin page ("Backup now") or CLI; scheduled by the reconcile loop
+  every `CP_BACKUP_INTERVAL_SEC` (default daily; 0 = off).
+- **Restore** = busy-gate (same fail-closed check) → `kubectl cp` the
+  archive in → in-pod `bun server/backup.ts import <file> --force` (the
+  `--force` only skips the in-pod CLI's busy check, which cannot see the
+  live host's state — the control-plane already made the real check) →
+  `rollout restart` → Ready + `/__health` verified. The host CLI itself
+  keeps the previous state as a timestamped `.bak` beside the dir. Restore
+  is CLI-only on purpose (an overwrite should not be one misclick on a web
+  form): `bun src/cli.ts restore <tenant> <archive.tgz>` — and it takes ANY
+  tenant's archive, which is the migration path.
+- **Why exec-in-pod, not a CronJob/Job**: the §5 decision is "a tenant is
+  exactly one pod" — the namespace quota has zero request headroom for a
+  backup pod on purpose, a Job would need the RWO volume (only mountable
+  beside the pod) and RBAC, and the export CLI already runs perfectly well
+  inside the pod that has everything. The reconcile loop is the PRD
+  CronJob's "control-plane job" flavour.
+
+### Admin surface & CLI
+
+The admin page gained a per-tenant image column (`running → desired` with
+the pending arrow), a digest form (records intent; the reconcile loop
+applies it — the form never blocks on helm), backup counts and a "Backup
+now" button. `src/cli.ts` is the scriptable/operator surface:
+`tenants | set-digest | upgrade | backup | backups | restore`.
+
+### New env (all optional, defaults in parentheses)
+
+| var | default | meaning |
+|---|---|---|
+| `CP_TENANT_PORT` | `3099` | tenant host port for the loopback health/busy checks |
+| `CP_RECONCILE_SEC` | `60` | reconcile tick; `0` = loop off |
+| `CP_BACKUP_DIR` | `./data/backups` | per-tenant archives, on the control-plane's disk |
+| `CP_BACKUP_INTERVAL_SEC` | `86400` | scheduled backup age threshold; `0` = on-demand only |
+| `CP_BACKUP_KEEP` | `7` | newest N archives kept per tenant |
+| `CP_ORG_NAME` | `your organisation` | shown on the waiting page ("Applying …'s setup") |
+
+### Landing the user IN their workspace (K8S-3 follow-on, 2026-09-02)
+
+Driving the pilot by hand surfaced two rough edges that no test would have
+caught, because both are about what the wait FEELS like:
+
+**The pairing screen had to go.** A tenant is a fresh Arigami, and a fresh
+Arigami asks for a one-time pairing code — possession of the code proves you
+can read the server's filesystem (`server/auth.ts`). In an orchestrated fleet
+that proof is both redundant (the control-plane authenticated this person
+against the company IdP seconds ago) and impossible (the code is inside a pod
+the user cannot get a shell on). So:
+
+- `control-plane/src/handoff.ts` mints a token — `base64url(payload).base64url(HMAC)`,
+  the same wire format as K2's share tokens — naming the user's email, with a
+  2-minute life and a random `jti`.
+- The tenant redeems it at `GET /__api/auth/handoff?t=…` (`server/handoff.ts`,
+  `server/api.ts`): verify signature → create-or-reuse the user row for that
+  email → session cookie → 302 to `/__host/`. The user lands inside.
+- The secret is per tenant, generated at tenant creation (`tenants.handoff_secret`)
+  and injected into the pod as chart `secretEnv.ARIGAMI_HANDOFF_SECRET`.
+
+What keeps this from being a skeleton key, and why each part is there:
+
+| control | why |
+|---|---|
+| no secret in env ⇒ every token rejected | a standalone host is byte-for-byte as safe as before this existed |
+| single-use `jti`, **persisted** to `$ARIGAMI_DIR/handoff-used.json` | a token in a browser history / proxy log is already spent, and a pod restart must not re-open it |
+| `MAX_TTL_MS` enforced by the VERIFIER (10 min) | a buggy or compromised minter still cannot issue a long-lived key |
+| token names one email | a leaked token cannot admit a different person |
+| per-tenant secret | tenant A's token is worthless against tenant B (asserted in `test/handoff-contract.test.ts`) |
+| refuse if the spend cannot be recorded | never silently downgrade to replayable |
+
+Two implementations exist on purpose (this service imports nothing from
+`server/`), so the format is a cross-codebase contract —
+`test/handoff-contract.test.ts` in the ROOT suite imports both and pins it in
+both directions. Coverage: `test/handoff.test.ts` (tamper, wrong secret,
+expiry, over-long life, replay, pruning) and `test/handoff-host.test.ts`
+(the route against a REAL host running `ARIGAMI_AUTH=pairing`: cookie works,
+replay 403s with no cookie, wrong secret gets nothing, and the unauthenticated
+API stays 401).
+
+**The wait became legible.** The old starting page was
+`<meta http-equiv="refresh" content="4">` and one sentence. Now
+`src/progress.ts` reads real state — pod phase, container waiting reason, and
+the host's own `ARIGAMI_BUNDLE applied` log line — and `stepsFor()` (pure,
+fully unit-tested) turns it into named steps the page ticks through while an
+elapsed timer runs:
+
+```
+✓ Your account
+✓ Reserving your private space
+◐ Fetching the workspace image      ← "First-time setups take the longest here."
+  Applying <org>'s setup
+  Starting your workspace
+```
+
+Rules it follows, deliberately: a step only advances on something Kubernetes
+actually reported (no invented percentages); phases we cannot distinguish are
+ONE honest step; `ImagePullBackOff`/`CrashLoopBackOff` end the spinner and say
+an administrator is needed; and passing `SLOW_MS` only adds "this is taking
+longer than usual" — it never fakes progress or declares failure. `configure`
+precedes `start` because the bundle really is applied before the host listens
+(`server/index.ts`). The page polls `GET /api/progress` and navigates itself
+the moment the tenant is ready, to a redirect the server minted — so "ready"
+and "signed in" are the same step for the user. `<noscript>` keeps the old
+meta-refresh.
+
+Preview without a cluster: `bun test/fixtures/preview-starting.ts out.html`
+renders the shipped page and the real `stepsFor` output with replayed timing.
+
+New env: `CP_ORG_NAME` (default `your organisation`) — the name shown in
+"Applying …'s setup".
+
+**Not proven live yet.** Everything above is unit- and route-tested, and the
+page was rendered and reviewed; the end-to-end "sign in → watch the steps →
+land inside the cockpit" run needs a cluster, and this box had no RAM headroom
+left for one at the time (the demo cluster is under the project controller's
+stand-down). That run is the remaining verification.
+
+### K8S-3 proof on k3d (2026-09-01)
+
+Same discipline as K8S-1/K8S-2: disposable single-node k3d cluster
+(`arigami-k8s3`, `--no-lb`, metrics-server/servicelb off) on the box that
+also runs the live host; the live `arigami` process, host firewall and
+docker store outside this cluster untouched; everything deleted BY NAME at
+the end (`docker ps -a` and `docker images` both empty afterward). The REAL
+image, built locally from this worktree's Dockerfile (the registry is still
+not publicly pullable — same finding as K8S-1 §5), as two tags `k8s3-a` /
+`k8s3-b` with distinct image IDs standing in for digests A/B (nothing to
+digest-pin against without a registry; the chart's new `imageRef` helper is
+what makes real `sha256:` pins render correctly).
+
+Fixtures (all in `control-plane/test/fixtures/` + `scripts/`):
+
+- **`mock-idp.ts`** — a real-enough OIDC IdP (discovery, RS256-signed
+  id_tokens, JWKS, PKCE S256 actually verified) that the production
+  `openid-client` flow in `src/auth.ts` accepts with full validation ON.
+  This closes K8S-2's honest gap: the OIDC callback path now has live
+  coverage. Who signs in = query params on the authorize URL.
+- **`make-org-bundle.sh`** — the fake org bundle (placeholder skill, agent,
+  enabled cron, memory seed, repo entry; never the operator's real
+  profiles), served to pods from INSIDE the cluster (hostPath + a pod
+  reusing the imported image — the pilot box's firewall drops
+  bridge→host-port traffic, and opening it for a disposable proof was out of
+  bounds; a real org's bundle is just an https git URL).
+- **`k3d-pilot-up.sh` / `k3d-pilot-down.sh`** — §1's "one command to seed
+  the org config, one to tear it down", for the k3d flavour.
+
+#### §1 — the pilot flow, two tenants, real org bundle
+
+- `root@fake-org.test` signs in first → org-admin, admin page 200, no
+  tenant (by design). `alice@` and `bob@` sign in → tenants
+  `u-1876ee0cb3` / `u-2968035f97` provisioned by the control-plane, both
+  `running`. `eve@evil.test` authenticates at the IdP but the callback 403s:
+  `eve@evil.test is not on an allowed domain` — before any user row exists.
+- First boot logged `ARIGAMI_BUNDLE applied: "fake-org"`, and in-pod:
+  `skills/org-onboarding` ACTIVE, `agents/org-helper` created,
+  `org-daily-checkin` cron registered ENABLED, `org-handbook` in
+  repos.json, `FAKE-ORG-SEED-1` in memory/MEMORY.md, provenance in
+  profile.json — the "already configured for the company" promise, which
+  required the two host fixes this wave shipped (env bundles are trusted;
+  dumb-HTTP clone fallback — the SECOND of which this run itself caught
+  live: the first boot failed with `dumb http transport does not support
+  shallow capabilities`, the host started anyway, and the next boot applied
+  cleanly. Both halves of "bundle failure never blocks boot" observed.)
+- Cockpit through the ingress (Traefik, Host-header routing):
+  `/__health` → `{"ok":true}`, `/__host/` serves the SPA, a wrong Host →
+  404. Signed in via the pairing code, created a session
+  (`POST /__api/sessions` → `sess_…`) — and a turn WITHOUT Claude auth
+  fails exactly as designed: `Not logged in · Please run /login` plus a
+  JIT-setup card for the `claude` capability in the chat. **Documented, not
+  proven: a real working turn** — that needs Claude credentials (org-injected
+  `secretEnv` or the user connecting through the card), which this proof
+  deliberately never touches.
+
+#### §2 — upgrade A→B, refuse-while-busy, rollback
+
+- **Busy gate, live**: a turn was made to stay in flight deterministically
+  by stubbing the `claude` binary in the pod with a `sleep` (a real turn
+  needs real credentials; everything downstream of the spawn — session
+  `working` state, `busySessions`, the loopback `/__health` field, the
+  `kubectl exec` read, the reconcile decision — is the production path).
+  With the turn in flight: loopback `/__health` →
+  `{"ok":true,"busySessions":1}` while the SAME endpoint through the
+  ingress → `{"ok":true}` (the privacy split, both observed). Admin set the
+  digest to `k8s3-b` on the admin form → reconcile log:
+  `u-1876ee0cb3 busy (1) — upgrade deferred`, tick after tick.
+- **Convergence**: the moment the turn ended, the next tick ran
+  `u-1876ee0cb3 upgraded k8s3-a -> k8s3-b`. Pod now on
+  `…arigami:k8s3-b`; state intact across the rollout: the marker file, the
+  whole chat history (including the killed turn's error line), skills,
+  users — all on the PVC, untouched.
+- **Rollback**: admin set `k8s3-broken` (no such image) on tenant B. The
+  rollout replaced the pod, which sat in `ImagePullBackOff` — note
+  honestly: a StatefulSet upgrade means the tenant is DOWN from old-pod
+  termination until rollback completes (~6 min here: 300s helm wait + the
+  rollback), which is exactly why the busy gate holds upgrades until nobody
+  is mid-turn. `helm history` tells the story verbatim — rev 2
+  `failed: … context deadline exceeded`, rev 3 `Rollback to 1` — the
+  provisioner deleted the stuck pod, the pod came back Ready on `k8s3-a`,
+  `/__health` ok, the marker intact, and the tenant was PARKED
+  (`desired_digest` reset to `k8s3-a`) so the loop can't flap it. Every one
+  of these paths is also a unit test (`test/upgrade.test.ts`,
+  `test/reconcile.test.ts`).
+
+#### §3 — backup/restore round-trip between two tenants
+
+- **On-demand** ("Backup now" on the admin page): in-pod
+  `server/backup.ts export --full` + `kubectl cp` → a `tgz` under
+  `CP_BACKUP_DIR/u-1876ee0cb3/` on the control-plane's disk, whose listing
+  shows the manifest, chat, triggers.json, profile.json, skills/, agents/.
+- **Scheduled**: with `CP_BACKUP_INTERVAL_SEC=600` the next reconcile tick
+  backed up tenant B on its own (`[reconcile] u-2968035f97 backed up`) and
+  correctly SKIPPED tenant A, whose archive was fresher than the interval.
+- **The round-trip**: `bun src/cli.ts restore u-2968035f97 <tenant A's
+  archive>` — busy-gate, `kubectl cp` in, in-pod
+  `server/backup.ts import --force`, rollout restart, health verify.
+  Tenant B then contained tenant A's state, verified in-pod: A's marker
+  file, A's chat session, A's users (the paired alice + support users), the
+  org trigger/agent/skill/memory-seed — and B's previous state preserved
+  in-pod at `/data/.arigami.bak-<stamp>` (the host CLI's own safety net).
+
+#### Resource envelope
+
+Tracking `available` MB (the OOM predictor) and free disk on the shared
+3.8GB VPS, live host running throughout:
+
+| step | available MB | disk free |
+|---|---|---|
+| before anything | ~1100 | 13G |
+| images built (A+B, cached layers) | 1663 | 7.4G |
+| cluster + 2 real tenants + fixtures | 1179–1324 | 7.3G |
+| upgrade/rollback/backup phase | 1135–1280 | 7.3G |
+| cluster deleted, images removed by name | 1663 | 13G |
+
+Never near the ~400MB / 2GB floors. The two-real-tenant fit needed the
+`ci/k8s3-pilot-values.yaml` overlay (300Mi requests — mechanics sizing, NOT
+production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
+
+#### What this proof does NOT show (stated, not shrugged)
+
+- A real Claude turn end-to-end (no credentials in tenants, on purpose).
+- A real IdP (the mock exercises the full client-side flow; a corporate
+  IdP's quirks — clock skew, opaque errors, logout — remain untested).
+- Real digest pins (`sha256:…`) against a registry — chart renders them
+  (helm-template-verified) but the pilot had no registry to pull from.
+- Multi-node behaviour, real storage classes, TLS — K8S-4 territory
+  (docs/K8S-OPERATIONS.md sketches the dedicated-box path).
+
+## What's deliberately NOT in here yet (K8S-4/K8S-5)
+
+- ~~Reconcile loop~~ — **landed in K8S-3** (above), including the
+  "only upgrade when no session is in flight" gate.
 - **Rings.** The `ring` column exists in the schema (per the PRD's table
   shape) and defaults to `"stable"`, but nothing reads it to stage a
-  rollout across cohorts.
-- **Dormancy automation.** `suspendTenant`/`resumeTenant` are real levers
-  (scale-to-zero/-one, proved on k3d in K8S-1 §7); nothing decides "N idle
-  hours → suspend" or "M days dormant → archive" on its own. The admin page
-  is the only thing pulling these levers today.
+  rollout across cohorts — the reconcile loop upgrades every running tenant
+  whose digest differs, in table order.
+- **Dormancy automation** — moved to K8S-5 by explicit user decision
+  (SPEC-ARIGAMI-K8S3.md: "כרגע אני רוצה לגרום לזה לעבוד כמו שצריך, אחר כך
+  נאפטם עלויות"). `suspendTenant`/`resumeTenant` remain real levers; the
+  admin page is still the only thing pulling them.
 - **Quotas UI.** The chart's `ResourceQuota`/`LimitRange` are fixed at
   provision time from the chart's own defaults (or `CP_HELM_EXTRA_VALUES`);
   there's no per-org or per-tenant sizing control surface.
@@ -354,6 +682,11 @@ its own `arigami-cp-k8s2` cluster).
   "still starting" never resolving) rather than a distinct state an admin
   could see and retry from. Simplicity choice for the pilot, not a schema
   limitation — `deleted` is reachable from `provisioning` so a stuck tenant
-  can still be cleaned up.
+  can still be cleaned up. (K8S-3 softened the UPGRADE flavour of this:
+  a failed upgrade rolls back and parks with the tenant still `running`;
+  first-provision failures still just sit in `provisioning`.)
+- **Alerting on in-tenant failures** (Claude auth expiry, PVC pressure) —
+  the signals exist in-pod; nothing forwards them to the control-plane. See
+  docs/K8S-OPERATIONS.md's runbook for the manual paths.
 - **Managed-cloud specifics** (GKE/EKS IAM, a real cert-manager/DNS setup,
   a real multi-user pilot) — K8S-4.

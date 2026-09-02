@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { canTransition, IllegalTransitionError, type TenantState } from './state-machine.js';
+import { newSecret as newHandoffSecret } from './handoff.js';
 
 export type Role = 'admin' | 'user';
 
@@ -37,6 +38,13 @@ export interface Tenant {
   state: TenantState;
   created_at: string;
   last_seen_at: string;
+  /**
+   * K8S-3: per-tenant HMAC secret, generated here and injected into the pod as
+   * ARIGAMI_HANDOFF_SECRET, that lets this service sign a one-shot sign-in for
+   * a user it already authenticated (src/handoff.ts). Never leaves this row and
+   * the tenant's own Secret; never rendered in a page.
+   */
+  handoff_secret: string;
 }
 
 export interface WebSession {
@@ -84,6 +92,13 @@ export function openDb(dbPath: string): Database {
       created_at INTEGER NOT NULL
     );
   `);
+  // Additive migrations for databases created before a column existed. Kept
+  // here (not a migrations framework) because the schema is three tables and
+  // every change so far is "add a column with a default" — a tenant row from
+  // K8S-2 keeps working, it just has no handoff secret and falls back to the
+  // pairing screen (src/handoff.ts signInUrl).
+  const tenantCols = new Set((db.query('PRAGMA table_info(tenants)').all() as { name: string }[]).map((c) => c.name));
+  if (!tenantCols.has('handoff_secret')) db.exec("ALTER TABLE tenants ADD COLUMN handoff_secret TEXT NOT NULL DEFAULT ''");
   return db;
 }
 
@@ -116,7 +131,7 @@ export function createStore(db: Database) {
   function listTenants(): Tenant[] {
     return db.query('SELECT * FROM tenants ORDER BY created_at ASC').all() as Tenant[];
   }
-  function createTenant(subject: string, email: string, opts: { desiredDigest: string; ring?: string }): Tenant {
+  function createTenant(subject: string, email: string, opts: { desiredDigest: string; ring?: string; handoffSecret?: string }): Tenant {
     const id = tenantIdFor(subject);
     const ns = `u-${id}`;
     const t: Tenant = {
@@ -130,11 +145,12 @@ export function createStore(db: Database) {
       state: 'provisioning',
       created_at: now(),
       last_seen_at: now(),
+      handoff_secret: opts.handoffSecret ?? newHandoffSecret(),
     };
     db.query(
-      `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(t.subject, t.email, t.ns, t.release, t.desired_digest, t.running_digest, t.ring, t.state, t.created_at, t.last_seen_at);
+      `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(t.subject, t.email, t.ns, t.release, t.desired_digest, t.running_digest, t.ring, t.state, t.created_at, t.last_seen_at, t.handoff_secret);
     return t;
   }
   // Validated against state-machine.ts — callers never write an illegal edge
@@ -149,6 +165,12 @@ export function createStore(db: Database) {
   }
   function setRunningDigest(subject: string, digest: string): void {
     db.query('UPDATE tenants SET running_digest = ? WHERE subject = ?').run(digest, subject);
+  }
+  // K8S-3: what the reconcile loop converges the tenant TOWARD. Set by the
+  // admin page / CLI; the loop upgrades when running_digest differs (and the
+  // tenant has no turn in flight).
+  function setDesiredDigest(subject: string, digest: string): void {
+    db.query('UPDATE tenants SET desired_digest = ? WHERE subject = ?').run(digest, subject);
   }
   function touchLastSeen(subject: string): void {
     db.query('UPDATE tenants SET last_seen_at = ? WHERE subject = ?').run(now(), subject);
@@ -181,7 +203,7 @@ export function createStore(db: Database) {
 
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
-    findTenantBySubject, listTenants, createTenant, setTenantState, setRunningDigest, touchLastSeen,
+    findTenantBySubject, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
     createSession, findSession, deleteSession,
   };
 }

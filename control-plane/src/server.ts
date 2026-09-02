@@ -4,6 +4,9 @@ import { createAuthService } from './auth.js';
 import * as tpl from './templates.js';
 import { canTransition } from './state-machine.js';
 import { tenantUrl } from './provisioner.js';
+import * as backupMod from './backup.js';
+import { signInUrl } from './handoff.js';
+import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -11,6 +14,24 @@ export interface Provisioner {
   suspendTenant(cfg: Config, t: Tenant): Promise<void>;
   resumeTenant(cfg: Config, t: Tenant): Promise<void>;
 }
+
+// K8S-3 admin-surface ops, injectable so test/server.test.ts runs without k8s.
+export interface AdminOps {
+  backupTenant(cfg: Config, t: Tenant): Promise<{ name: string; bytes: number }>;
+  listBackups(cfg: Config, ns: string): { name: string; bytes: number; mtimeMs: number }[];
+  /** live pod state behind the progress page; injected so tests need no cluster */
+  podSnapshot(cfg: Config, t: Tenant): Promise<PodSnapshot>;
+}
+
+const realAdminOps: AdminOps = {
+  backupTenant: (cfg, t) => backupMod.backupTenant(cfg, t),
+  listBackups: (cfg, ns) => backupMod.listBackups(cfg, ns),
+  podSnapshot: (cfg, t) => podSnapshot(cfg, t),
+};
+
+// A digest ("sha256:<hex>") or an image tag — the only two things the chart's
+// imageRef helper accepts. Anything else is a typo we bounce at the form.
+export const DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
@@ -40,7 +61,7 @@ async function runProvisioning(cfg: Config, store: Store, provisioner: Provision
   }
 }
 
-export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log) {
+export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log, adminOps: AdminOps = realAdminOps) {
   const auth = createAuthService(cfg, store);
 
   function ensureTenant(subject: string, email: string): Tenant {
@@ -93,14 +114,79 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         );
         return html(tpl.startingPage());
       }
-      if (t.state === 'running') return redirect(tenantUrl(cfg, t.ns));
+      // K8S-3: land the user INSIDE their workspace. They authenticated here
+      // moments ago against the org IdP; making them hunt for a pairing code
+      // that only exists inside the pod was the single worst step of the
+      // flow. `signInUrl` mints a one-shot, short-lived, email-bound token the
+      // tenant redeems for a session cookie (src/handoff.ts, server/handoff.ts).
+      if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
       return html(tpl.unavailablePage(t.state));
+    }
+
+    // Feeds the progress view on the starting page. Returns the SAME shape
+    // whatever happens, so the page never has to handle an error envelope;
+    // `redirect` is only ever present once the tenant is genuinely ready.
+    if (url.pathname === '/api/progress') {
+      if (!principal) return json({ phase: 'unavailable', steps: [], title: 'Signed out', detail: 'Sign in again to continue.', slow: false, failed: true }, 401);
+      const t = store.findTenantBySubject(principal.subject);
+      if (!t) return json({ phase: 'queued', steps: [], title: 'Setting up your workspace', detail: 'Getting started…', slow: false, failed: false });
+      const snap = t.state === 'provisioning' || t.state === 'dormant'
+        ? await adminOps.podSnapshot(cfg, t).catch(() => EMPTY_SNAPSHOT)
+        : EMPTY_SNAPSHOT;
+      const elapsed = Math.max(0, Date.now() - Date.parse(t.created_at || '') || 0);
+      const p = stepsFor(t.state, snap, elapsed, cfg.orgName);
+      return json({
+        ...p,
+        ...(p.phase === 'ready' ? { redirect: signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email) } : {}),
+      });
     }
 
     if (url.pathname === '/admin') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      return html(tpl.adminPage(store.listTenants(), principal.email));
+      const tenants = store.listTenants();
+      const backups: Record<string, { count: number; newestMs: number | null }> = {};
+      for (const t of tenants) {
+        const list = adminOps.listBackups(cfg, t.ns);
+        backups[t.ns] = { count: list.length, newestMs: list[0]?.mtimeMs ?? null };
+      }
+      return html(tpl.adminPage(tenants, principal.email, backups));
+    }
+
+    // K8S-3 §2: set the digest the reconcile loop converges this tenant to.
+    // The upgrade itself happens on a later tick, and only when the tenant
+    // has no turn in flight — this route just records intent.
+    const digestAction = /^\/admin\/tenants\/([^/]+)\/digest$/.exec(url.pathname);
+    if (digestAction && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const subject = digestAction[1];
+      const t = store.findTenantBySubject(subject);
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      if (t.state === 'deleted') return html(tpl.errorPage(409, 'tenant is deleted'), 409);
+      const form = await req.formData().catch(() => null);
+      const digest = String(form?.get('digest') || '').trim();
+      if (!DIGEST_RE.test(digest)) return html(tpl.errorPage(400, 'digest must be an image tag or sha256:<hex> digest'), 400);
+      store.setDesiredDigest(subject, digest);
+      log(`[admin] ${t.ns} desired_digest set to ${digest} by ${principal.email}`);
+      return redirect('/admin');
+    }
+
+    // K8S-3 §3: on-demand backup (scheduled ones run from src/reconcile.ts).
+    const backupAction = /^\/admin\/tenants\/([^/]+)\/backup$/.exec(url.pathname);
+    if (backupAction && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const t = store.findTenantBySubject(backupAction[1]);
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      if (t.state !== 'running') return html(tpl.errorPage(409, `cannot back up a tenant in state ${t.state}`), 409);
+      try {
+        const b = await adminOps.backupTenant(cfg, t);
+        log(`[admin] ${t.ns} backed up (${b.name}, ${b.bytes} bytes) by ${principal.email}`);
+      } catch (e) {
+        return html(tpl.errorPage(500, (e as Error).message), 500);
+      }
+      return redirect('/admin');
     }
 
     const adminAction = /^\/admin\/tenants\/([^/]+)\/(suspend|resume|delete)$/.exec(url.pathname);

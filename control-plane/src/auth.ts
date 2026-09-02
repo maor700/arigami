@@ -68,7 +68,18 @@ export function createAuthService(cfg: Config, store: Store) {
     if (!oidcEnabled()) throw new Error('CP_OIDC_ISSUER / CP_OIDC_CLIENT_ID not configured');
     if (oidcConfig) return oidcConfig;
     const client = await import('openid-client');
-    oidcConfig = await client.discovery(new URL(cfg.oidcIssuer), cfg.oidcClientId, cfg.oidcClientSecret || undefined);
+    // openid-client v6 (oauth4webapi) refuses plain-http endpoints unless
+    // explicitly allowed. An http:// issuer is only ever a dev/test IdP (the
+    // k3d proof's mock IdP, a local Keycloak) — honour it instead of failing
+    // with an opaque "only https is allowed"; real IdPs stay strict https.
+    const insecure = cfg.oidcIssuer.startsWith('http://');
+    oidcConfig = await client.discovery(
+      new URL(cfg.oidcIssuer),
+      cfg.oidcClientId,
+      cfg.oidcClientSecret || undefined,
+      undefined,
+      insecure ? { execute: [client.allowInsecureRequests] } : undefined,
+    );
     return oidcConfig;
   }
 

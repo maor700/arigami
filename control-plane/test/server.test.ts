@@ -7,6 +7,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { loadConfig } from '../src/config.js';
 import { openDb, createStore, type Tenant } from '../src/db.js';
 import { createApp, type Provisioner } from '../src/server.js';
+import { EMPTY_SNAPSHOT } from '../src/progress.js';
 
 function fakeProvisioner() {
   const calls: string[] = [];
@@ -69,16 +70,40 @@ describe('GET /', () => {
     store.createUser('user-1', 'bob@example.com', 'user');
     const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('starting');
+    // K8S-3: the wait is a live progress view, not a meta-refresh line.
+    const page = await res.text();
+    expect(page).toContain('Setting up your workspace');
+    expect(page).toContain('/api/progress');
     await tick();
     expect(calls).toContain('provision:user-1');
     expect(store.findTenantBySubject('user-1')?.state).toBe('running');
   });
 
-  test('a running tenant redirects straight to its URL', async () => {
+  // K8S-3: a running tenant is entered SIGNED IN — the user authenticated here
+  // seconds ago, so the control-plane mints a one-shot handoff instead of
+  // dropping them on the tenant's pairing screen.
+  test('a running tenant redirects into a one-shot sign-in on its URL', async () => {
     const { app, store } = setup();
     store.createUser('user-1', 'bob@example.com', 'user');
     const t = store.createTenant('user-1', 'bob@example.com', { desiredDigest: 'sha256:test' });
+    store.setTenantState(t.subject, 'running');
+    const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(`http://${t.ns}.example.test`);
+    expect(loc.pathname).toBe('/__api/auth/handoff');
+    const token = loc.searchParams.get('t')!;
+    // it names THIS user, is short-lived, and is not the secret itself
+    const payload = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8'));
+    expect(payload.email).toBe('bob@example.com');
+    expect(payload.exp - Date.now()).toBeLessThanOrEqual(2 * 60_000);
+    expect(res.headers.get('location')).not.toContain(t.handoff_secret);
+  });
+
+  test('a tenant from before the handoff existed still works — plain URL, pairing screen', async () => {
+    const { app, store } = setup();
+    store.createUser('user-1', 'bob@example.com', 'user');
+    const t = store.createTenant('user-1', 'bob@example.com', { desiredDigest: 'sha256:test', handoffSecret: '' });
     store.setTenantState(t.subject, 'running');
     const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
     expect(res.status).toBe(302);
@@ -192,5 +217,87 @@ describe('GET /__health', () => {
     const res = await app.handle(new Request('http://localhost:8090/__health'));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+});
+
+// ---- K8S-3 admin routes: set-digest + on-demand backup ------------------------
+
+import { type AdminOps } from '../src/server.js';
+
+function setupK8s3() {
+  const cfg = loadConfig({
+    CP_PUBLIC_URL: 'http://localhost:8090',
+    CP_ORG_DOMAIN: 'example.test',
+    CP_URL_SCHEME: 'http',
+    ALLOWED_EMAIL_DOMAINS: 'example.com',
+    CP_IMAGE_TAG: 'digest-a',
+  } as unknown as NodeJS.ProcessEnv);
+  const store = createStore(openDb(':memory:'));
+  const { p, calls } = fakeProvisioner();
+  const backupCalls: string[] = [];
+  const adminOps: AdminOps = {
+    async backupTenant(_cfg, t) { backupCalls.push(t.ns); return { name: 'arigami-backup-x.tgz', bytes: 123 }; },
+    listBackups: () => [{ name: 'arigami-backup-x.tgz', bytes: 123, mtimeMs: 1700000000000 }],
+    async podSnapshot() { return { ...EMPTY_SNAPSHOT }; },
+  };
+  const app = createApp(cfg, store, p, () => {}, adminOps);
+  const admin = () => { store.createUser('adm', 'root@example.com', 'admin'); return cookieFor(store, 'adm'); };
+  const user = (s = 'u1') => { store.createUser(s, `${s}@example.com`, 'user'); store.createTenant(s, `${s}@example.com`, { desiredDigest: 'digest-a' }); store.setRunningDigest(s, 'digest-a'); store.setTenantState(s, 'running'); };
+  return { app, store, calls, backupCalls, admin, user };
+}
+
+describe('POST /admin/tenants/:subject/digest (K8S-3)', () => {
+  test('records desired_digest for the reconcile loop; does NOT provision inline', async () => {
+    const { app, store, calls, admin, user } = setupK8s3();
+    const cookie = admin(); user('u1');
+    const res = await app.handle(new Request('http://localhost:8090/admin/tenants/u1/digest', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'digest=sha256:beef',
+    }));
+    expect(res.status).toBe(302);
+    expect(store.findTenantBySubject('u1')!.desired_digest).toBe('sha256:beef');
+    expect(store.findTenantBySubject('u1')!.running_digest).toBe('digest-a'); // reconcile's job, not the form's
+    expect(calls.filter((c) => c.startsWith('provision:')).length).toBe(0);
+  });
+
+  test('rejects a malformed digest with 400', async () => {
+    const { app, store, admin, user } = setupK8s3();
+    const cookie = admin(); user('u1');
+    const res = await app.handle(new Request('http://localhost:8090/admin/tenants/u1/digest', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'digest=' + encodeURIComponent('bad digest with spaces'),
+    }));
+    expect(res.status).toBe(400);
+    expect(store.findTenantBySubject('u1')!.desired_digest).toBe('digest-a');
+  });
+
+  test('plain users cannot set digests (403)', async () => {
+    const { app, store, user } = setupK8s3();
+    user('u1');
+    const res = await app.handle(new Request('http://localhost:8090/admin/tenants/u1/digest', {
+      method: 'POST', headers: { cookie: cookieFor(store, 'u1'), 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'digest=sha256:beef',
+    }));
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /admin/tenants/:subject/backup (K8S-3)', () => {
+  test('runs a backup for a running tenant', async () => {
+    const { app, backupCalls, admin, user } = setupK8s3();
+    const cookie = admin(); user('u1');
+    const res = await app.handle(new Request('http://localhost:8090/admin/tenants/u1/backup', { method: 'POST', headers: { cookie } }));
+    expect(res.status).toBe(302);
+    expect(backupCalls.length).toBe(1);
+  });
+
+  test('409 for a tenant that is not running', async () => {
+    const { app, store, backupCalls, admin } = setupK8s3();
+    const cookie = admin();
+    store.createUser('u2', 'u2@example.com', 'user');
+    store.createTenant('u2', 'u2@example.com', { desiredDigest: 'digest-a' }); // still provisioning
+    const res = await app.handle(new Request('http://localhost:8090/admin/tenants/u2/backup', { method: 'POST', headers: { cookie } }));
+    expect(res.status).toBe(409);
+    expect(backupCalls).toEqual([]);
   });
 });

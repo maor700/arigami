@@ -1,0 +1,43 @@
+# K8S-3 pilot overlay for the disposable k3d proof (docs/CONTROL-PLANE.md
+# "K8S-3 — proof on k3d"): the REAL image and chart mechanics, but sized so
+# TWO tenants fit next to the live host on the 3.8GB VPS. Production sizing
+# stays in values.yaml/values-real.yaml — these numbers would OOM a real
+# working session and exist only to prove control-plane mechanics.
+image:
+  repository: ghcr.io/maor700/arigami
+  tag: k8s3-a
+  pullPolicy: IfNotPresent
+
+ingress:
+  className: traefik
+  domain: localtest.me
+  tls:
+    enabled: false
+
+networkPolicy:
+  ingressNamespace: kube-system
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 300Mi
+  limits:
+    cpu: "2"
+    memory: 1536Mi
+
+shm:
+  sizeLimit: 256Mi
+
+persistence:
+  size: 2Gi
+
+# Same "exactly one pod" posture as the shipped defaults (values.yaml §5
+# decision), scaled to this overlay's pod size.
+resourceQuota:
+  requests:
+    cpu: 200m
+    memory: 300Mi
+  limits:
+    cpu: "3"
+    memory: 2Gi
+  storageRequests: 4Gi

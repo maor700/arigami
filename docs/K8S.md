@@ -92,10 +92,30 @@ startup probe, not a readiness flap, is what covers the clone). Test:
 entry.
 
 **Known gap, documented not fixed**: the PRD also mentions "`+ optional
-ref`" — `resolveSource`'s `gitClone` always does `git clone --depth 1` of the
-default branch, no `--branch`/ref pinning. Out of scope for the "smallest
-change that makes `ARIGAMI_BUNDLE` work" this wave asked for; a later wave
-adding `ARIGAMI_BUNDLE_REF` would need one line in `gitClone`.
+ref`" — `resolveSource`'s `gitClone` always clones the default branch, no
+`--branch`/ref pinning. Out of scope for the "smallest change that makes
+`ARIGAMI_BUNDLE` work" this wave asked for; a later wave adding
+`ARIGAMI_BUNDLE_REF` would need one line in `gitClone`.
+
+**K8S-3 updates to this mechanism** (proved live in the pilot run,
+`docs/CONTROL-PLANE.md`):
+
+- **The env bundle is TRUSTED** — applied like a shipped bundle: skills land
+  active (not as pending proposals) and `enabled: true` cron jobs really run.
+  Rationale: whoever sets the pod env controls the pod spec/machine already —
+  the pending-proposal gate protects a user from a bundle handed to them
+  mid-flight, not from their own platform operator. This is what makes an org
+  tenant boot "already configured" instead of full of approval prompts
+  (`server/profiles.ts` `applyBundleEnv`, test: `test/profiles.test.ts`).
+- **Dumb-HTTP bundle sources work**: `gitClone` falls back from `--depth 1`
+  to a full clone when the remote can't serve shallow (a bare repo behind any
+  static file server — git's dumb HTTP transport). Found live: the pilot's
+  fixture bundle server is exactly such a remote, and the first boot failed
+  with `dumb http transport does not support shallow capabilities`.
+- A bundle-apply FAILURE does not block boot: the host logs
+  `ARIGAMI_BUNDLE apply failed: …` and starts anyway; since nothing wrote
+  `profile.json`, the next boot retries. Both sides of this were observed
+  live (failed clone on first boot → fixed source → pod restart applied it).
 
 ## The chart
 
@@ -444,3 +464,33 @@ gone-on-return.
 Teardown: `k3d cluster delete arigami-k8s1-real`, `docker rmi` on the built
 image + the two k3d support images, all removed by name. `docker ps -a` /
 `docker images` both empty afterward; disk back to 14GB free.
+
+## K8S-3 addenda to the chart
+
+Three chart-level changes landed with the K8S-3 wave (control-plane
+reconcile/upgrades/backups — see `docs/CONTROL-PLANE.md` for those, and
+`docs/K8S-OPERATIONS.md` for the operator material):
+
+1. **Digest-aware image references.** `image.tag` starting with `sha256:`
+   now renders `repository@sha256:…` instead of the invalid
+   `repository:sha256:…` (`templates/_helpers.tpl` `imageRef`). The
+   control-plane pins tenants by digest (`desired_digest`); without this,
+   every digest-pinned provision/upgrade failed at pull time. Tag-shaped
+   values render `repository:tag` exactly as before.
+2. **§5 quota decision — a tenant is EXACTLY ONE POD.** The default
+   `resourceQuota.requests` equals the pod's own requests, leaving zero
+   headroom for any second pod — deliberately (a compromised tenant cannot
+   schedule workloads beside itself; K8S-1's live run proved even a busybox
+   prober is rejected). Support/debug work goes through `kubectl exec` into
+   the existing pod, and K8S-3 backups exec the in-pod export CLI rather
+   than running a Job. values.yaml documents the decision AND the
+   copy-paste preset for operators who consciously want debug-pod headroom.
+3. **§6 storage class reality.** `persistence.storageClassName` stays a
+   first-class value defaulting to the cluster default class, now with the
+   real warning: node-local classes (k3d/k3s `local-path`, hostPath) pin the
+   pod to one node forever and make tenant data single-node-durable — fine
+   for a one-box pilot, wrong for a multi-node cluster, where RWO on a
+   network-attached class (EBS/GCE-PD/Ceph/Longhorn) is required. Also:
+   check the class's `reclaimPolicy` (Delete = "delete namespace deletes
+   data", the intended tenant-delete semantics; Retain if you want an undo)
+   and `allowVolumeExpansion` (local-path has none — size up front).
