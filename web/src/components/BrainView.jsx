@@ -23,6 +23,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { CronSubPanel } from './Launcher.jsx';
 import { ProposalsPane } from './SkillsView.jsx';
+import { fmtDateTime } from '../lib/time.js';
 
 function bulletLines(content) {
   return (content || '')
@@ -35,7 +36,7 @@ function bulletLines(content) {
 function fmtDate(iso) {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleString();
+    return fmtDateTime(iso);
   } catch {
     return iso;
   }

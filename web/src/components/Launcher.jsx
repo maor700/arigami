@@ -30,6 +30,7 @@ import { useModels } from '../lib/models.js';
 import { EFFORT_OPTIONS } from '../lib/effort.js';
 import { Wave, Dot, YellowButton, tint } from './ui.jsx';
 import { t, useT } from '../lib/i18n.js';
+import { fmtDateTime } from '../lib/time.js';
 
 // [value, i18n key]; labels resolved with t() at render/summary time.
 const STATE_OPTS = [
@@ -1549,7 +1550,7 @@ function scheduleSummary(schedule, t) {
   if (!schedule) return '—';
   if (schedule.kind === 'cron') return `${t('launcher.cron.kindCron')} "${schedule.value}"`;
   if (schedule.kind === 'interval') return `${t('launcher.cron.kindInterval')} ${schedule.value}`;
-  if (schedule.kind === 'at') return `${t('launcher.cron.kindAt')} ${new Date(schedule.value).toLocaleString()}`;
+  if (schedule.kind === 'at') return `${t('launcher.cron.kindAt')} ${fmtDateTime(schedule.value)}`;
   return schedule.value;
 }
 
@@ -1744,7 +1745,7 @@ export function CronSubPanel() {
               <div className="flex items-center gap-2 text-[10px] text-fgdim">
                 <span>{t('launcher.cron.metaLastRun')} {fmtAgo(cj.lastRun)}</span>
                 <span>·</span>
-                <span>{t('launcher.cron.metaNextRun')} {cj.nextRunAt ? new Date(cj.nextRunAt).toLocaleString() : '—'}</span>
+                <span>{t('launcher.cron.metaNextRun')} {cj.nextRunAt ? fmtDateTime(cj.nextRunAt) : '—'}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button

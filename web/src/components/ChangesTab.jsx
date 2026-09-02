@@ -10,6 +10,7 @@ import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faArrowDown, faArrowUp, faCaretDown, faCaretUp, faCheck, faComment, faExpand, faRotateRight, faScaleBalanced, faWandMagicSparkles, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { fmtDateTime } from '../lib/time.js';
 
 // Single-letter status chip. Maps git porcelain-ish codes to M/A/D/??.
 function StatusChip({ status }) {
@@ -561,7 +562,7 @@ export default function ChangesTab({ session, active }) {
         {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{t('chat.filesCount', { n: files.length })}</span>}
         {desktop && expl && (
           <span
-            title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + new Date(expl.generatedAt).toLocaleString() : '')}
+            title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + fmtDateTime(expl.generatedAt) : '')}
             className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] text-fgdim"
           >
             <Icon icon={faWandMagicSparkles} /> {t('chat.explained')}{expl.language ? ` · ${expl.language}` : ''}

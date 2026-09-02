@@ -101,3 +101,26 @@ test('B1/B7/B21/B31: known statuses get a locale label, custom ones pass through
   expect(src('components/Rail.jsx')).toContain('[statusLabel(controller.status)');
   expect(src('components/SessionView.jsx')).toContain('statusLabel(session.status || cState)');
 });
+
+test('B4/B22: Hebrew gets a gap between number and unit; dates follow the UI language', async () => {
+  const prefs = await import(path.join(ROOT, 'web/src/lib/prefs.js'));
+  const tm = await import(path.join(ROOT, 'web/src/lib/time.js'));
+  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  prefs.setPrefs({ language: 'he' });
+  expect(tm.relTime(ago(86))).toBe('1 שע');
+  expect(tm.relTime(ago(12))).toBe('12 דק');
+  expect(tm.untilTime(Date.now() + (86 * 60 + 5) * 1000)).toBe('1 שע 26 דק');
+  expect(tm.dateLocale()).toBe('he-IL');
+  const d = new Date(2026, 7, 30, 10, 38); // Aug 30 2026 10:38 local
+  expect(tm.fmtDateTime(d)).toBe(d.toLocaleString('he-IL'));
+  expect(tm.fmtDate(d)).toBe(d.toLocaleDateString('he-IL'));
+  expect(tm.fmtDateTime('garbage')).toBe('');
+  prefs.setPrefs({ language: 'en' });
+  expect(tm.relTime(ago(86))).toBe('1h');
+  expect(tm.untilTime(Date.now() + (86 * 60 + 5) * 1000)).toBe('1h 26m');
+  expect(tm.fmtDateTime(d)).toBe(d.toLocaleString('en-US'));
+  // the raw toLocaleString() calls are gone from the surfaces the audit listed
+  for (const f of ['components/BrainView.jsx', 'components/Launcher.jsx', 'components/Rail.jsx', 'components/MergeCard.jsx', 'components/ChangesTab.jsx', 'components/settings/Automation.jsx', 'components/settings/Channels.jsx']) {
+    expect(src(f)).not.toMatch(/\.toLocale(?:Date)?String\(\)/);
+  }
+});

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { statusLabel } from '../lib/status.js';
-import { relTime } from '../lib/time.js';
+import { relTime, fmtDateTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
@@ -600,7 +600,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
                         <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: new Date(nextCron).toLocaleString() }) } : {})}>
+                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
                         <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
                         {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
                       </span>

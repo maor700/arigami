@@ -8,6 +8,7 @@ import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
 import { Section, Field, Toggle, BTN, INPUT } from './shared.jsx';
+import { fmtDateTime } from '../../lib/time.js';
 
 // Toggling creates/removes the backing CronTrigger server-side
 // (server/brain.ts setHeartbeat) — this only reflects what GET /brain returns.
@@ -76,7 +77,7 @@ function Telemetry() {
       >
         <Toggle on={!!st?.enabled} disabled={!st || busy || !admin || pinned} onChange={toggle} />
       </Field>
-      <Field label={t('telemetry.preview')} hint={st?.lastSentAt ? t('telemetry.lastSent', { when: new Date(st.lastSentAt).toLocaleString(), n: st.pending }) : t('telemetry.neverSent', { n: st?.pending ?? 0 })}>
+      <Field label={t('telemetry.preview')} hint={st?.lastSentAt ? t('telemetry.lastSent', { when: fmtDateTime(st.lastSentAt), n: st.pending }) : t('telemetry.neverSent', { n: st?.pending ?? 0 })}>
         <button type="button" className={BTN} disabled={!st} onClick={() => setShow((v) => !v)}>{show ? t('telemetry.hidePreview') : t('telemetry.showPreview')}</button>
       </Field>
       {show && st?.preview && (
