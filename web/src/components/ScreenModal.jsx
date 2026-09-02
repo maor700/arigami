@@ -88,13 +88,19 @@ export default function ScreenModal({ context, onClose }) {
     else shellRef.current?.requestFullscreen().catch(() => {});
   };
 
+  // CHAT1: a Done that did not land (the request already closed — timed out,
+  // session restarted) is said out loud instead of a button that just
+  // re-enables; the human then tells the agent in the composer.
+  const [doneErr, setDoneErr] = useState(null);
   const done = async () => {
     if (!req) return;
     setBusy(true);
+    setDoneErr(null);
     try {
       await answerScreenRequest(context.sessionId, req.requestId, note.trim(), true);
       window.dispatchEvent(new CustomEvent('host:focus-input'));
-    } catch {
+    } catch (e) {
+      setDoneErr(e?.status === 404 ? t('chat.screenDoneFailed') : String(e?.message || e).replace(/^HTTP \d+ — /, ''));
       setBusy(false);
     }
   };
@@ -231,6 +237,9 @@ export default function ScreenModal({ context, onClose }) {
               {t('chat.screenRequestDone')}
             </button>
           </div>
+        )}
+        {req && doneErr && (
+          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-[11px] font-bold text-[#9c3b33]">{doneErr}</div>
         )}
       </div>
     </div>,

@@ -35,21 +35,43 @@ export function mergeChatEvents(existing, snapshot) {
 // FULL narration list (the last one wins); the update rows themselves are
 // dropped — nothing renders them.
 // A1: the same fold applies to {kind:'agent-card'} + 'agent-card-update' (keyed by cardId).
+// CHAT1: the same fold covers the answer rows — `permission-answer` onto its
+// `permission-request` (and, for a "Question for you" card, onto the
+// AskUserQuestion `tool-use` by toolUseId, carrying the picks) and
+// `screen-request-answer` onto its `screen-request`. Live, store.js patches
+// those cards in place and never appends the answer row; on (re)load the
+// snapshot must match, otherwise a reloaded page (or the other device) shows
+// an answered question with live buttons again.
+const FOLDED = new Set(['setup-update', 'agent-card-update', 'permission-answer', 'screen-request-answer']);
 export function foldSetupUpdates(events) {
-  if (!Array.isArray(events) || !events.some((e) => e?.kind === 'setup-update' || e?.kind === 'agent-card-update')) return events;
+  if (!Array.isArray(events) || !events.some((e) => FOLDED.has(e?.kind))) return events;
   const out = [];
   const cardAt = new Map(); // requestId / cardId -> index in `out`
+  const toolAt = new Map(); // toolUseId -> index in `out` (AskUserQuestion cards)
   for (const e of events) {
-    if (e?.kind === 'setup' || e?.kind === 'agent-card') {
+    if (e?.kind === 'setup' || e?.kind === 'agent-card' || e?.kind === 'permission-request' || e?.kind === 'screen-request') {
       cardAt.set(e.requestId ?? e.cardId ?? e.id, out.length);
       out.push(e);
       continue;
     }
+    if (e?.kind === 'tool-use' && e.toolUseId) toolAt.set(e.toolUseId, out.length);
     if (e?.kind === 'setup-update' || e?.kind === 'agent-card-update') {
       const idx = cardAt.get(e.requestId ?? e.cardId ?? e.id);
       if (idx == null) continue; // update without its card in this page — nothing to show
       const { kind: _k, requestId: _r, cardId: _c, ts: _ts, seq: _seq, ...patch } = e;
       out[idx] = { ...out[idx], ...patch };
+      continue;
+    }
+    if (e?.kind === 'permission-answer') {
+      const idx = cardAt.get(e.requestId);
+      if (idx != null && out[idx].answered == null) out[idx] = { ...out[idx], answered: e.behavior, answeredMessage: e.message };
+      const ti = e.toolUseId ? toolAt.get(e.toolUseId) : undefined;
+      if (ti != null && out[ti].answered == null) out[ti] = { ...out[ti], answered: e.behavior, ...(e.answers ? { answers: e.answers } : {}) };
+      continue;
+    }
+    if (e?.kind === 'screen-request-answer') {
+      const idx = cardAt.get(e.requestId);
+      if (idx != null && out[idx].answered == null) out[idx] = { ...out[idx], answered: true, note: e.note, takenOver: !!e.takenOver };
       continue;
     }
     out.push(e);

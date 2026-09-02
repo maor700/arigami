@@ -20,11 +20,20 @@ export function ActionCard({ sessionId, action }) {
   // A3: "auto-approve this kind from now on" — only meaningful for an action
   // raised by an agent session WITH a kind (stored in agent.json autoApprove).
   const [auto, setAuto] = useState(false);
+  // CHAT1: an answer the host refused (session archived, over budget, host
+  // unreachable) is shown on the card — never a click that silently does nothing.
+  const [err, setErr] = useState(null);
   if (!action || !Array.isArray(action.buttons)) return null;
   const canAuto = !!(action.agent && action.kind);
   const answer = async (value) => {
     setBusy(true);
-    try { await api.post(`/sessions/${sessionId}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) }); } catch { setBusy(false); }
+    setErr(null);
+    try {
+      await api.post(`/sessions/${sessionId}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) });
+    } catch (e) {
+      setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
+      setBusy(false);
+    }
   };
   // Escape hatch: none of the options fit (or the prompt is stale) — clear the
   // sticky bar and keep chatting. The tool call already returned, so this
@@ -82,6 +91,11 @@ export function ActionCard({ sessionId, action }) {
           {t('chat.actionAutoApprove', { kind: action.kind, agent: action.agent.name })}
         </label>
       )}
+      {err && (
+        <div data-action-error dir="auto" className="mt-2.5 text-[11px] font-bold text-[#9c3b33]">
+          {t('chat.answerFailed')} <span className="font-mono font-normal">{err}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -115,14 +129,17 @@ export function ActionBar({ session }) {
   const action = session.action;
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(false); // A3: auto-approve this kind from now on
+  const [err, setErr] = useState(null); // CHAT1: a refused answer is shown, not swallowed
   if (!action || !Array.isArray(action.buttons)) return null;
   const canAuto = !!(action.agent && action.kind);
   const answer = async (value) => {
     setBusy(true);
+    setErr(null);
     try {
       await api.post(`/sessions/${session.id}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) });
-    } catch {
       /* bar clears via WS echo on success */
+    } catch (e) {
+      setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
     }
     setBusy(false);
   };
@@ -143,6 +160,11 @@ export function ActionBar({ session }) {
         <span className="font-mono text-[10px] text-[#8a7a2f]">
           {t('rail.revealedBy')}
         </span>
+        {err && (
+          <span data-action-error dir="auto" className="block text-[11px] font-bold text-[#9c3b33]">
+            {t('chat.answerFailed')} <span className="font-mono font-normal">{err}</span>
+          </span>
+        )}
       </span>
       <span className="ms-auto flex shrink-0 flex-wrap items-center gap-2">
         {canAuto && (
