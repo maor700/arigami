@@ -158,6 +158,20 @@ export async function clearSessionConversation(session) {
   if (ok) await api.post(`/sessions/${session.id}/clear`).catch((e) => toastError(`Clear failed: ${e.message || e}`));
 }
 
+// SIMPLE1: per-session chat presentation ('simple' | 'full'). Stored in
+// session.metadata.chatMode so the host can read it on the next turn (it
+// injects the brevity rule while 'simple'). Optimistic: the local copy flips at
+// once, the server's session-updated broadcast confirms it.
+export async function setChatMode(session, mode) {
+  if (!session?.id || (mode !== 'simple' && mode !== 'full')) return;
+  setState({
+    sessions: state.sessions.map((s) =>
+      s.id === session.id ? { ...s, metadata: { ...(s.metadata || {}), chatMode: mode } } : s
+    ),
+  });
+  await api.patch(`/sessions/${session.id}`, { metadata: { chatMode: mode } }).catch((e) => toastError(e));
+}
+
 export async function interruptSession(sessionId) {
   if (!sessionId) return;
   await api.post(`/sessions/${sessionId}/interrupt`).catch(() => {});

@@ -5,8 +5,9 @@ import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
+import { chatModeOf } from '../lib/chatMode.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
 import { useVoice, toggleRecording } from '../lib/voice.js';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
@@ -329,6 +330,47 @@ export function BornFromChip({ session, className = '' }) {
   );
 }
 
+/* ---------- SIMPLE1: chat view toggle (פשוט | טרמינל) --------------------- */
+
+// Per-session, persisted in metadata.chatMode (the host reads it every turn).
+// The Simple default for an unset session on a phone-width viewport is what
+// the human actually sees — persist it, so the model answers briefly too.
+export function ChatModeToggle({ session }) {
+  const t = useT();
+  const isDesktop = useIsDesktop();
+  const mode = chatModeOf(session, isDesktop);
+  const stored = session.metadata?.chatMode;
+  useEffect(() => {
+    if (!isDesktop && stored == null && !session.archived) setChatMode({ id: session.id }, 'simple');
+  }, [session.id, isDesktop, stored, session.archived]);
+  const seg = (value, label) => {
+    const active = mode === value;
+    return (
+      <button
+        type="button"
+        data-chat-mode-btn={value}
+        aria-pressed={active}
+        onClick={() => { if (!active) setChatMode(session, value); }}
+        className={`h-full cursor-pointer px-2 text-[10.5px] leading-none ${active ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:text-fg'}`}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <span
+      role="group"
+      aria-label={t('rail.chatMode')}
+      title={t('rail.chatModeHint')}
+      data-chat-mode-toggle={mode}
+      className="flex h-[22px] shrink-0 overflow-hidden rounded-full border-[1.5px] border-border bg-bg font-mono"
+    >
+      {seg('simple', t('rail.chatModeSimple'))}
+      {seg('full', t('rail.chatModeTerminal'))}
+    </span>
+  );
+}
+
 function TerminalHeader({ session }) {
   const [procPanel, setProcPanel] = useState(false);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
@@ -356,6 +398,7 @@ function TerminalHeader({ session }) {
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
+        <ChatModeToggle session={session} />
         <TermControls session={session} />
         <StatusChip session={session} />
       </div>
@@ -1540,6 +1583,7 @@ function ContentTab({ tab }) {
  */
 export function AgentHomeChat({ session, events, loading, agent, onOpenSession }) {
   const tt = useT();
+  const isDesktop = useIsDesktop();
   const [busy, setBusy] = useState(false);
   const ask = lastHumanText(events);
   const toWork = async () => {
@@ -1566,6 +1610,7 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
         working={session.claude?.state === 'working'}
         awaiting={session.claude?.state === 'awaiting-input'}
         action={session.action}
+        mode={chatModeOf(session, isDesktop)}
       />
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[10.5px] text-fgdim">
         <button
@@ -1704,6 +1749,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                     working={session.claude?.state === 'working'}
                     awaiting={session.claude?.state === 'awaiting-input'}
                     action={session.action}
+                    mode={chatModeOf(session, isDesktop)}
                   />
                   {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
                 </>

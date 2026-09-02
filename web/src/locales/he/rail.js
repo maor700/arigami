@@ -304,4 +304,9 @@ export const strings = {
   'waiting.do.merge': 'מזג',
   'waiting.do.raise-cap': 'הרם את התקרה',
   'waiting.do.fix': 'הסתכל',
+  // ---- SessionView.jsx: chat view (SIMPLE1) ----
+  'rail.chatMode': 'תצוגת שיחה',
+  'rail.chatModeSimple': 'פשוט',
+  'rail.chatModeTerminal': 'טרמינל',
+  'rail.chatModeHint': 'פשוט: רק השיחה, הפעולות מקופלות לשורה אחת · טרמינל: הכול',
 };

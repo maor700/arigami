@@ -459,8 +459,13 @@ export function createSession({
     archived: false,
     createdAt: now,
     updatedAt: now,
-    metadata:
-      metadata && typeof metadata === 'object' ? metadata : {},
+    metadata: {
+      // SIMPLE1: new sessions open in the Simple chat view (prose only; tool
+      // activity folded). Sessions from before this field existed keep the
+      // terminal view (the web treats "unset" as 'full' on desktop).
+      chatMode: 'simple',
+      ...(metadata && typeof metadata === 'object' ? metadata : {}),
+    },
     progress: null,
     action: null,
     tabs: [firstTab],

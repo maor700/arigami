@@ -304,4 +304,9 @@ export const strings = {
   'waiting.do.merge': 'Merge',
   'waiting.do.raise-cap': 'Raise the cap',
   'waiting.do.fix': 'Look at it',
+  // ---- SessionView.jsx: chat view (SIMPLE1) ----
+  'rail.chatMode': 'Chat view',
+  'rail.chatModeSimple': 'Simple',
+  'rail.chatModeTerminal': 'Terminal',
+  'rail.chatModeHint': 'Simple: the conversation only, actions folded into one line · Terminal: everything',
 };

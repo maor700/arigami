@@ -499,6 +499,7 @@ function spawnProc(s, resume) {
   const agentSlug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
+    id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
     capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
     hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
@@ -1580,10 +1581,31 @@ function memoryBootstrapPrefix(p) {
   return URL_GUIDANCE + identity + persona + block;
 }
 
+// SIMPLE1: the "פשוט" chat view. While a session is in Simple mode the human
+// only sees the assistant's prose (tool activity is folded behind a counter),
+// so the model has to actually answer like a person: a line or two. USER.md
+// carries the same preference globally; this is the hard per-session rule.
+// Re-read from session metadata on EVERY turn (not the spawn-time snapshot) so
+// flipping the toggle takes effect on the next message without a restart.
+export const SIMPLE_MODE_REMINDER =
+  '<system-reminder>\n' +
+  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" (פשוט) view, where only ' +
+  'your prose reaches them — tool calls, edits, bash output and thinking are folded away behind a counter. ' +
+  'Hard rule for what you write to the human in this chat: at most two sentences by default — the outcome and the one ' +
+  'thing that matters. Details only when asked. No headers, tables, bullet lists, code dumps or step-by-step narration ' +
+  'of what you did. Bad news is said first and plainly. This is a per-session rule and overrides longer-form formatting ' +
+  'guidance from anywhere else. It limits only what you write to the human — not your tool use or the work itself.\n' +
+  '</system-reminder>\n\n';
+
+export function chatModePrefix(metadata) {
+  return metadata && metadata.chatMode === 'simple' ? SIMPLE_MODE_REMINDER : '';
+}
+
 function writeUserMessage(p, text, attachments = []) {
   const content = [];
   let txt = text || '';
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
+  txt = chatModePrefix(getSession(p.id)?.metadata) + txt;
   if (attachments.length) {
     const list = attachments.map(describeAttachment).join('\n');
     txt += (txt ? '\n\n' : '') + `📎 Attached ${attachments.length} file(s) — read them as needed:\n${list}`;
