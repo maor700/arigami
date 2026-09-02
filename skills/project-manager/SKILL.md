@@ -77,7 +77,10 @@ pointers to branches/files — never pasted file contents.
 
 1. **Frame the project.** If `$ARGUMENTS` (or the seed message) doesn't make the
    goal obvious, ask the human once, up front. Write your plan to
-   `ORCHESTRATION.json` in your cwd (same schema as the dispatch skill) — your
+   `ORCHESTRATION.<your session id>.json` in your cwd (same schema as the
+   dispatch skill; project controllers all share the repos dir, so a plain
+   `ORCHESTRATION.json` is ambiguous — if you do use it, put `"master":
+   "<your session id>"` at its top level) — your
    chat is scratch; the file + one `list_sessions` poll is how you rebuild state
    after any wake or compaction.
 2. **Adopt the existing members.** For each current member, `task_session` it a
