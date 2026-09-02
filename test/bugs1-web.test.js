@@ -79,3 +79,25 @@ test('B26: phone-sized inputs are 16px (no iOS auto-zoom), desktop keeps the com
   const rail = src('components/Rail.jsx');
   expect(rail).toMatch(/flex-1 bg-transparent text-\[16px\] outline-none placeholder:text-fgdim sm:text-xs/);
 });
+
+// ---- LOW batch ---------------------------------------------------------------
+test('B1/B7/B21/B31: known statuses get a locale label, custom ones pass through', async () => {
+  const prefs = await import(path.join(ROOT, 'web/src/lib/prefs.js'));
+  const { statusLabel } = await import(path.join(ROOT, 'web/src/lib/status.js'));
+  prefs.setPrefs({ language: 'he' });
+  expect(statusLabel('In Progress')).toBe('בתהליך');
+  expect(statusLabel('Done')).toBe('הושלם');
+  expect(statusLabel('Approved')).toBe('אושר');
+  expect(statusLabel('idle')).toBe('ממתין');
+  expect(statusLabel('waiting-on-child')).toBe('ממתין לסשן-ילד');
+  expect(statusLabel('my custom status')).toBe('my custom status');
+  expect(statusLabel('')).toBe('');
+  expect(statusLabel(null)).toBe('');
+  prefs.setPrefs({ language: 'en' });
+  expect(statusLabel('In Progress')).toBe('In progress');
+  // every surface that showed the raw string now goes through statusLabel
+  expect(src('components/Rail.jsx')).toContain("statusLabel(session.status)");
+  expect(src('components/Rail.jsx')).toContain('label={statusLabel(sec.label)}');
+  expect(src('components/Rail.jsx')).toContain('[statusLabel(controller.status)');
+  expect(src('components/SessionView.jsx')).toContain('statusLabel(session.status || cState)');
+});

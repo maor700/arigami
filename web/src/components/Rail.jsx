@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { statusLabel } from '../lib/status.js';
 import { relTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
@@ -430,7 +431,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
         <span className="flex items-center gap-1.5 text-[10.5px] text-fgdim">
           <HealthDot health={health} />
           <span className="min-w-0 truncate">
-            {[session.status, relTime(session.updatedAt || session.createdAt)]
+            {[session.archived ? t('rail.archived') : statusLabel(session.status), relTime(session.updatedAt || session.createdAt)]
               .filter(Boolean)
               .join(' · ')}
           </span>
@@ -814,7 +815,7 @@ function FolderRow({
     0
   );
   const statusLine = isProject
-    ? [controller.status, relTime(controller.updatedAt || controller.createdAt)]
+    ? [statusLabel(controller.status), relTime(controller.updatedAt || controller.createdAt)]
         .filter(Boolean)
         .join(' · ')
     : count
@@ -1905,7 +1906,7 @@ export default function Rail({
         {mode === 'grouped' ? (
           sections.map((sec) => (
             <div key={sec.label}>
-              {sec.hasHeader && <GroupHeader label={sec.label} count={sec.items.length} />}
+              {sec.hasHeader && <GroupHeader label={statusLabel(sec.label)} count={sec.items.length} />}
               {sec.items.map((s) => sessionRowEl(s, { parent: parentInfoFor(s) }))}
             </div>
           ))
