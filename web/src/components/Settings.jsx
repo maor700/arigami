@@ -18,7 +18,8 @@ import Host from './settings/Host.jsx';
 import Health from './settings/Health.jsx';
 import Access from './settings/Access.jsx';
 
-export const SETTINGS_CATEGORIES = ['appearance', 'voice', 'connections', 'automation', 'host'];
+import { SETTINGS_CATEGORIES } from '../lib/route.js';
+export { SETTINGS_CATEGORIES };
 const ICONS = { appearance: faPalette, voice: faMicrophone, connections: faLink, automation: faRobot, host: faServer };
 
 export default function Settings({ category = 'appearance', section = '', initialAdd = false, onCategory, onClose }) {
