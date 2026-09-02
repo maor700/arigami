@@ -133,3 +133,21 @@ test('B24: the skill page drops the YAML frontmatter before rendering', async ()
   expect(stripFrontmatter('')).toBe('');
   expect(stripFrontmatter(null)).toBe('');
 });
+
+test('B2/B3/B6/B9/B12/B13/B15/B27/B36: wiring', () => {
+  expect(src('components/TabBar.jsx')).toContain("tab.title && tab.title !== 'Session' ? tab.title : t('rail.tabSession')");
+  expect(src('locales/he/dialogs.js')).not.toContain('ניצול שנוצל');
+  expect(src('locales/he/chat.js')).not.toContain('מקומט');
+  expect(src('components/Launcher.jsx')).toMatch(/value=\{cwd\}\s+dir="ltr"/);
+  expect(src('components/TabBar.jsx')).toMatch(/value=\{url\}\s+dir="ltr"/);
+  expect(src('components/SessionView.jsx')).toContain("['he', t('rail.hebrew')]");
+  expect(src('locales/he/rail.js')).toContain("'rail.hebrew': 'עברית'");
+  expect(src('components/ScreenSidePanel.jsx')).toContain("status !== 'connected' && own !== false");
+  expect(src('App.jsx')).toContain("if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }");
+  expect(src('App.jsx')).toMatch(/useEffect\(\(\) => \{ setRailOpen\(false\); \}, \[selectedId/);
+  expect(src('components/ChangesTab.jsx')).toContain("const noRepo = !loading && data?.emptyReason === 'no-repo';");
+  expect(src('components/ChangesTab.jsx')).toContain('{!noRepo && <div className="flex overflow-hidden');
+  expect(src('components/ChangesTab.jsx')).toContain('{noRepo ? null : desktop ? (');
+  expect(src('components/Rail.jsx')).not.toContain("if (!kids.length) api.del(`/folders/");
+  expect(src('components/Rail.jsx')).toContain("setFolderDialog({ type: 'delete', folder, kids: folderKids.get(folder.id) || [] })");
+});

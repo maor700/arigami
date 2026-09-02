@@ -1716,11 +1716,8 @@ export default function Rail({
       m.root.push({ type: 'session', id: s.id });
     });
   };
-  const deleteFolder = (folder) => {
-    const kids = folderKids.get(folder.id) || [];
-    if (!kids.length) api.del(`/folders/${folder.id}?mode=ungroup`).catch(() => {});
-    else setFolderDialog({ type: 'delete', folder, kids });
-  };
+  // B36: always confirm — an empty folder used to vanish on a single click.
+  const deleteFolder = (folder) => setFolderDialog({ type: 'delete', folder, kids: folderKids.get(folder.id) || [] });
 
   const rowProps = (s, { muted } = {}) => ({
     session: s,
