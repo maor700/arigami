@@ -127,6 +127,7 @@ export const en = {
   'integrations.oauth.cancel': 'Cancel',
 
   // Compact relative-time units — appended to a number (e.g. "5m", "4d 18h").
+  'time.unitGap': '', // between a number and its unit: '12m'
   'time.m': 'm',
   'time.h': 'h',
   'time.d': 'd',

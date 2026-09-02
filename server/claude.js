@@ -811,6 +811,28 @@ function recordTurn(id, j) {
 // the turn actually completes. This is the "auto switch when hit the limit" the
 // accounts feature was built for.
 const LIMIT_RE = /hit your (?:session|usage|weekly) limit|usage limit reached|rate limit|exceeded your.{0,20}limit|out of (?:usage|credits)/i;
+// B34: Claude Code's error_during_execution diagnostic (`[ede_diagnostic] result_type=… stop_reason=…`).
+export const EDE_DIAGNOSTIC_RE = /^\s*\[ede_diagnostic\]/;
+const INTERRUPT_WINDOW_MS = 30_000;
+
+/**
+ * B34 — the chat event for a `result` that is only Claude Code's
+ * `[ede_diagnostic] result_type=… stop_reason=…` line (error_during_execution),
+ * or null when the result is a normal one and the caller should render it as
+ * usual. Within INTERRUPT_WINDOW_MS of a host-sent interrupt it is the stop
+ * itself → a system line (never an error row: nothing failed, and the
+ * supervisor must not treat it as one). Otherwise an error row that says what
+ * happened in words, with the raw diagnostic in `detail`.
+ */
+export function resultChatEvent(j, { interruptedAt = 0, now = Date.now() } = {}) {
+  const text = j?.result || (j?.errors || []).join('; ') || '';
+  if (!j?.is_error || !EDE_DIAGNOSTIC_RE.test(text)) return null;
+  const interrupted = !!interruptedAt && now - interruptedAt < INTERRUPT_WINDOW_MS;
+  const meta = { detail: text, durationMs: j.duration_ms, costUsd: j.total_cost_usd, numTurns: j.num_turns };
+  return interrupted
+    ? { kind: 'system', text: '⏹ interrupted', ...meta }
+    : { kind: 'error', text: 'The turn ended unexpectedly (error_during_execution).', isError: true, ...meta };
+}
 // RES1 — the other way a model stops being usable: the CLI/API says the model
 // itself is gone or saturated. Same remedy as an exhausted account pool (drop a
 // rung of the model chain), so it shares the limit path below.
@@ -1277,6 +1299,20 @@ function handleEvent(id, j) {
       import('./host-control.js').then((m) => m.restarts.onSessionIdle()).catch(() => {});
       {
         const text = j.result || (j.errors || []).join('; ') || '';
+        // B34: `[ede_diagnostic] …` is Claude Code's internal note on an
+        // error_during_execution result — raw telemetry, not a message. After
+        // an interrupt WE sent (Esc) it is just the stop: a quiet system line
+        // and no recovery branch (nothing failed). See resultChatEvent().
+        {
+          const p = record(id);
+          const ede = resultChatEvent(j, { interruptedAt: p?.interruptedAt || 0 });
+          if (ede) {
+            if (p) p.interruptedAt = 0;
+            appendChat(id, ede);
+            recordTurn(id, j);
+            break;
+          }
+        }
         appendChat(id, {
           kind: j.is_error ? 'error' : 'result',
           text,
@@ -1938,6 +1974,8 @@ export function summarizeSession(id, { full = false } = {}) {
   const langLine =
     s.statusSummary?.lang === 'en'
       ? `Write the ENTIRE summary (and the tldr) in English, regardless of the conversation's language. `
+      : s.statusSummary?.lang === 'he'
+      ? `Write the ENTIRE summary (and the tldr) in Hebrew, in Hebrew SCRIPT, regardless of the conversation's language — Latin script ONLY for exact identifiers that must be copied verbatim (ticket & PR numbers, file/branch names, code symbols, URLs). `
       : `Write in the language the conversation is in, and CRITICALLY in that language's SCRIPT. If it is not English (e.g. Hebrew), Latin-script words break the ` +
         `right-to-left flow and become unreadable — so write EVERYTHING in Hebrew letters: use a real Hebrew word for ordinary dev terms (review→סקירה, reviewer→מבקר, listener→מאזין, ` +
         `merge→מיזוג, tests→בדיקות, bug→באג, CI→בדיקות אוטומטיות, approval→אישור), and for a loan word with no natural translation, TRANSLITERATE it into Hebrew letters rather than leaving it in Latin. ` +
@@ -1961,6 +1999,7 @@ export function summarizeSession(id, { full = false } = {}) {
 export function interrupt(id) {
   const p = record(id);
   if (!isRunning(id)) return false;
+  p.interruptedAt = Date.now(); // B34: the next error_during_execution result is this stop, not a failure
   try {
     p.child.stdin.write(
       JSON.stringify({ type: 'control_request', request_id: `req_${++reqSeq}`, request: { subtype: 'interrupt' } }) + '\n'

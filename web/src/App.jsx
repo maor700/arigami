@@ -30,7 +30,8 @@ import ScreenSidePanel from './components/ScreenSidePanel.jsx';
 import ScreenModal from './components/ScreenModal.jsx';
 import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
-import Settings, { SETTINGS_CATEGORIES } from './components/Settings.jsx';
+import Settings from './components/Settings.jsx';
+import { parseHash, parseLocation, routeFromState, sessionFromSearch } from './lib/route.js';
 import SkillsView from './components/SkillsView.jsx';
 import BrainView from './components/BrainView.jsx';
 import AgentView from './components/AgentView.jsx';
@@ -70,45 +71,7 @@ function scratchName(sessions) {
   return `scratch-${n + 1}`;
 }
 
-// ---- URL routing (hash-based) ---------------------------------------------
-// Each main view is reflected in window.location.hash so pages are deep-linkable
-// and survive a refresh. parseHash → the view state; routeFromState → the hash.
-// The two are inverses so syncing them can't drift.
-function parseHash(hash) {
-  const h = (hash || '').replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');
-  const seg = h.split('/');
-  switch (seg[0]) {
-    // SET: #/settings/<category>[/<section>]; the old standalone pages map onto
-    // Settings → Connections so shared links keep working.
-    case 'settings': return { view: 'settings', cat: SETTINGS_CATEGORIES.includes(seg[1]) ? seg[1] : 'appearance', section: seg[2] || '' };
-    case 'accounts': return { view: 'settings', cat: 'connections', section: 'claude', add: seg[1] === 'add' };
-    case 'integrations': return { view: 'settings', cat: 'connections', section: 'integrations' };
-    case 'skills': return { view: 'skills' };
-    case 'brain': return { view: 'brain' };
-    // UX1: #/agents/<slug>[/<tab>] — the agent surface is deep-linkable per tab
-    // (a receipt's "open home" lands straight on the בית tab).
-    case 'agents': return seg[1] ? { view: 'agent', slug: decodeURIComponent(seg[1]), tab: seg[2] ? decodeURIComponent(seg[2]) : '' } : { view: 'home' };
-    case 'setup': return { view: 'setup' };
-    case 'wizard': return { view: 'home', wizard: true };
-    case 'new':
-    case 'launcher': return { view: 'launcher', mode: ['ticket', 'empty', 'trigger'].includes(seg[1]) ? seg[1] : 'ticket' };
-    case 'ticket': return seg[1] ? { view: 'ticket', id: decodeURIComponent(seg[1]) } : { view: 'home' };
-    case 'session': return seg[1] ? { view: 'session', id: decodeURIComponent(seg[1]) } : { view: 'home' };
-    default: return { view: 'home' };
-  }
-}
-
-function routeFromState(s) {
-  if (s.settingsOpen) return `#/settings/${s.settingsCat || 'appearance'}${s.settingsSection ? `/${s.settingsSection}` : ''}`;
-  if (s.skillsOpen) return '#/skills';
-  if (s.brainOpen) return '#/brain';
-  if (s.agentOpen) return `#/agents/${encodeURIComponent(s.agentOpen)}${s.agentTab && s.agentTab !== 'home' ? `/${encodeURIComponent(s.agentTab)}` : ''}`;
-  if (s.setupOpen) return '#/setup';
-  if (s.launcher) return s.launcher.mode && s.launcher.mode !== 'ticket' ? `#/new/${s.launcher.mode}` : '#/new';
-  if (s.previewTicket) return `#/ticket/${encodeURIComponent(s.previewTicket)}`;
-  if (s.selectedId) return `#/session/${encodeURIComponent(s.selectedId)}`;
-  return '#/';
-}
+// ---- URL routing lives in lib/route.js (parseHash / parseLocation / routeFromState).
 
 // The session-type tab's id (where the chat/terminal lives) for a session.
 function sessionTabId(session) {
@@ -216,7 +179,8 @@ function Cockpit() {
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
   // right page. The two sync effects below keep hash ↔ state aligned thereafter.
-  const initial = parseHash(window.location.hash);
+  // B11: the host's `/__host/?session=<id>` links resolve like `#/session/<id>`.
+  const initial = parseLocation(window.location);
   const [selectedId, setSelectedId] = useState(initial.view === 'session' ? initial.id : null);
   const [launcher, setLauncher] = useState(initial.view === 'launcher' ? { mode: initial.mode } : null); // null | {mode:'ticket'|'empty'|'trigger'}
   const [previewTicket, setPreviewTicket] = useState(initial.view === 'ticket' ? initial.id : null); // ticket id shown full-pane (pending preview)
@@ -256,6 +220,8 @@ function Cockpit() {
   const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
   const [addTabOpen, setAddTabOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false); // mobile drawer
+  // B27: any navigation (row tap, hash change, deep link, ⌘K) closes the drawer.
+  useEffect(() => { setRailOpen(false); }, [selectedId, settingsOpen, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket]);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const searchRef = useRef(null);
@@ -310,8 +276,12 @@ function Cockpit() {
     const isTabRefinement = want.startsWith('#/session/') && cur.startsWith(`${want}/tab/`);
     if (cur !== want && !isTabRefinement) {
       const replace = firstSync.current || lastRoute.current === '#/';
+      // B11: a `?session=<id>` deep link is rewritten to its canonical hash form
+      // on the first sync — keeping the query would leave a stale id in the
+      // address bar that wins again on the next refresh with a bare hash.
+      const url = firstSync.current && sessionFromSearch(window.location.search) ? window.location.pathname + want : want;
       try {
-        window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
+        window.history[replace ? 'replaceState' : 'pushState'](null, '', url);
       } catch {
         window.location.hash = want;
       }
@@ -504,12 +474,14 @@ function Cockpit() {
 
   // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
   const keyCtx = useRef({});
-  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, sessionCount: sessions.length };
+  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, sessionCount: sessions.length };
   const pttActive = useRef(false); // push-to-talk: recording while the hotkey is held
   useEffect(() => {
     const onKey = (e) => {
       const ctx = keyCtx.current;
       if (e.key === 'Escape') {
+        // B27: the mobile drawer is the top-most thing when open.
+        if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }
         // dialogs/popovers/settings handle their own esc via capture listeners.
         // Esc-to-interrupt: only when there's nothing to close AND the selected
         // session is working AND the user isn't typing in an input.

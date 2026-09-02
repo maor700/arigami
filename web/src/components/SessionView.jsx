@@ -5,7 +5,7 @@ import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
@@ -13,6 +13,7 @@ import { useVoice, toggleRecording } from '../lib/voice.js';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
+import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
 import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
@@ -61,8 +62,10 @@ function StatusChip({ session }) {
   // A restart in flight beats the free-form status — it's the live signal the
   // user is waiting on (upsertSession toasts when it completes).
   const restarting = cState === 'restarting';
-  const status = restarting ? t('rail.statusRestartingDots') : session.status || cState || t('rail.statusIdle');
-  const awaiting = !restarting && (/review/i.test(session.status || '') || cState === 'awaiting-input');
+  // B28: a waiting request_action / request_screen / question is the headline, not the stale free-form status.
+  const attention = !restarting && needsAttention(session);
+  const status = restarting ? t('rail.statusRestartingDots') : attention ? t('status.needsYou') : statusLabel(session.status || cState) || t('rail.statusIdle');
+  const awaiting = !restarting && (attention || /review/i.test(session.status || '') || cState === 'awaiting-input');
   const dotColor = awaiting
     ? '#F9D312'
     : cState === 'working'
@@ -150,7 +153,7 @@ function LangToggle({ value, onChange, disabled }) {
   const t = useT();
   return (
     <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title={t('rail.summaryLanguage')}>
-      {[['auto', t('rail.auto')], ['en', t('rail.english')]].map(([key, label], i) => (
+      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label], i) => (
         <button
           key={key}
           type="button"
@@ -1344,7 +1347,7 @@ function ChatFooter({ session }) {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             placeholder={isDesktop ? t('rail.replyPlaceholder') : t('rail.replyPlaceholderShort')}
-            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
+            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-[#aaa] sm:text-[11.5px]"
             style={{ fieldSizing: 'content' }}
           />
           </div>

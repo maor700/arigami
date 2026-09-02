@@ -10,6 +10,7 @@ import { Icon } from '../lib/icons.js';
 import { faCheck, faTriangleExclamation, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 import { useT } from '../lib/i18n.js';
 import { toastSuccess, toastError } from '../lib/toast.js';
+import { fmtDateTime } from '../lib/time.js';
 
 const short = (sha) => (sha ? String(sha).slice(0, 7) : '');
 
@@ -20,7 +21,7 @@ export function MergePill({ session, compact }) {
   const md = session?.metadata || {};
   if (md.merged) {
     return (
-      <span title={`${md.merged.base || ''} · ${md.merged.at ? new Date(md.merged.at).toLocaleString() : ''}`} className="flex shrink-0 items-center gap-1 rounded-full border border-[#8fcf9a] bg-[#e8f6ea] px-2 py-0.5 font-mono text-[9.5px] font-bold text-[#2a6b35]">
+      <span title={`${md.merged.base || ''} · ${md.merged.at ? fmtDateTime(md.merged.at) : ''}`} className="flex shrink-0 items-center gap-1 rounded-full border border-[#8fcf9a] bg-[#e8f6ea] px-2 py-0.5 font-mono text-[9.5px] font-bold text-[#2a6b35]">
         <Icon icon={faCheck} /> {t('chat.mergeMerged', { sha: short(md.merged.sha) })}
       </span>
     );

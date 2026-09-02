@@ -4,6 +4,7 @@ import { requestOrigin } from './lib/proxy-headers.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
 import * as state from './state.js';
+import * as orchestration from './orchestration.js';
 import * as claude from './claude.js';
 import { broadcast } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
@@ -2565,26 +2566,19 @@ function ensureProjectFolder(masterId: string) {
   return folder;
 }
 
-// Read + parse the master's durable plan (ORCHESTRATION.json in its cwd). Bounded
-// read; never throws — returns {plan:null, planError} on any problem.
+// Read + parse the master's durable plan. B32: `ORCHESTRATION.<id>.json` first;
+// the shared `<cwd>/ORCHESTRATION.json` only when it is attributable to this
+// session (every project controller shares the repos dir) — see orchestration.ts.
+// Bounded read; never throws — returns {plan:null, planError} on any problem.
 function readOrchestration(s: any): { plan: unknown; planError?: string } {
   const dir = untildify((s.metadata?.worktree as string) || s.cwd) as string;
   if (!dir) return { plan: null, planError: 'no cwd' };
-  const file = path.join(dir, 'ORCHESTRATION.json');
-  try {
-    const raw = fs.readFileSync(file, 'utf8');
-    if (raw.length > 256 * 1024)
-      return { plan: null, planError: 'ORCHESTRATION.json too large' };
-    return { plan: JSON.parse(raw) };
-  } catch (e) {
-    const error = e instanceof Error ? e : new Error(String(e));
-    return {
-      plan: null,
-      planError: /ENOENT/.test(error.message)
-        ? 'no ORCHESTRATION.json yet'
-        : error.message,
-    };
-  }
+  const all = state.listSessions({ archived: true }) as any[];
+  const childIds = new Set(all.filter((c) => c.metadata?.master === s.id).map((c) => c.id as string));
+  const isController = (c: any) => c.metadata?.role === 'controller' || c.metadata?.kind === 'controller' || all.some((k) => k.metadata?.master === c.id);
+  const sharedCwd = all.some((c) => c.id !== s.id && !c.archived && isController(c) && untildify((c.metadata?.worktree as string) || c.cwd) === dir);
+  const { plan, planError } = orchestration.resolvePlan(dir, { id: s.id, folderId: s.folderId ?? null }, { childIds, sharedCwd });
+  return { plan, ...(planError ? { planError } : {}) };
 }
 
 // Bounded per-child summary for the Orchestration view — NEVER the chat (the one
@@ -3514,7 +3508,7 @@ export async function handle(
       const t = await import('./triggers.js');
       return json(
         res,
-        t.listTriggers().map((x: any) => (x.type === 'cron' ? { ...x, nextRunAt: t.nextRunFor(x) } : x))
+        t.withNextRun(t.listTriggers())
       );
     }
     if (p === '/__api/triggers' && m === 'POST') {
@@ -5448,7 +5442,7 @@ export async function handle(
       state.setStatusSummary(id, {
         text: s.statusSummary?.text || '',
         autoUpdate: body.autoUpdate ?? s.statusSummary?.autoUpdate ?? false,
-        lang: body.lang === 'en' ? 'en' : body.lang === 'auto' ? 'auto' : s.statusSummary?.lang ?? 'auto',
+        lang: body.lang === 'en' || body.lang === 'he' ? body.lang : body.lang === 'auto' ? 'auto' : s.statusSummary?.lang ?? 'auto',
         atSeq: s.statusSummary?.atSeq ?? 0,
       });
       try {
@@ -5482,7 +5476,7 @@ export async function handle(
       let updated: unknown = s.statusSummary ? s : null;
       if ('autoUpdate' in body) updated = state.setSummaryAutoUpdate(id, !!body.autoUpdate);
       if (typeof body.lang === 'string') {
-        updated = state.setSummaryLang(id, body.lang === 'en' ? 'en' : 'auto');
+        updated = state.setSummaryLang(id, body.lang === 'en' || body.lang === 'he' ? body.lang : 'auto');
         // Regenerate in the new language (full, so a Hebrew brief isn't folded
         // into an English one or vice-versa) so the switch is immediately visible.
         if (updated) { try { claude.summarizeSession(id, { full: true }); } catch {} }

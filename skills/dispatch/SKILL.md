@@ -107,7 +107,10 @@ context thin is the whole point.
 
 1. **Decompose.** Break the task into nodes with explicit `deps`. Mark each
    `readonly` (search/analysis, no edits) or `mutating` (edits in its own
-   worktree). Write `ORCHESTRATION.json` to your cwd. Announce via `set_title` /
+   worktree). Write `ORCHESTRATION.json` to your cwd — with `"master": "<your
+   session id>"` at the top level, or name the file `ORCHESTRATION.<your session
+   id>.json` when other controllers share your cwd (the cockpit's Orchestration
+   tab only shows a plan it can tie to you). Announce via `set_title` /
    `set_status` / `set_progress` so the cockpit reflects the plan.
 
 2. **Loop — on each wake (or right after writing the plan):**

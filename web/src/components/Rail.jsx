@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { relTime } from '../lib/time.js';
+import { statusLabel } from '../lib/status.js';
+import { relTime, fmtDateTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
@@ -344,6 +345,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   return (
     <div
       ref={tip.ref}
+      data-session-row={session.id}
       {...hoverProps}
       onClick={() => onSelect(session.id)}
       className="group relative mb-0.5 flex cursor-pointer items-start gap-[9px] rounded-[7px] p-2"
@@ -430,7 +432,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
         <span className="flex items-center gap-1.5 text-[10.5px] text-fgdim">
           <HealthDot health={health} />
           <span className="min-w-0 truncate">
-            {[session.status, relTime(session.updatedAt || session.createdAt)]
+            {[session.archived ? t('rail.archived') : statusLabel(session.status), relTime(session.updatedAt || session.createdAt)]
               .filter(Boolean)
               .join(' · ')}
           </span>
@@ -599,7 +601,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
                         <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: new Date(nextCron).toLocaleString() }) } : {})}>
+                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
                         <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
                         {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
                       </span>
@@ -814,7 +816,7 @@ function FolderRow({
     0
   );
   const statusLine = isProject
-    ? [controller.status, relTime(controller.updatedAt || controller.createdAt)]
+    ? [statusLabel(controller.status), relTime(controller.updatedAt || controller.createdAt)]
         .filter(Boolean)
         .join(' · ')
     : count
@@ -1505,6 +1507,23 @@ export default function Rail({
     if (f?.collapsed) api.patch(`/folders/${f.id}`, { collapsed: false }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+  // B5: keep the selected row visible — a session created from the launcher
+  // lands at the bottom of a long list (y=914 in a 693px window) with nothing
+  // scrolling to it. Retry briefly: the row may render a beat after the id.
+  const selectedRowMounted = !!selectedId && sessions.some((s) => s.id === selectedId);
+  useEffect(() => {
+    if (!selectedRowMounted || typeof document === 'undefined') return;
+    let tries = 0;
+    let timer = null;
+    const tick = () => {
+      const el = document.querySelector(`[data-session-row="${selectedId}"]`);
+      if (el) { try { el.scrollIntoView({ block: 'nearest' }); } catch {} return; }
+      if (++tries < 8) timer = setTimeout(tick, 60);
+    };
+    tick();
+    return () => { if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, selectedRowMounted]);
 
   // Flat-mode drag-to-reorder (disabled while searching — the list is filtered).
   const canDragSessions = mode === 'flat' && !q;
@@ -1710,11 +1729,8 @@ export default function Rail({
       m.root.push({ type: 'session', id: s.id });
     });
   };
-  const deleteFolder = (folder) => {
-    const kids = folderKids.get(folder.id) || [];
-    if (!kids.length) api.del(`/folders/${folder.id}?mode=ungroup`).catch(() => {});
-    else setFolderDialog({ type: 'delete', folder, kids });
-  };
+  // B36: always confirm — an empty folder used to vanish on a single click.
+  const deleteFolder = (folder) => setFolderDialog({ type: 'delete', folder, kids: folderKids.get(folder.id) || [] });
 
   const rowProps = (s, { muted } = {}) => ({
     session: s,
@@ -1848,7 +1864,7 @@ export default function Rail({
               }
             }}
             placeholder={t('rail.searchSessions')}
-            className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-fgdim"
+            className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-fgdim sm:text-xs"
           />
           <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[10px] text-fgdim">
             /
@@ -1900,7 +1916,7 @@ export default function Rail({
         {mode === 'grouped' ? (
           sections.map((sec) => (
             <div key={sec.label}>
-              {sec.hasHeader && <GroupHeader label={sec.label} count={sec.items.length} />}
+              {sec.hasHeader && <GroupHeader label={statusLabel(sec.label)} count={sec.items.length} />}
               {sec.items.map((s) => sessionRowEl(s, { parent: parentInfoFor(s) }))}
             </div>
           ))

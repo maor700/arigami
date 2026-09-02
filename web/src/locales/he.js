@@ -124,6 +124,7 @@ export const he = {
   'integrations.oauth.waiting': 'ממתין להתחברות בדפדפן…',
   'integrations.oauth.cancel': 'ביטול',
 
+  'time.unitGap': ' ', // '12 דק' — Hebrew units are words, not suffixes (B4)
   'time.m': 'דק',
   'time.h': 'שע',
   'time.d': 'ימ',

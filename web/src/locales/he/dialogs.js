@@ -160,7 +160,7 @@ export const strings = {
   'dialogs.resetsIn': 'מתאפס בעוד {t}',
   'dialogs.spentPct': '{title}: נוצלו {pct}%',
   'dialogs.subscriptionUsageTitle': 'ניצול המנוי (סשן / שבוע)',
-  'dialogs.usageSpent': 'ניצול שנוצל',
+  'dialogs.usageSpent': 'ניצול המנוי',
   'dialogs.sessionWindow5h': 'סשן (5 שעות)',
   'dialogs.weekWindow7d': 'שבוע (7 ימים)',
   'dialogs.checkingUsage': 'בודק ניצול…',

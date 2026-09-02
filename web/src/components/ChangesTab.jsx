@@ -10,6 +10,7 @@ import { useIsDesktop } from '../lib/useMedia.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faArrowDown, faArrowUp, faCaretDown, faCaretUp, faCheck, faComment, faExpand, faRotateRight, faScaleBalanced, faWandMagicSparkles, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { fmtDateTime } from '../lib/time.js';
 
 // Single-letter status chip. Maps git porcelain-ish codes to M/A/D/??.
 function StatusChip({ status }) {
@@ -448,6 +449,7 @@ export default function ChangesTab({ session, active }) {
   }, [selected, session.id, data, modeQ]);
 
   const noWorktree = failed || data?.error || (!loading && !data?.worktree && files.length === 0);
+  const noRepo = !loading && data?.emptyReason === 'no-repo';
 
   const lineComments = comments.filter((c) => c.target?.kind === 'line' && c.target?.path === selected);
   const fileComments = comments.filter((c) => c.target?.kind === 'file' && c.target?.path === selected);
@@ -521,7 +523,7 @@ export default function ChangesTab({ session, active }) {
             </button>
           </span>
         )}
-        <div className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border">
+        {!noRepo && <div className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border">
           {(workAvailable ? ['work', 'uncommitted', 'pr'] : ['uncommitted', 'pr']).map((m) => (
             <button
               key={m}
@@ -542,7 +544,7 @@ export default function ChangesTab({ session, active }) {
               {m === 'work' ? t('chat.work') : m === 'uncommitted' ? t('chat.uncommitted') : 'PR'}
             </button>
           ))}
-        </div>
+        </div>}
         {/* branch / file-count / explained are context, not actions — on mobile
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
@@ -561,7 +563,7 @@ export default function ChangesTab({ session, active }) {
         {desktop && files.length > 0 && <span className="font-mono text-[10.5px] text-fgdim">{t('chat.filesCount', { n: files.length })}</span>}
         {desktop && expl && (
           <span
-            title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + new Date(expl.generatedAt).toLocaleString() : '')}
+            title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + fmtDateTime(expl.generatedAt) : '')}
             className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] text-fgdim"
           >
             <Icon icon={faWandMagicSparkles} /> {t('chat.explained')}{expl.language ? ` · ${expl.language}` : ''}
@@ -576,7 +578,8 @@ export default function ChangesTab({ session, active }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {desktop ? (
+          {/* B14: not a git repo → nothing to explain/review/refresh or to switch between */}
+          {noRepo ? null : desktop ? (
             <>
           {!noWorktree && (
             <>

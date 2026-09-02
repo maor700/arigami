@@ -182,7 +182,7 @@ export interface PendingPrompt {
 export interface StatusSummary {
   text: string;
   tldr?: string; // 2–3 line condensation of `text`, shown as the rail-row tooltip
-  lang?: 'auto' | 'en'; // 'auto' = follow the conversation; 'en' = force English
+  lang?: 'auto' | 'en' | 'he'; // 'auto' = follow the conversation; 'en'/'he' = force that language (B9)
   generatedAt: string;
   autoUpdate: boolean; // refresh after each completed turn
   atSeq: number; // chat seq the summary already accounts for (the fold cursor)
@@ -672,7 +672,7 @@ export function setSummaryAutoUpdate(id: string, on: boolean): Session | null {
 }
 
 // Set the output language preference ('auto' | 'en'). Caller regenerates.
-export function setSummaryLang(id: string, lang: 'auto' | 'en'): Session | null {
+export function setSummaryLang(id: string, lang: 'auto' | 'en' | 'he'): Session | null {
   const s = getSession(id);
   if (!s || !s.statusSummary) return null;
   s.statusSummary = { ...s.statusSummary, lang: lang === 'en' ? 'en' : 'auto' };

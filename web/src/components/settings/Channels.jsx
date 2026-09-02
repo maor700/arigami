@@ -13,6 +13,7 @@ import { confirmDialog } from '../../lib/confirm.js';
 import { toastError } from '../../lib/toast.js';
 import QrStep from '../setup/QrStep.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN_SM, BTN_DANGER, INPUT, ROW } from './shared.jsx';
+import { fmtDate } from '../../lib/time.js';
 
 export function WhatsApp({ onChanged }) {
   const t = useT();
@@ -95,7 +96,7 @@ export function Webhooks() {
       <SettingCard
         title={t('chrome.webhooks.sms')}
         pill={<StatusPill status={sms ? (sms.live ? 'ok' : 'error') : 'off'} label={sms ? (sms.live ? t('setup.state.ok') : t('chrome.webhooks.sms.expired')) : t('setup.state.todo')} />}
-        hint={sms ? (sms.live ? t('chrome.webhooks.sms.live', { date: new Date(sms.exp).toLocaleDateString() }) : t('chrome.webhooks.sms.expired')) : t('chrome.webhooks.sms.none')}
+        hint={sms ? (sms.live ? t('chrome.webhooks.sms.live', { date: fmtDate(sms.exp) }) : t('chrome.webhooks.sms.expired')) : t('chrome.webhooks.sms.none')}
         actions={<>
           <button type="button" disabled={busy} onClick={rotate} className={BTN_SM}>{sms ? t('chrome.webhooks.sms.rotate') : t('chrome.webhooks.sms.create')}</button>
           {sms && <button type="button" disabled={busy} onClick={revoke} className={BTN_SM}>{t('chrome.webhooks.sms.revoke')}</button>}

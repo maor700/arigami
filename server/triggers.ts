@@ -213,7 +213,11 @@ export function getTriggerLog(id: string): { ts: number; level: string; text: st
 
 // ---- broadcasts -----------------------------------------------------------
 function emitTriggers(): void {
-  broadcast({ type: 'triggers', triggers: [...db.triggers.values()] });
+  broadcast({ type: 'triggers', triggers: withNextRun(listTriggers()) });
+}
+/** B33: decorate cron triggers with nextRunAt — the WS list (store.js overwrites the REST one) must carry it too. */
+export function withNextRun<T extends { type: string }>(list: T[]): T[] {
+  return list.map((x) => (x.type === 'cron' ? { ...x, nextRunAt: nextRunFor(x as unknown as CronTrigger) } : x));
 }
 function emitPending(): void {
   broadcast({ type: 'pending', pending: db.pending, queue: db.settings });

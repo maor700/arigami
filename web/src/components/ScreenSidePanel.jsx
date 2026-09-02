@@ -123,7 +123,8 @@ export default function ScreenSidePanel({ session }) {
       <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
         <span className="text-[12px] leading-none text-fg"><Icon icon={faDisplay} /></span>
         <span className="font-mono text-[12px] font-bold text-fg">{t('screen.panelTitle')}</span>
-        {statusLabel && status !== 'connected' && (
+        {/* B12: no machine → nothing to connect to; the empty state below says so */}
+        {statusLabel && status !== 'connected' && own !== false && (
           <span className="truncate font-mono text-[10px] text-fgdim">{statusLabel}</span>
         )}
         <span className="ms-auto flex items-center gap-1">
