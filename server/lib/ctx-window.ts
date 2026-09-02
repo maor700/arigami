@@ -18,6 +18,7 @@
 //   claude-sonnet-5[1m]        → 1,000,000
 //   claude-opus-5              → 1,000,000
 //   claude-fable-5             → 1,000,000
+//   claude-fable-5-1           → 1,000,000  (family match; 5.1 shipped 2026-09)
 //   claude-haiku-4-5-20251001  →   200,000
 import { cfg } from '../state.js';
 

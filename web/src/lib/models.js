@@ -2,6 +2,11 @@
 // `/models` cache (itself sourced from the `claude` CLI's own model list — see
 // server/models.js). Same caching idiom as linearMeta.js: a module-level cache
 // shared across every open ModelModal, refetched lazily and on manual refresh.
+//
+// Revalidated, not fetched-once: a cockpit tab stays open for days, and the
+// server only learns about a CLI update (= new models) when it is asked. So
+// every mount of a picker past REVALIDATE_MS quietly re-asks the server, and
+// a new model shows up the next time the picker opens instead of after a reload.
 import { useEffect } from 'react';
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
@@ -12,7 +17,12 @@ const FALLBACK = [
   { value: 'default', label: 'Default', desc: 'Use your Claude Code default model' },
 ];
 
-let cache = { models: FALLBACK, fetchedAt: 0, loading: false, error: null };
+export const REVALIDATE_MS = 5 * 60 * 1000;
+
+// `fetchedAt` is the SERVER's timestamp (when it last ran the CLI handshake);
+// `checkedAt` is ours (when this tab last asked the server) — staleness is
+// judged on the latter.
+let cache = { models: FALLBACK, fetchedAt: 0, checkedAt: 0, loading: false, error: null };
 let inflight = null;
 const listeners = new Set();
 const emit = () => {
@@ -23,15 +33,19 @@ function toOptions(models) {
   return models.map((m) => ({ value: m.value, label: m.displayName || m.value, desc: m.description || '' }));
 }
 
-function run(promise) {
-  cache = { ...cache, loading: true };
-  emit();
+// `quiet` — a background revalidate: keep the list (and the refresh button)
+// usable while it runs; only a real result changes what the picker shows.
+function run(promise, { quiet = false } = {}) {
+  if (!quiet) {
+    cache = { ...cache, loading: true };
+    emit();
+  }
   inflight = promise
     .then((d) => {
-      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), loading: false, error: d.error || null };
+      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), checkedAt: Date.now(), loading: false, error: d.error || null };
     })
     .catch((e) => {
-      cache = { ...cache, loading: false, error: e.message };
+      cache = { ...cache, checkedAt: Date.now(), loading: false, error: e.message };
     })
     .finally(() => {
       inflight = null;
@@ -40,9 +54,12 @@ function run(promise) {
   return inflight;
 }
 
-function ensure() {
-  if (cache.fetchedAt || inflight) return;
-  run(api.get('/models'));
+/** Fetch on first use; past REVALIDATE_MS, re-ask the server in the background. */
+export function ensureModels(now = Date.now()) {
+  if (inflight) return inflight;
+  if (!cache.checkedAt) return run(api.get('/models'));
+  if (now - cache.checkedAt >= REVALIDATE_MS) return run(api.get('/models'), { quiet: true });
+  return null;
 }
 
 export function refreshModels() {
@@ -50,8 +67,11 @@ export function refreshModels() {
   return run(api.post('/models/refresh'));
 }
 
+/** Current cache (for tests and non-React callers). */
+export const modelsSnapshot = () => cache;
+
 export function useModels() {
-  useEffect(ensure, []);
+  useEffect(() => { ensureModels(); }, []);
   return useSyncExternalStore(
     (cb) => {
       listeners.add(cb);
