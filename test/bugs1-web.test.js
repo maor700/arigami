@@ -71,3 +71,11 @@ test('B5: the rail scrolls the selected session row into view', () => {
   expect(rail).toMatch(/querySelector\(`\[data-session-row="\$\{selectedId\}"\]`\)/);
   expect(rail).toContain("scrollIntoView({ block: 'nearest' })");
 });
+
+test('B26: phone-sized inputs are 16px (no iOS auto-zoom), desktop keeps the compact size', () => {
+  const sv = src('components/SessionView.jsx');
+  expect(sv).toMatch(/resize-none bg-transparent text-\[16px\][^"]*sm:text-\[11\.5px\]/);
+  expect(sv).not.toMatch(/resize-none bg-transparent text-\[11\.5px\]/);
+  const rail = src('components/Rail.jsx');
+  expect(rail).toMatch(/flex-1 bg-transparent text-\[16px\] outline-none placeholder:text-fgdim sm:text-xs/);
+});

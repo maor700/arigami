@@ -1301,7 +1301,7 @@ function ChatFooter({ session }) {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             placeholder={isDesktop ? t('rail.replyPlaceholder') : t('rail.replyPlaceholderShort')}
-            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[11.5px] leading-relaxed outline-none placeholder:text-[#aaa]"
+            className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-[#aaa] sm:text-[11.5px]"
             style={{ fieldSizing: 'content' }}
           />
           </div>

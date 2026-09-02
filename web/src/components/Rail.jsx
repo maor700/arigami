@@ -1853,7 +1853,7 @@ export default function Rail({
               }
             }}
             placeholder={t('rail.searchSessions')}
-            className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-fgdim"
+            className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-fgdim sm:text-xs"
           />
           <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[10px] text-fgdim">
             /
