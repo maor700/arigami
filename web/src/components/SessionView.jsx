@@ -473,6 +473,18 @@ const fmtClock = (ts) =>
   new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const LOG_COLOR = { fire: '#7ee787', warn: '#e3b341', error: '#ff7b72', info: '#9aa0a6' };
 
+// WAFILT1: a WhatsApp listener's contact filter, as the host stored it —
+// [{raw, jids, name}]. A legacy single `contact`/`from` string is shown as a
+// one-element list, mirroring the host's read-side normalisation.
+export function listenerContacts(l) {
+  const p = l?.params || {};
+  if (Array.isArray(p.contacts) && p.contacts.length) {
+    return p.contacts.map((c) => (typeof c === 'string' ? { raw: c, jids: [c], name: null } : c)).filter((c) => c && c.raw);
+  }
+  const legacy = p.contact ?? p.from;
+  return typeof legacy === 'string' && legacy.trim() ? [{ raw: legacy.trim(), jids: [legacy.trim()], name: null }] : [];
+}
+
 export function ListenerChips({ session }) {
   const t = useT();
   const store = useStore();
@@ -498,7 +510,7 @@ export function ListenerChips({ session }) {
             key={l.id}
             type="button"
             onClick={() => setOpenId(l.id)}
-            title={t('rail.openListenerDetails')}
+            title={listenerContacts(l).length ? `${t('rail.contacts')} ${listenerContacts(l).map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
             className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
               errored
                 ? 'border-danger/40 bg-danger/10 text-danger'
@@ -651,6 +663,15 @@ function ListenersPanel({ session, initialId, onClose }) {
                     <span>{t('rail.nextPoll')} <span className="text-[#cfcfcf]">{fmtIn(detail?.nextPollAt ?? sel.nextPollAt)}</span></span>
                     <span>{t('rail.firedLabel')} <span className="text-[#cfcfcf]">{detail?.firedCount ?? sel.firedCount ?? 0}×</span></span>
                     <span>{t('rail.expires')} <span className="text-[#cfcfcf]">{fmtIn(sel.ttlAt)}</span></span>
+                    {listenerContacts(sel).length > 0 && (
+                      <span className="col-span-2">{t('rail.contacts')}{' '}
+                        {listenerContacts(sel).map((c) => (
+                          <span key={c.raw} className="me-1.5 inline-block rounded-full border border-white/15 px-1.5 text-[#cfcfcf]" title={`${c.raw} → ${(c.jids || []).join(', ')}`}>
+                            {c.name || c.raw}
+                          </span>
+                        ))}
+                      </span>
+                    )}
                     {(detail?.lastError ?? sel.lastError) && (
                       <span className="col-span-2 text-danger">{t('rail.lastError')} {detail?.lastError ?? sel.lastError}</span>
                     )}

@@ -4751,6 +4751,9 @@ export async function handle(
       if (type !== 'github-pr' && type !== 'linear-issue' && type !== 'slack' && type !== 'whatsapp' && type !== 'sms')
         return badRequest(res, `unsupported listener type: ${type}`);
       if (type === 'whatsapp') {
+        // WAFILT1: contacts is an array of strings (one contact = one-element array).
+        if (body.contacts != null && (!Array.isArray(body.contacts) || body.contacts.some((c: unknown) => typeof c !== 'string')))
+          return badRequest(res, 'contacts must be an array of strings — for one contact pass a one-element array');
         // S1: bridge not paired/connected → needs_setup instead of a dead listener.
         const wb = await import('./whatsapp-bridge.js');
         if (wb.getBridgeStatus().status !== 'connected') return json(res, caps.needsSetup('whatsapp', 'watch your WhatsApp messages'));
