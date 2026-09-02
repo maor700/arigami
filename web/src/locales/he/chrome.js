@@ -109,6 +109,8 @@ export const strings = {
   'auth.settings.pairCodeHint': 'הזינו במכשיר השני. חד-פעמי; מחליף קוד ממתין.',
   'auth.settings.issueCode': 'הנפק קוד',
   'auth.settings.remove': 'הסרה',
+  'auth.settings.usersTitle': 'משתמשים וטוקנים',
+  'auth.settings.noUsers': 'רק המנהל.',
   'auth.settings.tokens': 'טוקני API',
   'auth.settings.tokensHint': 'ל-CLI וסקריפטים: שלחו כ-"Authorization: Bearer <token>". מוצג פעם אחת.',
   'auth.settings.tokenLabel': 'תווית',

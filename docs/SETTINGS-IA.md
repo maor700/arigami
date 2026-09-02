@@ -112,3 +112,22 @@ Integrations, Accounts, Setup → Connections) לפני הריסטרקצ'ר, ה�
 1. **הסרת בורר הלוגו** (#4) — הערך משפיע רק על ה-favicon; אם רוצים אותו בחזרה זה 15 שורות ב-`Appearance.jsx` (הקומפוננטה `LogoMark` נשמרה שם, מוסתרת).
 2. **הסרת "Voice control" מהתפריט** — אם יש מי שמסתמך על זה במובייל בלי hotkey, אפשר להחזיר פריט אחד.
 3. **הסרת Section "Connections" מ-Setup** — Setup נשאר hero מינימלי + repos/profiles, וקישור להגדרות.
+
+## 6. AUDIT2 (2026-09-02) — 3 עמודים + מגירת "מתקדם"
+
+ביקורת `AUDIT-ARIGAMI-SETTINGS.md` מצאה 274 פריטים גלויים כברירת מחדל על 5 עמודים (200 מהם כרטיסי
+Composio). הריסטרקצ'ר השני **לא מחק כלום מהקוד ומהשרת** — כל פריט שסווג ADV/MOVE עבר למגירת
+`<details>` מקופלת בתחתית העמוד (`settings/shared.jsx › Advanced`), ופריטי REMOVE הוסתרו מה-UI
+בלבד (ה-routes שלהם נשארו).
+
+| עמוד | hash | על המסך | במגירה |
+|---|---|---|---|
+| **כללי** (`Appearance.jsx`) | `appearance` (גם `voice`, `automation` הישנים מגיעים לכאן) | ערכת נושא · שפה · גודל גופן · [קול: קיצור + מצב — רק כש-`GET /config` מחזיר `voiceEnabled:true`] | צבע הדגשה · ערכת/כיוון טרמינל · קול (מיקרופון/שפת זיהוי/שליחה אוטומטית; וגם קיצור+מצב כשהקול כבוי) · heartbeat של המוח · toggle טלמטריה |
+| **חיבורים** (`Connections.jsx`) | `connections` | זהות Google · חשבונות Claude · רשימת **מחוברים** אחת (MCP ישיר + Composio + גשר WhatsApp + Tailscale, המסלול ב-hover) · **הוסף חיבור** (`AddConnection.jsx` — בורר עם חיפוש: קטלוג MCP + `FEATURED` של Composio, הקלדה מחפשת בכל הקטלוג) · התראות פוש | "שייך ל" (A2) · הסבר פעיל/pool · webhooks (admin) · HTTPS serve · סטטוס git/desktop/repo · יומן חיבורים |
+| **מארח** (`Host.jsx`) | `host` | גרסה+עדכון · Claude CLI (מותקן/עדכן) · הפעל מחדש · שדרג · ייצוא/ייבוא (3 כפתורים) · מחובר/ת בתור · צימוד מכשיר | פרטי CLI (נבדק/עדכון אחרון/auto) · מנהל תהליך · יומן שדרוג · אפשרויות ייצוא/ייבוא · תקציבים · בריאות (אירועי `notify-human` מסוננים כברירת מחדל, 20 אחרונים) · משתמשים וטוקנים · סיסמת VNC · איפוס העדפות |
+
+- **התנתקות** עברה לתפריט הפרופיל בסרגל (`Rail.jsx › ProfileMenu`) — הפריט היחיד ל-logout.
+- `#/settings/connections/mcp` ו-`/integrations` (המשגר, סימניות) פותחים את הבורר "הוסף חיבור".
+- deep-link לסקשן שבמגירה (`#/settings/host/health`, `#/settings/automation/heartbeat`) פותח אותה.
+- `NativeMcp.jsx`, `Integrations.jsx` (הגריד), `Automation.jsx` ו-`Voice.jsx` נשארו בריפו כקומפוננטות/חלקים — לא בשימוש כעמודים.
+- טלמטריה: ה-endpoint לא קיים ב-DNS; `server/telemetry.ts` מפסיק לצבור תור מול יעד לא-נגיש (ראו `docs/TELEMETRY.md`). ב-UI נשאר רק ה-toggle.

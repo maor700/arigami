@@ -2,10 +2,10 @@
 // Section (anchored heading), SettingCard (the uniform card), StatusPill,
 // Field/Toggle/Segmented/CopyRow (moved here from the old 1300-line
 // Settings.jsx) and hostPost (admin-confirmed POST to /__api/host/*).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { Icon } from '../../lib/icons.js';
-import { faRotateRight } from '@fortawesome/free-solid-svg-icons';
+import { faRotateRight, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import { PILL } from '../setup/shared.jsx';
 
 export const BTN =
@@ -110,9 +110,21 @@ export function SettingCard({ title, hint, pill, actions, children, tone = 'defa
   );
 }
 
-export function CopyRow({ url }) {
+export function CopyRow({ url, compact = false }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
+  // compact: just the button (the caller already shows the URL) — list rows.
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={() => { navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        className={BTN_SM}
+      >
+        {copied ? t('chrome.copy.copied') : t('chrome.copy.copy')}
+      </button>
+    );
+  }
   return (
     <div className="flex items-center gap-2 py-2">
       <code dir="ltr" className="min-w-0 flex-1 truncate rounded-md border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] text-fg">{url}</code>
@@ -153,4 +165,32 @@ export function hostPost(path, method = 'POST', body) {
 export function fmtWhen(iso) {
   if (!iso) return '';
   try { return new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }); } catch { return String(iso); }
+}
+
+// AUDIT2 — the collapsed "Advanced" drawer at the bottom of every category.
+// Everything classified ADV/MOVE lives inside; it is a native <details> so the
+// content stays in the DOM (deep links, tests) but is not on screen until the
+// human opens it. `ids` are the section ids inside — arriving at one of them
+// via #/settings/<cat>/<id> opens the drawer so the scroll-to-section lands.
+export function Advanced({ section, ids = [], children, hint }) {
+  const t = useT();
+  const wanted = !!section && ids.includes(section);
+  const [open, setOpen] = useState(wanted);
+  useEffect(() => { if (wanted) setOpen(true); }, [wanted]);
+  return (
+    <details
+      id="settings-advanced"
+      data-settings-advanced
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      className="mt-8 rounded-xl border border-dashed border-hair"
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase select-none hover:text-fg [&::-webkit-details-marker]:hidden">
+        <span className={`text-[10px] transition-transform ${open ? '' : 'rtl:rotate-90 ltr:-rotate-90'}`}><Icon icon={faChevronDown} /></span>
+        {t('settings.advanced')}
+        {hint && <span className="ms-auto text-[10px] font-normal normal-case tracking-normal">{hint}</span>}
+      </summary>
+      <div className="border-t border-dashed border-hair px-3 pb-4 [&>section:first-child]:mt-3">{children}</div>
+    </details>
+  );
 }

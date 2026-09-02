@@ -27,6 +27,14 @@ export const SEND_TIMEOUT_MS = 5_000;
 export const PING_EVERY_MS = 24 * 60 * 60_000; // daily ping, even with no new events
 export const BATCH_DEBOUNCE_MS = 5 * 60_000; // new milestone → one send 5 min later (coalesced)
 export const MAX_EVENTS_PER_SEND = 500;
+// AUDIT2 — an unreachable collector must not leave a queue growing forever.
+// A DNS-level failure (the host does not resolve) drops the batch at once;
+// any other failure drops it after this many consecutive misses. After a drop
+// nothing is retried for UNREACHABLE_BACKOFF_MS; new events in that window are
+// dropped too (counted in state.dropped, shown by GET /__api/telemetry).
+export const MAX_CONSECUTIVE_FAILURES = 3;
+export const UNREACHABLE_BACKOFF_MS = 24 * 60 * 60_000;
+const DNS_FAILURE = /ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL/;
 
 // funnel name → wire name. Anything not in this map is DROPPED before it can
 // leave the box (so a new funnel.emit() elsewhere never leaks by accident).
@@ -74,6 +82,9 @@ interface TelemetryState {
   lastSentAt: string | null;
   lastPayload: Payload | null;
   lastError: string | null;
+  failures: number; // consecutive failed sends since the last success/drop
+  dropped: number; // events given up on because the collector was unreachable
+  nextTryAt: string | null; // backoff after a drop — no send before this
 }
 
 // ---------------------------------------------------------------------------
@@ -146,11 +157,19 @@ function readState(): TelemetryState {
   try {
     const j = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     if (j && typeof j === 'object')
-      return { cursor: Number(j.cursor) || 0, lastSentAt: j.lastSentAt || null, lastPayload: j.lastPayload || null, lastError: j.lastError || null };
+      return {
+        cursor: Number(j.cursor) || 0,
+        lastSentAt: j.lastSentAt || null,
+        lastPayload: j.lastPayload || null,
+        lastError: j.lastError || null,
+        failures: Number(j.failures) || 0,
+        dropped: Number(j.dropped) || 0,
+        nextTryAt: j.nextTryAt || null,
+      };
   } catch {
     /* fresh */
   }
-  return { cursor: 0, lastSentAt: null, lastPayload: null, lastError: null };
+  return { cursor: 0, lastSentAt: null, lastPayload: null, lastError: null, failures: 0, dropped: 0, nextTryAt: null };
 }
 
 function writeState(s: TelemetryState): void {
@@ -338,10 +357,12 @@ export function setSender(s: Sender | null): void {
 
 export interface FlushResult {
   sent: boolean;
-  reason?: 'disabled' | 'nothing' | 'error';
+  reason?: 'disabled' | 'nothing' | 'error' | 'backoff';
   events?: number;
   status?: number;
   error?: string;
+  /** events given up on in this call (collector unreachable) */
+  dropped?: number;
 }
 
 let inflight: Promise<FlushResult> | null = null;
@@ -372,25 +393,43 @@ export function flush(opts: { force?: boolean } = {}): Promise<FlushResult> {
       if (cursor !== st.cursor) { st.cursor = cursor; writeState(st); }
       return { sent: false, reason: 'nothing' };
     }
+    // Give up on this batch: the cursor moves past it so the queue stops
+    // growing, and nothing is retried until the backoff window has passed.
+    const drop = (): number => {
+      const n = payload.events.length;
+      st.cursor = cursor;
+      st.dropped = (st.dropped || 0) + n;
+      st.failures = 0;
+      st.nextTryAt = new Date(Date.now() + UNREACHABLE_BACKOFF_MS).toISOString();
+      return n;
+    };
+    if (st.nextTryAt && Date.parse(st.nextTryAt) > Date.now()) {
+      const dropped = payload.events.length ? drop() : 0;
+      if (dropped) writeState(st);
+      return { sent: false, reason: 'backoff', error: st.lastError || undefined, dropped };
+    }
     const endpoint = String(cfg.telemetry?.endpoint || '');
     if (!/^https?:\/\//.test(endpoint)) return { sent: false, reason: 'error', error: 'no endpoint' };
+    const failed = (error: string, status?: number): FlushResult => {
+      st.lastError = error;
+      st.failures = (st.failures || 0) + 1;
+      const dropped = DNS_FAILURE.test(error) || st.failures >= MAX_CONSECUTIVE_FAILURES ? drop() : 0;
+      writeState(st);
+      return { sent: false, reason: 'error', ...(status ? { status } : {}), error, ...(dropped ? { dropped } : {}) };
+    };
     try {
       const r = await sender(endpoint, JSON.stringify(payload));
-      if (!r.ok) {
-        st.lastError = `http ${r.status}`;
-        writeState(st);
-        return { sent: false, reason: 'error', status: r.status, error: st.lastError };
-      }
+      if (!r.ok) return failed(`http ${r.status}`, r.status);
       st.cursor = cursor;
       st.lastSentAt = payload.sentAt;
       st.lastPayload = payload;
       st.lastError = null;
+      st.failures = 0;
+      st.nextTryAt = null;
       writeState(st);
       return { sent: true, events: payload.events.length, status: r.status };
     } catch (e) {
-      st.lastError = (e as Error)?.name === 'AbortError' ? 'timeout' : String((e as Error)?.message || e).slice(0, 120);
-      writeState(st);
-      return { sent: false, reason: 'error', error: st.lastError };
+      return failed((e as Error)?.name === 'AbortError' ? 'timeout' : String((e as Error)?.message || e).slice(0, 120));
     }
   })().finally(() => {
     inflight = null;
@@ -461,6 +500,8 @@ export async function status(): Promise<{
   lastSentAt: string | null;
   lastError: string | null;
   pending: number;
+  dropped: number;
+  nextTryAt: string | null;
   preview: Payload;
 }> {
   const eff = effective();
@@ -474,6 +515,8 @@ export async function status(): Promise<{
     lastSentAt: st.lastSentAt,
     lastError: st.lastError,
     pending: built.payload.events.length,
+    dropped: st.dropped || 0,
+    nextTryAt: st.nextTryAt,
     preview: built.payload,
   };
 }
@@ -481,6 +524,6 @@ export async function status(): Promise<{
 /** Rotate the id and forget the send history (the server can't link the two ids). */
 export function forget(): { id: string } {
   const id = rotateId();
-  writeState({ cursor: readState().cursor, lastSentAt: null, lastPayload: null, lastError: null });
+  writeState({ cursor: readState().cursor, lastSentAt: null, lastPayload: null, lastError: null, failures: 0, dropped: 0, nextTryAt: null });
   return { id };
 }

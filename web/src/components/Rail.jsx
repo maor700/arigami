@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { relTime } from '../lib/time.js';
-import { hasOpenScreenRequest, needsAttention, setScreenModal, useStore } from '../lib/store.js';
+import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
@@ -34,6 +34,7 @@ import {
   faFolderPlus,
   faFolderTree,
   faGear,
+  faRightFromBracket,
   faGripVertical,
   faListCheck,
   faPause,
@@ -1209,9 +1210,16 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
 // Footer profile dropdown — consolidates the former standalone footer buttons
 // (setup / skills / brain / settings) behind one menu, fronted by the account
 // the host is currently running as. Accounts, Integrations and Voice moved
-// into Settings (SET): #/settings/connections, #/settings/voice.
+// into Settings (SET): #/settings/connections, #/settings/voice. AUDIT2: sign
+// out lives here (it left Settings › Host › danger zone) — the only logout.
 function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSettings }) {
   const t = useT();
+  const { auth } = useStore();
+  const canLogout = !!auth && auth.authMode !== 'off';
+  const logout = async () => {
+    await api.post('/auth/logout').catch(() => {});
+    signOut();
+  };
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
   const ref = useRef(null); // trigger wrapper
@@ -1274,6 +1282,11 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
           <Item icon={faBrain} onClick={act(onOpenBrain)}>{t('rail.brain')}</Item>
           <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
           <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
+          {canLogout && (
+            <div className="mt-1 border-t border-hair pt-1">
+              <Item icon={faRightFromBracket} onClick={act(logout)}>{t('auth.settings.logout')}</Item>
+            </div>
+          )}
         </div>,
         document.body
       )

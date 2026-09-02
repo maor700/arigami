@@ -100,12 +100,17 @@ payload for these shapes.
   unsent milestones ride together.
 - **Daily ping**: at most one send per 24 h even with no new milestones, so
   active installs can be counted.
-- `POST` with a 5-second timeout. Failures are silent (shown as *last send
-  failed* in Settings) and the batch is retried next time; nothing is ever
-  logged to stdout.
+- `POST` with a 5-second timeout. Failures are silent and the batch is retried
+  next time; nothing is ever logged to stdout.
+- **Unreachable collector** (AUDIT2): a DNS failure (`ENOTFOUND`, `EAI_AGAIN`)
+  drops the batch at once; any other failure drops it after 3 consecutive
+  misses. After a drop nothing is retried for 24 h and new milestones in that
+  window are dropped too — the queue never grows behind a dead endpoint. The
+  count is `dropped` in `GET /__api/telemetry`; the Settings UI shows only the
+  consent toggle (General › Advanced) and links here for "what is sent".
 
 Local state: `$ARIGAMI_DIR/telemetry.json` (cursor into `funnel.jsonl`, last
-send time, last payload).
+send time, last payload, consecutive `failures`, `dropped`, `nextTryAt`).
 
 ## Deleting your data
 

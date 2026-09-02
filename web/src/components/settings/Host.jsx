@@ -1,18 +1,27 @@
-// Settings › Host: version/commit + update check, supervisor/uptime, restart
-// now / when idle, upgrade, and Backup (export full/bundle, import). Mutations
-// go through POST /__api/host/* with the X-Arigami-Confirm header
-// (server/host-control.ts); progress arrives as `host` bus events
-// (store.js → state.hostEvent). Users/access, VNC and the danger zone are in
-// Access.jsx.
+// Settings › Host (AUDIT2: 23 → ~6 default-visible rows). On the page: version
+// + update (one row), Claude CLI (one row: installed / update available /
+// update now — UPD1), restart, upgrade, backup (three buttons) and Users &
+// access › signed-in-as + pairing (Access.jsx › WhoAmI). In the Advanced
+// drawer: CLI details (last check / last update / auto-update toggle), the
+// process manager row, the upgrade log, export/import options, per-agent
+// budgets (Budgets.jsx — the agent page has the same field), Health
+// (Health.jsx, reminders filtered), the users list + API tokens, the VNC
+// password and the danger zone. Mutations go through POST /__api/host/* with
+// the X-Arigami-Confirm header (server/host-control.ts); progress arrives as
+// `host` bus events (store.js → state.hostEvent).
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
-import { Section, Field, BTN, Toggle, hostPost } from './shared.jsx';
+import { Section, Field, BTN, Toggle, hostPost, Advanced } from './shared.jsx';
 import { relTime } from '../../lib/time.js';
 import Budgets from './Budgets.jsx';
+import Health from './Health.jsx';
+import { WhoAmI, UsersAdvanced, ScreenShare, DangerZone } from './Access.jsx';
+
+export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
 
 function fmtUptime(sec) {
   if (!Number.isFinite(sec)) return '';
@@ -25,12 +34,12 @@ function fmtUptime(sec) {
 
 // B4-full — Export is a plain download of GET /__api/host/export?mode=…;
 // import POSTs the chosen .tgz raw. A full restore ends in a host restart.
-function BackupField({ disabled, onRestarting, reload }) {
+// The two checkboxes (bundle memory seed, force import) render in the drawer
+// (`BackupOptions`) — state is lifted to the page so both halves agree.
+function BackupField({ disabled, onRestarting, reload, memory, force }) {
   const t = useT();
   const [exporting, setExporting] = useState(null);
   const [importing, setImporting] = useState(false);
-  const [force, setForce] = useState(false);
-  const [memory, setMemory] = useState(true);
   const fileRef = useRef(null);
 
   const download = async (mode) => {
@@ -72,29 +81,37 @@ function BackupField({ disabled, onRestarting, reload }) {
   return (
     <Section id="backup" title={t('host.backup')}>
       <Field label={t('host.backup')} hint={t('host.backup.hint')} wrap>
-        <div className="flex flex-col items-end gap-1.5">
-          <span className="flex flex-wrap items-center justify-end gap-2">
-            <button type="button" disabled={off} onClick={() => download('full')} className={BTN}>{exporting === 'full' ? t('host.exporting') : t('host.exportFull')}</button>
-            <button type="button" disabled={off} onClick={() => download('bundle')} className={BTN}>{exporting === 'bundle' ? t('host.exporting') : t('host.exportBundle')}</button>
-            <button type="button" disabled={off} onClick={() => fileRef.current?.click()} className={BTN}>{importing ? t('host.importing') : t('host.import')}</button>
-            <input ref={fileRef} type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" className="hidden" onChange={onFile} />
-          </span>
-          <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
-            <input type="checkbox" checked={memory} onChange={(e) => setMemory(e.target.checked)} disabled={off} />
-            {t('host.exportMemory')}
-          </label>
-          {memory && <div className="max-w-[28rem] text-end font-mono text-[10.5px] text-amber-500">{t('host.exportMemory.warn')}</div>}
-          <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
-            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={off} />
-            {t('host.importForce')}
-          </label>
-        </div>
+        <span className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" disabled={off} onClick={() => download('full')} className={BTN}>{exporting === 'full' ? t('host.exporting') : t('host.exportFull')}</button>
+          <button type="button" disabled={off} onClick={() => download('bundle')} className={BTN}>{exporting === 'bundle' ? t('host.exporting') : t('host.exportBundle')}</button>
+          <button type="button" disabled={off} onClick={() => fileRef.current?.click()} className={BTN}>{importing ? t('host.importing') : t('host.import')}</button>
+          <input ref={fileRef} type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" className="hidden" onChange={onFile} />
+        </span>
       </Field>
     </Section>
   );
 }
 
-export default function Host() {
+function BackupOptions({ memory, setMemory, force, setForce, disabled }) {
+  const t = useT();
+  return (
+    <Section id="backup-options" title={t('settings.host.backupOptions')}>
+      <div className="flex flex-col gap-1.5 py-2">
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+          <input type="checkbox" checked={memory} onChange={(e) => setMemory(e.target.checked)} disabled={disabled} />
+          {t('host.exportMemory')}
+        </label>
+        {memory && <div className="max-w-[28rem] font-mono text-[10.5px] text-amber-500">{t('host.exportMemory.warn')}</div>}
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={disabled} />
+          {t('host.importForce')}
+        </label>
+      </div>
+    </Section>
+  );
+}
+
+export default function Host({ section = '' }) {
   const t = useT();
   const { conn, hostEvent } = useStore();
   const [ver, setVer] = useState(null);
@@ -104,7 +121,8 @@ export default function Host() {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
-  const [showLog, setShowLog] = useState(false);
+  const [memory, setMemory] = useState(true);
+  const [force, setForce] = useState(false);
   const wasDown = useRef(false);
   const restarting = useRef(false);
 
@@ -135,7 +153,7 @@ export default function Host() {
       setSt((s) => (s ? { ...s, upgrade: { ...(s.upgrade || {}), step: ev.step, finishedAt: null } } : s));
       return;
     }
-    if (ev.kind === 'upgrade-failed') { toastError(t('host.upgradeFailed', { error: ev.error })); setShowLog(true); }
+    if (ev.kind === 'upgrade-failed') toastError(t('host.upgradeFailed', { error: ev.error }));
     if (ev.kind === 'upgrade-done') toast(t('host.upgradeDone'));
     if (ev.kind === 'restarting' || ev.kind === 'restart-draining') restarting.current = true;
     // UPD1: done/failed are toasted globally (store.js); here just refresh the row.
@@ -164,7 +182,7 @@ export default function Host() {
   const upgrade = async (when) => {
     const ok = await confirmDialog({ title: t('host.confirmUpgrade.title'), body: t('host.confirmUpgrade.body'), confirmLabel: t('host.confirmUpgrade.ok'), danger: true });
     if (!ok) return;
-    setLog([]); setShowLog(true);
+    setLog([]);
     act(() => hostPost(`/host/upgrade?when=${when}`));
   };
   const check = async () => {
@@ -191,6 +209,8 @@ export default function Host() {
   const upgRunning = !!upg && upg.finishedAt === null;
   const disabled = busy || noSup || phase === 'draining' || phase === 'exiting' || upgRunning;
   const warn = 'font-mono text-[10.5px] text-[#CE8324]';
+  const hasLog = log.length > 0 || (upg?.log?.length || 0) > 0;
+  const advIds = hasLog ? HOST_ADVANCED_IDS : HOST_ADVANCED_IDS.filter((x) => x !== 'upgrade-log');
 
   return (
     <>
@@ -205,40 +225,14 @@ export default function Host() {
           </div>
         </Field>
         <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
-          <div className="flex flex-col items-end gap-1.5">
-            <span className="flex flex-wrap items-center justify-end gap-2">
-              <span className="font-mono text-[11.5px] text-fg" dir="ltr">{cli?.installed ? t('host.cli.installed', { v: cli.installed }) : '…'}</span>
-              {cli?.updateAvailable
-                ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cli.latest })}</span>
-                : cli?.latest && cli?.installed ? <span className="font-mono text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
-              <button type="button" disabled={cliBusy === 'update' || cli?.applying || !cli?.updateAvailable} onClick={cliUpdate} className={BTN}>{cliBusy === 'update' || cli?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
-            </span>
-            <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
-              {cli?.checkError ? <span className="text-[#9c3b33]">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
-              <button type="button" disabled={cliBusy === 'check' || cli?.checking} onClick={cliCheck} className="cursor-pointer underline disabled:opacity-50">{cliBusy === 'check' || cli?.checking ? t('host.checking') : t('host.check')}</button>
-            </span>
-            {cli?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cli.deferred.availableMb, min: cli.deferred.minFreeMb })}</span>}
-            {cli?.lastUpdate && (
-              <span className={`font-mono text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
-                {cli.lastUpdate.ok
-                  ? t('host.cli.lastOk', { from: cli.lastUpdate.from || '?', to: cli.lastUpdate.to || '?', when: relTime(cli.lastUpdate.at) })
-                  : t('host.cli.lastFailed', { when: relTime(cli.lastUpdate.at), error: cli.lastUpdate.error || '?' })}
-              </span>
+          <span className="flex flex-wrap items-center justify-end gap-2">
+            <span className="font-mono text-[11.5px] text-fg" dir="ltr">{cli?.installed ? t('host.cli.installed', { v: cli.installed }) : '…'}</span>
+            {cli?.updateAvailable
+              ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cli.latest })}</span>
+              : cli?.latest && cli?.installed ? <span className="font-mono text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
+            {(cli?.updateAvailable || cli?.applying) && (
+              <button type="button" disabled={cliBusy === 'update' || cli?.applying} onClick={cliUpdate} className={BTN}>{cliBusy === 'update' || cli?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
             )}
-            <label className="flex cursor-pointer items-center gap-2 font-mono text-[10.5px] text-fgdim">
-              {t('host.cli.auto')}
-              <Toggle on={!!cli?.auto} disabled={!cli || cliBusy === 'auto'} onChange={cliAuto} />
-            </label>
-          </div>
-        </Field>
-        {st?.docker && (
-          <Field label={t('host.image')} hint={t('host.image.hint')}>
-            <span className="font-mono text-[11.5px] text-fg" dir="ltr">{st.image || ver?.image || 'docker'}</span>
-          </Field>
-        )}
-        <Field label={t('host.manager')} hint={t('host.manager.hint')}>
-          <span className="font-mono text-[11.5px] text-fg" dir="ltr">
-            {st ? `${st.manager === 'docker' ? t('host.docker.manager') : st.manager} · ${t('host.uptime', { t: fmtUptime(st.uptimeSec) })}${st.busySessions ? ` · ${t('host.busy', { n: st.busySessions })}` : ''}` : '…'}
           </span>
         </Field>
         <Field label={t('host.restart')} hint={t('host.restart.hint')} wrap>
@@ -269,18 +263,65 @@ export default function Host() {
               <button type="button" disabled={disabled || !st?.allowUpgrade} onClick={() => upgrade('now')} className={BTN}>{t('host.upgradeBtn')}</button>
             </span>
             {upgRunning && <span className={warn}>{t('host.upgradeRunning', { step: upg.step || '…' })}</span>}
-            {(log.length > 0 || upg?.log?.length > 0) && (
-              <button type="button" onClick={() => setShowLog((v) => !v)} className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</button>
-            )}
+            {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
           </div>
         </Field>
         )}
-        {showLog && (log.length > 0 || upg?.log?.length > 0) && (
-          <pre dir="ltr" className="thin-scroll my-3 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
-        )}
       </Section>
-      <Budgets />
-      <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} />
+
+      <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} memory={memory} force={force} />
+      <WhoAmI />
+
+      <Advanced section={section} ids={advIds}>
+        <Section id="cli-details" title={t('settings.host.cliDetails')}>
+          <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
+            <div className="flex flex-col items-end gap-1.5">
+              <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
+                {cli?.checkError ? <span className="text-[#9c3b33]">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
+                <button type="button" disabled={cliBusy === 'check' || cli?.checking} onClick={cliCheck} className="cursor-pointer underline disabled:opacity-50">{cliBusy === 'check' || cli?.checking ? t('host.checking') : t('host.check')}</button>
+              </span>
+              {cli?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cli.deferred.availableMb, min: cli.deferred.minFreeMb })}</span>}
+              {cli?.lastUpdate && (
+                <span className={`font-mono text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
+                  {cli.lastUpdate.ok
+                    ? t('host.cli.lastOk', { from: cli.lastUpdate.from || '?', to: cli.lastUpdate.to || '?', when: relTime(cli.lastUpdate.at) })
+                    : t('host.cli.lastFailed', { when: relTime(cli.lastUpdate.at), error: cli.lastUpdate.error || '?' })}
+                </span>
+              )}
+              <label className="flex cursor-pointer items-center gap-2 font-mono text-[10.5px] text-fgdim">
+                {t('host.cli.auto')}
+                <Toggle on={!!cli?.auto} disabled={!cli || cliBusy === 'auto'} onChange={cliAuto} />
+              </label>
+            </div>
+          </Field>
+        </Section>
+
+        <Section id="manager" title={t('host.manager')}>
+          {st?.docker && (
+            <Field label={t('host.image')} hint={t('host.image.hint')}>
+              <span className="font-mono text-[11.5px] text-fg" dir="ltr">{st.image || ver?.image || 'docker'}</span>
+            </Field>
+          )}
+          <Field label={t('host.manager')} hint={t('host.manager.hint')}>
+            <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+              {st ? `${st.manager === 'docker' ? t('host.docker.manager') : st.manager} · ${t('host.uptime', { t: fmtUptime(st.uptimeSec) })}${st.busySessions ? ` · ${t('host.busy', { n: st.busySessions })}` : ''}` : '…'}
+            </span>
+          </Field>
+        </Section>
+
+        {hasLog && (
+          <Section id="upgrade-log" title={t('settings.host.upgradeLog')}>
+            <pre dir="ltr" className="thin-scroll my-2 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
+          </Section>
+        )}
+
+        <BackupOptions memory={memory} setMemory={setMemory} force={force} setForce={setForce} disabled={busy} />
+        <Budgets />
+        <Health />
+        <UsersAdvanced />
+        <ScreenShare />
+        <DangerZone />
+      </Advanced>
     </>
   );
 }

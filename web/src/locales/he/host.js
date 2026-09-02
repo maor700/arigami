@@ -99,6 +99,8 @@ export const strings = {
   'health.incidents': 'אירועים (24 שעות)',
   'health.incidents.hint': 'כל פעולה אוטומטית שהמארח עשה. אותן שורות מופיעות גם בצ׳אט של הסשן הרלוונטי.',
   'health.incidentCount': '{n} ב-24 שעות',
+  'health.showReminders': 'הצג גם תזכורות ({n} "הזכיר לך")',
+  'health.showMore': 'הצג עוד {n}',
   'health.noIncidents': 'שום דבר לא הצריך תיקון ב-24 השעות האחרונות.',
   'health.action.respawn': 'הפעיל מחדש סשן שמת',
   'health.action.refresh-auth': 'רענן טוקן שפג',
