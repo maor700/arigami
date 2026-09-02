@@ -99,6 +99,8 @@ export const strings = {
   'health.incidents': 'Incidents (24h)',
   'health.incidents.hint': 'Every automatic action the host took. The same lines land in the affected session\u2019s chat.',
   'health.incidentCount': '{n} in 24h',
+  'health.showReminders': 'Also show reminders ({n} "reminded you")',
+  'health.showMore': 'Show {n} more',
   'health.noIncidents': 'Nothing needed fixing in the last 24 hours.',
   'health.action.respawn': 'Restarted a dead session',
   'health.action.refresh-auth': 'Refreshed an expired token',

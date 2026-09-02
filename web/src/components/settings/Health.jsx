@@ -4,6 +4,9 @@
 // rung below their model), and the last 24h of incidents from
 // $ARIGAMI_DIR/incidents.jsonl. Read-only apart from one button: take a
 // downgraded session back to the top rung without waiting for the reset.
+// AUDIT2: lives in Host › Advanced. The incident list hides the `notify-human`
+// class ("reminded you" — 84% of the log, not a fault) unless asked, and shows
+// the last 20 by default.
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useStore } from '../../lib/store.js';
@@ -13,6 +16,9 @@ import { toastError } from '../../lib/toast.js';
 import { Section, SettingCard, StatusPill, BTN_SM, ROW, LIST } from './shared.jsx';
 
 const DOT = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
+// Incident classes that only say "we pinged you" — filtered out by default.
+export const REMINDER_ACTIONS = new Set(['notify-human']);
+export const filterIncidents = (list, showReminders) => (showReminders ? list : list.filter((i) => !REMINDER_ACTIONS.has(i.action)));
 const OUTCOME_PILL = { ok: 'ok', failed: 'error', escalated: 'todo' };
 
 export default function Health() {
@@ -21,6 +27,8 @@ export default function Health() {
   const [snap, setSnap] = useState(null);
   const [log, setLog] = useState(null);
   const [busy, setBusy] = useState('');
+  const [showReminders, setShowReminders] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const load = () => {
     api.get('/health').then(setSnap).catch(() => setSnap(null));
@@ -34,6 +42,10 @@ export default function Health() {
   const rows = snap?.sessions || [];
   const unhealthy = rows.filter((r) => r.state !== 'IDLE_OK' && r.state !== 'RUNNING');
   const downgraded = sessions.filter((s) => (s.claude?.modelRung || 0) > 0);
+  const allIncidents = log?.incidents || [];
+  const reminders = allIncidents.filter((i) => REMINDER_ACTIONS.has(i.action)).length;
+  const shown = filterIncidents(allIncidents, showReminders);
+  const visible = showAll ? shown.slice(0, 200) : shown.slice(0, 20);
 
   const restore = async (id) => {
     setBusy(id);
@@ -131,13 +143,19 @@ export default function Health() {
       <SettingCard
         title={t('health.incidents')}
         hint={t('health.incidents.hint')}
-        pill={<StatusPill status={log?.count ? 'pending' : 'ok'} label={t('health.incidentCount', { n: log?.count ?? 0 })} />}
+        pill={<StatusPill status={shown.length ? 'pending' : 'ok'} label={t('health.incidentCount', { n: shown.length })} />}
       >
-        {!log?.incidents?.length ? (
+        {reminders > 0 && (
+          <label className="mt-1 flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+            <input type="checkbox" data-health-reminders checked={showReminders} onChange={(e) => setShowReminders(e.target.checked)} />
+            {t('health.showReminders', { n: reminders })}
+          </label>
+        )}
+        {!shown.length ? (
           <div className="mt-1 text-[11px] text-fgdim italic">{t('health.noIncidents')}</div>
         ) : (
           <div className={LIST}>
-            {log.incidents.slice(0, 50).map((i, n) => (
+            {visible.map((i, n) => (
               <div key={`${i.ts}:${n}`} className={ROW}>
                 <span className="flex min-w-0 flex-col">
                   <span className="min-w-0 truncate">
@@ -152,6 +170,11 @@ export default function Health() {
                 </span>
               </div>
             ))}
+            {shown.length > visible.length && (
+              <button type="button" onClick={() => setShowAll(true)} className="cursor-pointer py-1.5 font-mono text-[10.5px] text-fgdim underline hover:text-fg">
+                {t('health.showMore', { n: shown.length - visible.length })}
+              </button>
+            )}
           </div>
         )}
       </SettingCard>

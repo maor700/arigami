@@ -85,7 +85,17 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
   );
 }
 
-export default function ClaudeAccounts({ initialAdd = false, identity, onConnectAuto }) {
+// `footer`: the 3-line active/pool explainer — AUDIT2 moved it to the Advanced drawer.
+export function ClaudeAccountsFooter() {
+  const t = useT();
+  return (
+    <p className="mt-2 px-1 text-[10.5px] leading-snug text-fgdim">
+      <b>{t('launcher.account.footerActive')}</b> {t('launcher.account.footer1')} <b>{t('launcher.account.footerPool')}</b> {t('launcher.account.footer2')}
+    </p>
+  );
+}
+
+export default function ClaudeAccounts({ initialAdd = false, identity, onConnectAuto, footer = true }) {
   const t = useT();
   const { accounts, accountUsage } = useStore();
   const list = accounts?.accounts || [];
@@ -224,9 +234,7 @@ export default function ClaudeAccounts({ initialAdd = false, identity, onConnect
         </div>
       )}
 
-      <p className="mt-2 px-1 text-[10.5px] leading-snug text-fgdim">
-        <b>{t('launcher.account.footerActive')}</b> {t('launcher.account.footer1')} <b>{t('launcher.account.footerPool')}</b> {t('launcher.account.footer2')}
-      </p>
+      {footer && <ClaudeAccountsFooter />}
     </Section>
   );
 }

@@ -21,7 +21,7 @@ import { Section, StatusPill, ErrorLine, BTN_PRIMARY, BTN_DANGER, BTN_SM, ROW, L
 // to their vendors' own MCP servers (the native cards above), and `whatsapp` is
 // gone entirely — Composio's toolkit is WhatsApp *Business* (WABA templates,
 // per-conversation billing), while ours is the local personal bridge.
-const FEATURED = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'];
+export const FEATURED = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'];
 const CHIP = (on) => `shrink-0 cursor-pointer rounded-full border px-2.5 py-0.5 text-[10.5px] ${on ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim hover:border-ink hover:text-fg'}`;
 
 function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
@@ -54,7 +54,7 @@ function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
 }
 
 // No Composio key yet → the Composio OAuth login (opens a tab, polls).
-function ComposioLogin({ onDone }) {
+export function ComposioLogin({ onDone }) {
   const t = useT();
   const [state, setState] = useState(null); // null | 'starting' | 'waiting' | 'error'
   const [err, setErr] = useState('');

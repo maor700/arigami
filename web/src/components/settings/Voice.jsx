@@ -1,6 +1,10 @@
-// Settings › Voice: push-to-talk mode, microphone, recognition language, the
-// global hotkey (recorded live) and auto-send. Consumers: App.jsx (hotkey,
-// mode) and lib/voice.js (mic, language, auto-send).
+// Settings › General › Voice (AUDIT2): the two controls a person actually
+// touches — hotkey (recorded live) and push-to-talk mode — are `VoiceMain`;
+// microphone, recognition language and auto-send are `VoiceAdvanced`. The
+// General page shows VoiceMain inline only when the server reports
+// `voiceEnabled:true` (a Groq key exists); otherwise both blocks sit in the
+// Advanced drawer under one "voice is off" hint. Consumers: App.jsx (hotkey,
+// mode) and lib/voice.js (mic, language, auto-send). Nothing was removed.
 import { useEffect, useState } from 'react';
 import { usePrefs, setPrefs } from '../../lib/prefs.js';
 import { useT } from '../../lib/i18n.js';
@@ -69,35 +73,11 @@ function MicPicker({ value, onChange }) {
 
 // `recording` is owned by the Settings shell (it also swallows Escape while
 // a hotkey is being recorded) — see Settings.jsx.
-export default function Voice({ recording, setRecording }) {
+export function VoiceMain({ recording, setRecording }) {
   const prefs = usePrefs();
   const t = useT();
   return (
-    <Section id="voice" title={t('chrome.voice.section')} first>
-      <Field label={t('chrome.voice.mode')} hint={t('chrome.voice.mode.hint')}>
-        <Segmented
-          value={prefs.voiceMode}
-          onChange={(v) => setPrefs({ voiceMode: v })}
-          options={[
-            { value: 'hold', label: t('chrome.voice.mode.hold') },
-            { value: 'toggle', label: t('chrome.voice.mode.toggle') },
-          ]}
-        />
-      </Field>
-      <Field label={t('chrome.voice.mic')} hint={t('chrome.voice.mic.hint')}>
-        <MicPicker value={prefs.voiceMicId} onChange={(v) => setPrefs({ voiceMicId: v })} />
-      </Field>
-      <Field label={t('chrome.voice.language')} hint={t('chrome.voice.language.hint')}>
-        <Segmented
-          value={prefs.voiceLanguage}
-          onChange={(v) => setPrefs({ voiceLanguage: v })}
-          options={[
-            { value: 'auto', label: t('common.auto') },
-            { value: 'en', label: t('chrome.voice.language.en') },
-            { value: 'he', label: t('chrome.voice.language.he') },
-          ]}
-        />
-      </Field>
+    <>
       <Field label={t('chrome.voice.hotkey')} hint={t('chrome.voice.hotkey.hint')}>
         <span className="flex items-center gap-2">
           <input
@@ -118,9 +98,53 @@ export default function Voice({ recording, setRecording }) {
           </button>
         </span>
       </Field>
+      <Field label={t('chrome.voice.mode')} hint={t('chrome.voice.mode.hint')}>
+        <Segmented
+          value={prefs.voiceMode}
+          onChange={(v) => setPrefs({ voiceMode: v })}
+          options={[
+            { value: 'hold', label: t('chrome.voice.mode.hold') },
+            { value: 'toggle', label: t('chrome.voice.mode.toggle') },
+          ]}
+        />
+      </Field>
+    </>
+  );
+}
+
+export function VoiceAdvanced() {
+  const prefs = usePrefs();
+  const t = useT();
+  return (
+    <>
+      <Field label={t('chrome.voice.mic')} hint={t('chrome.voice.mic.hint')}>
+        <MicPicker value={prefs.voiceMicId} onChange={(v) => setPrefs({ voiceMicId: v })} />
+      </Field>
+      <Field label={t('chrome.voice.language')} hint={t('chrome.voice.language.hint')}>
+        <Segmented
+          value={prefs.voiceLanguage}
+          onChange={(v) => setPrefs({ voiceLanguage: v })}
+          options={[
+            { value: 'auto', label: t('common.auto') },
+            { value: 'en', label: t('chrome.voice.language.en') },
+            { value: 'he', label: t('chrome.voice.language.he') },
+          ]}
+        />
+      </Field>
       <Field label={t('chrome.voice.autoSend')} hint={t('chrome.voice.autoSend.hint')}>
         <Toggle on={prefs.voiceAutoSend} onChange={(v) => setPrefs({ voiceAutoSend: v })} />
       </Field>
+    </>
+  );
+}
+
+// The whole block in one section — what the old standalone Voice page was.
+export default function Voice({ recording, setRecording, first = false }) {
+  const t = useT();
+  return (
+    <Section id="voice" title={t('chrome.voice.section')} first={first}>
+      <VoiceMain recording={recording} setRecording={setRecording} />
+      <VoiceAdvanced />
     </Section>
   );
 }

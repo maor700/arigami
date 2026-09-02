@@ -1,31 +1,48 @@
-// Settings — one screen, five categories (SETTINGS-IA.md): a left rail on
+// Settings — one screen, THREE categories + a collapsed "Advanced" drawer per
+// page (AUDIT2, docs/SETTINGS-IA.md §6): כללי · חיבורים · מארח. A left rail on
 // desktop, horizontal chips on phones, deep-linkable as
 // #/settings/<category>[/<section>]. Each category is its own file under
 // ./settings/; this shell only owns the nav, the Escape/hotkey-recording key
 // handler and the scroll-to-section on open.
+//
+// The old `voice` and `automation` categories are still accepted as route ids
+// (BrainView links to #/settings/automation/heartbeat, older bookmarks to
+// #/settings/voice): they land on the General page with the drawer open at
+// the matching section. Nothing was deleted — the ADV/MOVE items of the audit
+// sit inside each page's <Advanced> drawer.
 import { useEffect, useState } from 'react';
 import { setPrefs } from '../lib/prefs.js';
 import { Wave } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
+import { useStore } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
-import { faXmark, faPalette, faMicrophone, faLink, faRobot, faServer } from '@fortawesome/free-solid-svg-icons';
-import Appearance from './settings/Appearance.jsx';
-import Voice from './settings/Voice.jsx';
+import { faXmark, faSliders, faLink, faServer } from '@fortawesome/free-solid-svg-icons';
+import General from './settings/Appearance.jsx';
 import Connections from './settings/Connections.jsx';
-import Automation from './settings/Automation.jsx';
-import Host from './settings/Host.jsx';
-import Health from './settings/Health.jsx';
-import Access from './settings/Access.jsx';
+import HostPage from './settings/Host.jsx';
 
-export const SETTINGS_CATEGORIES = ['appearance', 'voice', 'connections', 'automation', 'host'];
-const ICONS = { appearance: faPalette, voice: faMicrophone, connections: faLink, automation: faRobot, host: faServer };
+// Route ids App.jsx accepts. The first three are the nav; `voice` and
+// `automation` are legacy aliases that resolve onto `appearance` (General).
+export const SETTINGS_CATEGORIES = ['appearance', 'connections', 'host', 'voice', 'automation'];
+export const SETTINGS_NAV = ['appearance', 'connections', 'host'];
+const ICONS = { appearance: faSliders, connections: faLink, host: faServer };
+
+// Legacy category → {cat, section}. `automation` without a section opens the
+// heartbeat (its only user-facing control); `voice` opens the voice block.
+export function resolveCategory(category, section = '') {
+  if (category === 'voice') return { cat: 'appearance', section: section || 'voice' };
+  if (category === 'automation') return { cat: 'appearance', section: section || 'heartbeat' };
+  return { cat: SETTINGS_NAV.includes(category) ? category : 'appearance', section };
+}
 
 export default function Settings({ category = 'appearance', section = '', initialAdd = false, onCategory, onClose }) {
   const t = useT();
   const desktop = useIsDesktop();
+  const { config } = useStore();
   const [recordingHotkey, setRecordingHotkey] = useState(false);
-  const cat = SETTINGS_CATEGORIES.includes(category) ? category : 'appearance';
+  const { cat, section: sec } = resolveCategory(category, section);
+  const voiceEnabled = !!config?.voiceEnabled;
 
   // Escape closes; while a voice hotkey is being recorded the next chord is
   // captured instead (Voice.jsx owns the button, we own the listener so the
@@ -58,12 +75,12 @@ export default function Settings({ category = 'appearance', section = '', initia
   }, [onClose, recordingHotkey]);
 
   // Deep link to a section (#/settings/connections/claude) → scroll to it once
-  // the category has rendered.
+  // the category has rendered (sections inside the drawer open it first).
   useEffect(() => {
-    if (!section) return;
-    const id = setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 80);
+    if (!sec) return;
+    const id = setTimeout(() => document.getElementById(`settings-${sec}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
     return () => clearTimeout(id);
-  }, [cat, section]);
+  }, [cat, sec]);
 
   const navItem = (id) => (
     <button
@@ -81,11 +98,9 @@ export default function Settings({ category = 'appearance', section = '', initia
   );
 
   let body;
-  if (cat === 'voice') body = <Voice recording={recordingHotkey} setRecording={setRecordingHotkey} />;
-  else if (cat === 'connections') body = <Connections initialAdd={initialAdd} />;
-  else if (cat === 'automation') body = <Automation />;
-  else if (cat === 'host') body = <><Host /><Health /><Access /></>;
-  else body = <Appearance />;
+  if (cat === 'connections') body = <Connections initialAdd={initialAdd} section={sec} />;
+  else if (cat === 'host') body = <HostPage section={sec} />;
+  else body = <General section={sec} voiceEnabled={voiceEnabled} recording={recordingHotkey} setRecording={setRecordingHotkey} />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-panel">
@@ -100,14 +115,14 @@ export default function Settings({ category = 'appearance', section = '', initia
 
       {!desktop && (
         <div className="thin-scroll flex shrink-0 gap-1.5 overflow-x-auto border-b border-hair px-3 py-2">
-          {SETTINGS_CATEGORIES.map(navItem)}
+          {SETTINGS_NAV.map(navItem)}
         </div>
       )}
 
       <div className="flex min-h-0 flex-1">
         {desktop && (
           <nav className="flex w-[180px] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">
-            {SETTINGS_CATEGORIES.map(navItem)}
+            {SETTINGS_NAV.map(navItem)}
           </nav>
         )}
         <div data-settings-pane className="thin-scroll min-h-0 flex-1 overflow-y-auto">

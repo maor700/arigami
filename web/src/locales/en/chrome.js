@@ -109,6 +109,8 @@ export const strings = {
   'auth.settings.pairCodeHint': 'Enter this on the other device. Single-use; replaces any pending code.',
   'auth.settings.issueCode': 'Issue code',
   'auth.settings.remove': 'remove',
+  'auth.settings.usersTitle': 'Users & tokens',
+  'auth.settings.noUsers': 'Only the admin.',
   'auth.settings.tokens': 'API tokens',
   'auth.settings.tokensHint': 'For CLIs and scripts: send as "Authorization: Bearer <token>". Shown once.',
   'auth.settings.tokenLabel': 'label',

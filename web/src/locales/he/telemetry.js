@@ -13,6 +13,7 @@ export const strings = {
   'telemetry.id': 'מזהה מופע אנונימי',
   'telemetry.id.hint': 'uuid אקראי ב-$ARIGAMI_DIR/telemetry-id. איפוס = מחיקת הנתונים שלכם: שום דבר לא מקשר בין המזהה הישן לחדש, והשורות הישנות פגות בקולט.',
   'telemetry.rotate': 'איפוס מזהה',
+  'telemetry.docs': 'מה נשלח (docs/TELEMETRY.md) ↗',
   'telemetry.rotate.confirmTitle': 'לאפס את המזהה האנונימי?',
   'telemetry.rotate.confirmBody': 'המארח הזה יהפוך למופע אנונימי חדש לגמרי. אבני-דרך שכבר נשלחו נשארות מקושרות למזהה הישן עד שיפוגו.',
   'telemetry.rotated': 'נוצר מזהה אנונימי חדש',

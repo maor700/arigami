@@ -163,6 +163,42 @@ test('a failed send keeps the cursor so events retry; endpoint comes from config
   expect(sent).toEqual(['https://example.invalid/v1/events']);
 });
 
+test('an unreachable collector drops the batch instead of queueing forever: DNS failure at once, other errors after 3 misses, then a 24h backoff', () => {
+  const dir = fresh();
+  const r = runInChild(
+    PRELUDE +
+      "tm.setEnabled(true);f.firstTime('install');" +
+      // three plain failures → the third one drops
+      "tm.setSender(async()=>({ok:false,status:502}));const a=await tm.flush();const b=await tm.flush();const c=await tm.flush();const s1=await tm.status();" +
+      // backoff: a new milestone is dropped without a send attempt
+      "let calls=0;tm.setSender(async()=>{calls++;return {ok:true,status:204};});f.firstTime('cron.first');const d=await tm.flush();const s2=await tm.status();" +
+      "emit({a,b,c,d,s1:{pending:s1.pending,dropped:s1.dropped,hasNext:!!s1.nextTryAt},s2:{pending:s2.pending,dropped:s2.dropped},calls});",
+    env(dir, { ARIGAMI_TELEMETRY_URL: 'https://example.invalid/v1/events' })
+  );
+  expect(r.ok).toBe(true);
+  const { a, b, c, d, s1, s2, calls } = r.out[0];
+  expect(a).toMatchObject({ sent: false, reason: 'error', status: 502 });
+  expect(a.dropped).toBeUndefined();
+  expect(b.dropped).toBeUndefined();
+  expect(c).toMatchObject({ sent: false, reason: 'error', status: 502, dropped: 1 });
+  expect(s1).toEqual({ pending: 0, dropped: 1, hasNext: true });
+  expect(d).toMatchObject({ sent: false, reason: 'backoff', dropped: 1 });
+  expect(s2).toEqual({ pending: 0, dropped: 2 });
+  expect(calls).toBe(0);
+
+  const dir2 = fresh();
+  const r2 = runInChild(
+    PRELUDE +
+      "tm.setEnabled(true);f.firstTime('install');f.firstTime('session.first');" +
+      "tm.setSender(async()=>{throw new Error('getaddrinfo ENOTFOUND telemetry.arigami.dev');});const a=await tm.flush();const st=await tm.status();" +
+      "emit({a,pending:st.pending,dropped:st.dropped,lastError:st.lastError});",
+    env(dir2, { ARIGAMI_TELEMETRY_URL: 'https://example.invalid/v1/events' })
+  );
+  expect(r2.ok).toBe(true);
+  expect(r2.out[0]).toMatchObject({ a: { sent: false, reason: 'error', dropped: 2 }, pending: 0, dropped: 2 });
+  expect(r2.out[0].lastError).toMatch(/ENOTFOUND/);
+});
+
 test('instance id: uuid persisted in telemetry-id, stable across imports, rotate/forget gives a new one and clears history', () => {
   const dir = fresh();
   const r = runInChild(

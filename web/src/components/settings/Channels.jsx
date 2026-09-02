@@ -1,5 +1,8 @@
 // Settings › Connections › Channels: WhatsApp (one card, on the JIT QrStep —
 // this replaces the old duplicate WhatsAppBridge block), the SMS share-token
+// (AUDIT2: the hub now lists WhatsApp in its unified "connected" list and
+// renders only `Webhooks` inside the Advanced drawer; the default export is
+// the whole old section, kept for compatibility), the SMS share-token
 // URL for the phone's forwarder, Slack/GitHub webhook secrets, custom HMAC
 // hooks and the Tailscale Funnel toggle that exposes ONLY /__api/webhooks.
 import { useEffect, useState } from 'react';
@@ -11,7 +14,7 @@ import { toastError } from '../../lib/toast.js';
 import QrStep from '../setup/QrStep.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN_SM, BTN_DANGER, INPUT, ROW } from './shared.jsx';
 
-function WhatsApp({ onChanged }) {
+export function WhatsApp({ onChanged }) {
   const t = useT();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -45,7 +48,7 @@ function WhatsApp({ onChanged }) {
   );
 }
 
-function Webhooks() {
+export function Webhooks() {
   const t = useT();
   const { auth } = useStore();
   const [cfgv, setCfgv] = useState(null);

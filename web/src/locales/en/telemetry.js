@@ -12,6 +12,7 @@ export const strings = {
   'telemetry.neverSent': 'Nothing has been sent yet · {n} event(s) pending',
   'telemetry.id': 'Anonymous instance id',
   'telemetry.id.hint': 'A random uuid in $ARIGAMI_DIR/telemetry-id. Reset it to delete your data: nothing links the old id to the new one, and old rows expire on the collector.',
+  'telemetry.docs': 'What is sent (docs/TELEMETRY.md) ↗',
   'telemetry.rotate': 'Reset ID',
   'telemetry.rotate.confirmTitle': 'Reset the anonymous id?',
   'telemetry.rotate.confirmBody': 'This host becomes a brand-new anonymous instance. Previously sent milestones stay attached to the old id until they expire.',
