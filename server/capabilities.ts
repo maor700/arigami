@@ -294,7 +294,7 @@ export interface CapabilityProbes {
   claude: () => { cli: boolean; authed: boolean };
   git: () => { authed: boolean; gh: boolean };
   repos: () => Array<{ name: string; present: boolean; dir: string; source: string }>;
-  whatsapp: () => { status: string; qr: string | null; user: string | null };
+  whatsapp: () => { status: string; qr: string | null; user: string | null; reason?: string };
   desktop: () => { enabled: boolean; display: string | null; up: boolean };
   push: () => boolean;
   remote: () => { available: boolean; loggedIn?: boolean; serving?: boolean; httpsUrl?: string | null; reason?: string };
@@ -412,7 +412,7 @@ export const defaultProbes: CapabilityProbes = {
           return { status: 'disconnected', qr: null, user: null };
         }
       }
-      return { status: typeof j?.status === 'string' ? j.status : 'disconnected', qr: j?.qrUrl ?? null, user: j?.user ?? null };
+      return { status: typeof j?.status === 'string' ? j.status : 'disconnected', qr: j?.qrUrl ?? null, user: j?.user ?? null, ...(typeof j?.reason === 'string' ? { reason: j.reason } : {}) };
     } catch {
       return { status: 'disconnected', qr: null, user: null };
     }
@@ -522,7 +522,14 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
         const w = p.whatsapp();
         return w.status === 'connected'
           ? { ok: true, detail: `connected${w.user ? ` · ${w.user}` : ''}`, data: { status: w.status, user: w.user } }
-          : { ok: false, detail: w.status === 'qr' ? 'scan the QR code with WhatsApp' : 'not connected — scan a QR code to pair', data: { status: w.status, qr: w.qr } };
+          : {
+              ok: false,
+              detail: w.status === 'qr' ? 'scan the QR code with WhatsApp'
+                : w.reason === 'logged-out' ? 'WhatsApp unlinked this device — Show QR to pair again'
+                : w.reason === 'crash-loop' ? 'the WhatsApp process keeps exiting — see the host log, then Show QR'
+                : 'not connected — scan a QR code to pair',
+              data: { status: w.status, qr: w.qr, ...(w.reason ? { reason: w.reason } : {}) },
+            };
       },
       manual: { kind: 'qr', start: '/__api/whatsapp/connect', help: 'WhatsApp → Linked devices → Link a device → scan.' },
       autoCapable: false,

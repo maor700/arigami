@@ -1669,8 +1669,9 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     if (action === 'poll') return { ok: wb.getBridgeStatus().status === 'connected', ...wb.getBridgeStatus() };
     const { enqueueWake } = await import('./listeners.js');
     const sid = (req.headers['x-session-id'] as string) || 'ui';
-    wb.startBridge(sid, enqueueWake).catch(console.error);
-    return { ok: false, ...wb.getBridgeStatus() }; // {status:'starting'|'qr'|…, qr, qrUrl, user}
+    // A human's Connect / Show QR: a pairing WhatsApp has logged out is moved aside so the QR shows (WA1).
+    wb.startBridge(sid, enqueueWake, { repair: true }).catch(console.error);
+    return { ok: false, ...wb.getBridgeStatus() }; // {status:'starting'|'qr'|…, qr, qrUrl, user, reason?}
   } else if (capability.startsWith('composio:')) {
     const k = body?.key || body?.token;
     if (k) { ob.setComposioKey(String(k)); caps.invalidateComposioCache(); }
@@ -3965,8 +3966,9 @@ export async function handle(
       const wb = await import('./whatsapp-bridge.js');
       const { enqueueWake } = await import('./listeners.js');
       const sessionId = req.headers['x-session-id'] as string || 'ui';
-      // Fire and forget — UI polls /status every 3s for updates
-      wb.startBridge(sessionId, enqueueWake).catch(console.error);
+      // Fire and forget — UI polls /status every 3s for updates. {repair:true}:
+      // a pairing WhatsApp has logged out is moved aside so this shows a QR (WA1).
+      wb.startBridge(sessionId, enqueueWake, { repair: true }).catch(console.error);
       return json(res, wb.getBridgeStatus());
     }
     if (p === '/__api/whatsapp/disconnect' && m === 'POST') {
