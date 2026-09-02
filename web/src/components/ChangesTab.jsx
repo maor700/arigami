@@ -449,6 +449,7 @@ export default function ChangesTab({ session, active }) {
   }, [selected, session.id, data, modeQ]);
 
   const noWorktree = failed || data?.error || (!loading && !data?.worktree && files.length === 0);
+  const noRepo = !loading && data?.emptyReason === 'no-repo';
 
   const lineComments = comments.filter((c) => c.target?.kind === 'line' && c.target?.path === selected);
   const fileComments = comments.filter((c) => c.target?.kind === 'file' && c.target?.path === selected);
@@ -522,7 +523,7 @@ export default function ChangesTab({ session, active }) {
             </button>
           </span>
         )}
-        <div className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border">
+        {!noRepo && <div className="flex overflow-hidden rounded-[6px] border-[1.5px] border-border">
           {(workAvailable ? ['work', 'uncommitted', 'pr'] : ['uncommitted', 'pr']).map((m) => (
             <button
               key={m}
@@ -543,7 +544,7 @@ export default function ChangesTab({ session, active }) {
               {m === 'work' ? t('chat.work') : m === 'uncommitted' ? t('chat.uncommitted') : 'PR'}
             </button>
           ))}
-        </div>
+        </div>}
         {/* branch / file-count / explained are context, not actions — on mobile
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
@@ -577,7 +578,8 @@ export default function ChangesTab({ session, active }) {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {desktop ? (
+          {/* B14: not a git repo → nothing to explain/review/refresh or to switch between */}
+          {noRepo ? null : desktop ? (
             <>
           {!noWorktree && (
             <>
