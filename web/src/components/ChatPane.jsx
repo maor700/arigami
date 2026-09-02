@@ -13,6 +13,7 @@ import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
 import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
+import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
@@ -749,6 +750,43 @@ function ScreenRequestCard({ sessionId, event }) {
   );
 }
 
+/* ---------- Simple mode: the folded "behind the scenes" line --------------- */
+
+// SIMPLE1: one assistant turn's tool calls / results / thinking / status lines,
+// folded into a muted line that expands inline to the terminal rendering.
+// `group` is filled in by the ChatPane loop AFTER this element is created (the
+// slot sits where the turn's first folded event was), so read it at render.
+function BehindScenes({ sessionId, group, streaming }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  if (!groupHasSubstance(group.events)) return null;
+  const n = group.events.filter(isAction).length;
+  const label = n === 0 ? t('chat.behindScenes') : n === 1 ? t('chat.behindScenesOne') : t('chat.behindScenesN', { n });
+  return (
+    <div className="my-1" data-behind-scenes={group.events.length} data-actions={n}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[10.5px] text-[var(--term-faint)] hover:bg-[var(--term-hover)] hover:text-[var(--term-dim)]"
+      >
+        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[9px]" />
+        <span>{label}</span>
+        {streaming && <span className="host-spinner h-2.5 w-2.5" />}
+      </button>
+      {open && (
+        <div className="mt-1 mb-1.5 border-s-2 border-[var(--term-border)] ps-2.5">
+          {group.rows.map((r) => (
+            <div key={r.key} data-event-id={r.event.id || r.key}>
+              <Event sessionId={sessionId} event={r.event} recap={r.recap} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- the pane ------------------------------------------------------ */
 
 // Memoized: the store keeps every settled event's object identity stable and
@@ -825,8 +863,20 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
 const WINDOW = 150;
 const REVEAL = 300;
 
-export default function ChatPane({ sessionId, events, working, action, loading, awaiting }) {
+// The slot decides "still streaming" from the transcript itself: the group is
+// live while its last folded event is also the transcript's tail (no prose /
+// result after it yet) — the counter then shows a spinner and keeps growing.
+function BehindScenesSlot({ sessionId, group, events }) {
+  const last = group.events[group.events.length - 1];
+  const tail = events[events.length - 1];
+  const streaming = !!last && last === tail && last.kind !== 'result';
+  return <BehindScenes sessionId={sessionId} group={group} streaming={streaming} />;
+}
+
+export default function ChatPane({ sessionId, events, working, action, loading, awaiting, mode = 'full' }) {
   const t = useT();
+  // SIMPLE1: 'simple' folds tool activity per turn (see lib/chatMode.js).
+  const simple = mode === 'simple';
   // F7: the merge panel keys off metadata.review/merged (wire form is enough).
   const session = useStore().sessions.find((s) => s.id === sessionId) || null;
   const scrollRef = useRef(null);
@@ -926,6 +976,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       ref={scrollRef}
       onScroll={onScroll}
       dir={view.dir || 'auto'}
+      data-chat-mode={mode}
       className={`term ${view.theme === 'light' ? 'term-light' : ''} thin-scroll h-full overflow-y-auto bg-[var(--term-bg)] px-4 py-3.5`}
     >
       <div className="term-events" style={scale === 1 ? undefined : { zoom: scale }}>
@@ -1014,10 +1065,29 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
             isCapUse(e) || (e.kind === 'tool-result' && capIds.has(e.toolUseId) && !(e.isError ?? e.is_error));
           const out = [];
           const visible = events.slice(hiddenCount);
+          // SIMPLE1: in Simple mode each turn's folded events collect into one
+          // group, rendered as a BehindScenes slot where the first of them was.
+          // A `user` event starts a new turn (and a new group).
+          let group = null;
           for (let j = 0; j < visible.length; j++) {
             const e = visible[j];
             const i = hiddenCount + j;
             if (isCapRow(e)) continue;
+            if (simple) {
+              if (e.kind === 'user') group = null;
+              if (hiddenInSimple(e)) {
+                if (!group) {
+                  group = { events: [], rows: [] };
+                  const g = group;
+                  out.push(
+                    <BehindScenesSlot key={`bs:${keys[i]}`} sessionId={sessionId} group={g} events={events} />
+                  );
+                }
+                group.events.push(e);
+                group.rows.push({ key: keys[i], event: e, recap: recap.has(i) });
+                continue;
+              }
+            }
             if (e.kind === 'screenshot') {
               const shots = [e];
               for (let k = j + 1; k < visible.length; k++) {

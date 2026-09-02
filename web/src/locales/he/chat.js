@@ -302,4 +302,8 @@ export const strings = {
   'chat.mergeRefresh': 'בדוק שוב',
   'chat.mergeCardTitle': 'מיזוג',
   'chat.mergeChild': 'ילד',
+  // ---- ChatPane.jsx: Simple mode (SIMPLE1) ----
+  'chat.behindScenes': 'מה קרה מאחורי הקלעים',
+  'chat.behindScenesOne': 'מה קרה מאחורי הקלעים · פעולה אחת',
+  'chat.behindScenesN': 'מה קרה מאחורי הקלעים · {n} פעולות',
 };

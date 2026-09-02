@@ -302,4 +302,8 @@ export const strings = {
   'chat.mergeRefresh': 'Re-check',
   'chat.mergeCardTitle': 'Merge',
   'chat.mergeChild': 'child',
+  // ---- ChatPane.jsx: Simple mode (SIMPLE1) ----
+  'chat.behindScenes': 'What happened behind the scenes',
+  'chat.behindScenesOne': 'What happened behind the scenes · 1 action',
+  'chat.behindScenesN': 'What happened behind the scenes · {n} actions',
 };
