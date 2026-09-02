@@ -31,3 +31,36 @@ test('B11: the hash wins over the query; no query → plain hash routing', () =>
   expect(sessionFromSearch('?a=1&session=sess_z')).toBe('sess_z');
   expect(sessionFromSearch('')).toBe('');
 });
+
+// ---- B18 / B5 / B26 (components) ------------------------------------------
+import fs from 'node:fs';
+const src = (p) => fs.readFileSync(path.join(ROOT, 'web/src', p), 'utf8');
+
+test('B18: diff code rows are forced LTR (the cockpit document is RTL in Hebrew)', async () => {
+  const mem = new Map();
+  globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  globalThis.window = globalThis;
+  globalThis.location = { origin: 'http://host.test', port: '', pathname: '/', hash: '' };
+  globalThis.document = {
+    documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} }, setAttribute() {}, classList: { add() {}, remove() {} }, dir: 'rtl' },
+    querySelector: () => null, addEventListener() {}, removeEventListener() {},
+  };
+  globalThis.navigator = { language: 'he-IL', userAgent: 'test' };
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  const React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
+  const { renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js'));
+  const prefs = await import(path.join(ROOT, 'web/src/lib/prefs.js'));
+  prefs.setPrefs({ language: 'he' });
+  const { DiffView } = await import(path.join(ROOT, 'web/src/components/DiffView.jsx'));
+  const diff = ['diff --git a/a.js b/a.js', '--- a/a.js', '+++ b/a.js', '@@ -1,2 +1,2 @@', '-# audit repo', '+export const a = 1;', ' console.log(a);'].join('\n');
+  for (const mode of ['split', 'inline']) {
+    const html = render(React.createElement(DiffView, { diff, mode, path: 'a.js' }));
+    expect(html).toContain('# audit repo');
+    // every code row (and the hunk header) declares its own direction — and
+    // the sign sits in the row, so it renders on the LEFT of the code
+    const rows = html.match(/<div dir="ltr" class="[^"]*font-mono[^"]*"/g) || [];
+    expect(rows.length).toBeGreaterThanOrEqual(4); // hunk + 3 lines (split: 5 cells)
+    expect(html).toMatch(/dir="ltr"[^>]*>(?:(?!<\/div>).)*text-fgdim">-<\/span><span class="text-fg"># audit repo/);
+    expect(html).not.toMatch(/<div class="[^"]*font-mono text-\[11px\][^"]*"[^>]*style="background/); // no row without dir
+  }
+});

@@ -68,7 +68,8 @@ const Gutter = ({ n, compact }) => (
 );
 
 function HunkRow({ text }) {
-  return <div className="bg-[rgba(80,120,200,0.10)] px-2 py-0.5 font-mono text-[10.5px] text-fgdim">{text || '⋯'}</div>;
+  // B18: source text is LTR even when the cockpit is RTL (Hebrew)
+  return <div dir="ltr" className="bg-[rgba(80,120,200,0.10)] px-2 py-0.5 text-start font-mono text-[10.5px] text-fgdim">{text || '⋯'}</div>;
 }
 
 // The "+" add-comment affordance, shown on row hover.
@@ -115,7 +116,8 @@ function LineComments({ lis, byLi, openLi, onAdd, handlers = {}, onClose, label 
 function SideCell({ cell, sign, bg, tokens, compact }) {
   return (
     <div
-      className="flex min-w-0 overflow-x-auto whitespace-pre font-mono text-[11px] leading-[1.55] thin-scroll"
+      dir="ltr"
+      className="flex min-w-0 overflow-x-auto text-start whitespace-pre font-mono text-[11px] leading-[1.55] thin-scroll"
       style={{ background: cell ? bg : GAP_BG }}
     >
       {cell && (
@@ -204,7 +206,7 @@ export function DiffView({ diff, mode = 'split', comments = [], onAddComment, co
         const sign = l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
         return (
           <div key={i}>
-            <div className="group relative flex overflow-x-auto whitespace-pre font-mono text-[11px] leading-[1.55] thin-scroll" style={{ background: bg }}>
+            <div dir="ltr" className="group relative flex overflow-x-auto text-start whitespace-pre font-mono text-[11px] leading-[1.55] thin-scroll" style={{ background: bg }}>
               {onAddComment && <AddBtn onClick={() => setOpenLi(l.li)} />}
               {compact ? (
                 <Gutter n={l.newN ?? l.oldN} compact />
