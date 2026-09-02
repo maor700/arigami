@@ -167,6 +167,22 @@ export interface SupervisorConfig {
   ladderTailTurns?: number;
 }
 
+// LEARN1: autonomous memory learning (server/memory-learning.ts). `auto` = the
+// host triages the pending queue itself once `minBatch` proposals pile up OR
+// `maxAgeHours` passed since the last run (whichever first) and applies the
+// result through the same approve/write gate; `manual` = the run is computed
+// and stored pre-checked, the human clicks once. `minFreeMb` = never spawn the
+// one-shot LLM while MemAvailable is below this (deferred to the next tick).
+export interface MemoryLearningConfig {
+  mode: 'auto' | 'manual';
+  minBatch: number;
+  maxAgeHours: number;
+  minFreeMb: number;
+}
+export interface MemoryConfig {
+  learning: MemoryLearningConfig;
+}
+
 export interface Config {
   port: number;
   // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
@@ -209,6 +225,7 @@ export interface Config {
   share: ShareConfig;
   host: HostConfig;
   telemetry: TelemetryConfig;
+  memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
@@ -318,6 +335,9 @@ export const DEFAULTS: Config = {
     enabled: false,
     updateCheck: false,
     endpoint: 'https://telemetry.arigami.dev/v1/events',
+  },
+  memory: {
+    learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
   defaultModel: null,
   modelChain: ['fable', 'sonnet', 'haiku'],
@@ -599,5 +619,17 @@ export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): Telemetr
   const out = { ...file, telemetry: { ...(file.telemetry || {}), ...patch } } as any;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
   cfg.telemetry = next;
+  return next;
+}
+
+// LEARN1: persist a partial memory-learning config (mode / batch / age). Same
+// merge pattern as updateHostConfig — unrelated keys survive, live `cfg` patches.
+export function updateMemoryLearningConfig(patch: Partial<MemoryLearningConfig>): MemoryLearningConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: MemoryLearningConfig = { ...cfg.memory.learning, ...patch };
+  const out = { ...file, memory: { ...(file.memory || {}), learning: { ...((file.memory as any)?.learning || {}), ...patch } } } as any;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  cfg.memory = { ...cfg.memory, learning: next };
   return next;
 }

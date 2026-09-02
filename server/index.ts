@@ -345,6 +345,11 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/claude-update.js')
     .then((m: any) => m.startClaudeUpdater())
     .catch((e: any) => console.error('[host] claude updater failed to start:', e?.message));
+  // LEARN1: autonomous memory learning — triages the pending queue when enough
+  // proposals piled up / 48h passed (cfg.memory.learning), never under memory pressure.
+  import('./memory-learning.js')
+    .then((m: any) => m.startLearningScheduler())
+    .catch((e: any) => console.error('[host] memory learning scheduler failed to start:', e?.message));
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')
