@@ -37,7 +37,8 @@ let verCache = { bin: null, value: null, at: 0 };
 // a minute per binary path. Resolves null (never rejects) if the probe fails,
 // which callers read as "can't tell" — the cache is then left alone rather than
 // thrown away. `force` skips the memo (and re-resolves the binary).
-function cliVersion(force = false) {
+// Exported for lib/claude-update.js (installed-version probe) — one probe, one memo.
+export function cliVersion(force = false) {
   const bin = claudeBin({ force });
   if (!force && verCache.value && verCache.bin === bin && Date.now() - verCache.at < VERSION_TTL_MS) return Promise.resolve(verCache.value);
   return new Promise((resolve) => {

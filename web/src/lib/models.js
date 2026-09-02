@@ -22,7 +22,10 @@ export const REVALIDATE_MS = 5 * 60 * 1000;
 // `fetchedAt` is the SERVER's timestamp (when it last ran the CLI handshake);
 // `checkedAt` is ours (when this tab last asked the server) — staleness is
 // judged on the latter.
-let cache = { models: FALLBACK, fetchedAt: 0, checkedAt: 0, loading: false, error: null };
+// `cliUpdate` (UPD1): {installed, latest, updateAvailable} of the `claude` CLI
+// behind the list — the picker shows a badge when a newer CLI (= newer models)
+// is waiting in Settings › Host.
+let cache = { models: FALLBACK, fetchedAt: 0, checkedAt: 0, loading: false, error: null, cliUpdate: null };
 let inflight = null;
 const listeners = new Set();
 const emit = () => {
@@ -42,7 +45,7 @@ function run(promise, { quiet = false } = {}) {
   }
   inflight = promise
     .then((d) => {
-      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), checkedAt: Date.now(), loading: false, error: d.error || null };
+      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), checkedAt: Date.now(), loading: false, error: d.error || null, cliUpdate: d.cliUpdate === undefined ? cache.cliUpdate : d.cliUpdate };
     })
     .catch((e) => {
       cache = { ...cache, checkedAt: Date.now(), loading: false, error: e.message };

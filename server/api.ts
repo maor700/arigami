@@ -2968,6 +2968,11 @@ export async function handle(
       const hc = await import('./host-control.js');
       return json(res, hc.hostStatus());
     }
+    // UPD1: the `claude` CLI updater — installed/latest/lastUpdate (lib/claude-update.js).
+    if (p === '/__api/host/claude' && m === 'GET') {
+      const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
+      return json(res, cu.status());
+    }
     // ---- B4-full: export / import (server/backup.ts). Admin only; GET export
     // is a plain download (cookie or API token) so `curl -OJ` works too.
     if (p === '/__api/host/export' && m === 'GET') {
@@ -3022,6 +3027,24 @@ export async function handle(
         if (sub === 'upgrade' && m === 'POST') {
           const job = await hc.startUpgrade(when);
           return json(res, { ok: true, jobId: job.id, when, status: hc.hostStatus() });
+        }
+        // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,
+        // deferred under memory pressure) · claude/auto {enabled} (the policy toggle).
+        if (sub.startsWith('claude/') && m === 'POST') {
+          const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
+          if (sub === 'claude/check') return json(res, await cu.check({ force: true }));
+          if (sub === 'claude/update') {
+            await cu.check({ force: true });
+            const r = await cu.apply({ reason: 'manual' });
+            if (r.deferred) return json(res, { ...r, error: `deferred: ${r.availableMb}MB available < ${r.minFreeMb}MB (memory pressure)`, status: cu.status() }, 409);
+            return json(res, { ...r, status: cu.status() });
+          }
+          if (sub === 'claude/auto') {
+            if (typeof body.enabled !== 'boolean') return badRequest(res, 'enabled must be a boolean');
+            const { updateHostConfig } = await import('./lib/config.js');
+            updateHostConfig({ claudeAutoUpdate: body.enabled });
+            return json(res, cu.status());
+          }
         }
       } catch (e) {
         const err = e as Error & { status?: number };
@@ -3800,7 +3823,15 @@ export async function handle(
     }
     if (p === '/__api/models' && m === 'GET') {
       const { getModels } = await import('./models.js');
-      return json(res, await (getModels as any)());
+      const list = await (getModels as any)();
+      // UPD1: the picker is where new models are discovered — tell it when a
+      // newer CLI (= newer list) is one click away. Cheap: the cached status.
+      let cliUpdate = null;
+      try {
+        const s = (await (await import('./lib/claude-update.js')).claudeUpdater()).status();
+        cliUpdate = { installed: s.installed, latest: s.latest, updateAvailable: s.updateAvailable, checkedAt: s.checkedAt };
+      } catch {}
+      return json(res, { ...list, cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels } = await import('./models.js');

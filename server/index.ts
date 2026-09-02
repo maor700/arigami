@@ -324,6 +324,10 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./supervisor-loop.js')
     .then((m: any) => m.startSupervisor())
     .catch((e: any) => console.error('[host] supervisor failed to start:', e?.message));
+  // UPD1: daily `claude` CLI update check (+ auto-apply unless cfg.host.claudeAutoUpdate=false).
+  import('./lib/claude-update.js')
+    .then((m: any) => m.startClaudeUpdater())
+    .catch((e: any) => console.error('[host] claude updater failed to start:', e?.message));
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')
