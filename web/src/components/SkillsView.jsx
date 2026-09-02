@@ -6,6 +6,10 @@
 // edges, clearly marked as suggested.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
+
+// B24: SKILL.md starts with YAML frontmatter (name/description/triggers…) — metadata the
+// page already shows in its header, not prose to render as a giant bold paragraph.
+export const stripFrontmatter = (s) => String(s || '').replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
 import { api } from '../lib/api.js';
 import { toastSuccess } from '../lib/toast.js';
 import { confirmDialog } from '../lib/confirm.js';
@@ -261,7 +265,7 @@ function DetailPane({ name, aiSummary }) {
                 {aiSummary}
               </div>
             )}
-            <Markdown>{detail.content || ''}</Markdown>
+            <Markdown>{stripFrontmatter(detail.content)}</Markdown>
 
             {detail.supporting?.length > 0 && (
               <div className="mt-8 border-t border-hair pt-4">

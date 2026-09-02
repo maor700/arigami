@@ -124,3 +124,12 @@ test('B4/B22: Hebrew gets a gap between number and unit; dates follow the UI lan
     expect(src(f)).not.toMatch(/\.toLocale(?:Date)?String\(\)/);
   }
 });
+
+test('B24: the skill page drops the YAML frontmatter before rendering', async () => {
+  const { stripFrontmatter } = await import(path.join(ROOT, 'web/src/components/SkillsView.jsx'));
+  expect(stripFrontmatter('---\nname: x\ndescription: JIT-setup playbook\ntriggers: a, b\n---\n# Title\nbody')).toBe('# Title\nbody');
+  expect(stripFrontmatter('---\r\nname: x\r\n---\r\n# T')).toBe('# T');
+  expect(stripFrontmatter('# no frontmatter\n---\nrule')).toBe('# no frontmatter\n---\nrule');
+  expect(stripFrontmatter('')).toBe('');
+  expect(stripFrontmatter(null)).toBe('');
+});
