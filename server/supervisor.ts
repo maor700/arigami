@@ -565,3 +565,40 @@ export const HEALTH_DOT: Record<Health, 'grey' | 'blue' | 'amber' | 'red'> = {
   BLOCKED_SYSTEM: 'red',
   STALLED: 'red',
 };
+
+// ---- LADDER1: the "running below its model" badge -----------------------------
+// Derived from session.claude for the wire form (state.toWireSession), so the
+// rail row and the chat header show the same thing without re-deriving it:
+// "running on haiku · fable's quota resets at 18:50". null when the session is
+// on its top rung — the badge simply disappears on the climb back.
+
+export interface LadderBadge {
+  running: string; // the rung the session is on right now (a `claude --model` value)
+  configured: string; // the top rung — what the human actually picked
+  resetAt: string | null; // ISO: when the top rung's quota resets (the climb back)
+  compacted: boolean; // the conversation was compacted to fit the smaller window
+}
+
+export function ladderBadge(
+  claude:
+    | {
+        modelRung?: number;
+        modelChoice?: string | null;
+        modelDowngradedFrom?: string | null;
+        modelRestoreAt?: string | null;
+        ladderReplay?: { mode?: string } | null;
+      }
+    | null
+    | undefined
+): LadderBadge | null {
+  if (!claude || !((claude.modelRung || 0) > 0)) return null;
+  const running = (claude.modelChoice || '').trim();
+  const configured = (claude.modelDowngradedFrom || '').trim();
+  if (!running || !configured || running === configured) return null;
+  return {
+    running,
+    configured,
+    resetAt: claude.modelRestoreAt || null,
+    compacted: claude.ladderReplay?.mode === 'compact',
+  };
+}

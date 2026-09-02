@@ -3,6 +3,7 @@ import { auth } from './auth.js';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { broadcast } from './bus.js';
+import { ladderBadge } from './supervisor.js'; // pure — no cycle
 import { cfg, ensureConfigFile } from './lib/config.js';
 import { pickSessionAccount } from './accounts.js';
 import * as funnel from './funnel.js';
@@ -59,6 +60,31 @@ interface ClaudeState {
   modelRung?: number;
   modelRestoreAt?: string | null;
   modelDowngradedFrom?: string | null; // the rung we dropped from (for the receipt)
+  // LADDER1 — what the last ladder move replayed: the full conversation, or a
+  // compacted digest+tail on a FRESH conversation because the full one did not
+  // fit the weaker rung's window (server/lib/ladder-replay.ts). The climb back
+  // reads it to resume the original full history.
+  ladderReplay?: {
+    mode: 'full' | 'compact' | 'full-restore' | 'compact-restore';
+    at: string;
+    from: string;
+    to: string;
+    estTokens: number;
+    targetWindow: number;
+    originalSessionId?: string | null;
+    compactSessionId?: string | null;
+    tailTurns?: number;
+    imagesStripped?: number;
+    digest?: 'llm' | 'fallback';
+  } | null;
+  // LADDER1 — wire-only (toWireSession): the "running below its model" badge,
+  // null on the top rung. Never persisted; derived by supervisor.ladderBadge.
+  ladder?: {
+    running: string;
+    configured: string;
+    resetAt: string | null;
+    compacted: boolean;
+  } | null;
   capabilities?: Record<string, unknown>;
   // Live MCP server health map — what the /mcp panel renders (see McpServerHealth).
   mcp?: { servers: Record<string, McpServerHealth>; checkedAt?: number | null } | null;
@@ -377,6 +403,11 @@ export function slimCapabilities(caps: Record<string, unknown> | undefined): Rec
 export function toWireSession(s: Session): Session {
   let out: Session = s;
   if (s.claude?.capabilities) out = { ...out, claude: { ...s.claude, capabilities: slimCapabilities(s.claude.capabilities) } };
+  // LADDER1: the rail row + chat header badge, derived once here so both agree.
+  if (s.claude) {
+    const ladder = ladderBadge(s.claude);
+    if (ladder || out.claude?.ladder !== undefined) out = { ...out, claude: { ...(out.claude || s.claude), ladder } };
+  }
   const result = s.metadata?.result as { state?: string; summary?: unknown } | undefined;
   if (
     result &&

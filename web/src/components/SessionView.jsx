@@ -25,6 +25,7 @@ import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamP
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls from './TermControls.jsx';
+import LadderBadge from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
 import { openAgent } from './DelegatedLine.jsx';
@@ -387,6 +388,8 @@ function TerminalHeader({ session }) {
       <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
       <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
       <BornFromChip session={session} />
+      {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
+      <LadderBadge session={session} />
       {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
       {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[10.5px] text-fgdim sm:block" />}
       {session.metadata?.fromTriggerName && (

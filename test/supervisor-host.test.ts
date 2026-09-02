@@ -348,9 +348,9 @@ test('a supervisor-initiated model change mid-turn respawns but replays the inte
   // answered — not left as the worker's silent last words with no report.
   const txt = await until(async () => {
     const t = await chatText(sid);
-    return /ok: .*SLOW/.test(t) ? t : null;
+    return /ok: [\s\S]*SLOW/.test(t) ? t : null;
   }, 20000);
-  expect(txt).toMatch(/ok: .*SLOW/);
+  expect(txt).toMatch(/ok: [\s\S]*SLOW/);
 }, 60000);
 
 test('a child that goes terminal without report_to_master gets its report synthesized', async () => {

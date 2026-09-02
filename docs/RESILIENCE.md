@@ -137,6 +137,41 @@ account switch can fix that one.
 - `POST /__api/sessions/:id/model/restore` takes the top rung back by hand
   (Settings → מארח → בריאות has the button) without waiting for the reset.
 
+### Fit or compact before the replay (LADDER1)
+
+A rung is a `--resume` of the same conversation — but the rungs do not share a
+window: fable/sonnet-5 run 1M tokens, haiku 200k (`server/lib/ctx-window.ts`).
+A conversation that grew to 600k on fable is over haiku's limit before its first
+turn, which the human saw as "the context dies in a second" (2026-09-02, three
+sessions escalated within seconds of reaching the bottom rung). So before every
+downgrade `claude.js` judges the live conversation (the measured
+`claude.usage.ctxTokens`, else a chars/4 estimate) against the **target** rung's
+window with 70% headroom (`cfg.supervisor.ladderHeadroom`,
+`ARIGAMI_LADDER_HEADROOM`):
+
+- **fits** → plain `--resume` as before (`ladderReplay.mode = 'full'`).
+- **does not fit** → the conversation is *compacted* onto a **fresh** claude
+  conversation: the usual bootstrap prefix, a `[host]` preamble, an LLM digest of
+  the older part, the last 6 turns verbatim (`ladderTailTurns`,
+  `ARIGAMI_LADDER_TAIL_TURNS`), then the replayed message. Base64 image blocks
+  (screenshots, `Read` of a .png) become one-line placeholders — they are the
+  heaviest items and never needed for continuity. The digest is written by the
+  shared one-shot runner (`server/lib/oneshot.ts`) **on the target rung** — the
+  exhausted one has no quota to summarize with; if even that fails, a mechanical
+  digest (the human's messages in order) stands in. The original conversation id
+  is kept in `claude.ladderReplay.originalSessionId`; an incident
+  `context-compact` is logged.
+- **the climb back** resumes the *original full history* when it fits the top
+  rung's window (`context-restore` incident), with a short interim note of what
+  happened on the weaker rung — the digest was a stop-gap, never the history.
+- **the cockpit** shows a quiet badge on the rail row and the chat header while a
+  session runs below its model — "רץ על הייקו · מכסת Fable מתאפסת ב-18:50"
+  (`claude.ladder`, derived in `state.toWireSession`; null on the top rung) — plus
+  one system line at the switch and one at the climb back. No toasts.
+
+The decision and the transcript shaping are pure (`server/lib/ladder-replay.ts`,
+`test/ladder-replay.test.ts`); `claude.js` only does the IO around them.
+
 State lives on `session.claude`: `modelChain`, `modelRung`, `modelRestoreAt`,
 `modelDowngradedFrom`. While a session is downgraded the chain is computed from
 `modelDowngradedFrom`, not from the current `modelChoice` — otherwise every

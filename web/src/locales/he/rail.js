@@ -21,6 +21,11 @@ export const strings = {
   'rail.watchingSources': 'צופה ב-{n} מקורות',
   'rail.firedSuffix': ' · הופעל {n}×',
   'rail.needsYourInput': 'דורש את הקלט שלך',
+  // ---- LADDER1: running below the configured model ----
+  'rail.ladderRunningOn': 'רץ על {model}',
+  'rail.ladderResetsAt': 'מכסת {model} מתאפסת ב-{time}',
+  'rail.ladderCompacted': 'ההקשר קוצר כדי להיכנס לחלון הקטן',
+  'rail.ladderTitle': 'הסשן רץ על מודל חלש יותר עד שהמכסה של {model} תחזור',
   'rail.restartingEllipsis': 'מפעיל מחדש…',
   'rail.workingEllipsis': 'עובד…',
   'rail.restarting': 'מפעיל מחדש',

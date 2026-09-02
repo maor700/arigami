@@ -15,6 +15,7 @@ import {
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
+import LadderBadge from './LadderBadge.jsx';
 import { openAgent, deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
@@ -391,6 +392,8 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                 <Icon icon={faCircleInfo} />
               </button>
             )}
+            {/* LADDER1: quietly says the session is on a weaker rung (server-derived claude.ladder). */}
+            <LadderBadge session={session} compact />
             {screenReq ? (
               <span
                 title={t('rail.screenNeedsYou')}
