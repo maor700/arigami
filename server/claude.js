@@ -1952,6 +1952,8 @@ export function summarizeSession(id, { full = false } = {}) {
   const langLine =
     s.statusSummary?.lang === 'en'
       ? `Write the ENTIRE summary (and the tldr) in English, regardless of the conversation's language. `
+      : s.statusSummary?.lang === 'he'
+      ? `Write the ENTIRE summary (and the tldr) in Hebrew, in Hebrew SCRIPT, regardless of the conversation's language — Latin script ONLY for exact identifiers that must be copied verbatim (ticket & PR numbers, file/branch names, code symbols, URLs). `
       : `Write in the language the conversation is in, and CRITICALLY in that language's SCRIPT. If it is not English (e.g. Hebrew), Latin-script words break the ` +
         `right-to-left flow and become unreadable — so write EVERYTHING in Hebrew letters: use a real Hebrew word for ordinary dev terms (review→סקירה, reviewer→מבקר, listener→מאזין, ` +
         `merge→מיזוג, tests→בדיקות, bug→באג, CI→בדיקות אוטומטיות, approval→אישור), and for a loan word with no natural translation, TRANSLITERATE it into Hebrew letters rather than leaving it in Latin. ` +

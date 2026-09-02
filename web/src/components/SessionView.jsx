@@ -152,7 +152,7 @@ function LangToggle({ value, onChange, disabled }) {
   const t = useT();
   return (
     <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title={t('rail.summaryLanguage')}>
-      {[['auto', t('rail.auto')], ['en', t('rail.english')]].map(([key, label], i) => (
+      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label], i) => (
         <button
           key={key}
           type="button"

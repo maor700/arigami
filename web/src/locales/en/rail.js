@@ -104,6 +104,7 @@ export const strings = {
   'status.awaitingInput': 'Awaiting input',
   'status.waitingOnChild': 'Waiting on child',
   'status.needsYou': 'Needs you',
+  'rail.hebrew': 'Hebrew',
   'rail.dragToResize': 'Drag to resize',
   'rail.newSession': 'New session',
   'rail.closeSessions': 'Close sessions',

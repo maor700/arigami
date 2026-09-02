@@ -5442,7 +5442,7 @@ export async function handle(
       state.setStatusSummary(id, {
         text: s.statusSummary?.text || '',
         autoUpdate: body.autoUpdate ?? s.statusSummary?.autoUpdate ?? false,
-        lang: body.lang === 'en' ? 'en' : body.lang === 'auto' ? 'auto' : s.statusSummary?.lang ?? 'auto',
+        lang: body.lang === 'en' || body.lang === 'he' ? body.lang : body.lang === 'auto' ? 'auto' : s.statusSummary?.lang ?? 'auto',
         atSeq: s.statusSummary?.atSeq ?? 0,
       });
       try {
@@ -5476,7 +5476,7 @@ export async function handle(
       let updated: unknown = s.statusSummary ? s : null;
       if ('autoUpdate' in body) updated = state.setSummaryAutoUpdate(id, !!body.autoUpdate);
       if (typeof body.lang === 'string') {
-        updated = state.setSummaryLang(id, body.lang === 'en' ? 'en' : 'auto');
+        updated = state.setSummaryLang(id, body.lang === 'en' || body.lang === 'he' ? body.lang : 'auto');
         // Regenerate in the new language (full, so a Hebrew brief isn't folded
         // into an English one or vice-versa) so the switch is immediately visible.
         if (updated) { try { claude.summarizeSession(id, { full: true }); } catch {} }

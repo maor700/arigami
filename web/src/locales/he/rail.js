@@ -104,6 +104,7 @@ export const strings = {
   'status.awaitingInput': 'ממתין לקלט',
   'status.waitingOnChild': 'ממתין לסשן-ילד',
   'status.needsYou': 'דורש אותך',
+  'rail.hebrew': 'עברית',
   'rail.dragToResize': 'גררו לשינוי גודל',
   'rail.newSession': 'סשן חדש',
   'rail.closeSessions': 'סגירת סשנים',
