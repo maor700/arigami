@@ -207,7 +207,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
               {isSession ? (
                 <>
                   <Dot color={color} size={10} />
-                  <Truncate text={tab.title || t('rail.tabSession')} className="min-w-0" />
+                  <Truncate text={tab.title && tab.title !== 'Session' ? tab.title : t('rail.tabSession')} className="min-w-0" />
                   {awaiting && (
                     <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />
                   )}
