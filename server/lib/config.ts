@@ -158,6 +158,13 @@ export interface SupervisorConfig {
   maxRespawns: number;
   /** How long to stay on a weaker rung when the CLI never said when the quota resets. */
   modelBackoffMin: number;
+  /**
+   * LADDER1 — a ladder replay may occupy at most this share of the TARGET
+   * rung's context window (default 0.7); a bigger conversation is compacted
+   * (digest + last `ladderTailTurns` turns verbatim) instead of `--resume`d raw.
+   */
+  ladderHeadroom?: number;
+  ladderTailTurns?: number;
 }
 
 export interface Config {
@@ -446,6 +453,9 @@ function envOverrides(): Partial<Config> {
   if (num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)) sup.reportGraceMin = num(E.ARIGAMI_SUPERVISOR_REPORT_GRACE_MIN)!;
   if (num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)) sup.notifyEveryMin = num(E.ARIGAMI_SUPERVISOR_NOTIFY_MIN)!;
   if (num(E.ARIGAMI_MODEL_BACKOFF_MIN)) sup.modelBackoffMin = num(E.ARIGAMI_MODEL_BACKOFF_MIN)!;
+  if (num(E.ARIGAMI_LADDER_HEADROOM)) sup.ladderHeadroom = num(E.ARIGAMI_LADDER_HEADROOM)!;
+  if (E.ARIGAMI_LADDER_TAIL_TURNS != null && E.ARIGAMI_LADDER_TAIL_TURNS !== '' && Number.isFinite(Number(E.ARIGAMI_LADDER_TAIL_TURNS)))
+    sup.ladderTailTurns = Number(E.ARIGAMI_LADDER_TAIL_TURNS);
   if (Object.keys(sup).length) o.supervisor = { ...DEFAULTS.supervisor, ...sup };
   return o;
 }

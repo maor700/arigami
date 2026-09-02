@@ -21,6 +21,11 @@ export const strings = {
   'rail.watchingSources': 'Watching {n} sources',
   'rail.firedSuffix': ' · fired {n}×',
   'rail.needsYourInput': 'Needs your input',
+  // ---- LADDER1: running below the configured model ----
+  'rail.ladderRunningOn': 'running on {model}',
+  'rail.ladderResetsAt': '{model} quota resets at {time}',
+  'rail.ladderCompacted': 'context was compacted to fit the smaller window',
+  'rail.ladderTitle': 'The session runs on a weaker model until {model}\'s quota is back',
   'rail.restartingEllipsis': 'Restarting…',
   'rail.workingEllipsis': 'Working…',
   'rail.restarting': 'restarting',

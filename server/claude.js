@@ -25,6 +25,17 @@ import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
+import {
+  planReplay,
+  shapeForCompaction,
+  digestPrompt,
+  fallbackDigest,
+  buildPreamble,
+  restoreTarget,
+  renderEvents,
+  estimateTokens as estimateTextTokens,
+} from './lib/ladder-replay.js';
+import { runClaudeOneShot } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
@@ -510,6 +521,7 @@ function spawnProc(s, resume) {
     stderr: '',
     buf: '',
     sent: [], // user messages written since spawn — replayed if a --resume spawn dies early
+    preamble: '', // LADDER1: a [host] block written in front of the NEXT user message only (compacted context / interim digest)
     pendingBg: new Map(), // tool_use_id → {command,description} awaiting its bg tool_result
     hostToolIds: new Set(), // tool_use_ids of mcp__arigami__* calls — their JSON echoes are suppressed in the transcript (they manifest as UI: status badge, action card, tabs…)
     mcpToolCalls: new Map(), // tool_use_id → mcp server name, so each result feeds that server's live health
@@ -929,21 +941,55 @@ export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
   if (cd.unref) cd.unref();
   const from = chain[rung] || getSession(id)?.claude?.modelChoice || 'default';
   const lastMsg = [...(record(id)?.sent || [])].pop();
-  appendChat(id, {
-    kind: 'system',
-    text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing`,
-  });
   // When the CLI never told us when the quota resets, arm the climb back after
   // cfg.supervisor.modelBackoffMin instead of never — a downgrade that can't
   // expire would quietly pin the session to the weakest model forever.
   const restoreAt =
     resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
+  const patch = {
+    modelChoice: nxt.model,
+    modelRung: nxt.rung,
+    modelRestoreAt: restoreAt,
+    modelDowngradedFrom: chain[0] || from,
+    ...autoCompactFor(id, nxt.model),
+  };
+  // LADDER1: does the conversation even FIT the weaker rung? A 1M-window
+  // conversation `--resume`d into a 200k model is over the limit before its
+  // first turn — the "context dies in a second" incident. Judge it against the
+  // TARGET model's window, not the current one.
+  const plan = planReplay({ estTokens: conversationTokens(id), targetWindow: resolveCtxWindow(nxt.model).window, headroom: ladderHeadroom() });
+  const resetsLine = ` · ${from}'s quota resets ${localTime(restoreAt)}`;
+  if (plan.mode === 'compact') {
+    appendChat(id, {
+      kind: 'system',
+      text:
+        `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing${resetsLine}. ` +
+        `The conversation (~${Math.round(plan.estTokens / 1000)}k tokens) does not fit ${nxt.model}'s ${Math.round(plan.targetWindow / 1000)}k window — compacting it first…`,
+    });
+    // The summarizer runs on the TARGET rung (it has quota; the current one does
+    // not) — async, so the caller (a stream-json event handler) is not blocked.
+    // The cooldown is held until the respawn lands, so nothing else walks the
+    // ladder meanwhile.
+    clearTimeout(cd);
+    compactAndRespawn(id, { from, to: nxt.model, plan, patch, lastMsg })
+      .catch((e) => {
+        console.error('[ladder] compaction failed:', e?.message || e);
+        appendChat(id, { kind: 'error', text: `⤷ compacting the conversation for ${nxt.model} failed: ${String(e?.message || e).slice(0, 200)}` });
+      })
+      .finally(() => {
+        const t = setTimeout(() => ladderCooldown.delete(id), 30_000);
+        if (t.unref) t.unref();
+      });
+    return { ok: true, model: nxt.model, from, compacting: true };
+  }
+  appendChat(id, {
+    kind: 'system',
+    text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing${resetsLine}`,
+  });
   try {
     restartWith(id, {
-      modelChoice: nxt.model,
-      modelRung: nxt.rung,
-      modelRestoreAt: restoreAt,
-      modelDowngradedFrom: chain[0] || from,
+      ...patch,
+      ladderReplay: { mode: 'full', at: new Date().toISOString(), from, to: nxt.model, estTokens: plan.estTokens, targetWindow: plan.targetWindow },
     });
   } catch {
     ladderCooldown.delete(id);
@@ -955,6 +1001,152 @@ export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
   }, 900);
   if (t.unref) t.unref();
   return { ok: true, model: nxt.model, from };
+}
+
+// ---- LADDER1: compact-before-replay ------------------------------------------
+
+/** The replay may use at most this share of the target window (cfg.supervisor.ladderHeadroom, default 0.7). */
+function ladderHeadroom() {
+  const h = Number(cfg.supervisor?.ladderHeadroom);
+  return Number.isFinite(h) && h > 0 && h <= 1 ? h : 0.7;
+}
+function ladderTailTurns() {
+  const n = Number(cfg.supervisor?.ladderTailTurns);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 6;
+}
+const COMPACT_TIMEOUT_MS = 150_000;
+
+/** "18:50" in the host's local time — what the human reads in the receipt. */
+function localTime(iso) {
+  try {
+    return new Date(iso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch {
+    return String(iso || '');
+  }
+}
+
+/**
+ * How many tokens the live conversation occupies. The measured figure — the
+ * last assistant message's cache_read+cache_creation+input (updateUsage) — is
+ * the truth when we have it; a fresh or never-answered session falls back to a
+ * chars/4 estimate over the chat log.
+ */
+export function conversationTokens(id) {
+  const s = getSession(id);
+  const measured = Number(s?.claude?.usage?.ctxTokens);
+  if (Number.isFinite(measured) && measured > 0) return measured;
+  const evs = getChat(id, 0) || [];
+  return estimateTextTokens(renderEvents(evs, Number.MAX_SAFE_INTEGER).text);
+}
+
+/** Keep a configured auto-compact % meaningful on the new rung's window. */
+function autoCompactFor(id, model) {
+  const pct = getSession(id)?.claude?.autoCompactPct;
+  if (!pct) return {};
+  return { autoCompactTokens: Math.round(resolveCtxWindow(model).window * (pct / 100)) };
+}
+
+/**
+ * Stop the live proc, persist `patch`, and start a FRESH claude conversation
+ * (no --resume) whose first user message is preceded by `preamble`. The
+ * previous conversation id is untouched on disk — the climb back resumes it.
+ */
+function respawnFresh(id, patch, preamble) {
+  const s = getSession(id);
+  if (!s) throw new Error(`no such session: ${id}`);
+  const p = record(id);
+  if (p) {
+    p.expectKill = true;
+    try { p.child.stdin.end(); } catch {}
+    stopChild(p.child);
+    procs.delete(id);
+    reapSessionOnExit(id, 'session restarted');
+  }
+  setClaude(id, { ...patch, sessionId: null });
+  const np = spawnProc(getSession(id), false);
+  np.preamble = preamble || '';
+  setClaude(id, { state: 'idle' });
+  return np;
+}
+
+async function compactAndRespawn(id, { from, to, plan, patch, lastMsg }) {
+  const s = getSession(id);
+  if (!s) return;
+  const originalSessionId = s.claude?.sessionId || null;
+  const events = getChat(id, 0) || [];
+  const shape = shapeForCompaction(events, plan.targetWindow, { tailTurns: ladderTailTurns() });
+  let digest = '';
+  let digestKind = 'llm';
+  if (shape.digestSource.trim()) {
+    try {
+      const token = accountEnv(s).CLAUDE_CODE_OAUTH_TOKEN;
+      digest = await runClaudeOneShot(digestPrompt(shape.digestSource, { from, to }), {
+        model: to, // the rung that still has quota — never the exhausted one
+        cwd: untildify(s.metadata?.worktree || s.cwd) || HOME,
+        timeoutMs: COMPACT_TIMEOUT_MS,
+        tag: 'ladder-compact',
+        ...(token ? { token } : {}),
+      });
+      if (!digest || !digest.trim()) throw new Error('empty digest');
+    } catch (e) {
+      console.error('[ladder] summarizer failed, using the mechanical digest:', e?.message || e);
+      digest = fallbackDigest(shape.head);
+      digestKind = 'fallback';
+    }
+  } else {
+    digest = '(the whole conversation is in the verbatim tail below)';
+  }
+  if (!getSession(id)) return; // deleted meanwhile
+  const preamble = buildPreamble({
+    from,
+    to,
+    digest,
+    tailText: shape.tailText,
+    tailTurns: shape.tailTurns,
+    estTokens: plan.estTokens,
+    targetWindow: plan.targetWindow,
+    imagesStripped: shape.imagesStripped,
+    omittedFromDigest: shape.omittedFromDigest,
+    resetAtLocal: patch.modelRestoreAt ? localTime(patch.modelRestoreAt) : null,
+  });
+  const np = respawnFresh(
+    id,
+    {
+      ...patch,
+      ladderReplay: {
+        mode: 'compact',
+        at: new Date().toISOString(),
+        from,
+        to,
+        estTokens: plan.estTokens,
+        targetWindow: plan.targetWindow,
+        originalSessionId,
+        compactSessionId: null, // filled in below once spawnProc pinned it
+        tailTurns: shape.tailTurns,
+        imagesStripped: shape.imagesStripped,
+        digest: digestKind,
+      },
+    },
+    preamble
+  );
+  const compactSessionId = getSession(id)?.claude?.sessionId || null;
+  setClaude(id, { ladderReplay: { ...getSession(id)?.claude?.ladderReplay, compactSessionId } });
+  appendChat(id, {
+    kind: 'system',
+    text:
+      `⤷ context compacted for ${to}: a ${digestKind === 'llm' ? 'digest' : 'plain digest (summarizer unavailable)'} of the older conversation + the last ${shape.tailTurns} turn${shape.tailTurns === 1 ? '' : 's'} verbatim` +
+      (shape.imagesStripped ? `, ${shape.imagesStripped} image${shape.imagesStripped === 1 ? '' : 's'} dropped` : '') +
+      `. The full history is restored when ${from} comes back.`,
+  });
+  recordIncident(id, 'context-compact', { from, to, estTokens: plan.estTokens, targetWindow: plan.targetWindow, tailTurns: shape.tailTurns, imagesStripped: shape.imagesStripped, digest: digestKind, originalSessionId, compactSessionId }, 'ok', 'conversation larger than the target window');
+  // Replay the failed turn once the fresh proc is up (the preamble rides in
+  // front of it). With nothing in flight the preamble waits for the next message.
+  if (lastMsg && np) {
+    const t = setTimeout(() => {
+      try { sendMessage(id, lastMsg); } catch {}
+    }, 900);
+    if (t.unref) t.unref();
+  }
 }
 
 /**
@@ -974,10 +1166,38 @@ export function restoreModel(id) {
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
-  const wasWorking = getSession(id)?.claude?.state === 'working';
+  const s0 = getSession(id);
+  const wasWorking = s0?.claude?.state === 'working';
   const lastMsg = wasWorking ? [...(record(id)?.sent || [])].pop() : null;
-  appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
-  restartWith(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null });
+  const cur = s0?.claude?.modelChoice || chain[rung] || 'the weaker model';
+  // LADDER1: a downgrade that had to COMPACT the conversation left the full
+  // history untouched under its original conversation id. Now that the top
+  // rung is back, resume THAT — the digest was a stop-gap, not the history —
+  // as long as it still fits the top rung's window. What happened meanwhile on
+  // the weaker rung rides along as a short interim note.
+  const note = s0?.claude?.ladderReplay || null;
+  const target = restoreTarget(note, resolveCtxWindow(top).window, ladderHeadroom());
+  const patch = { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null, ...autoCompactFor(id, top) };
+  if (target.resume === 'original') {
+    const interim = interimDigest(id, note.at);
+    appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}, with the full conversation history (the ${cur} digest is retired)` });
+    restartWith(id, {
+      ...patch,
+      sessionId: note.originalSessionId,
+      ladderReplay: { mode: 'full-restore', at: new Date().toISOString(), from: cur, to: top, estTokens: note.estTokens, targetWindow: resolveCtxWindow(top).window, originalSessionId: note.originalSessionId, compactSessionId: note.compactSessionId || null },
+    });
+    const np = record(id);
+    if (np && interim) np.preamble = interim;
+    recordIncident(id, 'context-restore', { from: cur, to: top, originalSessionId: note.originalSessionId, reason: target.reason }, 'ok', 'quota reset');
+  } else {
+    appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
+    restartWith(id, {
+      ...patch,
+      ...(note && note.mode === 'compact'
+        ? { ladderReplay: { ...note, mode: 'compact-restore', at: new Date().toISOString() } }
+        : {}),
+    });
+  }
   if (!lastMsg) return top;
   // Replay the turn that was actually interrupted, once the resumed proc is up.
   const t = setTimeout(() => {
@@ -1641,6 +1861,13 @@ function writeUserMessage(p, text, attachments = []) {
   const content = [];
   let txt = text || '';
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
+  // LADDER1: the compacted-context / interim digest goes in front of the first
+  // message on the respawned proc — once, never persisted in the chat log (the
+  // human sees a one-line receipt instead of a wall of replayed transcript).
+  if (p.preamble) {
+    txt = p.preamble + txt;
+    p.preamble = '';
+  }
   txt = chatModePrefix(getSession(p.id)?.metadata) + txt;
   if (attachments.length) {
     const list = attachments.map(describeAttachment).join('\n');
@@ -2166,4 +2393,25 @@ export function clearConversation(id) {
 export function killAll() {
   for (const id of [...procs.keys()]) kill(id);
   for (const c of [...headless]) stopChild(c);
+}
+
+// LADDER1: what happened on the weaker rung while the full history was parked —
+// the chat events since the compaction, rendered plainly and capped, so the
+// restored top-rung conversation is not blind to the interim turns. Mechanical
+// on purpose (no LLM call on the climb back — it is a discretionary move).
+function interimDigest(id, sinceIso) {
+  const since = Date.parse(sinceIso || '') || 0;
+  const evs = (getChat(id, 0) || []).filter((e) => {
+    const t = typeof e.ts === 'number' ? e.ts : Date.parse(e.ts || '') || 0; // appendChat stamps ts = Date.now()
+    return since ? t >= since : true;
+  });
+  const meaningful = evs.filter((e) => e.kind === 'user' || e.kind === 'assistant-text' || e.kind === 'tool-use' || e.kind === 'error');
+  if (!meaningful.length) return '';
+  const { text, omitted } = renderEvents(meaningful, 12_000);
+  return (
+    `[host — full history restored] Your model's quota reset, so this conversation resumes with its FULL history. ` +
+    `Meanwhile the session kept working on a smaller model with a compacted context; here is what happened there` +
+    (omitted ? ` (${omitted} events omitted)` : '') +
+    `:\n=== INTERIM TURNS ===\n${text}\n=== END OF INTERIM ===\n\n`
+  );
 }
