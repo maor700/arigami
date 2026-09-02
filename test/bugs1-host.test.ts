@@ -61,3 +61,36 @@ test('B32: resolvePlan — per-session file first; the shared file only when att
   // nothing there
   expect(resolvePlan(fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B32e-')), me, {})).toEqual({ plan: null, planError: 'no ORCHESTRATION.json yet' });
 });
+
+test('B34: the ede_diagnostic result after an interrupt is a quiet system line; otherwise a worded error', () => {
+  const { env } = isolated();
+  const r = runInChild(
+    `
+    const c = await import('./server/claude.js');
+    const j = { type: 'result', is_error: true, subtype: 'error_during_execution', result: '[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use', duration_ms: 1234, total_cost_usd: 0.01, num_turns: 1 };
+    const now = Date.now();
+    emit({
+      afterEsc: c.resultChatEvent(j, { interruptedAt: now - 2000, now }),
+      stale: c.resultChatEvent(j, { interruptedAt: now - 120000, now }),
+      none: c.resultChatEvent(j, {}),
+      normal: c.resultChatEvent({ type: 'result', is_error: false, result: 'done' }, { interruptedAt: now }),
+      realError: c.resultChatEvent({ type: 'result', is_error: true, result: 'API Error: 401 OAuth access token has been revoked.' }, { interruptedAt: now }),
+    });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  const { afterEsc, stale, none, normal, realError } = r.out[0];
+  expect(afterEsc).toMatchObject({ kind: 'system', text: '⏹ interrupted', durationMs: 1234, costUsd: 0.01 });
+  expect(afterEsc.detail).toContain('[ede_diagnostic]');
+  expect(afterEsc.isError).toBeUndefined();
+  for (const e of [stale, none]) {
+    expect(e).toMatchObject({ kind: 'error', isError: true });
+    expect(e.text).not.toContain('[ede_diagnostic]'); // words, not telemetry
+    expect(e.detail).toContain('stop_reason=tool_use');
+  }
+  expect(normal).toBeNull(); // ordinary results are untouched
+  expect(realError).toBeNull(); // real errors keep their own text + recovery path
+  const src = fs.readFileSync(path.join(ROOT, 'server/claude.js'), 'utf8');
+  expect(src).toMatch(/p\.interruptedAt = Date\.now\(\)/); // interrupt() stamps it
+});
