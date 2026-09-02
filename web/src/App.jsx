@@ -220,6 +220,8 @@ function Cockpit() {
   const [dialog, setDialog] = useState(null); // null | {type:'archive'|'delete', session}
   const [addTabOpen, setAddTabOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false); // mobile drawer
+  // B27: any navigation (row tap, hash change, deep link, ⌘K) closes the drawer.
+  useEffect(() => { setRailOpen(false); }, [selectedId, settingsOpen, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket]);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const searchRef = useRef(null);
@@ -472,12 +474,14 @@ function Cockpit() {
 
   // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
   const keyCtx = useRef({});
-  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, sessionCount: sessions.length };
+  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, sessionCount: sessions.length };
   const pttActive = useRef(false); // push-to-talk: recording while the hotkey is held
   useEffect(() => {
     const onKey = (e) => {
       const ctx = keyCtx.current;
       if (e.key === 'Escape') {
+        // B27: the mobile drawer is the top-most thing when open.
+        if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }
         // dialogs/popovers/settings handle their own esc via capture listeners.
         // Esc-to-interrupt: only when there's nothing to close AND the selected
         // session is working AND the user isn't typing in an input.
