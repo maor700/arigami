@@ -1310,9 +1310,10 @@ function EmptyForm({ config, sessions, onCreated }) {
         </div>
         <input
           value={cwd}
+          dir="ltr"
           onChange={(e) => setCwd(e.target.value)}
           placeholder={config?.defaultCwd || '~/Desktop/repos'}
-          className="mb-4 w-full rounded-[9px] border-[1.5px] border-border px-3 py-[9px] font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+          className="mb-4 w-full text-start rounded-[9px] border-[1.5px] border-border px-3 py-[9px] font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
         />
 
         <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">

@@ -112,6 +112,7 @@ function AddTabPopover({ sessionId, onClose }) {
       <input
         ref={urlRef}
         value={url}
+        dir="ltr"
         onChange={(e) => setUrl(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
         placeholder="http://localhost:3021/…"
