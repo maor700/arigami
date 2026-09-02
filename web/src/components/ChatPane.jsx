@@ -398,33 +398,49 @@ function AskUserQuestion({ sessionId, event, live }) {
   const [picked, setPicked] = useState({});
   const [skipped, setSkipped] = useState({});
   const [busy, setBusy] = useState(false);
+  // CHAT1: what became of the answer — null | 'tool' | 'message' | {error}.
+  const [outcome, setOutcome] = useState(null);
   const questions = Array.isArray(event.input?.questions) ? event.input.questions : [];
+  // CHAT1: picks that already reached the host (the permission-answer the
+  // server echoed, folded onto this event) survive a reload and show on the
+  // other device. A card the host closed WITHOUT an answer ('deny': timed
+  // out, session restarted) says so — a click still works, the answer then
+  // goes in as a normal message.
+  const serverAnswers = event.answers && typeof event.answers === 'object' ? event.answers : null;
+  const closed = event.answered === 'deny' && !serverAnswers;
 
-  // Answer the whole AskUserQuestion tool_use with ONE tool_result, once every
-  // question has a pick (or is skipped). A tool_result resumes the blocked turn
-  // immediately; a plain chat message would be queued by the CLI until the
-  // question times out (~60s) — the old "stuck on working" stall.
+  // Answer the whole AskUserQuestion once every question has a pick (or is
+  // skipped). The host resolves the tool's pending permission with the picks
+  // (the CLI's own answer channel — the blocked turn resumes at once) and
+  // says whether it did ({delivered:'tool'}) or had to send a plain message
+  // because nothing was pending any more ({delivered:'message'}).
   const allAnswered = (p, sk) => questions.every((_q, qi) => p[qi] != null || sk[qi]);
 
   const submit = async (finalPicked, finalSkipped) => {
     setBusy(true);
-    const content = questions
-      .map((q, qi) => {
-        const label = q.question || q.header || `Question ${qi + 1}`;
-        const a = finalPicked[qi] != null ? finalPicked[qi] : '(no answer)';
-        return `${label}: ${a}`;
-      })
-      .join('\n');
+    setOutcome(null);
+    const answers = questions.map((q, qi) => ({
+      question: q.question || q.header || `Question ${qi + 1}`,
+      answer: finalPicked[qi] != null ? finalPicked[qi] : null,
+    }));
+    const content = answers.map((a) => `${a.question}: ${a.answer ?? '(no answer)'}`).join('\n');
     try {
+      let delivered = 'message';
       if (event.toolUseId) {
-        await api.post(`/sessions/${sessionId}/question/answer`, { toolUseId: event.toolUseId, content });
+        const r = await api.post(`/sessions/${sessionId}/question/answer`, { toolUseId: event.toolUseId, content, answers });
+        delivered = r?.delivered === 'message' ? 'message' : 'tool';
       } else {
         // Fallback for events without a tool_use id: deliver as a message.
         await api.post(`/sessions/${sessionId}/message`, { text: content });
       }
+      setOutcome(delivered);
       window.dispatchEvent(new CustomEvent('host:focus-input')); // back to the composer
-    } catch {
-      /* leave state so the user can retry the last pick */
+    } catch (e) {
+      // The answer did NOT reach the session: say so and put the buttons
+      // back — never a card that looks answered while the chat waits.
+      setOutcome({ error: String(e?.message || e).replace(/^HTTP \d+ — /, '') });
+      setPicked({});
+      setSkipped({});
     }
     setBusy(false);
   };
@@ -497,8 +513,8 @@ function AskUserQuestion({ sessionId, event, live }) {
       </div>
       {questions.map((q, qi) => {
         const options = Array.isArray(q.options) ? q.options : [];
-        const chosen = picked[qi];
-        const wasSkipped = skipped[qi];
+        const chosen = picked[qi] != null ? picked[qi] : serverAnswers ? serverAnswers[q.question] : undefined;
+        const wasSkipped = skipped[qi] || (!!serverAnswers && chosen == null);
         return (
           <div key={qi} className="mt-3 first:mt-2.5">
             {q.header && (
@@ -569,6 +585,17 @@ function AskUserQuestion({ sessionId, event, live }) {
           </div>
         );
       })}
+      {outcome && typeof outcome === 'object' && (
+        <div data-question-error dir="auto" className="mt-2.5 text-[11px] font-bold text-[#9c3b33]">
+          {t('chat.answerFailed')} <span className="font-mono font-normal">{outcome.error}</span>
+        </div>
+      )}
+      {outcome === 'message' && (
+        <div data-question-note dir="auto" className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
+      )}
+      {closed && !outcome && !Object.keys(picked).length && (
+        <div data-question-closed dir="auto" className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
+      )}
     </div>
   );
 }

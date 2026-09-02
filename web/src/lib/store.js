@@ -270,12 +270,24 @@ function appendChat(sessionId, event) {
   // server resolved on its own (timeout, or the process dying) leaves the
   // card showing live Allow/Deny buttons forever.
   if (event.kind === 'permission-answer') {
+    let next = cur;
     const idx = cur.findIndex((e) => e.kind === 'permission-request' && e.requestId === event.requestId);
     if (idx !== -1 && cur[idx].answered == null) {
-      const next = [...cur];
+      next = [...next];
       next[idx] = { ...next[idx], answered: event.behavior, answeredMessage: event.message };
-      setState({ chats: { ...state.chats, [sessionId]: next } });
     }
+    // CHAT1: a "Question for you" card (the AskUserQuestion tool-use) settles
+    // too — with the picks the host echoed, so the other tab/device shows the
+    // same answered card, and a close without an answer (timed out, session
+    // restarted) is visible instead of live buttons over nothing.
+    if (event.toolUseId) {
+      const ti = next.findIndex((e) => e.kind === 'tool-use' && e.toolUseId === event.toolUseId);
+      if (ti !== -1 && next[ti].answered == null) {
+        if (next === cur) next = [...next];
+        next[ti] = { ...next[ti], answered: event.behavior, ...(event.answers ? { answers: event.answers } : {}) };
+      }
+    }
+    if (next !== cur) setState({ chats: { ...state.chats, [sessionId]: next } });
     return;
   }
   // Same in-place-patch pattern as permission-answer, for request_screen

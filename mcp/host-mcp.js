@@ -5,6 +5,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { makeBlockingCall } from './blocking-call.js';
 
 // INTERNAL base for host→self fetches only. NEVER put HOST into a value the
 // agent might echo to a human — results carry host-relative paths instead
@@ -29,6 +30,11 @@ async function api(method, path, body, headers = {}) {
   if (!res.ok) throw new Error(json.error || `${res.status} ${text.slice(0, 300)}`);
   return json;
 }
+
+// CHAT1: the endpoints that block on a human (permission_prompt / question
+// cards, request_screen, request_setup) go through the long-poll wrapper —
+// a single open request died after ~5 min and took the answer with it.
+const blockingCall = makeBlockingCall(api);
 
 function sid(args) {
   const id = args?.session_id || process.env.ARIGAMI_SESSION_ID;
@@ -658,7 +664,7 @@ const TOOLS = [
       ['prompt']
     ),
     run: (a) =>
-      api('POST', '/__mcp/screen-request', {
+      blockingCall('/__mcp/screen-request', {
         session_id: sid(a),
         prompt: a.prompt,
         ...(a.reason ? { reason: a.reason } : {}),
@@ -685,7 +691,7 @@ const TOOLS = [
       ['capability', 'why']
     ),
     run: (a) =>
-      api('POST', '/__mcp/setup-request', {
+      blockingCall('/__mcp/setup-request', {
         session_id: sid(a),
         capability: a.capability,
         why: a.why,
@@ -991,7 +997,7 @@ const TOOLS = [
     // {behavior:'allow', updatedInput} or {behavior:'deny', message} as text.
     run: async (a) => {
       try {
-        return await api('POST', '/__mcp/permission', {
+        return await blockingCall('/__mcp/permission', {
           session_id: a.session_id || process.env.ARIGAMI_SESSION_ID,
           tool_name: a.tool_name,
           input: a.input ?? {},

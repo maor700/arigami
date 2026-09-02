@@ -1710,32 +1710,11 @@ export function sendMessage(id, text, attachments = [], { system = false } = {})
   return true;
 }
 
-// Answer a client-side tool_use (e.g. AskUserQuestion) with a tool_result so the
-// blocked turn resumes on the SAME turn, immediately. AskUserQuestion emits a
-// tool_use and blocks awaiting a tool_result for that id (default timeout ~60s);
-// a plain user message written meanwhile is queued by the CLI until that timeout
-// — the "stuck on working" stall. The tool_result envelope is the standard
-// Messages-API shape the CLI already accepts on stdin.
-export function answerToolResult(id, toolUseId, content, isError = false) {
-  if (!toolUseId) return false;
-  const wasRunning = isRunning(id);
-  const p = ensureRunning(id); // respawns with --resume after an exit
-  if (!wasRunning) {
-    // The proc that owned this tool_use already exited (its own ~60s block
-    // timeout, or the user was slow) — a tool_result keyed to a toolUseId the
-    // fresh --resume never asked for is silently dropped, leaving 'working'
-    // stuck forever (the state reconciler only fixes 'working' when the proc
-    // ISN'T running, which isn't the case right after a respawn). Deliver the
-    // answer as a normal turn instead — also makes it replay-safe under the
-    // early-death retry below, which only replays sendMessage's p.sent log.
-    return sendMessage(id, content);
-  }
-  const block = { type: 'tool_result', tool_use_id: toolUseId, content: String(content ?? '') };
-  if (isError) block.is_error = true;
-  p.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [block] } }) + '\n');
-  setClaude(id, { state: 'working' });
-  return true;
-}
+// CHAT1: the old answerToolResult (a tool_result written onto stdin for an
+// AskUserQuestion) is gone — while the tool waits on the permission prompt the
+// CLI reads any stdin user message as a new turn, cancels the pending tool and
+// drops the answer. The card is answered through the permission result now
+// (server/api.ts answerQuestion), or as a plain message when nothing is pending.
 
 // ---- pending prompts (queued while busy) -------------------------------------
 // Playing a queued prompt wraps it so the agent KNOWS it was queued — sometimes

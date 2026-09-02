@@ -38,7 +38,11 @@ import { mergeBranch, baseStatus, mergeMessage } from './merge.js';
 import fs from 'node:fs';
 import net from 'node:net';
 
-const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
+const PERMISSION_TIMEOUT_MS = Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) : 10 * 60 * 1000; // env: tests only
+// CHAT1: a "Question for you" card is a conversation, not a tool gate — the
+// human gets the same 30 minutes a request_screen card gets before the model
+// is told there was no answer.
+const QUESTION_TIMEOUT_MS = Number(process.env.ARIGAMI_QUESTION_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_QUESTION_TIMEOUT_MS) : 30 * 60 * 1000;
 // Longer than a permission decision — a request_screen ask is typically a
 // manual login/2FA/CAPTCHA flow the human has to actually walk through.
 const SCREEN_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
@@ -57,6 +61,8 @@ interface PendingPermission {
   sessionId: string;
   toolName: string;
   input: unknown;
+  /** CHAT1: the tool_use this prompt gates — how a question card finds its request. */
+  toolUseId?: string;
 }
 
 interface ScreenRequestResult {
@@ -177,6 +183,63 @@ interface CleanupResult {
 
 const pendingPermissions = new Map<string, PendingPermission>();
 const pendingScreenRequests = new Map<string, PendingScreenRequest>();
+
+// ---- CHAT1: long-poll legs for the endpoints that block on a human ----------
+// One HTTP request held open until the human clicks died after ~5 minutes
+// (the MCP process's fetch idle timeout): the tool returned "arigami
+// unreachable", the model went on without the answer, and the card the host
+// kept open for its own 10/15/30-minute timer resolved into nothing when the
+// human finally clicked — "I answered and the chat is stuck". Now a client
+// that sends `wait_key` (mcp/blocking-call.js) gets each HTTP leg capped at
+// WAIT_LEG_MS and re-attaches with POST /__mcp/wait until the real result
+// lands. A client without a key (an MCP process from before this shipped)
+// still gets the single blocking response.
+const WAIT_LEG_MS = Number(process.env.ARIGAMI_WAIT_LEG_MS) > 0 ? Number(process.env.ARIGAMI_WAIT_LEG_MS) : 4 * 60 * 1000;
+const WAIT_KEY_RE = /^wait_[A-Za-z0-9-]{8,80}$/;
+const WAIT_RESULT_TTL_MS = 5 * 60 * 1000; // a result nobody came back for is dropped
+interface WaitEntry {
+  sessionId: string;
+  promise: Promise<unknown>;
+  legs: number;
+  expire?: NodeJS.Timeout;
+}
+const blockingWaits = new Map<string, WaitEntry>();
+function waitKeyOf(body: Record<string, unknown>): string | null {
+  const k = body?.wait_key;
+  return typeof k === 'string' && WAIT_KEY_RE.test(k) ? k : null;
+}
+async function waitLeg(res: ServerResponse, key: string, entry: WaitEntry): Promise<void> {
+  entry.legs++;
+  let timer: NodeJS.Timeout | undefined;
+  const leg = new Promise<null>((r) => {
+    timer = setTimeout(() => r(null), WAIT_LEG_MS);
+  });
+  const hit = await Promise.race([entry.promise.then((v) => ({ v })), leg]);
+  if (timer) clearTimeout(timer);
+  if (!hit) return json(res, { pending: true, wait_key: key, legs: entry.legs }, 202);
+  blockingWaits.delete(key);
+  if (entry.expire) clearTimeout(entry.expire);
+  json(res, hit.v);
+}
+async function respondBlocking(res: ServerResponse, body: Record<string, unknown>, sessionId: string, promise: Promise<unknown>): Promise<void> {
+  const key = waitKeyOf(body);
+  if (!key) return json(res, await promise);
+  const entry: WaitEntry = { sessionId, promise, legs: 0 };
+  promise.then(() => {
+    // The result outlives the leg that just missed it; if no client ever
+    // comes back for it (its process died) it is dropped after the TTL.
+    entry.expire = setTimeout(() => blockingWaits.delete(key), WAIT_RESULT_TTL_MS);
+    if (entry.expire.unref) entry.expire.unref();
+  });
+  blockingWaits.set(key, entry);
+  await waitLeg(res, key, entry);
+}
+/** Test/diagnostics view: how many blocking calls are attached right now. */
+export function blockingWaitCount(sessionId?: string): number {
+  let n = 0;
+  for (const e of blockingWaits.values()) if (!sessionId || e.sessionId === sessionId) n++;
+  return n;
+}
 
 // ---- B4-full: host export / import ---------------------------------------------
 // Export streams a tar.gz straight from `tar` (server/backup.ts) — nothing is
@@ -503,27 +566,34 @@ async function handlePermissionRequest(
   // rendered "Question for you" card (posted as a message, which interrupts the
   // blocked turn). We only hide the redundant permission *bubble* in the UI — see
   // ChatPane's permission-request case.
-  const result = await new Promise<PermissionResult>((resolve) => {
+  const toolUseId = typeof body.tool_use_id === 'string' && body.tool_use_id ? body.tool_use_id : undefined;
+  const isQuestion = toolName === 'AskUserQuestion';
+  const timeoutMs = isQuestion ? QUESTION_TIMEOUT_MS : PERMISSION_TIMEOUT_MS;
+  const promise = new Promise<PermissionResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingPermissions.delete(requestId);
       state.setClaude(sessionId, { state: 'working' });
       claude.appendChat(sessionId, {
         kind: 'permission-answer',
         requestId,
+        ...(toolUseId ? { toolUseId } : {}),
         behavior: 'deny',
         message: 'timed out',
       });
       resolve({
         behavior: 'deny',
-        message: 'Permission request timed out after 10 minutes',
+        message: isQuestion
+          ? `The human did not answer the question card within ${Math.max(1, Math.round(timeoutMs / 60000))} minutes. Do not re-ask the same question right away — continue with a sensible default and say which one you picked.`
+          : `Permission request timed out after ${Math.max(1, Math.round(timeoutMs / 60000))} minutes`,
       });
-    }, PERMISSION_TIMEOUT_MS);
+    }, timeoutMs);
     pendingPermissions.set(requestId, {
       resolve,
       timer,
       sessionId,
       toolName,
       input,
+      ...(toolUseId ? { toolUseId } : {}),
     });
     state.setClaude(sessionId, { state: 'awaiting-input' });
     claude.appendChat(sessionId, {
@@ -531,15 +601,19 @@ async function handlePermissionRequest(
       requestId,
       toolName,
       input,
+      ...(toolUseId ? { toolUseId } : {}),
     });
     broadcast({
       type: `permission-request:${sessionId}`,
       requestId,
       toolName,
       input,
+      ...(toolUseId ? { toolUseId } : {}),
     });
   });
-  json(res, result);
+  // CHAT1: long-poll legs (see respondBlocking) — the MCP process re-attaches
+  // instead of dying at its fetch timeout while the human is still deciding.
+  await respondBlocking(res, body, sessionId, promise);
 }
 
 // Force-deny any permission request left pending for a session — e.g. its
@@ -556,6 +630,7 @@ export function expirePendingPermissions(
     claude.appendChat(sessionId, {
       kind: 'permission-answer',
       requestId,
+      ...(entry.toolUseId ? { toolUseId: entry.toolUseId } : {}), // CHAT1: closes the question card too
       behavior: 'deny',
       message,
     });
@@ -570,6 +645,8 @@ function answerPermission(
     behavior: string;
     message?: string;
     updatedInput?: unknown;
+    /** CHAT1: a question card's picks (question text → label), echoed on the chat event. */
+    answers?: Record<string, string>;
   }
 ): { ok: boolean } | null {
   const entry = pendingPermissions.get(data.requestId);
@@ -580,8 +657,10 @@ function answerPermission(
   claude.appendChat(sessionId, {
     kind: 'permission-answer',
     requestId: data.requestId,
+    ...(entry.toolUseId ? { toolUseId: entry.toolUseId } : {}),
     behavior: data.behavior,
     ...(data.message ? { message: data.message } : {}),
+    ...(data.answers ? { answers: data.answers } : {}),
   });
   entry.resolve(
     data.behavior === 'allow'
@@ -595,6 +674,69 @@ function answerPermission(
         }
   );
   return { ok: true };
+}
+
+// ---- CHAT1: the "Question for you" card --------------------------------------
+// AskUserQuestion is a CLI-side tool that blocks on the permission prompt
+// (handlePermissionRequest keeps it pending so the model waits for the card).
+// The CLI's own answer channel IS that permission result:
+//   {behavior:'allow', updatedInput:{...input, answers:{[question]: label}}}
+// — the tool then returns "Your questions have been answered: …" on the SAME
+// turn, at once. The old path wrote a tool_result onto stdin while the tool
+// was still waiting on the permission: the CLI read it as a new user message,
+// cancelled the pending tool ("The user doesn't want to proceed with this tool
+// use"), ended the turn with error_during_execution and dropped the answer —
+// the card looked answered and the chat sat there. When nothing is pending any
+// more (the tool already timed out, the process or the host was restarted) the
+// answer goes in as a normal user message instead, and the caller is told so.
+export interface QuestionAnswer {
+  question: string;
+  answer: string | null; // null = skipped
+}
+export function answerQuestion(
+  sessionId: string,
+  data: { toolUseId?: string; content?: string; answers?: QuestionAnswer[] | null }
+): { ok: true; delivered: 'tool' | 'message'; requestId?: string } {
+  let found: [string, PendingPermission] | undefined;
+  for (const [rid, e] of pendingPermissions) {
+    if (e.sessionId !== sessionId || e.toolName !== 'AskUserQuestion') continue;
+    if (data.toolUseId && e.toolUseId && e.toolUseId !== data.toolUseId) continue;
+    found = [rid, e]; // insertion order → the newest matching card wins
+  }
+  const list = Array.isArray(data.answers) ? data.answers.filter((a) => a && typeof a.question === 'string') : [];
+  const text =
+    (data.content || '').trim() ||
+    list.map((a) => `${a.question}: ${typeof a.answer === 'string' && a.answer ? a.answer : '(no answer)'}`).join('\n');
+  if (!found) {
+    claude.sendMessage(sessionId, text || '(no answer)');
+    return { ok: true, delivered: 'message' };
+  }
+  const [requestId, entry] = found;
+  const input = (entry.input && typeof entry.input === 'object' ? entry.input : {}) as { questions?: Array<{ question?: string; header?: string }> };
+  const answers: Record<string, string> = {};
+  if (list.length) {
+    for (const a of list) if (typeof a.answer === 'string' && a.answer) answers[a.question] = a.answer;
+  } else {
+    // An older cockpit build sends only the "label: answer" lines — map them
+    // back onto the questions the model asked.
+    const lines = text.split('\n');
+    for (const q of input.questions || []) {
+      for (const label of [q?.question, q?.header]) {
+        if (!label) continue;
+        const line = lines.find((l) => l.startsWith(`${label}: `));
+        const a = line ? line.slice(label.length + 2).trim() : '';
+        if (a && a !== '(no answer)' && q?.question) { answers[q.question] = a; break; }
+      }
+    }
+  }
+  answerPermission(sessionId, {
+    requestId,
+    behavior: 'allow',
+    updatedInput: { ...input, answers },
+    message: text,
+    answers,
+  });
+  return { ok: true, delivered: 'tool', requestId };
 }
 
 // ---- push for human intervention -------------------------------------------
@@ -658,7 +800,7 @@ async function handleScreenRequest(
   // machine, not the global one. A failed allocation (binary missing, ports
   // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
   try { await desktops.ensureDesktop(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
-  const result = await new Promise<ScreenRequestResult>((resolve) => {
+  const promise = new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
       screens.stopAutoSnapshots(requestId);
@@ -689,7 +831,7 @@ async function handleScreenRequest(
       SCREEN_REASON_LABEL[reason ?? ''] || 'needs you on the machine'
     );
   });
-  json(res, result);
+  await respondBlocking(res, body, sessionId!, promise); // CHAT1: long-poll legs
 }
 
 // Force-resolve any screen request left pending for a session — e.g. its
@@ -1284,8 +1426,8 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     return json(res, r);
   }
   state.setClaude(sessionId!, { state: 'awaiting-input', setupRequest: { id: entry.id, capability } } as any);
-  const result = await new Promise<SetupResult>((resolve) => entry.waiters.push(resolve));
-  json(res, result);
+  // CHAT1: long-poll legs — a 15-minute card outlives any single request.
+  await respondBlocking(res, body, sessionId!, new Promise<SetupResult>((resolve) => entry.waiters.push(resolve)));
 }
 
 /**
@@ -2825,6 +2967,15 @@ export async function handle(
   try {
     if (p === '/__mcp/permission' && m === 'POST') {
       return await handlePermissionRequest(res, await readBody(req));
+    }
+    // CHAT1: re-attach to a blocking call whose previous HTTP leg ended with
+    // {pending:true} (or died) — see respondBlocking / mcp/blocking-call.js.
+    if (p === '/__mcp/wait' && m === 'POST') {
+      const body = await readBody(req);
+      const key = waitKeyOf(body);
+      const entry = key ? blockingWaits.get(key) : undefined;
+      if (!key || !entry) return notFound(res, 'unknown wait key — the request it belonged to is gone (answered and collected, expired, or the host restarted)');
+      return await waitLeg(res, key, entry);
     }
     if (p === '/__mcp/screen-request' && m === 'POST') {
       // S1: no desktop → the tool asks instead of failing.
@@ -4777,22 +4928,22 @@ export async function handle(
       const removed = claude.removeStreamedAttachment(id, target);
       return json(res, { ok: removed });
     }
-    // Answer a client-side tool_use (AskUserQuestion) with a tool_result so the
-    // blocked turn resumes immediately instead of stalling until the ~60s
-    // question timeout (a plain message would be queued by the CLI meanwhile).
+    // CHAT1: the "Question for you" card — resolves the AskUserQuestion
+    // permission with the picks (the CLI's own answer channel, same turn), or
+    // falls back to a normal user message when nothing is pending any more.
+    // The reply says which: {delivered:'tool'|'message'}.
     if (sub === 'question/answer' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const toolUseId = typeof body.toolUseId === 'string' ? body.toolUseId : '';
-      const content = typeof body.content === 'string' ? body.content : '';
-      if (!toolUseId || !content.trim())
-        return badRequest(res, 'toolUseId and content required');
+      const content = typeof body.content === 'string' ? body.content.trim() : '';
+      const answers = Array.isArray(body.answers) ? (body.answers as QuestionAnswer[]) : null;
+      if (!content && !answers?.length) return badRequest(res, 'content or answers required');
       try {
-        claude.answerToolResult(id, toolUseId, content);
+        return json(res, answerQuestion(id, { toolUseId, content, answers }));
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
-        return json(res, { error: error.message }, 500);
+        return json(res, { error: error.message, ...((error as any).budget ? { budget: (error as any).budget } : {}) }, (error as any).status || 500);
       }
-      return json(res, { ok: true });
     }
     // ---- pending prompts (queued while the session is busy) ----
     if (sub === 'prompts' && m === 'POST') {
