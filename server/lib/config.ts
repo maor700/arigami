@@ -102,10 +102,16 @@ export interface ShareConfig {
 // into a 403 (restart stays available). drainTimeoutMs = how long an in-flight
 // claude turn may hold up a "restart now"; idleTimeoutMin = how long "restart
 // when idle" waits for sessions to go quiet before restarting anyway.
+// UPD1: the `claude` CLI updater (server/lib/claude-update.js). claudeAutoUpdate
+// = apply `claude update` by itself once the daily check finds a newer release
+// ("update now" in the cockpit works either way); claudeUpdateMinFreeMb = never
+// apply while MemAvailable is below this (deferred, retried every 15 min).
 export interface HostConfig {
   allowUpgrade: boolean;
   drainTimeoutMs: number;
   idleTimeoutMin: number;
+  claudeAutoUpdate: boolean;
+  claudeUpdateMinFreeMb: number;
 }
 
 // C1 — host auth. `mode:'off'` is ONLY legal when `bind` is loopback (the
@@ -296,6 +302,8 @@ export const DEFAULTS: Config = {
   },
   host: {
     allowUpgrade: true,
+    claudeAutoUpdate: true,
+    claudeUpdateMinFreeMb: 700,
     drainTimeoutMs: 20_000,
     idleTimeoutMin: 30,
   },
@@ -563,6 +571,17 @@ export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
 // Persist a partial telemetry config (Settings toggle, wizard step, `bin/host`).
 // Same merge pattern as updateBrainConfig. Note: env ARIGAMI_TELEMETRY and
 // DO_NOT_TRACK still win at runtime — see server/telemetry.ts effective().
+// UPD1: persist a partial host config (the Claude-CLI auto-update toggle).
+export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
+  ensureConfigFile();
+  const file = loadFile() as Partial<Config>;
+  const next: HostConfig = { ...cfg.host, ...patch };
+  const out = { ...file, host: { ...(file.host || {}), ...patch } } as any;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  cfg.host = next;
+  return next;
+}
+
 export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): TelemetryConfig {
   ensureConfigFile();
   const file = loadFile() as Partial<Config>;

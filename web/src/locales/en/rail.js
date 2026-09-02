@@ -162,6 +162,8 @@ export const strings = {
   'rail.stopAndSwitch': 'Stop & switch',
   'rail.model': 'Model',
   'rail.refetchModelList': 'Re-fetch the model list from the claude CLI',
+  'rail.cliUpdate': 'CLI update → {v}',
+  'rail.cliUpdate.hint': 'A newer claude CLI ({v}) is available — new models come with it. Update from Settings › Host.',
   'rail.refresh': 'refresh',
   'rail.effort': 'Effort',
   'rail.effortDefault': 'Default',

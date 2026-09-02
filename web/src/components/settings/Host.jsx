@@ -10,7 +10,8 @@ import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
-import { Section, Field, BTN, hostPost } from './shared.jsx';
+import { Section, Field, BTN, Toggle, hostPost } from './shared.jsx';
+import { relTime } from '../../lib/time.js';
 import Budgets from './Budgets.jsx';
 
 function fmtUptime(sec) {
@@ -98,6 +99,8 @@ export default function Host() {
   const { conn, hostEvent } = useStore();
   const [ver, setVer] = useState(null);
   const [st, setSt] = useState(null);
+  const [cli, setCli] = useState(null); // UPD1: GET /host/claude
+  const [cliBusy, setCliBusy] = useState(null); // 'check' | 'update' | 'auto'
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
@@ -108,6 +111,7 @@ export default function Host() {
   const load = () => {
     api.get('/host/status').then(setSt).catch(() => setSt(null));
     api.get('/version').then(setVer).catch(() => setVer(null));
+    api.get('/host/claude').then(setCli).catch(() => setCli(null));
   };
   useEffect(() => { load(); }, []);
 
@@ -134,6 +138,8 @@ export default function Host() {
     if (ev.kind === 'upgrade-failed') { toastError(t('host.upgradeFailed', { error: ev.error })); setShowLog(true); }
     if (ev.kind === 'upgrade-done') toast(t('host.upgradeDone'));
     if (ev.kind === 'restarting' || ev.kind === 'restart-draining') restarting.current = true;
+    // UPD1: done/failed are toasted globally (store.js); here just refresh the row.
+    if (ev.kind === 'claude-update-started') setCli((c) => (c ? { ...c, applying: true } : c));
     load();
   }, [hostEvent]);
 
@@ -165,6 +171,18 @@ export default function Host() {
     setChecking(true);
     try { setVer(await api.get('/version?refresh=1')); } catch (e) { fail(e); } finally { setChecking(false); }
   };
+  // UPD1 — the `claude` CLI row. Mutations are admin-confirmed POSTs like the rest of the card.
+  const cliAct = async (what, fn) => {
+    setCliBusy(what);
+    try { setCli(await fn()); } catch (e) {
+      if (e?.status === 409 && /memory|MB/.test(e.message || '')) toastError(t('host.cli.deferredToast', { mb: cli?.availableMb ?? '?', min: cli?.minFreeMb ?? '?' }));
+      else fail(e);
+      api.get('/host/claude').then(setCli).catch(() => {});
+    } finally { setCliBusy(null); }
+  };
+  const cliCheck = () => cliAct('check', () => hostPost('/host/claude/check'));
+  const cliUpdate = () => cliAct('update', async () => (await hostPost('/host/claude/update')).status);
+  const cliAuto = (on) => cliAct('auto', () => hostPost('/host/claude/auto', 'POST', { enabled: on }));
 
   const noSup = st && st.manager === 'none';
   const pending = st?.pendingRestart;
@@ -184,6 +202,33 @@ export default function Host() {
               {ver && !st?.docker && (ver.ahead === null ? t('host.noUpstream') : ver.ahead > 0 ? <span className="text-[#CE8324]">{t('host.updateAvailable', { n: ver.ahead })}</span> : t('host.upToDate'))}
               <button type="button" disabled={checking} onClick={check} className="cursor-pointer underline disabled:opacity-50">{checking ? t('host.checking') : t('host.check')}</button>
             </span>
+          </div>
+        </Field>
+        <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
+          <div className="flex flex-col items-end gap-1.5">
+            <span className="flex flex-wrap items-center justify-end gap-2">
+              <span className="font-mono text-[11.5px] text-fg" dir="ltr">{cli?.installed ? t('host.cli.installed', { v: cli.installed }) : '…'}</span>
+              {cli?.updateAvailable
+                ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cli.latest })}</span>
+                : cli?.latest && cli?.installed ? <span className="font-mono text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
+              <button type="button" disabled={cliBusy === 'update' || cli?.applying || !cli?.updateAvailable} onClick={cliUpdate} className={BTN}>{cliBusy === 'update' || cli?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
+            </span>
+            <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
+              {cli?.checkError ? <span className="text-[#9c3b33]">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
+              <button type="button" disabled={cliBusy === 'check' || cli?.checking} onClick={cliCheck} className="cursor-pointer underline disabled:opacity-50">{cliBusy === 'check' || cli?.checking ? t('host.checking') : t('host.check')}</button>
+            </span>
+            {cli?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cli.deferred.availableMb, min: cli.deferred.minFreeMb })}</span>}
+            {cli?.lastUpdate && (
+              <span className={`font-mono text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
+                {cli.lastUpdate.ok
+                  ? t('host.cli.lastOk', { from: cli.lastUpdate.from || '?', to: cli.lastUpdate.to || '?', when: relTime(cli.lastUpdate.at) })
+                  : t('host.cli.lastFailed', { when: relTime(cli.lastUpdate.at), error: cli.lastUpdate.error || '?' })}
+              </span>
+            )}
+            <label className="flex cursor-pointer items-center gap-2 font-mono text-[10.5px] text-fgdim">
+              {t('host.cli.auto')}
+              <Toggle on={!!cli?.auto} disabled={!cli || cliBusy === 'auto'} onChange={cliAuto} />
+            </label>
           </div>
         </Field>
         {st?.docker && (

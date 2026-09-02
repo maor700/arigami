@@ -162,6 +162,8 @@ export const strings = {
   'rail.stopAndSwitch': 'עצור והחלף',
   'rail.model': 'מודל',
   'rail.refetchModelList': 'משיכה מחדש של רשימת המודלים מ-claude CLI',
+  'rail.cliUpdate': 'עדכון CLI → {v}',
+  'rail.cliUpdate.hint': 'יש claude CLI חדש יותר ({v}) — מודלים חדשים מגיעים איתו. מעדכנים מהגדרות › מארח.',
   'rail.refresh': 'רענון',
   'rail.effort': 'רמת מאמץ',
   'rail.effortDefault': 'ברירת מחדל',

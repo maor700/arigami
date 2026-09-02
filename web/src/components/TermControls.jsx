@@ -187,7 +187,7 @@ function ModelModal({ session, onClose }) {
   const working = session.claude?.state === 'working';
   const [pending, setPending] = useState(null); // model awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
-  const { models: options, loading } = useModels();
+  const { models: options, loading, cliUpdate } = useModels();
   const modelLabel = Object.fromEntries(options.map((o) => [o.value, o.label]));
 
   const apply = async (model) => {
@@ -243,15 +243,30 @@ function ModelModal({ session, onClose }) {
       onClose={onClose}
       footer={confirmFooter}
       headerExtra={
-        <button
-          type="button"
-          onClick={refreshModels}
-          title={t('rail.refetchModelList')}
-          disabled={loading}
-          className="mt-0.5 shrink-0 cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-50"
-        >
-          {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
-        </button>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {cliUpdate?.updateAvailable && (
+            // UPD1: a newer `claude` CLI (= a newer model list) is waiting — one
+            // click to Settings › Host, where "update now" lives.
+            <a
+              href="#/settings/host/host"
+              onClick={onClose}
+              title={t('rail.cliUpdate.hint', { v: cliUpdate.latest })}
+              className="mt-0.5 rounded-full border border-[#CE8324] bg-[#FFF4E5] px-2 py-0.5 font-mono text-[9.5px] font-bold text-[#8a5210] no-underline hover:bg-[#ffe9c7]"
+              dir="ltr"
+            >
+              {t('rail.cliUpdate', { v: cliUpdate.latest })}
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={refreshModels}
+            title={t('rail.refetchModelList')}
+            disabled={loading}
+            className="mt-0.5 shrink-0 cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-50"
+          >
+            {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
+          </button>
+        </span>
       }
     />
   );
