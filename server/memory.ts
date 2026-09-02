@@ -24,6 +24,7 @@ import path from 'node:path';
 import { Database } from 'bun:sqlite';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { runClaudeOneShot } from './lib/oneshot.js';
+import { detectSensitive } from './lib/memory-triage.js';
 
 export const MEMORY_DIR = path.join(ARIGAMI_DIR, 'memory');
 export const USER_MD = path.join(MEMORY_DIR, 'USER.md');
@@ -133,16 +134,35 @@ export function sanitize(content: string): SanitizeResult {
   for (const re of SECRET_PATTERNS) if (re.test(content)) return { ok: false, reason: 'looks like it contains a credential/secret' };
   for (const re of INJECTION_PATTERNS) if (re.test(content)) return { ok: false, reason: 'looks like a prompt-injection attempt' };
   for (const re of EXFIL_PATTERNS) if (re.test(content)) return { ok: false, reason: 'looks like an exfiltration attempt' };
+  // LEARN1: identity-document and payment-card numbers are refused on EVERY
+  // path (a live agent included) — there is no legitimate reason to keep them
+  // in a file that is re-injected into every future session.
+  const sens = detectSensitive(content);
+  if (sens && sens.kind !== 'address') return { ok: false, reason: `sensitive personal data (${sens.reason})` };
+  return { ok: true };
+}
+
+// LEARN1: the stricter check for AUTONOMOUS paths (proposeFacts, the learning
+// run): everything sanitize() refuses PLUS home addresses. A human may still
+// store an address deliberately via memory_write / the Brain UI.
+export function sanitizeForAutoStore(content: string): SanitizeResult {
+  const base = sanitize(content);
+  if (!base.ok) return base;
+  const sens = detectSensitive(content);
+  if (sens) return { ok: false, reason: `sensitive personal data (${sens.reason}) — never stored automatically` };
   return { ok: true };
 }
 
 // ---- dedup --------------------------------------------------------------------
 
+// LEARN1: the bullet strip requires the space ("- foo"), otherwise a line that
+// starts with **bold** lost its first `*` and could never be matched for
+// replace/remove/undo.
 function normalizeLine(s: string): string {
   return (s || '')
     .trim()
     .toLowerCase()
-    .replace(/^[-*]\s*/, '')
+    .replace(/^[-*]\s+/, '')
     .replace(/\s+/g, ' ');
 }
 
@@ -540,6 +560,10 @@ export interface PendingFact {
   sessionId?: string;
   createdAt: string;
   status: 'pending' | 'approved' | 'rejected';
+  /** LEARN1: who decided (e.g. 'learning:<runId>', 'ui') and why — for the run log / audit. */
+  decidedBy?: string;
+  decidedAt?: string;
+  reason?: string;
 }
 
 function readPending(): PendingFact[] {
@@ -578,7 +602,7 @@ export function proposeFacts(facts: string[], opts: { source: string; sessionId?
     if (created.length >= 3) break; // cap on ACCEPTED proposals, not on candidates considered
     const content = String(raw || '').trim();
     if (!content) continue;
-    if (!sanitize(content).ok) continue; // drop suspicious auto-proposed content silently
+    if (!sanitizeForAutoStore(content).ok) continue; // drop suspicious/sensitive auto-proposed content silently
     if (isDuplicate(liveContent, content)) continue;
     if (list.some((p) => p.status === 'pending' && normalizeLine(p.content) === normalizeLine(content))) continue;
     const fact: PendingFact = {
@@ -597,32 +621,80 @@ export function proposeFacts(facts: string[], opts: { source: string; sessionId?
   return created;
 }
 
-export function approvePending(id: string): WriteResult {
+export interface ApproveOptions {
+  /** LEARN1: write THIS phrasing instead of the stored one (the triage picked the best variant). Still gated by writeMemory. */
+  content?: string;
+  /** LEARN1: the triage may re-target (a fact about the human → USER.md even if proposed for memory). */
+  target?: CappedTarget;
+  source?: string;
+}
+
+export function approvePending(id: string, opts: ApproveOptions = {}): WriteResult {
   const list = readPending();
   const idx = list.findIndex((p) => p.id === id && p.status === 'pending');
   if (idx === -1) return { ok: false, error: 'no such pending fact' };
   const fact = list[idx];
+  const target: CappedTarget = opts.target === 'user' || opts.target === 'memory' ? opts.target : fact.target;
   const res = writeMemory({
-    target: fact.target,
+    target,
     action: 'add',
-    content: fact.content,
-    source: `pending-approve:${fact.source}`,
+    content: (opts.content || fact.content).trim(),
+    source: opts.source || `pending-approve:${fact.source}`,
     sessionId: fact.sessionId,
   });
   if (res.ok) {
-    list[idx] = { ...fact, status: 'approved' };
+    list[idx] = { ...fact, target, status: 'approved', decidedBy: opts.source, decidedAt: new Date().toISOString() };
     writePending(list);
   }
   return res;
 }
 
-export function rejectPending(id: string): { ok: boolean } {
+// LEARN1: approve a pending fact by MERGING it into an existing line of its
+// target file (replace, keeping the more precise wording) — same writeMemory
+// gate (sanitize + cap) as an add, just action:'replace'.
+export function mergePending(id: string, opts: { oldText: string; content: string; target?: CappedTarget; source?: string }): WriteResult {
+  const list = readPending();
+  const idx = list.findIndex((p) => p.id === id && p.status === 'pending');
+  if (idx === -1) return { ok: false, error: 'no such pending fact' };
+  const fact = list[idx];
+  const target: CappedTarget = opts.target === 'user' || opts.target === 'memory' ? opts.target : fact.target;
+  const res = writeMemory({
+    target,
+    action: 'replace',
+    old_text: opts.oldText,
+    content: opts.content.trim(),
+    source: opts.source || `pending-merge:${fact.source}`,
+    sessionId: fact.sessionId,
+  });
+  if (res.ok) {
+    list[idx] = { ...fact, target, status: 'approved', decidedBy: opts.source, decidedAt: new Date().toISOString(), reason: `merged into: ${opts.oldText}` };
+    writePending(list);
+  }
+  return res;
+}
+
+export function rejectPending(id: string, opts: { source?: string; reason?: string } = {}): { ok: boolean } {
   const list = readPending();
   const idx = list.findIndex((p) => p.id === id && p.status === 'pending');
   if (idx === -1) return { ok: false };
-  list[idx] = { ...list[idx], status: 'rejected' };
+  list[idx] = { ...list[idx], status: 'rejected', decidedBy: opts.source, decidedAt: new Date().toISOString(), reason: opts.reason };
   writePending(list);
   return { ok: true };
+}
+
+/** LEARN1: bulk status change (a whole cluster of restatements rejected as members of an entered fact). */
+export function setPendingStatus(ids: string[], status: PendingFact['status'], opts: { source?: string; reason?: string } = {}): number {
+  const list = readPending();
+  const set = new Set(ids);
+  let n = 0;
+  const now = new Date().toISOString();
+  for (let i = 0; i < list.length; i++) {
+    if (!set.has(list[i].id) || list[i].status === status) continue;
+    list[i] = { ...list[i], status, decidedBy: opts.source, decidedAt: now, reason: opts.reason };
+    n++;
+  }
+  if (n) writePending(list);
+  return n;
 }
 
 // ---- autonomous episode + pending-fact extraction ------------------------------

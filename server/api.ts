@@ -4310,6 +4310,55 @@ export async function handle(
       const r = memory.undoLog(seq);
       return r.ok ? json(res, r) : badRequest(res, r.error || 'undo failed');
     }
+    // ---- LEARN1: autonomous memory learning (server/memory-learning.ts) ------
+    // GET  /memory/learning            status: mode, pending, next run, recent runs, manual-block preview
+    // POST /memory/learning/run        "למד עכשיו" — one triage run; applies in auto mode (or {apply:true})
+    // POST /memory/learning/apply      manual mode: apply a stored run {runId, keys?} or approve pre-pass clusters {keys}
+    // POST /memory/learning/mode       {mode:'auto'|'manual', minBatch?, maxAgeHours?}
+    // POST /memory/learning/undo/:seq  revert one applied line by its write-log seq
+    if (p === '/__api/memory/learning' || p.startsWith('/__api/memory/learning/')) {
+      const ml = (await import('./memory-learning.js')).learner();
+      const sub = p.slice('/__api/memory/learning'.length).replace(/^\//, '');
+      if (!sub && m === 'GET') return json(res, ml.status({ runs: Number(u.searchParams.get('runs')) || 20, preview: u.searchParams.get('preview') !== '0' }));
+      if (m !== 'POST') return notFound(res);
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = ((await readBody(req)) || {}) as any;
+      try {
+        if (sub === 'run') {
+          const apply = typeof body.apply === 'boolean' ? body.apply : undefined;
+          return json(res, { ok: true, run: await ml.run({ trigger: 'manual', apply }) });
+        }
+        if (sub === 'apply') {
+          const keys = Array.isArray(body.keys) ? body.keys.map(String) : undefined;
+          if (body.runId) return json(res, { ok: true, run: ml.applyRun(String(body.runId), keys) });
+          if (!keys) return badRequest(res, 'runId or keys required');
+          return json(res, { ok: true, run: ml.approveClusters(keys) });
+        }
+        if (sub === 'mode') {
+          const { updateMemoryLearningConfig } = await import('./lib/config.js');
+          const patch: any = {};
+          if (body.mode !== undefined) {
+            if (body.mode !== 'auto' && body.mode !== 'manual') return badRequest(res, "mode must be 'auto' or 'manual'");
+            patch.mode = body.mode;
+          }
+          if (body.minBatch !== undefined) { const n = Number(body.minBatch); if (!(n >= 1 && n <= 1000)) return badRequest(res, 'minBatch must be 1..1000'); patch.minBatch = Math.round(n); }
+          if (body.maxAgeHours !== undefined) { const n = Number(body.maxAgeHours); if (!(n >= 1 && n <= 24 * 30)) return badRequest(res, 'maxAgeHours must be 1..720'); patch.maxAgeHours = Math.round(n); }
+          if (!Object.keys(patch).length) return badRequest(res, 'nothing to change');
+          updateMemoryLearningConfig(patch);
+          return json(res, ml.status({ preview: false }));
+        }
+        if (sub.startsWith('undo/')) {
+          const seq = Number(sub.slice('undo/'.length));
+          if (!Number.isFinite(seq)) return badRequest(res, 'bad seq');
+          const r = ml.undo(seq);
+          return r.ok ? json(res, r) : badRequest(res, r.error || 'undo failed');
+        }
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { error: err.message }, err.status || 500);
+      }
+      return notFound(res);
+    }
     if (p === '/__api/memory/pending' && m === 'GET') {
       const memory = await import('./memory.js');
       return json(res, memory.listPending());

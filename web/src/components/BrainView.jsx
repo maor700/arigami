@@ -370,66 +370,9 @@ function LogPane({ onChanged }) {
   );
 }
 
-/* ---------- pending facts ---------------------------------------------------- */
-
-function PendingTab({ onChanged }) {
-  const t = useT();
-  const [list, setList] = useState(null);
-  const [busy, setBusy] = useState(null);
-
-  const load = () => api.get('/memory/pending').then(setList).catch(() => setList([]));
-  useEffect(() => { load(); }, []);
-
-  const decide = async (id, action) => {
-    setBusy(id);
-    try {
-      await api.post(`/memory/pending/${id}/${action}`);
-      toastSuccess(action === 'approve' ? t('brain.factApproved') : t('brain.factRejected'));
-      await load();
-      onChanged?.();
-    } catch (e) {
-      toastError(String(e.message || e).replace(/^HTTP \d+ — /, ''));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  if (list === null) return <div className="text-[12px] text-fgdim">{t('dialogs.loading')}</div>;
-
-  return (
-    <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-      {list.length === 0 && <div className="p-4 text-center text-[12px] text-fgdim">{t('brain.noPending')}</div>}
-      {list.map((f) => (
-        <div key={f.id} className="rounded-[10px] border border-hair p-3">
-          <div className="mb-1.5 flex items-center gap-2 text-[9.5px] text-fgdim">
-            <span className="rounded-full border border-hair px-1.5 py-px font-bold uppercase">{f.target}</span>
-            <span>{f.source}</span>
-            <span className="ml-auto">{fmtDate(f.createdAt)}</span>
-          </div>
-          <div className="mb-2 text-[12px] leading-relaxed text-fg">{f.content}</div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={busy === f.id}
-              onClick={() => decide(f.id, 'reject')}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] font-bold text-fg hover:bg-chip disabled:opacity-40"
-            >
-              {t('brain.reject')}
-            </button>
-            <button
-              type="button"
-              disabled={busy === f.id}
-              onClick={() => decide(f.id, 'approve')}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-40"
-            >
-              {t('brain.approve')}
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
+/* ---------- pending facts: LEARN1 — the raw approve/reject list moved to
+   Settings › כללי › זיכרון (the manual-mode block of autonomous learning). The
+   header keeps a pending-count link there instead of a tab. ------------------ */
 
 /* ---------- memory tab: composes everything above --------------------------- */
 
@@ -458,7 +401,7 @@ function MemoryTab({ onChanged }) {
 export default function BrainView({ onClose }) {
   const t = useT();
   const desktop = useIsDesktop();
-  const [mode, setMode] = useState('memory'); // 'memory' | 'pending' | 'cron' | 'proposals'
+  const [mode, setMode] = useState('memory'); // 'memory' | 'cron' | 'proposals'
   const [pendingCount, setPendingCount] = useState(0);
   const [askBusy, setAskBusy] = useState(false);
 
@@ -483,7 +426,7 @@ export default function BrainView({ onClose }) {
     }
   };
 
-  const TABS = ['memory', 'pending', 'cron', 'proposals'];
+  const TABS = ['memory', 'cron', 'proposals'];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -502,15 +445,13 @@ export default function BrainView({ onClose }) {
               }`}
             >
               {t(`brain.tab.${mItem}`)}
-              {mItem === 'pending' && pendingCount > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#9c3b33] px-1 text-[9px] font-bold text-white">
-                  {pendingCount}
-                </span>
-              )}
             </button>
           ))}
         </div>
-        <a href="#/settings/automation/heartbeat" className="ms-auto shrink-0 text-[11px] text-fgdim underline hover:text-fg">{t('brain.heartbeatSettings')}</a>
+        <a href="#/settings/appearance/memory" data-brain-pending-link className="ms-auto shrink-0 text-[11px] text-fgdim underline hover:text-fg">
+          {pendingCount > 0 ? t('brain.pendingLink', { n: pendingCount }) : t('brain.pendingLink.none')}
+        </a>
+        <a href="#/settings/automation/heartbeat" className="shrink-0 text-[11px] text-fgdim underline hover:text-fg">{t('brain.heartbeatSettings')}</a>
         <button
           type="button"
           onClick={askBrain}
@@ -532,11 +473,6 @@ export default function BrainView({ onClose }) {
       {mode === 'memory' && (
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto p-4">
           <MemoryTab onChanged={refreshPendingCount} />
-        </div>
-      )}
-      {mode === 'pending' && (
-        <div className="thin-scroll min-h-0 flex-1 overflow-y-auto p-4">
-          <PendingTab onChanged={refreshPendingCount} />
         </div>
       )}
       {mode === 'cron' && <CronSubPanel />}

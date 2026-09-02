@@ -6,6 +6,10 @@
 // (mic, recognition language, auto-send; plus hotkey/mode while voice is off),
 // the Brain heartbeat and the telemetry toggle. prefs keys are unchanged.
 // The origami logo chooser stays out of the UI (SETTINGS-IA §1.1 #4).
+// LEARN1: the זיכרון section (autonomous memory learning — mode, learning log,
+// pending strip, manual block) sits here, on the page, under the chrome block:
+// it is about how the assistant behaves for the human, like language/voice,
+// not about the machine (מארח). Deep link: #/settings/appearance/memory.
 import { usePrefs, setPrefs, PREF_LIMITS } from '../../lib/prefs.js';
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';
@@ -13,6 +17,7 @@ import { useT } from '../../lib/i18n.js';
 import { Field, Segmented, Section, Advanced } from './shared.jsx';
 import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
+import MemoryLearning from './MemoryLearning.jsx';
 
 export const GENERAL_ADVANCED_IDS = ['accent', 'terminal', 'voice-advanced', 'heartbeat', 'telemetry'];
 
@@ -69,6 +74,8 @@ export default function General({ section = '', voiceEnabled = false, recording,
           </span>
         </Field>
       </Section>
+
+      <MemoryLearning />
 
       {voiceEnabled && (
         <Section id="voice" title={t('chrome.voice.section')}>
