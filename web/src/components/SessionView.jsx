@@ -1157,7 +1157,8 @@ function ChatFooter({ session }) {
 
   return (
     <div
-      className="relative shrink-0 border-t border-hair bg-panel px-2.5 py-2 sm:px-3.5 sm:py-2.5"
+      // bottom padding grows by the home-indicator inset on phones (0 elsewhere)
+      className="relative shrink-0 border-t border-hair bg-panel px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] sm:px-3.5 sm:pt-2.5 sm:pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))]"
       onDragOver={(e) => {
         // Only react to drags this zone can accept — real files or a rail
         // session row. Internal drags (queued-prompt reorder) fall through.

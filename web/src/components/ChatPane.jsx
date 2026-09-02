@@ -867,6 +867,19 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [events.length, lastLen, working]);
 
+  // The pane shrinks when the mobile keyboard opens (and on any window
+  // resize); if the user was at the bottom, keep them there — otherwise the
+  // newest rows slide under the composer.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // new session selected → snap to bottom, back to the default window
   useEffect(() => {
     stickRef.current = true;
