@@ -11,6 +11,7 @@ import * as api from './api.js';
 import * as bus from './bus.js';
 import * as vnc from './vnc.js';
 import { killAll } from './claude.js';
+import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';
 import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
@@ -293,6 +294,20 @@ server.listen(cfg.port, cfg.bind, () => {
   } catch (e) {
     console.error('[host] pairing code failed:', (e as Error)?.message);
   }
+  // BUGS1/B20: the host owns the ONE WhatsApp process. Retire the legacy
+  // per-session `mcpServers.whatsapp` from ~/.claude.json BEFORE any session's
+  // claude can spawn (idempotent, backed up), then bring the bridge up when a
+  // pairing exists — with the per-session trees gone nothing else would.
+  try {
+    const r = migrateLegacyMcpRegistration();
+    if (r.error) console.error(`[host] whatsapp legacy-mcp migration skipped: ${r.error}`);
+  } catch (e) {
+    console.error('[host] whatsapp legacy-mcp migration failed:', (e as Error)?.message);
+  }
+  import('./listeners.js')
+    .then((m: any) => autoStartBridge(m.enqueueWake))
+    .then((r) => { if (r.started || r.reason !== 'not paired') console.log(`[host] whatsapp bridge ${r.started ? 'up' : 'not started'} (${r.reason})`); })
+    .catch((e: any) => console.error('[host] whatsapp bridge autostart failed:', e?.message));
   import('./accounts.js')
     .then((m: any) => {
       m.initAccounts(); // seed from keychain + any inherited .env token
@@ -348,6 +363,7 @@ function shutdown(): void {
     flushTriggers();
   } catch {}
   killAll();
+  try { stopBridge(); } catch {} // B20: the WhatsApp process is ours — never leave it orphaned
   releaseHost();
   try { server.close(); } catch {}
   process.exit(0);
