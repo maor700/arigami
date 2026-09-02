@@ -243,6 +243,7 @@ export const strings = {
   'rail.expires': 'פג תוקף:',
   'rail.lastError': 'שגיאה אחרונה:',
   'rail.activity': 'פעילות',
+  'rail.contacts': 'אנשי קשר:',
   'rail.loading': 'טוען…',
   'rail.noActivityYet': 'אין פעילות עדיין — ממתין לסקירה הבאה.',
   'rail.noActiveListeners': 'אין מאזינים פעילים.',

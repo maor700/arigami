@@ -50,7 +50,12 @@ import {
   addGroupSubscription,
   removeGroupSubscription,
   resolveActiveJid,
+  resolveContacts,
+  normalizeContacts,
+  contactJidSet,
+  contactLabel,
   type WhatsAppWatermark,
+  type ResolvedContact,
   DEFAULT_DB_PATH as WA_DEFAULT_DB_PATH,
 } from './listeners-whatsapp.js';
 import {
@@ -467,9 +472,11 @@ async function pollOne(l: Listener): Promise<void> {
   // ---- whatsapp poller (synchronous SQLite read, no network) -----------------
   if (l.type === 'whatsapp') {
     const { dbPath, groupJid } = l.params as { dbPath: string; groupJid?: string | null };
+    // WAFILT1: contact filter (legacy single `contact`/`from` → one-element array on read).
+    const contacts = normalizeContacts(l.params);
     const wm = l.watermark as unknown as WhatsAppWatermark;
     const nextSince = new Date(now).toISOString();
-    const { messages, error } = fetchWhatsappMessages(dbPath, wm.since, groupJid);
+    const { messages, error } = fetchWhatsappMessages(dbPath, wm.since, groupJid, contactJidSet(contacts));
     if (error) {
       const level = l.backoffLevel + 1;
       const wait = Math.min(BASE_BACKOFF_MS * 2 ** (level - 1), MAX_BACKOFF_MS);
@@ -477,9 +484,9 @@ async function pollOne(l: Listener): Promise<void> {
       patchListener(l.id, { backoffLevel: level, nextPollAt: now + wait, lastPolledAt: now, lastError: error.slice(0, 300) });
       return;
     }
-    const diff = diffWhatsapp(messages, nextSince);
+    const diff = diffWhatsapp(messages, nextSince, contacts);
     if (diff.shouldFire) {
-      llog(l.id, 'fire', `${messages.length} new WhatsApp message(s)`);
+      llog(l.id, 'fire', `${messages.length} new WhatsApp message(s)${contacts.length ? ' (contact filter)' : ''}`);
       enqueue(l, diff.summary, diff.nextWatermark, false);
     } else {
       patchListener(l.id, { lastPolledAt: now, nextPollAt: now + l.intervalSec * 1000, backoffLevel: 0 });
@@ -854,7 +861,7 @@ export async function registerSlackListener(
 
 export async function registerWhatsappListener(
   sessionId: string,
-  args: { db_path?: string; ttl_days?: number; interval_sec?: number; group_jid?: string }
+  args: { db_path?: string; ttl_days?: number; interval_sec?: number; group_jid?: string; contacts?: unknown; contact?: unknown; from?: unknown }
 ): Promise<Listener> {
   const s = getSession(sessionId);
   if (!s) throw new Error(`unknown session: ${sessionId}`);
@@ -862,6 +869,15 @@ export async function registerWhatsappListener(
   // Resolve phone-number JIDs to their active LID equivalent if one exists.
   const rawJid = args.group_jid || null;
   const groupJid = rawJid ? resolveActiveJid(dbPath, rawJid) : null;
+
+  // WAFILT1: contacts is an ARRAY (one contact = one-element array). A legacy
+  // single `contact`/`from` string is accepted and normalised the same way.
+  // Each entry is resolved NOW against the WhatsApp DB (JID / phone / name →
+  // JID set + display name) so polling is an exact IN-match and the UI can
+  // show names. An unresolvable name is a registration error, not a listener
+  // that silently never fires.
+  const rawContacts = parseContactsArg(args);
+  const contacts: ResolvedContact[] = rawContacts.length ? resolveContacts(dbPath, rawContacts) : [];
 
   // Ensure the bridge process is running. If not paired, startBridge will
   // open a QR code in the browser AND wake the session with scan instructions.
@@ -878,10 +894,11 @@ export async function registerWhatsappListener(
     }
   }
 
-  // If tracking a group, add it to the subscription table so the bridge starts storing its messages.
-  if (groupJid) {
-    addGroupSubscription(dbPath, groupJid);
-    llog('whatsapp-bridge', 'info', `subscribed to group: ${groupJid}`);
+  // If tracking a group (group_jid, or a contact entry that resolved to a group),
+  // add it to the subscription table so the bridge starts storing its messages.
+  for (const g of whatsappGroupJids(groupJid, contacts)) {
+    addGroupSubscription(dbPath, g);
+    llog('whatsapp-bridge', 'info', `subscribed to group: ${g}`);
   }
 
   // Baseline watermark: "now" so we don't replay history.
@@ -891,22 +908,54 @@ export async function registerWhatsappListener(
   const ttlDays = Number(args.ttl_days) > 0 ? Number(args.ttl_days) : DEFAULT_TTL_DAYS;
 
   const isGroup = groupJid?.endsWith('@g.us') ?? false;
-  const label = groupJid
-    ? isGroup ? `WhatsApp group ${groupJid}` : `WhatsApp DM ${groupJid}`
-    : 'WhatsApp messages';
+  const names = contacts.map((c) => contactLabel(c));
+  const label = names.length
+    ? `WhatsApp: ${names.join(', ')}${groupJid ? ` in ${groupJid}` : ''}`
+    : groupJid
+      ? isGroup ? `WhatsApp group ${groupJid}` : `WhatsApp DM ${groupJid}`
+      : 'WhatsApp messages';
   const listener = addListener({
     sessionId,
     type: 'whatsapp',
     label,
-    params: { dbPath, groupJid },
+    params: { dbPath, groupJid, contacts },
     fireOn: ['new_message'],
     watermark: { since } as Record<string, unknown>,
     ttlAt: now + ttlDays * 86_400_000,
     intervalSec,
     nextPollAt: now + intervalSec * 1000,
   });
-  llog(listener.id, 'info', `armed — polling WhatsApp DB every ${intervalSec}s${groupJid ? ` (group: ${groupJid})` : ''} (bridge running: ${isBridgeRunning()})`);
+  llog(listener.id, 'info', `armed — polling WhatsApp DB every ${intervalSec}s${groupJid ? ` (group: ${groupJid})` : ''}${contacts.length ? ` (contacts: ${contacts.map((c) => `${contactLabel(c)} → ${c.jids.join('|')}`).join(', ')})` : ''} (bridge running: ${isBridgeRunning()})`);
   return listener;
+}
+
+// WAFILT1: the `contacts` arg must be an array of non-empty strings; a legacy
+// single `contact`/`from` string becomes a one-element array. Anything else is
+// a 400 (the API route turns thrown errors into badRequest).
+function parseContactsArg(args: { contacts?: unknown; contact?: unknown; from?: unknown }): string[] {
+  const { contacts, contact, from } = args;
+  if (contacts != null) {
+    if (typeof contacts === 'string') {
+      throw new Error('contacts must be an array of strings — for one contact pass a one-element array, e.g. ["+972501234567"]');
+    }
+    if (!Array.isArray(contacts) || contacts.some((c) => typeof c !== 'string')) {
+      throw new Error('contacts must be an array of strings (JID, E.164 phone, or display-name substring)');
+    }
+    const cleaned = contacts.map((c) => c.trim()).filter(Boolean);
+    return [...new Set(cleaned)];
+  }
+  const legacy = contact ?? from;
+  if (typeof legacy === 'string' && legacy.trim()) return [legacy.trim()];
+  return [];
+}
+
+// Every group JID a WhatsApp listener depends on (its group_jid plus any
+// contact entry that resolved to a group) — these need a bridge subscription.
+function whatsappGroupJids(groupJid: string | null | undefined, contacts: ResolvedContact[]): string[] {
+  const out = new Set<string>();
+  if (groupJid) out.add(groupJid);
+  for (const j of contactJidSet(contacts)) if (j.endsWith('@g.us')) out.add(j);
+  return [...out];
 }
 
 // ---- SMS webhook listener ---------------------------------------------------
@@ -943,15 +992,15 @@ export function removeWhatsappListener(id: string): boolean {
   if (!l) return false;
   if (l.type === 'whatsapp') {
     const { dbPath, groupJid } = l.params as { dbPath: string; groupJid?: string | null };
-    if (groupJid) {
+    for (const g of whatsappGroupJids(groupJid, normalizeContacts(l.params))) {
       // Only remove subscription if no other active listener is watching this group
       const others = listListeners().filter(
-        (o) => o.id !== id && o.type === 'whatsapp' &&
-          (o.params as any)?.groupJid === groupJid && o.status === 'watching'
+        (o) => o.id !== id && o.type === 'whatsapp' && o.status === 'watching' &&
+          whatsappGroupJids((o.params as any)?.groupJid, normalizeContacts(o.params)).includes(g)
       );
       if (others.length === 0) {
-        removeGroupSubscription(dbPath, groupJid);
-        llog('whatsapp-bridge', 'info', `unsubscribed from group: ${groupJid}`);
+        removeGroupSubscription(dbPath, g);
+        llog('whatsapp-bridge', 'info', `unsubscribed from group: ${g}`);
       }
     }
   }

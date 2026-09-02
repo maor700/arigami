@@ -243,6 +243,7 @@ export const strings = {
   'rail.expires': 'expires:',
   'rail.lastError': 'last error:',
   'rail.activity': 'activity',
+  'rail.contacts': 'contacts:',
   'rail.loading': 'loading…',
   'rail.noActivityYet': 'No activity yet — waiting for the next poll.',
   'rail.noActiveListeners': 'No active listeners.',
