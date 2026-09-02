@@ -3508,7 +3508,7 @@ export async function handle(
       const t = await import('./triggers.js');
       return json(
         res,
-        t.listTriggers().map((x: any) => (x.type === 'cron' ? { ...x, nextRunAt: t.nextRunFor(x) } : x))
+        t.withNextRun(t.listTriggers())
       );
     }
     if (p === '/__api/triggers' && m === 'POST') {

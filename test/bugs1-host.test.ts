@@ -62,6 +62,29 @@ test('B32: resolvePlan — per-session file first; the shared file only when att
   expect(resolvePlan(fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B32e-')), me, {})).toEqual({ plan: null, planError: 'no ORCHESTRATION.json yet' });
 });
 
+test('B33: cron triggers broadcast over WS carry nextRunAt (what the launcher renders as "ריצה הבאה")', () => {
+  const { env } = isolated();
+  const r = runInChild(
+    `
+    const t = await import('./server/triggers.js');
+    t.load();
+    const cron = await t.createCronTrigger({ name: 'סיכום פעילות רשתות – ערב', prompt: 'summarize', schedule: { kind: 'cron', value: '0 20 * * *' } });
+    const decorated = t.withNextRun(t.listTriggers());
+    emit({ raw: cron, decorated: decorated.find((x) => x.id === cron.id), nextRunFor: t.nextRunFor(cron) });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  const { raw, decorated, nextRunFor } = r.out[0];
+  expect(raw.nextRunAt).toBeUndefined(); // the stored record stays clean
+  expect(typeof decorated.nextRunAt).toBe('number');
+  expect(decorated.nextRunAt).toBe(nextRunFor);
+  expect(decorated.nextRunAt).toBeGreaterThan(Date.now());
+  // and the WS emitter uses it (the REST list already did)
+  const src = fs.readFileSync(path.join(ROOT, 'server/triggers.ts'), 'utf8');
+  expect(src).toMatch(/broadcast\(\{ type: 'triggers', triggers: withNextRun\(listTriggers\(\)\) \}\)/);
+});
+
 test('B34: the ede_diagnostic result after an interrupt is a quiet system line; otherwise a worded error', () => {
   const { env } = isolated();
   const r = runInChild(
