@@ -131,3 +131,24 @@ test('agents: autoApprove is validated (kind regex), deduped, dropped when empty
   expect(o.block).toMatch(/enforced by the host/);
   expect(o.block).toMatch(/request_action a short `kind`/);
 });
+
+test('CONN1: capabilityDenied — a connected capability whose tools are outside the allowlist reads as denied, never as "connected"', () => {
+  const o = run(
+    tmp(),
+    "const a=await import('./server/agents.ts');const p=await import('./server/agent-policy.ts');" +
+      "a.createAgent({name:'Kesher',slug:'kesher',tools:['whatsapp','triggers','web','desktop']});" +
+      "a.createAgent({name:'Social',slug:'social',tools:['whatsapp','gmail']});" +
+      "a.createAgent({name:'Free',slug:'free'});" +
+      "const k=p.policyFor('kesher'),s=p.policyFor('social'),f=p.policyFor('free');" +
+      "const ids=['whatsapp','composio:gmail','composio:googlecalendar','composio:googledrive','identity','claude','mcp:linear'];" +
+      "emit({probe:ids.map(p.capabilityToolProbe),kesher:ids.map(id=>p.capabilityDenied(k,id)),social:ids.map(id=>p.capabilityDenied(s,id)),free:ids.map(id=>p.capabilityDenied(f,id)),none:ids.map(id=>p.capabilityDenied(null,id))});"
+  );
+  expect(o.probe).toEqual(['whatsapp', 'mcp__composio-mcp__GMAIL_LIST', 'mcp__composio-mcp__GOOGLECALENDAR_LIST', 'mcp__composio-mcp__GOOGLEDRIVE_LIST', null, null, null]);
+  // kesher: whatsapp allowed; every Google toolkit denied; capabilities without a tool of their own are never "denied"
+  expect(o.kesher).toEqual([false, true, true, true, false, false, false]);
+  // social-manager: gmail allowed, calendar/drive denied (the live 2026-09-03 measurement)
+  expect(o.social).toEqual([false, false, true, true, false, false, false]);
+  // no allowlist (or no agent) restricts nothing
+  expect(o.free).toEqual([false, false, false, false, false, false, false]);
+  expect(o.none).toEqual([false, false, false, false, false, false, false]);
+});
