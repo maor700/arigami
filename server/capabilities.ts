@@ -526,6 +526,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
               ok: false,
               detail: w.status === 'qr' ? 'scan the QR code with WhatsApp'
                 : w.reason === 'logged-out' ? 'WhatsApp unlinked this device — Show QR to pair again'
+                : w.reason === 'creds-corrupt' ? 'the saved WhatsApp pairing is damaged (creds.json empty) — Show QR to pair again'
                 : w.reason === 'crash-loop' ? 'the WhatsApp process keeps exiting — see the host log, then Show QR'
                 : 'not connected — scan a QR code to pair',
               data: { status: w.status, qr: w.qr, ...(w.reason ? { reason: w.reason } : {}) },
