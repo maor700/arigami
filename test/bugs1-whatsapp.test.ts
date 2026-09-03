@@ -299,3 +299,106 @@ test('WA1: a logged-out pairing (WhatsApp 401) is not retried; Connect/Show QR m
   fs.rmSync(path.join(DATA_DIR, 'fake-scanned'), { force: true });
   for (const b of backups) fs.rmSync(path.join(MCP_DIR, b), { recursive: true, force: true });
 });
+
+test('CONN1: an empty/non-JSON creds.json is "damaged", never "paired" — boot and restarts do not spawn a QR loop; Show QR moves it aside and pairs afresh', async () => {
+  // Regression for 2026-09-02 20:06Z: concurrent pre-B20 WhatsApp processes left a
+  // 0-byte auth_info/creds.json. Baileys then treats the device as unregistered, so
+  // every start sat on a QR nobody was told about while isPaired() said "paired".
+  const creds = path.join(MCP_DIR, 'auth_info', 'creds.json');
+  fs.mkdirSync(path.dirname(creds), { recursive: true });
+  fs.rmSync(path.join(MCP_DIR, 'auth_info.creds.last-good.json'), { force: true }); // no snapshot to self-heal from (next test covers that)
+  fs.writeFileSync(creds, ''); // the live footprint: exists, 0 bytes
+  const before = spawns();
+  captureLog();
+  try {
+    expect(wb.credsCorrupt()).toBe(true);
+    expect(wb.isPaired()).toBe(false);
+    // boot autostart: no spawn, a reason in the status file the probe reads
+    const auto = await wb.autoStartBridge();
+    expect(auto.started).toBe(false);
+    expect(auto.reason).toMatch(/^creds-corrupt/);
+    expect(wb.getBridgeStatus()).toMatchObject({ status: 'disconnected', reason: 'creds-corrupt' });
+    expect(spawns() - before).toBe(0);
+    // an internal restart does not spawn against it either, and never touches auth_info by itself
+    await wb.startBridge('sess_test', wake, { internal: true });
+    expect(spawns() - before).toBe(0);
+    expect(fs.existsSync(creds)).toBe(true);
+    expect(hostLog.some((l) => l.includes('[wa-bridge]') && l.includes('damaged'))).toBe(true);
+    // the capability every session reads says what to do; the tool says needs_setup
+    const caps = await import('../server/capabilities.js');
+    const st = await caps.statusOf(caps.getCapability('whatsapp')!);
+    expect(st.ok).toBe(false);
+    expect(st.detail).toContain('damaged');
+    expect(st.detail).toContain('Show QR');
+    expect((st as any).data?.reason).toBe('creds-corrupt');
+    expect((await wp.callWhatsapp('list_chats')) as any).toMatchObject({ needs_setup: 'whatsapp' });
+    // not-JSON is damaged too
+    fs.writeFileSync(creds, 'null');
+    expect(wb.credsCorrupt()).toBe(true);
+    fs.writeFileSync(creds, '{');
+    expect(wb.credsCorrupt()).toBe(true);
+  } finally {
+    releaseLog();
+  }
+
+  // Settings → Connections → Show QR ({repair:true}): the damaged auth_info is moved
+  // aside (kept), main.ts pairs afresh → QR → a scan → connected
+  wakes.length = 0;
+  await wb.startBridge('sess_ui', wake, { repair: true });
+  await until(() => wb.getBridgeStatus().status === 'qr', 20000);
+  const backups = fs.readdirSync(MCP_DIR).filter((n) => n.startsWith('auth_info.corrupt-'));
+  expect(backups.length).toBe(1);
+  expect(fs.existsSync(creds)).toBe(false);
+  expect(wb.credsCorrupt()).toBe(false);
+  expect(spawns() - before).toBe(1);
+  fs.writeFileSync(path.join(DATA_DIR, 'fake-scanned'), '');
+  await until(() => wb.getBridgeStatus().status === 'connected');
+  expect(wb.isPaired()).toBe(true);
+  expect(wb.credsCorrupt()).toBe(false);
+  wb.stopBridge();
+  await until(() => wb.getBridgeStatus().status === 'disconnected');
+  fs.rmSync(path.join(DATA_DIR, 'fake-scanned'), { force: true });
+  for (const b of backups) fs.rmSync(path.join(MCP_DIR, b), { recursive: true, force: true });
+});
+
+test('CONN1: the last known-good creds.json is snapshotted on connect and restored when the live file is found truncated', async () => {
+  // Regression for 2026-09-02 17:06Z: the host went down while Baileys was
+  // rewriting creds.json ("Credentials saved." was its last line) → 0 bytes → the
+  // pairing was lost until a human scanned again.
+  const creds = path.join(MCP_DIR, 'auth_info', 'creds.json');
+  const snap = path.join(MCP_DIR, 'auth_info.creds.last-good.json');
+  fs.rmSync(snap, { force: true });
+  fs.mkdirSync(path.dirname(creds), { recursive: true });
+  fs.writeFileSync(creds, JSON.stringify({ me: { id: 'good@s.whatsapp.net' }, noiseKey: 'k1' }));
+  const before = spawns();
+  await wb.startBridge('sess_test', wake);
+  await until(() => wb.getBridgeStatus().status === 'connected', 20000);
+  await until(() => fs.existsSync(snap), 10000); // taken by the status poll on 'connected'
+  expect(JSON.parse(fs.readFileSync(snap, 'utf8')).noiseKey).toBe('k1');
+  wb.stopBridge();
+  await until(() => wb.getBridgeStatus().status === 'disconnected');
+  // the crash footprint
+  fs.writeFileSync(creds, '');
+  expect(wb.credsCorrupt()).toBe(true);
+  captureLog();
+  try {
+    const auto = await wb.autoStartBridge();
+    expect(auto.started).toBe(true); // restored, then started — no QR, no human
+    expect(wb.credsCorrupt()).toBe(false);
+    expect(JSON.parse(fs.readFileSync(creds, 'utf8')).noiseKey).toBe('k1');
+    expect(fs.readdirSync(path.dirname(creds)).some((n) => n.startsWith('creds.json.damaged-'))).toBe(true);
+    expect(hostLog.some((l) => l.includes('restored the last known-good copy'))).toBe(true);
+    await until(() => wb.getBridgeStatus().status === 'connected', 20000);
+    expect(spawns() - before).toBe(2);
+  } finally {
+    releaseLog();
+  }
+  // no snapshot → the damaged path from the previous test still applies
+  wb.stopBridge();
+  await until(() => wb.getBridgeStatus().status === 'disconnected');
+  fs.rmSync(snap, { force: true });
+  fs.writeFileSync(creds, '');
+  expect((await wb.autoStartBridge()).reason).toMatch(/^creds-corrupt/);
+  for (const n of fs.readdirSync(path.dirname(creds))) if (n.startsWith('creds.json.damaged-')) fs.rmSync(path.join(path.dirname(creds), n), { force: true });
+  fs.rmSync(creds, { force: true });
+});

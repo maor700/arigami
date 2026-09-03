@@ -190,6 +190,33 @@ export function strictMcpFor(p: Policy | null): boolean {
   return !p.tools.some((pat) => pat.startsWith('mcp__') && serverOf(pat) !== HOST_SERVER);
 }
 
+// ---- capabilities vs the allowlist (CONN1) ----------------------------------
+
+/**
+ * CONN1: a representative tool name for a capability id, so `check_setup` can
+ * tell "connected but this agent may not use it" from "connected". Measured
+ * 2026-09-03: kesher (no `gmail` family) got `composio:gmail → ok "connected
+ * (shared)"` from check_setup and then had every GMAIL_* call blocked by the
+ * PreToolUse hook; social-manager the same for the calendar. null = the
+ * capability has no tool of its own to gate (identity, claude, git, desktop…).
+ */
+export function capabilityToolProbe(capId: string): string | null {
+  const id = String(capId || '').trim();
+  if (id === 'whatsapp') return 'whatsapp';
+  if (id.startsWith('composio:')) {
+    const toolkit = id.slice('composio:'.length).replace(/[^a-z0-9_]/gi, '');
+    return toolkit ? `mcp__composio-mcp__${toolkit.toUpperCase()}_LIST` : null;
+  }
+  return null;
+}
+
+/** Is every tool this capability would give the session outside the agent's allowlist? */
+export function capabilityDenied(p: Policy | null, capId: string): boolean {
+  if (!p || p.tools === null) return false;
+  const probe = capabilityToolProbe(capId);
+  return !!probe && !toolAllowed(p, probe);
+}
+
 // ---- domains ---------------------------------------------------------------
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0', '[::1]']);

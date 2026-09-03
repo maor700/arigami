@@ -3011,6 +3011,20 @@ export async function handle(
         const cap = caps.getCapability(id, {}, owner);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
         const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
+        // CONN1: a session under an agent allowlist that excludes this capability's
+        // tools must not hear "connected" — the hook would block the very next call
+        // and request_setup cannot fix an allowlist. Say so, with the way out.
+        if (me?.kind === 'session') {
+          const pol = policy.policyFor(sessionAgent(state.getSession(me.sessionId)));
+          if (policy.capabilityDenied(pol, id))
+            return json(res, {
+              ok: false,
+              denied: true,
+              capability: id,
+              detail: `${cap.title} is connected on this host, but agent ${pol!.slug}'s allowlist (${(pol!.tools || []).join(', ')}) does not include its tools — calls would be blocked`,
+              hint: 'do not call request_setup (it cannot change an allowlist); ask the human (request_action) to tick the tool family for this agent, or hand the task to an agent that has it',
+            });
+        }
         const r = await caps.ensure(id, why, {}, owner);
         return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, {}, owner) } : r);
       }

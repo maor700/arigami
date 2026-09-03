@@ -745,7 +745,7 @@ const TOOLS = [
   {
     name: 'check_setup',
     description:
-      'Cheap probe: is a capability connected right now? Returns {ok:true, detail} or the needs_setup shape {needs_setup, why, hint}. ' +
+      'Cheap probe: is a capability connected right now? Returns {ok:true, detail}, the needs_setup shape {needs_setup, why, hint}, or {ok:false, denied:true, detail, hint} when it IS connected but your agent\'s tool allowlist excludes it (then request_setup cannot help — ask the human via request_action instead). ' +
       'Use it BEFORE calling a provider MCP tool that cannot report needs_setup itself (e.g. Composio Gmail tools: check_setup({capability:"composio:gmail", why:"read your inbox"})). Cached ~60s for Composio. `why` defaults to the capability title.',
     inputSchema: obj({ capability: { type: 'string' }, why: { type: 'string' }, ...SID_PROP }, ['capability']),
     run: (a) => api('GET', `/__api/setup/capabilities/${encodeURIComponent(a.capability)}?why=${encodeURIComponent(a.why || '')}`),

@@ -66,8 +66,8 @@ const MAX_FAST_EXITS = 3;
 const CONNECT_TIMEOUT_MS = 90_000; // main.ts fetches the Baileys version before it serves MCP
 
 export type BridgeStatus = 'disconnected' | 'starting' | 'qr' | 'connected';
-/** Why the bridge is 'disconnected' and not trying: crash-loop (3 fast exits), logged-out (WhatsApp 401 — the pairing is dead), not-installed. */
-export type BridgeReason = 'crash-loop' | 'logged-out' | 'not-installed';
+/** Why the bridge is 'disconnected' and not trying: crash-loop (3 fast exits), logged-out (WhatsApp 401 — the pairing is dead), creds-corrupt (auth_info/creds.json is empty or not JSON — CONN1), not-installed. */
+export type BridgeReason = 'crash-loop' | 'logged-out' | 'creds-corrupt' | 'not-installed';
 
 // ---- status file ------------------------------------------------------------
 
@@ -151,8 +151,88 @@ export function isBridgeRunning(): boolean {
   return pidAlive(s.pid);
 }
 
+const CREDS_FILE = path.join(WA_AUTH_DIR, 'creds.json');
+
+/**
+ * CONN1: a creds.json that exists but is empty or not a JSON object. Seen live on
+ * 2026-09-02 20:06Z: several WhatsApp processes (the pre-B20 per-session trees)
+ * wrote the same Baileys auth_info at once and left a 0-byte creds.json. Baileys
+ * then treats the device as unregistered — every start since sat on a QR that
+ * nobody was told to scan, while isPaired() (file exists) kept saying "paired".
+ */
+export function credsCorrupt(): boolean {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(CREDS_FILE, 'utf8');
+  } catch {
+    return false; // no file = plain unpaired, not corrupt
+  }
+  if (!raw.trim()) return true;
+  try {
+    const j = JSON.parse(raw);
+    return !j || typeof j !== 'object';
+  } catch {
+    return true;
+  }
+}
+
+/** A usable pairing: creds.json exists AND is not corrupt. */
 export function isPaired(): boolean {
-  return fs.existsSync(path.join(WA_AUTH_DIR, 'creds.json'));
+  return fs.existsSync(CREDS_FILE) && !credsCorrupt();
+}
+
+// CONN1: Baileys rewrites creds.json with a plain (truncate-then-write) writeFile
+// on every key rotation (~every 10 min while connected). A host restart that
+// kills the process mid-write — 2026-09-02 17:06Z, the good process had just
+// logged "Credentials saved." when the host went down — leaves a 0-byte file and
+// the pairing is gone for good. So every time the bridge sees 'connected' it
+// keeps a copy of the last known-good creds.json next to the auth dir, and a
+// start that finds the live file damaged restores that copy instead of asking
+// the human to scan again. (Slightly stale creds are fine for Baileys: pre-key
+// counters re-sync; a truly revoked pairing still ends in the logged-out path.)
+const CREDS_SNAPSHOT = path.join(WA_MCP_DIR, 'auth_info.creds.last-good.json');
+
+/** Copy a valid creds.json aside (no-op when the live file is empty/not JSON or unchanged). */
+export function snapshotCreds(): boolean {
+  if (credsCorrupt() || !fs.existsSync(CREDS_FILE)) return false;
+  try {
+    const raw = fs.readFileSync(CREDS_FILE, 'utf8');
+    if (fs.existsSync(CREDS_SNAPSHOT) && fs.readFileSync(CREDS_SNAPSHOT, 'utf8') === raw) return true;
+    fs.writeFileSync(`${CREDS_SNAPSHOT}.tmp`, raw, { mode: 0o600 });
+    fs.renameSync(`${CREDS_SNAPSHOT}.tmp`, CREDS_SNAPSHOT); // atomic — never a half-written snapshot
+    return true;
+  } catch (e) {
+    console.error(`[wa-bridge] could not snapshot creds.json: ${(e as Error).message}`);
+    return false;
+  }
+}
+
+/** Is there a usable snapshot to restore a damaged creds.json from? */
+export function credsSnapshotUsable(): boolean {
+  try {
+    const j = JSON.parse(fs.readFileSync(CREDS_SNAPSHOT, 'utf8'));
+    return !!j && typeof j === 'object';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Damaged live creds.json + a usable snapshot → put the snapshot back (the damaged
+ * file is kept as creds.json.damaged-<ts> for forensics). false = nothing restored.
+ */
+export function restoreCredsFromSnapshot(): boolean {
+  if (!credsCorrupt() || !credsSnapshotUsable()) return false;
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    try { fs.renameSync(CREDS_FILE, `${CREDS_FILE}.damaged-${stamp}`); } catch {}
+    fs.copyFileSync(CREDS_SNAPSHOT, CREDS_FILE);
+    console.error(`[wa-bridge] auth_info/creds.json was empty/not JSON — restored the last known-good copy (${CREDS_SNAPSHOT}); the damaged file is kept as creds.json.damaged-${stamp}`);
+    return true;
+  } catch (e) {
+    console.error(`[wa-bridge] could not restore creds.json from the snapshot: ${(e as Error).message}`);
+    return false;
+  }
 }
 
 /** Last ~64KB of a file ('' when unreadable). */
@@ -220,11 +300,12 @@ export function pairingLoggedOut(): boolean {
  * next main.ts has no creds and pairs afresh, i.e. shows a QR. Only called for
  * an explicit human/UI start ({repair:true}); never by a restart or autostart.
  */
-export function retirePairing(): string | null {
+export function retirePairing(why: 'logged-out' | 'corrupt' = 'logged-out'): string | null {
   if (!fs.existsSync(WA_AUTH_DIR)) return null;
-  const dest = `${WA_AUTH_DIR}.logged-out-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const dest = `${WA_AUTH_DIR}.${why}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   fs.renameSync(WA_AUTH_DIR, dest);
-  console.error(`[wa-bridge] the pairing was logged out by WhatsApp — moved ${WA_AUTH_DIR} to ${dest} (kept, not deleted); the next start pairs afresh (QR)`);
+  const what = why === 'corrupt' ? 'the saved pairing is damaged (creds.json empty/not JSON)' : 'the pairing was logged out by WhatsApp';
+  console.error(`[wa-bridge] ${what} — moved ${WA_AUTH_DIR} to ${dest} (kept, not deleted); the next start pairs afresh (QR)`);
   return dest;
 }
 
@@ -249,6 +330,7 @@ function startStatusPoll(): void {
       _lastWakeFn(_lastSessionId, `📱 WhatsApp QR ready — scan to pair: ${qrUrl}`, `wa:qr:${_lastSessionId}`);
     } else if (status === 'connected') {
       fastExits = 0; // a real connection: the process is healthy, forget earlier stumbles
+      snapshotCreds(); // CONN1: keep the last known-good pairing for a truncated-file restore
       if (!_notifiedConnected && _lastWakeFn && _lastSessionId) {
         _notifiedConnected = true;
         _lastWakeFn(_lastSessionId, `✅ WhatsApp connected${user ? ` · ${user}` : ''} — listener is now watching for new messages.`, `wa:connected:${_lastSessionId}`);
@@ -375,8 +457,18 @@ export function startBridge(sessionId: string, wake: WakeFn, opts: { internal?: 
     // An explicit human start on a pairing WhatsApp has logged out: move it
     // aside so this process pairs afresh and the QR shows. Internal restarts
     // and the boot autostart never do this — only the Connect / Show QR path.
-    if (opts.repair && pairingLoggedOut()) {
-      try { retirePairing(); } catch (e) { console.error(`[wa-bridge] could not move the logged-out auth_info aside: ${(e as Error).message}`); }
+    if (credsCorrupt()) restoreCredsFromSnapshot(); // CONN1: self-heal a truncated creds.json first
+    if (opts.repair && (pairingLoggedOut() || credsCorrupt())) {
+      const why = credsCorrupt() ? 'corrupt' : 'logged-out';
+      try { retirePairing(why); } catch (e) { console.error(`[wa-bridge] could not move the ${why} auth_info aside: ${(e as Error).message}`); }
+    } else if (credsCorrupt()) {
+      // CONN1: an internal restart / boot autostart never touches auth_info, but it
+      // must not spawn against a damaged creds.json either — that only yields an
+      // unexplained QR loop. Say why and wait for Connect / Show QR.
+      console.error(`[wa-bridge] auth_info/creds.json is empty or not JSON — the saved WhatsApp pairing is damaged; NOT starting. Re-pair from Settings → Connections (Show QR) or call request_setup`);
+      writeStatusFile({ status: 'disconnected', pid: null, reason: 'creds-corrupt' });
+      _lastKnownStatus = 'disconnected';
+      return;
     }
     // Write starting state immediately so the UI reflects it
     writeStatusFile({ status: 'starting', pid: null });
@@ -497,6 +589,14 @@ export function stopBridge(): void {
 export function autoStartBridge(wake: WakeFn = () => {}): Promise<{ started: boolean; reason: string }> {
   if (process.env.ARIGAMI_WA_AUTOSTART === '0') return Promise.resolve({ started: false, reason: 'ARIGAMI_WA_AUTOSTART=0' });
   if (!whatsappMcpInstalled()) return Promise.resolve({ started: false, reason: 'whatsapp-mcp not installed' });
+  if (credsCorrupt()) restoreCredsFromSnapshot(); // CONN1: self-heal a truncated creds.json first
+  if (credsCorrupt()) {
+    // CONN1: say so in the status file the capability probe reads (instead of a
+    // silent "not paired") — the Connections card then explains what to do.
+    console.error('[wa-bridge] auth_info/creds.json is empty or not JSON — the saved WhatsApp pairing is damaged; not auto-starting. Re-pair from Settings → Connections (Show QR)');
+    writeStatusFile({ status: 'disconnected', pid: null, reason: 'creds-corrupt' });
+    return Promise.resolve({ started: false, reason: 'creds-corrupt — the saved pairing is damaged (creds.json empty/not JSON); re-pair from Settings → Connections (Show QR)' });
+  }
   if (!isPaired()) return Promise.resolve({ started: false, reason: 'not paired' });
   // The last verdict was WhatsApp's 401 and nobody paired since: a start would
   // only repeat it. The UI's Connect / Show QR ({repair:true}) is the way out.
