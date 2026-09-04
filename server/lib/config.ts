@@ -277,7 +277,7 @@ export const DEFAULTS: Config = {
   composioApiKey: '',
   sttModel: 'whisper-large-v3-turbo',
   voiceRouterProvider: 'groq',
-  voiceRouterModel: 'llama-3.3-70b-versatile',
+  voiceRouterModel: 'openai/gpt-oss-120b',
   anthropicRouterModel: 'claude-haiku-4-5-20251001',
   voiceLang: 'he',
   palette: [

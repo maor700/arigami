@@ -224,7 +224,7 @@ async function routeGroq(text, context, history) {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: cfg.voiceRouterModel || 'llama-3.3-70b-versatile',
+      model: cfg.voiceRouterModel || 'openai/gpt-oss-120b',
       temperature: 0,
       response_format: { type: 'json_object' },
       messages: [
