@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useVoice, stopRecording, cancel, clearPlan, startRecording } from '../lib/voice.js';
+import { useVoice, stopRecording, cancel, clearPlan, startRecording, endConversation } from '../lib/voice.js';
 import { runAction } from '../lib/commands.js';
 import { useStore } from '../lib/store.js';
 import { usePrefs } from '../lib/prefs.js';
@@ -21,6 +21,9 @@ const SAFE = new Set([
   'delete_session', 'archive_session', 'restore_session',
 ]);
 
+// How long a finished exchange ("Done.") stays on screen before the HUD closes.
+const DONE_LINGER_MS = 1400;
+
 function labelForAction(a, sessions) {
   switch (a.type) {
     case 'select_session': {
@@ -37,17 +40,29 @@ function labelForAction(a, sessions) {
   }
 }
 
+// "Cmd+Shift+V" → "⌘⇧V" on Mac, "Ctrl+Shift+V" elsewhere (display only).
+export function hotkeyLabel(hotkey, mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')) {
+  if (!hotkey) return '';
+  if (!mac) return hotkey.replace('Cmd', 'Ctrl');
+  return hotkey.split('+').map((p) => ({ Cmd: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' }[p] || p)).join('');
+}
+
 export default function VoiceHUD() {
   const t = useT();
-  const { status, mode, transcript, plan, error, level } = useVoice();
+  const { status, mode, transcript, plan, error, level, turns, auto, relisten } = useVoice();
   const dictate = mode === 'dictate';
   const { sessions } = useStore();
-  const autoSend = usePrefs().voiceAutoSend;
+  const prefs = usePrefs();
+  const autoSend = prefs.voiceAutoSend;
   const [injects, setInjects] = useState([]); // pending inject actions (editable)
   const ranFor = useRef(null);
+  const doneTimer = useRef(null);
 
   // When a plan arrives, auto-run the safe actions once and queue injects for
   // confirmation. (interrupt is treated as confirm-worthy too — it's queued.)
+  // VOICE2: an 'act' plan ends the conversation — once everything ran and
+  // nothing is queued, the HUD lingers a moment on "Done." and closes. 'ask' /
+  // 'answer' plans have no actions: the loop (lib/voice.js) re-opens the mic.
   useEffect(() => {
     if (status !== 'review' || !plan || ranFor.current === plan) return;
     ranFor.current = plan;
@@ -65,12 +80,16 @@ export default function VoiceHUD() {
       // Bake the resolved target into queued injects so the later Send lands on
       // the just-created/selected session, not the previously-active one.
       setInjects(pending.map((a) => ({ ...a, sessionId: ctx.targetSessionId || a.sessionId, text: a.text || '' })));
-      // Nothing to confirm and no message to show → close.
-      if (pending.length === 0 && !plan.say) clearPlan();
+      if (pending.length) return;
+      if (plan.kind === 'act') {
+        if (doneTimer.current) clearTimeout(doneTimer.current);
+        doneTimer.current = setTimeout(() => { doneTimer.current = null; clearPlan(); }, DONE_LINGER_MS);
+      } else if (!plan.say) {
+        clearPlan(); // nothing to confirm, nothing to show
+      }
     })();
   }, [status, plan, autoSend]);
-
-  if (status === 'idle') return null;
+  useEffect(() => () => { if (doneTimer.current) clearTimeout(doneTimer.current); }, []);
 
   // Dismissing the HUD must also tear down any LIVE capture — otherwise closing
   // mid-recording leaves the MediaRecorder, mic stream, meter interval and 90s
@@ -80,9 +99,29 @@ export default function VoiceHUD() {
   const close = () => {
     setInjects([]);
     ranFor.current = null;
-    if (status === 'recording') cancel();
+    if (doneTimer.current) { clearTimeout(doneTimer.current); doneTimer.current = null; }
+    if (status === 'recording' || status === 'thinking') cancel();
     else clearPlan();
   };
+
+  // VOICE2: Esc ends a command conversation from anywhere (capture phase, so
+  // the app-level Esc-to-interrupt never sees it while the HUD is up).
+  const open = status !== 'idle';
+  useEffect(() => {
+    if (!open || dictate) return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      setInjects([]);
+      ranFor.current = null;
+      endConversation('stop');
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, dictate]);
+
+  if (!open) return null;
 
   const sendInject = async (idx) => {
     const a = injects[idx];
@@ -93,8 +132,16 @@ export default function VoiceHUD() {
     if (rest.length === 0) close();
   };
 
+  const listeningForAnswer = status === 'recording' && auto;
+  const hotkey = hotkeyLabel(prefs.voiceHotkey);
+  // The exchange so far, minus the line already shown as the live transcript /
+  // the router's current reply (both rendered below in their own slots).
+  const history = dictate ? [] : turns.slice(0, Math.max(0, turns.length - (plan?.say ? 2 : 1)));
+  const lastUser = !dictate && turns.length ? turns[turns.length - (plan?.say ? 2 : 1)]?.text : '';
+  const shownTranscript = transcript || lastUser;
+
   return (
-    <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2">
+    <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2" data-voice-hud data-voice-status={status}>
       <div className="overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-2.5">
           {status === 'recording' ? (
@@ -107,15 +154,25 @@ export default function VoiceHUD() {
             <span className="text-[13px]"><Icon icon={faMicrophone} /></span>
           )}
           <span className="flex-1 text-[12px] font-bold" data-voice-mode={mode}>
-            {status === 'recording' && (dictate ? t('dialogs.voiceDictating') : t('dialogs.voiceListening'))}
+            {status === 'recording' && (dictate ? t('dialogs.voiceDictating') : listeningForAnswer ? t('dialogs.voiceListeningAnswer') : t('dialogs.voiceListening'))}
             {status === 'thinking' && (dictate ? t('dialogs.voiceTranscribingOnly') : t('dialogs.voiceTranscribing'))}
-            {status === 'review' && t('dialogs.voiceCommand')}
+            {status === 'review' && (relisten ? t('dialogs.voiceRelisten') : plan?.kind === 'ask' ? t('dialogs.voiceQuestion') : t('dialogs.voiceCommand'))}
             {status === 'error' && (dictate ? t('dialogs.voiceDictation') : t('dialogs.voiceError'))}
           </span>
-          <button type="button" onClick={close} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+          <button type="button" onClick={close} title={t('dialogs.cancel')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
         </div>
 
         <div className="px-4 py-3">
+          {/* VOICE2: the earlier turns of this exchange, chat-style */}
+          {history.length > 0 && (
+            <div className="mb-2.5 max-h-32 overflow-y-auto border-s-2 border-hair ps-2.5" data-voice-turns>
+              {history.map((tn, i) => (
+                <div key={i} dir="auto" className={`text-[11.5px] leading-snug ${tn.role === 'user' ? 'text-fg' : 'text-fgdim'}`}>
+                  {tn.role === 'user' ? `“${tn.text}”` : tn.text}
+                </div>
+              ))}
+            </div>
+          )}
           {status === 'recording' && (
             <div className="mb-2.5">
               <div className="h-2 w-full overflow-hidden rounded-full bg-hair">
@@ -129,20 +186,28 @@ export default function VoiceHUD() {
               </div>
             </div>
           )}
-          {transcript && (
-            <div dir="auto" className="mb-2.5 text-[12.5px] leading-snug text-fg">“{transcript}”</div>
+          {shownTranscript && status !== 'recording' && (
+            <div dir="auto" className="mb-2.5 text-[12.5px] leading-snug text-fg">“{shownTranscript}”</div>
           )}
           {error && <div className="mb-2 text-[11.5px] text-danger">{error}</div>}
-          {plan?.say && <div dir="auto" className="mb-2 text-[12px] text-fgdim">{plan.say}</div>}
+          {plan?.say && (
+            <div dir="auto" data-voice-say data-voice-kind={plan.kind} className={`mb-2 ${plan.kind === 'ask' ? 'text-[13px] font-bold text-fg' : 'text-[12px] text-fgdim'}`}>
+              {plan.say}
+            </div>
+          )}
+          {/* the question is still on screen while the mic re-opens for the answer */}
+          {status === 'recording' && listeningForAnswer && !plan?.say && turns.length > 0 && turns[turns.length - 1].role === 'assistant' && (
+            <div dir="auto" data-voice-say className="mb-2 text-[13px] font-bold text-fg">{turns[turns.length - 1].text}</div>
+          )}
 
-          {status === 'review' && injects.length === 0 && !plan?.say && (
+          {status === 'review' && injects.length === 0 && plan?.kind === 'act' && (
             <div className="text-[11.5px] text-fgdim">{t('dialogs.voiceDone')}</div>
           )}
 
           {injects.map((a, i) => {
             const target = sessions.find((s) => s.id === a.sessionId);
             return (
-              <div key={i} className="mb-2 rounded-[9px] border border-border bg-bg p-2.5">
+              <div key={i} className="mb-2 rounded-[9px] border border-border bg-bg p-2.5" data-voice-inject>
                 <div className="mb-1.5 font-mono text-[10px] tracking-[0.05em] text-fgdim uppercase">
                   {t('dialogs.voiceSendTo', { target: target ? sessionLabel(target) : t('dialogs.voiceCurrentSession') })}
                 </div>
@@ -179,12 +244,20 @@ export default function VoiceHUD() {
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0">{t('dialogs.voiceLang')}</span>
             <VoiceLangPicker compact />
-            {!dictate && <span className="hidden shrink-0 sm:inline">· ⌘⇧V {t('dialogs.mic')}</span>}
+            {!dictate && hotkey && <span className="hidden shrink-0 sm:inline" data-voice-hotkey>· {hotkey} {t('dialogs.mic')}</span>}
+            {!dictate && <span className="hidden shrink-0 sm:inline">· {t('dialogs.voiceStopHint')}</span>}
           </span>
           {status === 'recording' ? (
-            <button type="button" onClick={stopRecording} className="cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a]">
-              {t('dialogs.stop')}
-            </button>
+            <span className="flex shrink-0 items-center gap-1.5">
+              {listeningForAnswer && (
+                <button type="button" onClick={() => endConversation('stop')} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink" data-voice-cancel>
+                  {t('dialogs.cancel')}
+                </button>
+              )}
+              <button type="button" onClick={stopRecording} className="cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a]">
+                {listeningForAnswer ? t('dialogs.voiceDoneTalking') : t('dialogs.stop')}
+              </button>
+            </span>
           ) : status === 'error' ? (
             <button type="button" onClick={() => { ranFor.current = null; startRecording({ mode }); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
               {t('dialogs.tryAgain')}
@@ -192,6 +265,10 @@ export default function VoiceHUD() {
           ) : status === 'thinking' ? (
             <button type="button" onClick={cancel} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
               {t('dialogs.cancel')}
+            </button>
+          ) : status === 'review' && !dictate && injects.length === 0 && plan?.kind !== 'act' ? (
+            <button type="button" onClick={() => { ranFor.current = null; startRecording({ mode: 'command' }); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink" data-voice-again>
+              {t('dialogs.voiceSpeakAgain')}
             </button>
           ) : <span />}
         </div>

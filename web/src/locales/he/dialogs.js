@@ -237,6 +237,12 @@ export const strings = {
   'dialogs.voiceTranscribingOnly': 'מתמלל…',
   'dialogs.voiceLang': 'שפת המיקרופון',
   'dialogs.voiceLangAuto': 'אוטומטי ({lang})',
+  'dialogs.voiceListeningAnswer': 'מקשיב לתשובה שלך…',
+  'dialogs.voiceRelisten': 'פותח את המיקרופון…',
+  'dialogs.voiceQuestion': 'שאלה אליך',
+  'dialogs.voiceStopHint': 'אמרו ״סיים״ / Esc לסיום',
+  'dialogs.voiceDoneTalking': 'סיימתי לדבר',
+  'dialogs.voiceSpeakAgain': 'לדבר שוב',
 
   // ui.jsx
   'dialogs.startedByTrigger': 'הופעל על ידי טריגר: {name}',

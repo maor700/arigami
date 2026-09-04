@@ -4,7 +4,7 @@ import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSessi
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
-import { startRecording, stopRecording, toggleRecording, setSelectedContext } from './lib/voice.js';
+import { stopRecording, hotkeyPress, composerFocused, setSelectedContext } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
 import { useT } from './lib/i18n.js';
 import { Icon } from './lib/icons.js';
@@ -466,7 +466,9 @@ function Cockpit() {
         if (!id || !text) return;
         await api.post(`/sessions/${id}/message`, { text }).catch(() => {});
       },
-      clarify: () => {},
+      clarify: () => {}, // control words — stripped by the router before they reach the bus (VOICE2)
+      ask: () => {},
+      end_conversation: () => {},
     });
     return () => setCommandHandlers({});
   }, []);
@@ -515,14 +517,22 @@ function Cockpit() {
       }
       // Voice control: user-configurable hotkey (default Cmd/Ctrl+Shift+V).
       // 'hold' = push-to-talk (record while held); 'toggle' = press to start/stop.
-      if (matchesHotkey(e, getPrefs().voiceHotkey) && !isTyping(e)) {
-        e.preventDefault();
-        if (getPrefs().voiceMode === 'hold') {
-          if (!e.repeat && !pttActive.current) { pttActive.current = true; startRecording(); }
-        } else {
-          toggleRecording();
+      // VOICE2: it works everywhere — in the chat composer it dictates into
+      // the message, anywhere else it drives the command HUD (lib/voice.js
+      // hotkeyAction). Only a bare key (no modifier) typed into some OTHER
+      // field is left alone, so a single-letter shortcut can't eat a search.
+      if (matchesHotkey(e, getPrefs().voiceHotkey)) {
+        const inComposer = composerFocused(e.target);
+        const chord = e.metaKey || e.ctrlKey || e.altKey;
+        if (!isTyping(e) || inComposer || chord) {
+          e.preventDefault();
+          if (getPrefs().voiceMode === 'hold') {
+            if (!e.repeat && !pttActive.current) { pttActive.current = true; hotkeyPress({ hold: true, composer: inComposer }); }
+          } else {
+            hotkeyPress({ composer: inComposer });
+          }
+          return;
         }
-        return;
       }
       // Cmd/Ctrl+Shift chords (documented in the cheat-sheet): session nav,
       // new empty session, focus composer.

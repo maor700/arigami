@@ -1371,6 +1371,7 @@ function ChatFooter({ session }) {
           <div className="flex items-end gap-2 px-3 py-2">
           <textarea
             ref={taRef}
+            data-composer
             rows={1}
             dir={dirOf(text)}
             value={text}

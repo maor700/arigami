@@ -291,7 +291,7 @@ export const strings = {
   'rail.interruptClaude': 'הפסקת Claude',
   'rail.queuePendingHint': 'הוסיפו לתור כבקשה ממתינה — תרוץ כשהתור הנוכחי מסתיים (או דרך ▶)',
   'rail.send': 'שליחה',
-  'rail.voiceControlHint': 'פקודה קולית — מעבר/יצירת סשן, הגדרות… (הקישו כדי לדבר, הקישו שוב לעצירה)',
+  'rail.voiceControlHint': 'פקודה קולית — מעבר/יצירת סשן, הגדרות… (הקישו כדי לדבר, הקישו שוב לעצירה; אם נשאלתם משהו — פשוט ענו, המיקרופון נפתח מעצמו)',
   'rail.dictateHint': 'הכתבה לתוך ההודעה (הקישו כדי לדבר, הקישו שוב לעצירה)',
 
   // ---- SessionView.jsx: url / content tabs ----
