@@ -232,6 +232,11 @@ export const strings = {
   'dialogs.voiceDone': 'Done.',
   'dialogs.voiceSendTo': 'Send to {target}',
   'dialogs.voiceCurrentSession': 'current session',
+  'dialogs.voiceDictating': 'Dictating… (speak, then Stop — the text goes into the message)',
+  'dialogs.voiceDictation': 'Dictation',
+  'dialogs.voiceTranscribingOnly': 'Transcribing…',
+  'dialogs.voiceLang': 'Mic language',
+  'dialogs.voiceLangAuto': 'Auto ({lang})',
 
   // ui.jsx
   'dialogs.startedByTrigger': 'Started by trigger: {name}',

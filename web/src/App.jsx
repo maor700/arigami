@@ -16,7 +16,6 @@ import {
   faCircleUser,
   faGear,
   faHouse,
-  faMicrophone,
   faPen,
   faPlus,
   faPlusMinus,
@@ -906,15 +905,6 @@ function Cockpit() {
             <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-fg">
               {topBarTitle}
             </span>
-            {/* voice trigger — the rail (its old home) is a closed drawer on phones */}
-            <button
-              type="button"
-              onClick={() => toggleRecording()}
-              aria-label={t('chrome.voice.section')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[13px] text-fg"
-            >
-              <Icon icon={faMicrophone} />
-            </button>
           </div>
         )}
         {conn !== 'open' && (

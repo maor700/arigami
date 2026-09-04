@@ -48,13 +48,22 @@ async function groqTranscribe(buf, baseType, ext, language, model) {
 
 const TURBO = 'whisper-large-v3-turbo';
 
-export async function transcribe({ audioBase64, mimeType, lang }) {
+// The language Whisper is pinned to for this clip: the client's `language`
+// (VOICE1 — the mic-language pref, resolved on the client; `lang` is the
+// pre-VOICE1 field name), else the host default. Only an ISO-639-1/2 code
+// goes through; anything else falls back so a bad value can't 400 at Groq.
+export function sttLanguage({ language, lang } = {}) {
+  const v = String(language || lang || '').trim().toLowerCase();
+  return /^[a-z]{2,3}$/.test(v) ? v : (cfg.voiceLang || 'he');
+}
+
+export async function transcribe({ audioBase64, mimeType, language: language_, lang }) {
   if (!apiKey()) throw new Error('voice disabled: no GROQ_API_KEY');
   if (!audioBase64) throw new Error('no audio');
   const buf = Buffer.from(audioBase64, 'base64');
   const baseType = (mimeType || 'audio/webm').split(';')[0]; // drop ;codecs=…
   const ext = extFor(mimeType);
-  const language = lang || cfg.voiceLang || 'he';
+  const language = sttLanguage({ language: language_, lang });
   const primary = cfg.sttModel || TURBO;
 
   let res = await groqTranscribe(buf, baseType, ext, language, primary);
