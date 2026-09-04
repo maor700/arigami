@@ -347,3 +347,8 @@ function activeTabContent(s) {
 export function clearPlan() {
   set({ status: 'idle', plan: null, transcript: '' });
 }
+
+// Verification hook (VOICE1): a real mic can't be driven headlessly, so a live
+// check injects a fake STT result through the same path the recorder uses
+// (`handleTranscript(text, mode)`), or a fake clip through `processClip`.
+if (typeof window !== 'undefined') window.__arigamiVoice = { handleTranscript, processClip, startRecording, cancel, setSelectedContext };
