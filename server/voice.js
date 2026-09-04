@@ -102,7 +102,8 @@ const COMMANDS = `
 - dismiss {} — close any open overlay (settings / new-session dialog / a dialog) and return to the current view
 - interrupt {sessionId?} — stop the working agent
 - inject_prompt {sessionId?, text} — send TEXT to the coding agent
-- clarify {} — intent unclear; put a question in "say"
+- ask {} — you need ONE more detail before you can act (which session? what title? which URL? confirm?) — put a short question in "say"; the user answers by VOICE and the conversation continues ("clarify" is the old name of the same command)
+- end_conversation {} — the user is done ("that's all", "never mind", "leave it", "תודה זהו", "עזוב", "לא משנה") → close the voice window
 `.trim();
 
 function systemPrompt(context) {
@@ -144,15 +145,40 @@ Rules:
 - If the user is giving an instruction, task, question, or request meant for the CODING AGENT (e.g. "add a feature", "fix the bug", "why is this failing"), use inject_prompt. "text" MUST be the user's own words copied VERBATIM from the transcript, in the ORIGINAL language — NEVER translate, summarize, or rephrase. Only strip a leading wake/command phrase that addresses the app (e.g. "tell it to", "תגיד לו ש", "say to the session"); keep everything that is the actual instruction.
 - Use select_session when they name/describe a session ("go to X", "switch to the login one"); resolve to the best-matching id from the list above. If inject_prompt targets a session other than CURRENT, include its sessionId.
 - An inject_prompt "sessionId" MUST be one of the ids under "Current sessions" — NEVER a tabId. If the prompt is for a session you just created with new_session, OMIT sessionId entirely.
-- Only emit app commands the user clearly intended; otherwise prefer inject_prompt into the current session.
-- If you cannot tell, return {"actions":[{"type":"clarify"}],"say":"<short question in the user's language>"}.`;
+- This is a SPOKEN back-and-forth (VOICE2). The turns above are the conversation so far: when you asked something and the user now answers, COMBINE the answer with what they asked before and emit the action — never ask the same thing twice, never start over. Keep "say" short (one sentence, the user's language): it is shown on screen while the mic re-opens.
+- Missing one detail (which session, what name, which URL, a yes/no before something destructive)? → {"actions":[{"type":"ask"}],"say":"<one short question>"}. Never guess a session or a title.
+- inject_prompt ONLY when the user clearly addresses the coding agent: "tell it / send it / ask the session …" or a plain coding task ("fix the login bug", "run the tests"). NEVER use inject_prompt as a fallback for something you did not understand — ask instead. Chit-chat, thanks, "ok", or an answer to your own question is never a prompt for the agent.
+- Only emit app commands the user clearly intended.
+- If you cannot tell what they want, return {"actions":[{"type":"ask"}],"say":"<short question in the user's language>"}.`;
 }
 
-const normalizePlan = (plan, text) => ({
-  transcript: text,
-  actions: Array.isArray(plan?.actions) ? plan.actions : [],
-  say: typeof plan?.say === 'string' ? plan.say : '',
-});
+// The plan the client acts on. VOICE2 adds a `kind` so the conversation loop
+// can tell the outcomes apart without inspecting actions:
+//   ask    — the router needs an answer; `question` = what to ask (mic re-opens)
+//   act    — there is at least one real action to run
+//   answer — no action, just something to say (a question about the screen)
+//   end    — the user closed the conversation ("that's all")
+//   noop   — nothing at all
+// `ask`/`clarify` (old name) and `end_conversation` are control words, not app
+// actions: they are stripped from `actions` so an old client (VOICE1) that
+// still queues every non-safe action for confirmation never sees them.
+// `actions`/`say`/`transcript` keep their VOICE1 shape.
+export function normalizePlan(plan, text) {
+  const raw = Array.isArray(plan?.actions) ? plan.actions.filter((a) => a && typeof a.type === 'string') : [];
+  const isAsk = (a) => a.type === 'ask' || a.type === 'clarify';
+  const isEnd = (a) => a.type === 'end_conversation';
+  const actions = raw.filter((a) => !isAsk(a) && !isEnd(a));
+  const say = typeof plan?.say === 'string' ? plan.say.trim() : '';
+  const asked = raw.some(isAsk) || plan?.kind === 'ask';
+  const ended = raw.some(isEnd) || plan?.kind === 'end';
+  let kind = 'noop';
+  if (actions.length) kind = 'act';
+  else if (asked) kind = 'ask';
+  else if (ended) kind = 'end';
+  else if (say) kind = 'answer';
+  const question = kind === 'ask' ? (say || (typeof plan?.question === 'string' ? plan.question.trim() : '')) : '';
+  return { transcript: text, actions, say: say || question, kind, question };
+}
 
 // Structured-output tool the Anthropic router is forced to call → guaranteed JSON.
 const PLAN_TOOL = {

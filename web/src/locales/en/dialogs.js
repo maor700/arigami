@@ -237,6 +237,12 @@ export const strings = {
   'dialogs.voiceTranscribingOnly': 'Transcribing…',
   'dialogs.voiceLang': 'Mic language',
   'dialogs.voiceLangAuto': 'Auto ({lang})',
+  'dialogs.voiceListeningAnswer': 'Listening for your answer…',
+  'dialogs.voiceRelisten': 'Opening the mic…',
+  'dialogs.voiceQuestion': 'A question for you',
+  'dialogs.voiceStopHint': 'say “stop” / Esc to end',
+  'dialogs.voiceDoneTalking': 'Done talking',
+  'dialogs.voiceSpeakAgain': 'Speak again',
 
   // ui.jsx
   'dialogs.startedByTrigger': 'Started by trigger: {name}',

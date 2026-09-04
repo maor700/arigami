@@ -62,7 +62,7 @@ export const strings = {
   'chrome.voice.language': 'Mic language',
   'chrome.voice.language.hint': 'The language the mic listens in. Auto follows the interface language. Shown as a small badge on the mic; also changeable inside the speech window.',
   'chrome.voice.hotkey': 'Record hotkey',
-  'chrome.voice.hotkey.hint': 'Keyboard shortcut to record. Click Record, then press the keys.',
+  'chrome.voice.hotkey.hint': 'Works everywhere. With the cursor in the chat message box it dictates into the message; anywhere else it opens the voice-command window. Press again while listening to stop; press while the window is open to listen again. Click Record, then press the keys.',
   'chrome.voice.hotkey.pressKeys': 'Press keys…',
   'chrome.voice.hotkey.record': 'Record',
   'chrome.voice.hotkey.listening': 'Listening…',

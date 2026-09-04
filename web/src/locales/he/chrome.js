@@ -62,7 +62,7 @@ export const strings = {
   'chrome.voice.language': 'שפת המיקרופון',
   'chrome.voice.language.hint': 'השפה שבה המיקרופון מקשיב. אוטומטי עוקב אחרי שפת הממשק. מוצגת כתגית קטנה על המיקרופון; אפשר לשנות גם מתוך חלון הדיבור.',
   'chrome.voice.hotkey': 'מקש קיצור להקלטה',
-  'chrome.voice.hotkey.hint': 'קיצור מקלדת להקלטה. לחץ על הקלטה, ואז הקש על המקשים.',
+  'chrome.voice.hotkey.hint': 'עובד בכל מקום. כשהסמן בתיבת ההודעה של הצ׳אט — מכתיב לתוך ההודעה; בכל מקום אחר — פותח את חלון הפקודות הקוליות. לחיצה נוספת בזמן האזנה עוצרת; לחיצה כשהחלון פתוח מאזינה שוב. לחץ על הקלטה, ואז הקש על המקשים.',
   'chrome.voice.hotkey.pressKeys': 'הקש מקשים…',
   'chrome.voice.hotkey.record': 'הקלטה',
   'chrome.voice.hotkey.listening': 'מאזין…',
