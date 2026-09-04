@@ -238,6 +238,19 @@ test('hotkeyAction: composer focused → dictate; elsewhere → command; recordi
   expect(voice.composerFocused(null)).toBe(false);
 });
 
+test('matchesHotkey: "Cmd" is ⌘ on Apple and Ctrl elsewhere; the key and every modifier must match', () => {
+  const M = voice.matchesHotkey;
+  const ev = (o) => ({ key: 'v', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...o });
+  expect(M(ev({ key: 'V', metaKey: true, shiftKey: true }), 'Cmd+Shift+V', true)).toBe(true);
+  expect(M(ev({ key: 'V', ctrlKey: true, shiftKey: true }), 'Cmd+Shift+V', true)).toBe(false);
+  expect(M(ev({ key: 'V', ctrlKey: true, shiftKey: true }), 'Cmd+Shift+V', false)).toBe(true);
+  expect(M(ev({ key: 'V', metaKey: true, shiftKey: true }), 'Cmd+Shift+V', false)).toBe(false);
+  expect(M(ev({ key: 'V', ctrlKey: true }), 'Cmd+Shift+V', false)).toBe(false); // Shift missing
+  expect(M(ev({ key: ' ', altKey: true }), 'Alt+Space', true)).toBe(true);
+  expect(M(ev({ key: 'F8' }), 'F8', true)).toBe(true);
+  expect(M(ev({ key: 'v' }), '', true)).toBe(false);
+});
+
 test('hotkeyPress: toggles a dictation when the composer has focus, a command take otherwise; press again stops; hold never stops on keydown', async () => {
   voice.cancel();
   expect(voice.hotkeyPress({ composer: true })).toBe('dictate');

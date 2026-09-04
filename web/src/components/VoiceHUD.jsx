@@ -241,11 +241,13 @@ export default function VoiceHUD() {
 
         <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
           {/* VOICE1: the mic language, changeable right here (same pref as Settings) */}
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="shrink-0">{t('dialogs.voiceLang')}</span>
             <VoiceLangPicker compact />
-            {!dictate && hotkey && <span className="hidden shrink-0 sm:inline" data-voice-hotkey>· {hotkey} {t('dialogs.mic')}</span>}
-            {!dictate && <span className="hidden shrink-0 sm:inline">· {t('dialogs.voiceStopHint')}</span>}
+            {/* one hint, truncated: how to END while the loop is live, else the shortcut */}
+            {!dictate && (listeningForAnswer || relisten || plan?.kind === 'ask' || plan?.kind === 'answer'
+              ? <span className="hidden min-w-0 truncate sm:inline" data-voice-stop-hint>· {t('dialogs.voiceStopHint')}</span>
+              : hotkey && <span className="hidden min-w-0 truncate sm:inline" data-voice-hotkey>· {hotkey} {t('dialogs.mic')}</span>)}
           </span>
           {status === 'recording' ? (
             <span className="flex shrink-0 items-center gap-1.5">

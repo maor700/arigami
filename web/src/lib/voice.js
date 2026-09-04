@@ -477,6 +477,31 @@ export function clearPlan() {
 
 // ---- the global shortcut (VOICE2) ------------------------------------------------
 
+// Parse a "Cmd+Shift+V" hotkey string and test a keyboard event against it.
+// "Cmd" means the platform's primary modifier: ⌘ on Apple hardware, Ctrl
+// elsewhere — so the default shortcut works on Linux/Windows too (VOICE2; the
+// HUD label shows it the same way, see VoiceHUD.hotkeyLabel).
+export const isApple = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+export function matchesHotkey(e, hotkey, mac = isApple()) {
+  if (!hotkey || typeof hotkey !== 'string') return false;
+  const parts = hotkey.split('+').map((p) => p.trim());
+  let wantCmd = parts.includes('Cmd');
+  let wantCtrl = parts.includes('Ctrl');
+  if (wantCmd && !mac) { wantCmd = false; wantCtrl = true; }
+  const wantAlt = parts.includes('Alt');
+  const wantShift = parts.includes('Shift');
+  const wantKey = (parts.find((p) => !['Cmd', 'Ctrl', 'Alt', 'Shift'].includes(p)) || '').toLowerCase();
+  if (!wantKey) return false;
+  const key = (e.key === ' ' ? 'space' : e.key).toLowerCase();
+  return (
+    !!e.metaKey === wantCmd &&
+    !!e.ctrlKey === wantCtrl &&
+    !!e.altKey === wantAlt &&
+    !!e.shiftKey === wantShift &&
+    key === wantKey
+  );
+}
+
 // One shortcut, two meanings, decided by focus (pure, unit-tested):
 //   recording           → 'stop' (any mode — press again to stop)
 //   thinking            → 'none' (a take is in flight)
