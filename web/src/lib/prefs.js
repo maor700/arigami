@@ -3,7 +3,7 @@
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
 import { logoDataUri, isLogoId, DEFAULT_ACCENT } from './logos.js';
-import { langDir, resolveLang, isLangId } from './langs.js';
+import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from './langs.js';
 
 const KEY = 'arigami-prefs';
 
@@ -17,7 +17,7 @@ const DEFAULTS = {
   voiceAutoSend: false, // auto-send voice prompts without confirmation
   voiceMicId: '', // preferred microphone deviceId ('' = system default)
   voiceMode: 'hold', // 'hold' (push-to-talk, hold the key) | 'toggle' (press to start/stop)
-  voiceLanguage: 'auto', // 'auto' | 'en' | 'he' — STT recognition language hint
+  voiceLang: 'auto', // 'auto' (= the UI language) | ISO code from langs.VOICE_LANGS — the language the mic listens in
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
@@ -96,6 +96,10 @@ function sanitizeByMode(o) {
   return out;
 }
 
+function sanitizeVoiceLang(v) {
+  return isVoiceLangId(v) ? v : DEFAULTS.voiceLang;
+}
+
 function clamp(n, lo, hi, fallback) {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
@@ -128,7 +132,7 @@ function sanitize(raw) {
     voiceAutoSend: p.voiceAutoSend === true,
     voiceMicId: typeof p.voiceMicId === 'string' ? p.voiceMicId : DEFAULTS.voiceMicId,
     voiceMode: ['hold', 'toggle'].includes(p.voiceMode) ? p.voiceMode : DEFAULTS.voiceMode,
-    voiceLanguage: ['auto', 'en', 'he'].includes(p.voiceLanguage) ? p.voiceLanguage : DEFAULTS.voiceLanguage,
+    voiceLang: sanitizeVoiceLang(p.voiceLang ?? p.voiceLanguage), // `voiceLanguage` = pre-VOICE1 name of the same pref
     voiceHotkey: typeof p.voiceHotkey === 'string' && p.voiceHotkey ? p.voiceHotkey : DEFAULTS.voiceHotkey,
     ticketPresets: sanitizePresets(p.ticketPresets),
     ticketDefaultPresetId: typeof p.ticketDefaultPresetId === 'string' ? p.ticketDefaultPresetId : '',
@@ -220,6 +224,12 @@ export function setTermOverride(sessionId, patch) {
 }
 
 export const PREF_LIMITS = { font: [10, 20], rail: [180, 420] };
+
+// The language the mic listens in right now (VOICE1): the explicit pick, else
+// the UI language. Pure — pass the prefs object from usePrefs() to stay reactive.
+export function voiceLangFrom(prefs = state) {
+  return resolveVoiceLang(prefs.voiceLang, prefs.language);
+}
 
 // ---- launcher ticket-filter presets ----------------------------------------
 function newId() {

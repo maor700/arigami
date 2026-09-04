@@ -21,6 +21,7 @@ import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
 import { useT } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
+import MicButton from './MicButton.jsx';
 import { Icon } from '../lib/icons.js';
 import {
   faBars,
@@ -2123,6 +2124,12 @@ export default function Rail({
         <span className="min-w-0 flex-1 truncate">
           {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
         </span>
+        {/* VOICE1: voice COMMANDS (switch/create sessions, settings…) — the
+            composer mic dictates; this one goes through the router. */}
+        <MicButton
+          mode="command"
+          className="flex h-[22px] w-[26px] items-center justify-center rounded-[5px] border text-[11px]"
+        />
         {screenAvailable && (
           <button
             type="button"

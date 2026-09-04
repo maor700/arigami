@@ -232,6 +232,11 @@ export const strings = {
   'dialogs.voiceDone': 'סיום.',
   'dialogs.voiceSendTo': 'שליחה אל {target}',
   'dialogs.voiceCurrentSession': 'הסשן הנוכחי',
+  'dialogs.voiceDictating': 'מכתיב… (דבר, ואז עצור — הטקסט נכנס להודעה)',
+  'dialogs.voiceDictation': 'הכתבה',
+  'dialogs.voiceTranscribingOnly': 'מתמלל…',
+  'dialogs.voiceLang': 'שפת המיקרופון',
+  'dialogs.voiceLangAuto': 'אוטומטי ({lang})',
 
   // ui.jsx
   'dialogs.startedByTrigger': 'הופעל על ידי טריגר: {name}',

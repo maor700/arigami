@@ -291,7 +291,8 @@ export const strings = {
   'rail.interruptClaude': 'Interrupt Claude',
   'rail.queuePendingHint': 'Queue as pending prompt — runs when the current turn is done (or via ▶)',
   'rail.send': 'Send',
-  'rail.voiceControlHint': 'Voice control (tap to talk, tap again to stop)',
+  'rail.voiceControlHint': 'Voice command — switch/create sessions, settings… (tap to talk, tap again to stop)',
+  'rail.dictateHint': 'Dictate into the message (tap to talk, tap again to stop)',
 
   // ---- SessionView.jsx: url / content tabs ----
   'rail.compare': 'compare',

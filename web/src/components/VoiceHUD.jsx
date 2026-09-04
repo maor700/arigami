@@ -7,6 +7,7 @@ import { sessionLabel } from './ui.jsx';
 import { t as tr, useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faMicrophone, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import VoiceLangPicker from './VoiceLangPicker.jsx';
 
 // Actions that change app state but can't lose work → run automatically.
 // inject_prompt sends words to a coding agent (possibly bypassPermissions) →
@@ -38,7 +39,8 @@ function labelForAction(a, sessions) {
 
 export default function VoiceHUD() {
   const t = useT();
-  const { status, transcript, plan, error, level } = useVoice();
+  const { status, mode, transcript, plan, error, level } = useVoice();
+  const dictate = mode === 'dictate';
   const { sessions } = useStore();
   const autoSend = usePrefs().voiceAutoSend;
   const [injects, setInjects] = useState([]); // pending inject actions (editable)
@@ -104,11 +106,11 @@ export default function VoiceHUD() {
           ) : (
             <span className="text-[13px]"><Icon icon={faMicrophone} /></span>
           )}
-          <span className="flex-1 text-[12px] font-bold">
-            {status === 'recording' && t('dialogs.voiceListening')}
-            {status === 'thinking' && t('dialogs.voiceTranscribing')}
+          <span className="flex-1 text-[12px] font-bold" data-voice-mode={mode}>
+            {status === 'recording' && (dictate ? t('dialogs.voiceDictating') : t('dialogs.voiceListening'))}
+            {status === 'thinking' && (dictate ? t('dialogs.voiceTranscribingOnly') : t('dialogs.voiceTranscribing'))}
             {status === 'review' && t('dialogs.voiceCommand')}
-            {status === 'error' && t('dialogs.voiceError')}
+            {status === 'error' && (dictate ? t('dialogs.voiceDictation') : t('dialogs.voiceError'))}
           </span>
           <button type="button" onClick={close} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
         </div>
@@ -172,14 +174,19 @@ export default function VoiceHUD() {
           })}
         </div>
 
-        <div className="flex items-center justify-between border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
-          <span>⌘⇧V {t('dialogs.mic')}</span>
+        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
+          {/* VOICE1: the mic language, changeable right here (same pref as Settings) */}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">{t('dialogs.voiceLang')}</span>
+            <VoiceLangPicker compact />
+            {!dictate && <span className="hidden shrink-0 sm:inline">· ⌘⇧V {t('dialogs.mic')}</span>}
+          </span>
           {status === 'recording' ? (
             <button type="button" onClick={stopRecording} className="cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a]">
               {t('dialogs.stop')}
             </button>
           ) : status === 'error' ? (
-            <button type="button" onClick={() => { ranFor.current = null; startRecording(); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
+            <button type="button" onClick={() => { ranFor.current = null; startRecording({ mode }); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
               {t('dialogs.tryAgain')}
             </button>
           ) : status === 'thinking' ? (

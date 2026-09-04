@@ -9,13 +9,14 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
-import { useVoice, toggleRecording } from '../lib/voice.js';
+import { setDictationSink, appendDictation } from '../lib/voice.js';
+import MicButton from './MicButton.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf } from '../lib/i18n.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
-import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircle, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faMicrophone, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
@@ -911,6 +912,12 @@ function ChatFooter({ session }) {
       setDraft(session.id, { attachments: next });
       return next;
     });
+  // VOICE1: the composer mic dictates — the transcript is appended to the draft
+  // (with a space) and the textarea gets focus; nothing is sent.
+  useEffect(() => setDictationSink((spoken) => {
+    setText((prev) => appendDictation(prev, spoken));
+    taRef.current?.focus();
+  }), [session.id]);
   // Covers the case where ChatFooter stays mounted and only `session` changes.
   const prevSessionId = useRef(session.id);
   useEffect(() => {
@@ -1397,7 +1404,7 @@ function ChatFooter({ session }) {
             <Icon icon={faHourglassHalf} />
           </button>
         )}
-        <MicButton />
+        <MicButton mode="dictate" />
         <button
           type="button"
           title={t('rail.send')}
@@ -1409,28 +1416,6 @@ function ChatFooter({ session }) {
         </button>
       </div>
     </div>
-  );
-}
-
-// Always-visible voice trigger — voice used to hide inside the rail's profile
-// menu, unreachable on phones where the rail is a closed drawer.
-function MicButton() {
-  const t = useT();
-  const { status } = useVoice();
-  const rec = status === 'recording';
-  return (
-    <button
-      type="button"
-      title={t('rail.voiceControlHint')}
-      onClick={toggleRecording}
-      className={`flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] text-[13px] ${
-        rec
-          ? 'border-danger bg-[#fdf6f5] text-danger'
-          : 'border-border bg-bg text-fgdim hover:border-ink hover:text-fg'
-      }`}
-    >
-      <Icon icon={rec ? faCircle : faMicrophone} className={rec ? 'text-[9px]' : undefined} />
-    </button>
   );
 }
 

@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { usePrefs, setPrefs } from '../../lib/prefs.js';
 import { useT } from '../../lib/i18n.js';
 import { Field, Segmented, Section, Toggle } from './shared.jsx';
+import VoiceLangPicker from '../VoiceLangPicker.jsx';
 
 // Device labels are only exposed after mic permission was granted once —
 // until then offer a one-tap "Allow" that requests access and re-enumerates.
@@ -121,15 +122,7 @@ export function VoiceAdvanced() {
         <MicPicker value={prefs.voiceMicId} onChange={(v) => setPrefs({ voiceMicId: v })} />
       </Field>
       <Field label={t('chrome.voice.language')} hint={t('chrome.voice.language.hint')}>
-        <Segmented
-          value={prefs.voiceLanguage}
-          onChange={(v) => setPrefs({ voiceLanguage: v })}
-          options={[
-            { value: 'auto', label: t('common.auto') },
-            { value: 'en', label: t('chrome.voice.language.en') },
-            { value: 'he', label: t('chrome.voice.language.he') },
-          ]}
-        />
+        <VoiceLangPicker />
       </Field>
       <Field label={t('chrome.voice.autoSend')} hint={t('chrome.voice.autoSend.hint')}>
         <Toggle on={prefs.voiceAutoSend} onChange={(v) => setPrefs({ voiceAutoSend: v })} />
