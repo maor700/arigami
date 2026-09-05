@@ -85,9 +85,9 @@ test('B1/B7/B21/B31: known statuses get a locale label, custom ones pass through
   const prefs = await import(path.join(ROOT, 'web/src/lib/prefs.js'));
   const { statusLabel } = await import(path.join(ROOT, 'web/src/lib/status.js'));
   prefs.setPrefs({ language: 'he' });
-  expect(statusLabel('In Progress')).toBe('בתהליך');
-  expect(statusLabel('Done')).toBe('הושלם');
-  expect(statusLabel('Approved')).toBe('אושר');
+  expect(statusLabel('In Progress')).toBe('בעבודה');
+  expect(statusLabel('Done')).toBe('הסתיים');
+  expect(statusLabel('Approved')).toBe('מאושר');
   expect(statusLabel('idle')).toBe('ממתין');
   expect(statusLabel('waiting-on-child')).toBe('ממתין לסשן-ילד');
   expect(statusLabel('my custom status')).toBe('my custom status');

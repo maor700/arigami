@@ -107,11 +107,12 @@ test('a folder with kids renders as one card: header and both children fall insi
   expect(out).not.toContain('Controller<');
   // child count chip on the header
   expect(out).toMatch(/My Project[\s\S]*?>2</);
-  // each child reads as a child: the ↳ marker before its title, and nothing
+  // each child reads as a child: the data-rail-child row marker before its
+  // title (RAILUI: the ↳ glyph became an indent on a hairline), and nothing
   // of the OTHER child's row in between (proves the markers are per-row, not
   // one shared marker for the whole list).
-  expect(out).toMatch(/↳(?:(?!↳)[\s\S])*?Child A/);
-  expect(out).toMatch(/Child A[\s\S]*?↳(?:(?!↳)[\s\S])*?Child B/);
+  expect(out).toMatch(/data-rail-child(?:(?!data-rail-child)[\s\S])*?Child A/);
+  expect(out).toMatch(/Child A[\s\S]*?data-rail-child(?:(?!data-rail-child)[\s\S])*?Child B/);
 });
 
 test('a collapsed folder keeps the card, the child count and per-child state dots — the children\'s own rows disappear', async () => {
@@ -121,9 +122,9 @@ test('a collapsed folder keeps the card, the child count and per-child state dot
     { id: 's2', title: 'Idle one', folderId: 'f1', metadata: {}, claude: { state: 'idle' } },
   ];
   const out = await renderRail(sessions);
-  // collapsed: no child ROW renders (no ↳ marker at all) — the names only
-  // still show up folded into the header's own description line.
-  expect(out).not.toContain('↳');
+  // collapsed: no child ROW renders (no child marker at all) — the names only
+  // still show up folded into the header's own meta line.
+  expect(out).not.toContain('data-rail-child');
   expect(out).toMatch(/Dots Folder[\s\S]*?>2</);
   // one state dot per kid
   const dots = out.match(/h-\[5px\] w-\[5px\] shrink-0 rounded-full/g) || [];

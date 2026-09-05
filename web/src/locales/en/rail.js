@@ -20,6 +20,7 @@ export const strings = {
   'rail.watchingSource': 'Watching {n} source',
   'rail.watchingSources': 'Watching {n} sources',
   'rail.firedSuffix': ' · fired {n}×',
+  'rail.needsYouPill': 'needs you',
   'rail.needsYourInput': 'Needs your input',
   // ---- LADDER1: running below the configured model ----
   'rail.ladderRunningOn': 'running on {model}',
@@ -109,6 +110,7 @@ export const strings = {
   'status.awaitingInput': 'Awaiting input',
   'status.waitingOnChild': 'Waiting on child',
   'status.needsYou': 'Needs you',
+  'status.awaitingTakeover': 'Awaiting take-over',
   'rail.hebrew': 'Hebrew',
   'rail.dragToResize': 'Drag to resize',
   'rail.newSession': 'New session',

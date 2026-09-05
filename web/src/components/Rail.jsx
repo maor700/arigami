@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { statusLabel } from '../lib/status.js';
+import { statusLabel, statusTone } from '../lib/status.js';
 import { relTime, fmtDateTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
@@ -19,7 +19,7 @@ import LadderBadge from './LadderBadge.jsx';
 import { openAgent, deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
-import { useT } from '../lib/i18n.js';
+import { useT, dirOf } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import MicButton from './MicButton.jsx';
 import { Icon } from '../lib/icons.js';
@@ -322,6 +322,45 @@ function useHoverTip(text) {
   return { ref, show, hide, toggle, tip };
 }
 
+// RAILUI — shared row vocabulary (rail-items-A-variants.html A1 +
+// rail-h4-deep.html V2). One selected treatment for every kind of row: a
+// neutral 6% fill and a 3px bar in the row's own colour drawn by ::before, so
+// selecting never shifts the content the way a border did. The colour rides
+// in on `--rail-c`. Port / ··· stay hidden until hover (always shown on touch).
+const SEL_CLS =
+  "bg-sel before:pointer-events-none before:absolute before:start-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-[3px] before:bg-(--rail-c) before:content-['']";
+const HOVER_CLS = 'hover:bg-fg/[.035]';
+const REVEAL_CLS = 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100';
+const META_CLS = 'mt-[2px] flex items-center gap-1.5 text-[11px] leading-[1.3] text-fgdim';
+const TIME_CLS = 'ms-auto shrink-0 font-mono text-[10px] text-fgdim';
+// H4 V2 — the children of a folder: 22px indent and one 1px vertical hairline
+// (hair colour, never the project's) running down their side, no glyphs; 8px of
+// air after each group. Nest the same class again for depth 2 (+22px).
+const KIDS_CLS =
+  "relative mb-2 ps-[22px] before:pointer-events-none before:absolute before:start-[15px] before:top-0.5 before:bottom-1.5 before:w-px before:bg-hair before:content-['']";
+const DOTS_CLS = 'shrink-0 cursor-pointer self-start rounded px-0.5 py-0.5 text-[13px] leading-none text-fgdim hover:text-fg';
+// The status word IS the indicator (A1): coloured by tone, see statusTone().
+const TONE_CLS = { ok: 'text-ok', work: 'text-warn', review: 'text-brand', done: 'text-fgdim', danger: 'text-danger' };
+
+function StatusWord({ tone, children }) {
+  // Custom statuses are free text and can run long — truncate, never overflow the rail.
+  return <span className={`min-w-0 truncate font-medium ${TONE_CLS[tone] || ''}`}>{children}</span>;
+}
+
+// "needs you" — the one loud element on a row (A1's pill). Same pulse and
+// colours the `?` / screen badges had; only the shape changed.
+function NeedsYouPill({ title, icon, children }) {
+  return (
+    <span
+      title={title}
+      className="pulse-yellow flex h-4 shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-sans text-[10px] font-semibold leading-none text-[#1a1a1a]"
+    >
+      {icon && <Icon icon={icon} />}
+      {children}
+    </span>
+  );
+}
+
 function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting, muted }) {
   const t = useT();
   const color = session.color || '#c4c4c4';
@@ -344,27 +383,52 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   // already the session color — stamped at creation).
   const { agents } = useStore();
   const agent = session.metadata?.agent ? (agents || []).find((a) => a.slug === session.metadata.agent) : null;
+  // One meta line (A1): a single status word, coloured, picked by priority —
+  // archived › screen take-over › working/restarting › the session's status.
+  const statusWord = session.archived
+    ? t('rail.archived')
+    : screenReq
+      ? t('status.awaitingTakeover')
+      : restarting
+        ? t('rail.restarting')
+        : working
+          ? t('rail.working')
+          : statusLabel(session.status);
+  const tone = session.archived ? 'done' : screenReq || working || restarting ? 'work' : statusTone(session.status);
+  // Everything that used to be its own line (title-behind-ticket, description)
+  // folds into the meta line after the status and truncates there.
+  const secondary = showTitle ? session.title : session.metadata?.description;
+  // Child rows (inside a folder, `muted`) sit one step lighter than free rows:
+  // 12.5/400 in fg2 with a 16px avatar; the selected child steps back up.
+  const titleCls = muted
+    ? selected
+      ? 'text-[13px] font-medium text-fg'
+      : 'text-[12.5px] font-normal text-fg2'
+    : 'text-[13px] font-medium text-fg';
   return (
     <div
       ref={tip.ref}
       data-session-row={session.id}
       {...hoverProps}
       onClick={() => onSelect(session.id)}
-      className="group relative mb-0.5 flex cursor-pointer items-start gap-[9px] rounded-[7px] p-2"
-      style={{
-        background: selected ? tint(color) : undefined,
-        borderInlineStart: `4px solid ${selected ? color : 'transparent'}`,
-      }}
+      className={`group relative grid cursor-pointer items-center gap-x-2 rounded-lg px-2 ${
+        muted ? 'min-h-[38px] grid-cols-[16px_1fr_auto] py-1.5' : 'min-h-[44px] grid-cols-[20px_1fr_auto] py-[7px]'
+      } ${selected ? SEL_CLS : HOVER_CLS}`}
+      style={{ '--rail-c': color }}
     >
       {tip.tip}
-      {agent ? <AgentAvatar agent={{ ...agent, color }} size={16} className="mt-px" /> : <Dot color={color} className="mt-0.5" />}
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <Truncate text={label} className={`font-mono text-[11.5px] ${muted ? 'font-semibold' : 'font-bold'}`} />
+      {agent ? (
+        <AgentAvatar agent={{ ...agent, color }} size={muted ? 16 : 20} className="justify-self-center" />
+      ) : (
+        <Dot color={color} size={muted ? 8 : 9} className="justify-self-center" />
+      )}
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          <Truncate text={label} dir={dirOf(label)} className={`min-w-0 flex-1 text-left font-sans leading-tight [[dir=rtl]_&]:text-right ${titleCls}`} />
           {port != null && (
-            <span className="shrink-0 font-mono text-[10px] text-fgdim">:{port}</span>
+            <span className={`shrink-0 font-mono text-[10.5px] text-fgdim ${REVEAL_CLS}`}>:{port}</span>
           )}
-          <span className="me-auto flex shrink-0 items-center gap-1.5">
+          <span className="flex shrink-0 items-center gap-1.5">
             {watch && (
               <span
                 title={
@@ -375,7 +439,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                         : t('rail.watchingSource', { n: watch.count })) +
                       (watch.fired ? t('rail.firedSuffix', { n: watch.fired }) : '')
                 }
-                className={`flex items-center gap-0.5 font-mono text-[9px] leading-none ${
+                className={`flex items-center gap-0.5 font-mono text-[10px] leading-none ${
                   watch.errored ? 'pulse-yellow text-danger' : 'text-fgdim'
                 }`}
               >
@@ -395,51 +459,26 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
             )}
             {/* LADDER1: quietly says the session is on a weaker rung (server-derived claude.ladder). */}
             <LadderBadge session={session} compact />
+            {/* One indicator, by priority: needs you (pill) › waiting (badge) › working (spinner, on the meta line) › status word. */}
             {screenReq ? (
-              <span
-                title={t('rail.screenNeedsYou')}
-                className="pulse-yellow flex h-[15px] shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-mono text-[9px] font-bold text-[#1a1a1a]"
-              >
-                <Icon icon={faDisplay} /> {t('rail.screenNeedsYouShort')}
-              </span>
+              <NeedsYouPill title={t('rail.screenNeedsYou')} icon={faDisplay}>{t('rail.screenNeedsYouShort')}</NeedsYouPill>
             ) : attention ? (
-              <span
-                title={t('rail.needsYourInput')}
-                className="pulse-yellow flex h-[15px] w-[15px] items-center justify-center rounded-full border border-ink bg-brand font-mono text-[10px] font-bold text-[#1a1a1a]"
-              >
-                ?
-              </span>
+              <NeedsYouPill title={t('rail.needsYourInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
             ) : waiting?.length > 0 ? (
               <WaitingBadge items={waiting} t={t} />
-            ) : working || restarting ? (
-              <span
-                title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')}
-                className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]"
-              >
-                <span className="host-spinner h-[11px] w-[11px]" /> {restarting ? t('rail.restarting') : t('rail.working')}
-              </span>
             ) : null}
           </span>
         </span>
-        {showTitle && (
-          <Truncate
-            as="span"
-            text={session.title}
-            className="mt-px mb-[3px] block text-xs text-fgdim"
-          />
-        )}
-        {/* The subline carries three things now, in the order you scan them:
-            RES1's health dot, then the status + time (which may clip), then
-            UX1's agent button. The button is a click target, so it sits outside
-            the truncating span — the time is what gives way on a narrow rail,
-            not "whose job this is". */}
-        <span className="flex items-center gap-1.5 text-[10.5px] text-fgdim">
+        {/* The meta line, in scan order: RES1's health dot, the (spinner +)
+            status word, UX1's agent button ("whose job this is" — a click
+            target, so it sits outside the truncating span), the folded
+            secondary text, the trigger bolt, and the time pinned to the end. */}
+        <span className={META_CLS}>
           <HealthDot health={health} />
-          <span className="min-w-0 truncate">
-            {[session.archived ? t('rail.archived') : statusLabel(session.status), relTime(session.updatedAt || session.createdAt)]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
+          {(working || restarting) && (
+            <span title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')} className="host-spinner h-[10px] w-[10px] shrink-0" />
+          )}
+          {statusWord && <StatusWord tone={tone}>{statusWord}</StatusWord>}
           {/* UX1: born from an agent — the row wears its face AND says whose job
               this is, so a work session never reads as "the agent itself". */}
           {agent && (
@@ -448,23 +487,18 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               data-row-agent={agent.slug}
               title={t('session.bornFromTitle', { name: agent.name })}
               onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
-              className="shrink-0 cursor-pointer font-mono text-[10px] hover:underline"
+              className="shrink-0 cursor-pointer text-[10.5px] hover:underline"
               style={{ color: agent.color || undefined }}
             >
               · {agent.name}
             </button>
           )}
+          {secondary && <Truncate as="span" text={`· ${secondary}`} dir={dirOf(secondary)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
+          {session.metadata?.fromTriggerName && (
+            <TriggerTag name={session.metadata.fromTriggerName} showName={false} className="shrink-0 text-[10px]" />
+          )}
+          <span className={TIME_CLS}>{relTime(session.updatedAt || session.createdAt)}</span>
         </span>
-        {session.metadata?.description && (
-          <Truncate
-            as="span"
-            text={session.metadata.description}
-            className="block text-[10px] text-fgdim italic"
-          />
-        )}
-        {session.metadata?.fromTriggerName && (
-          <TriggerTag name={session.metadata.fromTriggerName} className="mt-px text-[10px]" />
-        )}
       </span>
       <button
         type="button"
@@ -473,9 +507,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
           e.stopPropagation();
           setMenuFor(menuOpen ? null : session.id);
         }}
-        className={`shrink-0 cursor-pointer self-start rounded px-1 py-0.5 text-[13px] leading-none tracking-[1px] text-fgdim hover:text-fg ${
-          menuOpen ? '' : 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'
-        }`}
+        className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
       >
         ···
       </button>
@@ -591,36 +623,37 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
               data-rail-agent={a.slug}
               onClick={() => onOpenAgent?.(a.slug, 'home')}
               title={t('agent.oneLiner')}
-              className="group relative mb-0.5 flex cursor-pointer items-center gap-[9px] rounded-[7px] p-2"
-              style={{ background: surfaceOpen ? tint(a.color) : undefined, borderInlineStart: `4px solid ${surfaceOpen ? a.color : 'transparent'}` }}
+              className={`group relative grid min-h-[42px] cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-[7px] ${surfaceOpen ? SEL_CLS : HOVER_CLS}`}
+              style={{ '--rail-c': a.color }}
             >
-              <AgentAvatar agent={a} size={20} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5">
-                  <Truncate text={a.name} className="font-mono text-[11.5px] font-bold" />
-                  <span className="me-auto flex shrink-0 items-center gap-1.5">
-                    {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
-                    {working ? (
-                      <span title={t('rail.teamWorking')} className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]">
-                        <span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
-                        <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
-                        {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
-                      </span>
-                    )}
-                  </span>
+              <AgentAvatar agent={a} size={20} className="justify-self-center" />
+              <span className="min-w-0">
+                <span className="flex items-center gap-2">
+                  <Truncate text={a.name} dir={dirOf(a.name)} className="min-w-0 flex-1 text-left font-sans text-[13px] font-medium leading-tight text-fg [[dir=rtl]_&]:text-right" />
+                  {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
                 </span>
-                {a.skills?.length > 0 && (
-                  <Truncate as="span" text={a.skills.join(' · ')} className="block text-[10px] text-fgdim" />
-                )}
+                <span className={META_CLS}>
+                  {working ? (
+                    <>
+                      <span title={t('rail.teamWorking')} className="host-spinner h-[10px] w-[10px] shrink-0" />
+                      <StatusWord tone="work">{t('rail.teamWorking')}</StatusWord>
+                    </>
+                  ) : (
+                    <span className="flex shrink-0 items-center gap-1.5" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
+                      <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
+                      {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
+                    </span>
+                  )}
+                  {a.skills?.length > 0 && (
+                    <Truncate as="span" text={`· ${a.skills.join(' · ')}`} className="min-w-0" />
+                  )}
+                </span>
               </span>
               <button
                 type="button"
                 title={t('rail.teamActions')}
                 onClick={(e) => { e.stopPropagation(); setMenuFor(menuOpen ? null : `agent:${a.slug}`); }}
-                className={`shrink-0 cursor-pointer self-start rounded px-1 py-0.5 text-[13px] leading-none tracking-[1px] text-fgdim hover:text-fg ${menuOpen ? '' : 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'}`}
+                className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
               >
                 ···
               </button>
@@ -809,35 +842,50 @@ function FolderRow({
   const ctlWorking = isProject && controller.claude?.state === 'working';
   const ctlRestarting = isProject && controller.claude?.state === 'restarting';
   const ctlColor = controller?.color || '#c4c4c4';
+  // H4: a project header wears its controller's agent face at 22px (that big
+  // avatar + "manager ·" on the meta line replaced the "manager" chip).
+  const { agents } = useStore();
+  const ctlAgent = controller?.metadata?.agent ? (agents || []).find((a) => a.slug === controller.metadata.agent) : null;
 
-  // Fill the same vertical space as a session row: a status subline + a
-  // description subline. A project folder mirrors its controller session
-  // (the header IS that session); a plain folder summarises its contents.
+  // Two lines, like a session row: the name, then one meta line. A project
+  // folder mirrors its controller session (the header IS that session); a
+  // plain folder summarises its contents.
   const label = (s) => s.metadata?.ticket || s.title || s.id;
   const count = kids.length;
   const newest = kids.reduce(
     (t, s) => Math.max(t, +new Date(s.updatedAt || s.createdAt || 0)),
     0
   );
-  const statusLine = isProject
+  const [ctlStatus, ctlTime] = isProject
     ? [statusLabel(controller.status), relTime(controller.updatedAt || controller.createdAt)]
-        .filter(Boolean)
-        .join(' · ')
+    : ['', ''];
+  const statusWord = isProject
+    ? ctlRestarting
+      ? t('rail.restarting')
+      : ctlWorking
+        ? t('rail.working')
+        : ctlStatus
     : count
-      ? `${count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count })}${
-          newest ? ` · ${relTime(new Date(newest).toISOString())}` : ''
-        }`
+      ? count === 1
+        ? t('rail.oneSession', { n: count })
+        : t('rail.nSessions', { n: count })
       : t('rail.emptyFolder');
+  const tone = isProject ? (ctlWorking || ctlRestarting ? 'work' : statusTone(controller.status)) : null;
+  const time = isProject ? ctlTime : newest ? relTime(new Date(newest).toISOString()) : '';
+  // Folded secondary text: the controller's description, or — only while the
+  // fold hides the rows — the members' names, so nothing disappears behind it.
   const descLine = isProject
-    ? controller.metadata?.description ||
-      (count === 1 ? t('rail.projectManagesOne', { n: count }) : t('rail.projectManagesN', { n: count }))
-    : count
+    ? controller.metadata?.description || ''
+    : collapsed && count
       ? kids.map(label).join(', ')
-      : t('rail.dropToGroup');
+      : count
+        ? ''
+        : t('rail.dropToGroup');
 
   // A project folder's header IS the controller session — surface its tldr as
   // the same hover tip a normal session row gets.
   const tip = useHoverTip(controller?.statusSummary?.tldr);
+  const hot = !!(attention || waitingHidden);
 
   return (
     <div
@@ -846,20 +894,12 @@ function FolderRow({
       onMouseLeave={tip.hide}
       data-rowbody
       onClick={() => (isProject ? onSelect(controller.id) : onToggle())}
-      className={`group relative mb-0.5 flex cursor-pointer items-start gap-[7px] rounded-[7px] p-2 hover:bg-chip ${
-        over?.zone === 'into' ? 'ring-1 ring-brand ring-inset' : ''
-      }`}
-      style={
-        isProject
-          ? {
-              // RAIL2 — the group's colour now lives only here, in the header
-              // (icon tint + selected-row treatment), same as any other session
-              // row; the wrapping container below carries no colour of its own.
-              background: ctlSelected ? tint(ctlColor) : undefined,
-              borderInlineStart: `4px solid ${ctlSelected ? ctlColor : 'transparent'}`,
-            }
-          : undefined
-      }
+      className={`group relative grid min-h-[44px] cursor-pointer grid-cols-[12px_22px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${
+        ctlSelected ? SEL_CLS : HOVER_CLS
+      } ${over?.zone === 'into' ? 'ring-1 ring-brand ring-inset' : ''}`}
+      // RAIL2 — the group's colour lives only here, in the header (avatar
+      // tint + selected bar); the children below carry a neutral hairline.
+      style={{ '--rail-c': ctlColor }}
     >
       {tip.tip}
       <button
@@ -869,49 +909,48 @@ function FolderRow({
           e.stopPropagation();
           onToggle();
         }}
-        className="-my-1 -ms-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-[11px] leading-none text-fgdim hover:text-fg"
+        className="-mx-1.5 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-[10px] leading-none text-fgdim hover:text-fg"
       >
         <span className={collapsed ? 'mirror-rtl' : undefined}>
           <Icon icon={collapsed ? faCaretRight : faCaretDown} />
         </span>
       </button>
-      <span
-        className={`mt-[2px] shrink-0 text-[12px] ${isProject ? '' : 'text-fgdim'}`}
-        style={isProject ? { color: ctlColor } : undefined}
-        title={isProject ? t('rail.projectFolderHint') : undefined}
-      >
-        <Icon icon={isProject ? faFolderTree : faFolder} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <Truncate text={folder.name} className="min-w-0 flex-1 text-[11.5px] font-bold" />
-          {/* Collapsed + something pending already crowds this row with the
-              rollup pill below — the chip's job (say why this row differs) is
-              done by the icon+tint then; skip it so the name keeps its room. */}
-          {isProject && !(collapsed && (attention || waitingHidden)) && (
-            <span className="shrink-0 rounded-full border border-border px-1 font-mono text-[8.5px] leading-[13px] text-fgdim">
-              {t('rail.managerChip')}
-            </span>
-          )}
-          <span className="me-auto flex shrink-0 items-center gap-1.5">
-            {/* The rollup pill below already says "! · ? · N" once something's
+      {isProject ? (
+        ctlAgent ? (
+          <span title={t('rail.projectFolderHint')} className="flex">
+            <AgentAvatar agent={{ ...ctlAgent, color: ctlColor }} size={22} />
+          </span>
+        ) : (
+          <span
+            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px]"
+            style={{ background: `${ctlColor}22`, border: `1.5px solid ${ctlColor}`, color: ctlColor }}
+            title={t('rail.projectFolderHint')}
+            aria-hidden="true"
+          >
+            <Icon icon={faFolderTree} />
+          </span>
+        )
+      ) : (
+        <span className="justify-self-center text-[15px] text-fgdim" aria-hidden="true">
+          <Icon icon={faFolder} />
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          <Truncate
+            text={folder.name}
+            dir={dirOf(folder.name)}
+            className={`min-w-0 flex-1 text-left font-sans text-[14px] leading-tight [[dir=rtl]_&]:text-right ${isProject ? 'font-semibold text-fg' : 'font-medium text-fg2'}`}
+          />
+          <span className="flex shrink-0 items-center gap-1.5">
+            {/* The rollup chip below already says "N · ? · !" once something's
                 pending — showing dots too is redundant and starves the title
                 of width, so dots only appear when there's nothing to flag. */}
-            {!attention && !waitingHidden && <StateDots kids={kids} />}
+            {!hot && <StateDots kids={kids} />}
             {ctlAttention ? (
-              <span
-                title={t('rail.controllerNeedsInput')}
-                className="pulse-yellow flex h-[15px] w-[15px] items-center justify-center rounded-full border border-ink bg-brand font-mono text-[10px] font-bold text-[#1a1a1a]"
-              >
-                ?
-              </span>
+              <NeedsYouPill title={t('rail.controllerNeedsInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
             ) : ctlWaiting.length > 0 ? (
               <WaitingBadge items={ctlWaiting} t={t} />
-            ) : ctlWorking || ctlRestarting ? (
-              <span
-                title={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}
-                className="host-spinner h-[11px] w-[11px]"
-              />
             ) : null}
             {errored && (
               <span
@@ -922,7 +961,7 @@ function FolderRow({
               </span>
             )}
             {!attention && working && (
-              <span title={t('rail.folderSessionWorking')} className="host-spinner h-[11px] w-[11px]" />
+              <span title={t('rail.folderSessionWorking')} className="host-spinner h-[10px] w-[10px]" />
             )}
             <button
               type="button"
@@ -937,10 +976,8 @@ function FolderRow({
               ]
                 .filter(Boolean)
                 .join(' · ')}
-              className={`shrink-0 cursor-pointer rounded-full px-1.5 py-px font-mono text-[9px] leading-[14px] ${
-                attention || waitingHidden
-                  ? 'border border-brand bg-transparent font-bold text-fg'
-                  : 'bg-chip text-fgdim'
+              className={`shrink-0 cursor-pointer rounded-full px-1.5 font-mono text-[10px] leading-4 ${
+                hot ? 'border border-brand bg-transparent font-semibold text-fg' : 'bg-fg/[.07] text-fgdim'
               }`}
             >
               {count}
@@ -949,12 +986,18 @@ function FolderRow({
             </button>
           </span>
         </span>
-        <span className="block text-[10.5px] text-fgdim">{statusLine}</span>
-        <Truncate
-          as="span"
-          text={descLine}
-          className="block text-[10px] text-fgdim italic"
-        />
+        <span className={META_CLS}>
+          {(ctlWorking || ctlRestarting) && (
+            <span
+              title={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}
+              className="host-spinner h-[10px] w-[10px] shrink-0"
+            />
+          )}
+          {isProject && <span className="shrink-0">{t('rail.managerChip')} ·</span>}
+          {statusWord && <StatusWord tone={tone}>{statusWord}</StatusWord>}
+          {descLine && <Truncate as="span" text={`· ${descLine}`} dir={dirOf(descLine)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
+          {time && <span className={TIME_CLS}>{time}</span>}
+        </span>
       </span>
       <button
         type="button"
@@ -963,9 +1006,7 @@ function FolderRow({
           e.stopPropagation();
           setMenuFor(menuOpen ? null : folder.id);
         }}
-        className={`shrink-0 cursor-pointer self-start rounded px-1 py-0.5 text-[13px] leading-none tracking-[1px] text-fgdim hover:text-fg ${
-          menuOpen ? '' : 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100'
-        }`}
+        className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
       >
         ···
       </button>
@@ -1482,7 +1523,7 @@ export default function Rail({
   ].sort((a, b) => a.ord - b.ord);
 
   // RAIL1 §4/§5 — "out of context, say the parent". A session reads as a
-  // child inside its own folder's card (the ↳ marker + tick); everywhere else
+  // child inside its own folder's card (indented on the hairline); everywhere else
   // (search, grouped-by-status, or a PM child sitting free at root) nothing
   // says whose it is. Prefer the folder (the visible group), then fall back to
   // metadata.master (the PM/controller that spawned it, for children with no
@@ -1757,7 +1798,7 @@ export default function Rail({
   // One draggable session row (used by every view). Always draggable so a
   // session can be dropped into a chat composer as a reference; the reorder
   // targets only wire up in flat mode, where the layout is manual.
-  // RAIL1: `mark` ('↳') renders a child
+  // RAIL1: `mark` renders a child (indented, lighter, on the hairline)
   // as belonging to its folder card even scanning fast; `parent` (from
   // `parentInfoFor`) is the opposite case — a row shown OUTSIDE its group,
   // which gets a small chip naming that group instead.
@@ -1784,26 +1825,18 @@ export default function Rail({
         {/* data-rowbody: the fixed-height slice dropZone measures (see dropZone) */}
         <div
           data-rowbody
-          className={mark ? 'flex items-start gap-1' : undefined}
-          /* RAIL1 follow-up: no per-child connecting strip — the group card already
-             carries its own colour bar and the children are indented under it. */
+          /* RAIL1 follow-up / RAILUI (H4 V2): no per-child glyph or strip — the
+             children sit indented under the header next to one neutral
+             hairline (see the wrapper below); `data-rail-child` is what marks
+             a row as a member. */
+          {...(mark ? { 'data-rail-child': '' } : {})}
         >
-          {mark && (
-            <span
-              aria-hidden="true"
-              className="mirror-rtl mt-[9px] shrink-0 whitespace-nowrap font-mono text-[10px] leading-none text-fgdim"
-            >
-              {mark}
-            </span>
+          {parent && (
+            <div className="px-2 pt-1">
+              <ParentChip info={parent} onSelect={onSelect} t={t} />
+            </div>
           )}
-          <div className="min-w-0 flex-1">
-            {parent && (
-              <div className="px-2 pt-1">
-                <ParentChip info={parent} onSelect={onSelect} t={t} />
-              </div>
-            )}
-            <Row {...rowProps(s, { muted: !!mark })} />
-          </div>
+          <Row {...rowProps(s, { muted: !!mark })} />
         </div>
         {after && <DropLine pos="after" gap={GAP} />}
       </div>
@@ -1913,7 +1946,7 @@ export default function Rail({
 
       {/* rows */}
       <div
-        className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[7px] py-0.5"
+        className="thin-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-[7px] py-0.5"
         onDragOver={onListDragOver}
         onDrop={onListDrop}
       >
@@ -1940,9 +1973,10 @@ export default function Rail({
                   </span>
                   <Truncate
                     text={f.name}
-                    className="min-w-0 flex-1 text-[11.5px] font-bold"
+                    dir={dirOf(f.name)}
+                    className="min-w-0 flex-1 text-left font-sans text-[14px] font-medium leading-tight text-fg2 [[dir=rtl]_&]:text-right"
                   />
-                  <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[9px] text-fgdim">
+                  <span className="shrink-0 rounded-full bg-fg/[.07] px-1.5 font-mono text-[10px] leading-4 text-fgdim">
                     {(folderKids.get(f.id) || []).length}
                   </span>
                 </div>
@@ -1969,7 +2003,7 @@ export default function Rail({
               return (
                 <div
                   key={entry.id}
-                  className={`mb-1 rounded-[10px] ${intoWhole ? 'ring-2 ring-brand ring-inset' : ''}`}
+                  className={`rounded-[10px] ${intoWhole ? 'ring-2 ring-brand ring-inset' : ''}`}
                 >
                   <div
                     draggable
@@ -2023,8 +2057,8 @@ export default function Rail({
                     />
                   </div>
                   {!entry.folder.collapsed && (
-                    <div className="mb-0.5 ps-4">
-                      {kids.map((s) => sessionRowEl(s, { mark: '↳' }))}
+                    <div className={KIDS_CLS}>
+                      {kids.map((s) => sessionRowEl(s, { mark: true }))}
                       {kids.length === 0 && (
                         <div className="px-2 py-1.5 text-[10px] text-fgdim italic">
                           {t('rail.emptyFolderDrop')}

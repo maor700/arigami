@@ -189,13 +189,14 @@ test('the rail marks one thing: with the agent surface open the agent row is sel
     onOpenSetup: noop, onArchive: noop, onRestore: noop, onRestart: noop, onDelete: noop, onEdit: noop,
     config: { defaultCwd: '/tmp/ws' }, conn: 'open', onOpenAgent: noop, ...extra,
   });
-  // A selected row (session or agent) is the one with a coloured left border.
-  const selectedRows = (html) => (html.match(/border-left:4px solid (?!transparent)/g) || []).length;
+  // A selected row (session or agent) is the one wearing the selected fill
+  // (RAILUI: `bg-sel` + a ::before bar in the row colour — no border anymore).
+  const selectedRows = (html) => (html.match(/\bbg-sel\b/g) || []).length;
   const onSession = render(React.createElement(Rail, railProps()));
   expect(selectedRows(onSession)).toBe(1); // the work session, alone
   const onSurface = render(React.createElement(Rail, railProps({ agentOpen: 'nili' })));
   expect(selectedRows(onSurface)).toBe(1); // …now the agent row, alone — not both
   // and it IS the agent row that carries it
   const agentRow = onSurface.slice(onSurface.indexOf('data-rail-agent="nili"'), onSurface.indexOf('data-rail-agent="scout"'));
-  expect(agentRow).toContain('border-left:4px solid');
+  expect(agentRow).toContain('bg-sel');
 });
