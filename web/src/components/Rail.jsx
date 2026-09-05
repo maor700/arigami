@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { statusLabel, statusTone } from '../lib/status.js';
+import { statusLabel } from '../lib/status.js';
 import { relTime, fmtDateTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
@@ -64,7 +64,9 @@ const HEALTH_COLOR = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: 
 
 function HealthDot({ health }) {
   const t = useT();
-  if (!health) return null;
+  // Grey means "nothing to report" — a dot on every row was noise, so only the
+  // states the dot exists for (blue/amber/red) render.
+  if (!health || !health.dot || health.dot === 'grey') return null;
   const color = HEALTH_COLOR[health.dot] || HEALTH_COLOR.grey;
   // An escalated session is not one the host is still working on — it is one it
   // gave up on, which is a different thing to tell the human.
@@ -331,20 +333,19 @@ const SEL_CLS =
   "bg-sel before:pointer-events-none before:absolute before:start-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-[3px] before:bg-(--rail-c) before:content-['']";
 const HOVER_CLS = 'hover:bg-fg/[.035]';
 const REVEAL_CLS = 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100';
-const META_CLS = 'mt-[2px] flex items-center gap-1.5 text-[11px] leading-[1.3] text-fgdim';
+const META_CLS = 'mt-[3px] flex items-center gap-1.5 text-[11px] leading-[1.3] text-fgdim';
 const TIME_CLS = 'ms-auto shrink-0 font-mono text-[10px] text-fgdim';
 // H4 V2 — the children of a folder: 22px indent and one 1px vertical hairline
 // (hair colour, never the project's) running down their side, no glyphs; 8px of
-// air after each group. Nest the same class again for depth 2 (+22px).
+// air after each group (12px). Nest the same class again for depth 2 (+22px).
 const KIDS_CLS =
-  "relative mb-2 ps-[22px] before:pointer-events-none before:absolute before:start-[15px] before:top-0.5 before:bottom-1.5 before:w-px before:bg-hair before:content-['']";
+  "relative mb-3 ps-[22px] before:pointer-events-none before:absolute before:start-[15px] before:top-0.5 before:bottom-1.5 before:w-px before:bg-hair before:content-['']";
 const DOTS_CLS = 'shrink-0 cursor-pointer self-start rounded px-0.5 py-0.5 text-[13px] leading-none text-fgdim hover:text-fg';
-// The status word IS the indicator (A1): coloured by tone, see statusTone().
-const TONE_CLS = { ok: 'text-ok', work: 'text-warn', review: 'text-brand', done: 'text-fgdim', danger: 'text-danger' };
-
-function StatusWord({ tone, children }) {
-  // Custom statuses are free text and can run long — truncate, never overflow the rail.
-  return <span className={`min-w-0 truncate font-medium ${TONE_CLS[tone] || ''}`}>{children}</span>;
+// The status word stays quiet (fgdim) — per feedback the only colour a row
+// carries is its own dot/avatar; "needs you" and the working spinner are the
+// two exceptions. Custom statuses are free text — truncate, never overflow.
+function StatusWord({ children }) {
+  return <span className="min-w-0 truncate">{children}</span>;
 }
 
 // "needs you" — the one loud element on a row (A1's pill). Same pulse and
@@ -394,10 +395,9 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
         : working
           ? t('rail.working')
           : statusLabel(session.status);
-  const tone = session.archived ? 'done' : screenReq || working || restarting ? 'work' : statusTone(session.status);
-  // Everything that used to be its own line (title-behind-ticket, description)
-  // folds into the meta line after the status and truncates there.
-  const secondary = showTitle ? session.title : session.metadata?.description;
+  // The title behind a ticket label folds into the meta line; the description
+  // stays out of the rail altogether (it lives in the session's details).
+  const secondary = showTitle ? session.title : null;
   // Child rows (inside a folder, `muted`) sit one step lighter than free rows:
   // 12.5/400 in fg2 with a 16px avatar; the selected child steps back up.
   const titleCls = muted
@@ -411,8 +411,8 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
       data-session-row={session.id}
       {...hoverProps}
       onClick={() => onSelect(session.id)}
-      className={`group relative grid cursor-pointer items-center gap-x-2 rounded-lg px-2 ${
-        muted ? 'min-h-[38px] grid-cols-[16px_1fr_auto] py-1.5' : 'min-h-[44px] grid-cols-[20px_1fr_auto] py-[7px]'
+      className={`group relative mb-[3px] grid cursor-pointer items-center gap-x-2 rounded-lg px-2 ${
+        muted ? 'min-h-[40px] grid-cols-[16px_1fr_auto] py-[7px]' : 'min-h-[46px] grid-cols-[20px_1fr_auto] py-2'
       } ${selected ? SEL_CLS : HOVER_CLS}`}
       style={{ '--rail-c': color }}
     >
@@ -478,7 +478,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
           {(working || restarting) && (
             <span title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')} className="host-spinner h-[10px] w-[10px] shrink-0" />
           )}
-          {statusWord && <StatusWord tone={tone}>{statusWord}</StatusWord>}
+          {statusWord && <StatusWord>{statusWord}</StatusWord>}
           {/* UX1: born from an agent — the row wears its face AND says whose job
               this is, so a work session never reads as "the agent itself". */}
           {agent && (
@@ -622,8 +622,9 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
               key={a.slug}
               data-rail-agent={a.slug}
               onClick={() => onOpenAgent?.(a.slug, 'home')}
-              title={t('agent.oneLiner')}
-              className={`group relative grid min-h-[42px] cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-[7px] ${surfaceOpen ? SEL_CLS : HOVER_CLS}`}
+              // The skills list left the row (detail); it lives in the tooltip now.
+              title={a.skills?.length ? a.skills.join(' · ') : t('agent.oneLiner')}
+              className={`group relative mb-[3px] grid min-h-[46px] cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${surfaceOpen ? SEL_CLS : HOVER_CLS}`}
               style={{ '--rail-c': a.color }}
             >
               <AgentAvatar agent={a} size={20} className="justify-self-center" />
@@ -636,16 +637,13 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
                   {working ? (
                     <>
                       <span title={t('rail.teamWorking')} className="host-spinner h-[10px] w-[10px] shrink-0" />
-                      <StatusWord tone="work">{t('rail.teamWorking')}</StatusWord>
+                      <StatusWord>{t('rail.teamWorking')}</StatusWord>
                     </>
                   ) : (
                     <span className="flex shrink-0 items-center gap-1.5" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
                       <span className="h-[7px] w-[7px] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
                       {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
                     </span>
-                  )}
-                  {a.skills?.length > 0 && (
-                    <Truncate as="span" text={`· ${a.skills.join(' · ')}`} className="min-w-0" />
                   )}
                 </span>
               </span>
@@ -870,17 +868,10 @@ function FolderRow({
         ? t('rail.oneSession', { n: count })
         : t('rail.nSessions', { n: count })
       : t('rail.emptyFolder');
-  const tone = isProject ? (ctlWorking || ctlRestarting ? 'work' : statusTone(controller.status)) : null;
   const time = isProject ? ctlTime : newest ? relTime(new Date(newest).toISOString()) : '';
   // Folded secondary text: the controller's description, or — only while the
   // fold hides the rows — the members' names, so nothing disappears behind it.
-  const descLine = isProject
-    ? controller.metadata?.description || ''
-    : collapsed && count
-      ? kids.map(label).join(', ')
-      : count
-        ? ''
-        : t('rail.dropToGroup');
+  const descLine = collapsed && count ? kids.map(label).join(', ') : !isProject && !count ? t('rail.dropToGroup') : '';
 
   // A project folder's header IS the controller session — surface its tldr as
   // the same hover tip a normal session row gets.
@@ -894,7 +885,7 @@ function FolderRow({
       onMouseLeave={tip.hide}
       data-rowbody
       onClick={() => (isProject ? onSelect(controller.id) : onToggle())}
-      className={`group relative grid min-h-[44px] cursor-pointer grid-cols-[12px_22px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${
+      className={`group relative mb-[3px] grid min-h-[46px] cursor-pointer grid-cols-[12px_22px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${
         ctlSelected ? SEL_CLS : HOVER_CLS
       } ${over?.zone === 'into' ? 'ring-1 ring-brand ring-inset' : ''}`}
       // RAIL2 — the group's colour lives only here, in the header (avatar
@@ -943,10 +934,10 @@ function FolderRow({
             className={`min-w-0 flex-1 text-left font-sans text-[14px] leading-tight [[dir=rtl]_&]:text-right ${isProject ? 'font-semibold text-fg' : 'font-medium text-fg2'}`}
           />
           <span className="flex shrink-0 items-center gap-1.5">
-            {/* The rollup chip below already says "N · ? · !" once something's
-                pending — showing dots too is redundant and starves the title
-                of width, so dots only appear when there's nothing to flag. */}
-            {!hot && <StateDots kids={kids} />}
+            {/* Per-kid dots exist to survive a fold — so they show only on a
+                collapsed folder, and not when the rollup chip already says
+                "N · ? · !" (redundant, and it starves the title of width). */}
+            {collapsed && !hot && <StateDots kids={kids} />}
             {ctlAttention ? (
               <NeedsYouPill title={t('rail.controllerNeedsInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
             ) : ctlWaiting.length > 0 ? (
@@ -977,7 +968,7 @@ function FolderRow({
                 .filter(Boolean)
                 .join(' · ')}
               className={`shrink-0 cursor-pointer rounded-full px-1.5 font-mono text-[10px] leading-4 ${
-                hot ? 'border border-brand bg-transparent font-semibold text-fg' : 'bg-fg/[.07] text-fgdim'
+                hot ? 'border border-brand bg-transparent font-semibold text-fg' : 'text-fgdim'
               }`}
             >
               {count}
@@ -994,7 +985,7 @@ function FolderRow({
             />
           )}
           {isProject && <span className="shrink-0">{t('rail.managerChip')} ·</span>}
-          {statusWord && <StatusWord tone={tone}>{statusWord}</StatusWord>}
+          {statusWord && <StatusWord>{statusWord}</StatusWord>}
           {descLine && <Truncate as="span" text={`· ${descLine}`} dir={dirOf(descLine)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
           {time && <span className={TIME_CLS}>{time}</span>}
         </span>
@@ -1976,7 +1967,7 @@ export default function Rail({
                     dir={dirOf(f.name)}
                     className="min-w-0 flex-1 text-left font-sans text-[14px] font-medium leading-tight text-fg2 [[dir=rtl]_&]:text-right"
                   />
-                  <span className="shrink-0 rounded-full bg-fg/[.07] px-1.5 font-mono text-[10px] leading-4 text-fgdim">
+                  <span className="shrink-0 px-1.5 font-mono text-[10px] leading-4 text-fgdim">
                     {(folderKids.get(f.id) || []).length}
                   </span>
                 </div>

@@ -48,9 +48,6 @@
   --color-border: var(--hb-border);
   --color-fg2: var(--hb-fg2);
   --color-sel: var(--hb-sel);
-  /* rail status tones (A1): the status word is coloured, nothing else is */
-  --color-ok: #5fbf72;
-  --color-warn: #ce8324;
   /* Latin renders in Inter (first with Latin glyphs); Hebrew has no Inter
      coverage so it falls through to Rubik Variable (Latin + Hebrew). Same idea
      for mono: the monospace faces lack Hebrew, so Hebrew picks up Rubik. */
