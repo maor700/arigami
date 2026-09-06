@@ -42,12 +42,7 @@ alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 health() { curl -fsS -m 2 "$URL/__api/config" >/dev/null 2>&1; }
 
 PLIST_LABEL="io.arigami.host"
-OLD_PLIST_LABEL="com.example.arigami"
 PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
-OLD_PLIST="$HOME/Library/LaunchAgents/$OLD_PLIST_LABEL.plist"
-# Pre-rename installs also had a companion login agent; `install`/`uninstall`
-# still unload it so nothing is left behind.
-LEGACY_LOGIN_PLIST="$HOME/Library/LaunchAgents/com.example.login.plist"
 launchd_loaded() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
 
 # ---- systemd (Linux) --------------------------------------------------------
@@ -90,7 +85,7 @@ claude_bin() {
 }
 manager_name() {
   if systemd_managed; then echo systemd
-  elif [ -f "$PLIST" ] || [ -f "$OLD_PLIST" ]; then echo launchd
+  elif [ -f "$PLIST" ]; then echo launchd
   elif command -v pm2 >/dev/null 2>&1 && pm2 jlist 2>/dev/null | grep -q '"name":"arigami"'; then echo pm2
   else echo none; fi
 }
@@ -453,8 +448,6 @@ install() {
     rl "no systemd on this Linux — run the host under your own supervisor (docs/DEPLOY.md)"; return 1
   fi
   mkdir -p "$HOME/Library/LaunchAgents" "$LOGDIR"
-  # Label moved to io.arigami.host: unload + drop the pre-rename agent first.
-  if [ -f "$OLD_PLIST" ]; then launchctl unload "$OLD_PLIST" 2>/dev/null || true; rm -f "$OLD_PLIST"; fi
   cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -486,13 +479,12 @@ EOF
   launchctl load "$PLIST"
   gl "✓ installed launchd agent $PLIST_LABEL (host :$PORT)"
 
-  if [ -f "$LEGACY_LOGIN_PLIST" ]; then launchctl unload "$LEGACY_LOGIN_PLIST" 2>/dev/null || true; rm -f "$LEGACY_LOGIN_PLIST"; fi
   dl "  auto-starts on login + respawns on crash. The Arigami.app just opens the window."
 }
 
 uninstall() {
   if [ "$(uname -s)" = Linux ]; then uninstall_systemd; return $?; fi
-  for p in "$PLIST" "$OLD_PLIST" "$LEGACY_LOGIN_PLIST"; do
+  for p in "$PLIST"; do
     launchctl unload "$p" 2>/dev/null || true
     [ -f "$p" ] && rm -f "$p"
   done
