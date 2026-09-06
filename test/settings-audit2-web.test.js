@@ -58,7 +58,7 @@ beforeAll(async () => {
     const body = u.includes('/composio/toolkits') ? TOOLKITS
       : u.includes('/setup/capabilities') ? CAPS
         : u.includes('/whatsapp/status') ? { status: 'connected', user: 'Dana' }
-          : u.includes('/remote') ? { available: true, loggedIn: true, serving: false, directUrl: 'http://box.ts.net:3099' }
+          : u.includes('/remote') ? { available: true, loggedIn: true, serving: false, directUrl: 'http://host.example.com:3099' }
             : u.includes('/agents') ? { agents: [{ slug: 'scout', name: 'Scout', emoji: '🔭' }] }
               : {};
     return { ok: true, status: 200, url: u, json: async () => body, text: async () => JSON.stringify(body) };
