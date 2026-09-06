@@ -1,0 +1,190 @@
+# Default values for arigami-control-plane. Value-by-value explanation in
+# README.md; the service's own env contract is control-plane/src/config.ts and
+# docs/CONTROL-PLANE.md.
+#
+# One release per cluster (or per org, if several orgs share a cluster). It is
+# NOT a tenant chart — it INSTALLS tenant charts.
+
+image:
+  # Built from control-plane/Dockerfile with the REPO ROOT as build context.
+  repository: ghcr.io/maor700/arigami-control-plane
+  # Pin a digest (sha256:…) for anything real; `latest` only for a scratch run.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# sqlite with one writer (control-plane/src/db.ts) and an in-process reconcile
+# loop that must not run twice — the same stateful-singleton rule as a tenant.
+# 1 is the only supported value; 0 to park the service without deleting it.
+replicaCount: 1
+
+# The image runs as uid/gid 1000 with no root pass at all (nothing chowns the
+# volume — fsGroup below does), so the pod satisfies the `restricted` Pod
+# Security Standard unchanged. Do not weaken this to match the tenant chart:
+# the tenant image has different constraints, this one does not.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false # helm/kubectl scratch space; all real state is on /data
+  capabilities:
+    drop: ["ALL"]
+
+# A provision runs `helm upgrade --install --wait` (default 120s) and a delete
+# waits on namespace teardown; give the process room to finish the in-flight
+# one rather than orphaning a half-created namespace.
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  # RWO only — single pod, single sqlite writer, and CP_BACKUP_DIR archives
+  # land here too. Size for the backups, not the DB: backupKeep archives per
+  # tenant, each a tar of that tenant's /data export.
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+  # "" = the cluster default class. Prefer a network-attached RWO class
+  # (GCE-PD, EBS/gp3, Ceph RBD) over anything node-local, for the same reason
+  # spelled out in the tenant chart's values.yaml.
+  storageClassName: ""
+
+service:
+  type: ClusterIP
+  port: 8090
+
+# The control-plane is the org's front door (sign-in lands here), so unlike a
+# tenant it usually wants a fixed host rather than a derived one.
+ingress:
+  enabled: true
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The OPPOSITE of the tenant chart: this service's whole job is to talk to
+  # the Kubernetes API, so it needs its token mounted.
+  automountServiceAccountToken: true
+
+# --- RBAC ---------------------------------------------------------------
+# The uncomfortable part, stated plainly. The control-plane creates tenant
+# NAMESPACES and helm-installs into them. Kubernetes RBAC cannot scope a rule
+# by object-name prefix, so "may manage namespaces called u-*" is not
+# expressible: the ClusterRole below is cluster-wide over the resource kinds
+# the tenant chart renders. Read README.md "Blast radius" before installing —
+# an operator who is not willing to grant this should run the control-plane in
+# its own cluster, or drop it and declare tenants in git instead.
+rbac:
+  create: true
+  # Also grant read on PersistentVolumes. Only needed for capacity accounting
+  # (docs/DEVOPS-HANDOFF.md: PV reclaim is async after a namespace delete, so
+  # free space has to be polled); nothing in the request path uses it.
+  persistentVolumeRead: true
+
+probes:
+  # control-plane/src/server.ts serves an unauthenticated {ok:true} here.
+  path: /__health
+  startup:
+    periodSeconds: 3
+    failureThreshold: 20
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# --- CP_* env contract (control-plane/src/config.ts) --------------------
+# Only non-secret values here. The OIDC client secret goes in `secretEnv` or,
+# for anything real, `existingSecret`.
+config:
+  # This service's own origin. Must equal the redirect_uri registered at the
+  # IdP. Leave empty to derive it from ingress.host + ingress.tls.
+  publicUrl: ""
+
+  # Set to "1" ONLY when a trusted proxy terminates TLS in front (the ingress
+  # controller does). It makes the service believe X-Forwarded-*.
+  trustProxy: "1"
+
+  # OIDC. The FIRST user ever to sign in becomes org-admin — provision the
+  # release and sign in yourself before publishing the URL.
+  oidcIssuer: ""
+  oidcClientId: ""
+  # Comma-separated. EMPTY MEANS NOBODY CAN SIGN UP (deliberate safe default);
+  # a literal "*" means open signup to anyone the IdP authenticates.
+  allowedEmailDomains: ""
+
+  # Tenants live at u-<id>.<orgDomain> — this needs a wildcard DNS record and
+  # a matching wildcard certificate, or per-tenant DNS from external-dns.
+  orgDomain: ""
+  orgName: ""
+  urlScheme: https
+
+  # The tenant image the control-plane provisions (NOT this chart's image).
+  tenantImageRepository: ghcr.io/maor700/arigami
+  tenantImageTag: latest
+
+  # Applied once on each tenant's first boot. KNOWN GAP (docs/DEVOPS-HANDOFF.md):
+  # the clone has no timeout, so an unreachable URL leaves the tenant pod stuck
+  # short of Ready with empty logs. Verify reachability FROM A POD, not from a laptop.
+  arigamiBundle: ""
+
+  # Ingress class handed to every tenant release. Must match this cluster's
+  # controller; before arigami-tenant 0.2.0 this value was read and silently
+  # dropped, so tenants inherited whatever the cluster's default controller was.
+  tenantIngressClass: ""
+
+  # Comma-separated namespaces the tenant NetworkPolicy accepts ingress from —
+  # the ingress controller's, plus an auth proxy's if the request path crosses
+  # one (e.g. "projectcontour,pomerium"). The tenant chart has no default and
+  # refuses to render without it, because the failure mode is a tenant that
+  # looks perfectly healthy and is unreachable.
+  tenantIngressNamespaces: ""
+
+  releasePrefix: "u-"
+  helmTimeoutSec: "300"
+  tenantPort: "3099"
+  reconcileSec: "60"
+  backupIntervalSec: "86400"
+  backupKeep: "7"
+  cookieDays: "30"
+
+# Extra plain env vars. [{name, value}]
+extraEnv: []
+
+# Secret material: CP_OIDC_CLIENT_SECRET, and anything else the service should
+# read from a Secret. Values set here are rendered into a chart-owned Secret —
+# convenient for a scratch install, but `helm --set` values also land in Helm's
+# own release Secret. For a real deployment create the Secret out-of-band
+# (external-secrets / sealed-secrets / SOPS) and point `existingSecret` at it.
+# Expected keys: CP_OIDC_CLIENT_SECRET
+secretEnv: {}
+existingSecret: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

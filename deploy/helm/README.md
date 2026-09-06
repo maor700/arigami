@@ -1,3 +1,10 @@
+# Charts
+
+| chart | what it deploys |
+|---|---|
+| [`arigami-tenant`](arigami-tenant/) | one Arigami instance for one tenant — this file |
+| [`arigami-control-plane`](arigami-control-plane/) | the service that provisions tenants (OIDC signup, reconcile, backups). Read its README's **Blast radius** section first: it needs cluster-scoped RBAC. |
+
 # `arigami-tenant` — one Helm release per tenant
 
 K8S-1 (`PRD-ARIGAMI-K8S.md`, design writeup in [docs/K8S.md](../../docs/K8S.md)):
@@ -36,6 +43,9 @@ storage class's reclaim policy if that's not what you want).
 | `tenant.id` | `demo` | short DNS-label id; derives the Ingress host (`u-<id>.<ingress.domain>`) and object names |
 | `image.repository` / `.tag` | `ghcr.io/maor700/arigami` / `latest` | pin a real release tag for anything beyond a smoke test |
 | `command` / `args` | `[]` | override the image's entrypoint/cmd — only used for the k3d stub proof, leave empty for the real image |
+| `networkPolicy.ingressNamespaces` | *(none — required)* | namespaces allowed to reach the tenant. **0.2.0 removed the `ingress-nginx` default**: it was wrong on every other cluster and failed silently (healthy pod, unreachable tenant), so rendering now fails instead. A list, because the path often crosses two namespaces (Envoy plus an auth proxy). The old singular `networkPolicy.ingressNamespace` still works. |
+| `networkPolicy.egress.mode` | `restricted` | `restricted` = DNS + public internet, RFC1918 and the cloud metadata endpoint carved out — so a session cannot reach unrelated in-cluster services. `open` restores the pre-0.2.0 posture. |
+| `podSecurityContext` | non-root, `fsGroup: 1000` | **0.2.0 default.** The pod no longer starts as root: `fsGroup` hands the volume over already owned, which is what lets it pass a `restricted` Pod Security Standard. `{}` restores the root-then-gosu start. |
 | `replicaCount` | `1` | **never raise this.** 1 = running, 0 = scaled-to-zero/dormant (K8S-3). Arigami is a stateful singleton (`server/state.ts`) |
 | `terminationGracePeriodSeconds` | `30` | see docs/K8S.md "Graceful shutdown, honestly" — today's SIGTERM handler exits in ~1s regardless, this is headroom not a guarantee |
 | `resources.requests` / `.limits` | `1CPU/2Gi` / `4CPU/8Gi` | measured on the live host 2026-09-01 (PRD §2): idle ≈150MB, one session ≈1-1.3GB, a heavy user 2.5-3.5GB. OOMKill mid-task is the #1 K8s-only failure mode (docs/DOCKER.md) |
