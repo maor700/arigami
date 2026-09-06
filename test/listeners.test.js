@@ -42,18 +42,18 @@ test('diffPr: fresh PR with no activity does not fire, watermark stays at 0', ()
 
 test('diffPr: a new review past the watermark fires and advances the cursor', () => {
   const d = diffPr(
-    snap({ reviews: [{ id: 50, state: 'CHANGES_REQUESTED', user: { login: 'reviewer' } }] }),
+    snap({ reviews: [{ id: 50, state: 'CHANGES_REQUESTED', user: { login: 'reviewer1' } }] }),
     { reviewId: 10 },
     { fireOn: FIRE }
   );
   expect(d.shouldFire).toBe(true);
   expect(d.nextWatermark.reviewId).toBe(50);
-  expect(d.summary).toContain('requested changes by @reviewer');
+  expect(d.summary).toContain('requested changes by @reviewer1');
 });
 
 test('diffPr: a review at-or-below the watermark does not re-fire', () => {
   const d = diffPr(
-    snap({ reviews: [{ id: 50, state: 'APPROVED', user: { login: 'reviewer' } }] }),
+    snap({ reviews: [{ id: 50, state: 'APPROVED', user: { login: 'reviewer1' } }] }),
     { reviewId: 50 },
     { fireOn: FIRE }
   );
@@ -72,13 +72,13 @@ test("diffPr: the author's own comment advances the watermark but never fires", 
 
 test('diffPr: fire_on filtering — approved-only ignores a plain comment review', () => {
   const d = diffPr(
-    snap({ reviews: [{ id: 5, state: 'COMMENTED', user: { login: 'reviewer' } }] }),
+    snap({ reviews: [{ id: 5, state: 'COMMENTED', user: { login: 'reviewer1' } }] }),
     {},
     { fireOn: ['approved'] }
   );
   expect(d.shouldFire).toBe(false);
   const d2 = diffPr(
-    snap({ reviews: [{ id: 6, state: 'APPROVED', user: { login: 'reviewer' } }] }),
+    snap({ reviews: [{ id: 6, state: 'APPROVED', user: { login: 'reviewer1' } }] }),
     {},
     { fireOn: ['approved'] }
   );
@@ -96,7 +96,7 @@ test('diffPr: merged/closed is terminal and always fires once', () => {
 test('diffPr: new inline review comments fire and combine in the count', () => {
   const d = diffPr(
     snap({
-      issueComments: [{ id: 3, user: { login: 'reviewer' } }],
+      issueComments: [{ id: 3, user: { login: 'reviewer1' } }],
       reviewComments: [{ id: 9, user: { login: 'reviewer2' } }],
     }),
     {},

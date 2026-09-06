@@ -10,7 +10,7 @@ const { diffLinearIssue, classifyLinearError } = await import('../server/listene
 const comment = (id, over = {}) => ({
   id: String(id),
   createdAt: over.createdAt || `2026-07-16T10:0${id}:00.000Z`,
-  user: over.user || { id: 'them', displayName: 'reviewer' },
+  user: over.user || { id: 'them', displayName: 'reviewer1' },
   body: over.body || 'hi',
 });
 const snap = (over = {}) => ({
@@ -51,7 +51,7 @@ test('diffLinearIssue: a new comment past the baseline fires and records the id'
     { fireOn: FIRE }
   );
   expect(d.shouldFire).toBe(true);
-  expect(d.summary).toContain('new comment by @reviewer');
+  expect(d.summary).toContain('new comment by @reviewer1');
   expect(d.nextWatermark.seenCommentIds).toEqual(['1']);
 });
 
@@ -149,6 +149,6 @@ test('diffLinearIssue: comment + status change combine in one summary', () => {
     { fireOn: ['new_comment', 'status_changed'] }
   );
   expect(d.shouldFire).toBe(true);
-  expect(d.summary).toContain('new comment by @reviewer');
+  expect(d.summary).toContain('new comment by @reviewer1');
   expect(d.summary).toContain('status changed');
 });
