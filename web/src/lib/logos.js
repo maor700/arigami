@@ -2,11 +2,29 @@
 // (folded-paper look) drawn in the accent color, with per-facet opacity to
 // suggest a fold catching the light. Used inline (Settings picker) and baked
 // into a favicon data-URI (prefs.applyBranding).
+//
+// 'star' is the brand mark (design/logo-final in the site repo — the folded
+// four-pointed star, eight facets). It is the default; the older presets stay
+// as opt-in alternatives.
 
 export const DEFAULT_ACCENT = '#12A594';
 
-// viewBox is 0 0 32 32 for every preset. `o` = fill-opacity of that facet.
+// viewBox defaults to 0 0 32 32; a preset may override it. `o` = fill-opacity of that facet.
 export const LOGOS = {
+  star: {
+    label: 'Star',
+    viewBox: '0 0 64 64',
+    paths: [
+      { d: 'M32 2 L32 32 L19.98 19.98 Z', o: 1 },
+      { d: 'M32 2 L44.02 19.98 L32 32 Z', o: 0.62 },
+      { d: 'M62 32 L32 32 L44.02 19.98 Z', o: 0.62 },
+      { d: 'M62 32 L44.02 44.02 L32 32 Z', o: 1 },
+      { d: 'M32 62 L32 32 L44.02 44.02 Z', o: 1 },
+      { d: 'M32 62 L19.98 44.02 L32 32 Z', o: 0.62 },
+      { d: 'M2 32 L32 32 L19.98 44.02 Z', o: 0.62 },
+      { d: 'M2 32 L19.98 19.98 L32 32 Z', o: 1 },
+    ],
+  },
   crane: {
     label: 'Crane',
     paths: [
@@ -42,7 +60,8 @@ export const LOGOS = {
   },
 };
 
-export const LOGO_IDS = ['crane', 'fold', 'plane', 'boat'];
+export const LOGO_IDS = ['star', 'crane', 'fold', 'plane', 'boat'];
+export const DEFAULT_LOGO = 'star';
 
 export function isLogoId(id) {
   return Object.prototype.hasOwnProperty.call(LOGOS, id);
@@ -51,12 +70,12 @@ export function isLogoId(id) {
 // Full <svg> string with the accent color baked in (no CSS vars) — used for the
 // browser-tab favicon, which can't read stylesheet variables.
 export function logoSvg(id, color) {
-  const preset = LOGOS[isLogoId(id) ? id : 'crane'];
+  const preset = LOGOS[isLogoId(id) ? id : DEFAULT_LOGO];
   const c = color || DEFAULT_ACCENT;
   const facets = preset.paths
     .map((p) => `<path d="${p.d}" fill="${c}" fill-opacity="${p.o}"/>`)
     .join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">${facets}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${preset.viewBox || '0 0 32 32'}">${facets}</svg>`;
 }
 
 export function logoDataUri(id, color) {

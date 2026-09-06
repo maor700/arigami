@@ -1,4 +1,4 @@
-// Arigami service worker — handles push notifications. v2
+// Arigami service worker — handles push notifications. v3 (folded-star icons)
 // Kept minimal: no cache/fetch interception (Vite handles assets).
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -12,7 +12,7 @@ self.addEventListener('push', (e) => {
   const options = {
     body,
     icon: '/__host/icon-192.png',
-    badge: '/__host/icon-192.png',
+    badge: '/__host/badge-96.png', // monochrome white mark — Android tints/masks the status-bar badge
     tag: data.tag || 'arigami',
     data: { url: data.url || '/__host/', sessionId: data.sessionId, eventId: data.eventId },
   };

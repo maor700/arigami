@@ -2,7 +2,7 @@
 // Global defaults (theme, terminal font/dir/theme, rail width) plus per-session
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
-import { logoDataUri, isLogoId, DEFAULT_ACCENT } from './logos.js';
+import { logoDataUri, isLogoId, DEFAULT_ACCENT, DEFAULT_LOGO } from './logos.js';
 import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from './langs.js';
 
 const KEY = 'arigami-prefs';
@@ -27,7 +27,7 @@ const DEFAULTS = {
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
-  logo: 'crane', // origami logo preset: 'crane' | 'fold' | 'plane' | 'boat'
+  logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
   language: 'auto', // 'auto' (browser) | 'en' | 'he' — drives strings + text direction
 };
 
@@ -142,7 +142,7 @@ function sanitize(raw) {
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
     usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
-    logo: isLogoId(p.logo) ? p.logo : 'crane',
+    logo: isLogoId(p.logo) ? p.logo : DEFAULT_LOGO,
     language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
   };
 }

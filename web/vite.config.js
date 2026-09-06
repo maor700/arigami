@@ -10,6 +10,9 @@ export default defineConfig({
   // requires a secure context + modern browser APIs, so this isn't a real
   // compatibility regression.
   build: { outDir: 'dist', target: 'es2022' },
+  // Dev server pre-bundles deps with esbuild at its own (older) default target;
+  // lift it to es2022 too or noVNC's top-level await breaks `vite dev`.
+  optimizeDeps: { esbuildOptions: { target: 'es2022' } },
   server: {
     proxy: {
       '/__api': 'http://localhost:3099',
