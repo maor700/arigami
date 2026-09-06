@@ -1,0 +1,23 @@
+arigami-control-plane {{ .Chart.Version }} installed as {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Origin:  {{ include "arigami-control-plane.publicUrl" . }}
+Tenants: {{ .Values.config.urlScheme }}://u-<id>.{{ .Values.config.orgDomain }}
+Tenant image: {{ .Values.config.tenantImageRepository }}:{{ .Values.config.tenantImageTag }}
+
+{{ if not .Values.config.oidcIssuer -}}
+WARNING: config.oidcIssuer is empty — /auth/login will fail and nobody can sign in.
+{{ end -}}
+{{ if not .Values.config.allowedEmailDomains -}}
+WARNING: config.allowedEmailDomains is empty — every sign-up will be rejected.
+{{ end -}}
+{{ if and (not .Values.existingSecret) (not .Values.secretEnv) -}}
+WARNING: no CP_OIDC_CLIENT_SECRET supplied (set existingSecret, or secretEnv for a scratch run).
+{{ end -}}
+{{ if eq .Values.image.tag "latest" -}}
+WARNING: image.tag is "latest" — pin a digest before this carries real tenants.
+{{ end }}
+The FIRST account to sign in becomes org-admin. Sign in yourself before you
+share the URL.
+
+  kubectl -n {{ .Release.Namespace }} logs sts/{{ include "arigami-control-plane.fullname" . }} -f
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "arigami-control-plane.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}

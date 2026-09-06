@@ -10,6 +10,7 @@ with the company's profile bundle. One tenant = one namespace = one pod.
 |---|---|---|
 | Tenant Helm chart | `deploy/helm/arigami-tenant/` (+ `README.md`) | `docs/K8S.md` |
 | Control-plane service (OIDC signup → provisions tenants; reconcile, upgrades w/ rollback, backup/restore, dormancy lever) | `control-plane/` | `docs/CONTROL-PLANE.md` |
+| Control-plane image + chart | `control-plane/Dockerfile`, `deploy/helm/arigami-control-plane/` | that chart's `README.md` |
 | Runtime image | `Dockerfile`, `docker-compose.yml` | `docs/DOCKER.md`, `docs/DEPLOY.md` |
 | Product plan + decisions | `/PRD-ARIGAMI-K8S.md`, `/SPEC-ARIGAMI-K8S3.md` (repo root of the workspace) | — |
 
@@ -26,7 +27,10 @@ summary, read the proofs.
 2. **RWO PVC on `/data`**; `/dev/shm` is a 1Gi memory `emptyDir` (Chrome needs it).
 3. **Per-tenant namespace** with `ResourceQuota`, `LimitRange`, and a
    `NetworkPolicy` that denies cross-tenant traffic (ingress only from the
-   ingress controller's namespace).
+   ingress controller's namespace(s); egress restricted to DNS and the public
+   internet, so a session cannot reach unrelated in-cluster services).
+   `networkPolicy.ingressNamespaces` has **no default** and must name whatever
+   fronts your cluster — get it wrong and the tenant is healthy but unreachable.
 4. **Ingress `u-<id>.<org-domain>`** + cert-manager TLS.
 5. **`ARIGAMI_BUNDLE=<git url>`** in the pod env applies the org's profile
    bundle on first boot (skills, memory seed, agents, cron). This is what makes
@@ -55,9 +59,20 @@ pairing code. Config knobs are all `CP_*` env vars, listed in
   (the `k8s3-pilot-values.yaml` overlay). Budget ~1–1.5 GB RAM per *active*
   tenant with Chrome open. A 3.8 GB box holds exactly one — see the envelope
   table in `docs/K8S.md`.
-- **Image registry.** `ghcr.io/maor700/arigami` is not public yet; build from
-  the `Dockerfile` (2.9 GB) and push to your registry; pin by digest
-  (`CP_IMAGE_TAG=sha256:…`), not `latest`.
+- **Image registry.** Two images, neither public yet: the tenant runtime
+  (`Dockerfile`, 2.9 GB) and the control-plane (`control-plane/Dockerfile`,
+  ~560 MB — note it builds with the REPO ROOT as context, because it bakes the
+  tenant chart). Build both, push to your registry, and pin by digest
+  (`image.tag=sha256:…`, `CP_IMAGE_TAG=sha256:…`), not `latest`.
+- **Cluster-scoped RBAC for the control-plane.** It creates tenant namespaces
+  and helm-installs into them, and Kubernetes RBAC cannot scope a rule by
+  object-name prefix — so the ClusterRole in
+  `deploy/helm/arigami-control-plane/templates/rbac.yaml` is cluster-wide over
+  the kinds the tenant chart renders. Cluster-wide `secrets` + `pods/exec` is
+  effectively cluster-admin. That chart's README states the blast radius in a
+  table and lists the two ways to avoid granting it (own cluster, or declare
+  tenants in git and drop the control-plane). **Decide this before anything
+  else** — it is the gate, not the YAML.
 - **IdP.** Any OIDC provider (Okta, Entra, Google). Set
   `CP_OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`, `ALLOWED_EMAIL_DOMAINS`.
 - **Secrets.** Handoff secrets ride in via `--set`, which Helm also stores in
@@ -76,7 +91,11 @@ pairing code. Config knobs are all `CP_*` env vars, listed in
   for scheduled tasks) is designed but not built (K8S-5). The lever
   (`suspend`/`resume` = scale 0/1) exists and works.
 - `CP_ARIGAMI_BUNDLE_REF` is accepted, not wired.
-- No managed-cloud run yet; only k3d on a single node.
+- No managed-cloud run yet; only k3d on a single node. The control-plane image
+  itself is verified only to the extent of: builds, boots as uid 1000, serves
+  `/__health`, creates its sqlite state on the volume, and runs `helm` against
+  the baked chart from inside the container. It has NOT yet provisioned a
+  tenant from inside a pod.
 
 ## Quick start (what the pilot proof actually ran)
 

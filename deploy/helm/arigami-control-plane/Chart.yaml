@@ -1,0 +1,22 @@
+apiVersion: v2
+name: arigami-control-plane
+description: >-
+  The Arigami control-plane: OIDC sign-up that provisions one arigami-tenant
+  release per user, reconciles digests, takes backups and hands users into
+  their own cockpit. A stateful singleton (sqlite on one RWO PVC) plus the
+  cluster-scoped RBAC it needs to create tenant namespaces. See
+  docs/CONTROL-PLANE.md and docs/DEVOPS-HANDOFF.md.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/maor700/arigami
+sources:
+  - https://github.com/maor700/arigami
+keywords:
+  - arigami
+  - control-plane
+  - multi-tenant
+  - provisioner
+maintainers:
+  - name: arigami
+    url: https://github.com/maor700/arigami

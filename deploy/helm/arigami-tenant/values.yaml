@@ -36,9 +36,30 @@ fullnameOverride: ""
 # `runAsNonRoot: true` here would break that on every fresh PVC, so this chart
 # leaves the pod's user to the image's own entrypoint rather than fighting it.
 # Both are still free to tighten for a non-Arigami (stub/test) image.
-podSecurityContext: {}
+# The image's entrypoint supports BOTH a root start (it chowns the fresh PVC
+# and drops to uid 1000 via gosu) and a direct non-root start (docker/
+# entrypoint.sh "prelude"). Kubernetes should always use the second: fsGroup
+# makes the kubelet hand the volume over already owned, so no root pass is
+# needed and the pod satisfies the `restricted` Pod Security Standard — which
+# a hardened cluster enforces and a root-starting pod simply cannot pass.
+#
+# Set podSecurityContext to {} to go back to the root-then-gosu start (a
+# cluster with no fsGroup support, or a stub image in CI).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  # The volume holds git worktrees; a recursive chown on every mount would add
+  # seconds to each restart once a tenant has real repos on disk. OnRootMismatch
+  # chowns only when the top-level owner is wrong, i.e. on first boot.
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
 containerSecurityContext:
   allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
 
 # Arigami is a STATEFUL SINGLETON (server/state.ts: the listeners scheduler,
 # session registry and git worktrees all live on the one PVC) — never run two
@@ -183,8 +204,41 @@ limitRange:
 # open egress here does not undo the isolation.
 networkPolicy:
   enabled: true
-  ingressNamespace: ingress-nginx
+  # Namespaces allowed to reach this tenant. THERE IS NO PORTABLE DEFAULT: it
+  # must name whatever fronts this cluster (ingress-nginx, projectcontour,
+  # traefik/kube-system on k3d…), and it is a LIST because the request path
+  # often crosses two — an Envoy namespace plus an auth proxy like Pomerium.
+  # Getting it wrong fails silently and confusingly: every object is healthy
+  # and the tenant is simply unreachable, because the policy drops the
+  # controller's connection. Rendering fails if this ends up empty.
+  # No default ON PURPOSE (changed in 0.2.0): the previous `ingress-nginx`
+  # default was wrong on every cluster that does not run ingress-nginx, and it
+  # failed in the worst possible way — silently. Rendering now fails instead.
+  ingressNamespaces: []
+  # Deprecated single-namespace form. Still honoured (appended to the list
+  # above) so existing values files keep working.
+  ingressNamespace: ""
   ingressNamespaceLabelKey: kubernetes.io/metadata.name
+
+  egress:
+    # restricted = DNS + public internet, no in-cluster reachability.
+    # open       = the pre-0.2.0 behaviour, everything allowed.
+    mode: restricted
+    # Namespace of the cluster DNS service, matched on ingressNamespaceLabelKey.
+    dnsNamespace: kube-system
+    # Subtracted from 0.0.0.0/0 in restricted mode. The /8, /12 and /16 are
+    # RFC1918 (pod, Service and node networks live in there); 169.254.169.254/32
+    # is the cloud metadata endpoint, which on GCP and AWS hands out node
+    # credentials to anything that can reach it.
+    exceptCidrs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.169.254/32
+    # Appended verbatim in restricted mode — the escape hatch for a tenant that
+    # legitimately needs one in-cluster destination (a shared registry mirror,
+    # an internal proxy). Raw NetworkPolicy egress rules.
+    extraRules: []
 
 # Health: server/index.ts serves an unauthenticated `{ok:true}` at /__health
 # (server/auth.ts isPublicPath) — NOT /__api/health, which requires a session

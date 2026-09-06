@@ -1,12 +1,24 @@
 {{- if .Values.networkPolicy.enabled -}}
 # Deny cross-tenant traffic (PRD-ARIGAMI-K8S.md §2). Every tenant namespace
 # gets one of these: ingress is allowed only from pods in the SAME namespace
-# and from the ingress controller's namespace — a pod in another tenant's
-# namespace gets nothing, even though the cluster network is flat. Egress is
-# left open (git clone, the Anthropic API, WhatsApp, OIDC discovery…); that
-# does not undo the isolation because every OTHER tenant's ingress policy
-# refuses the connection on the receiving end regardless of what this pod
-# tries to send.
+# and from the ingress controller's namespace(s) — a pod in another tenant's
+# namespace gets nothing, even though the cluster network is flat.
+#
+# EGRESS has two modes (networkPolicy.egress.mode):
+#
+#   open        the original posture. Everything is reachable, including every
+#               in-cluster Service. Cross-tenant isolation still holds, because
+#               the OTHER tenant's ingress rule refuses the connection at the
+#               receiving end — but nothing stops this pod from reaching a
+#               shared cluster service that has no policy of its own.
+#
+#   restricted  (default) DNS to the cluster resolver, then the public internet
+#               with the RFC1918 ranges and the cloud metadata endpoint carved
+#               out. Git, the Anthropic API, OIDC discovery and package
+#               registries keep working; the rest of the cluster does not.
+#               This is the posture to hand a security review — an agent
+#               running with bypassPermissions and a real GitHub token should
+#               not be able to reach an unrelated internal service by name.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,10 +33,36 @@ spec:
   ingress:
     - from:
         - podSelector: {}
+    {{- range (include "arigami-tenant.ingressNamespaces" . | fromJsonArray) }}
     - from:
         - namespaceSelector:
             matchLabels:
-              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.ingressNamespace }}
+              {{ $.Values.networkPolicy.ingressNamespaceLabelKey }}: {{ . | quote }}
+    {{- end }}
   egress:
+    {{- if eq .Values.networkPolicy.egress.mode "open" }}
     - {}
+    {{- else }}
+    # Cluster DNS. Without this nothing resolves and every other rule is moot.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.egress.dnsNamespace | quote }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The public internet, minus everything private. `except` entries must be
+    # inside the cidr they subtract from, so this is one 0.0.0.0/0 rule rather
+    # than a list of public ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.egress.exceptCidrs | nindent 14 }}
+    {{- with .Values.networkPolicy.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
 {{- end -}}

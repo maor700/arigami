@@ -1,0 +1,88 @@
+{{- if .Values.rbac.create -}}
+# The control-plane creates a NAMESPACE per tenant and helm-installs the
+# arigami-tenant chart into it (control-plane/src/provisioner.ts), then reads
+# pods/logs, execs for backups and scales StatefulSets for suspend/resume.
+#
+# Why this is a ClusterRole and not a set of RoleBindings: the namespaces do
+# not exist until the control-plane creates them, and Kubernetes RBAC has no
+# name-prefix matching — "may manage namespaces named u-*" cannot be
+# expressed. Every rule below is therefore cluster-wide over its resource
+# kinds. See README.md "Blast radius" for what that actually permits and the
+# two ways to avoid granting it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "arigami-control-plane.fullname" . }}
+  labels:
+    {{- include "arigami-control-plane.labels" . | nindent 4 }}
+rules:
+  # Tenant lifecycle: `helm --create-namespace` on provision, `kubectl delete
+  # namespace` on delete.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # Everything the arigami-tenant chart renders, plus Helm's own release
+  # Secrets (Helm stores release state as a Secret in the release namespace).
+  - apiGroups: [""]
+    resources:
+      - "pods"
+      - "services"
+      - "secrets"
+      - "serviceaccounts"
+      - "configmaps"
+      - "persistentvolumeclaims"
+      - "resourcequotas"
+      - "limitranges"
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Read-only: progress.ts surfaces why a tenant is not Ready yet.
+  - apiGroups: [""]
+    resources: ["events", "pods/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # `kubectl exec` (support access, the in-pod backup export) and `kubectl cp`,
+  # which is itself exec + tar. This is the single most powerful verb in the
+  # list: it is a shell inside any tenant pod.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # suspend/resume = scale 0/1; `helm --wait` and `rollout status` read status.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale", "statefulsets/status"]
+    verbs: ["get", "update", "patch"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  {{- if .Values.rbac.persistentVolumeRead }}
+  # Capacity accounting only: PV reclaim is async after a namespace delete, so
+  # free space has to be polled rather than inferred (docs/DEVOPS-HANDOFF.md).
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "arigami-control-plane.fullname" . }}
+  labels:
+    {{- include "arigami-control-plane.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "arigami-control-plane.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "arigami-control-plane.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end -}}

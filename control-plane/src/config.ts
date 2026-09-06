@@ -47,6 +47,10 @@ export interface Config {
   helmExtraValuesFile: string; // optional extra -f layered on every install (e.g. a k3d/stub overlay)
   helmTimeoutSec: number;
   ingressClassName: string;
+  // Namespaces the tenant NetworkPolicy accepts ingress from. The chart has no
+  // default and refuses to render without at least one (arigami-tenant 0.2.0),
+  // because getting it wrong makes a healthy-looking tenant unreachable.
+  ingressNamespaces: string[];
 
   // K8S-3 — reconcile / upgrades / backups
   tenantPort: number; // the port the tenant host listens on in-pod (chart service.port)
@@ -83,6 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     helmExtraValuesFile: env.CP_HELM_EXTRA_VALUES || '',
     helmTimeoutSec: Number(env.CP_HELM_TIMEOUT_SEC || 120),
     ingressClassName: env.CP_INGRESS_CLASS || '',
+    ingressNamespaces: csv(env.CP_INGRESS_NAMESPACES),
 
     tenantPort: Number(env.CP_TENANT_PORT || 3099),
     reconcileSec: Number(env.CP_RECONCILE_SEC ?? 60),

@@ -76,6 +76,15 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
     '--set-string', `env.ARIGAMI_BUNDLE=${cfg.arigamiBundle}`,
     '--wait', '--timeout', `${cfg.helmTimeoutSec}s`,
   ];
+  // CP_INGRESS_CLASS was read into config and never passed to helm until now,
+  // so every tenant Ingress rendered without an ingressClassName and fell to
+  // whatever controller the cluster treats as default — the wrong one, on any
+  // cluster running more than one.
+  if (cfg.ingressClassName) args.push('--set-string', `ingress.className=${cfg.ingressClassName}`);
+  // The chart (0.2.0+) has no default here and fails to render without it.
+  cfg.ingressNamespaces.forEach((ns, i) => {
+    args.push('--set-string', `networkPolicy.ingressNamespaces[${i}]=${ns}`);
+  });
   // K8S-3: the per-tenant handoff secret rides in as chart `secretEnv`, so the
   // chart renders it into the tenant's own Secret and the pod reads it as an
   // env var — this is what lets a user who signed in here land in their

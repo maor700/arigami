@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "arigami-control-plane.fullname" . }}
+  labels:
+    {{- include "arigami-control-plane.labels" . | nindent 4 }}
+spec:
+  # replicas:1 on a StatefulSet already guarantees "never two pods per
+  # ordinal", which is what the single sqlite writer and the single reconcile
+  # loop need. RollingUpdate is the only meaningful strategy here (OnDelete
+  # would make every upgrade a manual pod delete).
+  updateStrategy:
+    type: RollingUpdate
+  serviceName: {{ include "arigami-control-plane.fullname" . }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "arigami-control-plane.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "arigami-control-plane.labels" . | nindent 8 }}
+      {{- if and (not .Values.existingSecret) .Values.secretEnv }}
+      # Roll the pod when the chart-owned Secret changes. With `existingSecret`
+      # there is deliberately no such annotation — an out-of-band secret is
+      # rotated by whatever manages it, and external-secrets rotation should
+      # not be tied to a Helm revision.
+      annotations:
+        checksum/secret: {{ toYaml .Values.secretEnv | sha256sum }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "arigami-control-plane.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: {{ include "arigami-control-plane.imageRef" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: CP_PORT
+              value: {{ .Values.service.port | quote }}
+            - name: CP_PUBLIC_URL
+              value: {{ include "arigami-control-plane.publicUrl" . | quote }}
+            - name: CP_TRUST_PROXY
+              value: {{ .Values.config.trustProxy | quote }}
+            # Both on the PVC: sqlite state and the backup archives.
+            - name: CP_DB_PATH
+              value: /data/control-plane.db
+            - name: CP_BACKUP_DIR
+              value: /data/backups
+            # The tenant chart baked into the image at build time.
+            - name: CP_HELM_CHART_PATH
+              value: /charts/arigami-tenant
+            - name: CP_OIDC_ISSUER
+              value: {{ .Values.config.oidcIssuer | quote }}
+            - name: CP_OIDC_CLIENT_ID
+              value: {{ .Values.config.oidcClientId | quote }}
+            # Empty = nobody can sign up. That is the safe default, not a bug.
+            - name: ALLOWED_EMAIL_DOMAINS
+              value: {{ .Values.config.allowedEmailDomains | quote }}
+            - name: CP_ORG_DOMAIN
+              value: {{ required "config.orgDomain is required — tenants are addressed at u-<id>.<orgDomain>" .Values.config.orgDomain | quote }}
+            - name: CP_ORG_NAME
+              value: {{ .Values.config.orgName | quote }}
+            - name: CP_URL_SCHEME
+              value: {{ .Values.config.urlScheme | quote }}
+            - name: CP_IMAGE_REPOSITORY
+              value: {{ .Values.config.tenantImageRepository | quote }}
+            - name: CP_IMAGE_TAG
+              value: {{ .Values.config.tenantImageTag | quote }}
+            - name: CP_ARIGAMI_BUNDLE
+              value: {{ .Values.config.arigamiBundle | quote }}
+            - name: CP_INGRESS_CLASS
+              value: {{ .Values.config.tenantIngressClass | quote }}
+            - name: CP_INGRESS_NAMESPACES
+              value: {{ required "config.tenantIngressNamespaces is required — the tenant NetworkPolicy has no default and every provision would fail at render time" .Values.config.tenantIngressNamespaces | quote }}
+            - name: CP_RELEASE_PREFIX
+              value: {{ .Values.config.releasePrefix | quote }}
+            - name: CP_HELM_TIMEOUT_SEC
+              value: {{ .Values.config.helmTimeoutSec | quote }}
+            - name: CP_TENANT_PORT
+              value: {{ .Values.config.tenantPort | quote }}
+            - name: CP_RECONCILE_SEC
+              value: {{ .Values.config.reconcileSec | quote }}
+            - name: CP_BACKUP_INTERVAL_SEC
+              value: {{ .Values.config.backupIntervalSec | quote }}
+            - name: CP_BACKUP_KEEP
+              value: {{ .Values.config.backupKeep | quote }}
+            - name: CP_COOKIE_DAYS
+              value: {{ .Values.config.cookieDays | quote }}
+            {{- range .Values.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- if or .Values.secretEnv .Values.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ include "arigami-control-plane.secretName" . }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+      {{- if not .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "arigami-control-plane.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- if .Values.persistence.storageClassName }}
+        storageClassName: {{ .Values.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

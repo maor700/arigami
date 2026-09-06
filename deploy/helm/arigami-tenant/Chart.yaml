@@ -6,7 +6,7 @@ description: >-
   NetworkPolicy) and a per-tenant Ingress host. See docs/K8S.md and
   PRD-ARIGAMI-K8S.md (wave K8S-1) for the design this chart implements.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "latest"
 home: https://github.com/maor700/arigami
 sources:

@@ -90,3 +90,27 @@ at pull time.
 {{- include "arigami-tenant.fullname" . -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Namespaces whose pods may reach this tenant. Returns a JSON array so the
+NetworkPolicy can range over it.
+
+`networkPolicy.ingressNamespaces` is the current key. The older singular
+`networkPolicy.ingressNamespace` still works and is appended, so an existing
+values file keeps rendering the same policy — this used to be a single
+namespace, which is wrong wherever the request path crosses two of them (an
+Envoy/Contour namespace plus an auth proxy such as Pomerium, for instance).
+*/}}
+{{- define "arigami-tenant.ingressNamespaces" -}}
+{{- $out := list -}}
+{{- range (.Values.networkPolicy.ingressNamespaces | default list) -}}
+{{- $out = append $out . -}}
+{{- end -}}
+{{- if .Values.networkPolicy.ingressNamespace -}}
+{{- $out = append $out .Values.networkPolicy.ingressNamespace -}}
+{{- end -}}
+{{- if not $out -}}
+{{- fail "networkPolicy.ingressNamespaces must list at least one namespace (the ingress controller's) — with none, the policy makes the tenant unreachable" -}}
+{{- end -}}
+{{- $out | uniq | toJson -}}
+{{- end -}}
