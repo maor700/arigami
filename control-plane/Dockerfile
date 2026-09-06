@@ -85,6 +85,14 @@ ENV ARIGAMI_CP_IMAGE=${ARIGAMI_CP_IMAGE} \
 COPY control-plane/docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
+# Own /data in the image layer. Two reasons: a one-off `docker run <image>
+# helm version` must not trip the entrypoint's writability guard, and a fresh
+# named docker volume inherits the mount point's ownership — so `docker run -v
+# data:/data` just works instead of needing a manual chown. Neither weakens
+# the guard where it matters: a host bind-mount keeps the host's ownership,
+# and under Kubernetes the PVC's owner is decided by the chart's fsGroup.
+RUN install -d -o 1000 -g 1000 /data
+
 # uid/gid 1000, shipped by the base image. The chart pins runAsUser to the same
 # number and sets fsGroup so the kubelet hands over the PVC already owned.
 USER bun
