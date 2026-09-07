@@ -24,7 +24,7 @@ export const strings = {
   'host.ver.noBase.title': 'העדכון חסום — להיסטוריה המקומית ול-origin אין בסיס משותף (fast-forward בלתי אפשרי).',
   'host.ver.noBase.how': 'צריך יישור חד-פעמי של הריפו; האפשרויות והמספרים ב-docs/GIT-REALIGN.md.',
   'host.ver.notFF': 'העדכון חסום — לליבה יש {n} קומיטים שאינם ב-upstream; משיכה fast-forward בלתי אפשרית. ראה docs/GIT-REALIGN.md.',
-  'host.ver.ready.title': 'העדכון מוכן: v{from} ← v{to}',
+  'host.ver.ready.title': 'העדכון מוכן: v{from} → v{to}',
   'host.ver.ready.body': 'הקוד החדש על הדיסק, אבל עדיין רץ הישן. ההפעלה מחדש תתבצע רק כשתאשר — הסשנים ממשיכים מאיפה שהיו.',
   'host.ver.ready.busy': '{n} סשנים עובדים עכשיו — "כשפנוי" ימתין להם.',
   'host.ver.restartNow': 'הפעל מחדש עכשיו',
