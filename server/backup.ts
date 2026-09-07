@@ -48,7 +48,10 @@ export const TMP_DIR = path.join(ARIGAMI_DIR, 'tmp');
  * shim, chrome-base/ is rebuilt from the saved logins), huge caches
  * (chrome-sessions/), logs, our own scratch space and previous restores.
  */
-export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-plugin', 'tmp', 'backups', 'node_modules'];
+// EXT: `ext-plugin/` joins the list for the same reason as `user-plugin/` — it
+// is GENERATED from the installed extensions' docs on every load, so restoring
+// a stale copy would only shadow the real thing.
+export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-plugin', 'ext-plugin', 'tmp', 'backups', 'node_modules'];
 // A2: an agent's persistent Chrome profile is a cache like chrome-base (cookies, huge) — never exported.
 // M1 (RESEARCH-ARIGAMI-NATIVE-MCP §4.5): Claude Code's `.credentials.json` holds
 // the `mcpOAuth` grants in PLAINTEXT and they are bound to this machine's
@@ -59,7 +62,10 @@ export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-
 // mcp-connections.json) DO travel — they are names and URLs, no secrets, and the
 // capability check re-reports "needs authentication" on the new machine.
 export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json'];
-const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser', ...CREDENTIAL_GLOBS];
+// EXT: the user repo ($ARIGAMI_DIR/user) IS backed up — it holds the
+// extensions, the skills and the mcp catalog — but never its installed
+// dependencies, which `bun install` rebuilds.
+const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser', './user/node_modules', './user/extensions/*/node_modules', ...CREDENTIAL_GLOBS];
 /** Root-level only (F4 #7): `mcp-logs.txt`, `wa-logs.txt` … are logs that don't live under logs/. */
 export const ROOT_EXCLUDE_GLOBS = ['./*-logs.txt'];
 

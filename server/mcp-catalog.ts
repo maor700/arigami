@@ -144,12 +144,49 @@ export const MCP_CATALOG: McpServerSpec[] = [
   },
 ];
 
-const BY_SLUG = new Map(MCP_CATALOG.map((s) => [s.slug, s]));
+// EXT — the catalog is LAYERED, the same way skills.ts merges shipped ∪ user:
+// core rows here, plus validated rows from $ARIGAMI_DIR/user/mcp-catalog.json.
+// A user row can add a service (its capability id, its `domains` allowlist and
+// its setup card) with no PR to the core; it can never SHADOW a core row, so a
+// hand-edited file cannot silently repoint `linear` at another URL.
+// Cached for a second and refreshed on an extensions reload — every consumer
+// (mcpSpec, capabilities, the cockpit list) reads through here.
+let userRows: McpServerSpec[] = [];
+let userRowsAt = 0;
+const USER_TTL_MS = 1_000;
 
-export const mcpSpec = (slug: string): McpServerSpec | null => BY_SLUG.get(String(slug || '').toLowerCase()) ?? null;
-export const isMcpSlug = (slug: unknown): slug is string => typeof slug === 'string' && BY_SLUG.has(slug.toLowerCase());
+function readUserRows(): McpServerSpec[] {
+  if (Date.now() - userRowsAt < USER_TTL_MS) return userRows;
+  userRowsAt = Date.now();
+  try {
+    const ext = require('./extensions.js') as typeof import('./extensions.js');
+    const core = new Set(MCP_CATALOG.map((s) => s.slug));
+    userRows = ext
+      .readUserMcpCatalog()
+      .filter((r) => !core.has(r.slug))
+      .map((r) => ({ slug: r.slug, title: r.title, url: r.url, auth: r.auth, domains: r.domains, docs: r.docs || '', note: r.note }));
+  } catch {
+    userRows = [];
+  }
+  return userRows;
+}
+
+/** Drop the cache (called by the extensions loader after a reload). */
+export function refreshUserCatalog(): void {
+  userRowsAt = 0;
+  readUserRows();
+}
+
+/** Core rows + the user's own rows. This is what every consumer should read. */
+export const mcpCatalog = (): McpServerSpec[] => [...MCP_CATALOG, ...readUserRows()];
+
+export const mcpSpec = (slug: string): McpServerSpec | null => {
+  const s = String(slug || '').toLowerCase();
+  return mcpCatalog().find((row) => row.slug === s) ?? null;
+};
+export const isMcpSlug = (slug: unknown): slug is string => typeof slug === 'string' && !!mcpSpec(slug);
 /** Services a human can actually finish connecting from the cockpit today. */
-export const connectableMcp = (): McpServerSpec[] => MCP_CATALOG.filter((s) => s.auth !== 'oauth-byo-client');
+export const connectableMcp = (): McpServerSpec[] => mcpCatalog().filter((s) => s.auth !== 'oauth-byo-client');
 
 /**
  * The OAuth grant / MCP server name for a service and its owner.

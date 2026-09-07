@@ -28,7 +28,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SKILLS_DIR = path.join(ROOT, 'skills');
 /** User/bundle skills — the only root the app ever writes to. */
 export const USER_SKILLS_DIR = path.join(cfg.configDir!, 'skills');
-export type SkillSource = 'shipped' | 'user';
+// EXT: a third, READ-ONLY source — docs contributed by an installed extension,
+// generated into $ARIGAMI_DIR/ext-plugin/skills/<name>/SKILL.md by the loader.
+// They are listed so the human can see what a session sees; PUT refuses them
+// (edit the extension, not the generated file).
+export type SkillSource = 'shipped' | 'user' | 'extension';
 const GRAPH_CACHE = path.join(cfg.configDir!, 'skills-graph.json');
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -119,6 +123,8 @@ export interface SkillSummary {
   name: string;
   description: string;
   argumentHint: string;
+  /** EXT: the extension that contributed this skill (source === 'extension') */
+  ext?: string;
   /** A4: optional `slash:` frontmatter — the composer offers the skill as /<slash> (e.g. `slash: plan`). */
   slash: string;
   files: { name: string; size: number }[];
@@ -180,11 +186,31 @@ export function listSkills() {
     }
   })();
   return {
-    skills: dirs.map(readSkillMeta),
+    skills: [...dirs.map(readSkillMeta), ...extensionSkills()],
     surfaces: SURFACES,
     backbone: BACKBONE.filter((e) => present.has(e.to)),
     lib: hasLib,
   };
+}
+
+/** EXT: read-only entries for the docs the installed extensions contribute. */
+export function extensionSkills(): SkillSummary[] {
+  try {
+    // Late require: skills.ts is imported by claude.js, which the loader imports back.
+    const ext = require('./extensions.js') as typeof import('./extensions.js');
+    return ext.extPluginSkills().map((s) => ({
+      name: s.name,
+      description: s.description,
+      argumentHint: '',
+      slash: '',
+      files: [],
+      source: 'extension' as SkillSource,
+      overridesShipped: false,
+      ext: s.ext,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // GET /__api/skills/:name — raw SKILL.md + read-only supporting file contents.
@@ -236,6 +262,12 @@ export function writeSkill(
   }
   fs.writeFileSync(path.join(dest, 'SKILL.md'), content);
   ensureUserPlugin();
+  // EXT: $ARIGAMI_DIR/skills lives inside the user's git repo now (it is a
+  // symlink into user/skills) — so an edited skill gets versioned like the rest
+  // of the user's code. Debounced and best-effort: never block a save on git.
+  try {
+    (require('./extensions.js') as typeof import('./extensions.js')).autoCommit(`skill ${name}`);
+  } catch { /* loader not present (tests) */ }
   return { ok: true, skill: readSkillMeta(name) };
 }
 

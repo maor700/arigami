@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { which, HOME } from './lib/platform.js';
-import { MCP_CATALOG, connectableMcp, mcpSpec, grantName, grantToolPattern } from './mcp-catalog.js';
+import { mcpCatalog, connectableMcp, mcpSpec, grantName, grantToolPattern } from './mcp-catalog.js';
 import * as mcpConn from './mcp-connections.js';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
@@ -121,6 +121,8 @@ export const STATIC_CAPABILITY_IDS = ['identity', 'claude', 'git', 'whatsapp', '
 // Composio's toolkit is the Business Cloud API, ours is the local bridge.
 export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'] as const;
 // M1: native remote-MCP services listed even before anyone asked for them.
+export const knownMcpServices = (): string[] => connectableMcp().map((s) => s.slug);
+/** @deprecated snapshot taken at import; call knownMcpServices() for the live list. */
 export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
 const CAP_ID_RE = /^(identity|claude|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
@@ -722,7 +724,9 @@ export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: 
   const toolkits = [...new Set([...KNOWN_COMPOSIO_TOOLKITS, ...seenToolkits])].map((t) => composioCapability(t, p, owner));
   // M1: native cards come first — they are the recommended path for anything
   // the vendors host themselves; Composio is the fallback broker below them.
-  const native = MCP_CATALOG.map((sv) => mcpCapability(sv.slug, p, owner));
+  // EXT: the MERGED catalog — core rows plus the user's own mcp-catalog.json,
+  // so a service the user declared gets a capability card like any other.
+  const native = mcpCatalog().map((sv) => mcpCapability(sv.slug, p, owner));
   return [...staticCapabilities(p, owner), ...repos, ...native, ...toolkits];
 }
 

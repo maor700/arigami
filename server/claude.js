@@ -37,12 +37,23 @@ import {
 } from './lib/ladder-replay.js';
 import { runClaudeOneShot } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
+import * as extensions from './extensions.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
 // first apply) needs no restart for sessions to see user skills.
 function userPluginDir() {
   return ensureUserPlugin();
+}
+
+// EXT: $ARIGAMI_DIR/ext-plugin — the third plugin dir, generated from the
+// installed extensions' docs[]. '' when nothing contributed a skill.
+function extPluginDir() {
+  try {
+    return extensions.extPluginHasSkills() ? extensions.EXT_PLUGIN_DIR : '';
+  } catch {
+    return '';
+  }
 }
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
@@ -106,16 +117,28 @@ const MCP_CONFIG = JSON.stringify({ mcpServers: HOST_SERVERS });
 // WhatsApp bridge, the Composio gateway, anything they added by hand) from every
 // agent session. Isolation between agents comes from the local scope above;
 // A3's allowlist is what takes tools away on purpose.
-function mcpConfigFor(s) {
+// EXT: every ENABLED extension that declares tools[] also contributes an MCP
+// server (`ext-<name>`) here, so its tools show up as `mcp__ext-<name>__*` in
+// every session. A3's allowlist controls them through the `ext:<name>` family;
+// a host with no extensions produces the exact same config it did before.
+export function mcpConfigFor(s) {
   const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  if (!slug) return MCP_CONFIG;
-  let own = {};
+  let ext = {};
   try {
-    own = injectedServersFor(`agent:${slug}`);
+    ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global');
   } catch {
-    own = {}; // a missing/foreign connections.json must never stop a session
+    ext = {}; // a broken extension must never stop a session from starting
   }
-  return Object.keys(own).length ? JSON.stringify({ mcpServers: { ...HOST_SERVERS, ...own } }) : MCP_CONFIG;
+  let own = {};
+  if (slug) {
+    try {
+      own = injectedServersFor(`agent:${slug}`);
+    } catch {
+      own = {}; // a missing/foreign connections.json must never stop a session
+    }
+  }
+  if (!Object.keys(ext).length && !Object.keys(own).length) return MCP_CONFIG;
+  return JSON.stringify({ mcpServers: { ...HOST_SERVERS, ...ext, ...own } });
 }
 
 // ---- background shells (agent `run_in_background` bashes) -------------------
@@ -430,6 +453,14 @@ function policyArgs(s) {
   } catch {
     /* no connections.json — the hook still enforces */
   }
+  // EXT: the extension servers this spawn injects. An allowlist that does not
+  // name `ext:<name>` denies the whole server at layer 1, exactly like any
+  // other external MCP server the agent was not granted.
+  try {
+    for (const name of Object.keys(extensions.extServersFor(slug ? `agent:${slug}` : 'global'))) servers.add(name);
+  } catch {
+    /* loader not ready — the hook still enforces */
+  }
   const strict = strictMcpFor(policy);
   const denied = disallowedToolsFor(policy, [...servers]);
   const hook = `bun "${path.join(ROOT, 'mcp', 'policy-hook.js')}"`;
@@ -462,6 +493,10 @@ function spawnProc(s, resume) {
     // (/arigami-user:<skill>) — see skills.ts ensureUserPlugin().
     '--plugin-dir', ROOT,
     '--plugin-dir', userPluginDir(),
+    // EXT: the generated ext-plugin ($ARIGAMI_DIR/ext-plugin) carries the docs
+    // every installed extension contributes, as /arigami-ext:<skill>. Passed
+    // only when it actually has a skill — an empty plugin dir is noise.
+    ...(extPluginDir() ? ['--plugin-dir', extPluginDir()] : []),
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
     // A3: host-enforced tool/domain allowlist (agent-policy.ts) — real CLI
     // denials + a PreToolUse hook that asks the host before every call.
@@ -1783,8 +1818,20 @@ export function identityReminder(hint) {
     'and hand the desktop over to the human (request_screen) for logins. ' +
     'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
     (hint ? `\n${hint}\n` : '') +
+    // EXT: the third channel by which a session learns an extension exists
+    // ("that there is") — the skill description says WHEN, the tool schemas say
+    // HOW. Empty string when nothing is installed, so nothing changes.
+    (extSummary() ? `\n${extSummary()}\n` : '') +
     '</system-reminder>\n\n'
   );
+}
+
+function extSummary() {
+  try {
+    return extensions.summaryLine();
+  } catch {
+    return '';
+  }
 }
 
 // The "connectable" line is probed in the background (capability checks are

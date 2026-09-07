@@ -665,6 +665,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
     writeState(st);
     ensureExtPlugin();
     refreshFamilies();
+    refreshUserCatalog();
     summaryCache = buildSummaryLine();
     loaded = true;
     try { broadcast({ type: 'extensions-updated', extensions: listExtensions() }); } catch {}
@@ -768,6 +769,15 @@ export function extFamilies(): Record<string, string[]> {
     out[`ext:${e.name}`] = [`mcp__ext-${e.name}__*`, `mcp__ext-${e.name}-*`];
   }
   return out;
+}
+
+/** The user's own mcp-catalog.json rows are cached in mcp-catalog.ts — re-read them. */
+function refreshUserCatalog(): void {
+  try {
+    (require('./mcp-catalog.js') as typeof import('./mcp-catalog.js')).refreshUserCatalog();
+  } catch {
+    /* catalog module not loaded in this process */
+  }
 }
 
 function refreshFamilies(): void {
