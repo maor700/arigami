@@ -43,7 +43,7 @@ function fakeInstance(dir: string) {
   w('uploads/a.txt', 'upload');
   w('triggers.json', JSON.stringify({
     triggers: [
-      { id: 'c1', type: 'cron', name: '[old-bundle] morning', prompt: 'say hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, sessionMode: 'existing:s1', deliver: { push: true, whatsapp: '9725550000@s.whatsapp.net', master: 's1' }, createdAt: 'x', lastRun: null, runs: [] },
+      { id: 'c1', type: 'cron', name: '[old-bundle] morning', prompt: 'say hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, sessionMode: 'existing:s1', deliver: { push: true, whatsapp: '972500000000@s.whatsapp.net', master: 's1' }, createdAt: 'x', lastRun: null, runs: [] },
       { id: 'l1', type: 'linear-filter', name: 'not cron' },
     ],
   }));

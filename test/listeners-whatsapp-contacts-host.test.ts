@@ -24,10 +24,10 @@ let dir: string;
 let base: string;
 let dbPath: string;
 
-const PHONE = '972501234567@s.whatsapp.net';
-const LID = '73100494372867@lid';
-const GROUP = '120363412808577334@g.us';
-const OTHER = '972509999999@s.whatsapp.net';
+const PHONE = '972500000000@s.whatsapp.net';
+const LID = '1234567890@lid';
+const GROUP = '120363000000000000@g.us';
+const OTHER = '972500000001@s.whatsapp.net';
 
 const freePort = (): Promise<number> =>
   new Promise((resolve) => {
@@ -74,8 +74,8 @@ beforeAll(async () => {
     CREATE TABLE contacts (jid TEXT PRIMARY KEY, name TEXT, notify TEXT, phone_number TEXT);
     INSERT INTO chats VALUES ('${LID}', NULL, '2026-09-01T10:00:00.000Z');
     INSERT INTO chats VALUES ('${OTHER}', NULL, '2026-09-01T10:00:00.000Z');
-    INSERT INTO chats VALUES ('${GROUP}', 'משפחת אלימלך', '2026-09-01T10:00:00.000Z');
-    INSERT INTO contacts VALUES ('${LID}', 'אבא', 'Abba', '972501234567');
+    INSERT INTO chats VALUES ('${GROUP}', 'צוות הפיתוח', '2026-09-01T10:00:00.000Z');
+    INSERT INTO contacts VALUES ('${LID}', 'דנה', 'Dana', '972500000000');
     INSERT INTO contacts VALUES ('${OTHER}', 'שכן', NULL, NULL);
     INSERT INTO messages VALUES ('m0', '${LID}', '${LID}', 'old', '2026-09-01T10:00:00.000Z', 0);
   `);
@@ -121,19 +121,19 @@ test('register with contacts[] → resolved JIDs + names round-trip through POST
   sid = (await api('POST', '/__api/sessions', { title: 'audit-wafilt1', cwd: path.join(dir, 'workspace') })).json.id;
   expect(sid).toBeTruthy();
   const r = await api('POST', `/__api/sessions/${sid}/listeners`, {
-    type: 'whatsapp', contacts: ['+972 50-123 4567', LID, 'אלימלך'], interval_sec: 3600,
+    type: 'whatsapp', contacts: ['+972 50-000 0000', LID, 'הפיתוח'], interval_sec: 3600,
   });
   expect(r.status).toBe(201);
   const l = r.json;
   expect(l.type).toBe('whatsapp');
-  expect(l.label).toBe('WhatsApp: אבא, אבא, משפחת אלימלך');
+  expect(l.label).toBe('WhatsApp: דנה, דנה, צוות הפיתוח');
   const cs = l.params.contacts;
   expect(cs).toHaveLength(3);
-  expect(cs[0].raw).toBe('+972 50-123 4567');
+  expect(cs[0].raw).toBe('+972 50-000 0000');
   expect([...cs[0].jids].sort()).toEqual([PHONE, LID].sort());
-  expect(cs[0].name).toBe('אבא');
-  expect(cs[1]).toEqual({ raw: LID, jids: [LID], name: 'אבא' });
-  expect(cs[2]).toEqual({ raw: 'אלימלך', jids: [GROUP], name: 'משפחת אלימלך' });
+  expect(cs[0].name).toBe('דנה');
+  expect(cs[1]).toEqual({ raw: LID, jids: [LID], name: 'דנה' });
+  expect(cs[2]).toEqual({ raw: 'הפיתוח', jids: [GROUP], name: 'צוות הפיתוח' });
   expect(subs()).toEqual([GROUP]);
 
   const g = await api('GET', `/__api/sessions/${sid}/listeners/${l.id}`);
@@ -150,19 +150,19 @@ test('register with contacts[] → resolved JIDs + names round-trip through POST
 });
 
 test('legacy single `contact` string → one-element contacts array; group_jid + contacts coexist', async () => {
-  const r = await api('POST', `/__api/sessions/${sid}/listeners`, { type: 'whatsapp', contact: '+972501234567', group_jid: GROUP, interval_sec: 3600 });
+  const r = await api('POST', `/__api/sessions/${sid}/listeners`, { type: 'whatsapp', contact: '+972500000000', group_jid: GROUP, interval_sec: 3600 });
   expect(r.status).toBe(201);
   expect(r.json.params.contacts).toHaveLength(1);
   expect(r.json.params.contacts[0].jids).toContain(LID);
   expect(r.json.params.groupJid).toBe(GROUP);
-  expect(r.json.label).toBe(`WhatsApp: אבא in ${GROUP}`);
+  expect(r.json.label).toBe(`WhatsApp: דנה in ${GROUP}`);
   expect(subs()).toEqual([GROUP]);
   await api('DELETE', `/__api/sessions/${sid}/listeners/${r.json.id}`);
   expect(subs()).toEqual([]);
 });
 
 test('bad shapes are 400: string contacts, non-string entries, unresolvable name; empty array = no filter', async () => {
-  const s1 = await api('POST', `/__api/sessions/${sid}/listeners`, { type: 'whatsapp', contacts: '+972501234567' });
+  const s1 = await api('POST', `/__api/sessions/${sid}/listeners`, { type: 'whatsapp', contacts: '+972500000000' });
   expect(s1.status).toBe(400);
   expect(String(s1.json.error || s1.json.raw)).toMatch(/one-element array/);
   const s2 = await api('POST', `/__api/sessions/${sid}/listeners`, { type: 'whatsapp', contacts: [123] });

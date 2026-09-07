@@ -36,7 +36,7 @@ test('B32: resolvePlan — per-session file first; the shared file only when att
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B32-'));
   const me = { id: 'sess_me', folderId: 'fld_me' };
   // the audit's situation: another controller's plan in the shared cwd
-  fs.writeFileSync(path.join(dir, 'ORCHESTRATION.json'), JSON.stringify({ project: 'לאפיין את דנה', folderId: 'fld_sreFlms5wUc', nodes: [{ id: 'scan-whatsapp', session: 'sess_znWTFL3pnlA' }] }));
+  fs.writeFileSync(path.join(dir, 'ORCHESTRATION.json'), JSON.stringify({ project: 'לאפיין את המשתמש', folderId: 'fld_sreFlms5wUc', nodes: [{ id: 'scan-whatsapp', session: 'sess_znWTFL3pnlA' }] }));
   const r1 = resolvePlan(dir, me, { childIds: new Set(['sess_kid']), sharedCwd: true });
   expect(r1.plan).toBeNull();
   expect(r1.planError).toMatch(/belongs to another controller/);

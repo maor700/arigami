@@ -35,9 +35,9 @@ test('sensitive: ID numbers (checksum), payment cards and home addresses are det
   expect(detectSensitive('רחוב ראשי 12 תל אביב')?.kind).toBe('address');
   expect(detectSensitive('Lives at 12 Main Street')?.kind).toBe('address');
   // Not sensitive — the useful kind of identifier a memory is for.
-  expect(detectSensitive('וואטסאפ JID עצמי של דנה: 40012000100000@lid')).toBeNull();
-  expect(detectSensitive('Riverside WhatsApp 050-1234567, office 073-7654321')).toBeNull();
-  expect(detectSensitive('phone +972501234567, mail dana@example.com')).toBeNull();
+  expect(detectSensitive('וואטסאפ JID עצמי של דנה: 1234567890@lid')).toBeNull();
+  expect(detectSensitive('Riverside WhatsApp 050-0000000, office 073-0000000')).toBeNull();
+  expect(detectSensitive('phone +972500000000, mail dana@example.com')).toBeNull();
   expect(detectSensitive('deposited 88,000₪ in TradeStation on 5/2026')).toBeNull();
   expect(detectSensitive('address book has 300 contacts')).toBeNull();
   // A random 9-digit run with a bad check digit is not an ID.
@@ -52,7 +52,7 @@ test('repo documentation is recognised: source paths, repo roots, branches, API 
   expect(isRepoDoc('the queue is at /__api/waiting because pending was taken')).toBe(true);
   expect(isRepoDoc('User prefers Hebrew replies, about two sentences')).toBe(false);
   expect(isRepoDoc('Dana coaches a youth futsal team at City United')).toBe(false);
-  expect(isRepoDoc('Riverside WhatsApp 050-1234567')).toBe(false);
+  expect(isRepoDoc('Riverside WhatsApp 050-0000000')).toBe(false);
 });
 
 test('near-duplicate restatements cluster together; unrelated facts stay apart; the longest phrasing represents', () => {
@@ -60,8 +60,8 @@ test('near-duplicate restatements cluster together; unrelated facts stay apart; 
     { id: 'a', content: 'User is Dana Levi (dana@example.com); maintains a second-brain repo', target: 'user', sessionId: 's1' },
     { id: 'b', content: 'The user is Dana Levi, dana@example.com, and keeps a second brain vault', target: 'user', sessionId: 's2' },
     { id: 'c', content: 'Dana Levi (dana@example.com) is the user', target: 'user', sessionId: 's3' },
-    { id: 'd', content: 'Riverside sports registrar Robin: 073-7654323', target: 'memory', sessionId: 's1' },
-    { id: 'e', content: 'Riverside registrar Robin can be reached at 073-7654323', target: 'memory', sessionId: 's4' },
+    { id: 'd', content: 'Riverside sports registrar Robin: 073-0000001', target: 'memory', sessionId: 's1' },
+    { id: 'e', content: 'Riverside registrar Robin can be reached at 073-0000001', target: 'memory', sessionId: 's4' },
     { id: 'f', content: 'Dana leads Shacharit at the Oak Street hall on Shabbat 8:00', target: 'memory', sessionId: 's1' },
   ];
   expect(isNearDuplicate(items[0].content, items[1].content)).toBe(true);
@@ -81,14 +81,14 @@ test('near-duplicate restatements cluster together; unrelated facts stay apart; 
 
 test('prepass: sensitive → dropped, already in USER.md/MEMORY.md → dropped (folded ×N), repo docs → dropped, the rest clustered with a related-line hint', () => {
   const userMd = '- User is Dana Levi (dana@example.com), parent of two\n';
-  const memoryMd = '- Riverside (Springfield leisure company) WhatsApp contact: 050-1234567; office 073-7654321\n- Standing policy: agents never type passwords/2FA themselves\n';
+  const memoryMd = '- Riverside (Springfield leisure company) WhatsApp contact: 050-0000000; office 073-0000000\n- Standing policy: agents never type passwords/2FA themselves\n';
   const items = [
     ...Array.from({ length: 5 }, (_, i) => ({ id: `k${i}`, content: 'User is Dana Levi (dana@example.com), parent of two', target: 'user', sessionId: `s${i}` })),
     { id: 'sens', content: 'User ID 123456782, address Main St 12', target: 'user' },
     { id: 'doc1', content: 'Arigami project repo lives at /opt/arigami; feature work is done in worktrees', target: 'memory' },
     { id: 'doc2', content: 'Arigami repo: feature work in worktrees under /home/arigami/repos/arigami-wt-<task>', target: 'memory' },
-    { id: 'new1', content: 'Riverside sports registrar Robin: 073-7654323 (extension of the office line)', target: 'memory', sessionId: 's1' },
-    { id: 'new2', content: 'Riverside registrar Robin is at 073-7654323', target: 'memory', sessionId: 's2' },
+    { id: 'new1', content: 'Riverside sports registrar Robin: 073-0000001 (extension of the office line)', target: 'memory', sessionId: 's1' },
+    { id: 'new2', content: 'Riverside registrar Robin is at 073-0000001', target: 'memory', sessionId: 's2' },
     { id: 'new3', content: 'Dana coaches a youth futsal team at City United that won the national championship', target: 'user', sessionId: 's3' },
     { id: 'cred', content: 'password: hunter2hunter2hunter2', target: 'memory' },
   ];
@@ -204,11 +204,11 @@ test('shouldRun: ≥minBatch OR maxAgeHours since the last run (whichever first)
 
 const SEED =
   "const m=await import('./server/memory.ts');" +
-  "m.writeMemory({target:'memory',action:'add',content:'Riverside (Springfield leisure company) WhatsApp contact: 050-1234567; office 073-7654321',source:'seed'});" +
+  "m.writeMemory({target:'memory',action:'add',content:'Riverside (Springfield leisure company) WhatsApp contact: 050-0000000; office 073-0000000',source:'seed'});" +
   "m.writeMemory({target:'user',action:'add',content:'Dana Levi (dana@example.com) is the user; parent of two',source:'seed'});" +
   "const P=(facts,sid)=>m.proposeFacts(facts,{source:'learn1-test',sessionId:sid});" +
   "P(['User is Dana Levi (dana@example.com)'],'s1');P(['The user is Dana Levi, dana@example.com'],'s2');P(['Dana Levi (dana@example.com) is the user'],'s3');" +
-  "P(['Riverside sports registrar Robin: 073-7654323'],'s1');P(['Riverside registrar Robin can be reached at 073-7654323'],'s4');" +
+  "P(['Riverside sports registrar Robin: 073-0000001'],'s1');P(['Riverside registrar Robin can be reached at 073-0000001'],'s4');" +
   "P(['Dana coaches a youth futsal team at City United'],'s2');P(['Dana coaches the City United youth futsal team'],'s5');" +
   "P(['Arigami project repo lives at /opt/arigami; feature work is done in worktrees'],'s1');" +
   "P(['Standing policy: agents never type passwords or 2FA codes themselves — request_screen instead'],'s3');";
@@ -220,7 +220,7 @@ const STUB_LLM =
   'const key=(re)=>Object.keys(blocks).find(k=>re.test(blocks[k]));' +
   'const anat=key(/Robin/),futsal=key(/futsal/),policy=key(/passwords/);' +
   'return JSON.stringify({decisions:[' +
-  "{key:anat,action:'MERGE',target:'memory',content:'Riverside (Springfield leisure company) WhatsApp contact: 050-1234567; office 073-7654321; sports registrar Robin 073-7654323',merge_into:'Riverside (Springfield leisure company) WhatsApp contact: 050-1234567; office 073-7654321',reason:'מדייק שורה קיימת'}," +
+  "{key:anat,action:'MERGE',target:'memory',content:'Riverside (Springfield leisure company) WhatsApp contact: 050-0000000; office 073-0000000; sports registrar Robin 073-0000001',merge_into:'Riverside (Springfield leisure company) WhatsApp contact: 050-0000000; office 073-0000000',reason:'מדייק שורה קיימת'}," +
   "{key:futsal,action:'ENTER',target:'user',content:'Dana coaches the City United youth futsal team',reason:'עובדה חדשה, 2 סשנים'}," +
   "{key:policy,action:'DROP',target:'memory',content:'',reason:'כלל כללי מדי'}" +
   ']});};';
@@ -269,7 +269,7 @@ test('auto mode: one stub-LLM run applies through the approve gate — entered, 
   expect(byAction('DROP').find((i) => i.reasonKey === 'already-known').count).toBe(3);
   // The files: futsal entered in USER.md, Robin merged into the Riverside line (one line, not two).
   expect(o.userMd).toContain('City United youth futsal team');
-  expect(o.memoryMd).toContain('sports registrar Robin 073-7654323');
+  expect(o.memoryMd).toContain('sports registrar Robin 073-0000001');
   expect(o.memoryMd.match(/Riverside/g).length).toBe(1);
   // Nothing left pending; every row has a decision with the run as decider.
   expect(o.after.pending).toBe(0);
@@ -389,7 +389,7 @@ test('proposeFacts refuses sensitive personal data (ID numbers, cards, addresses
   const dir = tmp();
   const r = runInChild(
     "const m=await import('./server/memory.ts');" +
-    "const made=m.proposeFacts(['User ID 123456782','card 4111111111111111','גר ברחוב ראשי 12 נתיבות','Dana likes strong coffee'],{source:'learn1-test'});" +
+    "const made=m.proposeFacts(['User ID 123456782','card 4111111111111111','גר ברחוב ראשי 12 תל אביב','Dana likes strong coffee'],{source:'learn1-test'});" +
     "const w=m.writeMemory({target:'user',action:'add',content:'ת.ז. של דנה: 123456782',source:'agent'});" +
     "const addr=m.writeMemory({target:'user',action:'add',content:'גר בהדקל 51, כפר אביב',source:'agent'});" +
     'emit({made:made.map(f=>f.content),w:{ok:w.ok,error:w.error},addr:addr.ok});',

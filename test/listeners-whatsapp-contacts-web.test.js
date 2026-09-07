@@ -31,21 +31,21 @@ beforeAll(async () => {
   ({ ListenerChips, listenerContacts } = await import(web('components/SessionView.jsx')));
 });
 
-const LID = '73100494372867@lid';
-const PHONE = '972501234567@s.whatsapp.net';
-const GROUP = '120363412808577334@g.us';
+const LID = '1234567890@lid';
+const PHONE = '972500000000@s.whatsapp.net';
+const GROUP = '120363000000000000@g.us';
 
 test('chip shows the resolved contact names and its tooltip lists raw → JIDs', () => {
   store.getState().listeners.push({
     id: 'lsn_wa1', sessionId: 's1', type: 'whatsapp', status: 'watching', firedCount: 0, intervalSec: 10,
-    label: 'WhatsApp: אבא, משפחת אלימלך',
+    label: 'WhatsApp: דנה, צוות הפיתוח',
     params: { dbPath: '/x', groupJid: null, contacts: [
-      { raw: '+972501234567', jids: [PHONE, LID], name: 'אבא' },
-      { raw: 'אלימלך', jids: [GROUP], name: 'משפחת אלימלך' },
+      { raw: '+972500000000', jids: [PHONE, LID], name: 'דנה' },
+      { raw: 'הפיתוח', jids: [GROUP], name: 'צוות הפיתוח' },
     ] },
   });
   const html = render(h(ListenerChips, { session: { id: 's1' } }));
-  expect(html).toContain('WhatsApp: אבא, משפחת אלימלך');
+  expect(html).toContain('WhatsApp: דנה, צוות הפיתוח');
   expect(html).toContain('contacts:');
   expect(html).toContain(LID);
   expect(html).toContain(GROUP);
@@ -54,10 +54,10 @@ test('chip shows the resolved contact names and its tooltip lists raw → JIDs',
 });
 
 test('listenerContacts: array as stored; legacy contact/from → one-element list; none → []', () => {
-  expect(listenerContacts({ params: { contacts: [{ raw: LID, jids: [LID], name: 'אבא' }] } })).toEqual([{ raw: LID, jids: [LID], name: 'אבא' }]);
+  expect(listenerContacts({ params: { contacts: [{ raw: LID, jids: [LID], name: 'דנה' }] } })).toEqual([{ raw: LID, jids: [LID], name: 'דנה' }]);
   expect(listenerContacts({ params: { contacts: [LID] } })).toEqual([{ raw: LID, jids: [LID], name: null }]);
   expect(listenerContacts({ params: { contact: LID } })).toEqual([{ raw: LID, jids: [LID], name: null }]);
-  expect(listenerContacts({ params: { from: ' +972501234567 ' } })).toEqual([{ raw: '+972501234567', jids: ['+972501234567'], name: null }]);
+  expect(listenerContacts({ params: { from: ' +972500000000 ' } })).toEqual([{ raw: '+972500000000', jids: ['+972500000000'], name: null }]);
   expect(listenerContacts({ params: { groupJid: GROUP } })).toEqual([]);
   expect(listenerContacts({ params: { contacts: [] } })).toEqual([]);
   expect(listenerContacts({})).toEqual([]);
