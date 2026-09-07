@@ -4,7 +4,8 @@
 #  - package.json / web/package.json must not be "private": true
 #  - both must declare "license": "Apache-2.0"
 #  - NOTICE, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md must exist
-#  - no employer/internal/personal references (test/no-internal-refs.test.js)
+#  - no employer/internal references (test/no-internal-refs.test.js)
+#  - no personal data (scripts/check-personal-data.sh)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
@@ -29,8 +30,9 @@ done
 
 if command -v bun >/dev/null 2>&1; then
   bun test "$ROOT/test/no-internal-refs.test.js" >/dev/null 2>&1 || err "internal references found — run: bun test test/no-internal-refs.test.js"
+  bun test "$ROOT/test/no-personal-data.test.js" >/dev/null 2>&1 || err "personal data found — run: bun test test/no-personal-data.test.js"
 else
-  err "bun not found; cannot run test/no-internal-refs.test.js"
+  err "bun not found; cannot run the leak-gate tests"
 fi
 
 if [ "$fail" -ne 0 ]; then

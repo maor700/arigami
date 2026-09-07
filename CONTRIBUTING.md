@@ -51,6 +51,7 @@ Useful commands:
 | `bun run typecheck` (`npx tsc --noEmit`) | TypeScript check |
 | `bun run build:web` | production UI build |
 | `scripts/check-public-readiness.sh` | licensing / metadata sanity |
+| `scripts/check-personal-data.sh` | no personal data in tracked files |
 
 See `docs/DOCKER.md` for the container flow and `docs/ONBOARDING.md` for
 first-run setup.
@@ -63,11 +64,40 @@ first-run setup.
 2. Keep changes focused. Add or update tests under `test/` for behaviour
    changes, and update `docs/SPEC.md` when you change a REST/MCP contract.
 3. Before opening a PR make sure `bun test test/` and the typecheck pass
-   (or don't regress), and that `scripts/check-public-readiness.sh` is
-   green.
+   (or don't regress), and that `scripts/check-public-readiness.sh` and
+   `scripts/check-personal-data.sh` are green.
 4. Open a PR against `master`. CI runs tests and the readiness check.
 5. Never commit secrets, hostnames, IPs, tokens or personal data. `.env*`
-   files and anything under your data dir are ignored on purpose.
+   files, `*-logs.txt` and anything under your data dir are ignored on
+   purpose.
+
+## The personal-data gate
+
+The repository must contain **nothing personal** — no real names, phone
+numbers, mailboxes, WhatsApp JIDs, addresses or employer identifiers.
+Examples and test fixtures use neutral placeholders: `Dana Levi`,
+`dana@example.com`, `+972500000000`, `1234567890@lid`.
+
+Two checks enforce this, and both scan tracked files only:
+
+- `test/no-personal-data.test.js` — runs in the suite.
+- `scripts/check-personal-data.sh` — the same rules in shell. Install it as
+  a pre-commit hook:
+
+      ln -s ../../scripts/check-personal-data.sh .git/hooks/pre-commit
+
+Both match on *shape* (Israeli phone numbers, WhatsApp JIDs, real mailboxes)
+and, additionally, against an **optional** denylist of literal terms at
+`$ARIGAMI_DIR/private-terms.txt` (default `~/.arigami/private-terms.txt`,
+mode 0600, one term per line, `#` for comments). That file is deliberately
+outside the repo: writing the names down in a guard would put back exactly
+what the guard exists to remove. When it is absent, only the shape rules
+run. Denylist findings print `file:line` only, never the matched term.
+
+Placeholder numbers are recognised by being zeroed — after the operator
+prefix everything is `0` except at most two trailing digits
+(`+972500000000`, `050-0000000`, `073-0000001`). Use that form for any new
+example.
 
 ## Reporting bugs and proposing features
 
