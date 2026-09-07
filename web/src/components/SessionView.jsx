@@ -8,7 +8,7 @@ import { errText } from '../lib/errors.js';
 import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
-import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
+import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
 import { setDictationSink, appendDictation } from '../lib/voice.js';
@@ -1444,45 +1444,11 @@ function ChatFooter({ session }) {
 
 /* ---------- url / content tabs --------------------------------------------- */
 
-function ComparePill({ on, onToggle, label }) {
-  const t = useT();
-  const lbl = label || t('rail.compareToProd');
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-ink py-0.5 pe-2.5 ps-1.5 ${
-        on ? 'bg-chip' : 'bg-panel'
-      }`}
-    >
-      <span
-        className="relative h-[13px] w-[22px] rounded-full transition-colors"
-        style={{ background: on ? '#F9D312' : '#d6d6d6' }}
-      >
-        <span
-          className="absolute top-px h-[11px] w-[11px] rounded-full bg-white transition-[left]"
-          style={{
-            left: on ? 10 : 1,
-            border: `1px solid ${on ? '#2a2a2a' : '#999'}`,
-          }}
-        />
-      </span>
-      <span className={`text-[10.5px] ${on ? 'text-[#4a3f12]' : 'text-fgdim'}`}>
-        {lbl}
-      </span>
-    </button>
-  );
-}
-
 function UrlTab({ tab, active, session }) {
   const t = useT();
-  // A session can open a tab already split in comparison mode (compare.open via
-  // the open_tab MCP tool); otherwise it starts on the live view with the toggle.
-  const compareProxied = !!tab.url && !tab.url.startsWith('/') && !tab.url.startsWith(HOST_ORIGIN);
-  const [compareOn, setCompareOn] = useState(!!tab.compare?.open && compareProxied);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  const { config, extensions } = useStore();
+  const { extensions } = useStore();
 
   // EXT — an extension tab is a url tab the host stamped with `ext`/`extTab`
   // (server/state.ts addTab). It gets the artifact sandbox (opaque origin: no
@@ -1556,18 +1522,6 @@ function UrlTab({ tab, active, session }) {
       bridgeRef.current = null;
     };
   }, [extName, session?.id, tab.id]);
-  // The server can flip compare mode on later via update_tab (tab-updated WS):
-  // sync the local toggle when the server's compare.open changes, mirroring how
-  // the active-tab override works. Local user toggling still wins between server
-  // changes because we only react to the server value flipping.
-  const serverCompareOpen = !!tab.compare?.open && compareProxied;
-  const prevServerCompare = useRef(serverCompareOpen);
-  useEffect(() => {
-    if (serverCompareOpen !== prevServerCompare.current) {
-      prevServerCompare.current = serverCompareOpen;
-      setCompareOn(serverCompareOpen);
-    }
-  }, [serverCompareOpen]);
   // Command bus → reload the live tab (voice: "reload the page"). Only the
   // ACTIVE tab responds — otherwise every hidden URL tab in the session would
   // remount its iframe and lose its navigation/scroll/login state. Bumping the
@@ -1578,14 +1532,6 @@ function UrlTab({ tab, active, session }) {
     window.addEventListener('host:reload-tab', onReload);
     return () => window.removeEventListener('host:reload-tab', onReload);
   }, [active]);
-  // Every proxied URL tab gets the compare toggle. Baseline priority:
-  // explicit tab.compare.url → storybookCompareUrl for Storybook-port targets
-  // (the latest published build, e.g. Chromatic main) → prod at the same path
-  // (the /__compare page's own default).
-  const proxied = !!tab.url && !tab.url.startsWith('/') && !tab.url.startsWith(HOST_ORIGIN);
-  const isStorybook = /:60\d\d(\/|$)/.test(tab.url || '');
-  const compareTo =
-    tab.compare?.url || (isStorybook && config?.storybookCompareUrl) || null;
   // A url tab with no url is malformed (nothing to show) — render a calm empty
   // state rather than an iframe, so it can never spin the host-proxy bootstrap.
   if (!tab.url) {
@@ -1596,11 +1542,7 @@ function UrlTab({ tab, active, session }) {
       </div>
     );
   }
-  const src = compareOn
-    ? `${HOST_ORIGIN}/__compare?a=${encodeURIComponent(tab.url || '')}${
-        compareTo ? `&b=${encodeURIComponent(compareTo)}` : ''
-      }`
-    : tabSrc(tab.url);
+  const src = tabSrc(tab.url);
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5">
@@ -1626,13 +1568,6 @@ function UrlTab({ tab, active, session }) {
         >
           ↗
         </a>
-        {proxied && (
-          <ComparePill
-            on={compareOn}
-            onToggle={() => { setLoading(true); setCompareOn((v) => !v); }}
-            label={tab.compare?.url ? t('rail.compare') : isStorybook && compareTo ? t('rail.vsMainBuild') : t('rail.compareToProd')}
-          />
-        )}
       </div>
       <div className="relative min-h-0 flex-1">
         {loading && (

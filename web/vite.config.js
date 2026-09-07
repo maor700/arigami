@@ -19,7 +19,10 @@ export default defineConfig({
       '/__ws': { target: 'http://localhost:3099', ws: true },
       '/__vnc': { target: 'http://localhost:3099', ws: true },
       '/__ticket': 'http://localhost:3099',
-      '/__compare': 'http://localhost:3099',
+      // EXT: the extension tab mounts and the browser SDK, so an extension tab
+      // (the compare slider, say) renders under `vite dev` too.
+      '/__ext': 'http://localhost:3099',
+      '/__ext-sdk.js': 'http://localhost:3099',
     },
   },
 });

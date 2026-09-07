@@ -205,8 +205,6 @@ export interface Config {
   // (a remote client could forge the header). Env ARIGAMI_TRUST_PROXY=0|1.
   trustProxy?: boolean;
   auth: AuthConfig;
-  prodUrl: string;
-  storybookCompareUrl: string;
   upstreamCookies: Record<string, string>;
   defaultCwd: string;
   reposDir: string;
@@ -272,8 +270,6 @@ export const DEFAULTS: Config = {
     mode: 'pairing',
     cookieDays: 30,
   },
-  prodUrl: '',
-  storybookCompareUrl: '',
   upstreamCookies: {},
   // S1: a fresh install's first session opens in an empty workspace the host
   // creates on first start (no repo needed) — see server/index.ts.
@@ -433,8 +429,6 @@ function envOverrides(): Partial<Config> {
   if (E.ARIGAMI_TRUST_PROXY != null && E.ARIGAMI_TRUST_PROXY !== '') o.trustProxy = /^(1|true|yes)$/i.test(E.ARIGAMI_TRUST_PROXY);
   if (E.ARIGAMI_AUTH && ['off', 'pairing', 'oidc'].includes(E.ARIGAMI_AUTH))
     o.auth = { ...DEFAULTS.auth, mode: E.ARIGAMI_AUTH as AuthConfig['mode'] };
-  if (E.ARIGAMI_PROD_URL || E.POC_PROD_URL)
-    o.prodUrl = E.ARIGAMI_PROD_URL || E.POC_PROD_URL;
   if (E.ARIGAMI_REPOS_DIR || E.POC_REPOS_DIR)
     o.reposDir = E.ARIGAMI_REPOS_DIR || E.POC_REPOS_DIR;
   if (E.ARIGAMI_DEFAULT_CWD) o.defaultCwd = E.ARIGAMI_DEFAULT_CWD;

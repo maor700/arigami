@@ -172,3 +172,70 @@ test('the trusted tier needs BOTH the manifest and the state file; a manifest al
   expect(o.addTrust.trusted).toBe(true);
   expect(o.addTrustView.tier).toBe('trusted');
 });
+
+// ---------------------------------------------------------------------------
+// the compare extension + the prodUrl migration (PART B/C)
+// ---------------------------------------------------------------------------
+const MIGRATE_BODY = `
+  const fs=await import('node:fs');const path=await import('node:path');
+  const ext=await import('./server/extensions.ts');
+  const D=process.env.ARIGAMI_DIR;
+  const read=()=>JSON.parse(fs.readFileSync(path.join(D,'extensions.json'),'utf8'));
+  const out={};
+
+  // nothing installed → the migration must not fire, and must not mark itself done
+  await ext.reload({reason:'no-compare'});
+  out.beforeInstall=read().settings.compare||null;
+  out.beforeMigrated=read().migrated||{};
+
+  // install the shipped example, WITH the trusted grant
+  const add=await ext.addExtension(path.join(process.cwd(),'examples','extensions','compare'),{trust:true});
+  out.add={ok:add.ok,name:add.name,trusted:add.trusted,trustRequested:add.trustRequested,errors:add.errors,warnings:add.warnings};
+  out.view=ext.listExtensions().find(e=>e.name==='compare');
+  out.settings=read().settings.compare;
+  out.migrated=read().migrated;
+
+  // a second reload must not re-run it, and must not fight a human's own value
+  await ext.patchExtension('compare',{settings:{baselineUrl:'https://chosen.example'}});
+  await ext.reload({reason:'again'});
+  out.after=read().settings.compare;
+  emit(out);
+`;
+
+test('the compare example installs, asks for the trusted tier, and inherits the old config.json prodUrl once', () => {
+  const dir = tmp();
+  // a host that had the core "compare to prod" toggle configured
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ port: 3099, prodUrl: 'https://baseline.example' }, null, 2));
+  const r = runInChild(MIGRATE_BODY, {
+    ARIGAMI_DIR: dir,
+    ARIGAMI_PORT: '',
+    ARIGAMI_STATE_FILE: path.join(dir, 'state.json'),
+    ARIGAMI_CHAT_DIR: path.join(dir, 'chat'),
+  });
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0] as any;
+
+  // with no compare extension there is nothing to migrate INTO — so it waits
+  expect(o.beforeInstall).toBe(null);
+  expect(o.beforeMigrated['compare-baseline-from-prodUrl']).toBeUndefined();
+
+  // the shipped example is valid, and it is the trusted tier's reason for being
+  expect(o.add.ok).toBe(true);
+  expect(o.add.errors).toEqual([]);
+  expect(o.add.name).toBe('compare');
+  expect(o.add.trustRequested).toBe(true);
+  expect(o.add.trusted).toBe(true);
+  expect(o.view.tier).toBe('trusted');
+  expect(o.view.warnings).toEqual([]);
+  expect(o.view.tabs.map((t: any) => t.id)).toEqual(['compare']);
+  expect(o.view.tabs[0].openFrom).toContain('slash:/compare');
+  expect(Object.keys(o.view.settingsSchema)).toEqual(['baselineUrl', 'autoPath']);
+  // nothing personal ships in the manifest — the baseline default is empty
+  expect(o.view.settingsSchema.baselineUrl.default).toBe('');
+
+  // …and the host's old config.json prodUrl became its baseline, once
+  expect(o.settings).toEqual({ baselineUrl: 'https://baseline.example' });
+  expect(o.migrated['compare-baseline-from-prodUrl']).toBe(true);
+  // a later reload never overwrites what the human chose afterwards
+  expect(o.after).toEqual({ baselineUrl: 'https://chosen.example' });
+});

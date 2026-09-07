@@ -149,6 +149,13 @@ interface TabUrl {
   external?: boolean;
   badge?: string;
   color?: string;
+  /**
+   * Dead field. The "compare to prod" slider used to live in the core and
+   * stamped this on url tabs; it is an extension now
+   * (examples/extensions/compare). Kept only so a state.json written before
+   * that still parses and round-trips — nothing reads it, and nothing new
+   * writes it.
+   */
   compare?: unknown;
   // EXT: an extension tab is a `url` tab whose url is /__ext/<ext>/…; these two
   // fields let the cockpit find the manifest (and therefore the permissions the
@@ -1221,7 +1228,6 @@ export function addTab(
     url,
     format,
     body,
-    compare,
     badge,
     color,
     ext,
@@ -1233,7 +1239,6 @@ export function addTab(
     url?: string;
     format?: string;
     body?: string;
-    compare?: unknown;
     badge?: string;
     color?: string;
     /** type 'ext': the extension name */
@@ -1285,7 +1290,6 @@ export function addTab(
     if (norm.external) urlTab.external = true;
     if (norm.badge && badge === undefined) urlTab.badge = norm.badge;
     if (color) urlTab.color = color;
-    if (compare) urlTab.compare = compare;
     if (extName) { urlTab.ext = extName; urlTab.extTab = extTabName; }
   }
 
@@ -1305,7 +1309,7 @@ export function patchTab(
   const s = getSession(id);
   const tab = s?.tabs.find((t) => t.id === tabId);
   if (!tab) return null;
-  for (const k of ['title', 'url', 'body', 'badge', 'color', 'compare', 'format']) {
+  for (const k of ['title', 'url', 'body', 'badge', 'color', 'format']) {
     if (k in patch) (tab as any)[k] = (patch as any)[k];
   }
   if ('url' in patch) {

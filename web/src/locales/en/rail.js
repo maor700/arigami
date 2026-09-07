@@ -299,9 +299,6 @@ export const strings = {
   'rail.dictateHint': 'Dictate into the message (tap to talk, tap again to stop)',
 
   // ---- SessionView.jsx: url / content tabs ----
-  'rail.compare': 'compare',
-  'rail.vsMainBuild': 'vs main build',
-  'rail.compareToProd': 'compare to prod',
   'rail.noUrlForTab': 'No URL for this tab',
   'rail.noAddressToLoad': 'This tab has no address to load.',
   'rail.reloadPreview': 'Reload this preview',

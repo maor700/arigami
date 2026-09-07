@@ -4,7 +4,6 @@
 //                        mounted by the Preact card served at /__card.js)
 //   /__ticket-data/<id>  JSON the card consumes (ticket + linked PR via gh CLI)
 //   /__ticket-img/<file> locally-cached Linear images (signed URLs expire)
-//   /__compare?a&b       the vs-prod slider, generalized to any two proxied URLs
 // plus `linear` — { listAssigned(filter), getTicket(id) } for the launcher picker.
 //
 // One-way dependency: this module may import lib/config + lib/secrets only —
@@ -500,158 +499,6 @@ function buildCard() {
   return cardBuild;
 }
 
-// ---- /__compare — the vs-prod slider, generalized -------------------------------
-// Two PROXIED panes (?__target= → each iframe is its own SW client pinned to its
-// own target → same-origin → iframable + logged in + DOM-accessible for the sync
-// mirroring) with a draggable divider. a = the build under review (right, clipped
-// on top); b = the baseline (left, underneath) — defaults to prodUrl + a's path.
-// Note: prod behind Cloudflare may 403 a few assets (fonts) through the proxy, so
-// the prod pane can look slightly degraded — layout/content compare fine.
-export function comparePage(aRaw, bRaw) {
-  let a;
-  try { a = new URL(aRaw); } catch { return null; }
-  let b;
-  try { b = new URL(bRaw || new URL(a.pathname + a.search, cfg.prodUrl).href); } catch { return null; }
-  const src = (u) => '/?__target=' + encodeURIComponent(u.href);
-  const lbl = (u) => u.href.replace(/^https?:\/\//, '');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>compare</title><style>
-  :root{color-scheme:dark}*{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:#0d1117;overflow:hidden}
-  iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-  #bwrap{position:absolute;inset:0}
-  #awrap{position:absolute;inset:0;clip-path:inset(0 0 0 50%);overflow:hidden}
-  #dv{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#58a6ff;cursor:ew-resize;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
-  #dv .grab{position:absolute;top:0;bottom:0;left:-10px;width:22px;cursor:ew-resize}
-  #dv .knob{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:32px;height:32px;border-radius:50%;background:#58a6ff;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
-  .lbl{position:absolute;top:10px;font:600 11px ui-monospace,Menlo,monospace;color:#fff;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:6px;pointer-events:none;z-index:2}
-  #syncbtn{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);border:0;border-radius:999px;padding:6px 12px;cursor:pointer;font:600 12px ui-sans-serif;color:#fff;z-index:2}
-  #bnotice{position:absolute;inset:0;z-index:5;background:rgba(13,17,23,.97);color:#c9d1d9;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;font:13px/1.55 ui-sans-serif,system-ui}
-  #bnotice .t{font-weight:700;font-size:15px}
-  #bnotice .s{max-width:320px;color:#8b949e}
-  #bnotice code{background:#21262d;border-radius:4px;padding:1px 5px;font-size:11px}
-  #bnotice button{border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font:600 12px ui-sans-serif;color:#fff}
-  </style></head><body>
-  <div id="bwrap"><iframe id="fB" src="${esc(src(b))}"></iframe></div>
-  <div id="awrap"><iframe id="fA" src="${esc(src(a))}"></iframe></div>
-  <div id="dv"><div class="grab"></div><div class="knob">⇆</div></div>
-  <div class="lbl" style="left:12px">◀ ${esc(lbl(b))}</div>
-  <div class="lbl" style="right:12px">${esc(lbl(a))} ▶</div>
-  <button id="syncbtn"></button>
-  <div id="bnotice">
-    <div style="font-size:26px">⚠</div>
-    <div class="t">Baseline isn't logged in</div>
-    <div class="s">This page's SSO can't complete through the local proxy — its login rejects the <code>localhost</code> redirect URI, so it loops. Open it directly to view, or log in there first and Retry.</div>
-    <div style="display:flex;gap:8px">
-      <button id="bopen" style="background:#1f6feb">Open directly ↗</button>
-      <button id="bretry" style="background:#30363d">Retry</button>
-    </div>
-  </div>
-  <script>
-  (function(){
-    var fB = document.getElementById('fB'), fA = document.getElementById('fA');
-    var awrap = document.getElementById('awrap'), dv = document.getElementById('dv');
-    var setX = function(x){ x = Math.max(0, Math.min(100, x)); awrap.style.clipPath = 'inset(0 0 0 ' + x + '%)'; dv.style.left = x + '%'; };
-    var down = false;
-    // pointer capture on the divider keeps move events flowing even over the iframes
-    dv.addEventListener('pointerdown', function(e){ down = true; dv.setPointerCapture(e.pointerId); e.preventDefault(); });
-    dv.addEventListener('pointermove', function(e){ if (down) setX(e.clientX / document.body.clientWidth * 100); });
-    dv.addEventListener('pointerup', function(e){ down = false; try{ dv.releasePointerCapture(e.pointerId); }catch(_){} });
-
-    var sync = true;
-    var syncBtn = document.getElementById('syncbtn');
-    var renderSyncBtn = function(){ syncBtn.textContent = sync ? '🔗 sync: on' : '🔗 sync: off'; syncBtn.style.background = sync ? '#1f6feb' : '#30363d'; };
-    renderSyncBtn();
-    syncBtn.addEventListener('click', function(){ sync = !sync; renderSyncBtn(); });
-
-    // ---- interaction mirroring (both iframes are same-origin → full DOM access) ----
-    // Locate the "same" element in the other pane by stable hooks, then replay the
-    // event so each pane's own router/handlers run natively. Best-effort across
-    // structurally-different versions; a global guard prevents A→B→A loops.
-    var replaying = false;
-    var cssEsc = function(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\\]/g, '\\\\$&'); };
-    var cssPath = function(el){
-      var parts = [];
-      while (el && el.nodeType === 1 && el.tagName !== 'BODY' && parts.length < 8) {
-        var p = el.tagName.toLowerCase(), par = el.parentNode;
-        if (par) { var sib = [].filter.call(par.children, function(c){ return c.tagName === el.tagName; }); if (sib.length > 1) p += ':nth-of-type(' + ([].indexOf.call(sib, el) + 1) + ')'; }
-        parts.unshift(p); el = el.parentNode;
-      }
-      return parts.join('>');
-    };
-    var locator = function(el){
-      var act = (el.closest && el.closest('a[href],button,[role="button"],[role="tab"],[role="menuitem"],[data-testid],input,select,textarea,label')) || el;
-      var sel = null, g = function(n){ return act.getAttribute && act.getAttribute(n); };
-      if (g('data-testid')) sel = '[data-testid="' + cssEsc(g('data-testid')) + '"]';
-      else if (act.id && !/[0-9]{4,}|:r[0-9a-z]/i.test(act.id)) sel = '#' + cssEsc(act.id);
-      else if (act.tagName === 'A' && g('href')) sel = 'a[href="' + cssEsc(g('href')) + '"]';
-      else if (g('aria-label')) sel = act.tagName.toLowerCase() + '[aria-label="' + cssEsc(g('aria-label')) + '"]';
-      else if ((act.tagName === 'INPUT' || act.tagName === 'SELECT' || act.tagName === 'TEXTAREA') && act.name) sel = act.tagName.toLowerCase() + '[name="' + cssEsc(act.name) + '"]';
-      return { sel: sel, path: cssPath(act), text: (act.textContent || '').trim().slice(0, 40) };
-    };
-    var resolve = function(doc, loc){
-      var list = [];
-      if (loc.sel) { try { list = [].slice.call(doc.querySelectorAll(loc.sel)); } catch (e) {} }
-      if (!list.length && loc.path) { try { list = [].slice.call(doc.querySelectorAll(loc.path)); } catch (e) {} }
-      if (list.length > 1 && loc.text) { var t = list.filter(function(n){ return (n.textContent || '').trim().slice(0, 40) === loc.text; }); if (t.length) return t[0]; }
-      return list[0] || null;
-    };
-    var fire = function(dest, type, srcTarget){
-      replaying = true;
-      try {
-        if (type === 'input' || type === 'change') {
-          if (dest.type === 'checkbox' || dest.type === 'radio') dest.checked = srcTarget.checked;
-          else if ('value' in dest) dest.value = srcTarget.value;
-          dest.dispatchEvent(new Event(type, { bubbles: true }));
-        } else {
-          dest.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: dest.ownerDocument.defaultView }));
-        }
-      } catch (e) {}
-      setTimeout(function(){ replaying = false; }, 0);
-    };
-    var attach = function(fromF, toF){
-      var d; try { d = fromF.contentDocument; } catch (e) { return; }
-      if (!d) return;
-      ['click', 'input', 'change'].forEach(function(type){
-        d.addEventListener(type, function(ev){
-          if (replaying || !sync) return;
-          var dest; try { dest = resolve(toF.contentDocument, locator(ev.target)); } catch (e) { return; }
-          if (dest) fire(dest, type, ev.target);
-        }, true);
-      });
-      try {
-        fromF.contentWindow.addEventListener('scroll', function(){
-          if (replaying || !sync) return; replaying = true;
-          try { toF.contentWindow.scrollTo(fromF.contentWindow.scrollX, fromF.contentWindow.scrollY); } catch (e) {}
-          setTimeout(function(){ replaying = false; }, 0);
-        }, true);
-      } catch (e) {}
-    };
-    var wire = function(){ attach(fB, fA); attach(fA, fB); };
-    fB.addEventListener('load', wire); fA.addEventListener('load', wire);
-
-    // ---- baseline auth-loop guard ----
-    // Proxied prod sees its origin as the localhost proxy, so its SSO builds a
-    // localhost redirect_uri that prod rejects (invalid_redirect_uri) and bounces
-    // around /login forever. Detect that (or any runaway reload loop) and replace
-    // the pane with a clear notice instead of an endless flicker.
-    var B_SRC = ${JSON.stringify(src(b))}, B_HREF = ${JSON.stringify(b.href)};
-    var notice = document.getElementById('bnotice');
-    var loads = 0, t0 = Date.now();
-    var showNotice = function(){ notice.style.display = 'flex'; try { fB.src = 'about:blank'; } catch(e){} };
-    fB.addEventListener('load', function(){
-      loads++;
-      if (Date.now() - t0 > 15000) { loads = 1; t0 = Date.now(); } // rolling window
-      var href = ''; try { href = fB.contentWindow.location.href; } catch(e){}
-      // invalid_redirect_uri is a definitive prod-auth rejection; loads>=6 catches
-      // generic loops without false-firing on the normal bootstrap→SW reload dance.
-      if (/error=invalid_redirect_uri/.test(href) || loads >= 6) showNotice();
-    });
-    document.getElementById('bopen').addEventListener('click', function(){ window.open(B_HREF, '_blank', 'noopener'); });
-    document.getElementById('bretry').addEventListener('click', function(){ notice.style.display = 'none'; loads = 0; t0 = Date.now(); try { fB.src = B_SRC; } catch(e){} });
-  })();
-  </script></body></html>`;
-}
-
 // ---- HTTP entry -----------------------------------------------------------------
 // Returns true if the request was handled (index.js falls through to the proxy
 // otherwise). Async work is fire-and-forget, like the PoC handler.
@@ -718,19 +565,6 @@ export function handlePage(req, res) {
     const id = u.pathname.slice('/__ticket/'.length).toUpperCase().replace(/[^A-Z0-9-]/g, '');
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(ticketShell(id, u.searchParams.get('tab') || '', u.searchParams.get('title') || ''));
-    return true;
-  }
-
-  // The compare slider: /__compare?a=<url>[&b=<url>] (b defaults to prod + a's path).
-  if (u.pathname === '/__compare') {
-    const html = comparePage(u.searchParams.get('a') || '', u.searchParams.get('b') || '');
-    if (!html) {
-      res.writeHead(400, { 'content-type': 'text/plain' });
-      res.end('usage: /__compare?a=<url>[&b=<url>]');
-      return true;
-    }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(html);
     return true;
   }
 

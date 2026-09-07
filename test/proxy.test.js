@@ -18,8 +18,7 @@ import {
   SW_SOURCE,
   BOOTSTRAP_HTML,
 } from '../server/proxy.js';
-import { mdToHtml, diffHtml, esc, isPrUrl, parsePrUrl, comparePage, ticketShell } from '../server/pages.js';
-import { cfg } from '../server/lib/config.js';
+import { mdToHtml, diffHtml, esc, isPrUrl, parsePrUrl, ticketShell } from '../server/pages.js';
 
 // ---- targetOrigin --------------------------------------------------------------
 describe('targetOrigin', () => {
@@ -123,7 +122,9 @@ describe('SW_SOURCE', () => {
     const m = /const SKIP = (\(p\) => [^\n]+);/.exec(SW_SOURCE);
     expect(m).toBeTruthy();
     const SKIP = eval(m[1]);
-    for (const p of ['/__poc-sw.js', '/__whoami', '/__health', '/__card.js', '/__compare', '/__host/', '/__api/sessions', '/__ws', '/__mcp-x', '/__ticket/ENG-1', '/__ticket-img/a.png', '/__ticket-data/ENG-1']) {
+    // /__ext* is on the list because a TRUSTED extension tab is same-origin: a
+    // pinned client must not swallow its page or its assets (EXT trusted tier).
+    for (const p of ['/__poc-sw.js', '/__whoami', '/__health', '/__card.js', '/__host/', '/__api/sessions', '/__ws', '/__mcp-x', '/__ticket/ENG-1', '/__ticket-img/a.png', '/__ticket-data/ENG-1', '/__ext/compare/', '/__ext-sdk.js', '/__artifacts/a/']) {
       expect(SKIP(p)).toBe(true);
     }
     // proxied dev servers own their dunder paths (e.g. Vite's ping)
@@ -204,38 +205,6 @@ describe('esc / PR url helpers', () => {
     expect(isPrUrl('https://github.com/acme/app/issues/3')).toBe(false);
     expect(parsePrUrl('https://github.com/acme/app/pull/2841/files')).toEqual({ owner: 'acme', repo: 'app', num: '2841' });
     expect(parsePrUrl('nope')).toBe(null);
-  });
-});
-
-describe('comparePage', () => {
-  test('two explicit proxied panes', () => {
-    const html = comparePage('http://localhost:3024/policies', 'https://app.example.com/policies');
-    expect(html).toContain('/?__target=' + encodeURIComponent('http://localhost:3024/policies'));
-    expect(html).toContain('/?__target=' + encodeURIComponent('https://app.example.com/policies'));
-  });
-  test('b defaults to prodUrl + a path+search', () => {
-    const saved = cfg.prodUrl;
-    cfg.prodUrl = 'https://app.example.com';
-    try {
-      const html = comparePage('http://localhost:3024/policies?tab=2', '');
-      const want = new URL('/policies?tab=2', cfg.prodUrl).href;
-      expect(html).toContain('/?__target=' + encodeURIComponent(want));
-    } finally {
-      cfg.prodUrl = saved;
-    }
-  });
-  test('b empty with no prodUrl configured → null (generic default)', () => {
-    const saved = cfg.prodUrl;
-    cfg.prodUrl = '';
-    try {
-      expect(comparePage('http://localhost:3024/policies?tab=2', '')).toBe(null);
-    } finally {
-      cfg.prodUrl = saved;
-    }
-  });
-  test('bad a → null (caller answers 400)', () => {
-    expect(comparePage('not a url', '')).toBe(null);
-    expect(comparePage('', '')).toBe(null);
   });
 });
 

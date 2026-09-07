@@ -15,7 +15,8 @@ user's workflow in three places:
    `/linear/labels|statuses`), `config.linearWorkspace`, the `[A-Za-z]+-\d+`
    issue-id regex.
 2. **Company/user assumptions in config + profile.** `config.ts` DEFAULTS:
-   `prodUrl: app.example.com`, `reposDir: ~/Desktop/repos`, Acme port pools
+   `prodUrl: app.example.com` (that key is gone — the compare slider is an
+   extension now), `reposDir: ~/Desktop/repos`, Acme port pools
    (3020-3030, 6021-…), Hebrew voice, Groq models. `profiles/acme.json` is the
    only profile and lives in the core repo.
 3. **Personal workflow baked into skills.** `create-from-ticket` calls
@@ -148,7 +149,9 @@ workspace.json, and move it out of the core repo eventually (a profile is
 content, not platform).
 
 Config hygiene that falls out of this:
-- `prodUrl` / `storybookCompareUrl` become **per-repo** fields, not global.
+- `prodUrl` / `storybookCompareUrl` are **gone** from the core config: the
+  compare slider moved to `examples/extensions/compare`, whose `baselineUrl`
+  setting is per-extension. Per-REPO baselines are still open.
 - `linearWorkspace` → provider settings.
 - Voice defaults (`he`, Groq) are already config-driven — just stop shipping
   personal values as DEFAULTS; first-run picks them.
@@ -197,7 +200,8 @@ valid workflow, packaged as one option instead of the default.
 
 Each phase ships working and keeps today's behavior for the Acme workspace.
 
-- **Phase 0 — config hygiene (small).** Per-repo prodUrl/compareUrl;
+- **Phase 0 — config hygiene (small).** Per-repo compare baselines (the global
+  `prodUrl`/`storybookCompareUrl` keys are already gone — see above);
   branchTemplate; stop reading `linearWorkspace` outside the provider;
   workspace.json introduced (auto-migrated from current config).
 - **Phase 1 — IssueProvider + Linear adapter + local provider.**

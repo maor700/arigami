@@ -299,9 +299,6 @@ export const strings = {
   'rail.dictateHint': 'הכתבה לתוך ההודעה (הקישו כדי לדבר, הקישו שוב לעצירה)',
 
   // ---- SessionView.jsx: url / content tabs ----
-  'rail.compare': 'השוואה',
-  'rail.vsMainBuild': 'מול build ראשי',
-  'rail.compareToProd': 'השוואה ל-prod',
   'rail.noUrlForTab': 'אין כתובת URL ללשונית הזו',
   'rail.noAddressToLoad': 'ללשונית הזו אין כתובת לטעינה.',
   'rail.reloadPreview': 'טעינה מחדש של התצוגה המקדימה',

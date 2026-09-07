@@ -81,7 +81,7 @@ test('tabs: add/patch/activate/delete; session tab is protected', () => {
   const s = state.createSession({ title: 'tabs' });
   const sessionTab = s.tabs[0];
 
-  const url = state.addTab(s.id, { type: 'url', title: 'App', url: 'http://localhost:3020', compare: { url: 'https://prod' }, badge: 'dev' });
+  const url = state.addTab(s.id, { type: 'url', title: 'App', url: 'http://localhost:3020', badge: 'dev' });
   expect(url.id).toStartWith('tab_');
   expect(state.getSession(s.id).activeTabId).toBe(url.id); // new tab activates
 

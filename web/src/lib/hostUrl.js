@@ -9,7 +9,7 @@
 export const HOST_ORIGIN =
   window.location.port === '5173' ? 'http://localhost:3099' : window.location.origin;
 
-// Host-internal pages (/__ticket/…, /__compare, anything already on the host
+// Host-internal pages (/__ticket/…, /__ext/…, anything already on the host
 // origin) load directly; only external targets go through the ?__target= proxy.
 export function tabSrc(url) {
   // An empty url must NOT become `/?__target=` — that makes the host serve its

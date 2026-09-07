@@ -145,8 +145,12 @@ const splitTarget = (raw: string | null): TargetSplit => {
 const getPinnedTicket = (req: IncomingMessage): string =>
   (req.headers['x-poc-ticket'] as string) || '';
 
+// `/__ext` (the extension mounts and /__ext-sdk.js) is on the SKIP list for the
+// same reason /__artifacts is: a TRUSTED extension tab is same-origin, so a
+// client this SW has pinned to a proxy target must not swallow its own page or
+// assets. Its child iframes carry their own `?__target=`, and those are proxied.
 export const SW_SOURCE = `
-const SKIP = (p) => p === '/__poc-sw.js' || p === '/__whoami' || p === '/__health' || p === '/__card.js' || p === '/__compare' || p.startsWith('/__host') || p.startsWith('/__api') || p.startsWith('/__ws') || p.startsWith('/__mcp') || p.startsWith('/__ticket') || p.startsWith('/__artifacts') || p.startsWith('/__preview');
+const SKIP = (p) => p === '/__poc-sw.js' || p === '/__whoami' || p === '/__health' || p === '/__card.js' || p.startsWith('/__host') || p.startsWith('/__api') || p.startsWith('/__ws') || p.startsWith('/__mcp') || p.startsWith('/__ticket') || p.startsWith('/__artifacts') || p.startsWith('/__preview') || p.startsWith('/__ext');
 
 const MEM = new Map();
 

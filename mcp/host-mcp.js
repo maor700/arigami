@@ -396,19 +396,12 @@ const TOOLS = [
       ext: { type: 'string', description: 'Extension name — for type "ext" (see GET /__api/extensions for what is installed)' },
       tab: { type: 'string', description: 'Which tab of that extension (manifest tabs[].id); defaults to its first — for type "ext"' },
       params: { type: 'object', description: 'Query params handed to the extension page — for type "ext"', additionalProperties: true },
-      compare_url: { type: 'string', description: 'Prod URL — renders a compare-to-prod toggle. Omit to compare against prod at the same path by default.' },
-      compare: { type: 'boolean', description: 'Open the tab already split in comparison mode (local vs compare_url / prod), not just with the toggle available.' },
       badge: { type: 'string' },
       ...SID_PROP,
     }, ['type', 'title']),
     run: async (a) => {
-      // compare can be requested via compare_url (an explicit baseline) and/or
-      // compare:true (open straight into the split view). Either alone is valid —
-      // compare:true with no url compares against prod at the same path.
-      const wantCompare = a.compare === true || a.compare_url != null;
       const tab = await api('POST', `/__api/sessions/${sid(a)}/tabs`, {
         type: a.type, title: a.title, url: a.url, format: a.format, body: a.body,
-        compare: wantCompare ? { url: a.compare_url, open: a.compare === true } : undefined,
         badge: a.badge,
         ext: a.ext, tab: a.tab, params: a.params,
       });
@@ -481,14 +474,12 @@ const TOOLS = [
       url: { type: 'string' },
       format: { type: 'string', enum: ['html', 'markdown'] },
       body: { type: 'string' },
-      compare_url: { type: 'string' },
       badge: { type: 'string' },
       ...SID_PROP,
     }, ['tab_id']),
     run: (a) => {
       const patch = {};
       for (const k of ['title', 'url', 'format', 'body', 'badge']) if (a[k] !== undefined) patch[k] = a[k];
-      if (a.compare_url !== undefined) patch.compare = a.compare_url ? { url: a.compare_url } : null;
       return api('PATCH', `/__api/sessions/${sid(a)}/tabs/${a.tab_id}`, patch);
     },
   },
