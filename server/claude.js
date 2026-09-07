@@ -56,6 +56,16 @@ function extPluginDir() {
   }
 }
 
+/**
+ * The `--plugin-dir` arguments a spawn gets, in order: the shipped pack, the
+ * user pack, and — only when it actually has a skill — the generated extension
+ * pack. Exported so the plugin wiring can be asserted without spawning `claude`.
+ */
+export function pluginDirArgs() {
+  const ext = extPluginDir();
+  return ['--plugin-dir', ROOT, '--plugin-dir', userPluginDir(), ...(ext ? ['--plugin-dir', ext] : [])];
+}
+
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN
 // stripped: the host chooses the auth per session from the accounts store, so a
 // stray token in the environment (e.g. the old .env one) must not leak in and
@@ -490,13 +500,10 @@ function spawnProc(s, resume) {
     // Register the bundled skill pack (skills/) as a plugin so sessions can
     // invoke them as /arigami:<skill> — they appear in the chat palette. The
     // user/bundle skills ($ARIGAMI_DIR/skills) ride along as a second plugin
-    // (/arigami-user:<skill>) — see skills.ts ensureUserPlugin().
-    '--plugin-dir', ROOT,
-    '--plugin-dir', userPluginDir(),
-    // EXT: the generated ext-plugin ($ARIGAMI_DIR/ext-plugin) carries the docs
-    // every installed extension contributes, as /arigami-ext:<skill>. Passed
-    // only when it actually has a skill — an empty plugin dir is noise.
-    ...(extPluginDir() ? ['--plugin-dir', extPluginDir()] : []),
+    // (/arigami-user:<skill>) — see skills.ts ensureUserPlugin() — and the
+    // extensions' generated docs as a third (/arigami-ext:<skill>), only when
+    // one exists. See pluginDirArgs().
+    ...pluginDirArgs(),
     ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
     // A3: host-enforced tool/domain allowlist (agent-policy.ts) — real CLI
     // denials + a PreToolUse hook that asks the host before every call.

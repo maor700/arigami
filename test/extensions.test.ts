@@ -652,3 +652,22 @@ test('skills.ts lists an extension doc as a read-only `extension` skill and refu
   expect(o.all[0].description).toContain('Use when the human asks to test');
   expect(o.write.error).toContain('no such skill'); // PUT can't overwrite a generated file
 });
+
+test("the third --plugin-dir is passed only once an extension contributed a doc", () => {
+  const dir = tmp();
+  const o = run(
+    dir,
+    load +
+      "const claude=await import('./server/claude.js');" +
+      'await ext.reload();' +
+      'const before=claude.pluginDirArgs();' +
+      `await ext.addExtension(${JSON.stringify(HELLO)});await ext.reload();` +
+      'const after=claude.pluginDirArgs();' +
+      "await ext.patchExtension('hello',{enabled:false});" +
+      'emit({before,after,off:claude.pluginDirArgs(),extPlugin:ext.EXT_PLUGIN_DIR});'
+  );
+  // nothing installed → byte-identical to the two dirs sessions always had
+  expect(o.before).toEqual(['--plugin-dir', REPO, '--plugin-dir', path.join(dir, 'user-plugin')]);
+  expect(o.after).toEqual([...o.before, '--plugin-dir', o.extPlugin]);
+  expect(o.off).toEqual(o.before); // disabled → the empty plugin dir is not passed
+});
