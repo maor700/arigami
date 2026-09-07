@@ -17,26 +17,21 @@ import { claimHost, releaseHost } from './lib/hostlock.js';
 import { ARIGAMI_DIR, IS_DEFAULT_INSTANCE } from './lib/instance.js';
 import { flush as flushTriggers } from './triggers.js';
 import * as artifacts from './artifacts.js';
+import * as extServe from './ext-serve.js';
 import { setDrainHandler, healthBody } from './host-control.js';
 import { validateAuthBind } from './lib/config.js';
 import { auth } from './auth.js';
 // K2: share-token gate for cookie-less artifact links (see auth.ts ShareGate).
 auth.setShareGate(artifacts.shareGate);
+// EXT3: the same gate for an extension tab's own assets — the sandboxed page
+// has an opaque origin and cannot send the cookie (see server/ext-serve.ts).
+auth.setExtGate(extServe.shareGate);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
 // EXT: the browser tab SDK, served from the repo (sdk/browser/ext-sdk.js) at a
 // stable path every extension page can <script src> — see sdk/README.md.
 const EXT_SDK_FILE = path.join(ROOT, 'sdk', 'browser', 'ext-sdk.js');
-// EXT: an extension tab is served WITHOUT `allow-same-origin` on purpose — it
-// gets an opaque origin, so it has no cookie and cannot reach /__api at all.
-// Everything it is allowed to do goes through the postMessage bridge, which
-// checks the manifest permissions (architecture decision 2, option B). Same
-// shape as ARTIFACT_CSP minus that one token.
-const EXT_CSP =
-  "sandbox allow-scripts allow-forms allow-popups; default-src 'self' data: blob: https:; " +
-  "connect-src 'self' https:; img-src 'self' data: blob: https:; " +
-  "style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:";
 
 try {
   ensureConfigFile?.();
@@ -66,8 +61,8 @@ if (process.env.ARIGAMI_BUNDLE) {
   }
 }
 
-// Populated once the loader has been imported (below); `serveExt` needs a
-// synchronous handle and the route must 404 before that, not await.
+// Populated once the loader has been imported (below); the /__ext resolver
+// needs a synchronous handle and the route must 404 before that, not await.
 let extensionsMod: typeof import('./extensions.js') | null = null;
 
 interface ProxyModule {
@@ -137,46 +132,16 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-/**
- * `/__ext/<name>/…` → $ARIGAMI_DIR/user/extensions/<name>/ui/. Same traversal
- * check as serveHost, and only for an extension that is loaded, enabled and
- * actually declares a tab — everything else is a 404, so a stray directory
- * under user/extensions is never publicly readable.
- */
-function serveExt(pathname: string, res: ServerResponse): boolean {
-  const m = /^\/__ext\/([a-z0-9][a-z0-9-]*)(?:\/(.*))?$/.exec(pathname);
-  if (!m) return false;
-  const [, name, rest = ''] = m;
-  let root: string;
-  try {
-    const ext = extensionsMod?.getExtension(name);
-    if (!ext || ext.state !== 'loaded' || !(ext.manifest?.tabs || []).length) { res.writeHead(404); res.end(); return true; }
-    root = path.join(ext.dir, 'ui');
-  } catch {
-    res.writeHead(404);
-    res.end();
-    return true;
-  }
-  const file = path.normalize(path.join(root, rest || 'index.html'));
-  if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return true; }
-  let target = file;
-  try {
-    if (fs.statSync(target).isDirectory()) target = path.join(target, 'index.html');
-  } catch {
-    res.writeHead(404);
-    res.end();
-    return true;
-  }
-  if (!fs.existsSync(target)) { res.writeHead(404); res.end(); return true; }
-  res.writeHead(200, {
-    'content-type': MIME[path.extname(target)] || 'application/octet-stream',
-    'content-security-policy': EXT_CSP,
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
-  fs.createReadStream(target).pipe(res);
-  return true;
-}
+// EXT3: teach ext-serve.ts which extensions may be served — loaded, enabled
+// and actually declaring a tab; everything else is a 404, so a stray directory
+// under user/extensions is never publicly readable and an asset token stops
+// working the moment its extension is disabled. Null until the loader is
+// imported below (the route 404s in that window, as it did before).
+extServe.setResolver((name) => {
+  const ext = extensionsMod?.getExtension(name);
+  if (!ext || ext.state !== 'loaded' || !(ext.manifest?.tabs || []).length) return null;
+  return path.join(ext.dir, 'ui');
+});
 
 function serveHost(pathname: string, res: ServerResponse): void {
   let rel = pathname.replace(/^\/__host\/?/, '') || 'index.html';
@@ -261,7 +226,7 @@ const server = http.createServer(
     }
     if (pathname === '/__ext' || pathname.startsWith('/__ext/')) {
       try {
-        if (serveExt(pathname, res)) return;
+        if (extServe.serve(req, res)) return;
       } catch (e) {
         res.writeHead(500, { 'content-type': 'text/plain' });
         res.end('extension error: ' + (e as Error).message);

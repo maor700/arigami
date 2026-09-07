@@ -1,6 +1,7 @@
 // K2 — capability tokens for things opened WITHOUT a cookie: a shared
 // artifact today (`/__artifacts/<id>/?t=…`), public webhooks in C3
-// (`kind:'webhook'`). One HMAC-SHA256 module, one per-instance secret.
+// (`kind:'webhook'`), an extension tab's own assets in EXT3
+// (`kind:'extension'`). One HMAC-SHA256 module, one per-instance secret.
 //
 //   token  = base64url(JSON payload) + '.' + base64url(HMAC-SHA256(secret, payloadB64))
 //   payload = { kind, id, exp (unix ms), nonce, ver? }
@@ -19,7 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { cfg } from './lib/config.js';
 
-export type ShareKind = 'artifact' | 'webhook';
+export type ShareKind = 'artifact' | 'webhook' | 'extension';
 
 export interface SharePayload {
   kind: ShareKind;
@@ -31,9 +32,11 @@ export interface SharePayload {
 }
 
 // F5: `scope:'assets'` marks the short-lived token the host itself mints so a
-// sandboxed (opaque-origin, cookie-less) artifact document can fetch its own
+// sandboxed (opaque-origin, cookie-less) document can fetch its own
 // sub-resources. It is NOT a share link: hidden from the share lists, not
 // revoked by `unshare()`, any version of that artifact, 24h TTL.
+// EXT3 reuses it for `kind:'extension'` (id = the extension name), where the
+// tab UI has exactly the same cookie-less problem.
 export type ShareScope = 'assets';
 
 export interface IssuedToken {
@@ -72,7 +75,7 @@ export interface ShareTokenOptions {
 export const DEFAULT_DAYS = 7;
 export const MAX_DAYS = 90;
 const DAY_MS = 86_400_000;
-const KINDS: ReadonlySet<string> = new Set(['artifact', 'webhook']);
+const KINDS: ReadonlySet<string> = new Set(['artifact', 'webhook', 'extension']);
 const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 const b64u = (b: Buffer | string): string => Buffer.from(b).toString('base64url');

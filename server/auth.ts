@@ -80,8 +80,10 @@ export interface AuthOptions {
   shareGate?: ShareGate;
 }
 
-// K2: the share-token gate for `/__artifacts/<id>/…`. Injected by index.ts
-// (artifacts.shareGate) so auth.ts has no import cycle with state/artifacts.
+// K2: the share-token gate for `/__artifacts/<id>/…`, and EXT3's identical
+// gate for `/__ext/<name>/~t/<token>/…`. Injected by index.ts
+// (artifacts.shareGate / ext-serve.shareGate) so auth.ts has no import cycle
+// with state/artifacts/extensions.
 // 'granted' → the request proceeds cookie-less with `req.share` set (never
 // `req.auth`, so /__api stays 401); 'denied' → the gate already answered 401;
 // 'none' → no token on the URL, normal cookie rules apply.
@@ -150,6 +152,9 @@ export function createAuth(opts: AuthOptions) {
   const setSessionExists = (fn: (id: string) => boolean) => { sessionExists = fn; };
   let shareGate: ShareGate | null = opts.shareGate || null;
   const setShareGate = (fn: ShareGate | null) => { shareGate = fn; };
+  // EXT3: same contract, for the extension-tab asset tokens.
+  let extGate: ShareGate | null = null;
+  const setExtGate = (fn: ShareGate | null) => { extGate = fn; };
   const mode = () => opts.auth.mode;
 
   // ---- persistence ----------------------------------------------------------
@@ -392,6 +397,10 @@ export function createAuth(opts: AuthOptions) {
     if (pathname === '/__host' || pathname.startsWith('/__host/')) return true; // SPA shows Login
     if (pathname === '/') return true; // 302 → /__host/ (index.ts)
     if (pathname === '/__health' || pathname === '/__poc-sw.js') return true;
+    // EXT3: the extension tab SDK — a static script with no secrets, and the
+    // ONE subresource every sandboxed (opaque-origin, cookie-less) extension
+    // page must be able to load before the postMessage bridge exists at all.
+    if (pathname === '/__ext-sdk.js') return true;
     // C3: only the INBOUND webhook routes are public — each verifies its own
     // credential inside server/webhooks.ts (share-token / Slack v0 / GitHub
     // HMAC / custom HMAC). The admin routes under /__api/webhooks/* (token,
@@ -401,6 +410,7 @@ export function createAuth(opts: AuthOptions) {
     // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
     if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;
     if (pathname.startsWith('/__artifacts/')) return false; // K2: ?t= share tokens handled in gate() via shareGate
+    if (pathname.startsWith('/__ext/')) return false; // EXT3: ~t/ asset tokens handled in gate() via extGate
     return false;
   }
 
@@ -414,6 +424,13 @@ export function createAuth(opts: AuthOptions) {
     // consulted when there is no principal, only on the artifacts route.
     if (shareGate && (pathname === '/__artifacts' || pathname.startsWith('/__artifacts/'))) {
       const r = shareGate(req, res);
+      if (r === 'granted') return false;
+      if (r === 'denied') return true;
+    }
+    // EXT3: a `~t/<token>/` segment opens ONE extension's ui/ without a cookie
+    // — the sandboxed tab document cannot send one (see server/ext-serve.ts).
+    if (extGate && pathname.startsWith('/__ext/')) {
+      const r = extGate(req, res);
       if (r === 'granted') return false;
       if (r === 'denied') return true;
     }
@@ -535,7 +552,7 @@ export function createAuth(opts: AuthOptions) {
     // pairing
     announcePairing, issuePairingCode, readPairingCode, pair, pairingFile,
     // internal tokens
-    hostToken, tokenForSession, revokeSessionToken, setSessionExists, setShareGate,
+    hostToken, tokenForSession, revokeSessionToken, setSessionExists, setShareGate, setExtGate,
     // api tokens
     createApiToken, deleteApiToken, listApiTokens,
     // gate
