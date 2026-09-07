@@ -606,8 +606,8 @@ const TOOLS = [
       'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored. ' +
       'type "whatsapp" — watches the local WhatsApp DB (written by the whatsapp-mcp Baileys process) and wakes this session when new incoming messages arrive. No target required. ' +
       'For personal chats (default): omit group_jid — only direct messages are tracked. ' +
-      'For a specific group: pass group_jid (e.g. "120363412808577334@g.us") — tracking starts immediately and stops when the listener is cancelled. Group messages are NOT stored unless explicitly subscribed. ' +
-      'To wake only for specific people/groups: pass contacts — ALWAYS an ARRAY of strings, so ONE contact is a one-element array (e.g. contacts:["+972501234567"]). ' +
+      'For a specific group: pass group_jid (e.g. "120363000000000000@g.us") — tracking starts immediately and stops when the listener is cancelled. Group messages are NOT stored unless explicitly subscribed. ' +
+      'To wake only for specific people/groups: pass contacts — ALWAYS an ARRAY of strings, so ONE contact is a one-element array (e.g. contacts:["+972500000000"]). ' +
       'Each entry may be a JID (…@s.whatsapp.net / …@lid / …@g.us), an E.164 phone (+972…), or a display-name substring; the host resolves each entry against the WhatsApp DB at registration (phone → its LID too, name → every matching contact/group) and stores the resolved JIDs, so matching is exact. ' +
       'A message matches when its chat JID, or its sender JID inside a group, is in the set; the wake message names the matched contact. Empty/absent contacts = no contact filter. Combines with group_jid as AND. An entry that resolves to nothing is a registration error. ' +
       'Optionally pass db_path to override the default DB location. ' +
@@ -627,8 +627,8 @@ const TOOLS = [
       channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
       thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
       fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms'] } },
-      group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363412808577334@g.us") — for type whatsapp. Omit for personal messages only.' },
-      contacts: { type: 'array', items: { type: 'string' }, description: 'WhatsApp contact filter — an ARRAY of JIDs / E.164 phones / display-name substrings (one contact = one-element array, e.g. ["+972501234567"]). Only messages whose chat or group-sender resolves to one of them wake the session. Omit for no contact filter. For type whatsapp.' },
+      group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363000000000000@g.us") — for type whatsapp. Omit for personal messages only.' },
+      contacts: { type: 'array', items: { type: 'string' }, description: 'WhatsApp contact filter — an ARRAY of JIDs / E.164 phones / display-name substrings (one contact = one-element array, e.g. ["+972500000000"]). Only messages whose chat or group-sender resolves to one of them wake the session. Omit for no contact filter. For type whatsapp.' },
       db_path: { type: 'string', description: 'Override WhatsApp DB path (for type whatsapp, default: <whatsapp-mcp data dir>/whatsapp.db — ~/.local/lib/whatsapp-mcp/data natively, /data/.arigami/whatsapp/data in Docker)' },
       from_filter: { type: 'string', description: 'SMS sender filter — partial match on phone number (for type sms)' },
       ttl_days: { type: 'number', description: 'Auto-stop after this many days (default 7)' },

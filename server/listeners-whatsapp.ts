@@ -209,7 +209,7 @@ export function isJid(s: string): boolean {
   return /@(s\.whatsapp\.net|lid|g\.us|broadcast)$/.test(s);
 }
 
-// "+972 52-123 4567" → "972521234567@s.whatsapp.net"; null when not a phone.
+// "+972 50-000 0000" → "972500000000@s.whatsapp.net"; null when not a phone.
 export function phoneJid(s: string): string | null {
   const t = s.trim();
   if (!/^\+?[\d\s\-().]{6,}$/.test(t)) return null;

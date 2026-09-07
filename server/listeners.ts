@@ -1083,7 +1083,7 @@ function parseContactsArg(args: { contacts?: unknown; contact?: unknown; from?: 
   const { contacts, contact, from } = args;
   if (contacts != null) {
     if (typeof contacts === 'string') {
-      throw new Error('contacts must be an array of strings — for one contact pass a one-element array, e.g. ["+972501234567"]');
+      throw new Error('contacts must be an array of strings — for one contact pass a one-element array, e.g. ["+972500000000"]');
     }
     if (!Array.isArray(contacts) || contacts.some((c) => typeof c !== 'string')) {
       throw new Error('contacts must be an array of strings (JID, E.164 phone, or display-name substring)');

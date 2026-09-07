@@ -19,7 +19,7 @@ user's workflow in three places:
    (3020-3030, 6021-…), Hebrew voice, Groq models. `profiles/acme.json` is the
    only profile and lives in the core repo.
 3. **Personal workflow baked into skills.** `create-from-ticket` calls
-   `mcp__linear-server__*` tools by name; `ship-it` enforces `dem-\d+` branch
+   `mcp__linear-server__*` tools by name; `ship-it` enforces `eng-\d+` branch
    names, before/after GIF gates, Chromatic, Slack reviewer notify; `login`,
    `local-env`, `feedback-loop` encode Acme repos, ports, and app.example.com.
 
@@ -134,7 +134,7 @@ already provider-agnostic plumbing.
 {
   "issueProvider": { "id": "linear", "settings": { "workspace": "your-workspace" } },
   "scmProvider":   { "id": "github" },
-  "branchTemplate": "{issueKey}-{slug}",        // replaces the dem- regexes
+  "branchTemplate": "{issueKey}-{slug}",        // replaces the eng- regexes
   "portRanges": { "dev": [3020, 3070], "aux": [6021, 6070] },
   "packs": ["core", "acme"],                     // enabled skill packs
   "defaultWorkflow": "create-from-ticket",       // what "Go" on an issue runs
@@ -160,7 +160,7 @@ Split `skills/` by audience:
 | pack | skills | coupling today |
 |---|---|---|
 | `packs/core` | onboarding, explain-changes, dispatch, feedback-loop (generic core) | none/near-none |
-| `packs/acme` | create-from-ticket, ship-it, login, local-env, feedback-loop (Acme appendix) | Linear tools, dem- branches, GIF/Chromatic gates, app.example.com, port pools |
+| `packs/acme` | create-from-ticket, ship-it, login, local-env, feedback-loop (Acme appendix) | Linear tools, eng- branches, GIF/Chromatic gates, app.example.com, port pools |
 
 Pack manifest (`packs/<name>/pack.json`): name, skills, `requiresProviders:
 ["issues"]`, settings schema. Delivery mechanism is unchanged

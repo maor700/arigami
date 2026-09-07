@@ -115,7 +115,7 @@ export interface SensitiveHit {
 /**
  * Personal data that must never be stored by an autonomous path. Phone
  * numbers, emails and WhatsApp JIDs are deliberately NOT here — they are the
- * bread and butter of a useful memory ("Riverside's WhatsApp is 050-…").
+ * bread and butter of a useful memory ("the club's WhatsApp is 050-…").
  */
 export function detectSensitive(content: string): SensitiveHit | null {
   const s = String(content || '');
@@ -240,7 +240,7 @@ export function relatedLine(content: string, lines: string[], target: Target): C
     const line = raw.trim();
     if (!line || /^#/.test(line)) continue;
     const s = similarity(content, line);
-    // A shared long token (a proper noun like "Riverside", a product name) with a
+    // A shared long token (a proper noun like a club name, a product name) with a
     // little overall overlap is enough to point the model at the line.
     let longShared = 0;
     for (const w of tokens(line)) if (w.length >= 6 && A.has(w)) longShared++;
