@@ -1,0 +1,21 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "{{title}}",
+  "description": "{{description}}",
+  "tools": [{ "kind": "module", "name": "{{name}}", "module": "tools/module.ts" }],
+  "docs": [
+    {
+      "file": "docs/USAGE.md",
+      "skill": "{{name}}",
+      "description": "{{trigger}}"
+    }
+  ],
+  "permissions": ["tools:{{tool}}"],
+  "settings": {
+    "schema": {
+      "baseUrl": { "type": "string", "default": "", "title": "Base URL", "description": "Where the tool reads from" }
+    }
+  }
+}

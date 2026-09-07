@@ -1,0 +1,30 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "{{title}}",
+  "description": "{{description}}",
+  "listeners": [
+    {
+      "type": "{{type}}",
+      "module": "listener.ts",
+      "export": "provider",
+      "schema": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string" },
+          "match": { "type": "string" }
+        }
+      },
+      "defaultIntervalSec": 300
+    }
+  ],
+  "webhooks": [{ "id": "inbound", "listener": "{{type}}" }],
+  "permissions": ["notify"],
+  "settings": {
+    "schema": {
+      "maxItems": { "type": "number", "default": 5, "title": "Max items per wake", "description": "How many new items to name in the wake summary" }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "{{title}}",
+  "description": "{{description}}",
+  "tabs": [
+    {
+      "id": "main",
+      "title": "{{title}}",
+      "entry": "ui/index.html",
+      "icon": "list-check",
+      "openFrom": ["tab-bar"]
+    }
+  ],
+  "permissions": ["session:message", "session:prompts", "session:tabs", "events:chat"],
+  "settings": {
+    "schema": {
+      "intro": {
+        "type": "string",
+        "default": "",
+        "title": "Intro",
+        "description": "Optional line shown at the top of the tab"
+      }
+    }
+  }
+}

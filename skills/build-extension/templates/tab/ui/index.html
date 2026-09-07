@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- A tab: a static page served at /__ext/{{name}}/ inside a SANDBOX with no
+     same-origin — no cookie, no /__api, no framework, no bundler. Everything
+     goes through window.arigami (see the skill's reference/browser-sdk.md).
+     This one collects a structured choice and turns it into ONE prompt. -->
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{title}}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
+             padding: 24px; line-height: 1.6; background: Canvas; color: CanvasText; }
+      h1 { font-size: 19px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 18px; opacity: .7; font-size: 13px; }
+      fieldset { border: 1px solid rgba(128,128,128,.35); border-radius: 10px; margin: 0 0 14px; padding: 12px 14px; }
+      legend { font-size: 13px; opacity: .8; padding: 0 6px; }
+      label { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 14px; }
+      textarea, input[type="text"] { width: 100%; padding: 9px; border-radius: 8px; font: inherit;
+        border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; box-sizing: border-box; }
+      textarea { min-height: 70px; }
+      .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+      button { padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4);
+        background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      button:hover:not(:disabled) { background: rgba(128,128,128,.12); }
+      button:disabled { opacity: .5; cursor: default; }
+      pre { margin-top: 14px; padding: 10px; border-radius: 8px; font-size: 12px;
+        background: rgba(128,128,128,.12); white-space: pre-wrap; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <h1>{{title}}</h1>
+    <p class="sub" id="sub">מתחבר לקוקפיט…</p>
+
+    <fieldset>
+      <legend>מה לכלול</legend>
+      <!-- Replace these with the real choices. The VALUE is what reaches the prompt. -->
+      <label><input type="checkbox" name="opt" value="אפשרות א'" checked /> אפשרות א'</label>
+      <label><input type="checkbox" name="opt" value="אפשרות ב'" /> אפשרות ב'</label>
+      <label><input type="checkbox" name="opt" value="אפשרות ג'" /> אפשרות ג'</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>הערה חופשית</legend>
+      <textarea id="note" placeholder="משהו שחשוב שאדע?"></textarea>
+    </fieldset>
+
+    <div class="row">
+      <button id="send" disabled>שלח לצ'אט</button>
+    </div>
+    <pre id="log">—</pre>
+
+    <script src="/__ext-sdk.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const log = (m) => { $('log').textContent = typeof m === 'string' ? m : JSON.stringify(m, null, 2); };
+
+      // The prompt is ONE sentence built from the form — that is the whole job
+      // of a tab like this: turn a structured choice into something the session
+      // can act on without another round of questions.
+      const buildPrompt = () => {
+        const picked = [...document.querySelectorAll('input[name="opt"]:checked')].map((el) => el.value);
+        const note = $('note').value.trim();
+        return `{{title}}: ${picked.length ? picked.join(', ') : 'שום דבר נבחר'}` + (note ? `\nהערה: ${note}` : '');
+      };
+
+      (async () => {
+        try {
+          const ctx = await arigami.ready();
+          $('sub').textContent = (ctx.settings && ctx.settings.intro) || 'בחר ושלח — זה נכנס לצ׳אט של הסשן הזה.';
+          $('send').disabled = false;
+          log('מוכן.');
+          arigami.subscribe(['chat'], (ev) => {
+            if (ev && ev.kind === 'result') arigami.setStatus({ badge: '✓' }).catch(() => {});
+          });
+        } catch (e) {
+          $('sub').textContent = 'הדף לא רץ בתוך טאב של Arigami';
+          log(String((e && e.message) || e));
+        }
+      })();
+
+      $('send').onclick = async () => {
+        $('send').disabled = true;
+        try {
+          const r = await arigami.sendPrompt(buildPrompt(), { mode: 'queue' });
+          await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
+          log(r.delivered === 'now' ? 'נשלח.' : 'נכנס לתור — יופעל כשהסשן מתפנה.');
+        } catch (e) {
+          // A rejection here is almost always a permission missing from manifest.json.
+          log('שגיאה: ' + ((e && e.message) || e));
+        } finally {
+          $('send').disabled = false;
+        }
+      };
+    </script>
+  </body>
+</html>

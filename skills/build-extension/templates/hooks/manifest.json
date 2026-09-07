@@ -1,0 +1,23 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "{{title}}",
+  "description": "{{description}}",
+  "hooks": {
+    "module": "hooks.ts",
+    "events": ["merge.done"],
+    "gates": ["merge.before"]
+  },
+  "permissions": ["notify", "events:merge.*"],
+  "settings": {
+    "schema": {
+      "gateCommand": {
+        "type": "string",
+        "default": "bun run typecheck",
+        "title": "Gate command",
+        "description": "Run in the branch before every merge; a non-zero exit blocks it"
+      }
+    }
+  }
+}
