@@ -34,6 +34,11 @@ let state = {
   // whenever they change; `loadHealth()` is the initial snapshot.
   health: {},
   waiting: [],
+  // EXT: the installed extensions (GET /__api/extensions; 'extensions-updated'
+  // over WS). The Settings page, the "+" tab popover, the composer's ext slash
+  // commands and the tab bridge's permission checks all read this one list.
+  extensions: [],
+  extApiVersion: 1,
   usage: null, // GET /__api/usage — subscription 5h/7d windows (null until loaded)
   accounts: null, // GET /__api/accounts — { activeId, accounts:[…] } (null until loaded)
   accountUsage: {}, // accountId -> usage snapshot (from 'account-usage' broadcasts)
@@ -402,6 +407,21 @@ export async function loadAgents() {
   }
 }
 
+// EXT: installed extensions. Readable by any signed-in principal (the mutating
+// routes are admin-only); a host from before the extension system simply 404s
+// and the cockpit shows nothing extension-shaped.
+export async function loadExtensions() {
+  try {
+    const r = await api.get('/extensions');
+    setState({
+      extensions: Array.isArray(r?.extensions) ? r.extensions : [],
+      extApiVersion: r?.apiVersion ?? 1,
+    });
+  } catch {
+    /* pre-extensions host */
+  }
+}
+
 export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
@@ -739,8 +759,30 @@ function connect() {
     } catch {
       return;
     }
-    if (msg && typeof msg.type === 'string') handleEvent(msg);
+    if (msg && typeof msg.type === 'string') {
+      fanoutWire(msg);
+      handleEvent(msg);
+    }
   };
+}
+
+// EXT: a raw tap on the socket. The store's own `handleEvent` only knows the
+// event types the cockpit renders; an extension tab may subscribe to others
+// (`ext:<name>`), so the bridge needs the messages BEFORE that switch narrows
+// them. Read-only — a tap never mutates state, and one that throws must not
+// stop the store from handling the same message.
+const wireTaps = new Set();
+
+export function onWireEvent(fn) {
+  wireTaps.add(fn);
+  return () => wireTaps.delete(fn);
+}
+
+function fanoutWire(msg) {
+  if (!wireTaps.size) return;
+  for (const fn of wireTaps) {
+    try { fn(msg); } catch { /* a tab's bug is not the store's problem */ }
+  }
 }
 
 // C1 — who am I? 401 → Login screen; anything else (auth off, cookie, bearer)
@@ -769,6 +811,7 @@ function bootLoads() {
   loadSessions();
   loadFolders();
   loadAgents();
+  loadExtensions();
   loadUsage();
   loadAccounts();
   loadHealth();
@@ -882,6 +925,11 @@ function handleEvent(msg) {
     case 'folders-updated':
       if (Array.isArray(msg.folders ?? payload?.folders))
         setState({ folders: msg.folders ?? payload.folders });
+      return;
+    case 'extensions-updated':
+      if (Array.isArray(msg.extensions ?? payload?.extensions))
+        setState({ extensions: msg.extensions ?? payload.extensions });
+      else loadExtensions();
       return;
     case 'agents-updated':
       if (Array.isArray(msg.agents ?? payload?.agents)) setState({ agents: msg.agents ?? payload.agents });
