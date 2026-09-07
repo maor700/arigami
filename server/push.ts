@@ -71,11 +71,13 @@ export function removeSubscription(endpoint: string): void {
 
 // ---- send ------------------------------------------------------------------
 
-interface PushPayload {
+export interface PushPayload {
   title: string;
   body: string;
   tag?: string;
   sessionId?: string;
+  /** the chat event the notification points at (the SW deep-links to it) */
+  eventId?: string;
   url?: string;
 }
 

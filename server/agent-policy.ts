@@ -74,7 +74,33 @@ export const FAMILIES: Record<string, string[]> = {
   // "read-only" agent could publish a file and mint a public link.
   publish: ['publish_artifact', 'share_artifact', 'unshare_artifact'],
 };
-export const FAMILY_IDS = Object.keys(FAMILIES);
+// EXT: an extension contributes its own family, `ext:<name>` → the tool
+// patterns of the MCP server(s) the loader injects for it. FAMILIES is mutated
+// in place (never reassigned) so every module that captured the object — and
+// every closure over it — keeps seeing the live set; FAMILY_IDS is recomputed
+// from it. Everything else about the allowlist is unchanged: an agent lists
+// `ext:<name>` in tools[] exactly like `git` or `whatsapp`, and all four
+// enforcement layers work as they already do.
+const CORE_FAMILY_IDS = Object.keys(FAMILIES);
+let extFamilyIds: string[] = [];
+
+/** Called by server/extensions.ts on every reload. Replaces the previous set. */
+export function setExtFamilies(fams: Record<string, string[]>): void {
+  for (const id of extFamilyIds) delete FAMILIES[id];
+  extFamilyIds = [];
+  for (const [id, patterns] of Object.entries(fams || {})) {
+    if (!/^ext:[a-z0-9][a-z0-9-]*$/.test(id) || !Array.isArray(patterns) || !patterns.length) continue;
+    FAMILIES[id] = patterns.map(String);
+    extFamilyIds.push(id);
+  }
+  FAMILY_IDS.length = 0;
+  FAMILY_IDS.push(...CORE_FAMILY_IDS, ...extFamilyIds);
+}
+
+/** Family checkboxes: the core ones plus one per installed extension with tools. */
+export const FAMILY_IDS: string[] = [...CORE_FAMILY_IDS];
+/** Only the extension-contributed ids (the cockpit groups them separately). */
+export const extFamilyIdList = (): string[] => [...extFamilyIds];
 
 /** Built-ins an allowlist can take away. Everything else built-in (Read, Glob, Grep, …) is always on. */
 export const RESTRICTED_BUILTINS = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task', ...CRON_BUILTINS];
