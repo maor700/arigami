@@ -6,7 +6,7 @@ import { sessionLabel, Dot, YellowButton, GhostButton } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faFolder } from '@fortawesome/free-solid-svg-icons';
 
-function Overlay({ onClose, children }) {
+export function Overlay({ onClose, children }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {

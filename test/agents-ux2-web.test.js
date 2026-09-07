@@ -68,12 +68,12 @@ test('AgentView create mode: a draft, not a fetched agent — disabled tabs with
   prefs.setPrefs({ language: 'en' });
 });
 
-test('AgentView existing-agent mode is unaffected: tabs enabled, save + delete + open home present', () => {
+test('AgentView existing-agent mode is unaffected: tabs enabled, save + ⋯ menu + open home present', () => {
   prefs.setPrefs({ language: 'he' });
   const html = render(h(AgentView, { slug: 'nili', tab: 'persona', onClose: noop, onTab: noop, onOpenSession: noop }));
   expect(html).not.toMatch(/data-agent-tab="home"[^>]*disabled/);
   expect(html).toContain('שמור');
-  expect(html).toContain('מחק סוכן');
+  expect(html).toContain('data-agent-more'); // AGENT-PAGE: delete lives behind the ⋯ menu now
   expect(html).toContain('פתח צ׳אט בית');
   expect(html).not.toContain('data-agent-field="slug"'); // slug is fixed once the agent exists
   prefs.setPrefs({ language: 'en' });

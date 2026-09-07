@@ -79,7 +79,6 @@ export const strings = {
   'agent.page.episodes': 'אפיזודות',
   'agent.page.noEpisodes': 'אין עדיין אפיזודות — הן נכתבות כשסשן מדווח או עובר לארכיון.',
   'agent.page.home': 'בית',
-  'agent.page.created': 'נוצר {when}',
 
   // UX2 — יצירת סוכן דרך המשטח (AgentView במצב create), לא סשן
   'agent.page.createTitle': 'סוכן חדש',
@@ -235,4 +234,16 @@ export const strings = {
   'chat.agentAdoptedHint': '· הפרסונה, הכלים, המדיניות והתקציב שלו חלים מהתור הבא — התורות הקודמים רצו בלעדיו.',
   'chat.agentAdoptRevert': 'החזר לרגיל',
   'chat.agentAdoptReverted': 'האימוץ בוטל — הסשן חזר לרגיל',
+  // ---- AGENT-PAGE (child B): one-row header, details drawer, ⋯ menu, typed delete confirm
+  'agent.page.more': 'עוד',
+  'agent.page.details': 'פרטי הסוכן',
+  'agent.page.detailsHint': 'לחץ על השם לפרטים',
+  'agent.page.editPersona': 'ערוך בפרסונה',
+  'agent.page.tabSwitcher': 'החלף לשונית',
+  'agent.page.created': 'נוצר {when}',
+  'agent.page.deleteTitle': 'למחוק את הסוכן לצמיתות?',
+  'agent.page.deleteTypeName': 'כדי לאשר, הקלד את שם הסוכן:',
+  'agent.page.deleteNameMismatch': 'השם לא תואם',
+  'agent.page.deleteBusy': 'מוחק…',
+  'agent.page.deleteDo': 'מחק לצמיתות',
 };

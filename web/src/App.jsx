@@ -732,6 +732,8 @@ function Cockpit() {
   // the pixels for the chat. Every other view still gets it for drawer access.
   const sessionIsMain =
     !!selected && !settingsOpen && !skillsOpen && !brainOpen && !agentOpen && !setupOpen && !launcher && !previewTicket;
+  // AGENT-PAGE: the agent surface's one-row header hosts the hamburger too.
+  const mainHasHamburger = sessionIsMain || (!!agentOpen && !settingsOpen && !skillsOpen && !brainOpen);
   // Top-bar label names the view you're IN, not the session you came from.
   const topBarTitle = settingsOpen
     ? t('settings.title')
@@ -884,7 +886,7 @@ function Cockpit() {
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* mobile top bar: hamburger + current view — not shown over a session,
             where the TabBar hosts the hamburger instead */}
-        {!sessionIsMain && (
+        {!mainHasHamburger && (
           <div className="flex shrink-0 items-center gap-2.5 border-b border-hair bg-panel px-3 py-2 md:hidden">
             <button
               type="button"

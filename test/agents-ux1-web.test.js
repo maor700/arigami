@@ -67,19 +67,20 @@ afterAll(() => {
 
 const noop = () => {};
 
-test('the agent surface is a place: accent header, big avatar, persona line, status + budget, and the בית/ריצות tabs', () => {
+test('the agent surface is a place: accent one-row header, avatar, status, and the בית/ריצות tabs', () => {
   prefs.setPrefs({ language: 'he' });
   const html = render(h(AgentView, { slug: 'nili', tab: 'home', onClose: noop, onTab: noop, onOpenSession: noop }));
   expect(html).toContain('data-agent-surface="nili"');
-  // identity block: the avatar is the big one, the handle and the persona's first real line
+  // identity block (AGENT-PAGE: ONE row — avatar, name, status, tabs; the
+  // handle / persona line / one-liner moved into the details drawer, opened
+  // from the name — see test/agent-page-web.test.js)
   expect(html).toContain('data-agent-avatar="nili"');
-  expect(html).toContain('width:40px');
-  expect(html).toContain('@nili');
-  expect(html).toContain('You keep the garden alive.');
+  expect(html).toContain('data-agent-header');
+  expect(html).toContain('data-agent-details="toggle"');
+  expect(html).not.toContain('@nili'); // in the drawer, not the row
+  expect(html).not.toContain('You keep the garden alive.');
   // the accent wash keys off the agent color — this is what stops it reading as a session
   expect(html).toContain('#1F9C8226');
-  // the one-liner that names the two surfaces
-  expect(html).toContain('בית = לדבר עם הסוכן');
   // tabs, home first and runs present
   for (const id of ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs']) {
     expect(html).toContain(`data-agent-tab="${id}"`);

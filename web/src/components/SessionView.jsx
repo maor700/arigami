@@ -1692,11 +1692,19 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
   );
 }
 
-export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen }) {
+// `homeAgent` (AGENT-PAGE): the session is the agent's HOME chat embedded in
+// the agent surface — the session pane renders AgentHomeChat (no terminal
+// header) and the TabBar is `embedded`; every other tab (desktop, artifacts,
+// url, changes…) is the same component a work session gets, so the human can
+// see what the agent opened.
+export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession }) {
   const isDesktop = useIsDesktop();
+  const tt = useT();
   const { sessions: allSessions } = useStore();
   const hasChildren = allSessions.some((s) => s.metadata?.master === session.id);
-  const tabs = resolveTabs(session, hasChildren);
+  const tabs = homeAgent
+    ? resolveTabs(session, hasChildren).map((tb) => (tb.type === 'session' ? { ...tb, title: tt('agent.surface.homeTitle') } : tb))
+    : resolveTabs(session, hasChildren);
   // The built-in Changes tab isn't a server tab, so its activation is local.
   const [localActive, setLocalActive] = useState(null);
   // A server-side activation (e.g. a skill opening the Changes tab via MCP) is
@@ -1791,6 +1799,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
         onActivate={onActivate}
         addOpen={addTabOpen}
         setAddOpen={setAddTabOpen}
+        embedded={!!homeAgent}
       />
       <div className="relative min-h-0 flex-1">
         {tabs.map((tab) => {
@@ -1800,7 +1809,9 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
               key={tab.id}
               className={`absolute inset-0 flex-col bg-bg ${active ? 'flex' : 'hidden'}`}
             >
-              {tab.type === 'session' ? (
+              {tab.type === 'session' && homeAgent ? (
+                <AgentHomeChat session={session} agent={homeAgent} events={events} loading={chatLoading} onOpenSession={onOpenSession} />
+              ) : tab.type === 'session' ? (
                 <>
                   <TerminalHeader session={session} />
                   <ProgressStrip progress={session.progress} />

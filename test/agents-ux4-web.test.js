@@ -68,12 +68,17 @@ test('Rail Team row menu: opening it shows a delete action, danger-styled and se
   prefs.setPrefs({ language: 'en' });
 });
 
-test('Agent surface header: a delete button for an existing agent (reachable regardless of tab), none for a draft', () => {
+// AGENT-PAGE (child B): the delete is no longer a bare trash button in the
+// header — it sits behind the ⋯ menu (data-agent-more) and then a typed-name
+// dialog. Still reachable from every tab; still absent for a draft.
+test('Agent surface header: a ⋯ menu for an existing agent (reachable regardless of tab), no bare delete button, none of it for a draft', () => {
   prefs.setPrefs({ language: 'en' });
   const existing = render(h(AgentView, { slug: 'bot', tab: 'activity', onClose: noop, onTab: noop, onOpenSession: noop }));
-  expect(existing).toContain('data-agent-delete');
+  expect(existing).toContain('data-agent-more');
+  expect(existing).not.toContain('data-agent-delete'); // the menu (and its delete item) only renders once opened
 
   const draft = render(h(AgentView, { slug: '__new__', tab: 'persona', onClose: noop, onTab: noop, onOpenSession: noop, onCreated: noop }));
+  expect(draft).not.toContain('data-agent-more');
   expect(draft).not.toContain('data-agent-delete');
 });
 

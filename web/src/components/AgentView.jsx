@@ -16,7 +16,7 @@
 //   activity     A3: the agent's activity ledger with cost (today / 7d / 30d)
 //                (+ episodes, collapsed) — GET /__api/agents/:slug/activity?range=
 //   runs         UX1: every session born from the agent, with state and cost
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
@@ -29,9 +29,11 @@ import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
 import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
 import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
-import { AgentHomeChat } from './SessionView.jsx';
-import { deleteAgentConfirmed } from './DelegatedLine.jsx';
-import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject } from '@fortawesome/free-solid-svg-icons';
+import SessionView from './SessionView.jsx';
+import { deleteAgent } from './DelegatedLine.jsx';
+import { Overlay } from './Dialogs.jsx';
+import { GhostButton } from './ui.jsx';
+import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject, faEllipsis, faBars, faCircleInfo } from '@fortawesome/free-solid-svg-icons';
 
 export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs'];
 const ICONS = { home: faComments, persona: faIdBadge, memory: faBrain, connections: faLink, routine: faClock, activity: faListCheck, runs: faDiagramProject };
@@ -320,6 +322,7 @@ function HomeTab({ agent, onOpenSession }) {
   const { sessions, chats, chatLoaded } = useStore();
   const [home, setHome] = useState(null); // the wire session from /home (until the store has it)
   const [err, setErr] = useState('');
+  const [addTabOpen, setAddTabOpen] = useState(false); // the TabBar's "+" popover (App owns it for work sessions)
   useEffect(() => {
     let stop = false;
     setErr('');
@@ -336,12 +339,17 @@ function HomeTab({ agent, onOpenSession }) {
   const session = (id && (sessions || []).find((s) => s.id === id)) || home;
   if (err) return <div data-home-error className="px-4 py-5 text-[12px] text-danger">{t('agent.surface.homeFailed', { err })}</div>;
   if (!session) return <div className="px-4 py-5 text-[11.5px] text-fgdim">{t('agent.surface.homeOpening')}</div>;
+  // AGENT-PAGE: the home chat gets the SAME tab row a work session has (desktop,
+  // artifacts, url tabs the agent opens) — SessionView in `homeAgent` mode
+  // renders AgentHomeChat in the session pane and the shared TabBar above it.
   return (
-    <AgentHomeChat
+    <SessionView
       session={session}
-      agent={agent}
+      homeAgent={agent}
       events={chats[session.id] || []}
-      loading={!chatLoaded[session.id] && !(chats[session.id]?.length)}
+      chatLoading={!chatLoaded[session.id] && !(chats[session.id]?.length)}
+      addTabOpen={addTabOpen}
+      setAddTabOpen={setAddTabOpen}
       onOpenSession={onOpenSession}
     />
   );
@@ -455,6 +463,152 @@ export const NEW_AGENT_SLUG = '__new__';
 
 const DRAFT_COLOR = '#6A4FC4';
 
+/** Close a popover on an outside click or Escape (Escape is swallowed so the surface stays open). */
+function useDismiss(ref, open, onClose) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [ref, open, onClose]);
+}
+
+const row = 'flex items-baseline gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0';
+const rowLbl = 'w-[88px] shrink-0 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase';
+
+/**
+ * AGENT-PAGE: everything that used to sit in the tall header — handle, persona
+ * line, model, tools, domains, budget, skills, auto-approve — as a drawer under
+ * the one-row header, opened from the name or the ⋯ menu.
+ */
+export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
+  const t = useT();
+  const ref = useRef(null);
+  useDismiss(ref, true, onClose);
+  const persona = personaLine(agent.persona);
+  const tools = agent.tools || [];
+  const line = (label, value, key) => (value ? <div key={key} className={row}><span className={rowLbl}>{label}</span><span dir="auto" className="min-w-0 flex-1 break-words text-fg">{value}</span></div> : null);
+  return (
+    <div
+      ref={ref}
+      data-agent-details-drawer
+      role="dialog"
+      aria-label={t('agent.page.details')}
+      className="absolute top-full start-0 z-30 w-full max-h-[70vh] overflow-y-auto thin-scroll border-b-[1.5px] border-ink bg-panel px-4 py-3 shadow-[0_6px_0_rgba(42,42,42,0.12)] sm:start-3 sm:w-[440px] sm:rounded-b-[12px] sm:border-x-[1.5px]"
+    >
+      <div className="flex items-start gap-3">
+        <AgentAvatar agent={agent} size={40} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span dir="auto" className="text-[15px] leading-tight font-bold text-fg">{agent.name}</span>
+            <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{agent.slug}</span>
+          </div>
+          {persona && <div dir="auto" className="mt-0.5 text-[11.5px] leading-snug text-fgdim">{persona}</div>}
+        </div>
+        <button type="button" onClick={onClose} aria-label={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[14px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+      </div>
+      <div className="mt-3">
+        <div className={row}><span className={rowLbl}>{t('agent.card.budget')}</span><span className="min-w-0 flex-1"><BudgetBar budget={budget} /></span></div>
+        {line(t('agent.card.model'), agent.model || t('agent.card.modelDefault'), 'model')}
+        {line(t('agent.card.tools'), tools.length ? tools.map((id) => (TOOL_FAMILIES.includes(id) ? t(`agent.tool.${id}`) : id)).join(' · ') : null, 'tools')}
+        {line(t('agent.card.domains'), (agent.domains || []).join(', '), 'domains')}
+        {line(t('agent.card.skills'), (agent.skills || []).join(', '), 'skills')}
+        {line(t('agent.card.autoApprove'), (agent.autoApprove || []).join(', '), 'autoApprove')}
+        {line('', agent.createdAt ? t('agent.page.created', { when: relTime(agent.createdAt) }) : null, 'created')}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" data-agent-details-edit onClick={onEditPersona} className={btn}><Icon icon={faIdBadge} /> {t('agent.page.editPersona')}</button>
+        <span className="text-[10.5px] text-fgdim">{t('agent.oneLiner')}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * AGENT-PAGE: the destructive action, two steps away from the header — behind
+ * the ⋯ menu, then this dialog, which only enables Delete once the agent's
+ * exact name has been typed. Chosen over "hold 2 seconds": a long-press is what
+ * phones use for text selection / context menus and a scroll cancels it, it is
+ * invisible to a screen reader, and it never confirms WHICH agent — typing the
+ * name does all three.
+ */
+export function DeleteAgentDialog({ agent, onClose, onDeleted }) {
+  return <Overlay onClose={onClose}><DeleteAgentForm agent={agent} onClose={onClose} onDeleted={onDeleted} /></Overlay>;
+}
+
+/** The dialog's body (exported so it can be rendered without the portal). */
+export function DeleteAgentForm({ agent, onClose, onDeleted }) {
+  const t = useT();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  const match = typed.trim() === String(agent.name || '').trim();
+  const del = async () => {
+    if (!match || busy) return;
+    setBusy(true);
+    const ok = await deleteAgent(agent, t);
+    setBusy(false);
+    if (ok) { onDeleted?.(); onClose(); }
+  };
+  return (
+      <div data-agent-delete-dialog className="w-[400px] max-w-full overflow-hidden rounded-xl border-2 border-danger bg-panel text-fg shadow-[5px_6px_0_rgba(178,59,48,0.25)]">
+        <div className="px-[18px] pt-4">
+          <div className="text-[17px] leading-tight font-bold text-danger">{t('agent.page.deleteTitle')}</div>
+          <p dir="auto" className="mt-2 text-[12px] leading-normal text-fgdim">{t('agent.page.deleteConfirm', { name: agent.name })}</p>
+          <label className="mt-3 block text-[12px] text-fg">
+            {t('agent.page.deleteTypeName')} <span dir="auto" className="font-mono font-bold select-all">{agent.name}</span>
+          </label>
+          <input
+            ref={ref}
+            data-agent-delete-name
+            dir="auto"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') del(); }}
+            placeholder={agent.name}
+            autoComplete="off"
+            className="mt-1.5 w-full rounded-lg border-[1.5px] border-danger/50 bg-bg px-2.5 py-2 text-[12.5px] outline-none placeholder:text-fgdim/60 focus:border-danger"
+          />
+          {typed && !match && <div className="mt-1 text-[10.5px] text-danger">{t('agent.page.deleteNameMismatch')}</div>}
+        </div>
+        <div className="flex justify-end gap-[9px] p-[16px_18px]">
+          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
+          <button
+            type="button"
+            data-agent-delete-confirm
+            onClick={del}
+            disabled={!match || busy}
+            className="cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            {busy ? t('agent.page.deleteBusy') : t('agent.page.deleteDo')}
+          </button>
+        </div>
+      </div>
+  );
+}
+
+/** The ⋯ menu: details, and the delete — danger-styled, separated, last. */
+export function MoreMenu({ onClose, onDetails, onDelete }) {
+  const t = useT();
+  const ref = useRef(null);
+  useDismiss(ref, true, onClose);
+  const item = 'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12px] hover:bg-chip';
+  return (
+    <div ref={ref} data-agent-menu role="menu" className="absolute top-full end-2 z-30 mt-1 w-[200px] rounded-[10px] border-[1.5px] border-ink bg-panel p-1.5 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+      <button type="button" role="menuitem" data-agent-menu-details onClick={() => { onClose(); onDetails(); }} className={`${item} text-fg`}>
+        <span className="w-4 text-center text-[12px] text-fgdim"><Icon icon={faCircleInfo} /></span> {t('agent.page.details')}
+      </button>
+      <div className="my-1 border-t border-hair" />
+      <button type="button" role="menuitem" data-agent-delete onClick={() => { onClose(); onDelete(); }} className={`${item} text-danger hover:bg-danger/10`}>
+        <span className="w-4 text-center text-[12px]"><Icon icon={faTrash} /></span> {t('agent.page.delete')}…
+      </button>
+    </div>
+  );
+}
+
 export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClose, onOpenSession, onCreated }) {
   const t = useT();
   const { agents, sessions, triggers } = useStore();
@@ -463,6 +617,11 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
   const [fetched, setFetched] = useState(null); // full record (persona) — the store list has it too, but fetch to be exact
   const [missing, setMissing] = useState(false);
   const [budget, setBudget] = useState(null);
+  // AGENT-PAGE header popovers: the tab switcher (mobile), the ⋯ menu, the
+  // details drawer, the delete dialog. At most one is open at a time.
+  const [pop, setPop] = useState(null); // 'tabs' | 'menu' | 'details' | 'delete' | null
+  const popRef = useRef(null);
+  popRef.current = pop;
   const setTab = (id) => { setTabLocal(id); onTab?.(id); };
   useEffect(() => { if (TABS.includes(wantTab) && wantTab !== tab) setTabLocal(wantTab); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [wantTab]);
   useEffect(() => {
@@ -483,7 +642,9 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
     return () => { stop = true; };
   }, [slug, isNew, fetched?.updatedAt]);
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    // Escape closes an open popover/dialog first (they swallow it themselves);
+    // only a bare surface closes on Escape.
+    const onKey = (e) => { if (e.key === 'Escape' && !popRef.current) { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
@@ -497,9 +658,11 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
   // activity row) means the בית tab — leaving the surface for it and being
   // bounced back by App would only flicker.
   const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
+  const closePop = () => setPop(null);
 
-  const navItem = (id) => {
+  const navItem = (id, { inMenu = false } = {}) => {
     const disabled = isNew && id !== 'persona';
+    const current = effectiveTab === id;
     return (
       <button
         key={id}
@@ -507,10 +670,12 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
         data-agent-tab={id}
         disabled={disabled}
         title={disabled ? t('agent.page.tabDisabledHint') : undefined}
-        onClick={() => !disabled && setTab(id)}
-        aria-current={effectiveTab === id ? 'page' : undefined}
-        className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${effectiveTab === id ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
-        style={effectiveTab === id ? { borderColor: color, background: `${color}1a` } : undefined}
+        onClick={() => { if (disabled) return; setTab(id); if (inMenu) closePop(); }}
+        aria-current={current ? 'page' : undefined}
+        className={inMenu
+          ? `flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-chip'} ${current ? 'font-bold text-fg' : 'text-fgdim'}`
+          : `flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${current ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
+        style={!inMenu && current ? { borderColor: color, background: `${color}1a` } : undefined}
       >
         <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
         {t(`agent.page.tab.${id}`)}
@@ -530,50 +695,82 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
   else if (effectiveTab === 'routine') body = <RoutinePanel agent={agent} onOpenSession={openSession} />;
   else body = <PersonaTab key={agent.updatedAt} agent={agent} onSaved={setFetched} onDeleted={onClose} onOpenHome={() => setTab('home')} />;
 
-  const persona = personaLine(agent?.persona);
+  const title = agent?.name || (isNew ? t('agent.page.createTitle') : t('agent.page.title'));
   return (
-    // The accent wash + the oversized identity block are the whole point: this
-    // must not read as "another session with a header".
+    // AGENT-PAGE: ONE row — hamburger (mobile) · avatar · name · status · tab
+    // switcher · ⋯ · ✕. The accent wash keeps it reading as the agent's place;
+    // everything else (handle, persona line, budget, model, tools…) lives in
+    // the details drawer under the name.
     <div data-agent-page={slug} data-agent-surface={slug} className="flex min-h-0 flex-1 flex-col bg-panel">
-      <div className="shrink-0 border-b-[1.5px] px-4 pt-3 pb-2" style={{ background: `linear-gradient(180deg, ${color}26, ${color}0d)`, borderColor: `${color}66` }}>
-        <div className="flex items-start gap-3">
-          {agent ? <AgentAvatar agent={agent} size={40} /> : null}
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span dir="auto" className="text-[16px] leading-tight font-bold text-fg">{agent?.name || (isNew ? t('agent.page.createTitle') : t('agent.page.title'))}</span>
-              {!isNew && <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{slug}</span>}
-            </div>
-            {persona && <div dir="auto" className="mt-0.5 line-clamp-2 text-[11.5px] text-fgdim">{persona}</div>}
-          </div>
-          {/* UX4: the whole-entity destructive action lives in the header, not
-              buried as an anonymous trailing button at the bottom of פרסונה —
-              it's reachable from every tab and on mobile, same header the
-              agent's rail row menu's delete item leads back to. */}
-          {agent && !isNew && (
-            <button
-              type="button"
-              data-agent-delete
-              onClick={async () => { if (await deleteAgentConfirmed(agent, t)) onClose(); }}
-              title={t('agent.page.delete')}
-              aria-label={t('agent.page.delete')}
-              className="shrink-0 cursor-pointer rounded px-1.5 py-1 text-[13px] text-fgdim hover:bg-danger/10 hover:text-danger"
-            >
-              <Icon icon={faTrash} />
-            </button>
-          )}
-          <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
-            <Icon icon={faXmark} />
+      <div data-agent-header className="relative z-20 flex h-11 shrink-0 items-center gap-2 border-b-[1.5px] px-3" style={{ background: `linear-gradient(180deg, ${color}26, ${color}0d)`, borderColor: `${color}66` }}>
+        <button
+          type="button"
+          aria-label={t('rail.openSessions')}
+          onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
+          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
+        >
+          <Icon icon={faBars} />
+        </button>
+        {/* avatar + name = the details trigger (a draft has no details yet) */}
+        <button
+          type="button"
+          data-agent-details={isNew ? undefined : 'toggle'}
+          disabled={isNew || !agent}
+          title={isNew ? undefined : t('agent.page.detailsHint')}
+          aria-expanded={pop === 'details'}
+          onClick={() => setPop((p) => (p === 'details' ? null : 'details'))}
+          className="flex min-w-0 shrink cursor-pointer items-center gap-2 rounded-md py-0.5 pe-1.5 text-start disabled:cursor-default"
+        >
+          {agent ? <AgentAvatar agent={agent} size={26} /> : null}
+          <span dir="auto" className="min-w-0 truncate text-[14px] leading-tight font-bold text-fg">{title}</span>
+          {!isNew && agent && <span className="hidden shrink-0 text-[10px] text-fgdim sm:inline"><Icon icon={faCaretDown} /></span>}
+        </button>
+        {agent && !isNew && <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />}
+        <div className="ms-auto flex min-w-0 shrink items-center gap-1">
+          {/* sm+: the pills inline (scroll when tight); <sm: a switcher button */}
+          <div data-agent-tabs="pills" className="thin-scroll hidden min-w-0 items-center gap-1 overflow-x-auto sm:flex">{TABS.map((id) => navItem(id))}</div>
+          <button
+            type="button"
+            data-agent-tabs="switcher"
+            aria-label={t('agent.page.tabSwitcher')}
+            aria-expanded={pop === 'tabs'}
+            onClick={() => setPop((p) => (p === 'tabs' ? null : 'tabs'))}
+            className="flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] font-bold text-fg sm:hidden"
+            style={{ borderColor: color, background: `${color}1a` }}
+          >
+            <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[effectiveTab]} /></span>
+            {t(`agent.page.tab.${effectiveTab}`)}
+            <span className="text-[10px] text-fgdim"><Icon icon={faCaretDown} /></span>
           </button>
         </div>
         {agent && !isNew && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />
-            <BudgetBar budget={budget} />
-            <span className="ms-auto hidden text-[10.5px] text-fgdim sm:block">{t('agent.oneLiner')}</span>
-          </div>
+          <button
+            type="button"
+            data-agent-more
+            aria-label={t('agent.page.more')}
+            aria-expanded={pop === 'menu'}
+            onClick={() => setPop((p) => (p === 'menu' ? null : 'menu'))}
+            className="shrink-0 cursor-pointer rounded px-1.5 py-1 text-[14px] text-fgdim hover:bg-chip hover:text-fg"
+          >
+            <Icon icon={faEllipsis} />
+          </button>
         )}
-        <div className="thin-scroll -mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1">{TABS.map(navItem)}</div>
+        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
+          <Icon icon={faXmark} />
+        </button>
+        {pop === 'tabs' && (
+          <TabMenu onClose={closePop}>{TABS.map((id) => navItem(id, { inMenu: true }))}</TabMenu>
+        )}
+        {pop === 'menu' && agent && !isNew && (
+          <MoreMenu onClose={closePop} onDetails={() => setPop('details')} onDelete={() => setPop('delete')} />
+        )}
+        {pop === 'details' && agent && !isNew && (
+          <AgentDetailsDrawer agent={agent} budget={budget} onClose={closePop} onEditPersona={() => { closePop(); setTab('persona'); }} />
+        )}
       </div>
+      {pop === 'delete' && agent && !isNew && (
+        <DeleteAgentDialog agent={agent} onClose={closePop} onDeleted={onClose} />
+      )}
       {effectiveTab === 'home' && agent ? (
         <div key="home" className="flex min-h-0 flex-1 flex-col bg-bg">{body}</div>
       ) : (
@@ -581,6 +778,18 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
           <div key={effectiveTab} className="mx-auto w-full max-w-[720px] px-4 py-5 sm:px-7">{body}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The mobile tab switcher's popover. */
+function TabMenu({ onClose, children }) {
+  const t = useT();
+  const ref = useRef(null);
+  useDismiss(ref, true, onClose);
+  return (
+    <div ref={ref} data-agent-tabs-menu role="menu" aria-label={t('agent.page.tabSwitcher')} className="absolute top-full end-2 z-30 mt-1 w-[200px] rounded-[10px] border-[1.5px] border-ink bg-panel p-1.5 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+      {children}
     </div>
   );
 }

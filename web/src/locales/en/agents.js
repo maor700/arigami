@@ -79,7 +79,6 @@ export const strings = {
   'agent.page.episodes': 'Episodes',
   'agent.page.noEpisodes': 'No episodes yet — they are written when a session reports or is archived.',
   'agent.page.home': 'home',
-  'agent.page.created': 'created {when}',
 
   // UX2 — creating an agent through the surface (AgentView in create mode), not a session
   'agent.page.createTitle': 'New agent',
@@ -236,4 +235,16 @@ export const strings = {
   'chat.agentAdoptedHint': '· its persona, tools, policy and budget apply from the next turn on — earlier turns ran without it.',
   'chat.agentAdoptRevert': 'Back to normal',
   'chat.agentAdoptReverted': 'Adoption reverted — back to normal',
+  // ---- AGENT-PAGE (child B): one-row header, details drawer, ⋯ menu, typed delete confirm
+  'agent.page.more': 'More',
+  'agent.page.details': 'Agent details',
+  'agent.page.detailsHint': 'Click the name for details',
+  'agent.page.editPersona': 'Edit in Persona',
+  'agent.page.tabSwitcher': 'Switch tab',
+  'agent.page.created': 'created {when}',
+  'agent.page.deleteTitle': 'Delete this agent permanently?',
+  'agent.page.deleteTypeName': 'To confirm, type the agent’s name:',
+  'agent.page.deleteNameMismatch': 'The name does not match',
+  'agent.page.deleteBusy': 'Deleting…',
+  'agent.page.deleteDo': 'Delete permanently',
 };

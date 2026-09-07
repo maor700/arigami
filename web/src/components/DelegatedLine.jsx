@@ -24,8 +24,11 @@ export const openAgent = (slug, tab, draftName) => window.dispatchEvent(new Cust
 // reference to the surface if it happens to be open on this agent, so success
 // is announced as an event instead of a callback — App.jsx closes the surface
 // if it's showing the agent that just went away.
-export async function deleteAgentConfirmed(agent, t) {
-  if (!window.confirm(t('agent.page.deleteConfirm', { name: agent.name }))) return false;
+// The delete itself (no prompt): DELETE + toast + the app-wide event that
+// closes the surface / drops the rail row. The agent page wraps it in a typed
+// name confirmation (AgentView DeleteAgentDialog); the rail row menu keeps the
+// plain confirm below.
+export async function deleteAgent(agent, t) {
   try {
     await api.del(`/agents/${encodeURIComponent(agent.slug)}`);
     toastSuccess(t('agent.page.deleted'));
@@ -35,6 +38,11 @@ export async function deleteAgentConfirmed(agent, t) {
     toastError(e?.message || String(e));
     return false;
   }
+}
+
+export async function deleteAgentConfirmed(agent, t) {
+  if (!window.confirm(t('agent.page.deleteConfirm', { name: agent.name }))) return false;
+  return deleteAgent(agent, t);
 }
 
 const short = (s, n = 44) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s || '');

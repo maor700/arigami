@@ -178,7 +178,9 @@ function AddTabPopover({ sessionId, onClose }) {
   );
 }
 
-export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivate, addOpen, setAddOpen }) {
+// `embedded`: the bar sits under another header that already carries the
+// mobile hamburger and the brand glyph (the agent page) — skip both here.
+export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivate, addOpen, setAddOpen, embedded = false }) {
   const t = useT();
   const tabs = tabsProp?.length
     ? tabsProp
@@ -218,18 +220,22 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
       />
       {/* mobile: hamburger opens the rail drawer (there's no separate top bar
           over a session — this row is the top bar) */}
-      <button
-        type="button"
-        aria-label={t('rail.openSessions')}
-        onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
-        className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
-      >
-        <Icon icon={faBars} />
-      </button>
+      {!embedded && (
+        <button
+          type="button"
+          aria-label={t('rail.openSessions')}
+          onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
+          className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
+        >
+          <Icon icon={faBars} />
+        </button>
+      )}
       {/* brand glyph */}
-      <span className="hidden shrink-0 items-center pr-[11px] md:flex">
-        <Wave />
-      </span>
+      {!embedded && (
+        <span className="hidden shrink-0 items-center pr-[11px] md:flex">
+          <Wave />
+        </span>
+      )}
 
       <div className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]">
         {tabs.map((tab) => {
