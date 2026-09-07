@@ -430,9 +430,14 @@ export function toWireSession(s: Session): Session {
     if (ladder || out.claude?.ladder !== undefined) out = { ...out, claude: { ...(out.claude || s.claude), ladder } };
   }
   // 'busy' is already obvious in the UI (the session is visibly working) — only
-  // the hold a human has to resolve is worth a hint next to the switch.
+  // the hold a human has to resolve is worth a hint next to the switch. The
+  // client MERGES wire sessions ({...prev, ...next}), so a cleared hold has to
+  // be sent as an explicit null, not an absent key — but only for sessions that
+  // could be showing the hint at all (auto-play on, queue non-empty), so every
+  // other session keeps its identity on the wire.
   const hold = autoPlayHold(s);
   if (hold === 'action') out = { ...out, autoPlayHold: 'action' };
+  else if (s.promptAutoPlay && (s.pendingPrompts || []).length) out = { ...out, autoPlayHold: null };
   const result = s.metadata?.result as { state?: string; summary?: unknown } | undefined;
   if (
     result &&

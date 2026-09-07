@@ -78,7 +78,7 @@ test('a sticky action card holds the queue; answering/dismissing it releases the
   expect(o.whileHeld).toBe(0);
   expect(o.holdWire).toBe('action'); // the cockpit can say WHY nothing moves
   expect(o.played).toBe(1);
-  expect(o.clearedWire).toBeUndefined();
+  expect(o.clearedWire).toBeNull(); // explicit null — the client merges wire sessions
 });
 
 test('a busy session is never interrupted — the kick is a no-op until it goes idle', () => {
