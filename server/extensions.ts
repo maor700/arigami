@@ -75,12 +75,15 @@ function extLog(name: string, msg: string): void {
     /* logging must never break a load */
   }
 }
-const hostLog = (msg: string) => console.log(`[ext] ${msg}`);
+// STDERR on purpose: this module is also a CLI (`bun server/extensions.ts …`,
+// behind `bin/host ext`) whose STDOUT is a JSON document. Progress lines on
+// stdout would corrupt it — and the host captures both streams anyway.
+const hostLog = (msg: string) => process.stderr.write(`[ext] ${msg}\n`);
 
 // ---------------------------------------------------------------------------
 // §1 — the user repo: $ARIGAMI_DIR/user
 // ---------------------------------------------------------------------------
-const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', ''].join('\n');
+const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', '.arigami-reload.*', ''].join('\n');
 
 function isDir(p: string): boolean {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
@@ -374,7 +377,7 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
     const full = file(str(l.module), `listeners[${l.type}].module`);
     if (!full) continue;
     try {
-      const mod = await import(pathToFileURL(full).href + `?v=${mtimeOf(full)}`);
+      const mod = await importFresh(full);
       const p = (mod as any)[str(l.export)];
       if (!p) errors.push(`listeners[${l.type}]: ${l.module} has no export "${l.export}"`);
       else if (typeof p.poll !== 'function' || typeof p.register !== 'function') errors.push(`listeners[${l.type}]: export "${l.export}" is not a ListenerProvider (needs register() and poll())`);
@@ -388,7 +391,7 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
     const full = file(str(m.hooks.module), 'hooks.module');
     if (full) {
       try {
-        const mod = await import(pathToFileURL(full).href + `?v=${mtimeOf(full)}`);
+        const mod = await importFresh(full);
         const h = pickHooks(mod);
         for (const g of m.hooks.gates || []) {
           if (!GATE_NAMES.includes(g)) warnings.push(`hooks.gates: "${g}" is not a gate this host runs (${GATE_NAMES.join(', ')})`);
@@ -411,6 +414,58 @@ function pickHooks(mod: any): Hooks & { channels?: Record<string, any> } {
 
 function mtimeOf(p: string): number {
   try { return Math.floor(fs.statSync(p).mtimeMs); } catch { return 0; }
+}
+
+// ---- re-importing a module that changed on disk -----------------------------
+// The usual `import(url + '?v=<mtime>')` cache-bust does NOT work under Bun:
+// Bun keys its module cache on the resolved PATH and ignores the query, so the
+// second import silently returns the FIRST module. A symlink does not help
+// either — Bun resolves it to its realpath and hits the same cache entry. (Both
+// verified before settling on the below; the spec's `?v=` assumption is a
+// Node-ism.)
+//
+// What does work is a real second file: the loader copies the module next to
+// itself under a unique hidden name, imports THAT, and deletes it. Same
+// directory, so the module's own relative imports and its `@arigami/sdk`
+// resolution (node_modules walk-up from user/) are unaffected.
+//
+// If even the copy fails (read-only mount), we import the plain path: correct on
+// a FRESH host — the first import of a path is always current — and only a LIVE
+// reload of that one file would need a restart, which the log then says.
+let loadSeq = 0;
+let importSeq = 0;
+
+async function importFresh(full: string): Promise<any> {
+  const alias = path.join(path.dirname(full), `.arigami-reload.${loadSeq}.${++importSeq}.${path.basename(full)}`);
+  try {
+    fs.copyFileSync(full, alias);
+  } catch {
+    hostLog(`could not shadow ${path.basename(full)} for a fresh import — an edit to it needs a host restart`);
+    return import(pathToFileURL(full).href);
+  }
+  try {
+    return await import(pathToFileURL(alias).href);
+  } finally {
+    try { fs.rmSync(alias, { force: true }); } catch {}
+  }
+}
+
+/** Sweep aliases a crash may have left behind (they are hidden, but not litter). */
+function sweepReloadAliases(dir: string): void {
+  const seen = new Set<string>();
+  const walk = (d: string, depth: number) => {
+    if (depth > 3 || seen.has(d)) return;
+    seen.add(d);
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const full = path.join(d, e.name);
+      if (e.name.startsWith('.arigami-reload.')) { try { fs.rmSync(full, { force: true }); } catch {} }
+      else if (e.isDirectory()) walk(full, depth + 1);
+    }
+  };
+  walk(dir, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +572,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
     channels: {},
     listenerTypes: [],
   };
+  sweepReloadAliases(dir);
   const { manifest, error } = parseManifest(dir);
   entry.manifest = manifest || null;
   entry.mtime = newestMtime(watchedFiles(dir, manifest || null));
@@ -539,7 +595,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
   // listeners
   for (const l of manifest.listeners || []) {
     const full = insideDir(dir, str(l.module))!;
-    const mod = await import(pathToFileURL(full).href + `?v=${mtimeOf(full)}`);
+    const mod = await importFresh(full);
     const provider = (mod as any)[str(l.export)];
     registry.register(
       {
@@ -558,7 +614,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
   // hooks / gates / notification channels
   if (manifest.hooks?.module) {
     const full = insideDir(dir, str(manifest.hooks.module))!;
-    const mod = await import(pathToFileURL(full).href + `?v=${mtimeOf(full)}`);
+    const mod = await importFresh(full);
     const h = pickHooks(mod);
     for (const [ev, fn] of Object.entries(h.on || {})) {
       if (typeof fn !== 'function') continue;
@@ -611,6 +667,11 @@ function runHook(ext: string, event: string, fn: (ev: any, ctx: HookCtx) => any,
   ]).catch((e: Error) => {
     // A hook that throws is the extension's problem, never the host's.
     extLog(ext, `hook ${event} failed: ${e.message}`);
+    // …with ONE exception: a failing `incident` hook must not file an incident.
+    // appendIncident broadcasts, the broadcast re-enters this hook, it throws
+    // again — an unbounded loop that would take the host down. The extension's
+    // own log is the report for that case.
+    if (event === 'incident') return;
     appendIncident({ sessionId: payload?.sessionId || '', action: `ext:${ext}:hook:${event}`, health: 'BLOCKED_SYSTEM', reason: e.message.slice(0, 300), outcome: 'hook-failed' } as any);
   });
 }
@@ -629,6 +690,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
   if (reloading) await reloading.catch(() => {});
   let done!: () => void;
   reloading = new Promise<void>((r) => (done = r));
+  loadSeq++;
   try {
     ensureUserRepo();
     const st = readState();

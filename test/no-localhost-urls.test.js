@@ -29,6 +29,7 @@ const ALLOW = [
   ['server/voice.js', '"open localhost:3000"'], // prose example in the voice router prompt
   ['mcp/host-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // internal fetch base
   ['mcp/policy-hook.js', "const HOST = process.env.ARIGAMI_URL"], // A3 hook: internal fetch base
+  ['mcp/ext-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // EXT tool wrapper: internal fetch base
   ['mcp/host-mcp.js', 'url:"http://localhost:<port>"'], // allocate_port guidance → open_tab
   ['mcp/host-mcp.js', 'pass its http://localhost:<port> URL here'], // open_tab guidance
   ['mcp/host-mcp.js', 'never prefix it with http://localhost'],
