@@ -1,0 +1,33 @@
+{
+  "name": "compare",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "trusted": true,
+  "title": "Compare",
+  "description": "A side-by-side slider between the build you are looking at and a baseline (staging, production, the last published Storybook). Both panes are embedded through the host proxy, so both are logged in, interactive and mirrored.",
+  "tabs": [
+    {
+      "id": "compare",
+      "title": "Compare",
+      "entry": "ui/index.html",
+      "openFrom": ["tab-bar", "slash:/compare"]
+    }
+  ],
+  "permissions": ["session:tabs", "session:message"],
+  "settings": {
+    "schema": {
+      "baselineUrl": {
+        "type": "string",
+        "default": "",
+        "title": "Baseline URL",
+        "description": "The default right-hand side when only one URL is given — e.g. your staging or production origin. Leave empty to always pass both URLs explicitly."
+      },
+      "autoPath": {
+        "type": "boolean",
+        "default": true,
+        "title": "Keep the path",
+        "description": "Take the path and query of the URL under review and apply them to the baseline origin. Off: the baseline URL is opened exactly as written."
+      }
+    }
+  }
+}

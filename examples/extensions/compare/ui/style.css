@@ -1,0 +1,32 @@
+:root { color-scheme: dark }
+* { box-sizing: border-box }
+html, body { margin: 0; height: 100%; background: #0d1117; overflow: hidden; font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; color: #c9d1d9 }
+
+/* ---- the setup form ---- */
+#setup { display: flex; flex-direction: column; gap: 10px; padding: 22px; max-width: 560px }
+#setup .row { display: flex; flex-direction: column; gap: 4px }
+#setup label { font-size: 11px; color: #8b949e }
+#setup input { background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #c9d1d9; padding: 7px 9px; font: 12px ui-monospace, Menlo, monospace }
+#setup input:focus { outline: none; border-color: #58a6ff }
+#setup .actions { flex-direction: row; align-items: center; gap: 10px; margin-top: 4px }
+#hint { font-size: 11px; color: #8b949e }
+
+button { border: 0; border-radius: 8px; padding: 7px 13px; cursor: pointer; font: 600 12px ui-sans-serif, system-ui; color: #fff; background: #30363d }
+button.primary, #go { background: #1f6feb }
+
+/* ---- the two panes ---- */
+#view { position: absolute; inset: 0 }
+iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff }
+#bwrap { position: absolute; inset: 0 }
+#awrap { position: absolute; inset: 0; clip-path: inset(0 0 0 50%); overflow: hidden }
+#dv { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: #58a6ff; cursor: ew-resize; box-shadow: 0 0 0 1px rgba(0,0,0,.4) }
+#dv .grab { position: absolute; top: 0; bottom: 0; left: -10px; width: 22px; cursor: ew-resize }
+#dv .knob { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 32px; height: 32px; border-radius: 50%; background: #58a6ff; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px }
+.lbl { position: absolute; top: 10px; font: 600 11px ui-monospace, Menlo, monospace; color: #fff; background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 6px; pointer-events: none; z-index: 2; max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+#bar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 3 }
+#bar button { border-radius: 999px; padding: 6px 12px }
+
+#bnotice { position: absolute; inset: 0; z-index: 5; background: rgba(13,17,23,.97); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center }
+#bnotice .t { font-weight: 700; font-size: 15px }
+#bnotice .s { max-width: 340px; color: #8b949e; font-size: 13px }
+#bnotice .btns { display: flex; gap: 8px }
