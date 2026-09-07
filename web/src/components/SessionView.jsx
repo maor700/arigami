@@ -832,6 +832,14 @@ function PendingPromptsPanel({ session }) {
           </span>
           {t('rail.autoPlay')}
         </label>
+        {/* Auto-play is on and prompts wait, but the host is holding the queue
+            back until the human answers the action bar above — say so, instead
+            of leaving a queue that looks stuck on an idle session. */}
+        {autoPlay && session.autoPlayHold === 'action' && (
+          <span className="text-[10.5px] text-fgdim" title={t('rail.autoPlayHoldActionHint')}>
+            {t('rail.autoPlayHoldAction')}
+          </span>
+        )}
       </div>
       {/* floating list */}
       {open && (

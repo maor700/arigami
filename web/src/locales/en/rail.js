@@ -265,6 +265,8 @@ export const strings = {
   'rail.hideQueuedPrompts': 'Hide queued prompts',
   'rail.showQueuedPrompts': 'Show queued prompts',
   'rail.autoPlayPromptHint': 'Automatically play the next queued prompt when the current turn finishes (Claude may defer it if the conversation is mid-question)',
+  'rail.autoPlayHoldAction': '⏸ waiting for your decision above',
+  'rail.autoPlayHoldActionHint': 'Auto-play is on and prompts are waiting, but the queue is held until you answer the card above',
   'rail.autoPlay': 'auto-play',
   'rail.queuedPromptsHint': 'Queued prompts — drag to reorder, ▶ to start now',
   'rail.interruptSendNow': 'Interrupt the current work and send this prompt now',

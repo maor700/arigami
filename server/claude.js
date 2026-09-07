@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree } from './lib/children.js';
-import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing } from './state.js';
+import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
 import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, setActive, resolveRefreshToken } from './accounts.js';
@@ -2048,10 +2048,46 @@ export function playPendingPrompt(id, promptId, { auto = false } = {}) {
   return true;
 }
 
-// Auto-play the next queued prompt when a turn ends — but only when it's
-// REASONABLE: autoPlay on, session still idle after the settle delay (the user
-// may have typed something new meanwhile), and nothing waiting on a human
-// (pending permission request or a sticky action bar).
+// How long to wait before an auto-play actually fires: the user may type
+// something new in that window, and a turn-end is immediately followed by other
+// state churn. Long enough to settle, short enough that the queue feels live.
+const AUTOPLAY_SETTLE_MS = 800;
+
+// What a fired settle timer does. Indirected so tests can exercise the queue
+// logic (guards + timing) without spawning a claude process.
+let autoPlayer = (id) => playPendingPrompt(id, null, { auto: true });
+export function __setAutoPlayer(fn) {
+  autoPlayer = fn || ((id) => playPendingPrompt(id, null, { auto: true }));
+}
+
+// Auto-play the next queued prompt — but only when it's REASONABLE: autoPlay on,
+// session still idle after the settle delay (the user may have typed something
+// new meanwhile), and nothing waiting on a human (pending permission request or
+// a sticky action bar). state.autoPlayHold() owns that rule; the same answer is
+// what the cockpit shows next to the switch.
+//
+// A turn-end is NOT the only moment a queue can start moving — a prompt added to
+// an already-idle session, the switch flipped on while idle, an answered action
+// card, or a host restart with a queue on disk are all "kicks" too. Every one of
+// them calls kickAutoPlay(); before that, only the turn-end did, which is why a
+// queue could sit there forever on a session that wasn't working (the bug).
+export function kickAutoPlay(id) {
+  scheduleAutoPlay(id);
+}
+
+// Boot: sessions come back from state.json as idle, and a queue that was waiting
+// for a turn that will now never end would otherwise never move.
+export function kickAutoPlayAll() {
+  let n = 0;
+  for (const s of listSessions({ archived: false })) {
+    if (s.promptAutoPlay && (s.pendingPrompts || []).length) {
+      kickAutoPlay(s.id);
+      n++;
+    }
+  }
+  return n;
+}
+
 function scheduleAutoPlay(id) {
   const s = getSession(id);
   if (!s?.promptAutoPlay || !(s.pendingPrompts || []).length) return;
@@ -2059,15 +2095,14 @@ function scheduleAutoPlay(id) {
     try {
       const cur = getSession(id);
       if (!cur?.promptAutoPlay || !(cur.pendingPrompts || []).length) return;
-      // Not idle = a new turn started, or a permission request is pending
-      // (that flips state to 'awaiting-input').
-      if (cur.claude?.state !== 'idle') return;
-      if (cur.action) return; // sticky action bar → a human decision is pending
-      playPendingPrompt(id, null, { auto: true });
+      // Held: not idle (a new turn started, or a permission request flipped the
+      // state to 'awaiting-input'), or a sticky action bar awaits a human.
+      if (autoPlayHold(cur)) return;
+      autoPlayer(id);
     } catch (e) {
       console.error('[prompts] auto-play failed:', e?.message || e);
     }
-  }, 800);
+  }, AUTOPLAY_SETTLE_MS);
   if (t.unref) t.unref();
 }
 

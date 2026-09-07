@@ -2060,6 +2060,7 @@ export function deliverToSession(id: string, text: string): { delivered: 'now' |
   }
   state.addPendingPrompt(id, text);
   state.setPromptAutoPlay(id, true);
+  claude.kickAutoPlay(id); // "busy" can end between the check above and here
   return { delivered: 'queued' };
 }
 
@@ -4995,6 +4996,7 @@ export async function handle(
       }
       state.addPendingPrompt(id, wrapped);
       state.setPromptAutoPlay(id, true);
+      claude.kickAutoPlay(id);
       return json(res, {
         ok: true,
         delivered: 'queued',
@@ -5123,6 +5125,10 @@ export async function handle(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (!text) return badRequest(res, 'text required');
       const prompt = state.addPendingPrompt(id, text);
+      // The session may be idle already (queued deliberately, or the turn ended
+      // while the composer was open) — with auto-play on, that queue must start
+      // moving now; nothing else would kick it until the NEXT turn ends.
+      if (prompt) claude.kickAutoPlay(id);
       return prompt ? json(res, prompt, 201) : notFound(res);
     }
     if (sub === 'prompts/reorder' && m === 'POST') {
@@ -5134,6 +5140,8 @@ export async function handle(
     if (sub === 'prompts/autoplay' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const updated = state.setPromptAutoPlay(id, !!body.on);
+      // Flipping the switch ON over a waiting queue is itself a "play now".
+      if (updated && body.on) claude.kickAutoPlay(id);
       return updated ? json(res, { ok: true, on: !!body.on }) : notFound(res);
     }
     if (parts[3] === 'prompts' && parts[4] && parts[5] === 'play' && m === 'POST') {
@@ -5191,6 +5199,7 @@ export async function handle(
         }
       }
       state.patchSession(id, { action: null });
+      claude.kickAutoPlay(id); // the hold is gone; if no turn starts below, the queue resumes
       try { emitLocal('action.answered', { sessionId: id, actionId: (cur as any)?.id || null, kind: cur?.kind || null, value: String(value) }); } catch {}
       // F7: request_review's ✓ Verified is a human approval of the branch.
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
@@ -5228,6 +5237,7 @@ export async function handle(
     // returned, so the model isn't blocked; clearing the state is enough.
     if (sub === 'action/dismiss' && m === 'POST') {
       state.patchSession(id, { action: null });
+      claude.kickAutoPlay(id); // dismissing the card releases a held queue
       return json(res, { ok: true });
     }
     if (sub === 'permission/answer' && m === 'POST') {

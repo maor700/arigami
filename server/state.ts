@@ -238,6 +238,7 @@ export interface Session {
   bg: unknown[];
   pendingPrompts?: PendingPrompt[];
   promptAutoPlay?: boolean;
+  autoPlayHold?: 'action' | null; // wire-only (toWireSession): why the queue isn't moving
   sortOrder?: number; // manual flat-mode rail order (set by reorderSessions)
   folderId?: string | null; // rail folder membership (null/absent = root)
   changesExplaining?: 'pr' | 'uncommitted' | 'work' | null;
@@ -405,6 +406,21 @@ export function slimCapabilities(caps: Record<string, unknown> | undefined): Rec
   return out;
 }
 
+// Auto-play is ON and prompts are waiting, yet nothing plays — why? This is the
+// ONE place the rule lives: claude.js's settle timer asks it before playing, and
+// toWireSession puts the human-facing half of the answer on the wire.
+//   'action' — a sticky action bar (request_action / review card) is waiting on
+//              a human decision; playing over it would bury the question.
+//   'busy'   — a turn is running (or a permission request flipped the state);
+//              the queue moves on its own when it ends.
+//   null     — nothing holds it back.
+export function autoPlayHold(s: Session): 'action' | 'busy' | null {
+  if (!s.promptAutoPlay || !(s.pendingPrompts || []).length) return null;
+  if (s.action) return 'action';
+  if (s.claude?.state !== 'idle') return 'busy';
+  return null;
+}
+
 export function toWireSession(s: Session): Session {
   let out: Session = s;
   if (s.claude?.capabilities) out = { ...out, claude: { ...s.claude, capabilities: slimCapabilities(s.claude.capabilities) } };
@@ -413,6 +429,10 @@ export function toWireSession(s: Session): Session {
     const ladder = ladderBadge(s.claude);
     if (ladder || out.claude?.ladder !== undefined) out = { ...out, claude: { ...(out.claude || s.claude), ladder } };
   }
+  // 'busy' is already obvious in the UI (the session is visibly working) — only
+  // the hold a human has to resolve is worth a hint next to the switch.
+  const hold = autoPlayHold(s);
+  if (hold === 'action') out = { ...out, autoPlayHold: 'action' };
   const result = s.metadata?.result as { state?: string; summary?: unknown } | undefined;
   if (
     result &&

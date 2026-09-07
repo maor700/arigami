@@ -265,6 +265,8 @@ export const strings = {
   'rail.hideQueuedPrompts': 'הסתרת בקשות בתור',
   'rail.showQueuedPrompts': 'הצגת בקשות בתור',
   'rail.autoPlayPromptHint': 'נגן אוטומטית את הבקשה הבאה בתור כשהתור הנוכחי מסתיים (Claude עשוי לדחות אותה אם השיחה באמצע שאלה)',
+  'rail.autoPlayHoldAction': '⏸ ממתין להחלטה שלך למעלה',
+  'rail.autoPlayHoldActionHint': 'אוטו-פליי דולק ובקשות ממתינות, אבל התור עצור עד שתענה על הכרטיס שלמעלה',
   'rail.autoPlay': 'ניגון אוטומטי',
   'rail.queuedPromptsHint': 'בקשות בתור — גררו כדי לסדר מחדש, ▶ כדי להתחיל עכשיו',
   'rail.interruptSendNow': 'הפסיקו את העבודה הנוכחית ושלחו את הבקשה הזו עכשיו',

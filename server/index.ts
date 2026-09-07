@@ -10,7 +10,7 @@ import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
 import * as vnc from './vnc.js';
-import { killAll } from './claude.js';
+import { killAll, kickAutoPlayAll } from './claude.js';
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';
@@ -412,6 +412,14 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./memory-learning.js')
     .then((m: any) => m.startLearningScheduler())
     .catch((e: any) => console.error('[host] memory learning scheduler failed to start:', e?.message));
+  // A queue that was waiting for a turn-end the restart cancelled would sit
+  // there forever otherwise — sessions come back idle, and nothing else kicks.
+  try {
+    const n = kickAutoPlayAll();
+    if (n) console.log(`[host] auto-play: kicked ${n} session(s) with a waiting prompt queue`);
+  } catch (e) {
+    console.error('[host] auto-play boot kick failed:', (e as Error)?.message);
+  }
   // Shared :99 desktop (spec §7.3): default instance only, no-op when the
   // display is already up (legacy unit) or Xvfb/x11vnc are missing.
   import('./lib/desktops.js')
