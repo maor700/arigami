@@ -21,7 +21,16 @@ import Budgets from './Budgets.jsx';
 import Health from './Health.jsx';
 import { WhoAmI, UsersAdvanced, ScreenShare, DangerZone } from './Access.jsx';
 
-export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
+export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-legacy', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
+
+// VER1: numeric-triple compare ("0.2.0" vs "0.1.9"); 0 when either side is not a version.
+function cmpVer(a, b) {
+  const pa = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(a || ''));
+  const pb = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(b || ''));
+  if (!pa || !pb) return 0;
+  for (let i = 1; i <= 3; i++) { const d = Number(pa[i]) - Number(pb[i]); if (d) return d > 0 ? 1 : -1; }
+  return 0;
+}
 
 function fmtUptime(sec) {
   if (!Number.isFinite(sec)) return '';
@@ -121,6 +130,8 @@ export default function Host({ section = '' }) {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
+  const [updateErr, setUpdateErr] = useState(null); // VER1: {error, dirty?} from a refused POST /host/upgrade
+  const [dismissedJob, setDismissedJob] = useState(() => sessionStorage.getItem('host.ver.dismissed') || null);
   const [memory, setMemory] = useState(true);
   const [force, setForce] = useState(false);
   const wasDown = useRef(false);
@@ -154,7 +165,8 @@ export default function Host({ section = '' }) {
       return;
     }
     if (ev.kind === 'upgrade-failed') toastError(t('host.upgradeFailed', { error: ev.error }));
-    if (ev.kind === 'upgrade-done') toast(t('host.upgradeDone'));
+    // VER1: confirm-mode upgrades park with needsRestart — the card below asks for the click.
+    if (ev.kind === 'upgrade-done') toast(ev.needsRestart ? t('host.ver.builtToast', { to: ev.to || '?' }) : t('host.upgradeDone'));
     if (ev.kind === 'restarting' || ev.kind === 'restart-draining') restarting.current = true;
     // UPD1: done/failed are toasted globally (store.js); here just refresh the row.
     if (ev.kind === 'claude-update-started') setCli((c) => (c ? { ...c, applying: true } : c));
@@ -187,8 +199,30 @@ export default function Host({ section = '' }) {
   };
   const check = async () => {
     setChecking(true);
-    try { setVer(await api.get('/version?refresh=1')); } catch (e) { fail(e); } finally { setChecking(false); }
+    try { setVer(await api.get('/version?refresh=1')); api.get('/host/status').then(setSt).catch(() => {}); } catch (e) { fail(e); } finally { setChecking(false); }
   };
+  // VER1 — "Update": pull + install + build with when=confirm; the restart is the card's click.
+  const update = async () => {
+    const ok = await confirmDialog({ title: t('host.ver.confirmUpdate.title'), body: t('host.ver.confirmUpdate.body', { from: ver?.version || '?', to: ver?.available?.version || ver?.version || '?' }), confirmLabel: t('host.ver.confirmUpdate.ok') });
+    if (!ok) return;
+    setLog([]); setUpdateErr(null);
+    setBusy(true);
+    try { await hostPost('/host/upgrade?when=confirm'); load(); } catch (e) {
+      if (e?.status === 409 && e.dirty) setUpdateErr({ error: e.message, dirty: e.dirty });
+      else fail(e);
+      load();
+    } finally { setBusy(false); }
+  };
+  const restartAfterUpdate = async (when) => {
+    if (when === 'now') {
+      const n = st?.busySessions || 0;
+      const ok = await confirmDialog({ title: t('host.confirmRestart.title'), body: n ? t('host.confirmRestart.body', { n }) : '', confirmLabel: t('host.confirmRestart.ok'), danger: true });
+      if (!ok) return;
+    }
+    restarting.current = true;
+    act(() => hostPost(`/host/restart?when=${when}`));
+  };
+  const dismissReady = (jobId) => { sessionStorage.setItem('host.ver.dismissed', jobId); setDismissedJob(jobId); };
   // UPD1 — the `claude` CLI row. Mutations are admin-confirmed POSTs like the rest of the card.
   const cliAct = async (what, fn) => {
     setCliBusy(what);
@@ -211,17 +245,84 @@ export default function Host({ section = '' }) {
   const warn = 'font-mono text-[10.5px] text-[#CE8324]';
   const hasLog = log.length > 0 || (upg?.log?.length || 0) > 0;
   const advIds = hasLog ? HOST_ADVANCED_IDS : HOST_ADVANCED_IDS.filter((x) => x !== 'upgrade-log');
+  // VER1 — the version row's derived state.
+  const avail = ver?.available?.version || null;
+  const newer = !!avail && !!ver?.version && cmpVer(avail, ver.version) > 0;
+  const canUpdate = !!ver && !st?.docker && (newer || ver.ahead > 0);
+  const dirtyList = updateErr?.dirty?.length ? updateErr.dirty : st?.dirty || [];
+  const blocked = dirtyList.length > 0 || ver?.sharedBase === false || (ver?.behind > 0 && ver?.ahead > 0);
+  const readyJob = upg && upg.ok && upg.needsRestart && phase !== 'exiting' ? upg : null;
+  const readyDismissed = !!readyJob && dismissedJob === readyJob.id;
 
   return (
     <>
       <Section id="host" title={t('host.title')} first>
-        <Field label={t('host.version')} hint={t('host.version.hint')}>
-          <div className="flex flex-col items-end gap-1">
-            <span className="font-mono text-[11.5px] text-fg" dir="ltr">{ver ? `v${ver.version} · ${ver.commit || '?'}${ver.branch ? ` · ${ver.branch}` : ''}` : '…'}</span>
-            <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
-              {ver && !st?.docker && (ver.ahead === null ? t('host.noUpstream') : ver.ahead > 0 ? <span className="text-[#CE8324]">{t('host.updateAvailable', { n: ver.ahead })}</span> : t('host.upToDate'))}
+        <Field label={t('host.version')} hint={t('host.version.hint')} wrap>
+          <div className="flex max-w-full flex-col items-end gap-1.5">
+            <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+              <span className="text-fgdim">{t('host.ver.current')} </span>
+              {ver ? `v${ver.version} · ${ver.commit || '?'}${ver.branch ? ` · ${ver.branch}` : ''}` : '…'}
+            </span>
+            {ver && !st?.docker && (
+              <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+                <span className="text-fgdim">{t('host.ver.available')} </span>
+                {avail ? `v${avail}${ver.available?.tag && ver.available.tag !== `v${avail}` ? ` · ${ver.available.tag}` : ''}` : t('host.ver.availableUnknown')}
+                {ver.available?.release?.url && <> · <a href={ver.available.release.url} target="_blank" rel="noreferrer" className="underline">{t('host.ver.release')}</a></>}
+              </span>
+            )}
+            <span className="flex flex-wrap items-center justify-end gap-2 font-mono text-[10.5px] text-fgdim">
+              {ver && !st?.docker && (
+                ver.ahead === null ? t('host.noUpstream')
+                : newer ? <span className="text-[#CE8324]">{t('host.ver.newer', { v: avail })}</span>
+                : ver.ahead > 0 ? <span className="text-[#CE8324]">{t('host.ver.aheadOnly', { n: ver.ahead })}</span>
+                : t('host.upToDate')
+              )}
+              {ver?.fetchedAt ? <span>· {t('host.ver.checkedAt', { when: relTime(ver.fetchedAt) })}</span> : null}
               <button type="button" disabled={checking} onClick={check} className="cursor-pointer underline disabled:opacity-50">{checking ? t('host.checking') : t('host.check')}</button>
             </span>
+            {canUpdate && !upgRunning && !readyJob && (
+              <button type="button" disabled={disabled || blocked || !st?.allowUpgrade} onClick={update} className={BTN}>{t('host.ver.update')}</button>
+            )}
+            {upgRunning && <span className={warn}>{t('host.ver.updating', { step: upg.step || '…' })}</span>}
+            {st && !st.allowUpgrade && !st.docker && <span className={warn}>{t('host.upgradeDisabled')}</span>}
+            {dirtyList.length > 0 && (
+              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">
+                <div className="font-bold">{t('host.ver.dirty.title', { n: dirtyList.length })}</div>
+                <ul dir="ltr" className="my-1 max-h-[140px] overflow-auto font-mono text-[10.5px] leading-snug">
+                  {dirtyList.slice(0, 20).map((f) => <li key={f}>{f}</li>)}
+                  {dirtyList.length > 20 && <li>… +{dirtyList.length - 20}</li>}
+                </ul>
+                <div className="text-fgdim">{t('host.ver.dirty.how')}</div>
+              </div>
+            )}
+            {ver?.sharedBase === false && (
+              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">
+                <div className="font-bold">{t('host.ver.noBase.title')}</div>
+                <div className="text-fgdim">{t('host.ver.noBase.how')}</div>
+              </div>
+            )}
+            {ver?.sharedBase !== false && ver?.behind > 0 && ver?.ahead > 0 && (
+              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">{t('host.ver.notFF', { n: ver.behind })}</div>
+            )}
+            {readyJob && !readyDismissed && (
+              <div className="w-full max-w-[28rem] rounded-xl border-[1.5px] border-ink bg-panel px-3 py-2.5 text-start">
+                <div className="text-[12.5px] font-bold text-fg" dir="auto">{t('host.ver.ready.title', { from: readyJob.from || '?', to: readyJob.to || '?' })}</div>
+                <div className="mt-0.5 text-[11px] text-fgdim">{t('host.ver.ready.body')}</div>
+                {st?.busySessions > 0 && <div className={`mt-0.5 ${warn}`}>{t('host.ver.ready.busy', { n: st.busySessions })}</div>}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button type="button" disabled={busy || phase === 'draining' || phase === 'exiting'} onClick={() => restartAfterUpdate('now')} className={BTN}>{t('host.ver.restartNow')}</button>
+                  <button type="button" disabled={busy || phase !== 'idle'} onClick={() => restartAfterUpdate('idle')} className={BTN}>{t('host.ver.restartIdle')}</button>
+                  <button type="button" onClick={() => dismissReady(readyJob.id)} className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.ver.later')}</button>
+                </div>
+                {phase === 'pending-idle' && <div className={`mt-1 ${warn}`}>{t('host.pendingIdle', { n: st.busySessions })}</div>}
+              </div>
+            )}
+            {readyJob && readyDismissed && (
+              <span className={warn}>
+                {t('host.ver.ready.title', { from: readyJob.from || '?', to: readyJob.to || '?' })} · <button type="button" onClick={() => { sessionStorage.removeItem('host.ver.dismissed'); setDismissedJob(null); }} className="cursor-pointer underline">{t('host.ver.restartNow')}</button>
+              </span>
+            )}
+            {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
           </div>
         </Field>
         <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
@@ -248,24 +349,13 @@ export default function Host({ section = '' }) {
             {phase === 'exiting' && <span className={warn}>{t('host.restarting')}</span>}
           </div>
         </Field>
-        {st?.docker ? (
+        {st?.docker && (
           <Field label={t('host.upgrade')} hint={t('host.docker.upgradeHint')} wrap>
             <div className="flex flex-col items-end gap-1">
               <span className="text-[11px] text-fgdim">{t('host.docker.upgrade')}</span>
               <code dir="ltr" className="rounded-[6px] border border-hair bg-bg px-2 py-1 font-mono text-[10.5px] select-all">docker compose pull && docker compose up -d</code>
             </div>
           </Field>
-        ) : (
-        <Field label={t('host.upgrade')} hint={st && !st.allowUpgrade ? t('host.upgradeDisabled') : t('host.upgrade.hint')} wrap>
-          <div className="flex flex-col items-end gap-1.5">
-            <span className="flex items-center gap-2">
-              <button type="button" disabled={disabled || !st?.allowUpgrade} onClick={() => upgrade('idle')} className={BTN}>{t('host.upgradeIdleBtn')}</button>
-              <button type="button" disabled={disabled || !st?.allowUpgrade} onClick={() => upgrade('now')} className={BTN}>{t('host.upgradeBtn')}</button>
-            </span>
-            {upgRunning && <span className={warn}>{t('host.upgradeRunning', { step: upg.step || '…' })}</span>}
-            {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
-          </div>
-        </Field>
         )}
       </Section>
 
@@ -308,6 +398,20 @@ export default function Host({ section = '' }) {
             </span>
           </Field>
         </Section>
+
+        {!st?.docker && (
+          <Section id="upgrade-legacy" title={t('host.upgrade')}>
+            <Field label={t('host.upgrade')} hint={`${t('host.upgrade.legacyHint')} ${st && !st.allowUpgrade ? t('host.upgradeDisabled') : t('host.upgrade.hint')}`} wrap>
+              <div className="flex flex-col items-end gap-1.5">
+                <span className="flex items-center gap-2">
+                  <button type="button" disabled={disabled || blocked || !st?.allowUpgrade} onClick={() => upgrade('idle')} className={BTN}>{t('host.upgradeIdleBtn')}</button>
+                  <button type="button" disabled={disabled || blocked || !st?.allowUpgrade} onClick={() => upgrade('now')} className={BTN}>{t('host.upgradeBtn')}</button>
+                </span>
+                {upgRunning && <span className={warn}>{t('host.upgradeRunning', { step: upg.step || '…' })}</span>}
+              </div>
+            </Field>
+          </Section>
+        )}
 
         {hasLog && (
           <Section id="upgrade-log" title={t('settings.host.upgradeLog')}>

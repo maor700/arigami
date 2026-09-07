@@ -156,6 +156,7 @@ export function hostPost(path, method = 'POST', body) {
     if (!r.ok) {
       const e = new Error(b?.error || `HTTP ${r.status}`);
       e.status = r.status;
+      if (Array.isArray(b?.dirty)) e.dirty = b.dirty; // VER1: the dirty-checkout refusal names the files
       throw e;
     }
     return b;
