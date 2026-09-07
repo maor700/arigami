@@ -10,7 +10,7 @@
 // when both are present (it is the SPA's own, more specific state); the query
 // is only consulted when the hash is empty/bare.
 
-export const SETTINGS_CATEGORIES = ['appearance', 'voice', 'connections', 'automation', 'host'];
+export const SETTINGS_CATEGORIES = ['appearance', 'voice', 'connections', 'automation', 'host', 'extensions'];
 
 export function parseHash(hash) {
   const h = (hash || '').replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');

@@ -1,5 +1,5 @@
-// Settings — one screen, THREE categories + a collapsed "Advanced" drawer per
-// page (AUDIT2, docs/SETTINGS-IA.md §6): כללי · חיבורים · מארח. A left rail on
+// Settings — one screen, FOUR categories + a collapsed "Advanced" drawer per
+// page (AUDIT2, docs/SETTINGS-IA.md §6): כללי · חיבורים · מארח · הרחבות. A left rail on
 // desktop, horizontal chips on phones, deep-linkable as
 // #/settings/<category>[/<section>]. Each category is its own file under
 // ./settings/; this shell only owns the nav, the Escape/hotkey-recording key
@@ -17,16 +17,20 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { useStore } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
-import { faXmark, faSliders, faLink, faServer } from '@fortawesome/free-solid-svg-icons';
+import { faXmark, faSliders, faLink, faServer, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons';
 import General from './settings/Appearance.jsx';
 import Connections from './settings/Connections.jsx';
 import HostPage from './settings/Host.jsx';
+import ExtensionsPage from './settings/Extensions.jsx';
 
-// Route ids App.jsx accepts. The first three are the nav; `voice` and
+// Route ids App.jsx accepts. The first four are the nav; `voice` and
 // `automation` are legacy aliases that resolve onto `appearance` (General).
-export const SETTINGS_CATEGORIES = ['appearance', 'connections', 'host', 'voice', 'automation'];
-export const SETTINGS_NAV = ['appearance', 'connections', 'host'];
-const ICONS = { appearance: faSliders, connections: faLink, host: faServer };
+// EXT added `extensions` as a category of its own rather than a block inside
+// Host: installing one is a decision about running foreign code, and it needs
+// room for a permission list and a settings form per extension.
+export const SETTINGS_CATEGORIES = ['appearance', 'connections', 'host', 'extensions', 'voice', 'automation'];
+export const SETTINGS_NAV = ['appearance', 'connections', 'host', 'extensions'];
+const ICONS = { appearance: faSliders, connections: faLink, host: faServer, extensions: faPuzzlePiece };
 
 // Legacy category → {cat, section}. `automation` without a section opens the
 // heartbeat (its only user-facing control); `voice` opens the voice block.
@@ -100,6 +104,7 @@ export default function Settings({ category = 'appearance', section = '', initia
   let body;
   if (cat === 'connections') body = <Connections initialAdd={initialAdd} section={sec} />;
   else if (cat === 'host') body = <HostPage section={sec} />;
+  else if (cat === 'extensions') body = <ExtensionsPage />;
   else body = <General section={sec} voiceEnabled={voiceEnabled} recording={recordingHotkey} setRecording={setRecordingHotkey} />;
 
   return (

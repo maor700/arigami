@@ -30,11 +30,13 @@ import { strings as agentsEn } from '../locales/en/agents.js';
 import { strings as agentsHe } from '../locales/he/agents.js';
 import { strings as memoryEn } from '../locales/en/memory.js';
 import { strings as memoryHe } from '../locales/he/memory.js';
+import { strings as extEn } from '../locales/en/ext.js';
+import { strings as extHe } from '../locales/he/ext.js';
 
 // Core (settings/common) + per-module fragments. Fragments are authored per
 // area so localization work never collides on one file.
-const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn, ...wizardEn, ...telemetryEn, ...setupEn, ...agentsEn, ...memoryEn };
-const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe, ...wizardHe, ...telemetryHe, ...setupHe, ...agentsHe, ...memoryHe };
+const en = { ...coreEn, ...chromeEn, ...railEn, ...launcherEn, ...chatEn, ...dialogsEn, ...brainEn, ...hostEn, ...wizardEn, ...telemetryEn, ...setupEn, ...agentsEn, ...memoryEn, ...extEn };
+const he = { ...coreHe, ...chromeHe, ...railHe, ...launcherHe, ...chatHe, ...dialogsHe, ...brainHe, ...hostHe, ...wizardHe, ...telemetryHe, ...setupHe, ...agentsHe, ...memoryHe, ...extHe };
 
 const DICTS = { en, he };
 

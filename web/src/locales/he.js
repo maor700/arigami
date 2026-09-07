@@ -16,6 +16,7 @@ export const he = {
   'settings.cat.connections': 'חיבורים',
   'settings.cat.automation': 'אוטומציה',
   'settings.cat.host': 'מארח',
+  'settings.cat.extensions': 'הרחבות',
   'settings.connections.claude': 'חשבונות Claude',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'מתקדם',

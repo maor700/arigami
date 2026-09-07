@@ -17,6 +17,7 @@ export const en = {
   'settings.cat.connections': 'Connections',
   'settings.cat.automation': 'Automation',
   'settings.cat.host': 'Host',
+  'settings.cat.extensions': 'Extensions',
   'settings.connections.claude': 'Claude accounts',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'Advanced',
