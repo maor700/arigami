@@ -200,6 +200,25 @@ Copy `profiles/bundles/solo-dev/`, change `profile.json.name`, add skills
 bin/host profile validate ./my-bundle
 ```
 
-## 4. Backup, restore, migration
+## 4. Extensions
+
+A **Profile Bundle** ships a starting configuration; an **extension** adds
+capability — tools, docs, listener types, merge gates, notification channels and
+cockpit tabs — to a running host, at runtime, from a git repo you own. Nothing is
+added to `/opt/arigami`, so `git pull --ff-only` (and therefore every future
+upgrade) keeps working.
+
+```sh
+bin/host ext validate examples/extensions/hello
+bin/host ext add      examples/extensions/hello    # or a git URL
+bin/host ext list
+```
+
+Extension code runs with the host's privileges — `ext add` prints the
+permissions the manifest asks for before you enable it. Full picture:
+[docs/EXTENSIONS.md](EXTENSIONS.md); the contract for writing one:
+[sdk/README.md](../sdk/README.md).
+
+## 5. Backup, restore, migration
 
 See [docs/BACKUP.md](BACKUP.md): `bin/host export --full|--bundle`, `bin/host import`, Settings → Host → Export / Import, and the laptop → VPS → Docker recipes.
