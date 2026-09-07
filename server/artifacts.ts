@@ -23,6 +23,7 @@ import type { Artifact } from './state.js';
 import { shareTokens } from './share-token.js';
 import type { ShareScope } from './share-token.js';
 import { publicUrl } from './lib/public-url.js';
+import { TOKEN_SEG, injectBase as injectBaseHelper, rewriteBaseForToken, rewriteAbsoluteRefs as rewriteRefsHelper } from './lib/asset-base.js';
 
 export const ARTIFACTS_DIR = path.join(cfg.configDir!, 'uploads', 'artifacts');
 
@@ -72,26 +73,14 @@ export function walkSource(root: string): WalkEntry[] {
   return out;
 }
 
-// `<base href>` injection. The artifact is served from `/__artifacts/<id>/v<N>/`
+// `<base href>` injection — the shared helper (server/lib/asset-base.ts, also
+// used by extension tabs). The artifact is served from `/__artifacts/<id>/v<N>/`
 // (and, for cookie-less viewers, the tokenized `~t/<token>/` form), so the
-// document's OWN base — usually `./` or the site it was built for — would send
-// every relative URL to the wrong place: any existing <base> is overridden
-// (its `target` attribute is kept, that is the only other thing <base> does).
-// Placed right after <head> so it precedes every relative URL. Root-absolute
-// URLs (src="/x") are NOT fixed by <base> — those get a warning instead (see
-// scanHtmlWarnings); `/__artifacts/<id>/…` ones are rewritten at serve time.
-export function injectBase(html: string, href: string): string {
-  const own = /<base(\s[^>]*)?>/i.exec(html);
-  if (own) {
-    const tm = /\starget=(["'][^"']*["']|[^\s>]+)/i.exec(own[1] || '');
-    const tag = `<base href="${href}"${tm ? ` target=${tm[1]}` : ''}>`;
-    return html.slice(0, own.index) + tag + html.slice(own.index + own[0].length);
-  }
-  const tag = `<base href="${href}">`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + tag);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + '<head>' + tag + '</head>');
-  return tag + html;
-}
+// document's OWN base would send every relative URL to the wrong place.
+// Root-absolute URLs (src="/x") are NOT fixed by <base> — those get a warning
+// instead (see scanHtmlWarnings); `/__artifacts/<id>/…` ones are rewritten at
+// serve time by rewriteAbsoluteRefs below.
+export const injectBase = injectBaseHelper;
 
 export function scanHtmlWarnings(html: string): string[] {
   const w: string[] = [];
@@ -326,7 +315,6 @@ export interface ParsedArtifactUrl {
   hadTrailing: boolean;  // `/__artifacts/<id>` (false) vs `/__artifacts/<id>/…` (true)
 }
 
-const TOKEN_SEG = '~t';
 
 export function parseArtifactUrl(raw: string): ParsedArtifactUrl | null {
   const q = raw.indexOf('?');
@@ -523,17 +511,14 @@ export function serve(req: IncomingMessage, res: ServerResponse): boolean {
 
 // `<base href="/__artifacts/<aid>/v3/…">` → `<base href="/__artifacts/<aid>/~t/<token>/v3/…">`
 export function rewriteBaseForShare(html: string, aid: string, token: string): string {
-  const re = new RegExp(`(<base\\s[^>]*href=["'])(/__artifacts/${aid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)(?!${TOKEN_SEG}/)`, 'i');
-  return html.replace(re, (_m, pre: string, base: string) => `${pre}${base}${TOKEN_SEG}/${token}/`);
+  return rewriteBaseForToken(html, `/__artifacts/${aid}/`, token);
 }
 
 // F5: `src="/__artifacts/<aid>/x.png"` → `src="/__artifacts/<aid>/~t/<token>/x.png"`.
 // Root-absolute URLs bypass <base>; a page that references its own artifact
 // path that way (e.g. a link copied from an earlier publish) is fixed here.
-// Only attribute values are touched, and never an already-tokenized one.
 export function rewriteAbsoluteRefs(html: string, aid: string, token: string): string {
-  const re = new RegExp(`((?:src|href|poster|data)=["'])(/__artifacts/${aid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/)(?!${TOKEN_SEG}/)`, 'gi');
-  return html.replace(re, (_m, pre: string, base: string) => `${pre}${base}${TOKEN_SEG}/${token}/`);
+  return rewriteRefsHelper(html, `/__artifacts/${aid}/`, token);
 }
 
 function escapeHtml(s: string): string {
