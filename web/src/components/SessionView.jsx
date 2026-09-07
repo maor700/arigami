@@ -1484,6 +1484,15 @@ function UrlTab({ tab, active, session }) {
   const extRecord = useMemo(() => findExtension(extensions, extName), [extensions, extName]);
   const iframeRef = useRef(null);
   const bridgeRef = useRef(null);
+  // EXT3 recovery: the page's own <script src> is fetched from an opaque origin
+  // and therefore cookie-less — it rides the asset token in the entry HTML's
+  // <base>. A token that went stale while the tab sat open (24h TTL) makes that
+  // script 401, so the SDK never says hello. Remounting the iframe re-fetches
+  // the entry HTML (a same-site navigation: the cookie IS sent) and mints a
+  // fresh token. Once per mount, so a genuinely broken page doesn't loop.
+  const helloRef = useRef(false);
+  const extRetriedRef = useRef(false);
+  const helloTimerRef = useRef(null);
   // Read live by the bridge, so a settings change or a reload lands without
   // tearing the bridge (and the iframe's own state) down.
   const liveRef = useRef(null);
@@ -1517,12 +1526,14 @@ function UrlTab({ tab, active, session }) {
       post: (msg) => {
         try { iframeRef.current?.contentWindow?.postMessage(msg, '*'); } catch { /* iframe gone */ }
       },
+      onHello: () => { helloRef.current = true; },
     });
     bridgeRef.current = bridge;
     const onMsg = (e) => bridge.onMessage(e);
     window.addEventListener('message', onMsg);
     return () => {
       window.removeEventListener('message', onMsg);
+      clearTimeout(helloTimerRef.current);
       bridge.dispose();
       bridgeRef.current = null;
     };
@@ -1622,6 +1633,13 @@ function UrlTab({ tab, active, session }) {
             // says hello until it hears back, so a late-evaluating script is
             // covered too — init is idempotent.
             bridgeRef.current?.sendInit();
+            if (!extName) return;
+            clearTimeout(helloTimerRef.current);
+            helloTimerRef.current = setTimeout(() => {
+              if (helloRef.current || extRetriedRef.current) return;
+              extRetriedRef.current = true;
+              setReloadKey((k) => k + 1);
+            }, 4000);
           }}
           /* Published artifacts (A1) and extension tabs (EXT) run with an opaque
              origin — no allow-same-origin — so a page can't call /__api as the

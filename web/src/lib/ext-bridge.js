@@ -36,6 +36,9 @@ const V = 1;
  * @param post           (msg) => post to the iframe
  * @param api            REST client (injectable for tests)
  * @param subscribeWire  (fn) => unsubscribe, over raw WS messages (injectable)
+ * @param onHello        called the first time the tab's SDK announces itself —
+ *                       the shell uses it to notice a page whose script never
+ *                       loaded (EXT3: a stale asset token) and reload once
  */
 export function createExtBridge({
   sessionId,
@@ -47,6 +50,7 @@ export function createExtBridge({
   post,
   api = defaultApi,
   subscribeWire = onWireEvent,
+  onHello = () => {},
 }) {
   const subs = new Set(); // event names/globs the tab asked for
   let unsubWire = null;
@@ -172,6 +176,7 @@ export function createExtBridge({
     if (!m || typeof m !== 'object' || typeof m.type !== 'string') return;
     if (m.type === 'arigami:hello') {
       // The SDK announces itself until it hears back; init is idempotent.
+      try { onHello(); } catch { /* the shell's problem, not the tab's */ }
       sendInit();
       return;
     }
