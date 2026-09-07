@@ -77,11 +77,11 @@ pm2 start "bun server/index.ts" --name arigami --cwd /opt/arigami && pm2 save
 
 | endpoint | behaviour |
 |---|---|
-| `GET /__api/version` | `{version, commit, commitDate, branch, upstream, ahead, behind, updateAvailable}` — cached 60 s; `?refresh=1` runs `git fetch` first (≤ once / 5 min) |
-| `GET /__api/host/status` | `{manager, uptimeSec, busySessions, pendingRestart:'now'\|'idle'\|null, phase, allowUpgrade, upgrade}` |
+| `GET /__api/version` | `{version, tag, available:{version, tag, release}, commit, branch, ahead, behind, sharedBase, updateAvailable}` — `version` is VERSION/package.json (minted by `bun run release`), `available` is the upstream tip's package.json + newest v* tag (+ GitHub's latest release on `?refresh=1`), `sharedBase:false` = no merge base with upstream. Cached 60 s; `?refresh=1` runs `git fetch --tags` first (≤ once / 5 min) |
+| `GET /__api/host/status` | `{manager, dirty:[…], uptimeSec, busySessions, pendingRestart:'now'\|'idle'\|null, phase, allowUpgrade, upgrade}` — `dirty` lists the tracked changes that would block an upgrade (VER1) |
 | `POST /__api/host/restart?when=now` | stop accepting connections, give in-flight claude turns `host.drainTimeoutMs` (20 s) to finish, then exit 0 |
 | `POST /__api/host/restart?when=idle` | queue until no session is `working` (max `host.idleTimeoutMin`, 30 min), then as above. `DELETE` cancels while queued |
-| `POST /__api/host/upgrade?when=now\|idle` | refuse if the checkout has uncommitted changes (untracked files are fine) or `host.allowUpgrade=false`; else `git fetch` → `git pull --ff-only` → `bun install --frozen-lockfile` → `cd web && bun run build` → restart. Progress streams on `/__ws` as `{type:'host', event:{kind:'upgrade-progress', …}}` and to `logs/upgrade.log` |
+| `POST /__api/host/upgrade?when=confirm\|now\|idle` | refuse (409, body carries `dirty:[…]`) if the checkout has uncommitted changes (untracked files are fine) or `host.allowUpgrade=false`; else `git fetch --tags` → `git merge-base --is-ancestor HEAD @{u}` (fails early with a readable reason when a ff pull is impossible — docs/GIT-REALIGN.md) → `git pull --ff-only` → `bun install --frozen-lockfile` → `cd web && bun run build`. `when=confirm` (the cockpit's **Update** button, VER1) then parks with `upgrade.needsRestart=true` and the human restarts from the card; `now\|idle` restart by themselves (CLI / orchestrators). Progress streams on `/__ws` as `{type:'host', event:{kind:'upgrade-progress', …}}`, `upgrade-done` carries `{needsRestart, from, to}`; log in `logs/upgrade.log` |
 
 All mutations require the header `X-Arigami-Confirm: yes`, and — when the
 caller is a session (`X-Arigami-Session`, set by the `host_restart` MCP tool) —

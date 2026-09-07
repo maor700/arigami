@@ -63,7 +63,7 @@ re-running is a no-op):
 | `--no-service` | install everything, start nothing |
 | `--dry-run` | print the plan, change nothing |
 | `--repo URL` / `--branch B` | where to clone from (defaults: GitHub `master`) |
-| `update` | the upgrade path: `git pull --ff-only` → `bun install` → web build → restart — identical to the cockpit's **Upgrade** button (`POST /__api/host/upgrade`) |
+| `update` | the upgrade path: `git pull --ff-only` → `bun install` → web build → restart. The cockpit's **Update** button (Settings → Host → Version, `POST /__api/host/upgrade?when=confirm`) does the same pull/install/build and then waits for your restart click. Versions are minted with `bun run release <patch\|minor\|major>` (package.json + VERSION + CHANGELOG.md + tag `vX.Y.Z`; pushing the tag publishes the GitHub Release) |
 
 ### Environment (`--unattended`)
 
