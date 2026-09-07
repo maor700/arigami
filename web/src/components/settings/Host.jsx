@@ -258,13 +258,13 @@ export default function Host({ section = '' }) {
     <>
       <Section id="host" title={t('host.title')} first>
         <Field label={t('host.version')} hint={t('host.version.hint')} wrap>
-          <div className="flex max-w-full flex-col items-end gap-1.5">
-            <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+          <div className="flex w-full max-w-full flex-col items-end gap-1.5">
+            <span className="max-w-full break-all font-mono text-[11.5px] text-fg" dir="ltr">
               <span className="text-fgdim">{t('host.ver.current')} </span>
               {ver ? `v${ver.version} · ${ver.commit || '?'}${ver.branch ? ` · ${ver.branch}` : ''}` : '…'}
             </span>
             {ver && !st?.docker && (
-              <span className="font-mono text-[11.5px] text-fg" dir="ltr">
+              <span className="max-w-full break-all font-mono text-[11.5px] text-fg" dir="ltr">
                 <span className="text-fgdim">{t('host.ver.available')} </span>
                 {avail ? `v${avail}${ver.available?.tag && ver.available.tag !== `v${avail}` ? ` · ${ver.available.tag}` : ''}` : t('host.ver.availableUnknown')}
                 {ver.available?.release?.url && <> · <a href={ver.available.release.url} target="_blank" rel="noreferrer" className="underline">{t('host.ver.release')}</a></>}

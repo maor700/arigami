@@ -63,7 +63,8 @@ export function Field({ label, hint, children, wrap = false }) {
         <div className="text-[0.8125rem] font-bold text-fg">{label}</div>
         {hint && <div className="mt-0.5 text-[0.71875rem] text-fgdim">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      {/* VER1: max-w-full so a wide control that wrapped under the label can't run past the viewport (mobile) */}
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }
