@@ -34,8 +34,9 @@ runs sandboxed and **cannot** call `/__api`; everything goes through `window.ari
   `~/.arigami`). The core repo stays `git pull --ff-only`-able forever; that is the
   entire point of the system.
 * `$ARIGAMI_TOKEN` is a **session** token, not an admin one. `POST /__api/extensions/*`
-  (add / reload / validate) answers **403 admin only** to you. Use `bin/host ext …`
-  instead, and `GET /__api/extensions` (which a session *may* read) to check the result.
+  (add / reload / validate) answers **403 admin only** to you. Use `ARIGAMI_TOKEN=
+  bin/host ext …` (blanked, so the CLI runs in-process instead of over REST), and
+  `GET /__api/extensions` — which a session *may* read — to check the result.
 * **No secrets in files you write.** Settings and secrets live in
   `$ARIGAMI_DIR/extensions.json` (0600, outside the repo) and reach the code as
   `ctx.secrets` / env. Put a `settings.schema` in the manifest instead of a constant.
@@ -93,11 +94,14 @@ Arigami repo (`examples/extensions/hello`) is exactly that, and is worth reading
 ## 3. Validate, and fix until clean
 
 ```bash
-bin/host ext validate "$EXT_ROOT/$NAME"
+ARIGAMI_TOKEN= bin/host ext validate "$EXT_ROOT/$NAME"
 ```
 
-(That runs in-process and needs no token. `POST /__api/extensions/validate` is the same
-check but admin-only, so it is not your path.) It prints `{ok, errors, warnings}` and
+**The empty `ARIGAMI_TOKEN=` is not decoration.** `bin/host ext` goes over REST as soon
+as it sees a token — and yours is a session token, so the call comes back `403 admin
+only`. Blanking it for that one command makes the CLI run the check in-process, which
+is exactly what you want. (`POST /__api/extensions/validate` is the same check, and is
+admin-only, so it is never your path.) It prints `{ok, errors, warnings}` and
 says exactly what is wrong: a file that does not exist, an export that is missing, a
 listener type that is already taken, a `docs[].description` that is empty. **Do not go
 on while `ok` is false** — a broken manifest loads as `state: 'error'` and contributes
@@ -124,8 +128,8 @@ the human and ask them to press **Reload** in Settings → Extensions (or to run
 `ARIGAMI_TOKEN=<admin token> bin/host ext reload`); an admin token is the one thing you
 do not have.
 
-`ext add` is for a directory **somewhere else** or a git URL (`bin/host ext add <src>`
-copies/clones it in and prints the permissions). It *refuses* a name that already
+`ext add` is for a directory **somewhere else** or a git URL (`ARIGAMI_TOKEN=
+bin/host ext add <src>` copies/clones it in and prints the permissions). It *refuses* a name that already
 exists — so never call it on a directory you just created in place.
 
 ---

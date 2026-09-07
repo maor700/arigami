@@ -220,8 +220,9 @@ Without it (or with the host down) the same commands run in-process against
 That fallback is what a **session** uses: the token a session holds
 (`$ARIGAMI_TOKEN`) is a *session* principal, not an admin, so `POST
 /__api/extensions/*` answers `403 admin only` to it. A session validates with
-`bin/host ext validate <dir>`, writes into `user/extensions/<name>/` directly, and
-lets the mtime poll load it; `GET /__api/extensions` — readable by any signed-in
+`ARIGAMI_TOKEN= bin/host ext validate <dir>` — blanking the token is what makes the
+CLI run the check in-process instead of over REST — writes into
+`user/extensions/<name>/` directly, and lets the mtime poll load it; `GET /__api/extensions` — readable by any signed-in
 principal — is how it checks that the live host picked it up.
 
 REST (admin-only, same gate as `/__api/profiles`):
