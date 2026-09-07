@@ -82,8 +82,9 @@ afterAll(() => {
 const drawerOpen = (html) => /<details[^>]*\sopen(=""|\s|>)/.test(html);
 const beforeDrawer = (html) => html.split('<details')[0];
 
-test('the nav is three pages; voice/automation are aliases onto General', () => {
-  expect(SettingsMod.SETTINGS_NAV).toEqual(['appearance', 'connections', 'host']);
+test('the nav is the settings pages; voice/automation are aliases onto General', () => {
+  // EXT added a fourth page ("extensions"); the AUDIT2 three are still first.
+  expect(SettingsMod.SETTINGS_NAV.slice(0, 3)).toEqual(['appearance', 'connections', 'host']);
   expect(SettingsMod.SETTINGS_CATEGORIES).toEqual(expect.arrayContaining(['appearance', 'connections', 'host', 'voice', 'automation']));
   expect(SettingsMod.resolveCategory('voice')).toEqual({ cat: 'appearance', section: 'voice' });
   expect(SettingsMod.resolveCategory('automation')).toEqual({ cat: 'appearance', section: 'heartbeat' });
