@@ -19,7 +19,7 @@
 // named — the same asymmetry the SDK documents. Nothing but the tab's own
 // context and the events it subscribed to is ever posted.
 import { api as defaultApi } from './api.js';
-import { onWireEvent } from './store.js';
+import { onWireEvent, getState } from './store.js';
 import { permissionsFor, hasPermission, globMatch, normalizeWireEvent } from './ext.js';
 
 const V = 1;
@@ -33,6 +33,8 @@ const V = 1;
  * @param getWindow      () => the iframe's contentWindow (may be null before mount)
  * @param getPermissions () => manifest permissions, read live so a reload applies
  * @param getContext     () => the `arigami:init` context
+ * @param getSessionState () => the session's claude state ('idle' | 'working' |
+ *                       …), read live — mode 'auto' routes on it
  * @param post           (msg) => post to the iframe
  * @param api            REST client (injectable for tests)
  * @param subscribeWire  (fn) => unsubscribe, over raw WS messages (injectable)
@@ -47,6 +49,7 @@ export function createExtBridge({
   getWindow,
   getPermissions = () => [],
   getContext = () => ({}),
+  getSessionState = () => getState().sessions.find((s) => s.id === sessionId)?.claude?.state || '',
   post,
   api = defaultApi,
   subscribeWire = onWireEvent,
@@ -105,14 +108,34 @@ export function createExtBridge({
         const text = String(args.text ?? '');
         const attachments = Array.isArray(args.attachments) && args.attachments.length ? args.attachments : null;
         if (!text.trim() && !attachments) throw new Error('text required');
-        // 'now' interrupts the running turn; 'queue' is the pending-prompt
-        // queue, which the host plays when the session goes idle.
-        if (args.mode === 'now') {
+        // Three modes, and the default is the host's own delivery rule:
+        //   'now'   — write to the session immediately, even mid-turn;
+        //   'queue' — only add a pending prompt (it waits for ▶ unless the
+        //             human already turned auto-play on);
+        //   'auto'  — deliverToSession (server/api.ts): an idle session gets it
+        //             now, a busy one gets it queued AND auto-play turned on, so
+        //             it plays the moment the turn ends. Nothing is interrupted.
+        // 'auto' is the default: a tab that says nothing wants its prompt to be
+        // acted on, not to sit in a queue behind a switch it cannot see.
+        const mode = args.mode === 'now' || args.mode === 'queue' ? args.mode : 'auto';
+        const sendNow = async () => {
           await api.post(`/sessions/${sessionId}/message`, attachments ? { text, attachments } : { text });
           return { delivered: 'now' };
-        }
-        await api.post(`/sessions/${sessionId}/prompts`, { text });
-        return { delivered: 'queued' };
+        };
+        const enqueue = async (autoplay) => {
+          await api.post(`/sessions/${sessionId}/prompts`, { text });
+          if (autoplay) await api.post(`/sessions/${sessionId}/prompts/autoplay`, { on: true });
+          return { delivered: 'queued' };
+        };
+        if (mode === 'now') return sendNow();
+        if (mode === 'queue') return enqueue(false);
+        // 'auto': deliver now only if the session is idle AND the extension
+        // actually holds `session:message` — an extension granted only
+        // `session:prompts` keeps the queue path (with auto-play), it does not
+        // get promoted into the stronger permission by the default mode.
+        const idle = getSessionState() === 'idle';
+        if (idle && hasPermission(perms, 'session:message')) return sendNow();
+        return enqueue(true);
       }
       case 'runTool': {
         const name = String(args.name || '');

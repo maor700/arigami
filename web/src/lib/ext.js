@@ -50,7 +50,10 @@ export function hasPermission(permissions, needed) {
  *
  * `sendPrompt` is the one place with an alternative: queueing needs
  * `session:prompts`, but `session:message` — which may interrupt a running
- * turn — is strictly stronger, so it covers the queue too. Returns `null` for
+ * turn — is strictly stronger, so it covers the queue too. The default mode
+ * 'auto' may take either path (idle → message, busy → queue + auto-play), so
+ * it asks for the same pair as 'queue'; the bridge then only takes the
+ * message path when `session:message` is actually held. Returns `null` for
  * an unknown method (→ "unknown method"), `[]` for the ones checked per
  * argument (subscribe/unsubscribe check `events:<name>` one by one).
  */

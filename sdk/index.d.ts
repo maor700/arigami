@@ -278,7 +278,11 @@ export interface TabContext {
 
 export interface ArigamiSdk {
   ready(): Promise<TabContext>;
-  sendPrompt(text: string, opts?: { mode?: 'now' | 'queue'; attachments?: unknown[] }): Promise<{ delivered: 'now' | 'queued' }>;
+  /**
+   * mode 'auto' (default) = deliverToSession semantics: idle → now, busy →
+   * queued with auto-play. 'now' writes mid-turn; 'queue' only queues.
+   */
+  sendPrompt(text: string, opts?: { mode?: 'auto' | 'now' | 'queue'; attachments?: unknown[] }): Promise<{ delivered: 'now' | 'queued' }>;
   runTool(name: string, args?: Record<string, unknown>): Promise<unknown>;
   setStatus(opts: { badge?: string; color?: string; title?: string }): Promise<void>;
   openArtifact(path: string, opts?: { title?: string }): Promise<void>;

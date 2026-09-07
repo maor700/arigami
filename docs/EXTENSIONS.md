@@ -175,6 +175,29 @@ queue-until-idle delivery, coalescing, and watermark-after-delivery
 (at-least-once). `poll` runs with a **20 second deadline**; a throw or a timeout
 is a `transient` outcome, which is exactly what the backoff already handles.
 
+### A tab, and how it talks back
+
+`tabs[]` is a static page under `ui/`, served from an opaque origin (sandbox
+without `allow-same-origin`): no cookie, no `/__api`. Everything it can do goes
+through `window.arigami` (`<script src="/__ext-sdk.js">`) and is checked against
+the manifest permissions by the cockpit shell.
+
+The one call worth spelling out is `sendPrompt(text, {mode})` — how a form's
+answer reaches the session:
+
+| `mode` | behaviour | permission |
+|---|---|---|
+| `'auto'` *(default)* | the host's `deliverToSession` rule: session **idle** → sent now; session **busy** → queued **and** auto-play turned on, so it plays the moment the current turn ends | `session:prompts` or `session:message` |
+| `'now'` | written to the session immediately, even mid-turn | `session:message` |
+| `'queue'` | queued only — it sits there until the human presses ▶ (or auto-play is already on) | `session:prompts` |
+
+`'auto'` is the default because a form that says nothing wants its prompt to be
+acted on, not to wait behind a switch the tab cannot see. Protocol v1 is
+unchanged: omitting the mode used to mean `'queue'` and now means `'auto'`; a
+page that passes `'queue'` explicitly behaves exactly as it did. An extension
+that holds only `session:prompts` never takes the "now" path — `'auto'` queues
+for it (with auto-play) instead.
+
 ---
 
 ## 5. Runtime vs restart

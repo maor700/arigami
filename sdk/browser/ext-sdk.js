@@ -23,8 +23,12 @@
 //   { type:'arigami:event',  v:1, name, payload }     only names the tab subscribed to
 //
 // methods (`arigami:call`):
-//   sendPrompt   { text, mode:'now'|'queue', attachments? }  → {delivered}
+//   sendPrompt   { text, mode?:'auto'|'now'|'queue', attachments? } → {delivered}
 //     needs permission `session:message` (mode 'queue' → `session:prompts`)
+//     'auto' (the default) = the host's deliverToSession: idle session → sent
+//     now, busy session → queued WITH auto-play, so it plays when the turn ends.
+//     'now' writes mid-turn; 'queue' only queues (waits for ▶). An omitted mode
+//     used to mean 'queue'; a page that passes 'queue' explicitly is unchanged.
 //   runTool      { name, args }                              → tool result
 //     needs permission `tools:<name>`
 //   setStatus    { badge?, color?, title? }                  → {ok:true}
@@ -137,12 +141,19 @@
       return new Promise(function (resolve) { readyResolvers.push(resolve); });
     },
 
-    /** Send text to the session. mode 'now' sends immediately, 'queue' uses the prompt queue. */
+    /**
+     * Send text to the session.
+     *   'auto' (default) — idle → sent now; busy → queued with auto-play on, so
+     *                      it plays as soon as the current turn ends;
+     *   'now'            — sent immediately, even mid-turn;
+     *   'queue'          — queued only, and waits for the human's ▶.
+     */
     sendPrompt: function (text, opts) {
       opts = opts || {};
+      var mode = opts.mode === 'now' || opts.mode === 'queue' ? opts.mode : 'auto';
       return call('sendPrompt', {
         text: String(text == null ? '' : text),
-        mode: opts.mode === 'now' ? 'now' : 'queue',
+        mode: mode,
         attachments: opts.attachments || undefined,
       });
     },

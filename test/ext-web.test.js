@@ -194,6 +194,7 @@ function harness(overrides = {}) {
     extension: 'hello',
     getWindow: () => win,
     getPermissions: () => overrides.permissions ?? HELLO.permissions,
+    getSessionState: () => overrides.sessionState ?? 'idle',
     getContext: () => ({ sessionId: 's1', tabId: 'tab_1', extension: 'hello', apiVersion: 1, settings: { greeting: 'hi' }, permissions: HELLO.permissions }),
     post: (m) => posted.push(m),
     api,
@@ -236,6 +237,50 @@ test('bridge: sendPrompt "now" posts a message, "queue" posts a prompt', async (
   await t.send({ type: 'arigami:call', id: 'c3', method: 'sendPrompt', args: { text: '   ', mode: 'now' } });
   expect(t.calls).toHaveLength(2);
   expect(t.posted[2]).toMatchObject({ ok: false, error: 'text required' });
+});
+
+test('bridge: sendPrompt default mode is "auto" — idle delivers now', async () => {
+  const t = harness({ sessionState: 'idle' });
+  await t.send({ type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'go' } });
+  expect(t.calls).toEqual([['POST', '/sessions/s1/message', { text: 'go' }]]);
+  expect(t.posted[0].value).toEqual({ delivered: 'now' });
+
+  // an explicit 'auto' is the same thing
+  await t.send({ type: 'arigami:call', id: 'c2', method: 'sendPrompt', args: { text: 'go2', mode: 'auto' } });
+  expect(t.calls[1]).toEqual(['POST', '/sessions/s1/message', { text: 'go2' }]);
+  expect(t.posted[1].value).toEqual({ delivered: 'now' });
+});
+
+test('bridge: "auto" on a busy session queues AND turns auto-play on', async () => {
+  const t = harness({ sessionState: 'working' });
+  await t.send({ type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'later' } });
+  expect(t.calls).toEqual([
+    ['POST', '/sessions/s1/prompts', { text: 'later' }],
+    ['POST', '/sessions/s1/prompts/autoplay', { on: true }],
+  ]);
+  expect(t.posted[0].value).toEqual({ delivered: 'queued' });
+
+  // anything that is not 'idle' is busy — awaiting-input included.
+  const t2 = harness({ sessionState: 'awaiting-input' });
+  await t2.send({ type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'x', mode: 'auto' } });
+  expect(t2.calls[1]).toEqual(['POST', '/sessions/s1/prompts/autoplay', { on: true }]);
+});
+
+test('bridge: explicit "queue" keeps its old meaning — no auto-play, even when idle', async () => {
+  const t = harness({ sessionState: 'idle' });
+  await t.send({ type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'wait for me', mode: 'queue' } });
+  expect(t.calls).toEqual([['POST', '/sessions/s1/prompts', { text: 'wait for me' }]]);
+  expect(t.posted[0].value).toEqual({ delivered: 'queued' });
+});
+
+test('bridge: "auto" without session:message queues instead of promoting itself', async () => {
+  const t = harness({ permissions: ['session:prompts'], sessionState: 'idle' });
+  await t.send({ type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'hi' } });
+  expect(t.calls).toEqual([
+    ['POST', '/sessions/s1/prompts', { text: 'hi' }],
+    ['POST', '/sessions/s1/prompts/autoplay', { on: true }],
+  ]);
+  expect(t.posted[0].value).toEqual({ delivered: 'queued' });
 });
 
 test('bridge: a missing permission denies BEFORE the REST call, and names the permission', async () => {

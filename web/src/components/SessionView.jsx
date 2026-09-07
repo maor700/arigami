@@ -1506,6 +1506,9 @@ function UrlTab({ tab, active, session }) {
       extension: extName,
       getWindow: () => iframeRef.current?.contentWindow || null,
       getPermissions: () => liveRef.current?.ext?.permissions || [],
+      // Read live, not captured: `sendPrompt` mode 'auto' routes on whether the
+      // session is idle AT THE MOMENT OF THE CALL.
+      getSessionState: () => liveRef.current?.session?.claude?.state || '',
       getContext: () => {
         const l = liveRef.current || {};
         return {

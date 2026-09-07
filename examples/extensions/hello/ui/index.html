@@ -66,7 +66,9 @@
 
       $('send').onclick = async () => {
         try {
-          const r = await arigami.sendPrompt($('text').value, { mode: 'queue' });
+          // No mode → 'auto': idle session gets it now, a busy one gets it
+          // queued with auto-play, so it plays when the turn ends.
+          const r = await arigami.sendPrompt($('text').value);
           await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
           log(r);
         } catch (e) {

@@ -83,7 +83,9 @@
       $('send').onclick = async () => {
         $('send').disabled = true;
         try {
-          const r = await arigami.sendPrompt(buildPrompt(), { mode: 'queue' });
+          // No mode → 'auto': an idle session gets it now, a busy one gets it
+          // queued with auto-play, so it plays as soon as the turn ends.
+          const r = await arigami.sendPrompt(buildPrompt());
           await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
           log(r.delivered === 'now' ? 'נשלח.' : 'נכנס לתור — יופעל כשהסשן מתפנה.');
         } catch (e) {

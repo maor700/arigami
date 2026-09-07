@@ -31,7 +31,7 @@ inside `ui/`.** Load the SDK and call it:
 | call | returns | manifest permission |
 |---|---|---|
 | `arigami.ready()` | `{sessionId, tabId, extension, apiVersion, agent, cwd, settings, lang, permissions}` | — |
-| `arigami.sendPrompt(text, {mode})` | `{delivered:'now'\|'queued'}` | `session:message` (`mode:'queue'` also `session:prompts`) |
+| `arigami.sendPrompt(text, {mode})` | `{delivered:'now'\|'queued'}` | `session:prompts` or `session:message` (`mode:'now'` needs `session:message`) |
 | `arigami.runTool(name, args)` | the tool's result | `tools:<name>` |
 | `arigami.setStatus({badge,color,title})` | `{ok:true}` | `session:tabs` |
 | `arigami.openArtifact(path, {title})` | `{ok:true}` | `session:tabs` |
@@ -42,9 +42,12 @@ inside `ui/`.** Load the SDK and call it:
 control**, and catch its rejection — the page may have been opened outside the cockpit,
 in which case every call rejects with "this page is not running inside an Arigami tab".
 
-`sendPrompt` follows the host's normal delivery semantics: an idle session gets the
-text now, a busy one gets it queued with auto-play (`delivered:'queued'`). That is why
-`{mode:'queue'}` is the polite default for a form.
+`sendPrompt` has three modes, and the **default** (`'auto'` — just omit `opts`) is the
+host's normal delivery rule: an idle session gets the text now, a busy one gets it
+queued *with auto-play turned on*, so it plays the moment the current turn ends
+(`delivered:'queued'`). Nothing is ever interrupted. `{mode:'now'}` writes to the
+session even mid-turn; `{mode:'queue'}` only queues, and the prompt waits for the
+human's ▶ — use it when the human, not the tab, should decide when it runs.
 
 Event names for `subscribe` are the cockpit's own (`chat`, `session-updated`,
 `listener-updated`, `ext:<name>`); the shell filters them to this session and to what
@@ -59,8 +62,9 @@ a select, a date) and the *result* is a prompt. The pattern, end to end:
 1. `await arigami.ready()` → read `ctx.settings` (your `settings.schema` values) and
    `ctx.lang`; enable the buttons.
 2. Collect the input with plain HTML — no framework, no bundler, no network.
-3. Build **one** sentence of prompt text from the fields and `sendPrompt(text,
-   {mode:'queue'})`.
+3. Build **one** sentence of prompt text from the fields and `sendPrompt(text)` —
+   the default mode delivers it now if the session is idle, and auto-plays it
+   right after the current turn if it isn't.
 4. `setStatus({badge:'⏳'})` on send, and flip it from `subscribe(['chat'], …)` when a
    result arrives.
 

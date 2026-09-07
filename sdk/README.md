@@ -217,7 +217,7 @@ no direct `/__api`. Everything goes through the shell:
 <script src="/__ext-sdk.js"></script>
 <script>
   const ctx = await arigami.ready();                     // {sessionId, cwd, settings, …}
-  const r = await arigami.sendPrompt('plan the sprint', { mode: 'queue' });
+  const r = await arigami.sendPrompt('plan the sprint');           // mode 'auto'
   await arigami.setStatus({ badge: r.delivered === 'now' ? '✓' : '⏳' });
   arigami.subscribe(['chat'], (ev) => { if (ev.kind === 'result') arigami.setStatus({ badge: 'done' }); });
 </script>
@@ -238,6 +238,21 @@ is a public path and needs no token. Root-absolute references to your own mount
 `close()`. Each maps to one `arigami:call` message; the shell checks the
 manifest permission and refuses anything else. The wire protocol is documented
 at the top of `browser/ext-sdk.js` and is frozen for v1.
+
+`sendPrompt` has three delivery modes, and the default is the same rule the
+host uses everywhere else (`deliverToSession`, also what a hook's
+`ctx.sendPrompt` does):
+
+| `mode` | behaviour | returns |
+|---|---|---|
+| `'auto'` *(default)* | session idle → sent now; session busy → queued **and** auto-play turned on, so it plays the moment the turn ends | `{delivered:'now'}` / `{delivered:'queued'}` |
+| `'now'` | written to the session immediately, even mid-turn | `{delivered:'now'}` |
+| `'queue'` | queued only — it waits for the human's ▶ unless auto-play is already on | `{delivered:'queued'}` |
+
+The protocol stays v1: an omitted mode used to mean `'queue'`, and now means
+`'auto'`; a page that passes `'queue'` explicitly behaves exactly as before. An
+extension holding only `session:prompts` never takes the "now" path — `'auto'`
+queues for it (with auto-play) instead.
 
 ---
 
