@@ -270,6 +270,22 @@ export function createWebhooks(opts: WebhooksOptions) {
     try { opts.onEvent?.(ev); } catch {}
     return ev;
   }
+  /** Route an `ext-…` custom webhook to the extension that declared it. Best-effort. */
+  async function deliverToExtension(customId: string, ev: WebhookEvent): Promise<void> {
+    if (!customId.startsWith('ext-')) return;
+    try {
+      const ext = await import('./extensions.js');
+      const parsed = ext.parseWebhookId(customId);
+      if (!parsed) return;
+      const type = ext.webhookListenerType(parsed.ext, parsed.id);
+      if (!type) return;
+      const listeners = await import('./listeners.js');
+      await listeners.deliverExtWebhook(type, { kind: 'custom', customId, body: ev.payload, receivedAt: ev.receivedAt });
+    } catch (e) {
+      log(`[webhooks] extension delivery for ${customId} failed: ${(e as Error).message}`);
+    }
+  }
+
   const events = (q: { kind?: string; since?: string; limit?: number } = {}): WebhookEvent[] =>
     tail.filter((e) => (!q.kind || e.kind === q.kind) && (!q.since || e.receivedAt > q.since)).slice(-(q.limit || 50));
 
@@ -380,6 +396,12 @@ export function createWebhooks(opts: WebhooksOptions) {
     const why = verifyCustom(customId, req, raw);
     if (why) { deny(res, `custom/${customId}`, why, rlHeaders); return true; }
     const ev = record('custom', parsePayload(raw), { customId, event: headerOf(req, 'x-arigami-event') || '' });
+    // EXT: `ext-<name>-<id>` is an extension's own webhook. The manifest maps it
+    // to a listener type, and that provider's onWebhook turns the delivery into
+    // the same outcome a poll would have produced — which finally closes the
+    // "an inbound webhook cannot wake a session" gap (SMS was the exception,
+    // and only because a poller re-read its store).
+    void deliverToExtension(customId, ev);
     send(res, 200, { ok: true, id: ev.id }, rlHeaders);
     return true;
   }
@@ -423,12 +445,17 @@ let inst: Webhooks | null = null;
 export function webhooks(): Webhooks {
   if (inst) return inst;
   const { secret } = require('./lib/secrets.js') as typeof import('./lib/secrets.js');
-  const { broadcast } = require('./bus.js') as { broadcast: (m: unknown) => void };
+  const { broadcast, emitLocal } = require('./bus.js') as { broadcast: (m: unknown) => void; emitLocal: (n: string, p?: unknown) => void };
   inst = createWebhooks({
     dir: cfg.configDir!,
     envSecret: secret,
     publicUrl,
-    onEvent: (ev) => { try { broadcast({ type: 'webhook', kind: ev.kind, customId: ev.customId, event: ev.event, id: ev.id, receivedAt: ev.receivedAt }); } catch {} },
+    onEvent: (ev) => {
+      // The WS message deliberately carries NO payload (it reaches browsers);
+      // the in-process domain event does, because a hook needs the body.
+      try { broadcast({ type: 'webhook', kind: ev.kind, customId: ev.customId, event: ev.event, id: ev.id, receivedAt: ev.receivedAt }); } catch {}
+      try { emitLocal('webhook.received', { kind: ev.kind, customId: ev.customId, event: ev.event, id: ev.id, receivedAt: ev.receivedAt, body: ev.payload }); } catch {}
+    },
   });
   return inst;
 }

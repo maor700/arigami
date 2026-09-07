@@ -183,6 +183,11 @@ export interface MemoryConfig {
   learning: MemoryLearningConfig;
 }
 
+export interface NotifyConfig {
+  /** WhatsApp JID (…@s.whatsapp.net / …@lid / …@g.us) the host may message. */
+  whatsappJid?: string;
+}
+
 export interface Config {
   port: number;
   // Listen address. Default 127.0.0.1 (fail-closed): reach the host from other
@@ -244,6 +249,11 @@ export interface Config {
   // RES1 — supervisor loop knobs. `enabled:false` turns the whole 30s tick off
   // (the health model and /__api/health keep working, nothing is auto-recovered).
   supervisor: SupervisorConfig;
+  // EXT/notify: where a notification goes besides Web Push. `whatsappJid` is
+  // the default target for the built-in WhatsApp channel (notify.ts) — a cron
+  // `deliver.whatsapp: true` and any extension notify() with no explicit JID
+  // land there. Empty/absent = the channel is simply skipped.
+  notify?: NotifyConfig;
   configDir?: string;
   configFile?: string;
   imgDir?: string;
@@ -330,6 +340,9 @@ export const DEFAULTS: Config = {
     claudeUpdateMinFreeMb: 700,
     drainTimeoutMs: 20_000,
     idleTimeoutMin: 30,
+  },
+  notify: {
+    whatsappJid: '',
   },
   telemetry: {
     enabled: false,

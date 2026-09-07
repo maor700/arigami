@@ -6,7 +6,7 @@ import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
 import * as state from './state.js';
 import * as orchestration from './orchestration.js';
 import * as claude from './claude.js';
-import { broadcast } from './bus.js';
+import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
@@ -760,17 +760,16 @@ function pushIntervention(
   lastInterventionPush.set(key, now);
   const s = state.getSession(sessionId);
   const title = `${s?.title || 'Arigami'}${titleSuffix ? ` — ${titleSuffix}` : ''}`;
-  import('./push.js')
-    .then((push) => {
-      if (!push.hasSubscriptions()) return;
-      return push.sendPush({
+  import('./notify.js')
+    .then((n) =>
+      n.notify({
         title: title.slice(0, 80),
         body: body.slice(0, 200),
         tag: `${kind}:${sessionId}`,
         sessionId,
         url: publicUrl(sessionPath(sessionId)), // relative unless ARIGAMI_PUBLIC_URL (SW resolves it)
-      });
-    })
+      })
+    )
     .catch(() => {});
 }
 
@@ -962,6 +961,7 @@ function finishSetup(e: PendingSetup, outcome: 'done' | 'skipped' | 'timeout', o
   }
   const result: SetupResult = { state: outcome, id: e.id, capability: e.capability, detail: e.detail, mode: e.mode, evidence: e.evidence };
   for (const w of e.waiters.splice(0)) w(result);
+  try { emitLocal('setup.done', { capability: e.capability, ok: outcome === 'done', owner: e.owner, sessionId: e.sessionId }); } catch {}
 }
 
 /** F6: put a closed (not human-skipped) card back on the table so a late report can update it. */
@@ -2567,6 +2567,8 @@ export function markApproved(id: string, by: string): boolean {
   state.patchSession(id, {
     metadata: { review: { state: 'approved', at: new Date().toISOString(), by }, mergeConflict: null },
   });
+  // EXT domain event (the WS only ever carried this as a session-updated).
+  try { emitLocal('review.approved', { sessionId: id, by, branch: md.branch }); } catch {}
   return true;
 }
 
@@ -2662,6 +2664,25 @@ export async function mergeSession(
   if (st.reason && st.reason !== 'not-approved')
     return { error: st.reason === 'dirty' ? `base worktree is dirty (${(st.dirtyFiles || []).join(', ')})` : st.reason, status: 409, reason: st.reason, files: st.dirtyFiles };
   const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
+  // EXT: `merge.before` gates. This is the hook the code used to say did not
+  // exist (see HINT above) — an extension can run typecheck/tests/CI here and
+  // refuse. Gates FAIL CLOSED: a throw or a timeout blocks the merge with its
+  // own message, because blocking is the whole point of a gate. With no
+  // extension installed the call returns {ok:true} without doing anything.
+  try {
+    const ext = await import('./extensions.js');
+    if (ext.hasGates('merge.before')) {
+      const g = await ext.runGates('merge.before', { sessionId: s.id, branch: st.branch, base: st.base, repoRoot: st.repoRoot, title: s.title || '' });
+      if (!g.ok) {
+        const line = `merge blocked by the "${g.ext}" extension: ${g.reason}`;
+        claude.appendChat(s.id, { kind: 'merge', state: 'blocked', branch: st.branch, base: st.base, gate: g.ext, text: line });
+        return { error: `merge gate failed: ${g.reason}`, reason: 'gate', gate: g.ext, status: 409 };
+      }
+    }
+  } catch (e) {
+    // The loader itself failing must not block a human's merge — only a GATE does.
+    console.error('[ext] merge gates skipped:', (e as Error).message);
+  }
   const message = mergeMessage({ branch: st.branch, base: st.base, title: s.title, subtask: md.subtask, sessionId: s.id, strategy });
   const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, base: st.base, strategy, message });
   const masterId = md.master ? String(md.master) : null;
@@ -2672,6 +2693,7 @@ export async function mergeSession(
       claude.appendChat(s.id, { kind: 'merge', state: 'conflict', branch: st.branch, base: st.base, files: r.files, text: line });
       if (masterId && state.getSession(masterId))
         claude.appendChat(masterId, { kind: 'merge', state: 'conflict', child: s.id, branch: st.branch, base: st.base, files: r.files, text: `[${s.title || s.id}] ${line}` });
+      try { emitLocal('merge.conflict', { sessionId: s.id, branch: st.branch, base: st.base, files: r.files }); } catch {}
       return { conflict: true, files: r.files, branch: st.branch, base: st.base, status: 409 };
     }
     return { error: (r as any).error, reason: (r as any).reason, files: (r as any).files, status: 409 };
@@ -2682,6 +2704,7 @@ export async function mergeSession(
   claude.appendChat(s.id, card);
   if (masterId && state.getSession(masterId))
     claude.appendChat(masterId, { ...card, child: s.id, text: `[${s.title || s.id}] ${card.text}` });
+  try { emitLocal('merge.done', { sessionId: s.id, branch: st.branch, base: st.base, sha: r.sha, strategy, by }); } catch {}
   let cleanup: unknown;
   if (o.deleteBranch || o.runCleanup) {
     // the recorded cleanup removes the worktree AND deletes the branch — a
@@ -3603,6 +3626,79 @@ export async function handle(
       const body = (await readBody(req)) as any;
       if (!body.path) return badRequest(res, 'path required');
       return json(res, ob.detectLocalSource(String(body.path)));
+    }
+    // ---- EXT extensions (server/extensions.ts) --------------------------------
+    // Listing is readable by any signed-in principal (the cockpit shows it, and a
+    // session may want to know what is installed); everything that INSTALLS,
+    // enables or runs code is admin-only — the same gate as /__api/profiles.
+    if (p === '/__api/extensions' && m === 'GET') {
+      const ext = await import('./extensions.js');
+      if (!ext.isLoaded()) await ext.reload({ reason: 'first GET' });
+      return json(res, { extensions: ext.listExtensions(), apiVersion: ext.EXT_API_VERSION, dir: ext.EXT_DIR });
+    }
+    if (p === '/__api/listener-types' && m === 'GET') {
+      const reg = await import('./listeners-registry.js');
+      return json(res, { types: reg.listTypes() });
+    }
+    if (p.startsWith('/__api/extensions')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const ext = await import('./extensions.js');
+      if (p === '/__api/extensions/reload' && m === 'POST') {
+        const r = await ext.reload({ reason: 'REST' });
+        return json(res, { ok: true, ...r });
+      }
+      if (p === '/__api/extensions/validate' && m === 'POST') {
+        const body = (await readBody(req)) as { source?: unknown };
+        const source = String(body.source || '').trim();
+        if (!source) return badRequest(res, 'source required (an extension directory)');
+        const dir = path.resolve(untildify(source) || source);
+        return json(res, await ext.validateExtension(dir));
+      }
+      if (p === '/__api/extensions/add' && m === 'POST') {
+        const body = (await readBody(req)) as { source?: unknown };
+        const source = String(body.source || '').trim();
+        if (!source) return badRequest(res, 'source required (a directory or a git URL)');
+        // The caller SHOWS manifest.permissions to the human — extension code
+        // runs with host privileges, so an install is a decision, not a detail.
+        const r = await ext.addExtension(source);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      const em = /^\/__api\/extensions\/([a-z0-9][a-z0-9-]*)(?:\/(update))?$/.exec(p);
+      if (em) {
+        const name = em[1];
+        if (em[2] === 'update' && m === 'POST') {
+          const r = await ext.updateExtension(name);
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        if (m === 'PATCH') {
+          const body = (await readBody(req)) as any;
+          const r = await ext.patchExtension(name, {
+            enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+            settings: body.settings && typeof body.settings === 'object' ? body.settings : undefined,
+            secrets: body.secrets && typeof body.secrets === 'object' ? body.secrets : undefined,
+          });
+          return 'error' in r ? badRequest(res, String(r.error)) : json(res, r);
+        }
+        if (m === 'DELETE') {
+          const r = await ext.removeExtension(name);
+          return json(res, r, r.ok ? 200 : 404);
+        }
+      }
+      return notFound(res);
+    }
+    // One tool call into an extension's own MCP server, for the browser SDK's
+    // runTool(). The manifest must declare `tools:<tool>` — a tab may only reach
+    // what its author asked for in writing.
+    const extTool = /^\/__api\/ext\/([a-z0-9][a-z0-9-]*)\/tool\/([A-Za-z0-9_-]{1,64})$/.exec(p);
+    if (extTool && m === 'POST') {
+      const [, extName, toolName] = extTool;
+      const ext = await import('./extensions.js');
+      if (!ext.toolPermitted(extName, toolName))
+        return json(res, { error: `extension "${extName}" does not declare permission tools:${toolName}` }, 403);
+      const body = (await readBody(req)) as any;
+      const r = await ext.callExtTool(extName, toolName, body?.args && typeof body.args === 'object' ? body.args : {});
+      return json(res, r, r.ok ? 200 : 400);
     }
     // ---- K3 profile bundles (server/profiles.ts) ------------------------------
     // Listing/current are readable by any signed-in principal; apply/validate
@@ -4811,8 +4907,18 @@ export async function handle(
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const type = body.type || 'github-pr';
-      if (type !== 'github-pr' && type !== 'linear-issue' && type !== 'slack' && type !== 'whatsapp' && type !== 'sms')
-        return badRequest(res, `unsupported listener type: ${type}`);
+      const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms';
+      // EXT: any type an extension registered is as valid as a core one.
+      if (!core) {
+        const reg = await import('./listeners-registry.js');
+        if (!reg.has(type)) return badRequest(res, `unsupported listener type: ${type}`);
+        try {
+          const listeners = await import('./listeners.js');
+          return json(res, await listeners.registerExtListener(id, type, body), 201);
+        } catch (e) {
+          return badRequest(res, e instanceof Error ? e.message : String(e));
+        }
+      }
       if (type === 'whatsapp') {
         // WAFILT1: contacts is an array of strings (one contact = one-element array).
         if (body.contacts != null && (!Array.isArray(body.contacts) || body.contacts.some((c: unknown) => typeof c !== 'string')))
@@ -5085,6 +5191,7 @@ export async function handle(
         }
       }
       state.patchSession(id, { action: null });
+      try { emitLocal('action.answered', { sessionId: id, actionId: (cur as any)?.id || null, kind: cur?.kind || null, value: String(value) }); } catch {}
       // F7: request_review's ✓ Verified is a human approval of the branch.
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       // A5 (#2): the share card is the ONLY place an agent's public link is minted

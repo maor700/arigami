@@ -56,7 +56,8 @@ export interface LinearFilterTrigger {
 // into a running session via the same idle/busy channel task_session uses.
 export interface CronDeliver {
   push?: boolean; // web-push on completion (default true — decision: push is the default channel)
-  whatsapp?: string; // JID to notify — schema-only in v1, see docs/TRIGGERS.md
+  /** JID to notify, or `true` for config.notify.whatsappJid. Real since notify.ts. */
+  whatsapp?: string | boolean;
   master?: string; // session id to wake with a thin pointer, like report_to_master
 }
 
@@ -622,17 +623,24 @@ async function deliverCronResult(
   const title = `${triggerName}${isFailure ? ` — ${result.state}` : ''}`;
   if (deliver.push) {
     try {
-      const push = await import('./push.js');
-      if (push.hasSubscriptions())
-        await push.sendPush({ title: title.slice(0, 80), body: text.slice(0, 200), tag: `cron:${cronId || triggerName}` });
+      const n = await import('./notify.js');
+      await n.notify({ title: title.slice(0, 80), body: text.slice(0, 200), tag: `cron:${cronId || triggerName}`, channels: ['push'] });
     } catch {}
   }
-  if (deliver.whatsapp && cronId) {
-    // v1: no server-side WhatsApp send path exists yet — the live paired
-    // bridge connection (whatsapp-bridge.ts) only monitors status, it doesn't
-    // expose a send channel, and starting a second Baileys connection would
-    // replace (log out) the live one. Schema-only for now; see docs/TRIGGERS.md.
-    tlog(cronId, 'warn', `WhatsApp delivery to ${deliver.whatsapp} skipped — not implemented in v1 (see docs/TRIGGERS.md)`);
+  if (deliver.whatsapp) {
+    // Real since notify.ts: the host owns ONE paired WhatsApp process
+    // (whatsapp-bridge.ts) and whatsapp-proxy.ts can send through it, so this
+    // is no longer schema-only. `deliver.whatsapp` is either a JID or `true`
+    // (= config.notify.whatsappJid). Not paired / no default JID → skipped.
+    try {
+      const n = await import('./notify.js');
+      const jid = typeof deliver.whatsapp === 'string' ? deliver.whatsapp : undefined;
+      const payload = { title, body: text, tag: `cron:${cronId || triggerName}`, channels: ['whatsapp'], ...(jid ? { whatsappJid: jid } : {}) };
+      if (n.whatsappTarget(payload)) await n.notify(payload);
+      else if (cronId) tlog(cronId, 'warn', 'WhatsApp delivery skipped — no target JID (set notify.whatsappJid in config, or give deliver.whatsapp a JID)');
+    } catch (e) {
+      if (cronId) tlog(cronId, 'warn', `WhatsApp delivery failed: ${(e as Error).message}`);
+    }
   }
   if (deliver.master) {
     try {

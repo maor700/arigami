@@ -50,6 +50,14 @@ export function appendIncident(entry: Omit<Incident, 'ts'> & { ts?: string }): I
     console.error('[incidents] append failed:', (err as Error).message);
     return null;
   }
+  // EXT: this file is the ONE neck every system incident passes through, so the
+  // announcement belongs here rather than at each call site (they used to
+  // broadcast separately, which would have delivered the same incident to an
+  // extension hook twice). Same wire message as before — cockpit unaffected.
+  try {
+    const { broadcast } = require('./bus.js') as { broadcast: (m: unknown) => void };
+    broadcast({ type: 'incident', sessionId: e.sessionId, action: e.action, outcome: e.outcome });
+  } catch {}
   return e;
 }
 

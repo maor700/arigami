@@ -68,6 +68,11 @@ import { evaluateWorker, type WorkerWatermark } from './watchdog.js';
 import * as claude from './claude.js';
 import * as linear from './linear-mcp.js';
 import * as slack from './slack.js';
+// EXT: the listener TYPE registry. Core types keep their branches below; an
+// extension's provider is dispatched through the registry with a deadline and
+// then rejoins this file's watermark/backoff/wake machinery unchanged.
+import * as registry from './listeners-registry.js';
+import { emitLocal } from './bus.js';
 
 const execFileP = promisify(execFile);
 
@@ -353,6 +358,11 @@ export function getListenerLog(id: string): { ts: number; level: string; text: s
   return logs.get(id) || [];
 }
 
+/** EXT: a provider's ctx.log() writes here too, so its lines show in the modal. */
+export function llogPublic(id: string, level: 'info' | 'fire' | 'warn' | 'error', text: string): void {
+  llog(id, level, String(text).slice(0, 500));
+}
+
 // Type-agnostic watermark compare (both PR and Linear watermarks are flat
 // objects of scalars/string-arrays) — key-order-stable so it never false-fires.
 const wmChanged = (a: any = {}, b: any = {}): boolean => {
@@ -418,15 +428,16 @@ function tryDeliver(sessionId: string): void {
   } catch {
     return; // session not spawnable right now — keep pending, retry on next idle/poll
   }
-  // Send push notification with the eventId of the just-appended chat event
+  // Notify the human — Web Push plus every other registered channel (WhatsApp,
+  // anything an extension contributed). notify() never throws and skips a
+  // channel that isn't set up.
   if (mine.length) {
-    import('./push.js')
-      .then((push) => {
-        if (!push.hasSubscriptions()) return;
+    import('./notify.js')
+      .then((n) => {
         // The chat event was just appended — read the latest to get its id
         const latest = claude.getChat(sessionId, 0);
         const lastEvent = Array.isArray(latest) ? latest[latest.length - 1] : null;
-        push.sendPush({
+        return n.notify({
           title: labels[0] || 'Arigami',
           body: text.slice(0, 200),
           tag: mine[0]?.[0] || 'listener',
@@ -448,6 +459,11 @@ function tryDeliver(sessionId: string): void {
         lastError: null,
       });
     llog(lid, 'info', p.terminal ? 'woke session with the terminal notice — listener stopped' : 'woke session — wake delivered');
+    // EXT domain event: a listener actually woke a session (the WS only ever
+    // showed this as a listener-updated + a chat line).
+    try {
+      emitLocal('listener.fired', { listenerId: lid, sessionId, type: l?.type || '', summary: p.text, terminal: !!p.terminal });
+    } catch {}
     pending.delete(lid);
   }
 }
@@ -455,6 +471,124 @@ function tryDeliver(sessionId: string): void {
 // Called by claude.js when a session's turn finishes (state → idle).
 export function onSessionIdle(sessionId: string): void {
   tryDeliver(sessionId);
+}
+
+// ---- extension-provided types ------------------------------------------------
+
+/** The read-only row a provider is allowed to see. */
+const providerView = (l: Listener) => ({
+  id: l.id,
+  sessionId: l.sessionId,
+  type: l.type,
+  params: l.params as any,
+  watermark: l.watermark as any,
+  fireOn: l.fireOn,
+});
+
+/**
+ * Poll a registered (extension) type and map the SDK's PollOutcome onto the
+ * shape the rest of this file already handles. null = no provider for the type.
+ */
+async function pollExtension(l: Listener): Promise<PollOutcome | null> {
+  const reg = registry.get(l.type);
+  if (!reg) return null;
+  const ext = await import('./extensions.js');
+  const outcome = await registry.pollProvider(l.type, (signal) => ext.listenerCtx(reg.ext, signal, l.id), providerView(l));
+  return outcome ? mapOutcome(outcome) : null;
+}
+
+function mapOutcome(o: registry.PollOutcome): PollOutcome {
+  if (o.kind !== 'ok') return { kind: o.kind, error: o.error };
+  return {
+    kind: 'ok',
+    diff: {
+      terminal: (o.terminal as any) ?? null,
+      shouldFire: !!o.shouldFire,
+      summary: o.summary || '',
+      nextWatermark: (o.nextWatermark ?? {}) as any,
+    } as any,
+  };
+}
+
+/**
+ * Arm a listener of an extension-contributed type: validate the args against
+ * the provider's schema, let it take its own baseline, then hand the record to
+ * the same store every core type uses.
+ */
+export async function registerExtListener(sessionId: string, type: string, args: Record<string, unknown>): Promise<Listener> {
+  const s = getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+  const reg = registry.get(type);
+  if (!reg) throw new Error(`unsupported listener type: ${type}`);
+  const errors = registry.validateArgs(reg.provider.schema, args);
+  if (errors.length) throw new Error(errors.join('; '));
+
+  const ext = await import('./extensions.js');
+  const allowedFireOn = Array.isArray(reg.provider.fireOn) ? reg.provider.fireOn : [];
+  const requested = Array.isArray((args as any).fire_on) ? ((args as any).fire_on as string[]).map(String) : [];
+  const bad = allowedFireOn.length ? requested.filter((f) => !allowedFireOn.includes(f)) : [];
+  if (bad.length) throw new Error(`fire_on ${bad.join(', ')} not supported by "${type}" (one of ${allowedFireOn.join(', ')})`);
+  const fireOn = requested.length ? requested : allowedFireOn;
+
+  const baseline = await registry.withDeadline(type, registry.REGISTER_TIMEOUT_MS, (signal) =>
+    Promise.resolve(reg.provider.register(ext.listenerCtx(reg.ext, signal), args as any))
+  );
+
+  const now = Date.now();
+  const intervalSec =
+    Number((args as any).interval_sec) > 0
+      ? Number((args as any).interval_sec)
+      : Number(baseline?.intervalSec) > 0
+        ? Number(baseline!.intervalSec)
+        : Number(reg.provider.defaultIntervalSec) > 0
+          ? Number(reg.provider.defaultIntervalSec)
+          : DEFAULT_INTERVAL_SEC;
+  const ttlDays = Number((args as any).ttl_days) > 0 ? Number((args as any).ttl_days) : DEFAULT_TTL_DAYS;
+
+  const listener = addListener({
+    sessionId,
+    type,
+    label: registry.labelFor(type, baseline?.params ?? args),
+    params: (baseline?.params ?? args) as Record<string, unknown>,
+    fireOn,
+    watermark: (baseline?.watermark ?? {}) as Record<string, unknown>,
+    ttlAt: now + ttlDays * 86_400_000,
+    intervalSec,
+    nextPollAt: now + intervalSec * 1000,
+  });
+  llog(listener.id, 'info', `armed — ${type}${reg.ext ? ` (extension ${reg.ext})` : ''}, every ${intervalSec}s, baseline captured`);
+  return listener;
+}
+
+/**
+ * A webhook aimed at an extension listener: the provider turns the delivered
+ * event into the same PollOutcome a poll would have produced, so it rejoins the
+ * enqueue path. This is the bridge that used to be missing — until now an
+ * inbound webhook could not wake a session at all except through SMS polling.
+ */
+export async function deliverExtWebhook(
+  type: string,
+  event: { kind: string; customId?: string; body: unknown; receivedAt?: string }
+): Promise<number> {
+  const reg = registry.get(type);
+  if (!reg || typeof reg.provider.onWebhook !== 'function') return 0;
+  const ext = await import('./extensions.js');
+  let fired = 0;
+  for (const l of listListeners().filter((x) => x.type === type && x.status === 'watching')) {
+    const raw = await registry.webhookProvider(type, (signal) => ext.listenerCtx(reg.ext, signal, l.id), providerView(l), event);
+    if (!raw) continue;
+    const outcome = mapOutcome(raw);
+    if (outcome.kind !== 'ok') {
+      llog(l.id, 'warn', `webhook handling failed: ${(outcome.error || '').slice(0, 160)}`);
+      continue;
+    }
+    const diff = outcome.diff as any;
+    if (!diff.shouldFire && !diff.terminal) continue;
+    llog(l.id, 'fire', `webhook ${event.customId || event.kind}`);
+    enqueue(l, diff.summary, diff.nextWatermark, !!diff.terminal);
+    fired++;
+  }
+  return fired;
 }
 
 // ---- scheduler --------------------------------------------------------------
@@ -518,8 +652,16 @@ async function pollOne(l: Listener): Promise<void> {
     else if (l.type === 'linear-issue') outcome = await pollLinearIssue(l);
     else if (l.type === 'slack') outcome = await pollSlack(l);
     else {
-      patchListener(l.id, { status: 'errored', lastError: `unknown listener type: ${l.type}` });
-      return;
+      // EXT: a type contributed by an extension. pollProvider() already races
+      // the call against a 20s deadline and turns a throw/timeout into
+      // `transient`, so the backoff below owns the retry exactly as it does for
+      // a core type. An unregistered type is still the old hard error.
+      const ext = await pollExtension(l);
+      if (!ext) {
+        patchListener(l.id, { status: 'errored', lastError: `unknown listener type: ${l.type}` });
+        return;
+      }
+      outcome = ext;
     }
   } catch (e: any) {
     outcome = { kind: 'transient', error: e?.message };
@@ -543,8 +685,13 @@ async function pollOne(l: Listener): Promise<void> {
 
   // Type-specific wording for the gone/auth notices.
   const p = l.params as any;
-  const { target, provider, reauthHint } =
-    l.type === 'linear-issue'
+  const { target, provider, reauthHint } = registry.has(l.type)
+    ? {
+        target: l.label || l.type,
+        provider: registry.get(l.type)?.ext ? `the ${registry.get(l.type)!.ext} extension` : l.type,
+        reauthHint: 'Re-connect the service this listener uses, then re-arm the listener.',
+      }
+    : l.type === 'linear-issue'
       ? {
           target: `Linear issue ${p.issueId}`,
           provider: 'Linear',

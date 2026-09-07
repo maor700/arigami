@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { auth } from './auth.js';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { broadcast } from './bus.js';
+import { broadcast, emitLocal } from './bus.js';
 import { ladderBadge } from './supervisor.js'; // pure — no cycle
 import { cfg, ensureConfigFile } from './lib/config.js';
 import { pickSessionAccount } from './accounts.js';
@@ -522,6 +522,9 @@ export function createSession({
   db.sessions.set(session.id, session);
   touch(session);
   broadcast({ type: 'session-created', session: toWireSession(session) });
+  // EXT domain event — the dotted name is the public one (`session-created` on
+  // the wire stays exactly as it is for the cockpit).
+  try { emitLocal('session.created', { sessionId: session.id, title: session.title, cwd: session.cwd, agent: (session.metadata as any)?.agent ?? null }); } catch {}
   return session;
 }
 

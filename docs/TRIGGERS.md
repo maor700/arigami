@@ -159,7 +159,7 @@ cronTrigger = {
   schedule: { kind: 'cron' | 'interval' | 'at', value: '0 22 * * *' },
   prompt: 'Summarize today and write it to the journal.',
   sessionMode: 'isolated' | 'existing:<sessionId>',
-  deliver: { push: true, whatsapp: '<jid>', master: '<sessionId>' },
+  deliver: { push: true, whatsapp: '<jid>' /* or true = config notify.whatsappJid */, master: '<sessionId>' },
   autonomous: true,
   createdAt, createdBySessionId,
   lastRun: 1735689600000,          // ms epoch, null until first fire
@@ -234,16 +234,15 @@ Reuses existing channels — no new transport:
   dispatch parent — but cron doesn't set `metadata.master` on the spawned
   session (which would piggyback on the dispatch-flavored generic pointer
   wording); it calls `enqueueWake` directly so `[SILENT]` can gate it too.
-- `deliver.whatsapp` — **schema-only in v1, does not send.** The live paired
-  WhatsApp bridge (`server/whatsapp-bridge.ts`) only monitors a status file
-  written by an external process (`whatsapp-mcp`, outside this repo); it
-  exposes no send channel, and starting a second Baileys connection to send
-  one message would replace (log out) the live one —
-  `connectionReplaced` in that bridge's exit handler is exactly this failure
-  mode. A safe implementation needs an outbox the live bridge process drains
-  with its own connection, which lives in that external lib, not here. Until
-  that's built, configuring `deliver.whatsapp` logs a `tlog` warning and is a
-  no-op — don't rely on it.
+- `deliver.whatsapp` — **real.** It sends through the host's ONE paired
+  WhatsApp process (`server/whatsapp-bridge.ts` owns it; `whatsapp-proxy.ts`
+  calls `send_message` on it), so no second Baileys connection is opened and
+  the live pairing is never replaced. The value is either a JID
+  (`…@s.whatsapp.net` / `…@lid` / `…@g.us`) or `true`, which means "the default
+  target", `notify.whatsappJid` in `config.json`. Not paired, or no target
+  resolved → the delivery is skipped with a `tlog` warning; a notification is
+  never allowed to become an error. Delivery goes through `server/notify.ts`,
+  which is also where an extension registers extra channels (Telegram, mail…).
 - **`[SILENT]`** — a run's `summary`/`note` starting with `[SILENT]`
   suppresses a SUCCESS delivery only (push + master); the prefix is stripped
   before display. Failures (`error`/`blocked`) always deliver regardless.

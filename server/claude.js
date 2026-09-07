@@ -911,8 +911,9 @@ function parseResetAt(text) {
 // Never allowed to fail the recovery it is describing.
 function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
   try {
+    // appendIncident broadcasts {type:'incident'} itself (incidents.ts) — one
+    // neck, so an extension hook never sees the same incident twice.
     appendIncident({ sessionId: id, action, health: 'BLOCKED_SYSTEM', reason, outcome, detail });
-    broadcast({ type: 'incident', sessionId: id, action, outcome });
     // An escalation here is the same event the supervisor records for the ones it
     // handles: stamp it on the session so it shows red on the rail and lands in
     // the "waiting for you" queue instead of quietly looking idle.

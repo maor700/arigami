@@ -233,21 +233,21 @@ function incident(id: string, d: Decision, outcome: string, extra: Record<string
     outcome,
     detail: { ...(d.detail || {}), ...extra },
   });
-  if (e) broadcast({ type: 'incident', sessionId: id, action: d.action, outcome });
+  void e; // appendIncident broadcasts {type:'incident'} itself (incidents.ts)
 }
 
 function notify(id: string, title: string, body: string): void {
-  import('./push.js')
-    .then((push) => {
-      if (!push.hasSubscriptions()) return;
-      return push.sendPush({
+  // notify.ts: Web Push plus every registered channel (WhatsApp, extensions).
+  import('./notify.js')
+    .then((n) =>
+      n.notify({
         title: title.slice(0, 80),
         body: body.slice(0, 200),
         tag: `supervisor:${id}`,
         sessionId: id,
         url: `/__host/#/session/${encodeURIComponent(id)}`,
-      });
-    })
+      })
+    )
     .catch(() => {});
 }
 
