@@ -217,7 +217,10 @@ bin/host ext list
 Extension code runs with the host's privileges — `ext add` prints the
 permissions the manifest asks for before you enable it. Full picture:
 [docs/EXTENSIONS.md](EXTENSIONS.md); the contract for writing one:
-[sdk/README.md](../sdk/README.md).
+[sdk/README.md](../sdk/README.md). You can also just ask a session to build one
+for you — `/extend`, the [build-extension](../skills/build-extension/SKILL.md)
+skill: it scaffolds into your own repo, validates, loads it and opens it in the
+same chat.
 
 ## 5. Backup, restore, migration
 

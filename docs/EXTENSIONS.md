@@ -18,7 +18,61 @@ not, and what you are trusting when you install one.
 
 ---
 
-## 1. Layout
+## 1. Build one from the chat
+
+You do not have to write any of this by hand. **Ask the session for it** — "תבנה לי
+טאב עם טופס שמחזיר פרומפט", "תעקוב אחרי ה-RSS של X ותעיר אותי", "תן לי כלי שקורא
+מה-Notion DB", "תריץ typecheck לפני כל merge" — and the built-in skill
+[`skills/build-extension`](../skills/build-extension/SKILL.md) (`/extend`) takes it
+from there:
+
+1. one clarifying question at most, then it picks a name and a contribution kind;
+2. scaffolds from a template into `$ARIGAMI_DIR/user/extensions/<name>/` — **your**
+   repo, never the core one;
+3. `bin/host ext validate <dir>` until it is clean;
+4. the host's mtime poll (≤30 s) loads it — no restart of anything;
+5. it **shows you the thing in the same chat**: `open_tab` for a tab, a real
+   `register_listener` for a listener, a live `POST /__api/ext/<name>/tool/<tool>`
+   for a tool;
+6. you say what to change, it edits and re-opens;
+7. it commits your repo and tells you where the code lives.
+
+That last loop is the point of the whole system: the product writes its own
+extension, in the context of the task you are already in, and you look at it while it
+is being written.
+
+**What you will see immediately, and what waits for a new session:** a tab, a
+listener, a hook or an edited doc is live as soon as it loads; a **new tool** or a
+**new skill** appears only in the next session (or after `restart_session`), because
+`--mcp-config` and `--plugin-dir` are fixed when a session's `claude` process spawns.
+The full matrix is §5.
+
+**Your code, your repo.** `$ARIGAMI_DIR/user/` is a git repo the host creates with
+`git init` on first boot and commits to as things change; you never have to do
+anything for that to work. A **remote is optional** — add one when you want the code
+off the machine:
+
+```bash
+git -C ~/.arigami/user remote add origin git@github.com:<you>/arigami-user.git && \
+  git -C ~/.arigami/user push -u origin HEAD
+# or, with gh authenticated:
+gh repo create arigami-user --private --source ~/.arigami/user --push
+```
+
+Secrets never go with it: settings and secrets live in `$ARIGAMI_DIR/extensions.json`
+(0600), outside the repo.
+
+**What you are agreeing to, in one paragraph.** An extension is code, and it runs
+inside the host with the host's privileges — the same trust you already give a skill
+that can run Bash. Nothing is ever downloaded on its own, the permissions an extension
+asks for are printed before it is installed, and each one can be disabled on its own.
+An extension a session wrote a minute ago cannot reach your `/__api` from its tab (the
+page is sandboxed), but its **server** code can do whatever you can do. Install and
+generate extensions you would run as yourself; the long version is §7.
+
+---
+
+## 2. Layout
 
 ```
 $ARIGAMI_DIR/user/                    ← YOUR git repo (host runs `git init`; a remote is optional)
@@ -31,7 +85,7 @@ $ARIGAMI_DIR/user/                    ← YOUR git repo (host runs `git init`; a
     docs/                             USAGE.md → generated into a skill
     hooks.ts                          on / gates / channels
     README.md
-  skills/                             $ARIGAMI_DIR/skills is a symlink to here (see §2)
+  skills/                             $ARIGAMI_DIR/skills is a symlink to here (see §3)
   mcp-catalog.json                    optional: extra remote-MCP rows
   node_modules/@arigami/sdk → <repo>/sdk       (the loader maintains this symlink)
 
@@ -56,7 +110,7 @@ rebuilds — and skips `ext-plugin/`, which is regenerated on every load.
 
 ---
 
-## 2. The skills migration (one time, idempotent, non-destructive)
+## 3. The skills migration (one time, idempotent, non-destructive)
 
 `$ARIGAMI_DIR/skills` — the user skill pack (F2) — becomes a **symlink** into
 `user/skills`, so the skills you have edited are versioned along with everything
@@ -81,7 +135,7 @@ so a fresh box still gets history.
 
 ---
 
-## 3. What each contribution turns into
+## 4. What each contribution turns into
 
 | manifest | becomes | visible to a session |
 |---|---|---|
@@ -123,7 +177,7 @@ is a `transient` outcome, which is exactly what the backoff already handles.
 
 ---
 
-## 4. Runtime vs restart
+## 5. Runtime vs restart
 
 | you changed | takes effect |
 |---|---|
@@ -141,7 +195,7 @@ one.
 
 ---
 
-## 5. Install, update, remove
+## 6. Install, update, remove
 
 ```bash
 bin/host ext list
@@ -163,6 +217,13 @@ ARIGAMI_TOKEN=<admin api token> bin/host ext add <src>
 Without it (or with the host down) the same commands run in-process against
 `$ARIGAMI_DIR` — the same pattern as `bin/host profile`.
 
+That fallback is what a **session** uses: the token a session holds
+(`$ARIGAMI_TOKEN`) is a *session* principal, not an admin, so `POST
+/__api/extensions/*` answers `403 admin only` to it. A session validates with
+`bin/host ext validate <dir>`, writes into `user/extensions/<name>/` directly, and
+lets the mtime poll load it; `GET /__api/extensions` — readable by any signed-in
+principal — is how it checks that the live host picked it up.
+
 REST (admin-only, same gate as `/__api/profiles`):
 
 | route | does |
@@ -179,7 +240,7 @@ REST (admin-only, same gate as `/__api/profiles`):
 
 ---
 
-## 6. Security model — read this before installing anything
+## 7. Security model — read this before installing anything
 
 **Extension code runs in the host process, with the host's privileges.** It can
 read your files, spawn processes and reach your network. This is the same trust
@@ -219,7 +280,7 @@ scope here. Install extensions you would run as yourself.
 
 ---
 
-## 7. The example
+## 8. The example
 
 `examples/extensions/hello` uses every contribution kind and needs no network:
 
@@ -240,7 +301,7 @@ the skill `/arigami-ext:hello`.
 
 ---
 
-## 8. Domain events
+## 9. Domain events
 
 Available to `hooks.on` (payloads are frozen for `apiVersion: 1`):
 
@@ -261,7 +322,7 @@ a hook needs (a webhook body, for instance) is not broadcast to browsers.
 
 ---
 
-## 9. Notifications
+## 10. Notifications
 
 `server/notify.ts` is now the single way out of the host. It fans a payload out
 to Web Push **plus** every registered channel:
@@ -278,7 +339,7 @@ stops the others: a notification is not allowed to become an error.
 
 ---
 
-## 10. Your own remote MCP servers
+## 11. Your own remote MCP servers
 
 `$ARIGAMI_DIR/user/mcp-catalog.json` is merged into the core catalog, so you can
 add a vendor's MCP server (capability id, setup card, `domains` allowlist)
@@ -295,9 +356,14 @@ dropped, and the merged list refreshes on every extensions reload.
 
 ---
 
-## 11. Writing one
+## 12. Writing one
 
-Read [`sdk/README.md`](../sdk/README.md), copy `examples/extensions/hello`, and:
+The fastest way is to not write it: ask the session (§1, the `build-extension`
+skill). By hand: read [`sdk/README.md`](../sdk/README.md), copy
+`examples/extensions/hello` — or one of
+[`skills/build-extension/templates/`](../skills/build-extension/templates)
+(`tab`, `listener`, `tool`, `hooks`, each with a README listing its placeholders) —
+and:
 
 ```bash
 bin/host ext validate <your dir>     # says exactly what is wrong
