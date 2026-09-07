@@ -142,6 +142,10 @@ extServe.setResolver((name) => {
   if (!ext || ext.state !== 'loaded' || !(ext.manifest?.tabs || []).length) return null;
   return path.join(ext.dir, 'ui');
 });
+// …and which of them the human granted the TRUSTED tier (manifest asked AND
+// extensions.json agreed). False until the loader is imported, on a disable, and
+// on anything unknown — the sandbox is what you fall back to.
+extServe.setTrustResolver((name) => extensionsMod?.getExtension(name)?.trusted === true);
 
 function serveHost(pathname: string, res: ServerResponse): void {
   let rel = pathname.replace(/^\/__host\/?/, '') || 'index.html';

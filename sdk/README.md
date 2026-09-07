@@ -81,6 +81,7 @@ import type { ListenerProvider, Hooks, ToolDef } from '@arigami/sdk';
 | `webhooks[]` | a custom webhook `ext-<name>-<id>` routed to a listener's `onWebhook` |
 | `permissions[]` | what a **tab** may ask the shell for: `session:message`, `session:prompts`, `session:tabs`, `session:artifacts`, `tools:<name>`, `notify`, `events:<glob>` |
 | `settings.schema` | rendered as a form in Settings → Extensions; values land in `$ARIGAMI_DIR/extensions.json` (never in your repo) |
+| `trusted` | ask for the **trusted tier** — a tab served without the sandbox (see *Tabs*). The host only honours it once a human has granted it |
 | `daemons[]` | parsed, **not run** in this version |
 
 Secrets are never in the manifest and never in your repo: they live in
@@ -233,6 +234,35 @@ is a public path and needs no token. Root-absolute references to your own mount
 (`src="/__ext/<name>/x.png"`) are rewritten for you; anything else absolute
 (`/__api/…`) is not reachable from a tab at all — that is what the bridge is for.
 
+### Sandboxed vs trusted
+
+The above is the **sandboxed** tier: the default, and what you want for a form, a
+dashboard, a picker — anything that talks to the session through
+`window.arigami`.
+
+A manifest may instead ask for `"trusted": true`. A trusted tab is served with
+**no CSP sandbox** and the cockpit gives its iframe **no `sandbox` attribute**,
+so the page is same-origin with the cockpit — like `/__ticket` or a proxied url
+tab. Plainly: **it runs with the human's full cockpit session.** It keeps the
+session cookie, it can use the host proxy and its service worker, and it can call
+`/__api` directly as the signed-in human — the manifest permissions still govern
+the bridge, but a same-origin page does not have to use the bridge. The SDK is
+unchanged either way: same `window.arigami`, same protocol v1.
+
+Ask for the tier only when the tab must be same-origin. The case it was built for
+is a tab that embeds **host-proxied** URLs (`/?__target=…`): the proxy is a
+service worker plus the auth cookie, and an opaque origin can have neither.
+`examples/extensions/compare` is that tab, and the shipped example.
+
+Asking is not getting. The host serves a tab unsandboxed only when the manifest
+asks **and** a human granted it (`bin/host ext add --trust`, `bin/host ext trust
+<name>`, or the checkbox in the cockpit's install dialog); the grant lives in
+`$ARIGAMI_DIR/extensions.json`, not in your repo. So adding the flag in a later
+commit escalates nothing — the tab stays sandboxed, with a warning, until the
+human decides. `GET /__api/extensions` reports `tier`, `trusted` and
+`trustRequested`. One consequence for you as an author: a trusted tab needs no
+asset token, so its `<base>` is the plain `/__ext/<name>/…` path.
+
 `window.arigami`: `ready()`, `sendPrompt(text, {mode})`, `runTool(name, args)`,
 `setStatus({badge,color,title})`, `openArtifact(path)`, `subscribe(events, cb)`,
 `close()`. Each maps to one `arigami:call` message; the shell checks the
@@ -262,14 +292,16 @@ queues for it (with auto-play) instead.
 bin/host ext list
 bin/host ext validate <dir>
 bin/host ext add <dir|git-url>     # copies / shallow-clones into user/extensions/<name>
+bin/host ext add <dir> --trust     # …and grant the trusted tier (see Tabs)
+bin/host ext trust|untrust <name>  # grant / revoke it later
 bin/host ext update [name]         # git pull --ff-only
 bin/host ext remove <name>
 bin/host ext reload
 ```
 
 REST (admin): `GET /__api/extensions`, `POST /__api/extensions/reload`,
-`POST /__api/extensions/validate {source}`, `POST /__api/extensions/add {source}`,
-`PATCH /__api/extensions/:name {enabled?, settings?}`,
+`POST /__api/extensions/validate {source}`, `POST /__api/extensions/add {source, trust?}`,
+`PATCH /__api/extensions/:name {enabled?, settings?, trusted?}`,
 `DELETE /__api/extensions/:name`, `POST /__api/extensions/:name/update`,
 `GET /__api/listener-types`, `POST /__api/ext/:name/tool/:tool {args}`.
 
@@ -280,7 +312,8 @@ Claude Code limit, not ours).
 
 **Trust model, stated plainly:** extension code runs **in the host process with
 the host's privileges**, exactly like a skill with Bash or an MCP server you
-added by hand. There is no auto-download and no auto-update: you install from a
+added by hand. Its TAB is the one part that is contained — by the sandbox, unless
+you granted the trusted tier. There is no auto-download and no auto-update: you install from a
 directory or a git URL you named, the permissions are printed before the install,
 and the installed sha is recorded in `extensions.json`. Only install extensions
 you would run as yourself.

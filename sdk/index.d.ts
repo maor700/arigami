@@ -103,6 +103,21 @@ export interface Manifest {
   apiVersion: number;
   title?: string;
   description?: string;
+  /**
+   * Ask for the TRUSTED tier: the tab is served without the CSP sandbox and the
+   * cockpit's iframe gets no `sandbox` attribute, so the page is same-origin
+   * with the cockpit — it keeps the session cookie, may use the host proxy /
+   * service worker, and can call `/__api` directly as the signed-in human.
+   *
+   * A manifest can only ASK. The host serves a tab unsandboxed once the human
+   * has granted the tier at install time (`bin/host ext add --trust`, or the
+   * Settings › Extensions confirmation), which is recorded in
+   * `$ARIGAMI_DIR/extensions.json`; a `git pull` that adds this flag therefore
+   * escalates nothing. Ask for it only when the tab must embed host-proxied
+   * URLs or otherwise be same-origin — `examples/extensions/compare` is the
+   * shipped example.
+   */
+  trusted?: boolean;
   tabs?: ManifestTab[];
   listeners?: ManifestListener[];
   tools?: ManifestTool[];

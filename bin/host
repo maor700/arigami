@@ -392,9 +392,34 @@ ext() {
       if ext_live; then ext_api POST /__api/extensions/validate "$(ext_json "$src")"; echo
       else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" validate "$src"; fi ;;
     add|install)
-      src="${1:?usage: host ext add <dir|git-url>}"
-      if ext_live; then ext_api POST /__api/extensions/add "$(ext_json "$src")"; echo
-      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src"; fi ;;
+      src="${1:?usage: host ext add <dir|git-url> [--trust]}"
+      trust=false; case " ${*:2} " in *" --trust "*) trust=true ;; esac
+      if ext_live; then
+        # The TRUSTED tier is served WITHOUT the tab sandbox — the page runs with
+        # the cockpit's own session. Never granted silently: --trust, or a y/N in
+        # the terminal the human is looking at. (`wants-trust` reads the source's
+        # manifest; a git URL has none until it is cloned, so that path installs
+        # sandboxed and the cockpit offers the grant after a code read.)
+        if [ "$trust" != true ] && ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" wants-trust "$src" 2>/dev/null; then
+          yl "\"$src\" asks for the TRUSTED tier: its tab is served without the sandbox, so it runs"
+          yl "with your full cockpit session — like the core UI — and can call /__api as you."
+          if [ -t 0 ]; then
+            printf 'Grant it? [y/N] '; read -r ans
+            case "$ans" in y|Y|yes|YES) trust=true ;; esac
+          else
+            dl "  no terminal to ask on — installing sandboxed; pass --trust to grant"
+          fi
+        fi
+        ext_api POST /__api/extensions/add "$(printf '{"source":"%s","trust":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$trust")"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" $([ "$trust" = true ] && echo --trust); fi ;;
+    trust|untrust)
+      name="${1:?usage: host ext $sub <name>}"
+      want=$([ "$sub" = trust ] && echo true || echo false)
+      if [ "$sub" = trust ]; then
+        yl "the trusted tier serves \"$name\"'s tab WITHOUT the sandbox — it runs with your full cockpit session"
+      fi
+      if ext_live; then ext_api PATCH "/__api/extensions/$name" "{\"trusted\":$want}"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" "$sub" "$name"; fi ;;
     remove|rm)
       name="${1:?usage: host ext remove <name>}"
       if ext_live; then ext_api DELETE "/__api/extensions/$name"; echo
@@ -411,7 +436,7 @@ ext() {
       if ext_live; then ext_api PATCH "/__api/extensions/$name" "{\"enabled\":$want}"; echo
       else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" "$sub" "$name"; fi ;;
     *)
-      echo "usage: host ext <list|validate <dir>|add <dir|git-url>|remove <name>|update <name>|reload|enable <name>|disable <name>>"
+      echo "usage: host ext <list|validate <dir>|add <dir|git-url> [--trust]|trust <name>|untrust <name>|remove <name>|update <name>|reload|enable <name>|disable <name>>"
       dl "  with the host UP, export ARIGAMI_TOKEN=<admin api token> so the change reaches the running process"
       return 1 ;;
   esac

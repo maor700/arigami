@@ -20,6 +20,17 @@
 //     the token verifies (auth.ts extGate → shareGate() below).
 // The token opens nothing else: not another extension, not /__api, and not an
 // extension that has since been disabled or removed.
+//
+// ── the two tiers ──────────────────────────────────────────────────────────
+// Everything above is the SANDBOXED tier, and it is the default and the norm.
+// A manifest may ask for `"trusted": true`, and a human may grant it (recorded
+// in extensions.json, never in the manifest alone — see server/extensions.ts
+// loadOne). A granted extension is served with NO `content-security-policy`
+// sandbox and the cockpit gives its iframe no `sandbox` attribute, so the page
+// is same-origin with the cockpit: it keeps the session cookie, can use the
+// host proxy's service worker — the reason the tier exists, see
+// examples/extensions/compare — and can call /__api as the signed-in human. No
+// asset token is minted for it, because none is needed.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -76,6 +87,25 @@ export function setResolver(fn: ExtUiResolver): void { resolver = fn; }
 function uiRoot(name: string): string | null {
   if (!EXT_NAME_RE.test(name)) return null;
   try { return resolver(name); } catch { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// the TRUSTED tier
+// ---------------------------------------------------------------------------
+// A second injected resolver, same shape and for the same reason: this module
+// never imports the loader. It answers true only when the manifest asked for
+// `trusted` AND $ARIGAMI_DIR/extensions.json says a human granted it, so the
+// default here — and the answer while the loader is still importing, or after a
+// disable — is `false`, i.e. sandboxed. Fail-closed by construction.
+export type ExtTrustResolver = (name: string) => boolean;
+
+let trustResolver: ExtTrustResolver = () => false;
+export function setTrustResolver(fn: ExtTrustResolver): void { trustResolver = fn; }
+
+/** Is this extension served at the trusted tier (no CSP sandbox, same origin as the cockpit)? */
+export function isTrusted(name: string): boolean {
+  if (!EXT_NAME_RE.test(name)) return false;
+  try { return trustResolver(name) === true; } catch { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,27 +220,35 @@ export function serve(req: IncomingMessage, res: ServerResponse): boolean {
   }
   if (!fs.existsSync(target)) { res.writeHead(404); res.end(); return true; }
   const type = MIME[path.extname(target).toLowerCase()] || 'application/octet-stream';
+  const trusted = isTrusted(u.name);
   const headers: Record<string, string | number> = {
     'content-type': type,
-    'content-security-policy': EXT_CSP,
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
   };
+  // The whole difference between the two tiers is this header (plus the
+  // matching `sandbox` attribute the cockpit puts on the iframe): a trusted tab
+  // is same-origin with the cockpit, exactly like /__ticket or a proxied url
+  // tab, which is what lets it keep the cookie and use the host proxy's service
+  // worker. It can therefore also call /__api as the signed-in human — that is
+  // the consequence the install confirmation names out loud.
+  if (!trusted) headers['content-security-policy'] = EXT_CSP;
   if (type.startsWith('text/html')) {
-    // The document is sandboxed (opaque origin) → its sub-requests carry no
+    // Sandboxed: the document has an opaque origin → its sub-requests carry no
     // cookie. Route the injected <base> (and any root-absolute
     // `/__ext/<name>/…` reference, which <base> does not cover) through the
     // tokenized path form. A tokenized request keeps ITS token, so a reload
     // inside the iframe does not need a cookie either.
-    const token = grant?.token ?? assetToken(u.name);
+    // Trusted: the cookie is sent like anywhere else on the origin, so the
+    // <base> stays plain and no asset token is minted at all.
     const prefix = `/__ext/${u.name}/`;
     const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
     const html = fs.readFileSync(target, 'utf8');
-    const body = rewriteAbsoluteRefs(
-      rewriteBaseForToken(injectBase(html, `${prefix}${dir}`), prefix, token),
-      prefix,
-      token,
-    );
+    let body = injectBase(html, `${prefix}${dir}`);
+    if (!trusted) {
+      const token = grant?.token ?? assetToken(u.name);
+      body = rewriteAbsoluteRefs(rewriteBaseForToken(body, prefix, token), prefix, token);
+    }
     headers['content-length'] = Buffer.byteLength(body);
     res.writeHead(200, headers);
     if (req.method === 'HEAD') res.end(); else res.end(body);

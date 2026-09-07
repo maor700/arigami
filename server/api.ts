@@ -3657,12 +3657,15 @@ export async function handle(
         return json(res, await ext.validateExtension(dir));
       }
       if (p === '/__api/extensions/add' && m === 'POST') {
-        const body = (await readBody(req)) as { source?: unknown };
+        const body = (await readBody(req)) as { source?: unknown; trust?: unknown };
         const source = String(body.source || '').trim();
         if (!source) return badRequest(res, 'source required (a directory or a git URL)');
         // The caller SHOWS manifest.permissions to the human — extension code
         // runs with host privileges, so an install is a decision, not a detail.
-        const r = await ext.addExtension(source);
+        // `trust:true` is the second, separate decision (the TRUSTED tier: a tab
+        // served without the sandbox, with the cockpit's own session); the
+        // caller must have named that consequence before sending it.
+        const r = await ext.addExtension(source, { trust: body.trust === true });
         return json(res, r, r.ok ? 200 : 400);
       }
       const em = /^\/__api\/extensions\/([a-z0-9][a-z0-9-]*)(?:\/(update))?$/.exec(p);
@@ -3678,6 +3681,9 @@ export async function handle(
             enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
             settings: body.settings && typeof body.settings === 'object' ? body.settings : undefined,
             secrets: body.secrets && typeof body.secrets === 'object' ? body.secrets : undefined,
+            // EXT: grant/revoke the TRUSTED tier. Admin-only like the rest of
+            // this block; the loader still ignores it unless the manifest asks.
+            trusted: typeof body.trusted === 'boolean' ? body.trusted : undefined,
           });
           return 'error' in r ? badRequest(res, String(r.error)) : json(res, r);
         }

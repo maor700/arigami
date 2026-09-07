@@ -59,6 +59,7 @@ export const strings = {
   'ext.confirm.title': 'Install “{name}”?',
   'ext.confirm.intro': 'Extension code runs inside the host, with its privileges. It asks for:',
   'ext.confirm.install': 'Install',
+  'ext.confirm.installTrusted': 'Install unsandboxed',
   'ext.confirm.cancel': 'Cancel',
   'ext.confirm.errors': 'This extension does not validate. Installing it will leave it in an error state.',
   'ext.confirm.git.title': 'Clone and install from git?',
@@ -80,6 +81,26 @@ export const strings = {
   'ext.perm.tools': 'Call its own tool “{name}”',
   'ext.perm.events': 'Watch host events “{name}”',
   'ext.perm.unknown': 'Unknown permission — grants nothing',
+
+  // the trusted tier
+  'ext.trust.title': 'This extension asks to run without the sandbox',
+  'ext.trust.body':
+    'Its tab would be served as part of the cockpit itself: it keeps your session, can use the host proxy, and can call the API as you — the same reach the core UI has. Only grant this to a tab that genuinely needs it (one that embeds proxied pages), and only to code you have read.',
+  'ext.trust.grant': 'Yes — run it with my full cockpit session',
+  'ext.trust.grant.short': 'Grant trust',
+  'ext.trust.revoke': 'Revoke trust',
+  'ext.trust.confirm.title': 'Run “{name}” with your cockpit session?',
+  'ext.trust.confirm.body': 'Its tab loses the sandbox: it keeps your session cookie and can call the API as you, like the core UI.',
+  'ext.trust.confirm.go': 'Grant',
+  'ext.trust.revoke.title': 'Sandbox “{name}” again?',
+  'ext.trust.revoke.body': 'Its tab goes back to an opaque origin — no session, no API. A tab that needs to embed proxied pages will stop working.',
+  'ext.trust.revoke.go': 'Revoke',
+  'ext.trust.granted': '“{name}” now runs unsandboxed',
+  'ext.trust.revoked': '“{name}” is sandboxed again',
+  'ext.tier.trusted': 'Trusted',
+  'ext.tier.sandboxed': 'Sandboxed',
+  'ext.tier.trusted.hint': 'Its tab runs with your cockpit session.',
+  'ext.tier.asked.hint': 'It asked to run without the sandbox and did not get it.',
 
   // tab bar + slash
   'ext.tabs.heading': 'Extensions',

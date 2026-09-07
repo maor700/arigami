@@ -1490,6 +1490,13 @@ function UrlTab({ tab, active, session }) {
   // reach the session, and only as far as its manifest permissions allow.
   const extName = extOfTab(tab);
   const extRecord = useMemo(() => findExtension(extensions, extName), [extensions, extName]);
+  // …unless the human granted it the TRUSTED tier, in which case the host also
+  // omits the CSP sandbox header and the tab is same-origin with the cockpit
+  // (it needs to be — see examples/extensions/compare, which embeds proxied
+  // URLs). Fail-closed: an extension we have no record for yet is sandboxed,
+  // and the iframe is remounted if that answer ever flips, because `sandbox`
+  // only takes effect at navigation.
+  const extSandboxed = !!extName && extRecord?.trusted !== true;
   const iframeRef = useRef(null);
   const bridgeRef = useRef(null);
   // EXT3 recovery: the page's own <script src> is fetched from an opaque origin
@@ -1634,7 +1641,9 @@ function UrlTab({ tab, active, session }) {
           </div>
         )}
         <iframe
-          key={reloadKey}
+          /* the tier is part of the key: `sandbox` is only read at navigation,
+             so a grant/revoke that lands while the tab is open must remount */
+          key={`${reloadKey}:${extSandboxed ? 'sandboxed' : 'trusted'}`}
           ref={iframeRef}
           title={tab.title || t('rail.tabFallback')}
           src={src}
@@ -1652,11 +1661,12 @@ function UrlTab({ tab, active, session }) {
               setReloadKey((k) => k + 1);
             }, 4000);
           }}
-          /* Published artifacts (A1) and extension tabs (EXT) run with an opaque
-             origin — no allow-same-origin — so a page can't call /__api as the
-             cockpit. The host also sends a CSP sandbox header; this is
-             belt+braces. */
-          {...(extName || String(tab.url || '').startsWith('/__artifacts/')
+          /* Published artifacts (A1) and SANDBOXED extension tabs (EXT) run with
+             an opaque origin — no allow-same-origin — so a page can't call
+             /__api as the cockpit. The host also sends a CSP sandbox header;
+             this is belt+braces. A TRUSTED extension tab gets neither, by
+             design, exactly like /__ticket or a proxied url tab. */
+          {...(extSandboxed || String(tab.url || '').startsWith('/__artifacts/')
             ? { sandbox: 'allow-scripts allow-forms allow-popups' }
             : {})}
           className="absolute inset-0 h-full w-full border-0 bg-white"

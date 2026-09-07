@@ -59,6 +59,7 @@ export const strings = {
   'ext.confirm.title': 'להתקין את “{name}”?',
   'ext.confirm.intro': 'קוד של הרחבה רץ בתוך המארח, עם ההרשאות שלו. היא מבקשת:',
   'ext.confirm.install': 'התקנה',
+  'ext.confirm.installTrusted': 'התקנה בלי ארגז חול',
   'ext.confirm.cancel': 'ביטול',
   'ext.confirm.errors': 'ההרחבה לא עוברת ולידציה. התקנה תשאיר אותה במצב שגיאה.',
   'ext.confirm.git.title': 'לשכפל ולהתקין מ-git?',
@@ -80,6 +81,26 @@ export const strings = {
   'ext.perm.tools': 'להריץ את הכלי שלה “{name}”',
   'ext.perm.events': 'לעקוב אחרי אירועי מארח “{name}”',
   'ext.perm.unknown': 'הרשאה לא מוכרת — לא נותנת כלום',
+
+  // דרגת אמון
+  'ext.trust.title': 'ההרחבה הזאת מבקשת לרוץ בלי ארגז חול',
+  'ext.trust.body':
+    'הטאב שלה יוגש כחלק מהקוקפיט עצמו: הוא מחזיק את החיבור שלך, יכול להשתמש בפרוקסי של המארח, ויכול לקרוא ל-API בשמך — בדיוק כמו הממשק המקורי. תן את זה רק לטאב שבאמת צריך את זה (כזה שמטמיע דפים דרך הפרוקסי), ורק לקוד שקראת.',
+  'ext.trust.grant': 'כן — שירוץ עם החיבור המלא שלי לקוקפיט',
+  'ext.trust.grant.short': 'לתת אמון',
+  'ext.trust.revoke': 'לבטל אמון',
+  'ext.trust.confirm.title': 'להריץ את “{name}” עם החיבור שלך לקוקפיט?',
+  'ext.trust.confirm.body': 'הטאב שלה יאבד את ארגז החול: הוא מחזיק את העוגייה שלך ויכול לקרוא ל-API בשמך, כמו הממשק המקורי.',
+  'ext.trust.confirm.go': 'לתת',
+  'ext.trust.revoke.title': 'להחזיר את “{name}” לארגז חול?',
+  'ext.trust.revoke.body': 'הטאב שלה חוזר למקור אטום — בלי חיבור ובלי API. טאב שצריך להטמיע דפים דרך הפרוקסי יפסיק לעבוד.',
+  'ext.trust.revoke.go': 'לבטל',
+  'ext.trust.granted': '“{name}” רצה עכשיו בלי ארגז חול',
+  'ext.trust.revoked': '“{name}” חזרה לארגז חול',
+  'ext.tier.trusted': 'מהימנה',
+  'ext.tier.sandboxed': 'בארגז חול',
+  'ext.tier.trusted.hint': 'הטאב שלה רץ עם החיבור שלך לקוקפיט.',
+  'ext.tier.asked.hint': 'היא ביקשה לרוץ בלי ארגז חול ולא קיבלה.',
 
   // פס הטאבים + סלאש
   'ext.tabs.heading': 'הרחבות',

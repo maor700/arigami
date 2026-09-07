@@ -53,6 +53,24 @@ function PermissionList({ permissions }) {
   );
 }
 
+/* ---------- the trusted tier --------------------------------------------- */
+
+// The second decision, and a bigger one than the permission list: a trusted
+// extension's tab is served WITHOUT the sandbox, same origin as the cockpit, so
+// it holds the session cookie and can call /__api as the human. The manifest can
+// only ask; this checkbox is what actually grants it (host side: the `trusted`
+// map in extensions.json, which is why a `git pull` can't escalate anything).
+function TrustNotice({ children }) {
+  const t = useT();
+  return (
+    <div className="mt-2 rounded-lg border-[1.5px] border-ink bg-chip px-3 py-2 text-[11.5px] leading-relaxed text-fg">
+      <div className="font-bold">⚠ {t('ext.trust.title')}</div>
+      <div className="mt-0.5 text-fgdim">{t('ext.trust.body')}</div>
+      {children}
+    </div>
+  );
+}
+
 /* ---------- the install confirmation ------------------------------------- */
 
 // Deliberately a modal, not an inline panel: an install is a decision with
@@ -61,6 +79,8 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
   const t = useT();
   const name = manifest?.title || manifest?.name || '';
   const review = mode === 'review';
+  const wantsTrust = manifest?.trusted === true;
+  const [trust, setTrust] = useState(false);
   return (
     <div
       className="fixed inset-0 z-[86] flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
@@ -84,6 +104,15 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
         </div>
         <div className="px-[18px] pb-3">
           <PermissionList permissions={permissions} />
+          {wantsTrust && !review && (
+            <TrustNotice>
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} className="mt-[3px]" />
+                <span className="min-w-0 font-bold">{t('ext.trust.grant')}</span>
+              </label>
+            </TrustNotice>
+          )}
+          {wantsTrust && review && <TrustNotice>{null}</TrustNotice>}
           {errors.length > 0 && (
             <ErrorLine>
               <div className="font-bold">{t('ext.confirm.errors')}</div>
@@ -103,8 +132,8 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
           ) : (
             <>
               <button type="button" disabled={busy} onClick={onCancel} className={BTN_SM}>{t('ext.confirm.cancel')}</button>
-              <button type="button" disabled={busy} onClick={() => onConfirm('install')} className={BTN_PRIMARY}>
-                {busy ? t('ext.add.installing') : t('ext.confirm.install')}
+              <button type="button" disabled={busy} onClick={() => onConfirm('install', { trust })} className={BTN_PRIMARY}>
+                {busy ? t('ext.add.installing') : wantsTrust && trust ? t('ext.confirm.installTrusted') : t('ext.confirm.install')}
               </button>
             </>
           )}
@@ -160,12 +189,14 @@ function AddExtension({ onDone }) {
   };
 
   // Step 2 — the actual install. `after` is 'install' (already confirmed) or
-  // 'review' (git: show the permissions once they exist).
-  const install = async (src, after) => {
+  // 'review' (git: show the permissions once they exist). `trust` is only ever
+  // true on the confirmed path — a git clone's manifest is unread at this point,
+  // so the trusted tier there is granted afterwards, from the extension's card.
+  const install = async (src, after, trust = false) => {
     setPhase('installing');
     setError(null);
     try {
-      const r = await api.post('/extensions/add', { source: src });
+      const r = await api.post('/extensions/add', { source: src, trust });
       setSource('');
       await loadExtensions();
       if (after === 'review') {
@@ -227,7 +258,7 @@ function AddExtension({ onDone }) {
           errors={pending.errors}
           mode={pending.mode}
           busy={busy}
-          onConfirm={(choice) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install'))}
+          onConfirm={(choice, opts) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install', opts?.trust === true))}
           onCancel={() => setPending(null)}
         />
       )}
@@ -330,6 +361,30 @@ export function ExtensionCard({ ext }) {
     }
   };
 
+  // Grant / revoke the TRUSTED tier after the install — the path a git-cloned
+  // extension takes (its manifest could not be read before the clone), and the
+  // way out again once you no longer want a tab holding your cockpit session.
+  const setTrust = async (on) => {
+    const ok = await confirmDialog({
+      title: t(on ? 'ext.trust.confirm.title' : 'ext.trust.revoke.title', { name: ext.title || ext.name }),
+      body: t(on ? 'ext.trust.confirm.body' : 'ext.trust.revoke.body'),
+      confirmLabel: t(on ? 'ext.trust.confirm.go' : 'ext.trust.revoke.go'),
+      danger: on,
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/extensions/${ext.name}`, { trusted: on });
+      await loadExtensions();
+      toast(t(on ? 'ext.trust.granted' : 'ext.trust.revoked', { name: ext.title || ext.name }));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remove = async () => {
     const ok = await confirmDialog({
       title: t('ext.remove.title', { name: ext.title || ext.name }),
@@ -379,6 +434,22 @@ export function ExtensionCard({ ext }) {
         <div className="text-[11px] font-bold text-fgdim">{t('ext.permissions')}</div>
         <PermissionList permissions={ext.permissions} />
       </div>
+
+      {/* The tier. Only shown when it is a live question — an ordinary
+          sandboxed extension that never asked says nothing. */}
+      {(ext.trusted || ext.trustRequested) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className={`rounded-full border-[1.5px] border-ink px-2 py-0.5 text-[10.5px] ${ext.trusted ? 'bg-chip text-fg' : 'bg-panel text-fgdim'}`}>
+            {t(ext.trusted ? 'ext.tier.trusted' : 'ext.tier.sandboxed')}
+          </span>
+          <span className="min-w-0 flex-1 text-[10.5px] text-fgdim">
+            {t(ext.trusted ? 'ext.tier.trusted.hint' : 'ext.tier.asked.hint')}
+          </span>
+          <button type="button" disabled={busy} onClick={() => setTrust(!ext.trusted)} className={ext.trusted ? BTN_SM : BTN_DANGER}>
+            {t(ext.trusted ? 'ext.trust.revoke' : 'ext.trust.grant.short')}
+          </button>
+        </div>
+      )}
 
       {ext.error && <ErrorLine>{ext.error}</ErrorLine>}
       {(ext.warnings || []).length > 0 && (

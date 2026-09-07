@@ -259,20 +259,36 @@ export interface ExtState {
   settings: Record<string, Record<string, unknown>>;
   secrets: Record<string, Record<string, string>>;
   sha: Record<string, string>;
+  /**
+   * The TRUSTED tier, per extension — granted by a human, never by a manifest.
+   * `manifest.trusted` alone is only a REQUEST: the loader serves a tab
+   * unsandboxed only when this map also says so, which is what stops a
+   * `git pull` (or `ext update`) from silently escalating an installed
+   * extension into the cockpit's own origin.
+   */
+  trusted: Record<string, boolean>;
+  /** One-shot migrations the host has already run (id → true). */
+  migrated: Record<string, boolean>;
 }
-const EMPTY_STATE: ExtState = { enabled: {}, settings: {}, secrets: {}, sha: {} };
+const EMPTY_STATE: ExtState = { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
+
+const objOf = (v: unknown): Record<string, any> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as any) : {});
 
 export function readState(): ExtState {
   try {
     const raw = JSON.parse(fs.readFileSync(EXT_STATE_FILE, 'utf8'));
     return {
-      enabled: raw?.enabled && typeof raw.enabled === 'object' ? raw.enabled : {},
-      settings: raw?.settings && typeof raw.settings === 'object' ? raw.settings : {},
-      secrets: raw?.secrets && typeof raw.secrets === 'object' ? raw.secrets : {},
-      sha: raw?.sha && typeof raw.sha === 'object' ? raw.sha : {},
+      enabled: objOf(raw?.enabled),
+      settings: objOf(raw?.settings),
+      secrets: objOf(raw?.secrets),
+      sha: objOf(raw?.sha),
+      // Absent in a state file written before the trusted tier existed — which
+      // is exactly right: nothing is trusted until a human says so.
+      trusted: objOf(raw?.trusted),
+      migrated: objOf(raw?.migrated),
     };
   } catch {
-    return { ...EMPTY_STATE, enabled: {}, settings: {}, secrets: {}, sha: {} };
+    return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
   }
 }
 
@@ -330,6 +346,11 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
   if (!Number.isFinite(major)) errors.push('apiVersion is required (a number)');
   else if (major !== EXT_API_VERSION) errors.push(`apiVersion ${m.apiVersion} is not supported by this host (needs ${EXT_API_VERSION})`);
   else if (Number(m.apiVersion) > EXT_API_VERSION) warnings.push(`apiVersion ${m.apiVersion} is newer than this host's ${EXT_API_VERSION} — unknown features are ignored`);
+
+  // The trusted tier is a REQUEST here, nothing more — whether it is granted is
+  // read from extensions.json by the loader (see loadOne).
+  if (m.trusted !== undefined && typeof m.trusted !== 'boolean') errors.push('trusted must be true or false');
+  else if (m.trusted === true && !(m.tabs || []).length) warnings.push('trusted is only about tabs, and this manifest declares none');
 
   const file = (rel: string, what: string) => {
     const full = rel ? insideDir(dir, rel) : null;
@@ -477,6 +498,10 @@ export interface ExtEntry {
   manifest: Manifest | null;
   enabled: boolean;
   state: 'loaded' | 'disabled' | 'error';
+  /** the manifest asked for the trusted tier */
+  trustRequested: boolean;
+  /** …AND the human granted it in extensions.json. Only this serves a tab unsandboxed. */
+  trusted: boolean;
   error?: string;
   warnings: string[];
   sha?: string;
@@ -498,6 +523,8 @@ let summaryCache = '';
 export const isLoaded = () => loaded;
 export const getExtension = (name: string): ExtEntry | undefined => extensions.get(name);
 export const enabledExtensions = (): ExtEntry[] => [...extensions.values()].filter((e) => e.state === 'loaded');
+/** Is this extension served at the TRUSTED tier right now? (ext-serve.ts asks.) */
+export const isTrusted = (name: string): boolean => extensions.get(name)?.trusted === true;
 
 /** The wire view (GET /__api/extensions). Never leaks settings values or secrets. */
 export function listExtensions() {
@@ -511,6 +538,10 @@ export function listExtensions() {
       description: e.manifest?.description || '',
       enabled: e.enabled,
       state: e.state,
+      /** the tier the tab is actually served at — 'trusted' needs BOTH the manifest and the state file */
+      tier: e.trusted ? 'trusted' : 'sandboxed',
+      trusted: e.trusted,
+      trustRequested: e.trustRequested,
       error: e.error || null,
       warnings: e.warnings,
       sha: e.sha || null,
@@ -564,6 +595,8 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
     manifest: null,
     enabled: st.enabled[name] !== false,
     state: 'error',
+    trustRequested: false,
+    trusted: false,
     warnings: [],
     mtime: 0,
     contributions: { tools: 0, listeners: 0, docs: 0, tabs: 0, hooks: 0, gates: 0, channels: 0, webhooks: 0 },
@@ -588,6 +621,17 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
   const v = await validateExtension(dir);
   entry.warnings = v.warnings;
   if (!v.ok) { entry.error = v.errors.join('; '); return entry; }
+
+  // The trusted tier: the manifest asks, extensions.json decides. A manifest
+  // that starts asking (an `ext update`, a hand-edit, a `git pull`) therefore
+  // changes nothing on its own — the tab stays sandboxed and the extension
+  // carries a warning until a human grants it.
+  entry.trustRequested = manifest.trusted === true;
+  entry.trusted = entry.trustRequested && st.trusted[name] === true;
+  if (entry.trustRequested && !entry.trusted)
+    entry.warnings.push(
+      'this extension asks for the TRUSTED tier (its tab would run without the sandbox, with your full cockpit session) and this host has not granted it — the tab stays sandboxed. Grant it in Settings › Extensions, or reinstall with `bin/host ext add --trust`.'
+    );
 
   const settings = settingsFor(manifest, st);
   const secrets = st.secrets[name] || {};
@@ -641,7 +685,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
   void secrets;
   extLog(
     name,
-    `loaded v${manifest.version} — ${entry.contributions.tools} tool server(s), ${entry.contributions.listeners} listener type(s), ` +
+    `loaded v${manifest.version} [${entry.trusted ? 'TRUSTED — tab runs unsandboxed' : 'sandboxed'}] — ${entry.contributions.tools} tool server(s), ${entry.contributions.listeners} listener type(s), ` +
       `${entry.contributions.docs} doc(s), ${entry.contributions.tabs} tab(s), ${entry.contributions.hooks} hook(s), ${entry.contributions.gates} gate(s)`
   );
   return entry;
@@ -710,7 +754,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
       } catch (e) {
         entry = {
           name, dir: path.join(EXT_DIR, name), manifest: prev?.manifest || null, enabled: st.enabled[name] !== false,
-          state: 'error', error: (e as Error).message, warnings: [], mtime: newestMtime(watchedFiles(path.join(EXT_DIR, name), prev?.manifest || null)),
+          state: 'error', trustRequested: false, trusted: false, error: (e as Error).message, warnings: [], mtime: newestMtime(watchedFiles(path.join(EXT_DIR, name), prev?.manifest || null)),
           contributions: { tools: 0, listeners: 0, docs: 0, tabs: 0, hooks: 0, gates: 0, channels: 0, webhooks: 0 },
           unsubs: [], gates: {}, channels: {}, listenerTypes: [],
         };
@@ -1138,6 +1182,10 @@ export interface AddResult {
   dir?: string;
   manifest?: Manifest;
   permissions?: string[];
+  /** the manifest asked for the trusted tier */
+  trustRequested?: boolean;
+  /** …and the caller granted it (`--trust`, or the cockpit's confirmation) */
+  trusted?: boolean;
   errors: string[];
   warnings: string[];
 }
@@ -1148,8 +1196,13 @@ export interface AddResult {
  * is ever fetched on its own: `source` came from a human or from a session
  * acting for one, and the returned `permissions` are what the caller shows
  * before enabling it.
+ *
+ * `opts.trust` grants the TRUSTED tier in the same breath — the caller (the CLI
+ * with `--trust` / its y/N prompt, or the cockpit's install dialog) is the one
+ * that named the consequence to the human. Without it a `trusted` manifest still
+ * installs, sandboxed, and says so.
  */
-export async function addExtension(source: string): Promise<AddResult> {
+export async function addExtension(source: string, opts: { trust?: boolean } = {}): Promise<AddResult> {
   const src = String(source || '').trim();
   if (!src) return { ok: false, errors: ['source required (a directory or a git URL)'], warnings: [] };
   ensureUserRepo();
@@ -1185,10 +1238,21 @@ export async function addExtension(source: string): Promise<AddResult> {
     const want = path.join(EXT_DIR, v.manifest.name);
     if (EXT_NAME_RE.test(v.manifest.name) && !exists(want)) { fs.renameSync(dir, want); dir = want; name = v.manifest.name; }
   }
-  hostLog(`installed "${name}" from ${isGitUrl(src) ? src : 'a local directory'}${v.ok ? '' : ' (with validation errors)'}`);
+  const trustRequested = v.manifest?.trusted === true;
+  const trusted = trustRequested && opts.trust === true;
+  if (trusted) {
+    const st = readState();
+    st.trusted[name] = true;
+    writeState(st);
+  }
+  hostLog(
+    `installed "${name}" from ${isGitUrl(src) ? src : 'a local directory'}` +
+      `${trusted ? ' — TRUSTED tier granted: its tab runs unsandboxed, with the cockpit session' : trustRequested ? ' — it asks for the TRUSTED tier; NOT granted, the tab stays sandboxed' : ''}` +
+      `${v.ok ? '' : ' (with validation errors)'}`
+  );
   await reload({ only: [name], reason: `add ${name}` });
   autoCommit(`add extension ${name}`);
-  return { ok: v.ok, name, dir, manifest: v.manifest, permissions: v.manifest?.permissions || [], errors: v.errors, warnings: v.warnings };
+  return { ok: v.ok, name, dir, manifest: v.manifest, permissions: v.manifest?.permissions || [], trustRequested, trusted, errors: v.errors, warnings: v.warnings };
 }
 
 /** Remove the directory. The extensions.json entry is KEPT (settings history). */
@@ -1220,11 +1284,17 @@ export async function updateExtension(name: string): Promise<{ ok: boolean; outp
   return { ok: true, output: (r.stdout || '').trim().slice(0, 400), sha };
 }
 
-/** PATCH /__api/extensions/:name — enable/disable and settings. */
-export async function patchExtension(name: string, patch: { enabled?: boolean; settings?: Record<string, unknown>; secrets?: Record<string, string> }) {
+/** PATCH /__api/extensions/:name — enable/disable, settings, and the trusted tier. */
+export async function patchExtension(name: string, patch: { enabled?: boolean; settings?: Record<string, unknown>; secrets?: Record<string, string>; trusted?: boolean }) {
   if (!EXT_NAME_RE.test(name)) return { error: `invalid extension name: ${name}` };
   const st = readState();
   if (typeof patch.enabled === 'boolean') st.enabled[name] = patch.enabled;
+  // Granting trust is an admin decision the caller has already confirmed; the
+  // loader still only acts on it when the manifest asks for the tier too.
+  if (typeof patch.trusted === 'boolean') {
+    st.trusted[name] = patch.trusted;
+    hostLog(`"${name}" trusted tier ${patch.trusted ? 'GRANTED — its tab now runs unsandboxed, with the cockpit session' : 'revoked — its tab is sandboxed again'}`);
+  }
   if (patch.settings && typeof patch.settings === 'object') st.settings[name] = { ...(st.settings[name] || {}), ...patch.settings };
   if (patch.secrets && typeof patch.secrets === 'object') st.secrets[name] = { ...(st.secrets[name] || {}), ...patch.secrets };
   writeState(st);
@@ -1315,10 +1385,31 @@ export function emitDomain(name: string, payload: Record<string, unknown>): void
 // Used when the host is DOWN (or no admin token is exported): the same
 // functions, in-process, against $ARIGAMI_DIR. With the host up, bin/host goes
 // through REST instead so the LIVE process reloads.
-// bun server/extensions.ts list|validate <dir>|add <src>|remove <name>|update [name]|reload|enable <name>|disable <name>
+// bun server/extensions.ts list|validate <dir>|add <src> [--trust]|trust <name>|untrust <name>|
+//   remove <name>|update [name]|reload|enable <name>|disable <name>|wants-trust <dir>
 if (import.meta.main) {
-  const [cmd, arg] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const [cmd, arg] = argv;
+  const flag = (f: string) => argv.includes(f);
   const out = (o: unknown) => process.stdout.write(JSON.stringify(o, null, 2) + '\n');
+
+  /** The local source's manifest, for the trust question. A git URL has none yet. */
+  const localManifest = (src: string): Manifest | null => {
+    const from = path.resolve(src.startsWith('~') ? src.replace(/^~/, process.env.HOME || '~') : src);
+    return isDir(from) ? parseManifest(from).manifest || null : null;
+  };
+
+  /** One y/N on stdin. Only ever asked on a TTY — a script never gets a hidden prompt. */
+  const askYes = async (question: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      process.stderr.write(question);
+      process.stdin.setEncoding('utf8');
+      process.stdin.resume();
+      process.stdin.once('data', (d: string) => {
+        process.stdin.pause();
+        resolve(/^\s*y(es)?\s*$/i.test(String(d)));
+      });
+    });
   try {
     if (cmd === 'list' || cmd === undefined) {
       await reload({ reason: 'cli list' });
@@ -1328,13 +1419,34 @@ if (import.meta.main) {
       const v = await validateExtension(path.resolve(arg.startsWith('~') ? arg.replace(/^~/, process.env.HOME || '~') : arg));
       out(v);
       process.exitCode = v.ok ? 0 : 1;
+    } else if (cmd === 'wants-trust') {
+      // bin/host asks this BEFORE installing over REST, so the y/N below can be
+      // asked in the shell the human is actually looking at. Exit 0 = yes.
+      if (!arg) throw new Error('usage: bun server/extensions.ts wants-trust <dir>');
+      const m = localManifest(arg);
+      process.exitCode = m?.trusted === true ? 0 : 1;
     } else if (cmd === 'add') {
-      if (!arg) throw new Error('usage: bun server/extensions.ts add <dir|git-url>');
-      const r = await addExtension(arg);
+      if (!arg) throw new Error('usage: bun server/extensions.ts add <dir|git-url> [--trust]');
+      let trust = flag('--trust');
+      // A trusted tab is the cockpit's own origin — never grant that silently.
+      if (!trust && localManifest(arg)?.trusted === true) {
+        const line =
+          `"${arg}" asks for the TRUSTED tier: its tab is served WITHOUT the sandbox, so it\n` +
+          `runs with your full cockpit session — same as the core UI — and can call /__api as you.\n` +
+          `Grant it? [y/N] `;
+        if (process.stdin.isTTY) trust = await askYes(line);
+        else process.stderr.write(line.replace('Grant it? [y/N] ', 'NOT granted (no terminal to ask on) — installing sandboxed; pass --trust to grant.\n'));
+      }
+      const r = await addExtension(arg, { trust });
       // The permissions are what the human is agreeing to — print them loudly.
       if (r.permissions?.length) process.stderr.write(`permissions requested by "${r.name}": ${r.permissions.join(', ')}\n`);
+      if (r.trusted) process.stderr.write(`"${r.name}" is installed at the TRUSTED tier — its tab runs unsandboxed.\n`);
+      else if (r.trustRequested) process.stderr.write(`"${r.name}" asked for the trusted tier and did NOT get it — its tab is sandboxed.\n`);
       out(r);
       process.exitCode = r.ok ? 0 : 1;
+    } else if (cmd === 'trust' || cmd === 'untrust') {
+      if (!arg) throw new Error(`usage: bun server/extensions.ts ${cmd} <name>`);
+      out(await patchExtension(arg, { trusted: cmd === 'trust' }));
     } else if (cmd === 'remove') {
       if (!arg) throw new Error('usage: bun server/extensions.ts remove <name>');
       const r = await removeExtension(arg);
@@ -1352,7 +1464,7 @@ if (import.meta.main) {
       if (!arg) throw new Error(`usage: bun server/extensions.ts ${cmd} <name>`);
       out(await patchExtension(arg, { enabled: cmd === 'enable' }));
     } else {
-      process.stderr.write('usage: bun server/extensions.ts list | validate <dir> | add <src> | remove <name> | update [name] | reload | enable <name> | disable <name>\n');
+      process.stderr.write('usage: bun server/extensions.ts list | validate <dir> | add <src> [--trust] | trust <name> | untrust <name> | remove <name> | update [name] | reload | enable <name> | disable <name>\n');
       process.exitCode = 2;
     }
     doCommit('extension change');

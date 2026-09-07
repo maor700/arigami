@@ -67,7 +67,8 @@ inside the host with the host's privileges — the same trust you already give a
 that can run Bash. Nothing is ever downloaded on its own, the permissions an extension
 asks for are printed before it is installed, and each one can be disabled on its own.
 An extension a session wrote a minute ago cannot reach your `/__api` from its tab (the
-page is sandboxed), but its **server** code can do whatever you can do. Install and
+page is sandboxed — unless you grant it the trusted tier yourself, §7.1), but its
+**server** code can do whatever you can do. Install and
 generate extensions you would run as yourself; the long version is §7.
 
 ---
@@ -90,7 +91,7 @@ $ARIGAMI_DIR/user/                    ← YOUR git repo (host runs `git init`; a
   node_modules/@arigami/sdk → <repo>/sdk       (the loader maintains this symlink)
 
 $ARIGAMI_DIR/extensions.json          host-owned state, mode 0600:
-                                      { enabled, settings, secrets, sha }
+                                      { enabled, settings, secrets, sha, trusted }
 $ARIGAMI_DIR/ext-plugin/              GENERATED Claude Code plugin (the 3rd --plugin-dir)
 $ARIGAMI_DIR/logs/ext-<name>.log      one log per extension
 ```
@@ -147,7 +148,7 @@ so a fresh box still gets history.
 | `hooks.gates` | `merge.before`, run before every merge | a 409 with the reason on the merge card |
 | `hooks.channels` | notification channels next to Web Push and WhatsApp | — |
 | `webhooks[]` | a custom webhook `ext-<name>-<id>` routed to a listener's `onWebhook` | a wake, like a poll |
-| `tabs[]` | static pages at `/__ext/<name>/…` | `open_tab({type:'ext', ext})` |
+| `tabs[]` | static pages at `/__ext/<name>/…` (sandboxed, or trusted — §7.1) | `open_tab({type:'ext', ext})` |
 | `settings.schema` | a form in Settings → Extensions | `ctx.settings`, `EXT_SETTINGS` |
 | `daemons[]` | **parsed, not run** in this version | — |
 
@@ -223,8 +224,9 @@ one.
 ```bash
 bin/host ext list
 bin/host ext validate examples/extensions/hello
-bin/host ext add      examples/extensions/hello      # or a git URL
+bin/host ext add      examples/extensions/hello      # or a git URL; --trust for §7.1
 bin/host ext enable  hello        # / disable
+bin/host ext trust   hello        # / untrust — the trusted tier (§7.1)
 bin/host ext update  hello        # git pull --ff-only, only for a git checkout
 bin/host ext reload
 bin/host ext remove  hello        # removes the dir; settings history is kept
@@ -255,8 +257,8 @@ REST (admin-only, same gate as `/__api/profiles`):
 | `GET /__api/extensions` | the registry view (readable by any signed-in principal) |
 | `POST /__api/extensions/reload` | rescan and reload everything |
 | `POST /__api/extensions/validate {source}` | validate a directory without installing |
-| `POST /__api/extensions/add {source}` | copy a directory / shallow-clone a git URL; returns the manifest **and its permissions** |
-| `PATCH /__api/extensions/:name` | `{enabled?, settings?, secrets?}` |
+| `POST /__api/extensions/add {source, trust?}` | copy a directory / shallow-clone a git URL; returns the manifest **and its permissions**. `trust:true` also grants the trusted tier (§7.1) — the caller must have named that consequence |
+| `PATCH /__api/extensions/:name` | `{enabled?, settings?, secrets?, trusted?}` (`trusted` = the tier, §7.1) |
 | `POST /__api/extensions/:name/update` | `git pull --ff-only` |
 | `DELETE /__api/extensions/:name` | remove the directory |
 | `GET /__api/listener-types` | core + extension listener types (this is what the MCP `register_listener` enum is built from) |
@@ -291,7 +293,8 @@ What the host does to keep that honest:
 * **Gates fail CLOSED.** That is the exception, and it is deliberate: a
   `merge.before` gate that throws or times out (5 min) blocks the merge, because
   blocking is what a gate is for.
-* **Tabs are sandboxed.** `/__ext/…` is served with
+* **Tabs are sandboxed** — unless you granted the extension the trusted tier
+  (§7.1). `/__ext/…` is served with
   `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups` and
   **without** `allow-same-origin`. The page has an opaque origin, no cookie and
   no reachable `/__api`; every capability goes through the postMessage bridge,
@@ -309,6 +312,57 @@ What the host does to keep that honest:
 What is **not** in the model: there is no isolation between an extension and the
 host. Real isolation needs a separate OS user or a container, which is out of
 scope here. Install extensions you would run as yourself.
+
+### 7.1 Sandboxed vs trusted
+
+A tab is served at one of two tiers. **Sandboxed is the default and covers
+almost everything** — a form, a dashboard, a picker, anything that talks to the
+session through `window.arigami`.
+
+| | **sandboxed** (default) | **trusted** (`"trusted": true` + a grant) |
+|---|---|---|
+| CSP on `/__ext/<name>/…` | `sandbox allow-scripts allow-forms allow-popups`, no `allow-same-origin` | none |
+| the cockpit's `<iframe sandbox>` | same list | absent |
+| origin | opaque | the cockpit's own |
+| session cookie | no | yes |
+| `/__api` | unreachable; only the bridge | reachable **directly, as the signed-in human** |
+| host proxy / service worker | unusable (an opaque origin cannot have one) | usable |
+| own assets | through the `~t/<token>` capability in `<base>` | ordinary same-origin requests |
+| `window.arigami` | works | works, unchanged |
+
+The tier exists for one real case: **a tab that must embed host-PROXIED URLs**
+(`/?__target=…`). The proxy is a service worker plus the auth cookie, and an
+opaque origin can have neither, so those panes come back blank or 401 in a
+sandboxed tab. `examples/extensions/compare` is that case, and the shipped
+example of the tier.
+
+Say the consequence out loud, because that is the whole point of the grant: **a
+trusted tab runs with your full cockpit session, exactly like the core UI.** The
+manifest permission list still governs the bridge, but a trusted page does not
+have to use the bridge — it can call `/__api` itself. Grant it only to a tab that
+genuinely needs the origin, and only to code you have read.
+
+Two yeses are required, and that is deliberate:
+
+1. the **manifest** asks — `"trusted": true`;
+2. a **human grants** it, recorded per extension in `$ARIGAMI_DIR/extensions.json`
+   (`trusted: { "<name>": true }`).
+
+The loader ANDs the two. So an extension you installed sandboxed cannot escalate
+itself by adding the flag in a later commit: `ext update` pulls the new manifest,
+the tab stays sandboxed, and the extension carries a warning until you decide.
+Revoking is the same switch in reverse (the tab is remounted).
+
+```bash
+bin/host ext add ./compare --trust    # or answer the y/N it asks on a terminal
+bin/host ext trust   compare          # grant later (after reading the code)
+bin/host ext untrust compare          # back to the sandbox
+```
+
+In the cockpit: the install dialog shows a checkbox that names the consequence,
+and each extension's card shows its tier with a grant/revoke button.
+`GET /__api/extensions` reports `tier` (`'sandboxed' | 'trusted'`), `trusted` and
+`trustRequested` for every row.
 
 ---
 
