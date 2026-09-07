@@ -5,13 +5,21 @@ web/dist/
 .DS_Store
 bin/.appicon.png
 
-# Docker secrets — never commit
+# Secrets and local env — never commit
 .env
+.env.*
+!.env.example
 docker/.env
 
-# debug logs
+# Debug/runtime logs written next to the checkout
+*-logs.txt
 mcp-logs.txt
 wa-logs.txt
+
+# Local evaluation/audit artefacts: session transcripts and screenshots of a
+# live account. Never part of the product — keep them outside the repo.
+audit/
+
 node_modules
 web/node_modules
 __pycache__/
