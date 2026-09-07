@@ -9,10 +9,13 @@
 //   /adopt <agent>                 → host: UX2 — this session adopts the agent from its next turn
 //   @<agent> <text>                → host: delegate (PM → child born from the agent,
 //                                     otherwise the agent's home chat)
+//   /<slash from a manifest>       → host: EXT — an extension tab whose manifest
+//                                     declares openFrom:["slash:/pick"] opens as a tab
 //   anything else starting with /  → pass-through to the claude CLI (as before)
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { t } from './i18n.js';
+import { extSlashItems } from './ext.js';
 
 // Host commands the composer answers itself (never sent to claude).
 export const AGENT_COMMANDS = [
@@ -109,9 +112,10 @@ export function buildMentionItems(query, agents) {
  * Decide what a composer submission means. Returns one of:
  *   {type:'team'} · {type:'as', agent, text} · {type:'as-usage'} · {type:'unknown-agent', name}
  *   {type:'agent-new', name} · {type:'adopt', agent} · {type:'adopt-usage'}
- *   {type:'skill', text: '/arigami:<skill> args'} · {type:'mention', agents, text} · {type:'plain', text}
+ *   {type:'skill', text: '/arigami:<skill> args'} · {type:'ext-tab', ext, tab, title}
+ *   {type:'mention', agents, text} · {type:'plain', text}
  */
-export function resolveSubmission(text, { skills = [], agents = [] } = {}) {
+export function resolveSubmission(text, { skills = [], agents = [], extensions = [] } = {}) {
   const raw = String(text || '').trim();
   const slash = parseSlash(raw);
   if (slash) {
@@ -132,6 +136,10 @@ export function resolveSubmission(text, { skills = [], agents = [] } = {}) {
     }
     const item = skillSlashItems(skills).find((s) => s.name === slash.name);
     if (item) return { type: 'skill', text: `/${item.command}${slash.args ? ' ' + slash.args : ''}`, skill: item.skill };
+    // EXT: checked AFTER skills, so an extension can never shadow a slash the
+    // human already had. Extension slashes take no arguments — they open a tab.
+    const extItem = extSlashItems(extensions).find((x) => x.name === slash.name);
+    if (extItem) return { type: 'ext-tab', ...extItem.extTab };
     return { type: 'plain', text: raw };
   }
   const mention = parseMentions(raw, agents);

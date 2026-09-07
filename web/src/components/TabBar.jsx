@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { tabSrc } from '../lib/hostUrl.js';
+import { useStore } from '../lib/store.js';
+import { extTabItems } from '../lib/ext.js';
 import { Wave, Dot, YellowButton } from './ui.jsx';
 import { Truncate } from './Truncate.jsx';
 import { useT } from '../lib/i18n.js';
@@ -52,6 +54,10 @@ function AddTabPopover({ sessionId, onClose }) {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // EXT: every tab an active extension declares is openable from here, exactly
+  // like `open_tab({type:'ext'})` — the human is not worse off than the agent.
+  const { extensions } = useStore();
+  const extTabs = useMemo(() => extTabItems(extensions), [extensions]);
 
   useEffect(() => {
     urlRef.current?.focus();
@@ -71,6 +77,20 @@ function AddTabPopover({ sessionId, onClose }) {
       document.removeEventListener('keydown', onKey, true);
     };
   }, [onClose]);
+
+  const openExt = async (row) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const tab = await api.post(`/sessions/${sessionId}/tabs`, { type: 'ext', ext: row.ext, tab: row.tab });
+      if (tab?.id) await api.post(`/sessions/${sessionId}/activate-tab`, { tabId: tab.id });
+      onClose();
+    } catch (e) {
+      setError(String(e.message || e));
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (busy) return; // guard: Enter can fire while the POST is already in flight
@@ -106,6 +126,27 @@ function AddTabPopover({ sessionId, onClose }) {
       ref={ref}
       className="absolute top-[42px] right-0 z-30 w-[280px] rounded-[10px] border-[1.5px] border-ink bg-panel p-3 shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
     >
+      {extTabs.length > 0 && (
+        <div className="mb-2.5 border-b border-hair pb-2.5">
+          <div className="mb-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+            {t('ext.tabs.heading')}
+          </div>
+          <div className="flex flex-col gap-0.5">
+            {extTabs.map((row) => (
+              <button
+                key={`${row.ext}/${row.tab}`}
+                type="button"
+                disabled={busy}
+                onClick={() => openExt(row)}
+                className="flex cursor-pointer items-baseline gap-1.5 rounded-md px-1.5 py-1 text-start text-[12px] text-fg hover:bg-chip disabled:opacity-50"
+              >
+                <span className="min-w-0 truncate">{row.title}</span>
+                <span className="shrink-0 font-mono text-[9.5px] text-fgdim">{row.extTitle}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
         {t('rail.openUrlAsTab')}
       </div>

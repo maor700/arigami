@@ -9,11 +9,13 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { HOST_ORIGIN, tabSrc } from '../lib/hostUrl.js';
+import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
+import { createExtBridge } from '../lib/ext-bridge.js';
 import { setDictationSink, appendDictation } from '../lib/voice.js';
 import MicButton from './MicButton.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
-import { t, useT, dirOf } from '../lib/i18n.js';
+import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
 import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -943,10 +945,15 @@ function ChatFooter({ session }) {
 
   // A4: host agent commands (/team, /as, /agent new) + skills with a `slash:`
   // field (/plan, /review, user skills) join the palette; "@" suggests agents.
-  const { agents, sessions: sessionsAll } = useStore();
+  const { agents, sessions: sessionsAll, extensions } = useStore();
   const skills = useSkills();
   const [teamOpen, setTeamOpen] = useState(false);
-  const extraItems = useMemo(() => [...agentCommandItems(), ...skillSlashItems(skills)], [skills]);
+  // EXT: a manifest tab with openFrom:["slash:/pick"] joins the palette last —
+  // after the agent commands and the skills, which own their names first.
+  const extraItems = useMemo(
+    () => [...agentCommandItems(), ...skillSlashItems(skills), ...extSlashItems(extensions)],
+    [skills, extensions]
+  );
 
   // The palette shows while the input is a single "/token" (no space yet) —
   // "/agent new" is two words, so the second word is allowed for that one.
@@ -991,6 +998,8 @@ function ChatFooter({ session }) {
   // commands are inserted as "/name " so the user can add args, then ↵ sends.
   const accept = (item) => {
     if (!item) return;
+    // EXT: an extension slash takes no arguments — picking it opens the tab.
+    if (item.extTab) { runHostCommand({ type: 'ext-tab', ...item.extTab }); setText(''); return; }
     if (item.agentCmd) {
       // A4: /team runs at once; /as and /agent new want arguments.
       if (item.run) { runHostCommand({ type: item.agentCmd }); setText(''); return; }
@@ -1032,6 +1041,11 @@ function ChatFooter({ session }) {
     }
     if (r.type === 'as') {
       await api.post(`/sessions/${session.id}/delegate`, { agent: r.agent.slug, text: r.text, mode: 'as' });
+      return;
+    }
+    if (r.type === 'ext-tab') {
+      const tab = await api.post(`/sessions/${session.id}/tabs`, { type: 'ext', ext: r.ext, tab: r.tab });
+      if (tab?.id) await api.post(`/sessions/${session.id}/activate-tab`, { tabId: tab.id });
       return;
     }
     if (r.type === 'mention') {
@@ -1116,7 +1130,7 @@ function ChatFooter({ session }) {
       ? `> ${quoted.text.split('\n').join('\n> ')}\n\n`
       : '';
     // A4: slash-commands / @mentions the host answers itself (see lib/composer.js).
-    const resolved = resolveSubmission(draft, { skills, agents });
+    const resolved = resolveSubmission(draft, { skills, agents, extensions });
     if (resolved.type !== 'plain' && resolved.type !== 'skill') {
       setText('');
       try {
@@ -1452,7 +1466,7 @@ function ComparePill({ on, onToggle, label }) {
   );
 }
 
-function UrlTab({ tab, active }) {
+function UrlTab({ tab, active, session }) {
   const t = useT();
   // A session can open a tab already split in comparison mode (compare.open via
   // the open_tab MCP tool); otherwise it starts on the live view with the toggle.
@@ -1460,7 +1474,59 @@ function UrlTab({ tab, active }) {
   const [compareOn, setCompareOn] = useState(!!tab.compare?.open && compareProxied);
   const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
-  const { config } = useStore();
+  const { config, extensions } = useStore();
+
+  // EXT — an extension tab is a url tab the host stamped with `ext`/`extTab`
+  // (server/state.ts addTab). It gets the artifact sandbox (opaque origin: no
+  // cookie, no /__api) plus the postMessage bridge, which is the ONLY way it can
+  // reach the session, and only as far as its manifest permissions allow.
+  const extName = extOfTab(tab);
+  const extRecord = useMemo(() => findExtension(extensions, extName), [extensions, extName]);
+  const iframeRef = useRef(null);
+  const bridgeRef = useRef(null);
+  // Read live by the bridge, so a settings change or a reload lands without
+  // tearing the bridge (and the iframe's own state) down.
+  const liveRef = useRef(null);
+  liveRef.current = { ext: extRecord, session, tabId: tab.id };
+
+  useEffect(() => {
+    if (!extName || !session?.id) return;
+    const bridge = createExtBridge({
+      sessionId: session.id,
+      tabId: tab.id,
+      extension: extName,
+      getWindow: () => iframeRef.current?.contentWindow || null,
+      getPermissions: () => liveRef.current?.ext?.permissions || [],
+      getContext: () => {
+        const l = liveRef.current || {};
+        return {
+          sessionId: l.session?.id || '',
+          tabId: l.tabId || '',
+          extension: extName,
+          apiVersion: l.ext?.apiVersion ?? 1,
+          agent: l.session?.metadata?.agent || null,
+          cwd: l.session?.cwd || '',
+          settings: l.ext?.settings || {},
+          lang: currentLang(),
+          permissions: l.ext?.permissions || [],
+        };
+      },
+      // targetOrigin '*' is forced: the page has an OPAQUE origin (sandbox
+      // without allow-same-origin) and cannot be named. Inbound messages are
+      // authenticated the other way round — by contentWindow identity.
+      post: (msg) => {
+        try { iframeRef.current?.contentWindow?.postMessage(msg, '*'); } catch { /* iframe gone */ }
+      },
+    });
+    bridgeRef.current = bridge;
+    const onMsg = (e) => bridge.onMessage(e);
+    window.addEventListener('message', onMsg);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      bridge.dispose();
+      bridgeRef.current = null;
+    };
+  }, [extName, session?.id, tab.id]);
   // The server can flip compare mode on later via update_tab (tab-updated WS):
   // sync the local toggle when the server's compare.open changes, mirroring how
   // the active-tab override works. Local user toggling still wins between server
@@ -1547,13 +1613,23 @@ function UrlTab({ tab, active }) {
         )}
         <iframe
           key={reloadKey}
+          ref={iframeRef}
           title={tab.title || t('rail.tabFallback')}
           src={src}
-          onLoad={() => setLoading(false)}
-          /* Published artifacts (A1) run with an opaque origin — no
-             allow-same-origin — so a page can't call /__api as the cockpit.
-             The host also sends a CSP sandbox header; this is belt+braces. */
-          {...(String(tab.url || '').startsWith('/__artifacts/') ? { sandbox: 'allow-scripts allow-forms allow-popups' } : {})}
+          onLoad={() => {
+            setLoading(false);
+            // EXT: hand the tab its context the moment it exists. The SDK also
+            // says hello until it hears back, so a late-evaluating script is
+            // covered too — init is idempotent.
+            bridgeRef.current?.sendInit();
+          }}
+          /* Published artifacts (A1) and extension tabs (EXT) run with an opaque
+             origin — no allow-same-origin — so a page can't call /__api as the
+             cockpit. The host also sends a CSP sandbox header; this is
+             belt+braces. */
+          {...(extName || String(tab.url || '').startsWith('/__artifacts/')
+            ? { sandbox: 'allow-scripts allow-forms allow-popups' }
+            : {})}
           className="absolute inset-0 h-full w-full border-0 bg-white"
         />
       </div>
@@ -1771,7 +1847,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
               ) : tab.type === 'orchestration' ? (
                 <OrchestrationTab session={session} active={active} />
               ) : tab.type === 'url' ? (
-                <UrlTab tab={tab} active={active} />
+                <UrlTab tab={tab} active={active} session={session} />
               ) : (
                 <ContentTab tab={tab} />
               )}
