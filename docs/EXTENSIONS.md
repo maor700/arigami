@@ -274,6 +274,14 @@ What the host does to keep that honest:
   no reachable `/__api`; every capability goes through the postMessage bridge,
   which checks the manifest permissions. An extension a session wrote a minute
   ago cannot delete your sessions.
+  Because that origin is opaque, the tab's own sub-requests carry no cookie
+  either: the entry HTML (served only to an authenticated request) gets a
+  `<base href="/__ext/<name>/~t/<token>/">`, where `<token>` is a 24h
+  HMAC capability scoped to **that** extension — the same mechanism published
+  artifacts use (F5). It opens no other extension, no `/__api`, and stops
+  working the moment the extension is disabled. `/__ext-sdk.js` is public: it
+  is a static script with no secrets, and it is the one file a sandboxed page
+  must be able to load before the bridge exists at all.
 
 What is **not** in the model: there is no isolation between an extension and the
 host. Real isolation needs a separate OS user or a container, which is out of

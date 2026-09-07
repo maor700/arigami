@@ -223,6 +223,16 @@ no direct `/__api`. Everything goes through the shell:
 </script>
 ```
 
+**Your own assets just work — don't hand-write the host path.** Because the
+page has an opaque origin, the browser treats every sub-request it makes as
+cross-site and sends no session cookie. The host therefore injects a
+`<base href="/__ext/<name>/~t/<token>/">` into the entry HTML, where `<token>`
+is a short-lived capability for that one extension: write `href="style.css"`,
+`src="./app.js"`, `src="img/logo.png"` and they resolve through it. `/__ext-sdk.js`
+is a public path and needs no token. Root-absolute references to your own mount
+(`src="/__ext/<name>/x.png"`) are rewritten for you; anything else absolute
+(`/__api/…`) is not reachable from a tab at all — that is what the bridge is for.
+
 `window.arigami`: `ready()`, `sendPrompt(text, {mode})`, `runTool(name, args)`,
 `setStatus({badge,color,title})`, `openArtifact(path)`, `subscribe(events, cb)`,
 `close()`. Each maps to one `arigami:call` message; the shell checks the

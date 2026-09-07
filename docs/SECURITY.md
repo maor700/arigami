@@ -30,8 +30,9 @@ itself, see below) and, for one more release, the legacy `/__api/sms/inbound`.
 
 ## Share links (K2)
 
-`/__artifacts/<id>/?t=<token>` is the only cookie-less path into the host by
-design. What the bearer of a link gets: **one artifact, one version** (pinned
+`/__artifacts/<id>/?t=<token>` is the main cookie-less path into the host by
+design (EXT3 adds a second one of exactly the same shape,
+`/__ext/<name>/~t/<token>/…`, below). What the bearer of a link gets: **one artifact, one version** (pinned
 in the signed payload), read-only static files under the artifact's own
 sandboxed CSP. What they do not get: any other artifact or version, `/__api`,
 WebSockets, host pages, the proxy — the gate never sets a principal for a
@@ -43,6 +44,20 @@ A leaked link = a leaked artifact, deliberately; the token also appears in
 sub-resource paths (`/~t/<token>/`) so a shared page can load its assets —
 `Referrer-Policy: no-referrer` keeps it out of third-party referers, but the
 viewer's browser history holds it like any capability URL.
+
+### Extension tab assets (EXT3)
+
+An extension tab is served under the same CSP `sandbox` (opaque origin), so its
+sub-resources carry no cookie either. The entry HTML — served **only** to a real
+principal — gets a `<base href="/__ext/<name>/~t/<token>/">`. That token is the
+same HMAC primitive with `kind:'extension'`, `scope:'assets'` and a 24h life;
+it is host-minted, never user-shareable, hidden from the share lists, and bound
+to one extension name. It opens that extension's `ui/` and nothing else: not
+another extension, not `/__api`, not a directory under `user/extensions` that
+declares no tab, and not an extension that has since been disabled or removed
+(the resolver is consulted on every verify). `/__ext-sdk.js` is a public path —
+a static script with no secrets, and the one sub-resource a sandboxed page must
+load before the postMessage bridge can exist.
 
 ## Webhooks (C3)
 
