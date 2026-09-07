@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hello — Arigami extension</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0; padding: 24px; line-height: 1.6;
+        background: Canvas; color: CanvasText;
+      }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 20px; opacity: .7; font-size: 13px; }
+      textarea { width: 100%; min-height: 90px; padding: 10px; border-radius: 8px;
+        border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit;
+        font: inherit; box-sizing: border-box; }
+      .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+      button { padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4);
+        background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      button:hover:not(:disabled) { background: rgba(128,128,128,.12); }
+      button:disabled { opacity: .5; cursor: default; }
+      pre { margin-top: 16px; padding: 10px; border-radius: 8px; font-size: 12px;
+        background: rgba(128,128,128,.12); white-space: pre-wrap; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Hello</h1>
+    <p class="sub" id="ctx">מתחבר לקוקפיט…</p>
+
+    <textarea id="text" placeholder="מה לשלוח לסשן?">תסביר בשתי שורות מה זו הרחבה ב-Arigami.</textarea>
+    <div class="row">
+      <button id="send" disabled>שלח לסשן</button>
+      <button id="echo" disabled>הרץ hello_echo</button>
+    </div>
+    <pre id="log">—</pre>
+
+    <script src="/__ext-sdk.js"></script>
+    <script>
+      // This page is served with `sandbox allow-scripts …` and WITHOUT
+      // allow-same-origin: it has an opaque origin, no cookie, and no way to
+      // call /__api. Everything below goes through the postMessage bridge, and
+      // the shell checks the manifest permissions before it does any of it.
+      const $ = (id) => document.getElementById(id);
+      const log = (m) => { $('log').textContent = typeof m === 'string' ? m : JSON.stringify(m, null, 2); };
+
+      (async () => {
+        try {
+          const ctx = await arigami.ready();
+          const greeting = (ctx.settings && ctx.settings.greeting) || 'שלום';
+          $('title').textContent = greeting + '!';
+          $('ctx').textContent = 'סשן ' + ctx.sessionId + (ctx.cwd ? ' · ' + ctx.cwd : '');
+          $('send').disabled = false;
+          $('echo').disabled = false;
+          log('מוכן. permissions: ' + (ctx.permissions || []).join(', '));
+
+          arigami.subscribe(['chat'], (ev) => {
+            if (ev && ev.kind === 'result') arigami.setStatus({ badge: '✓' }).catch(() => {});
+          });
+        } catch (e) {
+          $('ctx').textContent = 'הדף לא רץ בתוך טאב של Arigami';
+          log(String((e && e.message) || e));
+        }
+      })();
+
+      $('send').onclick = async () => {
+        try {
+          const r = await arigami.sendPrompt($('text').value, { mode: 'queue' });
+          await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
+          log(r);
+        } catch (e) {
+          log('שגיאה: ' + ((e && e.message) || e));
+        }
+      };
+
+      $('echo').onclick = async () => {
+        try {
+          log(await arigami.runTool('hello_echo', { text: 'from the tab' }));
+        } catch (e) {
+          log('שגיאה: ' + ((e && e.message) || e));
+        }
+      };
+    </script>
+  </body>
+</html>

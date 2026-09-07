@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user|profile|export|import
+# host — lifecycle CLI for arigami: start|stop|restart|status|logs [-f]|doctor|pair|user|profile|ext|export|import
 # Pidfile + logs under $ARIGAMI_DIR (default ~/.arigami); health check = GET /__api/config.
 set -u
 
@@ -365,6 +365,58 @@ profile() {
   esac
 }
 
+# EXT — extensions (server/extensions.ts). Same shape as `profile`: when the
+# host is up and an admin ARIGAMI_TOKEN is exported the commands go through
+# REST (so the LIVE process reloads); with the host down they run in-process
+# against $ARIGAMI_DIR. `add` prints the manifest's permissions first —
+# extension code runs with the host's privileges, so installing one is a
+# decision, not a detail.
+ext_api() { # method path [json-body]
+  if [ -n "${3:-}" ]; then
+    curl -fsS -m 300 -X "$1" "$URL$2" -H "Authorization: Bearer ${ARIGAMI_TOKEN:-}" -H 'content-type: application/json' --data "$3"
+  else
+    curl -fsS -m 300 -X "$1" "$URL$2" -H "Authorization: Bearer ${ARIGAMI_TOKEN:-}"
+  fi
+}
+ext_json() { printf '{"source":"%s"}' "$(printf '%s' "$1" | sed 's/["\\]/\\&/g')"; }
+ext_live() { health && [ -n "${ARIGAMI_TOKEN:-}" ]; }
+
+ext() {
+  sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      if ext_live; then ext_api GET /__api/extensions; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" list; fi ;;
+    validate)
+      src="${1:?usage: host ext validate <dir>}"
+      if ext_live; then ext_api POST /__api/extensions/validate "$(ext_json "$src")"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" validate "$src"; fi ;;
+    add|install)
+      src="${1:?usage: host ext add <dir|git-url>}"
+      if ext_live; then ext_api POST /__api/extensions/add "$(ext_json "$src")"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src"; fi ;;
+    remove|rm)
+      name="${1:?usage: host ext remove <name>}"
+      if ext_live; then ext_api DELETE "/__api/extensions/$name"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" remove "$name"; fi ;;
+    update)
+      if ext_live; then ext_api POST "/__api/extensions/${1:?usage: host ext update <name>}/update" '{}'; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" update "${1:-}"; fi ;;
+    reload)
+      if ext_live; then ext_api POST /__api/extensions/reload '{}'; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" reload; fi ;;
+    enable|disable)
+      name="${1:?usage: host ext $sub <name>}"
+      want=$([ "$sub" = enable ] && echo true || echo false)
+      if ext_live; then ext_api PATCH "/__api/extensions/$name" "{\"enabled\":$want}"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" "$sub" "$name"; fi ;;
+    *)
+      echo "usage: host ext <list|validate <dir>|add <dir|git-url>|remove <name>|update <name>|reload|enable <name>|disable <name>>"
+      dl "  with the host UP, export ARIGAMI_TOKEN=<admin api token> so the change reaches the running process"
+      return 1 ;;
+  esac
+}
+
 # B4-full — export / import (server/backup.ts). Both run in-process against
 # $ARIGAMI_DIR; reading is always safe. A FULL import swaps $ARIGAMI_DIR under
 # the host, so with the host up it goes through REST (needs ARIGAMI_TOKEN =
@@ -533,12 +585,13 @@ case "${1:-status}" in
   pair) pair ;;
   user) shift; user "$@" ;;
   profile) shift; profile "$@" ;;
+  ext) shift; ext "$@" ;;
   export) shift; export_cmd "$@" ;;
   import) shift; import_cmd "$@" ;;
   install) install ;;
   uninstall) uninstall ;;
   *)
-    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|ext list|add <src>|remove <name>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

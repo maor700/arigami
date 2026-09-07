@@ -1248,3 +1248,54 @@ export function readUserMcpCatalog(): UserMcpRow[] {
 export function emitDomain(name: string, payload: Record<string, unknown>): void {
   try { emitLocal(name, payload); } catch {}
 }
+
+// ---- CLI (bin/host ext …) ---------------------------------------------------
+// Used when the host is DOWN (or no admin token is exported): the same
+// functions, in-process, against $ARIGAMI_DIR. With the host up, bin/host goes
+// through REST instead so the LIVE process reloads.
+// bun server/extensions.ts list|validate <dir>|add <src>|remove <name>|update [name]|reload|enable <name>|disable <name>
+if (import.meta.main) {
+  const [cmd, arg] = process.argv.slice(2);
+  const out = (o: unknown) => process.stdout.write(JSON.stringify(o, null, 2) + '\n');
+  try {
+    if (cmd === 'list' || cmd === undefined) {
+      await reload({ reason: 'cli list' });
+      out({ extensions: listExtensions(), apiVersion: EXT_API_VERSION, dir: EXT_DIR });
+    } else if (cmd === 'validate') {
+      if (!arg) throw new Error('usage: bun server/extensions.ts validate <dir>');
+      const v = await validateExtension(path.resolve(arg.startsWith('~') ? arg.replace(/^~/, process.env.HOME || '~') : arg));
+      out(v);
+      process.exitCode = v.ok ? 0 : 1;
+    } else if (cmd === 'add') {
+      if (!arg) throw new Error('usage: bun server/extensions.ts add <dir|git-url>');
+      const r = await addExtension(arg);
+      // The permissions are what the human is agreeing to — print them loudly.
+      if (r.permissions?.length) process.stderr.write(`permissions requested by "${r.name}": ${r.permissions.join(', ')}\n`);
+      out(r);
+      process.exitCode = r.ok ? 0 : 1;
+    } else if (cmd === 'remove') {
+      if (!arg) throw new Error('usage: bun server/extensions.ts remove <name>');
+      const r = await removeExtension(arg);
+      out(r);
+      process.exitCode = r.ok ? 0 : 1;
+    } else if (cmd === 'update') {
+      const names = arg ? [arg] : dirsIn(EXT_DIR);
+      const results = [];
+      for (const n of names) results.push({ name: n, ...(await updateExtension(n)) });
+      out({ results });
+      process.exitCode = results.some((r) => !r.ok) ? 1 : 0;
+    } else if (cmd === 'reload') {
+      out(await reload({ reason: 'cli reload' }));
+    } else if (cmd === 'enable' || cmd === 'disable') {
+      if (!arg) throw new Error(`usage: bun server/extensions.ts ${cmd} <name>`);
+      out(await patchExtension(arg, { enabled: cmd === 'enable' }));
+    } else {
+      process.stderr.write('usage: bun server/extensions.ts list | validate <dir> | add <src> | remove <name> | update [name] | reload | enable <name> | disable <name>\n');
+      process.exitCode = 2;
+    }
+    doCommit('extension change');
+  } catch (e) {
+    process.stderr.write(`error: ${(e as Error).message}\n`);
+    process.exitCode = 1;
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "name": "hello",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "Hello",
+  "description": "The smallest extension that uses every contribution kind: a tool, a doc, a listener, hooks with a gate, and a tab.",
+  "tabs": [
+    {
+      "id": "hello",
+      "title": "Hello",
+      "entry": "ui/index.html",
+      "icon": "hand-wave",
+      "openFrom": ["tab-bar"]
+    }
+  ],
+  "listeners": [
+    {
+      "type": "hello-tick",
+      "module": "listener.ts",
+      "export": "tickProvider",
+      "schema": {
+        "type": "object",
+        "required": ["count"],
+        "properties": {
+          "count": { "type": "number" },
+          "note": { "type": "string" }
+        }
+      },
+      "fireOn": ["tick"],
+      "defaultIntervalSec": 30
+    }
+  ],
+  "tools": [
+    { "kind": "module", "name": "hello", "module": "tools/module.ts" }
+  ],
+  "docs": [
+    {
+      "file": "docs/USAGE.md",
+      "skill": "hello",
+      "description": "Use when the human asks to test the Arigami extension system, says \"hello extension\", or wants an example of how a tool, a listener and a tab hang together."
+    }
+  ],
+  "hooks": {
+    "module": "hooks.ts",
+    "events": ["merge.done", "listener.fired"],
+    "gates": ["merge.before"]
+  },
+  "webhooks": [{ "id": "tick", "listener": "hello-tick" }],
+  "permissions": ["session:message", "session:tabs", "tools:hello_echo", "notify", "events:merge.*"],
+  "settings": {
+    "schema": {
+      "greeting": { "type": "string", "default": "שלום", "title": "Greeting", "description": "What the tool and the tab greet with" }
+    }
+  }
+}
