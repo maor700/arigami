@@ -150,6 +150,11 @@ interface TabUrl {
   badge?: string;
   color?: string;
   compare?: unknown;
+  // EXT: an extension tab is a `url` tab whose url is /__ext/<ext>/…; these two
+  // fields let the cockpit find the manifest (and therefore the permissions the
+  // postMessage bridge must enforce) without parsing the url back apart.
+  ext?: string;
+  extTab?: string;
 }
 
 interface TabContent {
@@ -1157,6 +1162,32 @@ export function normalizeTabUrl(url: string | null | undefined): TabNormResult {
   return { url: u };
 }
 
+/** `{type:'ext', ext, tab, params}` → the url tab that actually gets stored. */
+function resolveExtTab(ext: string, tabId: string, params?: Record<string, unknown>): { url: string; title: string; ext: string; tab: string } {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(ext)) throw new Error('tab type "ext" needs `ext` (the extension name)');
+  let entry: { id: string; title: string; entry: string } | null = null;
+  try {
+    // Late require: state.ts is imported by the loader, so a static import here
+    // would be a cycle. A missing loader simply means "no such extension".
+    const mod = require('./extensions.js') as typeof import('./extensions.js');
+    const e = mod.getExtension(ext);
+    if (!e || e.state !== 'loaded') throw new Error(`extension "${ext}" is not loaded`);
+    const tabs = e.manifest?.tabs || [];
+    if (!tabs.length) throw new Error(`extension "${ext}" declares no tabs`);
+    const t = tabId ? tabs.find((x) => x.id === tabId) : tabs[0];
+    if (!t) throw new Error(`extension "${ext}" has no tab "${tabId}"`);
+    entry = { id: t.id, title: t.title, entry: t.entry };
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  // entry is `ui/index.html` in the manifest; the mount is rooted AT ui/.
+  const rel = entry.entry.replace(/^ui\//, '');
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null) qs.set(k, String(v));
+  const q = qs.toString();
+  return { url: `/__ext/${ext}/${rel}${q ? `?${q}` : ''}`, title: entry.title, ext, tab: entry.id };
+}
+
 export function addTab(
   id: string,
   {
@@ -1168,6 +1199,9 @@ export function addTab(
     compare,
     badge,
     color,
+    ext,
+    tab: extTabId,
+    params,
   }: {
     type?: string;
     title?: string;
@@ -1177,12 +1211,31 @@ export function addTab(
     compare?: unknown;
     badge?: string;
     color?: string;
+    /** type 'ext': the extension name */
+    ext?: string;
+    /** type 'ext': which manifest tab (defaults to the first one) */
+    tab?: string;
+    /** type 'ext': query params handed to the page */
+    params?: Record<string, unknown>;
   } = {}
 ): Tab | null {
   const s = getSession(id);
   if (!s) return null;
+  // EXT: `type:'ext'` is sugar — it is normalised to a url tab pointing at the
+  // /__ext mount, so nothing downstream (persistence, WS, the cockpit's url
+  // renderer) needs to know a new tab kind exists.
+  let extName = '';
+  let extTabName = '';
+  if (type === 'ext') {
+    const r = resolveExtTab(String(ext || ''), extTabId ? String(extTabId) : '', params);
+    type = 'url';
+    url = r.url;
+    if (!title) title = r.title;
+    extName = r.ext;
+    extTabName = r.tab;
+  }
   if (type !== 'url' && type !== 'content')
-    throw new Error('tab type must be "url" or "content"');
+    throw new Error('tab type must be "url", "content" or "ext"');
 
   const tab: Tab =
     type === 'content'
@@ -1208,6 +1261,7 @@ export function addTab(
     if (norm.badge && badge === undefined) urlTab.badge = norm.badge;
     if (color) urlTab.color = color;
     if (compare) urlTab.compare = compare;
+    if (extName) { urlTab.ext = extName; urlTab.extTab = extTabName; }
   }
 
   if (badge !== undefined) tab.badge = badge;

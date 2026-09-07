@@ -384,13 +384,18 @@ const TOOLS = [
       'never paste that URL into your reply (the human may be on a phone). For static output use publish_artifact instead. ' +
       'URL guidance — localhost URLs (dev server, Storybook) render directly; for a Linear issue use "/__ticket/<ID>" (linear.app cannot be embedded); ' +
       'for a GitHub PR use "/__pr/<owner>/<repo>/<number>" (github.com cannot be embedded; this renders via the local gh auth) — raw linear.app/github.com PR urls are auto-rewritten to these; ' +
-      'other unembeddable sites (e.g. Chromatic builds) become external link tabs that open in a new window.',
+      'other unembeddable sites (e.g. Chromatic builds) become external link tabs that open in a new window. ' +
+      'type "ext" opens a tab an installed EXTENSION provides: pass ext (its name), optionally tab (which of its tabs) and params — ' +
+      'the host resolves it to the extension\'s sandboxed page and the human sees it in this session.',
     inputSchema: obj({
-      type: { type: 'string', enum: ['url', 'content'] },
+      type: { type: 'string', enum: ['url', 'content', 'ext'] },
       title: { type: 'string' },
       url: { type: 'string' },
       format: { type: 'string', enum: ['html', 'markdown'] },
       body: { type: 'string' },
+      ext: { type: 'string', description: 'Extension name — for type "ext" (see GET /__api/extensions for what is installed)' },
+      tab: { type: 'string', description: 'Which tab of that extension (manifest tabs[].id); defaults to its first — for type "ext"' },
+      params: { type: 'object', description: 'Query params handed to the extension page — for type "ext"', additionalProperties: true },
       compare_url: { type: 'string', description: 'Prod URL — renders a compare-to-prod toggle. Omit to compare against prod at the same path by default.' },
       compare: { type: 'boolean', description: 'Open the tab already split in comparison mode (local vs compare_url / prod), not just with the toggle available.' },
       badge: { type: 'string' },
@@ -405,6 +410,7 @@ const TOOLS = [
         type: a.type, title: a.title, url: a.url, format: a.format, body: a.body,
         compare: wantCompare ? { url: a.compare_url, open: a.compare === true } : undefined,
         badge: a.badge,
+        ext: a.ext, tab: a.tab, params: a.params,
       });
       return { tab_id: tab.id };
     },
@@ -609,6 +615,9 @@ const TOOLS = [
       'Optionally pass from_filter to only match SMS from a specific number (partial match). ' +
       'It auto-stops on the terminal event (merge/close, or completed/canceled), after ttl_days (default 7), or when this session is archived. Returns the listener {id, label, ...}.',
     inputSchema: obj({
+      // EXT: the enum is filled in at startup from GET /__api/listener-types so
+      // a type an extension contributed is offered like a built-in one; the
+      // static list here is the fallback when the host isn't answering yet.
       type: { type: 'string', enum: ['github-pr', 'linear-issue', 'slack', 'whatsapp', 'sms'], description: 'Listener type (default github-pr)' },
       url: { type: 'string', description: 'GitHub PR url, or a Slack message url (for type slack)' },
       owner: { type: 'string' },
@@ -626,12 +635,12 @@ const TOOLS = [
       interval_sec: { type: 'number', description: 'Poll interval seconds (default 10 for whatsapp, 30 for others)' },
       ...SID_PROP,
     }),
-    run: (a) => api('POST', `/__api/sessions/${sid(a)}/listeners`, {
-      type: a.type || 'github-pr', url: a.url, owner: a.owner, repo: a.repo, number: a.number,
-      issue_id: a.issue_id, channel_id: a.channel_id, thread_ts: a.thread_ts,
-      fire_on: a.fire_on, ttl_days: a.ttl_days, interval_sec: a.interval_sec,
-      group_jid: a.group_jid, contacts: a.contacts, db_path: a.db_path, from_filter: a.from_filter,
-    }),
+    // Extension types take their own arguments (declared in the provider's
+    // schema), so anything the caller passed that isn't a core field rides along.
+    run: (a) => {
+      const { session_id, ...rest } = a || {};
+      return api('POST', `/__api/sessions/${sid(a)}/listeners`, { ...rest, type: a.type || 'github-pr' });
+    },
   },
   {
     name: 'list_listeners',
@@ -1020,6 +1029,35 @@ const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities:
 // tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a
 // hidden one is refused here too (the PreToolUse hook is the outer layer).
 let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
+
+// EXT: teach `register_listener` about the types an extension registered. One
+// call at startup (like refreshHidden's policy probe); a failure keeps the
+// static enum, so a host that is still booting never breaks the tool.
+async function refreshListenerTypes() {
+  const tool = TOOLS.find((t) => t.name === 'register_listener');
+  if (!tool) return;
+  try {
+    const r = await api('GET', '/__api/listener-types');
+    const types = (r?.types || []).filter((t) => t && typeof t.type === 'string');
+    if (!types.length) return;
+    tool.inputSchema.properties.type.enum = types.map((t) => t.type);
+    const extras = types.filter((t) => !t.builtin);
+    if (extras.length) {
+      tool.description +=
+        ' Extension types on this host: ' +
+        extras
+          .map((t) => `"${t.type}"${t.label && t.label !== t.type ? ` (${t.label})` : ''}${t.ext ? ` [from the ${t.ext} extension]` : ''}` +
+            (t.schema?.required?.length ? ` — required args: ${t.schema.required.join(', ')}` : '') +
+            (t.fireOn?.length ? `; fire_on: ${t.fireOn.join(' | ')}` : ''))
+          .join('; ') +
+        '. Pass their arguments as top-level fields.';
+      const fireOn = tool.inputSchema.properties.fire_on?.items?.enum;
+      if (Array.isArray(fireOn)) for (const t of extras) for (const f of t.fireOn || []) if (!fireOn.includes(f)) fireOn.push(f);
+    }
+  } catch {
+    /* host not ready — keep the static enum */
+  }
+}
 async function refreshHidden() {
   const id = process.env.ARIGAMI_SESSION_ID;
   if (!process.env.ARIGAMI_AGENT || !id) return (hiddenTools = null);
@@ -1056,4 +1094,5 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 });
 
+await refreshListenerTypes();
 await server.connect(new StdioServerTransport());
