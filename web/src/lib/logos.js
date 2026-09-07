@@ -7,7 +7,8 @@
 // four-pointed star, eight facets). It is the default; the older presets stay
 // as opt-in alternatives.
 
-export const DEFAULT_ACCENT = '#12A594';
+// Brand accent — the landing page's orange (arigami-site global.css --accent).
+export const DEFAULT_ACCENT = '#f97316';
 
 // viewBox defaults to 0 0 32 32; a preset may override it. `o` = fill-opacity of that facet.
 export const LOGOS = {
@@ -67,13 +68,35 @@ export function isLogoId(id) {
   return Object.prototype.hasOwnProperty.call(LOGOS, id);
 }
 
+// A facet's `o` (0–1) is how much light it catches: 1 = the flat accent, less
+// = a darker shade of it (the landing page's mark paints the shadow facets
+// #c2410c on #f97316). Shading with black instead of fill-opacity keeps the
+// mark readable on any background — a translucent facet on a light tab strip
+// reads as a pale, washed-out star.
+export const SHADE_STRENGTH = 0.6;
+export function facetShadePct(o) {
+  return Math.round(100 - (1 - o) * SHADE_STRENGTH * 100);
+}
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+export function facetColor(hex, o) {
+  const rgb = hexToRgb(hex);
+  if (!rgb || o >= 1) return hex;
+  const k = facetShadePct(o) / 100;
+  return '#' + rgb.map((v) => Math.round(v * k).toString(16).padStart(2, '0')).join('');
+}
+
 // Full <svg> string with the accent color baked in (no CSS vars) — used for the
 // browser-tab favicon, which can't read stylesheet variables.
 export function logoSvg(id, color) {
   const preset = LOGOS[isLogoId(id) ? id : DEFAULT_LOGO];
   const c = color || DEFAULT_ACCENT;
   const facets = preset.paths
-    .map((p) => `<path d="${p.d}" fill="${c}" fill-opacity="${p.o}"/>`)
+    .map((p) => `<path d="${p.d}" fill="${facetColor(c, p.o)}"/>`)
     .join('');
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${preset.viewBox || '0 0 32 32'}">${facets}</svg>`;
 }

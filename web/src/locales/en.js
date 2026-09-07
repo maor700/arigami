@@ -84,7 +84,12 @@ export const en = {
 
   // settings — terminal
   'settings.terminal': 'Terminal',
-  'settings.fontSize': 'Font size',
+  'settings.uiScale': 'UI size',
+  'settings.uiScale.hint': 'Text and controls across the whole app, sidebar included.',
+  'settings.uiScale.small': 'Small',
+  'settings.uiScale.medium': 'Medium',
+  'settings.uiScale.large': 'Large',
+  'settings.fontSize': 'Chat font size',
   'settings.fontSize.hint': 'Chat output text size ({min}–{max}px).',
   'settings.termTheme': 'Terminal theme',
   'settings.termTheme.hint':

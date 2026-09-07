@@ -81,7 +81,12 @@ export const he = {
 
   // settings — terminal
   'settings.terminal': 'טרמינל',
-  'settings.fontSize': 'גודל גופן',
+  'settings.uiScale': 'גודל הממשק',
+  'settings.uiScale.hint': 'טקסט ופקדים בכל האפליקציה, כולל הסיידבר.',
+  'settings.uiScale.small': 'קטן',
+  'settings.uiScale.medium': 'בינוני',
+  'settings.uiScale.large': 'גדול',
+  'settings.fontSize': 'גודל גופן הצ׳אט',
   'settings.fontSize.hint': 'גודל טקסט הפלט של הצ׳אט ({min}–{max}px).',
   'settings.termTheme': 'ערכת נושא לטרמינל',
   'settings.termTheme.hint':

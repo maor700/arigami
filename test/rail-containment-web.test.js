@@ -127,7 +127,7 @@ test('a collapsed folder keeps the card, the child count and per-child state dot
   expect(out).not.toContain('data-rail-child');
   expect(out).toMatch(/Dots Folder[\s\S]*?>2</);
   // one state dot per kid
-  const dots = out.match(/h-\[5px\] w-\[5px\] shrink-0 rounded-full/g) || [];
+  const dots = out.match(/h-\[0\.3125rem\] w-\[0\.3125rem\] shrink-0 rounded-full/g) || []; // 5px, in rem (BRAND: the rail scales with --ui-scale)
   expect(dots.length).toBe(2);
 });
 

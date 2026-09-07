@@ -7,12 +7,22 @@ import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from 
 
 const KEY = 'arigami-prefs';
 
+export const PREF_LIMITS = { font: [10, 24], rail: [180, 420] };
+
+// UI size: one factor on the root font-size, so everything measured in rem/em
+// (the rail, chrome, settings) grows together. The chat output has its own
+// px size (termFontSize) and is untouched by this.
+export const UI_SCALES = { small: 0.875, medium: 1, large: 1.15 };
+export const UI_SCALE_IDS = ['small', 'medium', 'large'];
+export const isUiScale = (v) => UI_SCALE_IDS.includes(v);
+
 const DEFAULTS = {
-  theme: 'light', // app chrome: 'light' | 'dark'
+  theme: 'dark', // app chrome: 'light' | 'dark' — dark by default, like the landing page
   termTheme: 'dark', // default terminal: 'light' | 'dark'
-  termFontSize: 12, // px, clamped 10–20
+  termFontSize: 16, // px, clamped 10–24 — the chat output text size
   termDir: 'auto', // default terminal direction: 'auto' | 'ltr' | 'rtl'
   railWidth: 248, // px, clamped 180–420
+  uiScale: 'medium', // whole-UI size incl. the rail: 'small' | 'medium' | 'large' → --ui-scale on <html> (rem)
   termOverrides: {}, // { [sessionId]: { dir?, theme? } } — per-terminal overrides
   voiceAutoSend: false, // auto-send voice prompts without confirmation
   voiceMicId: '', // preferred microphone deviceId ('' = system default)
@@ -123,11 +133,12 @@ function sanitizeOverrides(o) {
 function sanitize(raw) {
   const p = raw && typeof raw === 'object' ? raw : {};
   return {
-    theme: p.theme === 'dark' ? 'dark' : 'light',
+    theme: p.theme === 'light' ? 'light' : 'dark',
     termTheme: p.termTheme === 'light' ? 'light' : 'dark',
-    termFontSize: clamp(p.termFontSize, 10, 20, DEFAULTS.termFontSize),
+    termFontSize: clamp(p.termFontSize, PREF_LIMITS.font[0], PREF_LIMITS.font[1], DEFAULTS.termFontSize),
     termDir: ['auto', 'ltr', 'rtl'].includes(p.termDir) ? p.termDir : DEFAULTS.termDir,
-    railWidth: clamp(p.railWidth, 180, 420, DEFAULTS.railWidth),
+    railWidth: clamp(p.railWidth, PREF_LIMITS.rail[0], PREF_LIMITS.rail[1], DEFAULTS.railWidth),
+    uiScale: isUiScale(p.uiScale) ? p.uiScale : DEFAULTS.uiScale,
     termOverrides: sanitizeOverrides(p.termOverrides),
     voiceAutoSend: p.voiceAutoSend === true,
     voiceMicId: typeof p.voiceMicId === 'string' ? p.voiceMicId : DEFAULTS.voiceMicId,
@@ -176,10 +187,13 @@ function applyBranding() {
   const root = document.documentElement;
   if (state.accent) root.style.setProperty('--color-brand', state.accent);
   else root.style.removeProperty('--color-brand');
+  root.style.setProperty('--ui-scale', String(UI_SCALES[state.uiScale] || 1));
   root.setAttribute('dir', langDir(state.language));
   root.setAttribute('lang', resolveLang(state.language));
   const link = document.querySelector("link[rel='icon']");
   if (link) link.setAttribute('href', logoDataUri(state.logo, state.accent || DEFAULT_ACCENT));
+  const meta = document.querySelector("meta[name='theme-color']");
+  if (meta) meta.setAttribute('content', state.accent || DEFAULT_ACCENT);
 }
 applyTheme(); // set before first paint
 applyBranding();
@@ -222,8 +236,6 @@ export function setTermOverride(sessionId, patch) {
   const cur = (state.termOverrides && state.termOverrides[sessionId]) || {};
   setPrefs({ termOverrides: { ...state.termOverrides, [sessionId]: { ...cur, ...patch } } });
 }
-
-export const PREF_LIMITS = { font: [10, 20], rail: [180, 420] };
 
 // The language the mic listens in right now (VOICE1): the explicit pick, else
 // the UI language. Pure — pass the prefs object from usePrefs() to stay reactive.

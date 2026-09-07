@@ -93,10 +93,10 @@ export default function Settings({ category = 'appearance', section = '', initia
       onClick={() => onCategory?.(id)}
       aria-current={cat === id ? 'page' : undefined}
       className={desktop
-        ? `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[12.5px] ${cat === id ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:bg-chip/60 hover:text-fg'}`
-        : `flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[11.5px] ${cat === id ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim'}`}
+        ? `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[0.78125rem] ${cat === id ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:bg-chip/60 hover:text-fg'}`
+        : `flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[0.71875rem] ${cat === id ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim'}`}
     >
-      <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
+      <span className="w-4 text-center text-[0.75rem]"><Icon icon={ICONS[id]} /></span>
       {t(`settings.cat.${id}`)}
     </button>
   );
@@ -109,11 +109,11 @@ export default function Settings({ category = 'appearance', section = '', initia
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-panel">
-      <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
+      <div className="flex h-11 shrink-0 items-center gap-[0.5625rem] border-b border-hair px-4">
         <Wave />
         <span className="text-sm font-bold text-fg">{t('settings.title')}</span>
-        <span className="text-[12px] text-fgdim">/ {t(`settings.cat.${cat}`)}</span>
-        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="ms-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
+        <span className="text-[0.75rem] text-fgdim">/ {t(`settings.cat.${cat}`)}</span>
+        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="ms-auto cursor-pointer px-1 text-[0.9375rem] text-fgdim hover:text-fg">
           <Icon icon={faXmark} />
         </button>
       </div>
@@ -126,12 +126,12 @@ export default function Settings({ category = 'appearance', section = '', initia
 
       <div className="flex min-h-0 flex-1">
         {desktop && (
-          <nav className="flex w-[180px] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">
+          <nav className="flex w-[11.25rem] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">
             {SETTINGS_NAV.map(navItem)}
           </nav>
         )}
         <div data-settings-pane className="thin-scroll min-h-0 flex-1 overflow-y-auto">
-          <div key={cat} className="mx-auto w-full max-w-[640px] px-4 py-5 sm:px-7">{body}</div>
+          <div key={cat} className="mx-auto w-full max-w-[40rem] px-4 py-5 sm:px-7">{body}</div>
         </div>
       </div>
     </div>

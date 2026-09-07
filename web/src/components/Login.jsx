@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { afterLogin } from '../lib/store.js';
 import { useT } from '../lib/i18n.js';
+import { Logo } from './Logo.jsx';
 
 // C1 — full-page sign-in. Pairing: the one-time code printed by the host at
 // boot (or `bin/host pair`). OIDC: a redirect to /__api/auth/oidc/start when the
@@ -41,28 +42,24 @@ export default function Login({ info }) {
 
   return (
     <div className="flex h-screen flex-col items-center justify-center bg-bg p-6 text-fg">
-      <span className="mb-4 flex items-end gap-0.5" aria-hidden="true">
-        {[14, 22, 17, 26].map((h, i) => (
-          <span key={i} className="inline-block w-1 bg-brand" style={{ height: h }} />
-        ))}
-      </span>
-      <div className="mb-1 text-[26px] leading-tight font-bold">{t('auth.login.heading')}</div>
-      <div className="mb-4 max-w-[360px] text-center text-[11.5px] text-fgdim">
+      <Logo size="3rem" className="mb-4" />
+      <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('auth.login.heading')}</div>
+      <div className="mb-4 max-w-[22.5rem] text-center text-[0.71875rem] text-fgdim">
         {hasAdmin ? t('auth.login.subPaired') : t('auth.login.subFirst')}
-        {!hasAdmin && <div className="mt-1.5 text-[11px] leading-relaxed text-fgdim">{t('auth.login.whereCode')}</div>}
+        {!hasAdmin && <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-fgdim">{t('auth.login.whereCode')}</div>}
       </div>
 
       {oidc && (
         <button
           type="button"
           onClick={oidcStart}
-          className="mb-4 w-[320px] max-w-[90%] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-2.5 text-sm font-bold text-fg hover:bg-brand"
+          className="mb-4 w-[20rem] max-w-[90%] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-2.5 text-sm font-bold text-fg hover:bg-brand"
         >
           {t('auth.login.oidc')}
         </button>
       )}
 
-      <div className="flex w-[320px] max-w-[90%] flex-col gap-2">
+      <div className="flex w-[20rem] max-w-[90%] flex-col gap-2">
         <input
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
@@ -71,7 +68,7 @@ export default function Login({ info }) {
           autoFocus
           autoComplete="one-time-code"
           spellCheck={false}
-          className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[13px] py-2.5 text-center font-mono text-base tracking-[0.2em] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+          className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2.5 text-center font-mono text-base tracking-[0.2em] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
         />
         {!hasAdmin && (
           <input
@@ -81,7 +78,7 @@ export default function Login({ info }) {
             placeholder={t('auth.login.emailPlaceholder')}
             type="email"
             autoComplete="email"
-            className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[13px] py-2 text-xs outline-none placeholder:text-fgdim"
+            className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2 text-xs outline-none placeholder:text-fgdim"
           />
         )}
         <button
@@ -93,8 +90,8 @@ export default function Login({ info }) {
           {busy ? t('auth.login.busy') : t('auth.login.pair')}
         </button>
       </div>
-      {error && <div className="mt-3 max-w-[360px] text-center text-[11.5px] text-[#9c3b33]">{error}</div>}
-      <div className="mt-6 max-w-[360px] text-center font-mono text-[10px] text-fgdim">{t('auth.login.hint')}</div>
+      {error && <div className="mt-3 max-w-[22.5rem] text-center text-[0.71875rem] text-[#9c3b33]">{error}</div>}
+      <div className="mt-6 max-w-[22.5rem] text-center font-mono text-[0.625rem] text-fgdim">{t('auth.login.hint')}</div>
     </div>
   );
 }

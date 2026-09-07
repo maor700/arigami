@@ -1,24 +1,13 @@
 // Tiny shared primitives for the host chrome.
 import { t } from '../lib/i18n.js';
 
-// The "wave" brand glyph — 4 ascending yellow bars.
+import { Logo } from './Logo.jsx';
+
+// The brand glyph in every chrome header (tab bar, Settings, launcher). It was
+// four ascending bars ("wave"); it is the origami star mark now — the name
+// stays so the headers don't churn. Sized in rem so it follows the UI scale.
 export function Wave({ scale = 1 }) {
-  const heights = [8, 13, 10, 15];
-  return (
-    <span
-      className="inline-flex items-end"
-      style={{ gap: Math.max(1.5 * scale, 1.5) }}
-      aria-hidden="true"
-    >
-      {heights.map((h, i) => (
-        <span
-          key={i}
-          className="inline-block bg-brand"
-          style={{ width: 2.5 * scale, height: h * scale }}
-        />
-      ))}
-    </span>
-  );
+  return <Logo size={`${1.125 * scale}rem`} />;
 }
 
 // Session color dot.
@@ -41,7 +30,7 @@ export function YellowButton({ children, className = '', ...rest }) {
   return (
     <button
       type="button"
-      className={`cursor-pointer rounded-lg border-2 border-ink bg-brand px-4 py-2 text-[13px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a] disabled:cursor-default disabled:opacity-50 ${className}`}
+      className={`cursor-pointer rounded-lg border-2 border-ink bg-brand px-4 py-2 text-[0.8125rem] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a] disabled:cursor-default disabled:opacity-50 ${className}`}
       {...rest}
     >
       {children}
@@ -53,7 +42,7 @@ export function GhostButton({ children, className = '', ...rest }) {
   return (
     <button
       type="button"
-      className={`cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3.5 py-2 text-[12.5px] text-fgdim hover:bg-hair ${className}`}
+      className={`cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3.5 py-2 text-[0.78125rem] text-fgdim hover:bg-hair ${className}`}
       {...rest}
     >
       {children}

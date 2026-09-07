@@ -92,7 +92,7 @@ function StatusChip({ session }) {
         />
       )}
       <span
-        className={`font-mono text-[10.5px] font-bold ${awaiting ? 'text-[#4a3f12]' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
+        className={`font-mono text-[10.5px] font-bold ${awaiting ? 'text-fg' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
       >
         {String(status).toLowerCase()}
       </span>

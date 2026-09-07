@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
+import { Logo } from './Logo.jsx';
 import { faArrowUp, faCamera, faComment, faCodeBranch } from '@fortawesome/free-solid-svg-icons';
 
 // F8: no sessions yet → one question ("What would you like me to do?"), three
@@ -45,15 +46,10 @@ export default function FirstRun({ config, onCreated, onOpenLauncher }) {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center bg-bg p-6 text-fg">
-      {/* big wave glyph */}
-      <span className="mb-4 flex items-end gap-0.5" aria-hidden="true">
-        {[14, 22, 17, 26].map((h, i) => (
-          <span key={i} className="inline-block w-1 bg-brand" style={{ height: h }} />
-        ))}
-      </span>
-      <div className="mb-1 text-[26px] leading-tight font-bold">{t('launcher.firstRun.heading')}</div>
-      <div className="mb-4 max-w-[460px] text-center text-[11.5px] leading-relaxed text-fgdim">{t('launcher.firstRun.sub')}</div>
-      <div className="flex w-[460px] max-w-[92%] items-end gap-[9px] rounded-[12px] border-[1.5px] border-ink bg-panel px-[13px] py-2.5 focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
+      <Logo size="3rem" className="mb-4" />
+      <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('launcher.firstRun.heading')}</div>
+      <div className="mb-4 max-w-[28.75rem] text-center text-[0.71875rem] leading-relaxed text-fgdim">{t('launcher.firstRun.sub')}</div>
+      <div className="flex w-[28.75rem] max-w-[92%] items-end gap-[0.5625rem] rounded-[12px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2.5 focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
         <textarea
           value={val}
           onChange={(e) => setVal(e.target.value)}
@@ -63,14 +59,14 @@ export default function FirstRun({ config, onCreated, onOpenLauncher }) {
           autoFocus
           dir="auto"
           data-testid="first-run-prompt"
-          className="min-w-0 flex-1 resize-none bg-transparent text-[13px] leading-snug outline-none placeholder:text-fgdim"
+          className="min-w-0 flex-1 resize-none bg-transparent text-[0.8125rem] leading-snug outline-none placeholder:text-fgdim"
         />
         <button
           type="button"
           onClick={submit}
           disabled={busy}
           title={t('launcher.firstRun.createTitle')}
-          className="flex h-[28px] w-[28px] shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50"
+          className="flex h-[1.75rem] w-[1.75rem] shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50"
         >
           {busy ? '…' : <Icon icon={faArrowUp} />}
         </button>
@@ -82,17 +78,17 @@ export default function FirstRun({ config, onCreated, onOpenLauncher }) {
             type="button"
             data-testid={`first-run-chip-${c.id}`}
             onClick={() => { setVal(t(c.prompt)); setError(null); }}
-            className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-panel px-3 py-1 text-[11.5px] text-fg hover:border-ink"
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-panel px-3 py-1 text-[0.71875rem] text-fg hover:border-ink"
           >
             <Icon icon={c.icon} /> {t(c.label)}
           </button>
         ))}
       </div>
-      {error && <div className="mt-3 text-[11px] text-danger">{error}</div>}
+      {error && <div className="mt-3 text-[0.6875rem] text-danger">{error}</div>}
       <button
         type="button"
         onClick={onOpenLauncher}
-        className="mt-6 cursor-pointer text-[11px] text-fgdim underline-offset-2 hover:underline"
+        className="mt-6 cursor-pointer text-[0.6875rem] text-fgdim underline-offset-2 hover:underline"
       >
         {t('launcher.firstRun.advanced')}
       </button>

@@ -3,7 +3,7 @@ import { api } from '../lib/api.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { useStore } from '../lib/store.js';
 import { extTabItems } from '../lib/ext.js';
-import { Wave, Dot, YellowButton } from './ui.jsx';
+import { Dot, YellowButton } from './ui.jsx';
 import { Truncate } from './Truncate.jsx';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
@@ -32,9 +32,9 @@ function Badge({ badge }) {
       />
     );
   }
-  if (kind === 'external') return <span className="text-[11px] text-fgdim">↗</span>;
+  if (kind === 'external') return <span className="text-[0.6875rem] text-fgdim">↗</span>;
   const text = obj ? (obj.text ?? obj.count ?? obj.value ?? '') : badge;
-  return <span className="shrink-0 font-mono text-[10px] text-fgdim">{String(text)}</span>;
+  return <span className="shrink-0 font-mono text-[0.625rem] text-fgdim">{String(text)}</span>;
 }
 
 function isExternal(tab) {
@@ -124,11 +124,11 @@ function AddTabPopover({ sessionId, onClose }) {
   return (
     <div
       ref={ref}
-      className="absolute top-[42px] right-0 z-30 w-[280px] rounded-[10px] border-[1.5px] border-ink bg-panel p-3 shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
+      className="absolute top-[2.625rem] right-0 z-30 w-[17.5rem] rounded-[10px] border-[1.5px] border-ink bg-panel p-3 shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
     >
       {extTabs.length > 0 && (
         <div className="mb-2.5 border-b border-hair pb-2.5">
-          <div className="mb-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+          <div className="mb-1.5 font-mono text-[0.625rem] tracking-[0.08em] text-fgdim uppercase">
             {t('ext.tabs.heading')}
           </div>
           <div className="flex flex-col gap-0.5">
@@ -138,16 +138,16 @@ function AddTabPopover({ sessionId, onClose }) {
                 type="button"
                 disabled={busy}
                 onClick={() => openExt(row)}
-                className="flex cursor-pointer items-baseline gap-1.5 rounded-md px-1.5 py-1 text-start text-[12px] text-fg hover:bg-chip disabled:opacity-50"
+                className="flex cursor-pointer items-baseline gap-1.5 rounded-md px-1.5 py-1 text-start text-[0.75rem] text-fg hover:bg-chip disabled:opacity-50"
               >
                 <span className="min-w-0 truncate">{row.title}</span>
-                <span className="shrink-0 font-mono text-[9.5px] text-fgdim">{row.extTitle}</span>
+                <span className="shrink-0 font-mono text-[0.59375rem] text-fgdim">{row.extTitle}</span>
               </button>
             ))}
           </div>
         </div>
       )}
-      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+      <div className="mb-2 font-mono text-[0.625rem] tracking-[0.08em] text-fgdim uppercase">
         {t('rail.openUrlAsTab')}
       </div>
       <input
@@ -157,7 +157,7 @@ function AddTabPopover({ sessionId, onClose }) {
         onChange={(e) => setUrl(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
         placeholder="http://localhost:3021/…"
-        className="mb-2 w-full rounded-lg border-[1.5px] border-ink px-2.5 py-2 font-mono text-[11.5px] outline-none placeholder:text-fgdim"
+        className="mb-2 w-full rounded-lg border-[1.5px] border-ink px-2.5 py-2 font-mono text-[0.71875rem] outline-none placeholder:text-fgdim"
       />
       <input
         value={title}
@@ -166,7 +166,7 @@ function AddTabPopover({ sessionId, onClose }) {
         placeholder={t('rail.titleOptional')}
         className="mb-2.5 w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 text-xs outline-none placeholder:text-fgdim focus:border-fgdim"
       />
-      {error && <div className="mb-2 text-[11px] text-danger">{error}</div>}
+      {error && <div className="mb-2 text-[0.6875rem] text-danger">{error}</div>}
       <YellowButton
         onClick={submit}
         disabled={busy || !url.trim()}
@@ -179,7 +179,7 @@ function AddTabPopover({ sessionId, onClose }) {
 }
 
 // `embedded`: the bar sits under another header that already carries the
-// mobile hamburger and the brand glyph (the agent page) — skip both here.
+// mobile hamburger (the agent page) — skip it here.
 export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivate, addOpen, setAddOpen, embedded = false }) {
   const t = useT();
   const tabs = tabsProp?.length
@@ -215,7 +215,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
     <div className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-hair bg-panel px-3">
       {/* session-color edge strip */}
       <span
-        className="absolute top-0 bottom-0 left-0 w-[3px]"
+        className="absolute top-0 bottom-0 left-0 w-[0.1875rem]"
         style={{ background: color }}
       />
       {/* mobile: hamburger opens the rail drawer (there's no separate top bar
@@ -225,16 +225,10 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           type="button"
           aria-label={t('rail.openSessions')}
           onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
-          className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
+          className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[0.8125rem] text-fg md:hidden"
         >
           <Icon icon={faBars} />
         </button>
-      )}
-      {/* brand glyph */}
-      {!embedded && (
-        <span className="hidden shrink-0 items-center pr-[11px] md:flex">
-          <Wave />
-        </span>
       )}
 
       <div className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]">
@@ -250,39 +244,39 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                 active
                   ? 'border-brand font-bold text-fg'
                   : 'border-transparent text-fgdim hover:text-fg'
-              } ${isSession ? 'min-w-[64px] flex-[0_1_auto]' : 'shrink-0'}`}
+              } ${isSession ? 'min-w-[4rem] flex-[0_1_auto]' : 'shrink-0'}`}
             >
               {isSession ? (
                 <>
                   <Dot color={color} size={10} />
                   <Truncate text={tab.title && tab.title !== 'Session' ? tab.title : t('rail.tabSession')} className="min-w-0" />
                   {awaiting && (
-                    <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />
+                    <span className="pulse-yellow h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full bg-brand" />
                   )}
                 </>
               ) : tab.type === 'changes' ? (
                 <>
-                  <span className="shrink-0 text-[12px] leading-none text-fgdim"><Icon icon={faPlusMinus} /></span>
+                  <span className="shrink-0 text-[0.75rem] leading-none text-fgdim"><Icon icon={faPlusMinus} /></span>
                   <span className="shrink-0">{tab.title || t('rail.tabChanges')}</span>
                 </>
               ) : tab.type === 'orchestration' ? (
                 <>
-                  <span className="shrink-0 text-[12px] leading-none text-fgdim"><Icon icon={faFolderTree} /></span>
+                  <span className="shrink-0 text-[0.75rem] leading-none text-fgdim"><Icon icon={faFolderTree} /></span>
                   <span className="shrink-0">{tab.title || t('rail.tabOrchestration')}</span>
                 </>
               ) : (
                 <>
                   <span
-                    className="h-[13px] w-[13px] shrink-0 rounded-[3px]"
+                    className="h-[0.8125rem] w-[0.8125rem] shrink-0 rounded-[3px]"
                     style={{ background: tab.color || '#d8d8d8' }}
                   />
-                  <Truncate text={tab.title || tab.type} className="max-w-[140px]" />
+                  <Truncate text={tab.title || tab.type} className="max-w-[8.75rem]" />
                   <Badge badge={tab.badge} />
                   <span
                     role="button"
                     title={t('rail.closeTab')}
                     onClick={(e) => closeTab(e, tab)}
-                    className="-mr-1 ml-0.5 hidden rounded px-0.5 text-[11px] text-fgdim hover:text-fg group-hover:inline [@media(pointer:coarse)]:inline"
+                    className="-mr-1 ml-0.5 hidden rounded px-0.5 text-[0.6875rem] text-fgdim hover:text-fg group-hover:inline [@media(pointer:coarse)]:inline"
                   >
                     <Icon icon={faXmark} />
                   </span>
@@ -295,7 +289,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           type="button"
           title={t('rail.openUrlAsTabCmd')}
           onClick={() => setAddOpen((v) => !v)}
-          className="shrink-0 cursor-pointer border-b-2 border-transparent px-[9px] text-[15px] leading-none text-fgdim hover:text-fg"
+          className="shrink-0 cursor-pointer border-b-2 border-transparent px-[0.5625rem] text-[0.9375rem] leading-none text-fgdim hover:text-fg"
         >
           +
         </button>

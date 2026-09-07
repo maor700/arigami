@@ -10,7 +10,7 @@
 // pending strip, manual block) sits here, on the page, under the chrome block:
 // it is about how the assistant behaves for the human, like language/voice,
 // not about the machine (מארח). Deep link: #/settings/appearance/memory.
-import { usePrefs, setPrefs, PREF_LIMITS } from '../../lib/prefs.js';
+import { usePrefs, setPrefs, PREF_LIMITS, UI_SCALE_IDS } from '../../lib/prefs.js';
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';
 import { useT } from '../../lib/i18n.js';
@@ -44,7 +44,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
           <select
             value={prefs.language}
             onChange={(e) => setPrefs({ language: e.target.value })}
-            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg"
+            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[0.71875rem] font-bold text-fg"
           >
             <option value="auto">{t('settings.language.auto')}</option>
             {LANG_IDS.map((id) => (
@@ -52,22 +52,29 @@ export default function General({ section = '', voiceEnabled = false, recording,
             ))}
           </select>
         </Field>
+        <Field label={t('settings.uiScale')} hint={t('settings.uiScale.hint')}>
+          <Segmented
+            value={prefs.uiScale}
+            onChange={(v) => setPrefs({ uiScale: v })}
+            options={UI_SCALE_IDS.map((id) => ({ value: id, label: t(`settings.uiScale.${id}`) }))}
+          />
+        </Field>
         <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: fontMin, max: fontMax })}>
           <span className="flex items-center overflow-hidden rounded-lg border-[1.5px] border-ink">
             <button
               type="button"
               onClick={() => stepFont(-1)}
               disabled={prefs.termFontSize <= fontMin}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[11px] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
+              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.6875rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
             >
               A−
             </button>
-            <span className="border-x-[1.5px] border-ink bg-panel px-3 py-1.5 font-mono text-[11.5px] font-bold text-fg">{prefs.termFontSize}px</span>
+            <span className="border-x-[1.5px] border-ink bg-panel px-3 py-1.5 font-mono text-[0.71875rem] font-bold text-fg">{prefs.termFontSize}px</span>
             <button
               type="button"
               onClick={() => stepFont(1)}
               disabled={prefs.termFontSize >= fontMax}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[13px] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
+              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.8125rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
             >
               A+
             </button>
@@ -87,7 +94,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id="accent" title={t('settings.appearance')}>
           <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
             <span className="flex items-center gap-2">
-              <label className="relative flex h-[26px] w-[38px] cursor-pointer items-center justify-center overflow-hidden rounded-lg border-[1.5px] border-ink">
+              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer items-center justify-center overflow-hidden rounded-lg border-[1.5px] border-ink">
                 <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
                 <input
                   type="color"
@@ -97,12 +104,12 @@ export default function General({ section = '', voiceEnabled = false, recording,
                   aria-label={t('settings.accent')}
                 />
               </label>
-              <code className="font-mono text-[11px] text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
+              <code className="font-mono text-[0.6875rem] text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
               {prefs.accent ? (
                 <button
                   type="button"
                   onClick={() => setPrefs({ accent: '' })}
-                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[10.5px] text-fgdim hover:border-ink hover:text-fg"
+                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[0.65625rem] text-fgdim hover:border-ink hover:text-fg"
                 >
                   {t('common.reset')}
                 </button>
@@ -131,7 +138,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id={voiceEnabled ? 'voice-advanced' : 'voice'} title={t('chrome.voice.section')}>
           {!voiceEnabled && (
             <>
-              <div data-voice-off className="mb-1 text-[11px] text-fgdim">{t('settings.voice.off')}</div>
+              <div data-voice-off className="mb-1 text-[0.6875rem] text-fgdim">{t('settings.voice.off')}</div>
               <VoiceMain recording={recording} setRecording={setRecording} />
             </>
           )}

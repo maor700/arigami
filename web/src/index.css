@@ -17,21 +17,22 @@
   --hb-sel: rgba(0, 0, 0, 0.055); /* selected rail row fill (6% ink) */
 }
 
+/* Dark = the landing page's palette (arigami-site global.css: --bg/--bg-2/--bg-3, --line, --fg). */
 [data-theme="dark"] {
-  --hb-bg: #161617;
-  --hb-panel: #1c1c1e;
-  --hb-fg: #ededed;
-  --hb-fgdim: #9a9a9f;
-  --hb-border: #34343a;
-  --hb-rail: #1f1f22;
-  --hb-hair: #2c2c30;
-  --hb-chip: color-mix(in srgb, var(--color-brand) 24%, #161617);
-  --hb-fg2: #d2d2d6;
+  --hb-bg: #0b0d10;
+  --hb-panel: #111418;
+  --hb-fg: #e8eaee;
+  --hb-fgdim: #8e96a4;
+  --hb-border: #303743;
+  --hb-rail: #111418;
+  --hb-hair: #262b33;
+  --hb-chip: color-mix(in srgb, var(--color-brand) 24%, #0b0d10);
+  --hb-fg2: #c9ced6;
   --hb-sel: rgba(255, 255, 255, 0.06);
 }
 
 @theme {
-  --color-brand: #12A594;
+  --color-brand: #f97316; /* landing-page orange (prefs.accent overrides on :root) */
   --color-ink: #2a2a2a;
   --color-chip: var(--hb-chip);
   --color-hair: var(--hb-hair);
@@ -61,6 +62,14 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* UI size (Settings › General): one factor on the root font-size. Everything
+   sized in rem/em — the rail, tab bar, settings, dialogs — follows it; the
+   chat output keeps its own px size (termFontSize). prefs.applyBranding sets
+   --ui-scale on <html>; 100% keeps the browser's own default as the base. */
+html {
+  font-size: calc(100% * var(--ui-scale, 1));
 }
 
 /* App height. `dvh` tracks the collapsing browser chrome on phones (100vh
