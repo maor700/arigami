@@ -1,7 +1,9 @@
 # B2: build + publish the arigami images to GHCR.
 #   push to master  → ghcr.io/maor700/arigami:latest + :sha-<7>
 #                     ghcr.io/maor700/arigami-control-plane:latest + :sha-<7>
-#   tag v X.Y.Z     → …:X.Y.Z + :X.Y + :sha-<7> for both
+#   tag v X.Y.Z     → …:X.Y.Z + :X.Y + :sha-<7> for both, plus a GitHub Release
+#                     "vX.Y.Z" whose body is that version's CHANGELOG.md section
+#                     (VER1 — `bun run release` mints the tag and the section).
 # amd64 + arm64 via buildx/QEMU. Each image is smoke-tested on amd64 before push.
 #
 # Two images, one repo: the tenant runtime (root Dockerfile) and the
@@ -187,3 +189,32 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # VER1: the tag push publishes the release notes. `bun run release` wrote the
+  # CHANGELOG section and the annotated tag; here the section becomes the
+  # Release body (VERSION must agree with the tag — a mis-tagged commit fails).
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: VERSION matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(tr -d '[:space:]' < VERSION)"
+          [ "$tag" = "$ver" ] || { echo "::error::tag v$tag but VERSION says $ver — mint tags with 'bun run release'"; exit 1; }
+      - name: release notes from CHANGELOG.md
+        run: bun scripts/release.ts notes "$GITHUB_REF_NAME" > /tmp/notes.md && cat /tmp/notes.md
+      - name: create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file /tmp/notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file /tmp/notes.md --verify-tag
+          fi

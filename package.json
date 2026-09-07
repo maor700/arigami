@@ -12,7 +12,8 @@
     "dev": "bun --watch server/index.ts",
     "typecheck": "tsc --noEmit",
     "build:web": "cd web && bun run build",
-    "test": "bun test"
+    "test": "bun test",
+    "release": "bun scripts/release.ts"
   },
   "dependencies": {
     "@composio/client": "2.0.0-rc.3",
