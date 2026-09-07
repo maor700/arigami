@@ -1,0 +1,261 @@
+# @arigami/sdk — the extension contract (API v1)
+
+An **Arigami extension** is a directory. It adds tools, docs, listeners, hooks,
+notification channels and tabs to a running host **at runtime** — no core build,
+no `git pull` in `/opt/arigami`, no restart of the host.
+
+```
+$ARIGAMI_DIR/user/extensions/<name>/
+├── manifest.json      the contract (below)
+├── ui/                tabs: index.html + assets (static, base './')
+├── listener.ts        ListenerProvider(s) — a Bun module
+├── tools/             server.ts (an MCP stdio server) or module.ts (plain functions)
+├── docs/              USAGE.md → generated into a skill Claude can read
+├── hooks.ts           on: {...}, gates: {...}, channels: {...}
+└── README.md
+```
+
+`$ARIGAMI_DIR/user/` is **your** git repo (the host runs `git init` if it is
+missing; a remote is optional). The core repo (`/opt/arigami`) and your repo
+share no files — the only interface between them is `manifest.json` and this
+package.
+
+Import types with no install: the loader keeps
+`$ARIGAMI_DIR/user/node_modules/@arigami/sdk` symlinked to `<repo>/sdk`.
+
+```ts
+import type { ListenerProvider, Hooks, ToolDef } from '@arigami/sdk';
+```
+
+---
+
+## manifest.json
+
+```json
+{
+  "name": "feature-picker",
+  "version": "0.2.0",
+  "apiVersion": 1,
+  "title": "בחירת פיצ'רים",
+  "description": "A form that returns a prompt to the chat",
+
+  "tabs": [
+    { "id": "picker", "title": "Pick features", "entry": "ui/index.html",
+      "icon": "list-check", "openFrom": ["tab-bar", "slash:/pick"] }
+  ],
+
+  "listeners": [
+    { "type": "rss", "module": "listener.ts", "export": "rssProvider",
+      "schema": { "type": "object", "required": ["url"],
+                  "properties": { "url": { "type": "string" } } },
+      "defaultIntervalSec": 300 }
+  ],
+
+  "tools": [
+    { "kind": "mcp", "name": "featdb", "command": "bun", "args": ["tools/server.ts"],
+      "env": { "FEATDB_PATH": "${EXT_DIR}/data.sqlite" } },
+    { "kind": "module", "name": "echo", "module": "tools/module.ts" }
+  ],
+
+  "docs": [
+    { "file": "docs/USAGE.md", "skill": "feature-picker",
+      "description": "Use when the user wants to plan or pick features, or says /pick" }
+  ],
+
+  "hooks": { "module": "hooks.ts", "events": ["merge.done"], "gates": ["merge.before"] },
+  "webhooks": [ { "id": "inbound", "listener": "rss" } ],
+  "permissions": [ "session:message", "session:tabs", "tools:featdb", "notify", "events:merge.*" ],
+  "settings": { "schema": { "teamName": { "type": "string", "default": "" } } }
+}
+```
+
+| field | meaning |
+|---|---|
+| `name` | `^[a-z0-9][a-z0-9-]*$`, must equal the directory name |
+| `apiVersion` | **1**. A different major is refused (the extension is listed with `state:'error'`, nothing else breaks). |
+| `tabs[]` | static pages under `ui/`, served at `/__ext/<name>/<entry>` (sandboxed, see below) |
+| `listeners[]` | `module` + `export` naming a `ListenerProvider`; `type` must be globally unique |
+| `tools[]` | `kind:'mcp'` (any language, stdio) or `kind:'module'` (TS functions the host wraps). Injected into every session as the MCP server `ext-<name>`, so tools appear as `mcp__ext-<name>__*`. |
+| `docs[]` | each entry becomes `$ARIGAMI_DIR/ext-plugin/skills/<skill>/SKILL.md`, listed to Claude as `/arigami-ext:<skill>`. **`description` is the trigger text** — write "use when …". |
+| `hooks` | one module with `on` (domain events), `gates` (`merge.before`) and `channels` (notification fan-out) |
+| `webhooks[]` | a custom webhook `ext-<name>-<id>` routed to a listener's `onWebhook` |
+| `permissions[]` | what a **tab** may ask the shell for: `session:message`, `session:prompts`, `session:tabs`, `session:artifacts`, `tools:<name>`, `notify`, `events:<glob>` |
+| `settings.schema` | rendered as a form in Settings → Extensions; values land in `$ARIGAMI_DIR/extensions.json` (never in your repo) |
+| `daemons[]` | parsed, **not run** in this version |
+
+Secrets are never in the manifest and never in your repo: they live in
+`$ARIGAMI_DIR/extensions.json` (`secrets[<name>]`, mode 0600) and reach your
+code as `ctx.secrets` and as env for `tools[]`.
+
+---
+
+## Listeners
+
+A provider plugs into the existing scheduler and gets watermarks, backoff,
+auth-fail handling, TTL, queue-until-idle delivery and coalescing for free.
+
+```ts
+import type { ListenerProvider } from '@arigami/sdk';
+
+export const rssProvider: ListenerProvider<{ url: string }, { lastTs: number }> = {
+  type: 'rss',
+  label: (a) => `RSS ${new URL(a.url).hostname}`,
+  schema: { type: 'object', required: ['url'], properties: { url: { type: 'string' } } },
+  defaultIntervalSec: 300,
+
+  async register(ctx, args) {                       // baseline: never fire on the past
+    const items = await fetchItems(ctx, args.url);
+    return { params: args, watermark: { lastTs: items[0]?.ts ?? 0 } };
+  },
+
+  async poll(ctx, l) {
+    let items;
+    try { items = await fetchItems(ctx, l.params.url); }
+    catch (e: any) { return { kind: e.status === 404 ? 'gone' : 'transient', error: String(e.message) }; }
+    const fresh = items.filter((i) => i.ts > l.watermark.lastTs);
+    if (!fresh.length) return { kind: 'ok', shouldFire: false, nextWatermark: l.watermark };
+    return { kind: 'ok', shouldFire: true, nextWatermark: { lastTs: fresh[0].ts },
+             summary: `RSS: ${fresh.length} new items` };
+  },
+};
+```
+
+Rules the host enforces:
+
+* `poll` runs with a **20 s deadline** (`ctx.signal`); a throw or a timeout is a
+  `transient` outcome and goes through the normal exponential backoff.
+* the watermark advances **after delivery**, never before — wakes are
+  at-least-once on purpose.
+* `summary` is the text the session is woken with. Keep it a thin pointer.
+* `register` is called once, from `register_listener` / `POST
+  /__api/sessions/:id/listeners`; `args` were validated against `schema`
+  (required keys + primitive types).
+
+---
+
+## Hooks, gates and channels
+
+```ts
+import type { Hooks, NotifyChannel } from '@arigami/sdk';
+
+export const hooks: Hooks = {
+  on: {
+    'merge.done': async (ev, ctx) => { await ctx.notify({ title: `merged ${ev.branch}`, body: ev.sha.slice(0, 7) }); },
+    'listener.fired': async (ev, ctx) => { if (ev.type === 'rss') await ctx.sendPrompt(ev.sessionId, 'summarise'); },
+  },
+  gates: {
+    'merge.before': async (ev, ctx) => {
+      const r = await ctx.exec(['bun', 'run', 'typecheck'], { cwd: ev.repoRoot, timeoutMs: 120_000 });
+      return r.code === 0 ? { ok: true } : { ok: false, reason: `typecheck failed:\n${r.stderr.slice(-800)}` };
+    },
+  },
+};
+
+export const channels: Record<string, NotifyChannel> = {
+  telegram: async (payload, ctx) => { /* ctx.fetch(...) */ },
+};
+```
+
+Domain events (payloads are frozen for v1):
+
+| event | payload |
+|---|---|
+| `session.created` | `{ sessionId, title, cwd, agent }` |
+| `listener.fired` | `{ listenerId, sessionId, type, summary }` |
+| `review.approved` | `{ sessionId, by, branch }` |
+| `merge.done` | `{ sessionId, branch, base, sha, strategy }` |
+| `merge.conflict` | `{ sessionId, branch, base, files }` |
+| `action.answered` | `{ sessionId, actionId, value }` |
+| `setup.done` | `{ capability, ok, owner }` |
+| `incident` | `{ sessionId, action, outcome }` |
+| `webhook.received` | `{ kind, customId, body }` |
+
+A hook that throws is written to the extension's log and to the incident file —
+it never stops the host. A **gate** that throws or times out (5 min) **fails
+closed**: the merge is refused with the gate's message. That is the point of a
+gate.
+
+---
+
+## Tools
+
+`kind:'module'` is the cheap path — write functions, the host wraps them in an
+MCP server (`mcp/ext-mcp.js`) for you:
+
+```ts
+import type { ToolDef } from '@arigami/sdk';
+
+export const tools: ToolDef[] = [
+  {
+    name: 'hello_echo',
+    description: 'Echo a message back, uppercased.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    async run(args, ctx) { return { echo: String(args.text).toUpperCase(), extDir: ctx.extDir }; },
+  },
+];
+```
+
+`kind:'mcp'` is a real MCP stdio server in any language — the host only supplies
+`{command, args, env}` and the env vars `EXT_DIR`, `EXT_NAME`, `EXT_SETTINGS`,
+`ARIGAMI_URL`, `ARIGAMI_TOKEN`, plus your secrets. `${EXT_DIR}` is expanded in
+manifest `env` values.
+
+Tools reach a session only at **spawn** (`--mcp-config`), so a brand-new tool
+shows up in the **next** session (or after `restart_session`). Editing a doc is
+visible immediately.
+
+---
+
+## Tabs
+
+`ui/` is served at `/__ext/<name>/…` with
+`Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups` and
+**without** `allow-same-origin` — the page has an opaque origin, no cookie and
+no direct `/__api`. Everything goes through the shell:
+
+```html
+<script src="/__ext-sdk.js"></script>
+<script>
+  const ctx = await arigami.ready();                     // {sessionId, cwd, settings, …}
+  const r = await arigami.sendPrompt('plan the sprint', { mode: 'queue' });
+  await arigami.setStatus({ badge: r.delivered === 'now' ? '✓' : '⏳' });
+  arigami.subscribe(['chat'], (ev) => { if (ev.kind === 'result') arigami.setStatus({ badge: 'done' }); });
+</script>
+```
+
+`window.arigami`: `ready()`, `sendPrompt(text, {mode})`, `runTool(name, args)`,
+`setStatus({badge,color,title})`, `openArtifact(path)`, `subscribe(events, cb)`,
+`close()`. Each maps to one `arigami:call` message; the shell checks the
+manifest permission and refuses anything else. The wire protocol is documented
+at the top of `browser/ext-sdk.js` and is frozen for v1.
+
+---
+
+## Install, reload, versions
+
+```
+bin/host ext list
+bin/host ext validate <dir>
+bin/host ext add <dir|git-url>     # copies / shallow-clones into user/extensions/<name>
+bin/host ext update [name]         # git pull --ff-only
+bin/host ext remove <name>
+bin/host ext reload
+```
+
+REST (admin): `GET /__api/extensions`, `POST /__api/extensions/reload`,
+`POST /__api/extensions/validate {source}`, `POST /__api/extensions/add {source}`,
+`PATCH /__api/extensions/:name {enabled?, settings?}`,
+`DELETE /__api/extensions/:name`, `POST /__api/extensions/:name/update`,
+`GET /__api/listener-types`, `POST /__api/ext/:name/tool/:tool {args}`.
+
+The host also polls mtimes every 30 s and reloads what changed. What is live
+immediately: docs, listener providers, hooks, gates, channels, tabs. What needs
+a new session: the tool list and the skill list (they are fixed at spawn — a
+Claude Code limit, not ours).
+
+**Trust model, stated plainly:** extension code runs **in the host process with
+the host's privileges**, exactly like a skill with Bash or an MCP server you
+added by hand. There is no auto-download and no auto-update: you install from a
+directory or a git URL you named, the permissions are printed before the install,
+and the installed sha is recorded in `extensions.json`. Only install extensions
+you would run as yourself.
