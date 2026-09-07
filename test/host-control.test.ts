@@ -15,7 +15,7 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-hc-'));
 process.env.ARIGAMI_DIR = scratch;
 process.env.ARIGAMI_STATE_FILE = path.join(scratch, 'state.json');
 const hc = await import('../server/host-control.ts');
-const { RestartController, NoSupervisorError, detectManager, isDirtyStatus, upgradePlan } = hc;
+const { RestartController, NoSupervisorError, detectManager, isDirtyStatus, dirtyFiles, upgradePlan, NOT_FF_ERROR } = hc;
 
 // Fake timers: `fire()` runs the earliest armed timer.
 function harness(opts: { manager?: string; busy?: number } = {}) {
@@ -150,12 +150,22 @@ test('isDirtyStatus: tracked changes are dirty, untracked-only is clean', () => 
   expect(isDirtyStatus('UU conflict.ts\n')).toBe(true);
 });
 
-test('upgradePlan: fetch → ff-only pull → frozen install → web build, in the right dirs', () => {
+test('upgradePlan: fetch → ancestry check → ff-only pull → frozen install → web build, in the right dirs', () => {
   const plan = upgradePlan('/r');
-  expect(plan.map((s) => s.name)).toEqual(['fetch', 'pull', 'install', 'build']);
-  expect(plan[1].cmd).toContain('--ff-only');
-  expect(plan[2].cmd).toContain('--frozen-lockfile');
-  expect(plan[3].cwd).toBe(path.join('/r', 'web'));
+  expect(plan.map((s) => s.name)).toEqual(['fetch', 'check', 'pull', 'install', 'build']);
+  expect(plan[0].cmd).not.toContain('--prune'); // VER1: pruning is how a rewritten remote loses its merge base
+  expect(plan[1].cmd).toEqual(['git', 'merge-base', '--is-ancestor', 'HEAD', '@{u}']);
+  expect(plan[1].failMessage).toBe(NOT_FF_ERROR);
+  expect(plan[2].cmd).toContain('--ff-only');
+  expect(plan[3].cmd).toContain('--frozen-lockfile');
+  expect(plan[4].cwd).toBe(path.join('/r', 'web'));
+});
+
+// VER1: the dirty list the card shows — status code + path, untracked skipped.
+test('dirtyFiles: "XY path" per tracked change, untracked dropped', () => {
+  expect(dirtyFiles('')).toEqual([]);
+  expect(dirtyFiles('?? new.txt\n')).toEqual([]);
+  expect(dirtyFiles(' M server/a.ts\nM  b.ts\n?? c\nUU d.ts\nR  old -> new\n')).toEqual(['M server/a.ts', 'M b.ts', 'UU d.ts', 'R old -> new']);
 });
 
 // End-to-end refusal: a real git repo with a modified tracked file. Runs in a
@@ -173,15 +183,17 @@ test('startUpgrade refuses a dirty worktree (409) and never runs a step', () => 
     `
     const hc = await import('./server/host-control.ts');
     let dirtyErr = null;
-    try { await hc.startUpgrade('now', ${JSON.stringify(repo)}); } catch (e) { dirtyErr = { msg: e.message, status: e.status }; }
-    emit({ dirtyErr, job: hc.currentUpgrade() });
+    try { await hc.startUpgrade('now', ${JSON.stringify(repo)}); } catch (e) { dirtyErr = { msg: e.message, status: e.status, dirty: e.dirty }; }
+    emit({ dirtyErr, job: hc.currentUpgrade(), status: await hc.hostStatus() });
     `,
     { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_PORT: '', ARIGAMI_SUPERVISOR: 'systemd' }
   );
   if (!r.ok) throw new Error(r.error);
-  const { dirtyErr, job } = r.out[0];
+  const { dirtyErr, job, status } = r.out[0];
   expect(dirtyErr.status).toBe(409);
   expect(dirtyErr.msg).toMatch(/uncommitted/);
+  expect(dirtyErr.dirty).toEqual(['M a.txt']); // VER1: the refusal names the files
+  expect(Array.isArray(status.dirty)).toBe(true); // hostStatus carries the list for the running checkout
   expect(job).toBeNull();
   expect(fs.existsSync(path.join(dir, 'logs', 'upgrade.log'))).toBe(false);
 });
@@ -225,4 +237,57 @@ test('healthBody: busySessions for loopback peers only', () => {
   expect(hc.healthBody('::ffff:127.0.0.1', busy)).toEqual({ ok: true, busySessions: 3 });
   expect(hc.healthBody('203.0.113.9', busy)).toEqual({ ok: true });
   expect(hc.healthBody(undefined, busy)).toEqual({ ok: true });
+});
+
+// VER1: when='confirm' → the steps run, the job parks in `await-restart` with
+// needsRestart, the upgrade-done event says so, and NO restart is requested —
+// the click on the card is what restarts. when='now' keeps the old one-shot.
+test('startUpgrade confirm mode: builds, then waits for the restart click; a failing check step reports NOT_FF_ERROR', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-'));
+  const g = (...a: string[]) => spawnSync('git', a, { cwd: repo, stdio: 'ignore' });
+  g('init', '-q'); g('config', 'user.email', 'test@example.invalid'); g('config', 'user.name', 'test');
+  fs.writeFileSync(path.join(repo, 'VERSION'), '1.2.3\n');
+  g('add', 'VERSION'); g('commit', '-q', '-m', 'init');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upg-dir-'));
+  const r = runInChild(
+    `
+    const hc = await import('./server/host-control.ts');
+    const bus = await import('./server/bus.js');
+    const events = [];
+    bus.subscribe((m) => { if (m.type === 'host') events.push(m.event); });
+    const repo = ${JSON.stringify(repo)};
+    const fs = await import('node:fs');
+    // a "pull" that bumps VERSION, so from/to differ
+    const plan = [
+      { name: 'fetch', cmd: ['true'], cwd: repo },
+      { name: 'pull', cmd: ['sh', '-c', 'echo 1.2.4 > VERSION'], cwd: repo },
+    ];
+    const job = await hc.startUpgrade('confirm', repo, plan);
+    await new Promise((r) => setTimeout(r, 400));
+    const done = hc.currentUpgrade();
+    const status = await hc.hostStatus();
+    // the fake pull dirtied VERSION — commit it, or the next call is refused as dirty
+    const { spawnSync } = await import('node:child_process');
+    spawnSync('git', ['commit', '-q', '-am', 'pulled'], { cwd: repo });
+    let ffErr = null;
+    try {
+      await hc.startUpgrade('confirm', repo, [{ name: 'check', cmd: ['false'], cwd: repo, failMessage: hc.NOT_FF_ERROR }]);
+      await new Promise((r) => setTimeout(r, 300));
+      ffErr = hc.currentUpgrade().error;
+    } catch (e) { ffErr = 'threw: ' + e.message; }
+    emit({ accepted: { when: job.when, from: job.from }, done, phase: status.phase, pending: status.pendingRestart, ffErr, events: events.map((e) => ({ kind: e.kind, needsRestart: e.needsRestart, from: e.from, to: e.to })) });
+    `,
+    { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_PORT: '', ARIGAMI_SUPERVISOR: 'systemd' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.accepted).toEqual({ when: 'confirm', from: '1.2.3' });
+  expect(o.done.ok).toBe(true);
+  expect(o.done.needsRestart).toBe(true);
+  expect(o.done.step).toBe('await-restart');
+  expect(o.done.to).toBe('1.2.4');
+  expect(o.phase).toBe('idle'); // nothing restarted
+  expect(o.pending).toBeNull();
+  expect(o.ffErr).toBe(NOT_FF_ERROR);
+  expect(o.events.filter((e: any) => e.kind === 'upgrade-done')).toEqual([{ kind: 'upgrade-done', needsRestart: true, from: '1.2.3', to: '1.2.4' }]);
 });
