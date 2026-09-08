@@ -160,7 +160,43 @@ function safeName(s: string): boolean {
   return !!s && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0');
 }
 
+// --no-wildcards-match-slash / --wildcards-match-slash are GNU-tar-only flags
+// (they control whether `*` in an --exclude pattern can cross a `/`). macOS
+// ships BSD tar (libarchive) and Windows' tar.exe is bsdtar too — both reject
+// these flags outright, and there's no equivalent bsdtar option that gives the
+// same "root-only glob" semantics ROOT_EXCLUDE_GLOBS depends on. Silently
+// dropping the flags would risk a wrong (and unnoticed) archive, so a
+// non-GNU tar is blocked with a clear reason instead — see the module header
+// for why `server/archive.js`'s pure-JS reader can't stand in here (read-only).
+export type TarFlavor = 'gnu' | 'bsd' | 'unknown';
+
+/** Pure parser for `tar --version` output, so the gnu/bsd decision is testable without spawning a real tar. */
+export function parseTarFlavor(versionOutput: string): TarFlavor {
+  if (/GNU tar/i.test(versionOutput)) return 'gnu';
+  if (/bsdtar|libarchive/i.test(versionOutput)) return 'bsd';
+  return 'unknown';
+}
+
+let _tarFlavor: TarFlavor | undefined;
+function detectTarFlavor(): TarFlavor {
+  if (_tarFlavor) return _tarFlavor;
+  try {
+    const r = spawnSync('tar', ['--version'], { encoding: 'utf8', timeout: 5000 });
+    return (_tarFlavor = parseTarFlavor(`${r.stdout || ''}${r.stderr || ''}`));
+  } catch {
+    return (_tarFlavor = 'unknown');
+  }
+}
+
 function tarArgs(extra: string[] = []): string[] {
+  const flavor = detectTarFlavor();
+  if (flavor !== 'gnu') {
+    throw new Error(
+      `backup export/import needs GNU tar (uses --wildcards-match-slash); this host's tar looks like ${
+        flavor === 'bsd' ? 'BSD tar/libarchive (the macOS/Windows default)' : 'an unrecognized tar'
+      } — install GNU tar and put it first on PATH (e.g. "brew install gnu-tar" on macOS gives "gtar"; alias/symlink it to "tar"), or export/import from a Linux host for now`
+    );
+  }
   const ex: string[] = [];
   // root-only globs: `*` must not cross a `/` so uploads/x-logs.txt is kept
   ex.push('--no-wildcards-match-slash');
