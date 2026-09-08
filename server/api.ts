@@ -17,7 +17,13 @@ import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
 import * as handoff from './handoff.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
+// desktops.js stays a direct import for ONE call only: ensureGlobalDesktop()
+// (the shared, non-per-session desktop the `desktop` JIT-setup capability
+// toggles) is x11-specific plumbing that was never meant to join the
+// ScreenDriver interface — see server/lib/screen-driver.ts. Every per-session
+// desktop operation below goes through pickDriver() instead.
 import * as desktops from './lib/desktops.js';
+import { pickDriver } from './lib/screen-driver.js';
 import * as chrome from './lib/chrome.js';
 import * as browserActions from './lib/browser-actions.js';
 import * as caps from './capabilities.js';
@@ -37,7 +43,6 @@ import {
 } from './git.js';
 import { mergeBranch, baseStatus, mergeMessage } from './merge.js';
 import fs from 'node:fs';
-import net from 'node:net';
 
 const PERMISSION_TIMEOUT_MS = Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) : 10 * 60 * 1000; // env: tests only
 // CHAT1: a "Question for you" card is a conversation, not a tool gate — the
@@ -799,7 +804,7 @@ async function handleScreenRequest(
   // connect, metadata.screen should already point at this session's own
   // machine, not the global one. A failed allocation (binary missing, ports
   // exhausted) isn't fatal — screenTarget() falls back to the global desktop.
-  try { await desktops.ensureDesktop(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
+  try { await pickDriver().ensure(sessionId!); } catch (e) { console.error('[screen] desktop alloc failed for', sessionId, (e as Error).message); }
   const promise = new Promise<ScreenRequestResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingScreenRequests.delete(requestId);
@@ -1337,7 +1342,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
       chrome.closeChrome(hid);
       await chrome.syncProfileToBase(hid).catch(() => {});
       if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(hid);
-      desktops.releaseDesktop(hid);
+      pickDriver().release(hid);
       artifacts.removeSession(hid);
       state.deleteSession(hid);
     }
@@ -2820,22 +2825,6 @@ function triggerMemoryEpisode(id: string, trigger: string): void {
   })();
 }
 
-// Quick reachability probe for the configured VNC server — lets the client
-// hide the screen-share icon cleanly on a machine where setup hasn't run yet,
-// instead of showing a button that fails on click.
-function probeVnc(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host, port, timeout: 800 });
-    const done = (ok: boolean) => {
-      sock.destroy();
-      resolve(ok);
-    };
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-    sock.once('timeout', () => done(false));
-  });
-}
-
 let VERSION = '0.0.0';
 try {
   VERSION = JSON.parse(fs.readFileSync(path.join(resourceRoot(), 'package.json'), 'utf8')).version || VERSION;
@@ -3514,10 +3503,8 @@ export async function handle(
       // own desktop or the shared fallback — the machine side panel must never
       // render the fallback as if it were the session's, see ScreenSidePanel.jsx.
       const sessionId = u.searchParams.get('session') || undefined;
-      const own = !!sessionId && !!(state.getSession(sessionId)?.metadata as any)?.screen?.vncPort;
-      const target = desktops.screenTarget(sessionId);
-      const available = !!cfg.screen?.enabled && (await probeVnc(target.vncHost, target.vncPort));
-      return json(res, { available, ...(sessionId ? { display: target.display, own } : {}) });
+      const st = await pickDriver().status(sessionId);
+      return json(res, { available: st.available, ...(sessionId ? { display: st.display, own: st.own } : {}) });
     }
     // Settings → screen: the VNC-auth password. Never echoed back — the UI
     // only learns whether one is set. Empty string clears it.
@@ -4754,7 +4741,7 @@ export async function handle(
       // just leaves the session on the lazy path (first request_screen/
       // capture_screen/browser-open allocates it instead).
       if (body.needsScreen) {
-        try { await desktops.ensureDesktop(s.id); } catch (e) { console.error('[desktop] needs_screen alloc failed:', (e as Error).message); }
+        try { await pickDriver().ensure(s.id); } catch (e) { console.error('[desktop] needs_screen alloc failed:', (e as Error).message); }
       }
       spawnSafe(s.id);
       // Only build a skill/ticket-fallback prompt when the caller gave us
@@ -4834,7 +4821,7 @@ export async function handle(
           // copy is kept (only removed on DELETE) so unarchiving picks up where
           // it left off.
           chrome.closeChrome(id);
-          desktops.releaseDesktop(id);
+          pickDriver().release(id);
           triggerMemoryEpisode(id, 'archive');
 
           if (u.searchParams.get('runCleanup') === 'true') {
@@ -4853,7 +4840,7 @@ export async function handle(
         // (T8 §4) — independent of whether the profile copy itself survives.
         await chrome.syncProfileToBase(id).catch(() => {});
         if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
-        desktops.releaseDesktop(id);
+        pickDriver().release(id);
         const cleanup =
           u.searchParams.get('runCleanup') === 'true'
             ? await runCleanup(s)
@@ -5397,8 +5384,8 @@ export async function handle(
     // machine" from a button instead of only the agent.
     if (sub === 'screen/allocate' && m === 'POST') {
       try {
-        const info = await desktops.ensureDesktop(id);
-        return json(res, { ok: true, display: info.display });
+        const info = await pickDriver().ensure(id);
+        return json(res, { ok: true, display: String(info.display) });
       } catch (e) {
         return json(res, { ok: false, error: (e as Error).message }, 503);
       }

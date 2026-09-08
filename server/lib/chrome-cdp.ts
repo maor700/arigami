@@ -15,14 +15,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { chromeSessionDir } from './chrome.js';
-import * as state from '../state.js';
-import { resourceRoot } from './resource-root.js';
+import { pickDriver } from './screen-driver.js';
 
 export type ChromeTab = { id: string; type: string; url: string; title: string; webSocketDebuggerUrl?: string };
-
-const XINPUT = path.join(resourceRoot(), 'skills', '_lib', 'xinput.py');
 
 /** The DevTools port Chrome wrote for this session's profile, or null. */
 export function cdpPort(sessionId: string, profileDir = chromeSessionDir(sessionId)): number | null {
@@ -155,20 +151,11 @@ export async function pageScroll(sessionId: string, x: number, y: number, deltaX
   await cdpCall(page.webSocketDebuggerUrl!, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY });
 }
 
-function xinputType(display: string, text: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const p = spawn('python3', [XINPUT, 'type', text], { env: { ...process.env, DISPLAY: display }, stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    p.stderr.on('data', (d) => { err += d; });
-    p.on('error', reject);
-    p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || `xinput exit ${code}`))));
-  });
-}
-
 /**
  * Type `text` into whatever has focus on the session's desktop: CDP
- * Input.insertText on the front tab (unicode ok), else XTEST (ASCII only).
- * Never logs the text — it may be a one-time code.
+ * Input.insertText on the front tab (unicode ok), else the screen driver's
+ * own typeText (XTEST on x11 — ASCII only). Never logs the text — it may be
+ * a one-time code.
  */
 export async function typeIntoDesktop(sessionId: string, text: string, press?: 'Enter'): Promise<{ ok: true; via: 'cdp' | 'xinput' }> {
   if (!text) throw new Error('empty text');
@@ -182,16 +169,6 @@ export async function typeIntoDesktop(sessionId: string, text: string, press?: '
     }
     return { ok: true, via: 'cdp' };
   }
-  const s = state.getSession(sessionId);
-  const display = (s?.metadata as any)?.screen?.display as string | undefined;
-  if (!display) throw new Error('no browser or desktop for this session');
-  await xinputType(display, text);
-  if (press === 'Enter') {
-    await new Promise<void>((resolve, reject) => {
-      const p = spawn('python3', [XINPUT, 'key', 'Return'], { env: { ...process.env, DISPLAY: display }, stdio: 'ignore' });
-      p.on('error', reject);
-      p.on('exit', () => resolve());
-    });
-  }
-  return { ok: true, via: 'xinput' };
+  const r = await pickDriver().typeText(sessionId, text, press);
+  return { ok: true, via: r.via as 'xinput' };
 }
