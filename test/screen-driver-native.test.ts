@@ -54,14 +54,24 @@ test('pickDriver: ARIGAMI_SCREEN_DRIVER overrides the platform decision either w
   expect(out.forcedX11).toBe('x11');
 });
 
-test('native driver: browserLaunch never adds DISPLAY and never maximizes', () => {
+test('native driver: browserLaunch STRIPS an ambient DISPLAY/XAUTHORITY/WAYLAND_DISPLAY, never maximizes', () => {
+  // The bug this guards: `env: {...process.env}` alone is not enough — if
+  // the HOST process itself happens to have DISPLAY set (a systemd unit, a
+  // dev shell, another session's Xvfb elsewhere in this same process), that
+  // leaks into Chrome and silently redirects it off the user's real screen.
+  // Setting these three in the child's ambient env here (not asserting
+  // against whatever this test runner happens to have) is what makes this
+  // test fail against the old `{...process.env}`-only code and pass now.
   const out = inChild(
     "const {createNativeDriver}=await import('./server/lib/screen-driver-native.ts');" +
     "const d=createNativeDriver();" +
     "const {env,extraArgs}=await d.browserLaunch('s1');" +
-    "emit({displayUnset: env.DISPLAY===undefined, extraArgs});"
+    "emit({display: env.DISPLAY, xauth: env.XAUTHORITY, wayland: env.WAYLAND_DISPLAY, extraArgs});",
+    { DISPLAY: ':99', XAUTHORITY: '/tmp/fake-xauth', WAYLAND_DISPLAY: 'wayland-0' }
   );
-  expect(out.displayUnset).toBe(true);
+  expect(out.display).toBeUndefined();
+  expect(out.xauth).toBeUndefined();
+  expect(out.wayland).toBeUndefined();
   expect(out.extraArgs).not.toContain('--start-maximized');
   expect(out.extraArgs.some((a: string) => a.startsWith('--window-size='))).toBe(true);
   expect(out.extraArgs.some((a: string) => a.startsWith('--window-position='))).toBe(true);

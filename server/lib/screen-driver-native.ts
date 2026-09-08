@@ -51,16 +51,34 @@ export function createNativeDriver(): ScreenDriver {
     },
 
     async childEnv(_sessionId) {
-      return {}; // no DISPLAY-equivalent for a spawned `claude` process to need
+      // Returns {} — never {...process.env} — so there is nothing here for
+      // an ambient DISPLAY/XAUTHORITY to leak through (same class of bug as
+      // browserLaunch below). Not that it matters yet: claude.js spawns the
+      // session's own process synchronously and reads the driver's
+      // synchronous peek() instead (this method can't be awaited from
+      // there) — see server/claude.js's own comment on that call site.
+      return {};
     },
 
     async browserLaunch(_sessionId) {
-      // No DISPLAY to set — Chrome opens directly on the user's real screen.
-      // Deliberately no --start-maximized: on a real monitor that takes over
-      // the whole desktop, which is exactly what a native window must not
-      // do. An ordinary, movable, reasonably-sized window instead.
+      // Deliberately DELETE DISPLAY/XAUTHORITY/WAYLAND_DISPLAY rather than
+      // just not setting them: process.env is ambient — this host process
+      // may itself be running with a stray DISPLAY (a systemd unit's env, a
+      // dev shell, another session's Xvfb from the x11 driver elsewhere in
+      // this same process). Forwarding that would silently open Chrome on
+      // whatever unrelated display happens to be set instead of the user's
+      // real screen — exactly the bug this driver exists to prevent. The
+      // OS's own windowing APIs find the real screen without any of these;
+      // nothing needs to be added, only these three ever need removing.
+      // No --start-maximized either: on a real monitor that takes over the
+      // whole desktop, which a native window must never do — an ordinary,
+      // movable, reasonably-sized window instead.
+      const env = { ...process.env };
+      delete env.DISPLAY;
+      delete env.XAUTHORITY;
+      delete env.WAYLAND_DISPLAY;
       return {
-        env: { ...process.env },
+        env,
         extraArgs: ['--window-size=1280,900', '--window-position=48,48'],
       };
     },
