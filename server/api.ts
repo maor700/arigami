@@ -473,9 +473,9 @@ async function handleHostImport(
   let file = '';
   try {
     file = await spoolUpload(req, bk.TMP_DIR);
-    const { kind } = bk.detectArchive(file);
+    const { kind } = await bk.detectArchive(file);
     if (kind === 'bundle') {
-      const unpacked = bk.unpackBundle(file);
+      const unpacked = await bk.unpackBundle(file);
       const pf = await import('./profiles.js');
       const report = await pf.applySource(unpacked.dir);
       broadcast({ type: 'host', event: { kind: 'import-done', mode: 'bundle', name: unpacked.name } });

@@ -218,7 +218,7 @@ test('bundle export: profile.json + skills + memory-seed + cron + README, and NO
   const r2 = runInChild(
     `const bk = await import('./server/backup.ts'); const fs = await import('node:fs');
      const t = bk.tarDir(${JSON.stringify(out)}, 'b.tgz'); const w = fs.createWriteStream(${JSON.stringify(tgz)}); t.stream.pipe(w);
-     await t.done; await new Promise(r => w.on('finish', r)); emit(bk.detectArchive(${JSON.stringify(tgz)}).kind);`,
+     await t.done; await new Promise(r => w.on('finish', r)); emit((await bk.detectArchive(${JSON.stringify(tgz)})).kind);`,
     { ARIGAMI_DIR: dir },
   );
   expect(r2.ok).toBe(true);
@@ -256,7 +256,7 @@ test('bundle export: name is exported-host (or --name) — never the last applie
   expect(c.readme).not.toMatch(/review before sharing/);
 }, 60_000);
 
-test('full export of a multi-MB dir returns promptly (file finish before tar close must not hang)', () => {
+test('full export of a multi-MB dir returns promptly (file finish before tar close must not hang)', async () => {
   // F4 #1: on a big archive the write stream finished BEFORE tar's close
   // settled `done`; the CLI then awaited a 'finish' that had already fired.
   const dir = fakeInstance(path.join(tmp(), 'inst'));
@@ -277,7 +277,7 @@ test('full export of a multi-MB dir returns promptly (file finish before tar clo
   expect(r.out[0]).toEqual({ kind: 'arigami-backup', code: 0 });
   expect(Date.now() - t0).toBeLessThan(20_000); // the child harness times out at 30 s; the old code hung forever
   expect(fs.statSync(out).size).toBeGreaterThan(4 * 1024 * 1024);
-  expect(bk.detectArchive(tgz).kind).toBe('bundle');
+  expect((await bk.detectArchive(tgz)).kind).toBe('bundle');
 }, 60_000);
 
 test('bundle export refuses to write inside $ARIGAMI_DIR (other than tmp/)', () => {
@@ -394,17 +394,17 @@ function makeArchive(files: Record<string, string>, manifest: unknown, extraTar:
 
 const goodManifest = (over: Record<string, unknown> = {}) => ({ kind: 'arigami-backup', format: bk.BACKUP_FORMAT, version: '0.0.1', commit: 'abc', createdAt: 'now', host: {}, include: null, excludes: [], ...over });
 
-test('import refuses a newer major version / newer format / non-backup / unsafe paths', () => {
+test('import refuses a newer major version / newer format / non-backup / unsafe paths', async () => {
   const newer = makeArchive({ 'config.json': '{}' }, goodManifest({ version: '99.0.0' }));
-  expect(() => bk.readManifestFromArchive(newer)).toThrow(/newer than this host/);
+  await expect(bk.readManifestFromArchive(newer)).rejects.toThrow(/newer than this host/);
   const fmt = makeArchive({ 'config.json': '{}' }, goodManifest({ format: bk.BACKUP_FORMAT + 1 }));
-  expect(() => bk.readManifestFromArchive(fmt)).toThrow(/newer than this host/);
+  await expect(bk.readManifestFromArchive(fmt)).rejects.toThrow(/newer than this host/);
   const none = makeArchive({ 'config.json': '{}' }, undefined);
-  expect(() => bk.readManifestFromArchive(none)).toThrow(/not an Arigami backup/);
-  expect(() => bk.detectArchive(none)).toThrow(/neither/);
+  await expect(bk.readManifestFromArchive(none)).rejects.toThrow(/not an Arigami backup/);
+  await expect(bk.detectArchive(none)).rejects.toThrow(/neither/);
   // a bundle archive is recognised as such
   const bundle = makeArchive({ 'profile.json': '{"name":"x"}' }, undefined);
-  expect(bk.detectArchive(bundle).kind).toBe('bundle');
+  expect((await bk.detectArchive(bundle)).kind).toBe('bundle');
   // an entry escaping the root
   const root = tmp('arigami-esc-');
   fs.mkdirSync(path.join(root, 'in'));
@@ -412,7 +412,7 @@ test('import refuses a newer major version / newer format / non-backup / unsafe 
   fs.writeFileSync(path.join(root, 'in', bk.MANIFEST_NAME), JSON.stringify(goodManifest()));
   const esc = path.join(root, 'esc.tgz');
   spawnSync('tar', ['-P', '-czf', esc, '-C', path.join(root, 'in'), '.', '../evil']);
-  expect(() => bk.readManifestFromArchive(esc)).toThrow(/unsafe path/);
+  await expect(bk.readManifestFromArchive(esc)).rejects.toThrow(/unsafe path/);
 }, 60_000);
 
 test('importFull: stop-the-world guard (409 unless force)', async () => {
@@ -483,6 +483,117 @@ test('full export → importFull round-trips a whole instance', async () => {
     expect(fs.readFileSync(path.join(dst, f), 'utf8')).toBe(fs.readFileSync(path.join(src, f), 'utf8'));
   expect(fs.existsSync(path.join(dst, 'chrome-sessions'))).toBe(false);
   expect(fs.existsSync(path.join(dst, 'logs'))).toBe(false);
+}, 60_000);
+
+// ---- ARIGAMI_TAR=js (dispatch/js-tar) ------------------------------------------------------------
+// The pure-JS tar (server/lib/tar.ts) behind the ARIGAMI_TAR=js flag — its own
+// unit tests live in test/tar-js.test.ts (glob-exclude parity with real GNU
+// tar, byte-level create/extract interop). These prove it end-to-end through
+// backup.ts's public API: the exact same fixtures/assertions as the system-tar
+// tests above, just with the flag on, so a regression in the wiring (not the
+// tar engine itself) shows up here.
+
+test('ARIGAMI_TAR=js: full export → importFull round-trips a whole instance, same as the system-tar path', async () => {
+  const src = fakeInstance(path.join(tmp(), 'src'));
+  const out = path.join(tmp(), 'full-js.tgz');
+  const r = runInChild(`const bk = await import('./server/backup.ts'); emit(await bk.exportFullToFile(${JSON.stringify(out)}));`, { ARIGAMI_DIR: src, ARIGAMI_TAR: 'js' });
+  expect(r.ok).toBe(true);
+  // the archive itself is real GNU-tar-openable, not just JS-readable
+  expect(tarList(out)).toContain(bk.MANIFEST_NAME);
+
+  const dst = path.join(tmp(), 'dst-js');
+  const prev = process.env.ARIGAMI_TAR;
+  process.env.ARIGAMI_TAR = 'js';
+  try {
+    await bk.importFull(out, { dir: dst, busyCount: () => 0 });
+  } finally {
+    if (prev === undefined) delete process.env.ARIGAMI_TAR; else process.env.ARIGAMI_TAR = prev;
+  }
+  for (const f of ['config.json', 'accounts.json', 'secrets.env', 'users.json', 'chat/s1.jsonl', 'memory/USER.md', 'memory/memory.sqlite', 'skills/exported-skill/SKILL.md', 'uploads/a.txt', 'state.json', 'triggers.json', 'repos.json'])
+    expect(fs.readFileSync(path.join(dst, f), 'utf8')).toBe(fs.readFileSync(path.join(src, f), 'utf8'));
+  expect(fs.existsSync(path.join(dst, 'chrome-sessions'))).toBe(false);
+  expect(fs.existsSync(path.join(dst, 'logs'))).toBe(false);
+  expect(fs.existsSync(path.join(dst, '.credentials.json'))).toBe(false);
+}, 60_000);
+
+test('ARIGAMI_TAR=js: bundle export → tarDir → unpackBundle round-trips (and the tarball opens with real tar)', async () => {
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  const tgz = path.join(tmp(), 'bundle-js.tgz');
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts'); const tr = await import('./server/triggers.ts'); tr.load();
+     const b = bk.exportBundle({ cron: tr.listTriggers() }); const t = bk.tarDir(b.dir, 'b.tgz');
+     const code = await bk.exportToFile(t, ${JSON.stringify(tgz)}); t.cleanup();
+     emit({ code, kind: (await bk.detectArchive(${JSON.stringify(tgz)})).kind });`,
+    { ARIGAMI_DIR: dir, ARIGAMI_TAR: 'js' },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ code: 0, kind: 'bundle' });
+  expect(tarList(tgz)).toContain('profile.json'); // real GNU tar can read what we wrote
+
+  const dst = path.join(tmp(), 'dst-bundle-js');
+  fs.mkdirSync(dst, { recursive: true });
+  const r2 = runInChild(
+    `const bk = await import('./server/backup.ts'); const pf = await import('./server/profiles.ts'); const tr = await import('./server/triggers.ts'); tr.load();
+     const u = await bk.unpackBundle(${JSON.stringify(tgz)}); const rep = await pf.applySource(u.dir); tr.flush();
+     emit(rep);`,
+    { ARIGAMI_DIR: dst, ARIGAMI_TAR: 'js' },
+  );
+  expect(r2.ok).toBe(true);
+  expect(r2.out[0].errors).toEqual([]);
+  expect(r2.out[0].repos).toEqual(['demo-app']);
+}, 60_000);
+
+test('ARIGAMI_TAR=js: an archive made by real system tar (an old, pre-migration backup) still imports correctly', async () => {
+  const dir = path.join(tmp(), 'inst');
+  fakeInstance(dir);
+  const arch = makeArchive(
+    { 'config.json': '{"restored":true}', 'memory/USER.md': '- restored user\n', 'run/host.pid': '999', 'chrome-sessions/x': 'y' },
+    goodManifest({ version: '0.0.9' }),
+  );
+  const prev = process.env.ARIGAMI_TAR;
+  process.env.ARIGAMI_TAR = 'js';
+  let r: Awaited<ReturnType<typeof bk.importFull>>;
+  try {
+    r = await bk.importFull(arch, { dir, busyCount: () => 0 });
+  } finally {
+    if (prev === undefined) delete process.env.ARIGAMI_TAR; else process.env.ARIGAMI_TAR = prev;
+  }
+  expect(r.manifest.version).toBe('0.0.9');
+  expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'))).toEqual({ restored: true });
+  expect(fs.readFileSync(path.join(dir, 'memory/USER.md'), 'utf8')).toBe('- restored user\n');
+  // run/ from the archive is dropped in favor of this host's own — same exclude semantics as the system-tar path
+  expect(fs.existsSync(path.join(dir, 'chrome-sessions'))).toBe(false);
+}, 60_000);
+
+test('non-GNU system tar: the JS implementation is used automatically instead of the old hard block (base-branch regression: this used to throw "needs GNU tar")', () => {
+  const fakeBinDir = tmp('fake-bsdtar-');
+  // A stand-in for macOS/Windows' tar: answers --version like libarchive's
+  // bsdtar, and hard-fails anything else so this test proves the real `tar`
+  // binary is never invoked for the actual archive work.
+  fs.writeFileSync(
+    path.join(fakeBinDir, 'tar'),
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "bsdtar 3.5.3 - libarchive 3.5.3 zlib/1.2.11"; exit 0; fi\necho "FAKE TAR MUST NOT BE INVOKED FOR ARCHIVE OPS: $*" >&2\nexit 99\n'
+  );
+  fs.chmodSync(path.join(fakeBinDir, 'tar'), 0o755);
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  const ROOT = path.resolve(import.meta.dir, '..');
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARIGAMI_DIR: dir };
+  delete (env as any).ARIGAMI_TAR; // no explicit flag — only the non-GNU tar should trigger the JS fallback
+  const full = path.join(tmp(), 'nongnu.tgz');
+  const r = spawnSync('bun', ['server/backup.ts', 'export', '--full', full], { cwd: ROOT, encoding: 'utf8', env, timeout: 30_000 });
+  expect(r.stderr).not.toMatch(/needs GNU tar/);
+  expect(r.stderr).not.toMatch(/FAKE TAR MUST NOT BE INVOKED/);
+  expect(r.status).toBe(0);
+  const parsed = JSON.parse(r.stdout);
+  expect(parsed.ok).toBe(true);
+  // produced with the fake tar poisoning PATH — verify with the REAL system tar (absolute path), unpoisoned
+  const realTar = spawnSync('/usr/bin/tar', ['-tzf', full], { encoding: 'utf8' });
+  expect(realTar.status).toBe(0);
+  expect(realTar.stdout).toMatch(new RegExp(bk.MANIFEST_NAME.replace('.', '\\.')));
+
+  const inspect = spawnSync('bun', ['server/backup.ts', 'inspect', full], { cwd: ROOT, encoding: 'utf8', env, timeout: 30_000 });
+  expect(inspect.status).toBe(0);
+  expect(JSON.parse(inspect.stdout).kind).toBe('full');
 }, 60_000);
 
 // ---- CLI ----------------------------------------------------------------------------------------
