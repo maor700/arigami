@@ -10,8 +10,11 @@
 // instead, so a future macOS/Windows implementation is a second file behind
 // `pickDriver()`, not a rewrite of chrome.ts/api.ts/screenshots.ts.
 //
-// `pickDriver()` returns the x11 implementation unconditionally for now —
-// see screen-driver-x11.ts. No native-window implementation exists yet.
+// `pickDriver()` picks x11 on Linux (dev checkout or a Linux desktop build)
+// and native-window everywhere else — see screen-driver-x11.ts and
+// screen-driver-native.ts. ARIGAMI_SCREEN_DRIVER forces either one, mainly
+// so native-window can be exercised on a Linux dev box that has no real
+// desktop-app build to run.
 
 /**
  * Opaque per-session (or global) desktop handle. Callers must not read
@@ -67,20 +70,37 @@ export interface ScreenDriver {
   status(sessionId?: string | null): Promise<{ available: boolean; own: boolean; detail?: string; display?: string }>;
 }
 
-/** Always the x11 driver today — no native-window implementation exists yet. `env` is injectable for tests. */
-export function pickDriver(env: NodeJS.ProcessEnv = process.env): ScreenDriver {
-  void env; // reserved: a future native-window driver will switch on process.platform / env here
+/**
+ * x11 on Linux, native-window everywhere else (a compiled desktop build is
+ * never Linux+Xvfb — see isCompiledBinary()'s own doc for why that signal,
+ * not just `process.platform`, is what actually distinguishes "dev checkout"
+ * from "shipped app"). `env`/`platform` are injectable for tests.
+ * ARIGAMI_SCREEN_DRIVER=x11|native-window overrides the decision outright —
+ * the only way to exercise native-window on a Linux dev box.
+ */
+export function pickDriver(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): ScreenDriver {
+  const forced = env.ARIGAMI_SCREEN_DRIVER;
+  if (forced === 'native-window') return nativeDriver();
+  if (forced === 'x11') return x11Driver();
+  if (platform !== 'linux' || isCompiledBinary()) return nativeDriver();
   return x11Driver();
 }
 
 // Lazy import + singleton: screen-driver-x11.ts pulls in desktops.ts/vnc.ts,
-// which have their own module-level state (the `alive`/`pending` maps) — a
-// static top-level import here would be fine too, but keeping construction
-// behind a function makes the eventual `if (platform !== 'linux') return macDriver()`
-// branch a one-line change instead of a restructure.
+// which have their own module-level state (the `alive`/`pending` maps) —
+// keeping construction behind a function (rather than constructing at
+// top-level import time) is what made the native-window branch above a
+// one-line addition instead of a restructure.
 import { createX11Driver } from './screen-driver-x11.js';
+import { createNativeDriver } from './screen-driver-native.js';
+import { isCompiledBinary } from './resource-root.js';
 let _x11: ScreenDriver | null = null;
 function x11Driver(): ScreenDriver {
   if (!_x11) _x11 = createX11Driver();
   return _x11;
+}
+let _native: ScreenDriver | null = null;
+function nativeDriver(): ScreenDriver {
+  if (!_native) _native = createNativeDriver();
+  return _native;
 }

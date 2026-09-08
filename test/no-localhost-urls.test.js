@@ -24,6 +24,7 @@ const ALLOW = [
   ['server/api.ts', 'req.headers.host ||'], // request-URL parsing base
   ['server/api.ts', "new URL(req.url || '/', 'http://localhost')"], // URL parsing base
   ['server/vnc.ts', "new URL(req.url || '/', 'http://localhost')"], // URL parsing base
+  ['server/screencast.ts', "new URL(req.url || '/', 'http://localhost')"], // URL parsing base
   ['server/remote.js', 'tailscale'], // hands the loopback to `tailscale serve`
   ['server/remote.js', "'serve', '--bg'"],
   ['server/voice.js', '"open localhost:3000"'], // prose example in the voice router prompt

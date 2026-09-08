@@ -117,7 +117,9 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--password-store=basic',
     '--no-first-run',
     '--no-default-browser-check',
-    '--start-maximized',
+    // Window sizing/positioning is driver-specific (see browserLaunch below):
+    // x11's virtual screen wants --start-maximized, a native-window desktop
+    // must NOT get it (it would take over the user's real monitor).
     // F8: loopback DevTools port (Chrome writes it to <profile>/DevToolsActivePort)
     // so the host can read the take-over browser's tabs / type into it — see chrome-cdp.ts.
     '--remote-debugging-port=0',

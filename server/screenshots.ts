@@ -27,7 +27,7 @@ export interface ScreenshotEvent {
   height?: number;
   auto?: boolean;      // taken by the Watch-mode timer, not by the agent
   requestId?: string;  // the request_screen card it belongs to (auto only)
-  via: 'rfb' | 'x11';
+  via: 'rfb' | 'x11' | 'cdp'; // driver-defined; 'cdp' is native-window's (see screen-driver-native.ts)
 }
 
 const FILE_RE = /^[A-Za-z0-9_-]+\.png$/;
@@ -113,7 +113,7 @@ export async function takeScreenshot(
     url: `/__api/sessions/${sessionId}/screens/${file}`,
     file,
     ts,
-    via: cap.via as 'rfb' | 'x11', // driver-defined; the x11 driver only ever returns these two
+    via: cap.via as ScreenshotEvent['via'],
     ...(opts.caption ? { caption: opts.caption } : {}),
     ...(width ? { width, height } : {}),
     ...(opts.auto ? { auto: true } : {}),
