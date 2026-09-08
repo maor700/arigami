@@ -79,7 +79,11 @@ export function createX11Driver(): ScreenDriver {
 
     async browserLaunch(sessionId) {
       const info = await desktops.ensureDesktop(sessionId);
-      return { env: { ...process.env, DISPLAY: info.display }, extraArgs: [] };
+      // --start-maximized used to be hardcoded in chrome.ts for every driver;
+      // it now lives here because it's an x11-only need — Xvfb's virtual
+      // screen has no window manager, so an unmaximized Chrome opens at
+      // whatever default size Chrome picks, cropped by the screen edges.
+      return { env: { ...process.env, DISPLAY: info.display }, extraArgs: ['--start-maximized'] };
     },
 
     async capture(sessionId) {

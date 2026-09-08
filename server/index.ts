@@ -10,6 +10,7 @@ import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
 import * as vnc from './vnc.js';
+import * as screencast from './screencast.js';
 import { killAll, kickAutoPlayAll } from './claude.js';
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
@@ -305,11 +306,14 @@ server.on(
     // and kills the process (with it, every running Claude session). Guard it.
     try {
       const pathname = (req.url || '').split('?')[0];
-      // C1: /__ws, /__vnc and the SW proxy's websockets all need the cookie
-      // (or an internal bearer) — an anonymous upgrade is answered 401 + closed.
+      // C1: /__ws, /__vnc, /__screencast and the SW proxy's websockets all
+      // need the cookie (or an internal bearer) — an anonymous upgrade is
+      // answered 401 + closed.
       if (auth.gateUpgrade(req, socket)) return;
       if (pathname === '/__ws') return bus.handleUpgrade(req, socket, head);
       if (pathname === '/__vnc') return vnc.handleUpgrade(req, socket, head);
+      // native-window's live view (no VNC server to bridge to there) — see screencast.ts.
+      if (pathname === '/__screencast') return screencast.handleUpgrade(req, socket, head);
       if (proxy?.handleUpgrade) return proxy.handleUpgrade(req, socket, head);
       socket.destroy();
     } catch (e) {
