@@ -16,14 +16,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { chromeSessionDir } from './chrome.js';
 import * as state from '../state.js';
+import { resourceRoot } from './resource-root.js';
 
 export type ChromeTab = { id: string; type: string; url: string; title: string; webSocketDebuggerUrl?: string };
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const XINPUT = path.resolve(HERE, '..', '..', 'skills', '_lib', 'xinput.py');
+const XINPUT = path.join(resourceRoot(), 'skills', '_lib', 'xinput.py');
 
 /** The DevTools port Chrome wrote for this session's profile, or null. */
 export function cdpPort(sessionId: string, profileDir = chromeSessionDir(sessionId)): number | null {

@@ -10,18 +10,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
 import { hasCredentials } from './accounts.js';
 import * as funnel from './funnel.js';
+import { resourceRoot } from './lib/resource-root.js';
 
 const CONFIG_DIR = cfg.configDir as string;
 const REPOS_FILE = path.join(CONFIG_DIR, 'repos.json');
 
 // profiles/ ships in the repo (server/../profiles); users can add their own.
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = resourceRoot();
 const SHIPPED_PROFILES = path.join(REPO_ROOT, 'profiles');
 const USER_PROFILES = path.join(CONFIG_DIR, 'profiles');
 

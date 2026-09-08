@@ -32,12 +32,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
 import { tilde } from './lib/platform.js';
+import { resourceRoot } from './lib/resource-root.js';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = resourceRoot();
 export const SHIPPED_BUNDLES_DIR = path.join(REPO_ROOT, 'profiles', 'bundles');
 export const USER_BUNDLES_DIR = path.join(ARIGAMI_DIR, 'profiles');
 export const PROVENANCE_FILE = path.join(ARIGAMI_DIR, 'profile.json');

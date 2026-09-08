@@ -17,13 +17,12 @@
 // (lib/pty-bridge.py on POSIX, winpty on Windows — see platform.ptyArgs).
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { ptyArgs } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
 import { broadcast } from './bus.js';
+import { resourceRoot } from './lib/resource-root.js';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BRIDGE = path.join(HERE, 'lib', 'pty-bridge.py');
+const BRIDGE = path.join(resourceRoot(), 'server', 'lib', 'pty-bridge.py');
 
 const stripAnsi = (s) =>
   s

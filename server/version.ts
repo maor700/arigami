@@ -7,8 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { resourceRoot } from './lib/resource-root.js';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = resourceRoot();
 const TTL_MS = 60_000;
 const FETCH_TTL_MS = 5 * 60_000;
 
