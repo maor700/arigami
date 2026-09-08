@@ -29,10 +29,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
 import { resourceRoot } from './lib/resource-root.js';
+import * as jsTar from './lib/tar.js';
 export { cronBundleKey };
 
 const REPO_ROOT = resourceRoot();
@@ -164,10 +165,13 @@ function safeName(s: string): boolean {
 // (they control whether `*` in an --exclude pattern can cross a `/`). macOS
 // ships BSD tar (libarchive) and Windows' tar.exe is bsdtar too — both reject
 // these flags outright, and there's no equivalent bsdtar option that gives the
-// same "root-only glob" semantics ROOT_EXCLUDE_GLOBS depends on. Silently
-// dropping the flags would risk a wrong (and unnoticed) archive, so a
-// non-GNU tar is blocked with a clear reason instead — see the module header
-// for why `server/archive.js`'s pure-JS reader can't stand in here (read-only).
+// same "root-only glob" semantics ROOT_EXCLUDE_GLOBS depends on. Rather than
+// risk a wrong (and unnoticed) archive on a non-GNU tar, lib/tar.js — a
+// streaming pure-JS tar reader/writer that implements the same glob semantics
+// itself — stands in as the default there (useJsTar() below); GNU tar stays
+// the default everywhere else. See lib/tar.js's header for why
+// `server/archive.js`'s pure-JS reader can't be reused here (in-memory,
+// zip-bomb-capped, read-only — none of which fit an uncapped streaming backup).
 export type TarFlavor = 'gnu' | 'bsd' | 'unknown';
 
 /** Pure parser for `tar --version` output, so the gnu/bsd decision is testable without spawning a real tar. */
@@ -186,6 +190,26 @@ function detectTarFlavor(): TarFlavor {
   } catch {
     return (_tarFlavor = 'unknown');
   }
+}
+
+/**
+ * `ARIGAMI_TAR=js` forces the pure-JS implementation everywhere (the escape
+ * hatch for testing it on Linux without touching the system tar). Otherwise
+ * it's automatic: GNU tar stays the default, and the JS implementation is
+ * the fallback the moment the system tar isn't GNU (macOS/Windows) — see the
+ * comment above TarFlavor for why that used to be a hard block instead.
+ */
+function useJsTar(): boolean {
+  return process.env.ARIGAMI_TAR === 'js' || detectTarFlavor() !== 'gnu';
+}
+
+/** The EXCLUDES/EXCLUDE_GLOBS/ROOT_EXCLUDE_GLOBS semantics as a JS predicate — the same two-phase (root-only, then general) matching tarArgs() builds from GNU tar's --wildcards-match-slash toggle. */
+function jsExcludeMatcher(): jsTar.ExcludeMatcher {
+  return jsTar.makeExcludeMatcher([
+    ...ROOT_EXCLUDE_GLOBS.map((pattern) => ({ pattern, slashCross: false })),
+    ...EXCLUDES.map((e) => ({ pattern: `./${e}`, slashCross: true })),
+    ...EXCLUDE_GLOBS.map((pattern) => ({ pattern, slashCross: true })),
+  ]);
 }
 
 function tarArgs(extra: string[] = []): string[] {
@@ -256,19 +280,31 @@ export function exportFull(opts: { include?: string[]; dir?: string } = {}): Exp
   const members = include
     ? include.filter((n) => !EXCLUDES.includes(n) && fs.existsSync(path.join(dir, n))).map((n) => `./${n}`)
     : ['.'];
-  const args = ['-czf', '-', ...tarArgs(['--ignore-failed-read', '-C', dir, ...members, '-C', scratch, MANIFEST_NAME])];
-  const p = spawn('tar', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let err = '';
-  p.stderr.on('data', (c) => (err += c));
-  const done = new Promise<number>((resolve) => p.on('close', (code) => resolve(code ?? 1)));
   const cleanup = () => {
     try { fs.rmSync(scratch, { recursive: true, force: true }); } catch {}
   };
-  done.then((code) => {
-    cleanup();
-    if (code !== 0 && code !== 1) console.error(`[backup] tar exited ${code}: ${err.trim().split('\n').pop()}`); // 1 = "file changed as we read it"
-  });
-  return { stream: p.stdout, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup, kill: () => { try { p.kill('SIGTERM'); } catch {} } };
+  let stream: Readable;
+  let done: Promise<number>;
+  let kill: () => void;
+  if (useJsTar()) {
+    const r = jsTar.createTarGzStream([{ dir, members }, { dir: scratch, members: [MANIFEST_NAME] }], { exclude: jsExcludeMatcher() });
+    stream = r.stream;
+    done = r.done;
+    kill = r.kill;
+  } else {
+    const args = ['-czf', '-', ...tarArgs(['--ignore-failed-read', '-C', dir, ...members, '-C', scratch, MANIFEST_NAME])];
+    const p = spawn('tar', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (c) => (err += c));
+    stream = p.stdout;
+    done = new Promise<number>((resolve) => p.on('close', (code) => resolve(code ?? 1)));
+    kill = () => { try { p.kill('SIGTERM'); } catch {} };
+    done.then((code) => {
+      if (code !== 0 && code !== 1) console.error(`[backup] tar exited ${code}: ${err.trim().split('\n').pop()}`); // 1 = "file changed as we read it"
+    });
+  }
+  done.then(cleanup);
+  return { stream, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup, kill };
 }
 
 /**
@@ -300,7 +336,7 @@ export async function exportToFile(r: ExportResult, out: string): Promise<number
 export async function exportFullToFile(out: string, opts: { include?: string[]; dir?: string } = {}): Promise<Manifest> {
   const code = await exportToFile(exportFull(opts), out);
   if (code !== 0 && code !== 1) throw new Error(`tar exited ${code}`);
-  return readManifestFromArchive(out);
+  return await readManifestFromArchive(out);
 }
 
 function ensureTmp(dir: string): string {
@@ -311,7 +347,14 @@ function ensureTmp(dir: string): string {
 
 // ---- archive inspection -----------------------------------------------------------
 
-function tarList(file: string): string[] {
+async function tarList(file: string): Promise<string[]> {
+  if (useJsTar()) {
+    try {
+      return await jsTar.listTarGz(file);
+    } catch (e) {
+      throw new ImportError(`not a readable tar.gz: ${(e as Error).message}`);
+    }
+  }
   const r = spawnSync('tar', ['-tzf', file], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) throw new ImportError(`not a readable tar.gz: ${(r.stderr || '').trim().split('\n').pop() || 'tar failed'}`);
   return r.stdout.split('\n').filter(Boolean);
@@ -326,23 +369,31 @@ export function assertSafeEntries(entries: string[]): void {
   }
 }
 
-export function readManifestFromArchive(file: string): Manifest {
-  const entries = tarList(file);
+export async function readManifestFromArchive(file: string): Promise<Manifest> {
+  const entries = await tarList(file);
   assertSafeEntries(entries);
   const name = entries.find((e) => e === MANIFEST_NAME || e === `./${MANIFEST_NAME}`);
   if (!name) throw new ImportError(`not an Arigami backup (no ${MANIFEST_NAME} at the archive root)`);
-  const r = spawnSync('tar', ['-xzOf', file, name], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  if (r.status !== 0) throw new ImportError('could not read the manifest from the archive');
+  let text: string;
+  if (useJsTar()) {
+    const buf = await jsTar.extractFileFromTarGz(file, name);
+    if (!buf) throw new ImportError('could not read the manifest from the archive');
+    text = buf.toString('utf8');
+  } else {
+    const r = spawnSync('tar', ['-xzOf', file, name], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    if (r.status !== 0) throw new ImportError('could not read the manifest from the archive');
+    text = r.stdout;
+  }
   let parsed: unknown;
-  try { parsed = JSON.parse(r.stdout); } catch { throw new ImportError(`${MANIFEST_NAME} is not valid JSON`); }
+  try { parsed = JSON.parse(text); } catch { throw new ImportError(`${MANIFEST_NAME} is not valid JSON`); }
   return checkManifest(parsed);
 }
 
 export type ArchiveKind = 'full' | 'bundle';
 
 /** What kind of archive is this? Bundles carry profile.json at the root, backups carry the manifest. */
-export function detectArchive(file: string): { kind: ArchiveKind; entries: string[] } {
-  const entries = tarList(file);
+export async function detectArchive(file: string): Promise<{ kind: ArchiveKind; entries: string[] }> {
+  const entries = await tarList(file);
   assertSafeEntries(entries);
   const has = (n: string) => entries.some((e) => e === n || e === `./${n}`);
   if (has(MANIFEST_NAME)) return { kind: 'full', entries };
@@ -366,21 +417,30 @@ export function detectArchive(file: string): { kind: ArchiveKind; entries: strin
  */
 export async function importFull(file: string, opts: ImportOptions = {}): Promise<ImportResult> {
   const dir = path.resolve(opts.dir || ARIGAMI_DIR);
-  const manifest = readManifestFromArchive(file);
+  const manifest = await readManifestFromArchive(file);
   const busy = opts.busyCount ? opts.busyCount() : 0;
   if (busy > 0 && !opts.force)
     throw new ImportError(`${busy} session(s) are working — wait for them, restart when idle, or import with force`, 409);
-  const entries = tarList(file).filter((e) => e !== MANIFEST_NAME && e !== `./${MANIFEST_NAME}`);
+  const entries = (await tarList(file)).filter((e) => e !== MANIFEST_NAME && e !== `./${MANIFEST_NAME}`);
 
   const parent = path.dirname(dir);
   const ts = stamp(opts.now ? opts.now() : new Date());
   const staging = path.join(parent, `${path.basename(dir)}.import-${ts}`);
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  const x = spawnSync('tar', ['-xzf', file, '-C', staging, ...tarArgs()], { encoding: 'utf8' });
-  if (x.status !== 0) {
-    fs.rmSync(staging, { recursive: true, force: true });
-    throw new ImportError(`extract failed: ${(x.stderr || '').trim().split('\n').pop() || 'tar failed'}`, 500);
+  if (useJsTar()) {
+    try {
+      await jsTar.extractTarGzToDir(file, staging, { exclude: jsExcludeMatcher() });
+    } catch (e) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw new ImportError(`extract failed: ${(e as Error).message}`, 500);
+    }
+  } else {
+    const x = spawnSync('tar', ['-xzf', file, '-C', staging, ...tarArgs()], { encoding: 'utf8' });
+    if (x.status !== 0) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw new ImportError(`extract failed: ${(x.stderr || '').trim().split('\n').pop() || 'tar failed'}`, 500);
+    }
   }
   // the manifest stays in the restored dir as a record of where it came from
   fs.writeFileSync(path.join(staging, MANIFEST_NAME), JSON.stringify({ ...manifest, importedAt: new Date().toISOString() }, null, 2) + '\n');
@@ -596,18 +656,31 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
 
 /** tar.gz stream of a bundle dir (the export UI download). */
 export function tarDir(dir: string, filename: string): ExportResult {
+  if (useJsTar()) {
+    const r = jsTar.createTarGzStream([{ dir, members: ['.'] }]);
+    return { stream: r.stream, filename, done: r.done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: r.kill };
+  }
   const p = spawn('tar', ['-czf', '-', '-C', dir, '.'], { stdio: ['ignore', 'pipe', 'pipe'] });
   const done = new Promise<number>((resolve) => p.on('close', (code) => resolve(code ?? 1)));
   return { stream: p.stdout, filename, done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: () => { try { p.kill('SIGTERM'); } catch {} } };
 }
 
 /** Extract a bundle archive into $ARIGAMI_DIR/profiles/<name>/ and return the dir (apply is profiles.ts's job). */
-export function unpackBundle(file: string): { dir: string; name: string } {
-  const { kind } = detectArchive(file);
+export async function unpackBundle(file: string): Promise<{ dir: string; name: string }> {
+  const { kind } = await detectArchive(file);
   if (kind !== 'bundle') throw new ImportError('archive is not a profile bundle');
   const staging = fs.mkdtempSync(path.join(ensureTmp(ARIGAMI_DIR), 'bundle-import-'));
-  const x = spawnSync('tar', ['-xzf', file, '-C', staging], { encoding: 'utf8' });
-  if (x.status !== 0) throw new ImportError(`extract failed: ${(x.stderr || '').trim().split('\n').pop() || 'tar failed'}`, 500);
+  if (useJsTar()) {
+    try {
+      await jsTar.extractTarGzToDir(file, staging, {});
+    } catch (e) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw new ImportError(`extract failed: ${(e as Error).message}`, 500);
+    }
+  } else {
+    const x = spawnSync('tar', ['-xzf', file, '-C', staging], { encoding: 'utf8' });
+    if (x.status !== 0) throw new ImportError(`extract failed: ${(x.stderr || '').trim().split('\n').pop() || 'tar failed'}`, 500);
+  }
   const mf = readJson(path.join(staging, 'profile.json'));
   const name = String(mf?.name || '');
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) { fs.rmSync(staging, { recursive: true, force: true }); throw new ImportError('profile.json has no valid "name"'); }
@@ -650,9 +723,9 @@ if (import.meta.main) {
     } else if (cmd === 'import') {
       const file = positional[0];
       if (!file) throw new Error('usage: import <file.tgz> [--force]');
-      const { kind } = detectArchive(file);
+      const { kind } = await detectArchive(file);
       if (kind === 'bundle') {
-        const u = unpackBundle(file);
+        const u = await unpackBundle(file);
         const pf = await import('./profiles.js');
         const tr = await import('./triggers.js');
         tr.load();
@@ -665,8 +738,8 @@ if (import.meta.main) {
       }
     } else if (cmd === 'inspect') {
       const file = positional[0];
-      const d = detectArchive(file);
-      out({ kind: d.kind, entries: d.entries.length, manifest: d.kind === 'full' ? readManifestFromArchive(file) : null });
+      const d = await detectArchive(file);
+      out({ kind: d.kind, entries: d.entries.length, manifest: d.kind === 'full' ? await readManifestFromArchive(file) : null });
     } else {
       process.stderr.write('usage: bun server/backup.ts export --full [out.tgz] [--include a,b] | export --bundle [out-dir|out.tgz] [--name n] [--no-memory] | import <file.tgz> [--force] | inspect <file>\n');
       process.exitCode = 2;
