@@ -111,3 +111,40 @@ linuxOnly('global desktop: when everything is free it spawns Xvfb :99 then x11vn
   expect(r.reason).toMatch(/Xvfb did not come up/);
   expect(spawned[0]).toEqual(['/usr/bin/Xvfb', ':987', '-screen', '0', '1280x800x24', '-nolisten', 'tcp']);
 });
+
+// Platform-bugs fix: per-session desktops (spawnDesktop/ensureDesktop) need
+// Xvfb+x11vnc, Linux-only. `desktopUnsupportedReason` is the pure gate that
+// keeps a macOS/Windows call from ever reaching spawn('Xvfb') and its opaque
+// 5s waitForFile timeout — platform is injected so this needs no real mock of
+// process.platform.
+import { desktopUnsupportedReason } from '../server/lib/desktops.ts';
+
+test('desktopUnsupportedReason: linux is supported, everything else gets a clear reason', () => {
+  expect(desktopUnsupportedReason('linux')).toBeNull();
+  expect(desktopUnsupportedReason('darwin')).toMatch(/darwin/);
+  expect(desktopUnsupportedReason('darwin')).toMatch(/Linux/);
+  expect(desktopUnsupportedReason('win32')).toMatch(/win32/);
+});
+
+test('desktopUnsupportedReason defaults to the real process.platform when not given one', () => {
+  expect(desktopUnsupportedReason()).toBe(process.platform === 'linux' ? null : expect.any(String));
+});
+
+test('ensureDesktop rejects immediately (no Xvfb spawn attempt) on a non-Linux platform', () => {
+  // Isolated in a child: state.js needs its own ARIGAMI_DIR/session, and we
+  // don't want a real spawn attempt even if the gate were broken.
+  const r = inChild(
+    `const desktops = await import('./server/lib/desktops.ts');
+     const state = await import('./server/state.ts');
+     const s = state.createSession({ cwd: process.cwd() });
+     let threw = null;
+     const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+     Object.defineProperty(process, 'platform', { value: 'darwin' });
+     try { await desktops.ensureDesktop(s.id); } catch (e) { threw = e.message; }
+     Object.defineProperty(process, 'platform', realPlatform);
+     emit({ threw });`
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].threw).toMatch(/darwin/);
+  expect(r.out[0].threw).toMatch(/Linux/);
+});

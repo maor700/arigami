@@ -115,6 +115,19 @@ function waitForPort(port: number, host: string, timeoutMs: number): Promise<voi
   });
 }
 
+/**
+ * Per-session desktops need Xvfb+x11vnc, which only exist on Linux. Without
+ * this gate, spawnDesktop() on macOS/Windows called `spawn('Xvfb', …)`, got an
+ * async ENOENT, and waitForFile() sat out its full 5s timeout with an opaque
+ * "timed out waiting for /tmp/.X11-unix/X…" — repeated on every call, since
+ * nothing remembered the failure. `platform` is injectable for testing
+ * without mocking the real process.platform.
+ */
+export function desktopUnsupportedReason(platform: NodeJS.Platform = process.platform): string | null {
+  if (platform === 'linux') return null;
+  return `per-session desktop is unsupported on ${platform} — Xvfb/x11vnc only run on Linux, so screen-share and in-session browser features are unavailable on this host`;
+}
+
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
@@ -157,6 +170,8 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
 
 /** Lazily spawn (or reuse) this session's desktop. Throws on allocation/spawn failure — callers should fall back to the global desktop rather than fail the caller's whole flow. */
 export function ensureDesktop(sessionId: string): Promise<DesktopInfo> {
+  const unsupported = desktopUnsupportedReason();
+  if (unsupported) return Promise.reject(new Error(unsupported));
   if (!cfg.screen?.enabled) return Promise.reject(new Error('screen share disabled'));
   const s = state.getSession(sessionId);
   if (!s) return Promise.reject(new Error(`unknown session: ${sessionId}`));
