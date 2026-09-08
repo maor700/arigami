@@ -23,6 +23,9 @@ import { WhoAmI, UsersAdvanced, ScreenShare, DangerZone } from './Access.jsx';
 
 export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-legacy', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
 
+// VER1: sessionStorage is absent when the page is rendered server-side (tests).
+const ss = () => (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+
 // VER1: numeric-triple compare ("0.2.0" vs "0.1.9"); 0 when either side is not a version.
 function cmpVer(a, b) {
   const pa = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(a || ''));
@@ -131,7 +134,7 @@ export default function Host({ section = '' }) {
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
   const [updateErr, setUpdateErr] = useState(null); // VER1: {error, dirty?} from a refused POST /host/upgrade
-  const [dismissedJob, setDismissedJob] = useState(() => sessionStorage.getItem('host.ver.dismissed') || null);
+  const [dismissedJob, setDismissedJob] = useState(() => ss()?.getItem('host.ver.dismissed') || null);
   const [memory, setMemory] = useState(true);
   const [force, setForce] = useState(false);
   const wasDown = useRef(false);
@@ -222,7 +225,7 @@ export default function Host({ section = '' }) {
     restarting.current = true;
     act(() => hostPost(`/host/restart?when=${when}`));
   };
-  const dismissReady = (jobId) => { sessionStorage.setItem('host.ver.dismissed', jobId); setDismissedJob(jobId); };
+  const dismissReady = (jobId) => { ss()?.setItem('host.ver.dismissed', jobId); setDismissedJob(jobId); };
   // UPD1 — the `claude` CLI row. Mutations are admin-confirmed POSTs like the rest of the card.
   const cliAct = async (what, fn) => {
     setCliBusy(what);
@@ -319,7 +322,7 @@ export default function Host({ section = '' }) {
             )}
             {readyJob && readyDismissed && (
               <span className={warn}>
-                {t('host.ver.ready.title', { from: readyJob.from || '?', to: readyJob.to || '?' })} · <button type="button" onClick={() => { sessionStorage.removeItem('host.ver.dismissed'); setDismissedJob(null); }} className="cursor-pointer underline">{t('host.ver.restartNow')}</button>
+                {t('host.ver.ready.title', { from: readyJob.from || '?', to: readyJob.to || '?' })} · <button type="button" onClick={() => { ss()?.removeItem('host.ver.dismissed'); setDismissedJob(null); }} className="cursor-pointer underline">{t('host.ver.restartNow')}</button>
               </span>
             )}
             {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
