@@ -34,6 +34,9 @@ const ALLOW = [
   ['test/proxy-headers.test.ts', '172.18.0.2', 'RFC1918 example: docker-network peer (C2)'],
   ['test/proxy-headers.test.ts', 'box.ts.net', 'placeholder tailnet host in a test (C2)'],
   ['docs/TLS.md', '<tailnet>.ts.net', 'placeholder tailnet host in docs (C2)'],
+  ['deploy/helm/arigami-tenant/values.yaml', '10.0.0.0/8', 'RFC1918 range the egress policy subtracts from 0.0.0.0/0'],
+  ['deploy/helm/arigami-tenant/values.yaml', '172.16.0.0/12', 'RFC1918 range the egress policy subtracts from 0.0.0.0/0'],
+  ['deploy/helm/arigami-tenant/values.yaml', '192.168.0.0/16', 'RFC1918 range the egress policy subtracts from 0.0.0.0/0'],
 ];
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'run', 'audit']);
