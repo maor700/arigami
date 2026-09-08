@@ -624,7 +624,7 @@ test('sanitizeAccountsForExport: marks keychain accounts needsReauth (renamed of
 
 test('resolveConfigPathsForImport: drops absolute reposDir/defaultCwd only on a genuine cross-platform import; tilde paths, same-platform imports and archives with no host.platform are untouched', () => {
   const other = process.platform === 'linux' ? 'darwin' : 'linux';
-  const raw = { reposDir: '/Users/dev/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 };
+  const raw = { reposDir: '/Users/owner/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 };
   const resolved = bk.resolveConfigPathsForImport(raw, other)!;
   expect(resolved.reposDir).toBeUndefined();
   expect(resolved.defaultCwd).toBe('~/.arigami/workspace'); // portable already — left alone
@@ -635,7 +635,7 @@ test('resolveConfigPathsForImport: drops absolute reposDir/defaultCwd only on a 
   const onlyTilde = { reposDir: '~/repos', defaultCwd: '~/work' };
   expect(bk.resolveConfigPathsForImport(onlyTilde, other)).toBe(onlyTilde); // nothing absolute to drop
   // a Windows-shaped absolute path is recognized even when this test runs on POSIX
-  const win = { reposDir: 'C:\\Users\\alex\\repos' };
+  const win = { reposDir: 'C:\\Users\\owner\\repos' };
   expect(bk.resolveConfigPathsForImport(win, other)!.reposDir).toBeUndefined();
 }, 60_000);
 
@@ -731,7 +731,7 @@ test('full export: accounts.json in a real archive ships with keychain accounts 
 
 test('importFull: an absolute reposDir/defaultCwd from a DIFFERENT-platform archive is dropped (config.ts falls back to its own default); same-platform archives are untouched', async () => {
   const other = process.platform === 'linux' ? 'darwin' : 'linux';
-  const cfg = JSON.stringify({ reposDir: '/Users/dev/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 });
+  const cfg = JSON.stringify({ reposDir: '/Users/owner/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 });
   const archCross = makeArchive({ 'config.json': cfg }, goodManifest({ host: { platform: other } }));
   const dirCross = path.join(tmp(), 'cross');
   await bk.importFull(archCross, { dir: dirCross, busyCount: () => 0 });
@@ -744,7 +744,7 @@ test('importFull: an absolute reposDir/defaultCwd from a DIFFERENT-platform arch
   const dirSame = path.join(tmp(), 'same');
   await bk.importFull(archSame, { dir: dirSame, busyCount: () => 0 });
   const gotSame = JSON.parse(fs.readFileSync(path.join(dirSame, 'config.json'), 'utf8'));
-  expect(gotSame.reposDir).toBe('/Users/dev/Desktop/repos');
+  expect(gotSame.reposDir).toBe('/Users/owner/Desktop/repos');
 }, 60_000);
 
 test('bun server/backup.ts export --full --whatsapp / import --whatsapp CLI flags', () => {
