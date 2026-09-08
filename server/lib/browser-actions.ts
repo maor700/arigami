@@ -19,7 +19,7 @@
 // SAME running Chrome (the one the human may be signing in to Google on) is
 // what these tools talk to over chrome-cdp.ts.
 import { openChrome, closeChrome as closeChromeProcess, isChromeRunning } from './chrome.js';
-import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
+import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
 import * as screens from '../screenshots.js';
 
 export interface HumanGate {
@@ -157,4 +157,9 @@ export async function scroll(sessionId: string, opts: { x?: number; y?: number; 
 export function close(sessionId: string): { ok: true } {
   closeChromeProcess(sessionId);
   return { ok: true };
+}
+
+/** PNG bytes of the front tab (CDP `Page.captureScreenshot`) — the `connect.sh shot` / evidence-screenshot path. */
+export async function screenshot(sessionId: string): Promise<Buffer> {
+  return pageScreenshot(sessionId);
 }
