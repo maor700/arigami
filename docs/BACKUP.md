@@ -26,13 +26,39 @@ Everything under `$ARIGAMI_DIR` **except** the host-bound or regenerable bits:
 | `*-logs.txt` at the root (`mcp-logs.txt`, `wa-logs.txt`) | integration logs that don't live under `logs/` (root level only — an upload named `x-logs.txt` is kept) |
 | `user-plugin/` | a symlink shim regenerated at boot (F2) |
 | `*.bak-*` | earlier `.bak` copies |
+| `skills` | **only** when it's currently a symlink to `user/skills` (the normal, migrated state — extensions.ts rebuilds it every boot). A not-yet-migrated instance still keeps real files there and those ARE backed up. |
+| `whatsapp/auth_info` | WhatsApp allows exactly one linked device — see "WhatsApp pairing" below. Off by default; `--whatsapp` opts in on export (native installs keep this auth outside `$ARIGAMI_DIR` anyway, so it only matters for the Docker layout). |
 
 So it **does** include: `config.json`, `repos.json`, `users.json` (pairing
 users + API-token hashes), `accounts.json` / `secrets.env` (Claude & integration
-credentials, exactly as stored), `state.json` + `sessions.json` (sessions
-resume after restore), `chat/`, `memory/` (USER/MEMORY + the sqlite index),
-`skills/`, `skill-proposals/`, `profiles/`, `triggers.json`, `uploads/`,
-artifacts, share tokens, push subscriptions.
+credentials, mostly as stored — see below), `state.json` + `sessions.json`
+(sessions resume after restore), `chat/`, `memory/` (USER/MEMORY + the sqlite
+index), `skills/`, `skill-proposals/`, `profiles/`, `triggers.json`,
+`uploads/`, artifacts, share tokens, push subscriptions.
+
+**`accounts.json` is rewritten, not copied verbatim.** A `keychain` account
+(the local `claude` login — macOS Keychain or `~/.claude/.credentials.json`)
+is a live pointer into *this* machine's OS credential store; it cannot
+travel. The export keeps the record (so it shows up rather than silently
+vanishing) but marks it `needsReauth: true` — reconnect it from Settings →
+Connections on the new machine. `oauth-token` accounts (`claude setup-token`
+/ browser auth) travel unchanged; the token itself is portable.
+
+**WhatsApp pairing** (`whatsapp/auth_info`, Docker layout only) is excluded
+from both export and import by default, for the same reason a `keychain`
+account can't travel: WhatsApp allows exactly one linked device. Restoring a
+second machine's pairing while the first is still connected logs the first
+one out. Pass `--whatsapp` to `export --full` (REST: `?whatsapp=1`) to carry
+it anyway — and to `import` (REST: same) to actually restore one already in
+the archive — only once you're sure no other machine still needs that
+WhatsApp number.
+
+**`reposDir` / `defaultCwd` are resolved fresh on a cross-platform restore.**
+If the archive's manifest says a different OS than the host doing the
+import, any *absolute* path in those two config.json keys is dropped (a
+`~/…` path is already portable and is left alone) — config.ts falls back to
+its own default the moment it next loads, instead of a Linux repo path
+landing verbatim on a Windows or macOS import.
 
 A manifest `arigami-export.json` rides at the archive root:
 

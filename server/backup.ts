@@ -65,8 +65,23 @@ export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-
 export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json'];
 // EXT: the user repo ($ARIGAMI_DIR/user) IS backed up — it holds the
 // extensions, the skills and the mcp catalog — but never its installed
-// dependencies, which `bun install` rebuilds.
+// dependencies, which `bun install` rebuilds (nor its @arigami/sdk symlink,
+// same reason — see dynamicExcludeGlobs() for its sibling, the $ARIGAMI_DIR/skills
+// symlink, which can't be a static glob because it isn't always a symlink).
 const EXCLUDE_GLOBS = ['*.bak-*', '.bak-*', '*.tmp', './agents/*/browser', './user/node_modules', './user/extensions/*/node_modules', ...CREDENTIAL_GLOBS];
+// B4 backup portability (#1): WhatsApp allows exactly ONE linked device.
+// Restoring this archive's Baileys auth onto a second machine while the
+// first is still paired kicks the first one off — a live conflict, not a
+// theoretical one (it happened here twice in one day while this feature was
+// being tested). Native installs keep that auth OUTSIDE $ARIGAMI_DIR
+// entirely (whatsapp-bridge.ts: ~/.local/lib/whatsapp-mcp/auth_info — never
+// reaches this tar); only the Docker layout roots it inside, at
+// whatsapp/auth_info (docker/entrypoint.sh symlinks it there). Excluded from
+// both export and import by default for that reason; `whatsapp: true` opts
+// in on either side (CLI: `export --full --whatsapp` / `import --whatsapp`)
+// — the caller must warn the human that the archive's WhatsApp number will
+// log out of whatever machine is currently using it the moment this lands.
+export const WHATSAPP_AUTH_GLOB = './whatsapp/auth_info';
 /** Root-level only (F4 #7): `mcp-logs.txt`, `wa-logs.txt` … are logs that don't live under logs/. */
 export const ROOT_EXCLUDE_GLOBS = ['./*-logs.txt'];
 
@@ -102,6 +117,8 @@ export interface ExportResult {
   /** resolves with tar's exit code once the stream ends */
   done: Promise<number>;
   cleanup: () => void;
+  /** non-fatal notices the caller should surface to the human (e.g. WhatsApp auth included) */
+  warnings: string[];
 }
 
 export interface ImportOptions {
@@ -111,6 +128,8 @@ export interface ImportOptions {
   /** restore target (default ARIGAMI_DIR) */
   dir?: string;
   now?: () => Date;
+  /** restore the WhatsApp auth dir if the archive has one (default false — see WHATSAPP_AUTH_GLOB) */
+  whatsapp?: boolean;
 }
 
 export interface ImportResult {
@@ -119,6 +138,8 @@ export interface ImportResult {
   backupDir: string | null;
   entries: number;
   restartRequired: true;
+  /** the archive had a whatsapp/auth_info but it was left out of the restore (opts.whatsapp wasn't set) */
+  whatsappSkipped: boolean;
 }
 
 export class ImportError extends Error {
@@ -143,6 +164,37 @@ function packageVersion(): string {
   return String(readJson(path.join(REPO_ROOT, 'package.json'))?.version || '0.0.0');
 }
 
+/**
+ * B4 backup portability (#2): what exportFull() writes for accounts.json
+ * instead of the raw file. A `keychain` account (accounts.js) is a live
+ * pointer into THIS machine's OS credential store — it cannot travel, and
+ * shipping it as-is is a dead reference that only fails once a session on
+ * the new machine tries to authenticate. Kept as a record (not dropped) but
+ * renamed off `type: 'keychain'` so accounts.js's seed() doesn't treat it as
+ * "already have one" and skip adopting a real login the importing machine
+ * has of its own, `pool: false` so auto-pick never round-robins into it, and
+ * `needsReauth: true` to say plainly what it needs. `oauth-token` accounts
+ * are untouched — the token itself is portable.
+ *
+ * Duplicated (not imported) from accounts.js's identical
+ * sanitizeAccountsForExport: accounts.js pulls in bus.js (a live
+ * WebSocketServer) and config.js at module load, side effects this
+ * CLI-invokable module has no business paying for. The two are asserted
+ * identical in test/backup.test.ts.
+ */
+export function sanitizeAccountsForExport(raw: { activeId?: string | null; accounts?: any[] } | null): any {
+  if (!raw || !Array.isArray(raw.accounts)) return raw;
+  if (!raw.accounts.some((a) => a && a.type === 'keychain')) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize
+  let activeId = raw.activeId ?? null;
+  const accounts = raw.accounts.map((a) => {
+    if (!a || a.type !== 'keychain') return a;
+    if (activeId === a.id) activeId = null;
+    const { type, pool, ...rest } = a;
+    return { ...rest, type: 'keychain-stale', pool: false, needsReauth: true };
+  });
+  return { ...raw, activeId, accounts };
+}
+
 function gitCommit(): string | null {
   const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 5000 });
   return r.status === 0 ? r.stdout.trim() : null;
@@ -155,6 +207,38 @@ export function stamp(d = new Date()): string {
 export function major(v: string | undefined | null): number {
   const m = /^\s*v?(\d+)/.exec(String(v ?? ''));
   return m ? Number(m[1]) : 0;
+}
+
+/** POSIX `/…`, a Windows drive (`C:\…` / `C:/…`) or a UNC path (`\\…`) — deliberately not `path.isAbsolute`, which only knows the running platform's own rules. */
+function isAbsoluteAnyPlatform(p: string): boolean {
+  return /^\//.test(p) || /^[a-zA-Z]:[\\/]/.test(p) || /^\\\\/.test(p);
+}
+
+/**
+ * B4 backup portability (#3): `reposDir`/`defaultCwd` in config.json are
+ * filesystem paths the EXPORTING machine wrote. A `~/…` token is already
+ * portable — config.ts's tilde() resolves it fresh on whichever machine
+ * loads the file, so those are left alone. An absolute path (a Linux repo
+ * dir, a `C:\Users\...` dir) only means something there. When the archive's
+ * manifest says the platform differs from this importing host, drop the
+ * absolute ones instead of restoring them literally — config.ts falls back
+ * to its own (portable) DEFAULTS the moment it next loads. A missing/absent
+ * manifest platform is treated as "same" (nothing to resolve), not "assume
+ * different" — safer against archives that predate the `host` field.
+ */
+export function resolveConfigPathsForImport(raw: Record<string, unknown> | null, manifestPlatform: string | undefined | null): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object') return raw;
+  if (!manifestPlatform || manifestPlatform === process.platform) return raw;
+  const out = { ...raw };
+  let changed = false;
+  for (const key of ['reposDir', 'defaultCwd']) {
+    const v = out[key];
+    if (typeof v === 'string' && v && !v.startsWith('~') && isAbsoluteAnyPlatform(v)) {
+      delete out[key];
+      changed = true;
+    }
+  }
+  return changed ? out : raw;
 }
 
 function safeName(s: string): boolean {
@@ -203,16 +287,24 @@ function useJsTar(): boolean {
   return process.env.ARIGAMI_TAR === 'js' || detectTarFlavor() !== 'gnu';
 }
 
-/** The EXCLUDES/EXCLUDE_GLOBS/ROOT_EXCLUDE_GLOBS semantics as a JS predicate — the same two-phase (root-only, then general) matching tarArgs() builds from GNU tar's --wildcards-match-slash toggle. */
-function jsExcludeMatcher(): jsTar.ExcludeMatcher {
+/**
+ * The EXCLUDES/EXCLUDE_GLOBS/ROOT_EXCLUDE_GLOBS semantics as a JS predicate —
+ * the same two-phase (root-only, then general) matching tarArgs() builds from
+ * GNU tar's --wildcards-match-slash toggle. `dynamic` folds in per-call
+ * excludes (WhatsApp auth, the live-checked `skills` symlink, the rewritten
+ * accounts.json) that can't be static module-level lists — see
+ * dynamicExcludeGlobs() and whatsappExcludeGlobs().
+ */
+function jsExcludeMatcher(dynamic: string[] = []): jsTar.ExcludeMatcher {
   return jsTar.makeExcludeMatcher([
     ...ROOT_EXCLUDE_GLOBS.map((pattern) => ({ pattern, slashCross: false })),
     ...EXCLUDES.map((e) => ({ pattern: `./${e}`, slashCross: true })),
     ...EXCLUDE_GLOBS.map((pattern) => ({ pattern, slashCross: true })),
+    ...dynamic.map((pattern) => ({ pattern, slashCross: true })),
   ]);
 }
 
-function tarArgs(extra: string[] = []): string[] {
+function tarArgs(extra: string[] = [], dynamic: string[] = []): string[] {
   const flavor = detectTarFlavor();
   if (flavor !== 'gnu') {
     throw new Error(
@@ -228,7 +320,36 @@ function tarArgs(extra: string[] = []): string[] {
   ex.push('--wildcards-match-slash');
   for (const e of EXCLUDES) ex.push(`--exclude=./${e}`);
   for (const g of EXCLUDE_GLOBS) ex.push(`--exclude=${g}`);
+  for (const g of dynamic) ex.push(`--exclude=${g}`);
   return [...ex, ...extra];
+}
+
+/** WHATSAPP_AUTH_GLOB unless the caller opted in — shared by export and import. */
+function whatsappExcludeGlobs(includeWhatsApp?: boolean): string[] {
+  return includeWhatsApp ? [] : [WHATSAPP_AUTH_GLOB];
+}
+
+/**
+ * Per-export dynamic excludes beyond the static lists:
+ *  - `skills` only when it is CURRENTLY a symlink (extensions.ts's
+ *    migrateSkills() rebuilds $ARIGAMI_DIR/skills → user/skills on every
+ *    boot, and user/skills travels on its own) — a not-yet-migrated instance
+ *    still keeps real files there and those must still ship. Only checked
+ *    for a default ('.') export; an explicit `--include skills` is a
+ *    deliberate ask and is left alone. Windows can't create a symlink
+ *    without elevated privilege, so shipping a regenerable one is also a
+ *    portability trap, not just dead weight.
+ *  - accounts.json, when a rewritten copy is being substituted in from
+ *    scratch/ (see exportFull) — the raw one must not also ride along.
+ */
+function dynamicExcludeGlobs(dir: string, opts: { skills?: boolean; accounts?: boolean; whatsapp?: boolean } = {}): string[] {
+  const out: string[] = [];
+  if (opts.skills) {
+    try { if (fs.lstatSync(path.join(dir, 'skills')).isSymbolicLink()) out.push('./skills'); } catch {}
+  }
+  if (opts.accounts) out.push('./accounts.json');
+  out.push(...whatsappExcludeGlobs(opts.whatsapp));
+  return out;
 }
 
 /** Manifest for a backup taken right now. */
@@ -269,17 +390,43 @@ export function checkManifest(m: unknown, here: { format?: number; version?: str
  * the archive to the given top-level entries (e.g. ['memory','skills']).
  * The manifest is written to a scratch dir under $ARIGAMI_DIR/tmp and added
  * with a second `-C`, so the live directory is never mutated by an export.
+ * `whatsapp: true` carries the WhatsApp Baileys auth along (off by default —
+ * see WHATSAPP_AUTH_GLOB); the caller must warn the human before setting it.
  */
-export function exportFull(opts: { include?: string[]; dir?: string } = {}): ExportResult {
+export function exportFull(opts: { include?: string[]; dir?: string; whatsapp?: boolean } = {}): ExportResult {
   const dir = opts.dir || ARIGAMI_DIR;
   if (!fs.existsSync(dir)) throw new Error(`${dir} does not exist`);
   const include = Array.isArray(opts.include) && opts.include.length ? opts.include.filter(safeName) : null;
   const scratch = fs.mkdtempSync(path.join(ensureTmp(dir), 'export-'));
   const manifest = buildManifest(include);
   fs.writeFileSync(path.join(scratch, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + '\n');
+  const scratchMembers = [MANIFEST_NAME];
+
+  // #2: substitute a sanitized accounts.json, but only when there's actually
+  // something to rewrite — an unaffected file must stay byte-identical (round-
+  // trip tests, `bin/host export --include` diffing) rather than just re-
+  // pretty-printed.
+  const accountsFile = path.join(dir, 'accounts.json');
+  let substitutedAccounts = false;
+  if ((!include || include.includes('accounts.json')) && fs.existsSync(accountsFile)) {
+    const raw = readJson<{ activeId?: string | null; accounts?: any[] }>(accountsFile);
+    if (raw) {
+      const sanitized = sanitizeAccountsForExport(raw);
+      if (sanitized !== raw) {
+        fs.writeFileSync(path.join(scratch, 'accounts.json'), JSON.stringify(sanitized, null, 2) + '\n');
+        scratchMembers.push('accounts.json');
+        substitutedAccounts = true;
+      }
+    }
+  }
+
   const members = include
     ? include.filter((n) => !EXCLUDES.includes(n) && fs.existsSync(path.join(dir, n))).map((n) => `./${n}`)
     : ['.'];
+  const dynamic = dynamicExcludeGlobs(dir, { skills: !include, accounts: substitutedAccounts, whatsapp: opts.whatsapp });
+  const warnings: string[] = [];
+  if (opts.whatsapp)
+    warnings.push('WhatsApp pairing included: WhatsApp allows only one linked device at a time. Restoring this archive elsewhere logs out any other machine currently connected with this WhatsApp number.');
   const cleanup = () => {
     try { fs.rmSync(scratch, { recursive: true, force: true }); } catch {}
   };
@@ -287,12 +434,12 @@ export function exportFull(opts: { include?: string[]; dir?: string } = {}): Exp
   let done: Promise<number>;
   let kill: () => void;
   if (useJsTar()) {
-    const r = jsTar.createTarGzStream([{ dir, members }, { dir: scratch, members: [MANIFEST_NAME] }], { exclude: jsExcludeMatcher() });
+    const r = jsTar.createTarGzStream([{ dir, members }, { dir: scratch, members: scratchMembers }], { exclude: jsExcludeMatcher(dynamic) });
     stream = r.stream;
     done = r.done;
     kill = r.kill;
   } else {
-    const args = ['-czf', '-', ...tarArgs(['--ignore-failed-read', '-C', dir, ...members, '-C', scratch, MANIFEST_NAME])];
+    const args = ['-czf', '-', ...tarArgs(['--ignore-failed-read', '-C', dir, ...members, '-C', scratch, ...scratchMembers], dynamic)];
     const p = spawn('tar', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let err = '';
     p.stderr.on('data', (c) => (err += c));
@@ -304,7 +451,7 @@ export function exportFull(opts: { include?: string[]; dir?: string } = {}): Exp
     });
   }
   done.then(cleanup);
-  return { stream, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup, kill };
+  return { stream, filename: `arigami-backup-${stamp()}.tgz`, done, cleanup, kill, warnings };
 }
 
 /**
@@ -333,9 +480,11 @@ export async function exportToFile(r: ExportResult, out: string): Promise<number
 }
 
 /** Full export straight to a file (CLI). */
-export async function exportFullToFile(out: string, opts: { include?: string[]; dir?: string } = {}): Promise<Manifest> {
-  const code = await exportToFile(exportFull(opts), out);
+export async function exportFullToFile(out: string, opts: { include?: string[]; dir?: string; whatsapp?: boolean } = {}): Promise<Manifest> {
+  const r = exportFull(opts);
+  const code = await exportToFile(r, out);
   if (code !== 0 && code !== 1) throw new Error(`tar exited ${code}`);
+  for (const w of r.warnings) process.stderr.write(`warning: ${w}\n`);
   return await readManifestFromArchive(out);
 }
 
@@ -422,6 +571,12 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
   if (busy > 0 && !opts.force)
     throw new ImportError(`${busy} session(s) are working — wait for them, restart when idle, or import with force`, 409);
   const entries = (await tarList(file)).filter((e) => e !== MANIFEST_NAME && e !== `./${MANIFEST_NAME}`);
+  // #1: same "one linked device" reasoning as export — an archive that DOES carry
+  // a WhatsApp auth (an older archive, or one exported with `whatsapp: true`) is
+  // still left out of the restore unless this import explicitly opts in too, so
+  // a plain `import backup.tgz` never silently knocks the target's own pairing.
+  const hasWhatsAppAuth = entries.some((e) => e.replace(/^\.\//, '').startsWith('whatsapp/auth_info'));
+  const dynamic = whatsappExcludeGlobs(opts.whatsapp);
 
   const parent = path.dirname(dir);
   const ts = stamp(opts.now ? opts.now() : new Date());
@@ -430,13 +585,13 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
   fs.mkdirSync(staging, { recursive: true });
   if (useJsTar()) {
     try {
-      await jsTar.extractTarGzToDir(file, staging, { exclude: jsExcludeMatcher() });
+      await jsTar.extractTarGzToDir(file, staging, { exclude: jsExcludeMatcher(dynamic) });
     } catch (e) {
       fs.rmSync(staging, { recursive: true, force: true });
       throw new ImportError(`extract failed: ${(e as Error).message}`, 500);
     }
   } else {
-    const x = spawnSync('tar', ['-xzf', file, '-C', staging, ...tarArgs()], { encoding: 'utf8' });
+    const x = spawnSync('tar', ['-xzf', file, '-C', staging, ...tarArgs([], dynamic)], { encoding: 'utf8' });
     if (x.status !== 0) {
       fs.rmSync(staging, { recursive: true, force: true });
       throw new ImportError(`extract failed: ${(x.stderr || '').trim().split('\n').pop() || 'tar failed'}`, 500);
@@ -444,6 +599,14 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
   }
   // the manifest stays in the restored dir as a record of where it came from
   fs.writeFileSync(path.join(staging, MANIFEST_NAME), JSON.stringify({ ...manifest, importedAt: new Date().toISOString() }, null, 2) + '\n');
+
+  // #3: resolve machine-specific absolute paths anew on a cross-platform restore.
+  const stagedConfig = path.join(staging, 'config.json');
+  const rawConfig = readJson<Record<string, unknown>>(stagedConfig);
+  if (rawConfig) {
+    const resolved = resolveConfigPathsForImport(rawConfig, manifest.host?.platform);
+    if (resolved !== rawConfig) fs.writeFileSync(stagedConfig, JSON.stringify(resolved, null, 2) + '\n');
+  }
 
   let backupDir: string | null = null;
   if (!fs.existsSync(dir)) {
@@ -463,7 +626,7 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     }
   }
   fs.rmSync(staging, { recursive: true, force: true });
-  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true };
+  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp };
 }
 
 function moveIfExists(from: string, to: string): void {
@@ -658,11 +821,11 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
 export function tarDir(dir: string, filename: string): ExportResult {
   if (useJsTar()) {
     const r = jsTar.createTarGzStream([{ dir, members: ['.'] }]);
-    return { stream: r.stream, filename, done: r.done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: r.kill };
+    return { stream: r.stream, filename, done: r.done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: r.kill, warnings: [] };
   }
   const p = spawn('tar', ['-czf', '-', '-C', dir, '.'], { stdio: ['ignore', 'pipe', 'pipe'] });
   const done = new Promise<number>((resolve) => p.on('close', (code) => resolve(code ?? 1)));
-  return { stream: p.stdout, filename, done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: () => { try { p.kill('SIGTERM'); } catch {} } };
+  return { stream: p.stdout, filename, done, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }, kill: () => { try { p.kill('SIGTERM'); } catch {} }, warnings: [] };
 }
 
 /** Extract a bundle archive into $ARIGAMI_DIR/profiles/<name>/ and return the dir (apply is profiles.ts's job). */
@@ -704,7 +867,7 @@ if (import.meta.main) {
     if (cmd === 'export' && flag('--full')) {
       const file = positional[0] || `arigami-backup-${stamp()}.tgz`;
       const include = val('--include')?.split(',').map((s) => s.trim()).filter(Boolean);
-      const m = await exportFullToFile(file, { include });
+      const m = await exportFullToFile(file, { include, whatsapp: flag('--whatsapp') });
       out({ ok: true, file: path.resolve(file), bytes: fs.statSync(file).size, manifest: m });
     } else if (cmd === 'export' && flag('--bundle')) {
       const tr = await import('./triggers.js');
@@ -733,7 +896,8 @@ if (import.meta.main) {
         tr.flush();
         out({ ok: true, kind, ...rep });
       } else {
-        const r = await importFull(file, { force: flag('--force') });
+        const r = await importFull(file, { force: flag('--force'), whatsapp: flag('--whatsapp') });
+        if (r.whatsappSkipped) process.stderr.write('warning: this archive has a WhatsApp pairing (whatsapp/auth_info) — left OUT of the restore; re-run with --whatsapp once you\'re sure no other machine still needs that WhatsApp number\n');
         out({ ok: true, kind, ...r });
       }
     } else if (cmd === 'inspect') {
@@ -741,7 +905,7 @@ if (import.meta.main) {
       const d = await detectArchive(file);
       out({ kind: d.kind, entries: d.entries.length, manifest: d.kind === 'full' ? await readManifestFromArchive(file) : null });
     } else {
-      process.stderr.write('usage: bun server/backup.ts export --full [out.tgz] [--include a,b] | export --bundle [out-dir|out.tgz] [--name n] [--no-memory] | import <file.tgz> [--force] | inspect <file>\n');
+      process.stderr.write('usage: bun server/backup.ts export --full [out.tgz] [--include a,b] [--whatsapp] | export --bundle [out-dir|out.tgz] [--name n] [--no-memory] | import <file.tgz> [--force] [--whatsapp] | inspect <file>\n');
       process.exitCode = 2;
     }
   } catch (e) {

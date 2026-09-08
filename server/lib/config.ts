@@ -284,7 +284,12 @@ export const DEFAULTS: Config = {
   // S1: a fresh install's first session opens in an empty workspace the host
   // creates on first start (no repo needed) — see server/index.ts.
   defaultCwd: `${DEFAULT_DIR_TOKEN}/workspace`,
-  reposDir: '~/Desktop/repos',
+  // B4 backup portability #3 (bonus): was `~/Desktop/repos` — macOS TCC blocks
+  // a Finder-launched app (bin/install-app) from ever touching ~/Desktop, no
+  // permission dialog offered, just silent failure. Under $ARIGAMI_DIR needs
+  // no permission at all (same reasoning as defaultCwd above) and is exactly
+  // as portable across platforms via tilde().
+  reposDir: `${DEFAULT_DIR_TOKEN}/repos`,
   ticketsDir: '~/.arigami-tickets',
   stateFile: `${DEFAULT_DIR_TOKEN}/state.json`,
   chatDir: `${DEFAULT_DIR_TOKEN}/chat`,

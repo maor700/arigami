@@ -454,6 +454,10 @@ export_cmd() {
       --full|--bundle) mode="$1" ;;
       --include|--name) extra+=("$1" "$2"); shift ;;
       --no-memory) extra+=("$1") ;;
+      # B4 backup portability #1: WhatsApp allows one linked device — off by
+      # default (see server/backup.ts's WHATSAPP_AUTH_GLOB); only pass this
+      # once you're sure no other machine still needs this WhatsApp number.
+      --whatsapp) extra+=("$1") ;;
       *) out="$1" ;;
     esac
     shift
@@ -475,17 +479,21 @@ export_cmd() {
         yl "  memory-seed/ carries your USER.md / MEMORY.md (personal profile + notes) — review before sharing, or: host export --bundle --no-memory"
       fi
       ;;
-    *) echo "usage: host export --full [out.tgz] [--include a,b] | host export --bundle [out-dir|out.tgz] [--name name] [--no-memory]"; return 1 ;;
+    *) echo "usage: host export --full [out.tgz] [--include a,b] [--whatsapp] | host export --bundle [out-dir|out.tgz] [--name name] [--no-memory]"; return 1 ;;
   esac
 }
 
 import_cmd() {
-  file=""; force=""
+  file=""; force=""; extra=()
   while [ $# -gt 0 ]; do
-    case "$1" in --force) force="--force" ;; *) file="$1" ;; esac
+    case "$1" in
+      --force) force="--force" ;;
+      --whatsapp) extra+=("$1") ;;  # restore a WhatsApp auth already in the archive — see export_cmd's note
+      *) file="$1" ;;
+    esac
     shift
   done
-  [ -n "$file" ] && [ -f "$file" ] || { echo "usage: host import <file.tgz> [--force]"; return 1; }
+  [ -n "$file" ] && [ -f "$file" ] || { echo "usage: host import <file.tgz> [--force] [--whatsapp]"; return 1; }
   kind="$(ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file" 2>/dev/null | sed -n 's/^[[:space:]]*"kind":[[:space:]]*"\([a-z]*\)".*/\1/p' | head -1)"
   [ -n "$kind" ] || { ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file"; return 1; }
   if [ "$kind" = "bundle" ]; then
@@ -500,7 +508,9 @@ import_cmd() {
   # full backup
   if health; then
     if [ -n "${ARIGAMI_TOKEN:-}" ]; then
-      q=""; [ -n "$force" ] && q="?force=1"
+      q=""; [ -n "$force" ] && q="force=1"
+      [ ${#extra[@]} -gt 0 ] && q="${q:+$q&}whatsapp=1"
+      [ -n "$q" ] && q="?$q"
       curl -fsS -m 3600 -X POST "$URL/__api/host/import$q" \
         -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'X-Arigami-Confirm: yes' \
         -H 'content-type: application/gzip' --data-binary "@$file" || return 1
@@ -513,7 +523,7 @@ import_cmd() {
     dl "  or:      ARIGAMI_TOKEN=<admin api token> host import $file   (REST; the host restarts itself)"
     return 1
   fi
-  ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" import "$file" $force || return 1
+  ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" import "$file" $force "${extra[@]}" || return 1
   dl "  previous data kept as a timestamped .bak next to $DIR — start the host: host start"
 }
 
