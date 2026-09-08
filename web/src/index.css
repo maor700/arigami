@@ -32,7 +32,7 @@
 }
 
 @theme {
-  --color-brand: #f97316; /* landing-page orange (prefs.accent overrides on :root) */
+  --color-brand: #6eceb7; /* app accent, mint (prefs.accent overrides on :root) */
   --color-ink: #2a2a2a;
   --color-chip: var(--hb-chip);
   --color-hair: var(--hb-hair);

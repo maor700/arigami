@@ -7,8 +7,11 @@
 // four-pointed star, eight facets). It is the default; the older presets stay
 // as opt-in alternatives.
 
-// Brand accent — the landing page's orange (arigami-site global.css --accent).
-export const DEFAULT_ACCENT = '#f97316';
+// Brand accent — chosen 2026-09-08 (the owner picked this mint/turquoise over the
+// landing page's orange, after reviewing live mockups at several intensities).
+// The landing page (arigami-site global.css --accent) still uses orange
+// separately; the two are no longer required to match.
+export const DEFAULT_ACCENT = '#6eceb7';
 
 // viewBox defaults to 0 0 32 32; a preset may override it. `o` = fill-opacity of that facet.
 export const LOGOS = {
@@ -69,8 +72,8 @@ export function isLogoId(id) {
 }
 
 // A facet's `o` (0–1) is how much light it catches: 1 = the flat accent, less
-// = a darker shade of it (the landing page's mark paints the shadow facets
-// #c2410c on #f97316). Shading with black instead of fill-opacity keeps the
+// = a darker shade of it (e.g. the shadow facets shade to #559f8d on the
+// #6eceb7 app accent). Shading with black instead of fill-opacity keeps the
 // mark readable on any background — a translucent facet on a light tab strip
 // reads as a pale, washed-out star.
 export const SHADE_STRENGTH = 0.6;

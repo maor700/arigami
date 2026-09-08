@@ -1,7 +1,8 @@
-// BRAND (dispatch/branding-font): the app wears the landing page's brand by
-// default — the folded-star mark, orange accent, dark chrome — and the mark
-// shows in the rail header, the pairing screen, the Settings header and the
-// empty (no session) screen. Type defaults: chat output 16px; a separate
+// BRAND (dispatch/branding-font): the app wears the landing page's mark by
+// default — the folded-star mark, mint accent (chosen 2026-09-08, no longer
+// tied to the landing page's orange), dark chrome — and the mark shows in
+// the rail header, the pairing screen, the Settings header and the empty
+// (no session) screen. Type defaults: chat output 16px; a separate
 // small/medium/large UI size drives --ui-scale on <html> (rem), so the rail
 // and chrome are measured in rem, not px.
 import { test, expect, beforeAll } from 'bun:test';
@@ -27,8 +28,8 @@ beforeAll(async () => {
   SettingsMod = await import(web('components/Settings.jsx'));
 });
 
-test('defaults: landing-page orange accent, dark chrome, 16px chat font, medium UI size, star mark', () => {
-  expect(logos.DEFAULT_ACCENT).toBe('#f97316');
+test('defaults: mint app accent, dark chrome, 16px chat font, medium UI size, star mark', () => {
+  expect(logos.DEFAULT_ACCENT).toBe('#6eceb7');
   expect(logos.DEFAULT_LOGO).toBe('star');
   const p = prefs.getPrefs();
   expect(p.theme).toBe('dark');
@@ -50,19 +51,19 @@ test('sanitize: uiScale accepts only small/medium/large; font size clamps into t
   prefs.setPrefs({ uiScale: 'medium', termFontSize: 16 });
 });
 
-test('favicon svg: orange facets shaded darker (no translucent facets), star by default', () => {
+test('favicon svg: mint facets shaded darker (no translucent facets), star by default', () => {
   const svg = logos.logoSvg(undefined, undefined);
   expect(svg).toContain('viewBox="0 0 64 64"');
-  expect(svg).toContain('fill="#f97316"');
+  expect(svg).toContain('fill="#6eceb7"');
   expect(svg).not.toContain('fill-opacity');
   expect(svg).not.toContain('12a594');
-  // the shadow facet is a darker orange, still orange-ish (r > g > b)
-  const shade = logos.facetColor('#f97316', 0.62);
-  expect(shade).not.toBe('#f97316');
+  // the shadow facet is a darker mint, still mint-ish (g > b > r)
+  const shade = logos.facetColor('#6eceb7', 0.62);
+  expect(shade).not.toBe('#6eceb7');
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(shade.slice(i, i + 2), 16));
-  expect(r).toBeGreaterThan(g);
   expect(g).toBeGreaterThan(b);
-  expect(r).toBeLessThan(0xf9);
+  expect(b).toBeGreaterThan(r);
+  expect(g).toBeLessThan(0xce);
 });
 
 test('Logo component: the star preset in currentColor, shadow facets via color-mix, sized in rem', () => {
@@ -98,7 +99,7 @@ test('rail header row: the mark + wordmark; rail/login/settings chrome measured 
   }
   const css = fs.readFileSync(web('index.css'), 'utf8');
   expect(css).toMatch(/html \{\s*font-size: calc\(100% \* var\(--ui-scale, 1\)\);/);
-  expect(css).toContain('--color-brand: #f97316');
-  expect(fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8')).toContain('theme-color" content="#f97316"');
-  expect(JSON.parse(fs.readFileSync(path.join(ROOT, 'web/public/manifest.json'), 'utf8')).theme_color).toBe('#f97316');
+  expect(css).toContain('--color-brand: #6eceb7');
+  expect(fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8')).toContain('theme-color" content="#6eceb7"');
+  expect(JSON.parse(fs.readFileSync(path.join(ROOT, 'web/public/manifest.json'), 'utf8')).theme_color).toBe('#6eceb7');
 });
