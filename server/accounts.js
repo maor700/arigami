@@ -182,8 +182,11 @@ function seed() {
     if (!store.activeId) store.activeId = acc.id;
     dirty = true;
   }
+  // Prefer a usable account when picking a default — an imported archive can
+  // leave activeId null with only a needsReauth (former keychain) entry ahead
+  // of a fresh one this seed() call just pushed above.
   if (!store.activeId && store.accounts[0]) {
-    store.activeId = store.accounts[0].id;
+    store.activeId = (store.accounts.find((a) => !a.needsReauth) || store.accounts[0]).id;
     dirty = true;
   }
   if (dirty) save();
@@ -193,6 +196,31 @@ export function initAccounts() {
   load();
   seed();
   return listAccounts();
+}
+
+// ---- B4 backup portability (#2) ----------------------------------------------
+// A `keychain` account is a live pointer into THIS machine's OS credential
+// store (macOS Keychain, or ~/.claude/.credentials.json) — it cannot travel.
+// Shipping it as-is in a backup is a dead reference that only fails once a
+// session on the new machine tries to authenticate. exportFull() (backup.ts)
+// calls this to rewrite accounts.json before it goes into the archive: the
+// record is KEPT (not silently dropped — the human should see it needs
+// reconnecting) but renamed off `type: 'keychain'` so seed()'s "already have
+// one" guard doesn't shadow a real login the importing machine may have of
+// its own, and `pool: false` so auto-pick never round-robins into it.
+// `oauth-token` accounts are untouched — the token itself is the portable
+// credential.
+export function sanitizeAccountsForExport(raw) {
+  if (!raw || !Array.isArray(raw.accounts)) return raw;
+  if (!raw.accounts.some((a) => a && a.type === 'keychain')) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize
+  let activeId = raw.activeId ?? null;
+  const accounts = raw.accounts.map((a) => {
+    if (!a || a.type !== 'keychain') return a;
+    if (activeId === a.id) activeId = null;
+    const { type, pool, ...rest } = a;
+    return { ...rest, type: 'keychain-stale', pool: false, needsReauth: true };
+  });
+  return { ...raw, activeId, accounts };
 }
 
 // ---- queries ----------------------------------------------------------------

@@ -596,6 +596,190 @@ test('non-GNU system tar: the JS implementation is used automatically instead of
   expect(JSON.parse(inspect.stdout).kind).toBe('full');
 }, 60_000);
 
+// ---- B4 backup portability: WhatsApp auth, keychain accounts, cross-platform config paths ---------
+
+test('sanitizeAccountsForExport: marks keychain accounts needsReauth (renamed off "keychain" so seed() can adopt a real login elsewhere), clears activeId when it pointed there, leaves oauth-token and no-op shapes untouched', () => {
+  const raw = {
+    activeId: 'kc1',
+    accounts: [
+      { id: 'kc1', type: 'keychain', label: 'Default (macOS login)', pool: true, addedAt: 'x' },
+      { id: 'tok1', type: 'oauth-token', label: 'Work', pool: true, token: { v: 0, t: 'sk-ant-x' } },
+    ],
+  };
+  const out = bk.sanitizeAccountsForExport(raw);
+  expect(out.activeId).toBeNull();
+  expect(out.accounts[0]).toEqual({ id: 'kc1', type: 'keychain-stale', label: 'Default (macOS login)', pool: false, addedAt: 'x', needsReauth: true });
+  expect(out.accounts[1]).toBe(raw.accounts[1]); // oauth-token untouched, same reference
+  // no keychain account at all → nothing to rewrite, same top-level reference
+  const noKeychain = { activeId: 'tok1', accounts: [raw.accounts[1]] };
+  expect(bk.sanitizeAccountsForExport(noKeychain)).toBe(noKeychain);
+  // an activeId pointing elsewhere survives untouched
+  const other = { activeId: 'tok1', accounts: [raw.accounts[0], raw.accounts[1]] };
+  expect(bk.sanitizeAccountsForExport(other).activeId).toBe('tok1');
+  // malformed/foreign shape (e.g. the test fixture's accounts.json) passes through as-is
+  const malformed = { claude: { token: 'x' } };
+  expect(bk.sanitizeAccountsForExport(malformed)).toBe(malformed);
+  expect(bk.sanitizeAccountsForExport(null)).toBeNull();
+}, 60_000);
+
+test('resolveConfigPathsForImport: drops absolute reposDir/defaultCwd only on a genuine cross-platform import; tilde paths, same-platform imports and archives with no host.platform are untouched', () => {
+  const other = process.platform === 'linux' ? 'darwin' : 'linux';
+  const raw = { reposDir: '/Users/dev/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 };
+  const resolved = bk.resolveConfigPathsForImport(raw, other)!;
+  expect(resolved.reposDir).toBeUndefined();
+  expect(resolved.defaultCwd).toBe('~/.arigami/workspace'); // portable already — left alone
+  expect(resolved.port).toBe(3099);
+  expect(bk.resolveConfigPathsForImport(raw, process.platform)).toBe(raw); // same platform — untouched
+  expect(bk.resolveConfigPathsForImport(raw, undefined)).toBe(raw); // no host.platform recorded — treated as "same", not "different"
+  expect(bk.resolveConfigPathsForImport(raw, '')).toBe(raw);
+  const onlyTilde = { reposDir: '~/repos', defaultCwd: '~/work' };
+  expect(bk.resolveConfigPathsForImport(onlyTilde, other)).toBe(onlyTilde); // nothing absolute to drop
+  // a Windows-shaped absolute path is recognized even when this test runs on POSIX
+  const win = { reposDir: 'C:\\Users\\alex\\repos' };
+  expect(bk.resolveConfigPathsForImport(win, other)!.reposDir).toBeUndefined();
+}, 60_000);
+
+test('full export: WhatsApp auth (whatsapp/auth_info) excluded by default; whatsapp:true opts in and returns the "will log out" warning', () => {
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  fs.mkdirSync(path.join(dir, 'whatsapp', 'auth_info'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'whatsapp', 'auth_info', 'creds.json'), '{"me":{"id":"972500000000@s.whatsapp.net"}}');
+  const outDefault = path.join(tmp(), 'no-wa.tgz');
+  const outOpt = path.join(tmp(), 'with-wa.tgz');
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts');
+     const a = bk.exportFull({});
+     await bk.exportToFile(a, ${JSON.stringify(outDefault)}); a.cleanup();
+     const b = bk.exportFull({ whatsapp: true });
+     await bk.exportToFile(b, ${JSON.stringify(outOpt)}); b.cleanup();
+     emit({ warningsA: a.warnings, warningsB: b.warnings });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].warningsA).toEqual([]);
+  expect(r.out[0].warningsB.length).toBe(1);
+  expect(r.out[0].warningsB[0]).toMatch(/one linked device/);
+  const entriesDefault = tarList(outDefault);
+  expect(entriesDefault.some((e) => e.startsWith('whatsapp/auth_info'))).toBe(false);
+  const entriesOpt = tarList(outOpt);
+  expect(entriesOpt).toContain('whatsapp/auth_info/creds.json');
+}, 60_000);
+
+test('importFull: WhatsApp auth in the archive is skipped by default (whatsappSkipped=true, protects the target\'s own live pairing); whatsapp:true restores it', async () => {
+  const arch = makeArchive({ 'config.json': '{"a":1}', 'whatsapp/auth_info/creds.json': '{"me":{}}' }, goodManifest());
+  const dir1 = path.join(tmp(), 'inst1');
+  const r1 = await bk.importFull(arch, { dir: dir1, busyCount: () => 0 });
+  expect(r1.whatsappSkipped).toBe(true);
+  expect(fs.existsSync(path.join(dir1, 'whatsapp', 'auth_info', 'creds.json'))).toBe(false);
+  const dir2 = path.join(tmp(), 'inst2');
+  const r2 = await bk.importFull(arch, { dir: dir2, busyCount: () => 0, whatsapp: true });
+  expect(r2.whatsappSkipped).toBe(false);
+  expect(fs.existsSync(path.join(dir2, 'whatsapp', 'auth_info', 'creds.json'))).toBe(true);
+  // an archive with no WhatsApp auth at all reports nothing skipped
+  const clean = makeArchive({ 'config.json': '{}' }, goodManifest());
+  const r3 = await bk.importFull(clean, { dir: path.join(tmp(), 'inst3'), busyCount: () => 0 });
+  expect(r3.whatsappSkipped).toBe(false);
+}, 60_000);
+
+test('full export: a migrated skills symlink ($ARIGAMI_DIR/skills → user/skills) is left out of a default export — extensions.ts rebuilds it every boot; the real content under user/skills still ships; an explicit --include skills is a deliberate ask and is kept', () => {
+  const dir = path.join(tmp(), 'inst');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.json'), '{}');
+  fs.mkdirSync(path.join(dir, 'user', 'skills', 'real-skill'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'user', 'skills', 'real-skill', 'SKILL.md'), SKILL);
+  fs.symlinkSync(path.join(dir, 'user', 'skills'), path.join(dir, 'skills'), 'dir');
+  const out = path.join(tmp(), 'sym.tgz');
+  const r = runInChild(`const bk = await import('./server/backup.ts'); emit(await bk.exportFullToFile(${JSON.stringify(out)}));`, { ARIGAMI_DIR: dir });
+  expect(r.ok).toBe(true);
+  const entries = tarList(out);
+  expect(entries).not.toContain('skills');
+  expect(entries).toContain('user/skills/real-skill/SKILL.md');
+
+  const out2 = path.join(tmp(), 'sym-include.tgz');
+  const r2 = runInChild(
+    `const bk = await import('./server/backup.ts'); emit(await bk.exportFullToFile(${JSON.stringify(out2)}, { include: ['skills'] }));`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r2.ok).toBe(true);
+  expect(tarList(out2)).toContain('skills');
+}, 60_000);
+
+test('full export: accounts.json in a real archive ships with keychain accounts marked needsReauth (not just the pure function)', () => {
+  const dir = path.join(tmp(), 'inst');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.json'), '{}');
+  fs.writeFileSync(
+    path.join(dir, 'accounts.json'),
+    JSON.stringify({
+      activeId: 'acc_kc',
+      accounts: [
+        { id: 'acc_kc', type: 'keychain', label: 'Default (macOS login)', pool: true, addedAt: 'x' },
+        { id: 'acc_tok', type: 'oauth-token', label: 'Work', pool: true, token: { v: 0, t: 'sk-ant-fake' } },
+      ],
+    }),
+  );
+  const out = path.join(tmp(), 'acct.tgz');
+  const r = runInChild(`const bk = await import('./server/backup.ts'); emit(await bk.exportFullToFile(${JSON.stringify(out)}));`, { ARIGAMI_DIR: dir });
+  expect(r.ok).toBe(true);
+  const staging = path.join(tmp(), 'extracted-acct');
+  fs.mkdirSync(staging, { recursive: true });
+  spawnSync('tar', ['-xzf', out, '-C', staging]);
+  const written = JSON.parse(fs.readFileSync(path.join(staging, 'accounts.json'), 'utf8'));
+  expect(written.activeId).toBeNull();
+  expect(written.accounts[0]).toEqual({ id: 'acc_kc', type: 'keychain-stale', label: 'Default (macOS login)', pool: false, addedAt: 'x', needsReauth: true });
+  expect(written.accounts[1]).toEqual({ id: 'acc_tok', type: 'oauth-token', label: 'Work', pool: true, token: { v: 0, t: 'sk-ant-fake' } });
+}, 60_000);
+
+test('importFull: an absolute reposDir/defaultCwd from a DIFFERENT-platform archive is dropped (config.ts falls back to its own default); same-platform archives are untouched', async () => {
+  const other = process.platform === 'linux' ? 'darwin' : 'linux';
+  const cfg = JSON.stringify({ reposDir: '/Users/dev/Desktop/repos', defaultCwd: '~/.arigami/workspace', port: 3099 });
+  const archCross = makeArchive({ 'config.json': cfg }, goodManifest({ host: { platform: other } }));
+  const dirCross = path.join(tmp(), 'cross');
+  await bk.importFull(archCross, { dir: dirCross, busyCount: () => 0 });
+  const gotCross = JSON.parse(fs.readFileSync(path.join(dirCross, 'config.json'), 'utf8'));
+  expect(gotCross.reposDir).toBeUndefined();
+  expect(gotCross.defaultCwd).toBe('~/.arigami/workspace');
+  expect(gotCross.port).toBe(3099);
+
+  const archSame = makeArchive({ 'config.json': cfg }, goodManifest({ host: { platform: process.platform } }));
+  const dirSame = path.join(tmp(), 'same');
+  await bk.importFull(archSame, { dir: dirSame, busyCount: () => 0 });
+  const gotSame = JSON.parse(fs.readFileSync(path.join(dirSame, 'config.json'), 'utf8'));
+  expect(gotSame.reposDir).toBe('/Users/dev/Desktop/repos');
+}, 60_000);
+
+test('bun server/backup.ts export --full --whatsapp / import --whatsapp CLI flags', () => {
+  const dir = fakeInstance(path.join(tmp(), 'inst'));
+  fs.mkdirSync(path.join(dir, 'whatsapp', 'auth_info'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'whatsapp', 'auth_info', 'creds.json'), '{}');
+  const ROOT = path.resolve(import.meta.dir, '..');
+  const run = (args: string[], env: Record<string, string> = {}) =>
+    spawnSync('bun', ['server/backup.ts', ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ARIGAMI_DIR: dir, ...env }, timeout: 30_000 });
+
+  const withWa = path.join(tmp(), 'cli-wa.tgz');
+  let r = run(['export', '--full', withWa, '--whatsapp']);
+  expect(r.status).toBe(0);
+  expect(tarList(withWa)).toContain('whatsapp/auth_info/creds.json');
+
+  const noWa = path.join(tmp(), 'cli-no-wa.tgz');
+  r = run(['export', '--full', noWa]);
+  expect(r.status).toBe(0);
+  expect(tarList(noWa).some((e) => e.startsWith('whatsapp/auth_info'))).toBe(false);
+
+  const dst = path.join(tmp(), 'cli-dst-default');
+  fs.mkdirSync(dst);
+  r = run(['import', withWa], { ARIGAMI_DIR: dst });
+  expect(r.status).toBe(0);
+  expect(JSON.parse(r.stdout).whatsappSkipped).toBe(true);
+  expect(fs.existsSync(path.join(dst, 'whatsapp', 'auth_info', 'creds.json'))).toBe(false);
+
+  const dst2 = path.join(tmp(), 'cli-dst-wa');
+  fs.mkdirSync(dst2);
+  r = run(['import', withWa, '--whatsapp'], { ARIGAMI_DIR: dst2 });
+  expect(r.status).toBe(0);
+  expect(JSON.parse(r.stdout).whatsappSkipped).toBe(false);
+  expect(fs.existsSync(path.join(dst2, 'whatsapp', 'auth_info', 'creds.json'))).toBe(true);
+}, 60_000);
+
 // ---- CLI ----------------------------------------------------------------------------------------
 
 test('bun server/backup.ts export/inspect/import CLI', () => {

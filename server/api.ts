@@ -257,7 +257,7 @@ const IMPORT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 async function handleHostExport(
   req: IncomingMessage,
   res: ServerResponse,
-  opts: { mode: string; include: string[]; memory?: boolean; name?: string }
+  opts: { mode: string; include: string[]; memory?: boolean; name?: string; whatsapp?: boolean }
 ): Promise<void> {
   const bk = await import('./backup.js');
   let r: import('./backup.js').ExportResult;
@@ -267,7 +267,7 @@ async function handleHostExport(
       const b = bk.exportBundle({ cron: tr.listTriggers(), memory: opts.memory !== false, name: opts.name });
       r = bk.tarDir(b.dir, `arigami-bundle-${b.name}-${bk.stamp()}.tgz`);
     } else if (opts.mode === 'full') {
-      r = bk.exportFull({ include: opts.include });
+      r = bk.exportFull({ include: opts.include, whatsapp: opts.whatsapp });
     } else return json(res, { error: 'mode must be "full" or "bundle"' }, 400);
   } catch (e) {
     return json(res, { error: (e as Error).message }, 500);
@@ -277,6 +277,10 @@ async function handleHostExport(
     'Content-Disposition': `attachment; filename="${r.filename}"`,
     'Cache-Control': 'no-store',
     'X-Arigami-Export': opts.mode,
+    // #1: a plain header (not JSON — this response body is the tar stream
+    // itself) so a caller that opted into `whatsapp` sees the "old machine
+    // will log out" notice even on a raw `curl -OJ`.
+    ...(r.warnings.length ? { 'X-Arigami-Warning': r.warnings.join(' | ') } : {}),
   });
   // F4 #1: pipe() ends `res` when tar's stdout ends; `done` (tar's close) can
   // settle after or before that — end explicitly either way, and stop tar
@@ -475,6 +479,7 @@ async function handleHostImport(
 ): Promise<void> {
   const bk = await import('./backup.js');
   const force = u.searchParams.get('force') === '1' || u.searchParams.get('force') === 'true';
+  const whatsapp = ['1', 'true', 'yes'].includes(String(u.searchParams.get('whatsapp') || ''));
   let file = '';
   try {
     file = await spoolUpload(req, bk.TMP_DIR);
@@ -486,7 +491,7 @@ async function handleHostImport(
       broadcast({ type: 'host', event: { kind: 'import-done', mode: 'bundle', name: unpacked.name } });
       return json(res, { ok: true, kind, ...report });
     }
-    const r = await bk.importFull(file, { force, busyCount: hc.busySessions });
+    const r = await bk.importFull(file, { force, whatsapp, busyCount: hc.busySessions });
     broadcast({ type: 'host', event: { kind: 'import-done', mode: 'full', backupDir: r.backupDir, version: r.manifest.version } });
     // F4 #3: no supervisor → say so and stay up (the data dir is already
     // swapped; `bin/host restart` finishes the job). Never exit unsupervised.
@@ -3187,6 +3192,7 @@ export async function handle(
         include: (u.searchParams.get('include') || '').split(',').filter(Boolean),
         memory: !['0', 'false', 'no'].includes(String(u.searchParams.get('memory') || '')),
         name: u.searchParams.get('name') || undefined,
+        whatsapp: ['1', 'true', 'yes'].includes(String(u.searchParams.get('whatsapp') || '')),
       });
     }
     if (p.startsWith('/__api/host/') && (m === 'POST' || m === 'DELETE')) {
@@ -3214,6 +3220,7 @@ export async function handle(
             include: Array.isArray(body.include) ? body.include.map(String) : [],
             memory: body.memory !== false && !['0', 'false', 'no'].includes(String(u.searchParams.get('memory') || '')),
             name: typeof body.name === 'string' ? body.name : u.searchParams.get('name') || undefined,
+            whatsapp: body.whatsapp === true || ['1', 'true', 'yes'].includes(String(u.searchParams.get('whatsapp') || '')),
           });
         }
         return await handleHostImport(req, res, u, hc);
