@@ -12,8 +12,8 @@
 // request_screen, which it mirrors.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { which, HOME } from './lib/platform.js';
+import { resourceRoot } from './lib/resource-root.js';
 import { mcpCatalog, connectableMcp, mcpSpec, grantName, grantToolPattern } from './mcp-catalog.js';
 import * as mcpConn from './mcp-connections.js';
 import { cfg } from './lib/config.js';
@@ -832,4 +832,4 @@ if (import.meta.main && process.argv[2] === 'doctor') {
 }
 
 // Keep the path helper visible for tests/tools.
-export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const REPO_ROOT = resourceRoot();

@@ -5,12 +5,11 @@
 // device code + URL for the human to enter on any device.
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { ptyArgs, which } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
+import { resourceRoot } from './lib/resource-root.js';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BRIDGE = path.join(HERE, 'lib', 'pty-bridge.py');
+const BRIDGE = path.join(resourceRoot(), 'server', 'lib', 'pty-bridge.py');
 
 export type GhLoginState = 'idle' | 'starting' | 'awaiting' | 'done' | 'error';
 export interface GhLoginView {

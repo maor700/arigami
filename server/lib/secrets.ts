@@ -1,14 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { ARIGAMI_DIR } from './instance.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { resourceRoot } from './resource-root.js';
 
 const STATE_DIR = ARIGAMI_DIR;
 export const SECRETS_ENV = path.join(STATE_DIR, 'secrets.env');
-export const LOCAL_ENV = path.join(__dirname, '..', '..', '.local.env');
+export const LOCAL_ENV = path.join(resourceRoot(), '.local.env');
 export const KEYCHAIN_PREFIX = 'arigami:';
 
 export function parseEnvFile(file: string): Record<string, string> {

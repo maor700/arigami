@@ -5,7 +5,7 @@ import './lib/platform.js';
 import http, { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resourceRoot } from './lib/resource-root.js';
 import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
@@ -27,7 +27,7 @@ auth.setShareGate(artifacts.shareGate);
 // has an opaque origin and cannot send the cookie (see server/ext-serve.ts).
 auth.setExtGate(extServe.shareGate);
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resourceRoot();
 const WEB_DIST = path.join(ROOT, 'web', 'dist');
 // EXT: the browser tab SDK, served from the repo (sdk/browser/ext-sdk.js) at a
 // stable path every extension page can <script src> — see sdk/README.md.

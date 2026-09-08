@@ -19,11 +19,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { cfg } from './state.js';
 import { runClaudeOneShot } from './lib/oneshot.js';
+import { resourceRoot } from './lib/resource-root.js';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resourceRoot();
 /** Shipped pack (git-tracked). Read-only at runtime. */
 export const SKILLS_DIR = path.join(ROOT, 'skills');
 /** User/bundle skills — the only root the app ever writes to. */

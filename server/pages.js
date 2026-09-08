@@ -12,9 +12,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
 import { execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { cfg } from './lib/config.js';
 import { secret } from './lib/secrets.js';
+import { resourceRoot } from './lib/resource-root.js';
 
 // Linear ticket data sources, in order:
 //   1. Live Linear GraphQL when a personal API key is set (auto-fresh).
@@ -485,7 +485,7 @@ async function fetchPR(owner, repo, num) {
 
 // ---- the card bundle ------------------------------------------------------------
 // Built lazily from server/assets/card.jsx with Bun.build (preact), memoized.
-const CARD_SRC = fileURLToPath(new URL('./assets/card.jsx', import.meta.url));
+const CARD_SRC = path.join(resourceRoot(), 'server', 'assets', 'card.jsx');
 let cardBuild = null;
 function buildCard() {
   if (!cardBuild) {

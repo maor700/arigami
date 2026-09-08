@@ -13,15 +13,14 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { ptyArgs, isWin } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
 import { addTokenAccount } from './accounts.js';
 import { cfg } from './lib/config.js';
 import { broadcast } from './bus.js';
+import { resourceRoot } from './lib/resource-root.js';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BRIDGE = path.join(HERE, 'lib', 'pty-bridge.py');
+const BRIDGE = path.join(resourceRoot(), 'server', 'lib', 'pty-bridge.py');
 const TIMEOUT_MS = 5 * 60_000;
 
 // Strip ANSI so URL/token scraping sees plain text. setup-token is a full TUI:

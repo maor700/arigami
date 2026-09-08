@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { resourceRoot } from './lib/resource-root.js';
 import { publicUrl, sessionPath } from './lib/public-url.js';
 import { requestOrigin } from './lib/proxy-headers.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
@@ -2837,7 +2838,7 @@ function probeVnc(host: string, port: number): Promise<boolean> {
 
 let VERSION = '0.0.0';
 try {
-  VERSION = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'package.json'), 'utf8')).version || VERSION;
+  VERSION = JSON.parse(fs.readFileSync(path.join(resourceRoot(), 'package.json'), 'utf8')).version || VERSION;
 } catch {}
 
 // Session tokens (ARIGAMI_TOKEN) are only honoured while their session exists.

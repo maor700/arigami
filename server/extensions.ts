@@ -23,8 +23,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { resourceRoot } from './lib/resource-root.js';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
 import * as registry from './listeners-registry.js';
@@ -39,7 +40,7 @@ import type {
   ListenerCtx,
 } from './lib/ext-types.js';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = resourceRoot();
 
 /** The apiVersion this host implements. A manifest with a different MAJOR is refused. */
 export const EXT_API_VERSION = 1;

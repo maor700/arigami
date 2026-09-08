@@ -29,6 +29,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { resourceRoot } from './lib/resource-root.js';
 import * as state from './state.js';
 import * as bus from './bus.js';
 
@@ -294,7 +295,7 @@ function gitStatus(root: string): Promise<string> {
 
 // ---- singleton wiring ---------------------------------------------------------
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = resourceRoot();
 const STARTED_AT = Date.now();
 let drainHandler: (() => void) | null = null;
 let current: UpgradeJob | null = null;
