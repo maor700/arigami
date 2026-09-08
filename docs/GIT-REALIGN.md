@@ -63,3 +63,22 @@ git push --force-with-lease origin master
 3. אחרי היישור: `bun run release minor` → tag `v0.2.0` → `git push --follow-tags` — ה-tag הראשון שיוצא מהריפו המיושר, ומכאן "עדכן" בהגדרות עובד (ff-only מול origin).
 
 **אל תבצעו אוטומטית.** זו החלטה של מאור (כרטיס בחירה בסשן VER1); הסשן שמריץ את זה עושה גיבוי-ענף לפני כל פקודה ולא מריץ `fetch --prune` / `reset --hard` על origin.
+
+---
+
+## מה בוצע בפועל (2026-09-08)
+
+מאור בחר **אופציה א׳**, והיישור בוצע. מה שנעשה, לפי הסדר:
+
+1. `git fetch origin` (בלי `--prune`); גיבויים: `backup/master-pre-realign` (b01a1a7) ו-`backup/ver1-pre-realign` (5518c06). שניהם עדיין קיימים.
+2. ה-rebase עצמו רץ ב-worktree נפרד ומנותק (`/home/arigami/repos/realign-wt`) ולא ב-`/opt/arigami` — כדי שההוסט החי לא ירוץ אף רגע על עץ עם קונפליקטים.
+3. `git rebase --onto origin/master 10437ca` — 44 קומיטים ללא-מיזוג (57 כולל מיזוגים, שנשטחו). 28 עברו נקי; חמישה עצרו בקונפליקטים, כולם מאותו סוג: קומיטי ה-scrub המקומיים מול ה-scrub של PR #2. בכולם נבחר הצד המקומי, שהוא הנייטרלי מבין השניים ("הבעלים" במקום שם פרטי, "the club" במקום שם מעסיק).
+4. שני מקרים חריגים:
+   - `web/src/components/TabBar.jsx` — קונפליקט אמיתי בין branding לבין agent-page, שבהיסטוריה המקורית נפתר בקומיט מיזוג שה-rebase משטח. שוחזרה בדיוק התוצאה של אותו מיזוג (מ-b01a1a7).
+   - `test/no-internal-refs.test.js` — git מתייחס אליו כבינארי (יש בו בית NUL), ולכן הקונפליקט לא סומן והגרסה של origin נשארה בשקט. זו הגרסה שמכילה את המונחים האישיים בתוך הקוד; הוחלפה בגרסה המקומית (215d146) שקוראת denylist חיצוני.
+5. תוצאה: העץ החדש נבדל מ-`master` הישן ב-**24 קבצים בלבד**, וכולם התוספות של origin (control-plane, deploy/helm/arigami-control-plane, docker/entrypoint.sh, DEVOPS-HANDOFF, release.yml). **אפס** הבדלים תחת `server/`, `web/`, `mcp/`, `bin/`, `skills/`, `examples/` — כלומר מה שההוסט מריץ זהה בדיוק.
+6. תוקן בקומיט נפרד: שער המידע האישי לא הכיר את טווחי ה-RFC1918 ש-`deploy/helm/arigami-tenant/values.yaml` מחסיר מ-`0.0.0.0/0`. אחריו `check-public-readiness.sh` עובר.
+7. `master` ב-`/opt/arigami` הוזז ל-2abe77b. מצבו: **44 קומיטים לפני `origin/master`, אפס מאחור** — כלומר `git push origin master` רגיל (fast-forward, בלי force) אפשרי.
+8. `dispatch/versions-update` (VER1) עבר rebase על master החדש. הקונפליקט היחיד: `.github/workflows/release.yml` — שני ה-jobs נשמרו (בניית ה-control-plane מ-origin, ו-`github-release` של VER1).
+
+**מה נשאר:** ה-push ל-origin לא בוצע (ממתין לאישור מפורש). אחריו: `bun run release minor` → `v0.2.0` → `git push --follow-tags`, ומאותו רגע "עדכן" בהגדרות עובד ff-only מול origin.
