@@ -6,9 +6,9 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
+import { resourceRoot } from './lib/resource-root.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold } from './state.js';
@@ -109,7 +109,7 @@ function accountEnv(s) {
   }
 }
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resourceRoot();
 const HOST_SERVERS = { 'arigami': { command: 'bun', args: [path.join(ROOT, 'mcp', 'host-mcp.js')] } };
 const MCP_CONFIG = JSON.stringify({ mcpServers: HOST_SERVERS });
 

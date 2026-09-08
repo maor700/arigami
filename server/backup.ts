@@ -29,13 +29,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
+import { resourceRoot } from './lib/resource-root.js';
 export { cronBundleKey };
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REPO_ROOT = resourceRoot();
 
 /** Bump the MAJOR when a restored dir would not be understood by an older host. */
 export const BACKUP_FORMAT = 1;
