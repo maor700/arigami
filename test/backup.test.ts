@@ -87,6 +87,19 @@ test('assertSafeEntries refuses absolute and parent-escaping paths', () => {
   expect(() => bk.assertSafeEntries(['./ok', 'x/../../evil'])).toThrow(/unsafe/);
 }, 60_000);
 
+// Platform-bugs fix: tarArgs()'s --no-wildcards-match-slash/--wildcards-
+// match-slash are GNU-tar-only. macOS/Windows ship BSD tar (libarchive),
+// which rejects those flags — parseTarFlavor() is the pure classifier behind
+// the runtime `tar --version` probe that decides whether to run (GNU,
+// unchanged) or block with a clear reason (BSD/unknown) instead of silently
+// building a wrong archive.
+test('parseTarFlavor: classifies real-world `tar --version` banners', () => {
+  expect(bk.parseTarFlavor('tar (GNU tar) 1.35\nCopyright (C) 2023 Free Software Foundation, Inc.')).toBe('gnu');
+  expect(bk.parseTarFlavor('bsdtar 3.5.3 - libarchive 3.5.3 zlib/1.2.11 liblzma/5.2.5')).toBe('bsd');
+  expect(bk.parseTarFlavor('tar (Busybox) 1.35.0')).toBe('unknown');
+  expect(bk.parseTarFlavor('')).toBe('unknown');
+});
+
 test('bundleCronFromTrigger strips the bundle tag, existing:<session> mode and personal delivery', () => {
   const c = bk.bundleCronFromTrigger({ name: '[old-bundle] morning', prompt: 'hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, sessionMode: 'existing:s1', deliver: { push: true, whatsapp: '1@s.whatsapp.net', master: 's1' } });
   expect(c).toEqual({ name: 'morning', key: 'exported-host/morning', prompt: 'hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } });
