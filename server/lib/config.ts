@@ -73,6 +73,16 @@ export interface ScreenConfig {
   keepProfiles: boolean;
 }
 
+// Xvfb/x11vnc — everything the desktop feature spawns — only exist on Linux.
+// Defaulting `enabled` to `true` on macOS/Windows meant every session that
+// opened a browser hit ensureDesktop() → spawn('Xvfb') → ENOENT, waited out a
+// 5s timeout, and did that again on the next try (see lib/desktops.ts).
+// `platform` is injectable so this is unit-testable without mocking the real
+// process.platform; ARIGAMI_SCREEN_ENABLED still overrides either default.
+export function defaultScreenEnabled(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'linux';
+}
+
 // The brain session's heartbeat (spec M4.3): off by default. When on, a
 // backing CronTrigger (server/brain.ts) wakes the singleton brain session
 // every `heartbeatEvery` to self-check whether anything needs the owner's
@@ -305,7 +315,7 @@ export const DEFAULTS: Config = {
     stallTimeoutSec: 600,
   },
   screen: {
-    enabled: true,
+    enabled: defaultScreenEnabled(),
     vncHost: '127.0.0.1',
     vncPort: 5900,
     autoSnapshots: false,
