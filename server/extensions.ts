@@ -26,6 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { bunExec } from './lib/bun-exec.js';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
 import * as registry from './listeners-registry.js';
@@ -883,7 +884,7 @@ function serversFor(e: ExtEntry): Record<string, { command: string; args: string
     for (const [k, v] of Object.entries(secrets)) env[k] = String(v);
     out[key] =
       t.kind === 'module'
-        ? { command: 'bun', args: [path.join(REPO_ROOT, 'mcp', 'ext-mcp.js'), insideDir(e.dir, str((t as any).module)) || ''], cwd: e.dir, env }
+        ? { ...bunExec('ext', [insideDir(e.dir, str((t as any).module)) || '']), cwd: e.dir, env }
         : { command: (t as any).command, args: ((t as any).args || []).map((a: string) => String(a).replaceAll('${EXT_DIR}', e.dir)), cwd: e.dir, env };
   }
   return out;

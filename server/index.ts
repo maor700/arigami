@@ -33,6 +33,36 @@ const WEB_DIST = path.join(ROOT, 'web', 'dist');
 // stable path every extension page can <script src> — see sdk/README.md.
 const EXT_SDK_FILE = path.join(ROOT, 'sdk', 'browser', 'ext-sdk.js');
 
+// Desktop packaging (bun build --compile): inside a compiled binary there is
+// no `bun` on PATH, so server/lib/bun-exec.ts re-execs THIS SAME binary with
+// `--mcp <kind>` instead of `bun mcp/<file>.js` to run one of the mcp/*.js
+// helper scripts. Must be the very first thing checked — before config-dir
+// creation, the host lock or the port bind below — because these subprocesses
+// spawn once per Claude Code session/tool-call and must never touch host
+// state or compete for the port. `await new Promise(() => {})` permanently
+// parks this module's own evaluation right here (never falling through to
+// the server bootstrap below) while the imported script's own listeners
+// (stdio for host-mcp.js/ext-mcp.js; policy-hook.js calls process.exit
+// itself) keep the process alive on their own.
+{
+  const mcpIdx = process.argv.indexOf('--mcp');
+  if (mcpIdx !== -1) {
+    const MCP_FILES: Record<string, string> = { host: 'host-mcp.js', policy: 'policy-hook.js', ext: 'ext-mcp.js' };
+    const kind = process.argv[mcpIdx + 1];
+    const file = MCP_FILES[kind];
+    if (!file) {
+      console.error(`[host] unknown --mcp kind: ${kind}`);
+      process.exit(1);
+    }
+    // Rewrite argv so the target script sees the same relative layout it
+    // would under `bun mcp/<file>.js [...args]` (ext-mcp.js reads its module
+    // path from argv[2]).
+    process.argv = [process.argv[0], path.join(ROOT, 'mcp', file), ...process.argv.slice(mcpIdx + 2)];
+    await import(path.join(ROOT, 'mcp', file));
+    await new Promise(() => {});
+  }
+}
+
 try {
   ensureConfigFile?.();
   // S1 (minimal onboarding): the default cwd is an empty workspace under the

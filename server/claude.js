@@ -9,6 +9,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold } from './state.js';
@@ -110,7 +111,7 @@ function accountEnv(s) {
 }
 
 const ROOT = resourceRoot();
-const HOST_SERVERS = { 'arigami': { command: 'bun', args: [path.join(ROOT, 'mcp', 'host-mcp.js')] } };
+const HOST_SERVERS = { 'arigami': bunExec('host') };
 const MCP_CONFIG = JSON.stringify({ mcpServers: HOST_SERVERS });
 
 // M1 — the `--mcp-config` payload for one session. Always the host MCP; for a
@@ -543,7 +544,7 @@ function policyArgs(s) {
   }
   const strict = strictMcpFor(policy);
   const denied = disallowedToolsFor(policy, [...servers]);
-  const hook = `bun "${path.join(ROOT, 'mcp', 'policy-hook.js')}"`;
+  const hook = bunExecShell('policy');
   return [
     ...(strict ? ['--strict-mcp-config'] : []),
     ...(denied.length ? ['--disallowedTools', denied.join(',')] : []),
