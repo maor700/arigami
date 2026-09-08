@@ -21,7 +21,8 @@ import { fileURLToPath } from 'node:url';
 // "file:///abs/path/to/file.ts", while the compiled binary gives
 // "file:///$bunfs/root/<binary-name>". process.isBun is true in both cases,
 // so it alone can't distinguish them — the $bunfs marker is the actual signal.
-function isCompiledBinary(): boolean {
+/** Exported so other lib/ helpers (bun-exec.ts) can branch on the same signal without re-deriving it. */
+export function isCompiledBinary(): boolean {
   return (
     typeof (process as any).isBun !== 'undefined' &&
     import.meta.url.includes('/$bunfs/')

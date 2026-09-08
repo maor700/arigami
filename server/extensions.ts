@@ -26,6 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { bunExec } from './lib/bun-exec.js';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
 import * as registry from './listeners-registry.js';
@@ -883,7 +884,7 @@ function serversFor(e: ExtEntry): Record<string, { command: string; args: string
     for (const [k, v] of Object.entries(secrets)) env[k] = String(v);
     out[key] =
       t.kind === 'module'
-        ? { command: 'bun', args: [path.join(REPO_ROOT, 'mcp', 'ext-mcp.js'), insideDir(e.dir, str((t as any).module)) || ''], cwd: e.dir, env }
+        ? { ...bunExec('ext', [insideDir(e.dir, str((t as any).module)) || '']), cwd: e.dir, env }
         : { command: (t as any).command, args: ((t as any).args || []).map((a: string) => String(a).replaceAll('${EXT_DIR}', e.dir)), cwd: e.dir, env };
   }
   return out;
@@ -1421,6 +1422,15 @@ export function emitDomain(name: string, payload: Record<string, unknown>): void
 // bun server/extensions.ts list|validate <dir>|add <src> [--trust]|trust <name>|untrust <name>|
 //   remove <name>|update [name]|reload|enable <name>|disable <name>|wants-trust <dir>
 if (import.meta.main) {
+  // Wrapped in an async IIFE (not a real top-level await) so this module has
+  // no top-level await at all — `bun build --compile` refuses to bundle any
+  // `require()` of a module that transitively does, and skills.ts/state.ts
+  // both late-require this file. import.meta.main is false whenever this
+  // file is imported rather than run directly, so this whole block — and the
+  // process.exitCode / doCommit semantics it relies on — never executes in
+  // that case; behavior when run as a CLI is unchanged (the event loop still
+  // waits for this promise before the process can exit naturally).
+  void (async () => {
   const argv = process.argv.slice(2);
   const [cmd, arg] = argv;
   const flag = (f: string) => argv.includes(f);
@@ -1505,4 +1515,5 @@ if (import.meta.main) {
     process.stderr.write(`error: ${(e as Error).message}\n`);
     process.exitCode = 1;
   }
+  })();
 }
