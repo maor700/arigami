@@ -107,12 +107,53 @@ async function git(cwd: string, args: string[]): Promise<GitResult> {
 
 // ---- Worktree mutation (dispatcher) ----
 
+// A git worktree is a sibling directory, not a subdirectory of the parent
+// checkout, so Bun's node_modules resolution never climbs into it — a fresh
+// worktree has no node_modules anywhere until something installs one. Off
+// switch for callers (tests) that create throwaway worktrees and don't want
+// to pay for it. Read at call time, not module load, so tests can flip it
+// mid-process.
+const worktreeInstallEnabled = (): boolean => process.env.ARIGAMI_WORKTREE_INSTALL !== '0';
+
+interface DepInstallResult {
+  ran: boolean;
+  ok: boolean;
+  error?: string;
+}
+
 interface WorktreeAddResult {
   ok: boolean;
   dir: string;
   branch: string;
   base: string;
   error?: string;
+  // Present only when the install step ran (worktreeInstallEnabled()); one
+  // entry per location that has a package.json (root and/or web/). Absent
+  // entries had none to install.
+  install?: { root?: DepInstallResult; web?: DepInstallResult };
+}
+
+// `bun install --frozen-lockfile` in `dir`, skipped (ran:false) when there's
+// no package.json there — a worktree may only have one at the root, only
+// under web/, both, or neither. Measured at ~0.3s per location since Bun
+// hardlinks from its global cache, so this never blocks worktree creation
+// for long; a failure here is reported, not thrown, so a worktree without
+// dependencies is still handed back usable.
+async function installDeps(dir: string): Promise<DepInstallResult> {
+  if (!fs.existsSync(path.join(dir, 'package.json'))) return { ran: false, ok: true };
+  const proc = Bun.spawn(['bun', 'install', '--frozen-lockfile'], {
+    cwd: dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const code = await proc.exited;
+  return code === 0
+    ? { ran: true, ok: true }
+    : { ran: true, ok: false, error: stderr.trim() || `bun install failed (${code})` };
 }
 
 // Resolve the repo a worker should branch off. The dispatcher passes the master's
@@ -161,7 +202,15 @@ export async function addWorktree(
     : ['worktree', 'add', '-b', branch, dir, baseRef];
   const r = await git(root, args);
   if (r.code !== 0) return fail(r.out.trim() || `git worktree add failed (${r.code})`);
-  return { ok: true, dir, branch, base: baseRef };
+  if (!worktreeInstallEnabled()) return { ok: true, dir, branch, base: baseRef };
+  const [rootInstall, webInstall] = await Promise.all([
+    installDeps(dir),
+    installDeps(path.join(dir, 'web')),
+  ]);
+  const install: WorktreeAddResult['install'] = {};
+  if (rootInstall.ran) install.root = rootInstall;
+  if (webInstall.ran) install.web = webInstall;
+  return { ok: true, dir, branch, base: baseRef, install };
 }
 
 export async function removeWorktree(
