@@ -12,8 +12,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { cfg } from './state.js';
 import * as claude from './claude.js';
-import { captureScreen } from './vnc.js';
-import { ensureDesktop, screenTarget } from './lib/desktops.js';
+import { pickDriver } from './lib/screen-driver.js';
 import { encodePng, downscaleRgba, frameDiffRatio } from './lib/png.js';
 
 export const SCREENS_DIR = path.join(cfg.configDir!, 'uploads', 'screens');
@@ -77,8 +76,9 @@ export async function takeScreenshot(
   // Lazy per-session desktop (T8): the session's own machine if it has (or
   // can get) one, otherwise the global desktop — ensureDesktop() throwing
   // (binary missing, ports exhausted) is not fatal here, just no upgrade.
-  try { await ensureDesktop(sessionId); } catch {}
-  const cap = await captureScreen(screenTarget(sessionId));
+  const driver = pickDriver();
+  try { await driver.ensure(sessionId); } catch {}
+  const cap = await driver.capture(sessionId);
   let png = cap.png;
   let width = cap.width, height = cap.height;
   const now = Date.now();
@@ -113,7 +113,7 @@ export async function takeScreenshot(
     url: `/__api/sessions/${sessionId}/screens/${file}`,
     file,
     ts,
-    via: cap.via,
+    via: cap.via as 'rfb' | 'x11', // driver-defined; the x11 driver only ever returns these two
     ...(opts.caption ? { caption: opts.caption } : {}),
     ...(width ? { width, height } : {}),
     ...(opts.auto ? { auto: true } : {}),

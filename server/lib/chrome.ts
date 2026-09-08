@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { ARIGAMI_DIR } from './instance.js';
 import { supervise, killTree } from './children.js';
 import * as state from '../state.js';
-import { ensureDesktop } from './desktops.js';
+import { pickDriver } from './screen-driver.js';
 import { chromeCandidates, findChromeBin } from './platform.js';
 
 export const CHROME_BASE_DIR = path.join(ARIGAMI_DIR, 'chrome-base');
@@ -105,7 +105,9 @@ export function isChromeRunning(sessionId: string): boolean {
 export async function openChrome(sessionId: string, url?: string): Promise<{ display: string; pid: number; alreadyRunning: boolean }> {
   const s = state.getSession(sessionId);
   if (!s) throw new Error(`unknown session: ${sessionId}`);
-  const { display } = await ensureDesktop(sessionId);
+  const driver = pickDriver();
+  const handle = await driver.ensure(sessionId);
+  const display = String(handle.display);
   const existing = running.get(sessionId);
   if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
 
@@ -121,8 +123,9 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--remote-debugging-port=0',
     ...(url ? [url] : []),
   ];
-  const child = spawn(chromeBin(), chromeExtraFlags().concat(args), {
-    env: { ...process.env, DISPLAY: display },
+  const { env, extraArgs } = await driver.browserLaunch(sessionId);
+  const child = spawn(chromeBin(), chromeExtraFlags().concat(extraArgs, args), {
+    env,
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   supervise(child, `browser:${sessionId}`);

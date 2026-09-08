@@ -21,14 +21,15 @@ const wss = new WebSocketServer({
   handleProtocols: (protocols: Set<string>) => (protocols.has('binary') ? 'binary' : false),
 });
 
-wss.on('connection', async (ws: WebSocket, req: any) => {
-  const sessionId = new URL(req.url || '/', 'http://localhost').searchParams.get('session');
-  // T8c / BROWSE1: an explicit ?session= must show THAT session's own machine,
-  // never silently fall back to the shared :99 desktop just because it hasn't
-  // been allocated yet — allocate it now (same lazy-alloc the agent's own
-  // request_screen/capture_screen trigger). Only a genuine allocation failure
-  // (screen sharing disabled, port range exhausted) falls through to
-  // screenTarget()'s global fallback below.
+// T8c / BROWSE1: an explicit ?session= must show THAT session's own machine,
+// never silently fall back to the shared :99 desktop just because it hasn't
+// been allocated yet — allocate it now (same lazy-alloc the agent's own
+// request_screen/capture_screen trigger). Only a genuine allocation failure
+// (screen sharing disabled, port range exhausted) falls through to
+// screenTarget()'s global fallback below. Exported so screen-driver-x11.ts's
+// attachViewer() can drive an already-upgraded socket the same way the raw
+// /__vnc upgrade handler below does.
+export async function bridgeToVnc(ws: WebSocket, sessionId: string | null): Promise<void> {
   if (sessionId) { try { await ensureDesktop(sessionId); } catch { /* fall back below */ } }
   if (ws.readyState !== 1 /* OPEN */) return; // client gone while we awaited allocation
   const { vncHost, vncPort } = screenTarget(sessionId);
@@ -48,6 +49,11 @@ wss.on('connection', async (ws: WebSocket, req: any) => {
   tcp.on('close', () => { try { ws.close(); } catch {} });
   ws.on('close', () => { try { tcp.destroy(); } catch {} });
   ws.on('error', () => { try { tcp.destroy(); } catch {} });
+}
+
+wss.on('connection', (ws: WebSocket, req: any) => {
+  const sessionId = new URL(req.url || '/', 'http://localhost').searchParams.get('session');
+  void bridgeToVnc(ws, sessionId);
 });
 
 export function handleUpgrade(req: any, socket: any, head: Buffer): void {

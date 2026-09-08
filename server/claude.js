@@ -26,6 +26,7 @@ import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
+import { pickDriver } from './lib/screen-driver.js';
 import {
   planReplay,
   shapeForCompaction,
@@ -582,6 +583,7 @@ function spawnProc(s, resume) {
   ];
   const cwd = untildify(s.cwd) || HOME;
   const accountEnvSnapshot = accountEnv(s);
+  const screenHandle = pickDriver().peek(s.id);
   const child = spawn(claudeBin(), args, {
     cwd,
     env: {
@@ -611,8 +613,10 @@ function spawnProc(s, resume) {
       // allocation from an earlier request_screen/capture_screen/browser-open
       // in this session). A desktop allocated while this process is already
       // running only takes effect on its next spawn — env can't be changed
-      // on a live child.
-      ...(s.metadata?.screen?.display ? { DISPLAY: s.metadata.screen.display } : {}),
+      // on a live child. spawnProc() is called synchronously from many call
+      // sites, so this uses the driver's synchronous peek() rather than the
+      // async childEnv() (server/lib/screen-driver.ts).
+      ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
