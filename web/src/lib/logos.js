@@ -7,8 +7,8 @@
 // four-pointed star, eight facets). It is the default; the older presets stay
 // as opt-in alternatives.
 
-// Brand accent — chosen 2026-09-08 (the owner picked this mint/turquoise over the
-// landing page's orange, after reviewing live mockups at several intensities).
+// Brand accent — chosen 2026-09-08: this mint/turquoise over the landing
+// page's orange, after reviewing live mockups at several intensities.
 // The landing page (arigami-site global.css --accent) still uses orange
 // separately; the two are no longer required to match.
 export const DEFAULT_ACCENT = '#6eceb7';
