@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" >
-<path d="M32 2 L32 32 L19.98 19.98 Z" fill="#f97316"/>
-<path d="M32 2 L44.02 19.98 L32 32 Z" fill="#c2410c"/>
-<path d="M62 32 L32 32 L44.02 19.98 Z" fill="#c2410c"/>
-<path d="M62 32 L44.02 44.02 L32 32 Z" fill="#f97316"/>
-<path d="M32 62 L32 32 L44.02 44.02 Z" fill="#f97316"/>
-<path d="M32 62 L19.98 44.02 L32 32 Z" fill="#c2410c"/>
-<path d="M2 32 L32 32 L19.98 44.02 Z" fill="#c2410c"/>
-<path d="M2 32 L19.98 19.98 L32 32 Z" fill="#f97316"/>
+<path d="M32 2 L32 32 L19.98 19.98 Z" fill="#6eceb7"/>
+<path d="M32 2 L44.02 19.98 L32 32 Z" fill="#559f8d"/>
+<path d="M62 32 L32 32 L44.02 19.98 Z" fill="#559f8d"/>
+<path d="M62 32 L44.02 44.02 L32 32 Z" fill="#6eceb7"/>
+<path d="M32 62 L32 32 L44.02 44.02 Z" fill="#6eceb7"/>
+<path d="M32 62 L19.98 44.02 L32 32 Z" fill="#559f8d"/>
+<path d="M2 32 L32 32 L19.98 44.02 Z" fill="#559f8d"/>
+<path d="M2 32 L19.98 19.98 L32 32 Z" fill="#6eceb7"/>
 </svg>

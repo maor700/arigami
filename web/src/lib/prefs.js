@@ -2,7 +2,7 @@
 // Global defaults (theme, terminal font/dir/theme, rail width) plus per-session
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
-import { logoDataUri, isLogoId, DEFAULT_ACCENT, DEFAULT_LOGO } from './logos.js';
+import { logoDataUri, DEFAULT_ACCENT, DEFAULT_LOGO } from './logos.js';
 import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from './langs.js';
 
 const KEY = 'arigami-prefs';
@@ -153,7 +153,14 @@ function sanitize(raw) {
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
     usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
-    logo: isLogoId(p.logo) ? p.logo : DEFAULT_LOGO,
+    // No UI exposes a logo picker (Appearance.jsx keeps it out — SETTINGS-IA
+    // §1.1 #4), so a stored `logo` can only be a leftover from a browser that
+    // visited before the brand default flipped to 'star' — never an explicit
+    // user choice. Ignore whatever's saved and always resolve to the current
+    // DEFAULT_LOGO, so changing the brand default isn't silently pinned by
+    // old localStorage. Once a picker ships, go back to
+    // `isLogoId(p.logo) ? p.logo : DEFAULT_LOGO` to respect a real choice.
+    logo: DEFAULT_LOGO,
     language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
   };
 }

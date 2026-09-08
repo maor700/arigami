@@ -658,7 +658,7 @@ function Cockpit() {
               const target = document.querySelector(`[data-event-id="${CSS.escape(eventId)}"]`);
               if (target) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                target.style.outline = '2px solid var(--color-brand, #f97316)';
+                target.style.outline = '2px solid var(--color-brand, #6eceb7)';
                 setTimeout(() => { target.style.outline = ''; }, 2000);
                 return;
               }
