@@ -49,3 +49,72 @@ test('getVersion on a repo with an upstream that is 2 commits ahead', async () =
   expect(await getVersion({ root: local })).toBe(after);
   invalidateVersion();
 });
+
+// VER1: currentVersion (VERSION file wins), compareVersions, and the
+// "available" side — the upstream tip's package.json + newest v* tag — plus
+// sharedBase=false when the two histories have no merge base (the realign case).
+import { currentVersion, compareVersions } from '../server/version.ts';
+
+test('currentVersion: VERSION file over package.json; compareVersions', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cv-'));
+  fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+  expect(currentVersion(d)).toBe('1.0.0');
+  fs.writeFileSync(path.join(d, 'VERSION'), '1.0.1\n');
+  expect(currentVersion(d)).toBe('1.0.1');
+  fs.writeFileSync(path.join(d, 'VERSION'), 'garbage\n');
+  expect(currentVersion(d)).toBe('1.0.0');
+  expect(compareVersions('0.1.0', '0.1.1')).toBe(-1);
+  expect(compareVersions('v0.2.0', '0.1.9')).toBe(1);
+  expect(compareVersions('1.0.0', '1.0.0')).toBe(0);
+  expect(compareVersions('1.0.0-rc.1', '1.0.0')).toBe(0);
+  expect(compareVersions(null, '1.0.0')).toBeNull();
+});
+
+test('getVersion: available version/tag from upstream, sharedBase false once the histories diverge without a base', async () => {
+  process.env.ARIGAMI_NO_RELEASE_CHECK = '1';
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ver2-'));
+  const up = path.join(base, 'up');
+  const local = path.join(base, 'local');
+  const g = (cwd: string, ...a: string[]) => {
+    const r = spawnSync('git', a, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  fs.mkdirSync(up);
+  g(up, 'init', '-q', '-b', 'main'); g(up, 'config', 'user.email', 't@example.invalid'); g(up, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(up, 'package.json'), JSON.stringify({ version: '0.1.0' }));
+  fs.writeFileSync(path.join(up, 'VERSION'), '0.1.0\n');
+  g(up, 'add', '.'); g(up, 'commit', '-q', '-m', 'one'); g(up, 'tag', 'v0.1.0');
+  g(base, 'clone', '-q', up, local);
+  g(local, 'config', 'user.email', 't@example.invalid'); g(local, 'config', 'user.name', 't');
+  // upstream releases 0.2.0
+  fs.writeFileSync(path.join(up, 'package.json'), JSON.stringify({ version: '0.2.0' }));
+  fs.writeFileSync(path.join(up, 'VERSION'), '0.2.0\n');
+  g(up, 'add', '.'); g(up, 'commit', '-q', '-m', 'chore(release): v0.2.0'); g(up, 'tag', 'v0.2.0');
+
+  invalidateVersion();
+  const before = await getVersion({ root: local });
+  expect(before.version).toBe('0.1.0');
+  expect(before.tag).toBe('v0.1.0');
+  expect(before.available).toEqual({ version: '0.1.0', tag: 'v0.1.0', release: null });
+  expect(before.sharedBase).toBe(true);
+  expect(before.updateAvailable).toBe(false);
+
+  const after = await getVersion({ root: local, refresh: true });
+  expect(after.ahead).toBe(1);
+  expect(after.available.version).toBe('0.2.0');
+  expect(after.available.tag).toBe('v0.2.0');
+  expect(after.updateAvailable).toBe(true);
+  expect(after.sharedBase).toBe(true);
+
+  // the realign case: local history rewritten from scratch, still tracking origin/main
+  g(local, 'checkout', '-q', '--orphan', 'fresh');
+  g(local, 'commit', '-q', '-m', 'rewritten root');
+  g(local, 'branch', '-q', '--set-upstream-to=origin/main');
+  invalidateVersion();
+  const apart = await getVersion({ root: local });
+  expect(apart.sharedBase).toBe(false);
+  expect(apart.ahead).toBe(2);
+  expect(apart.behind).toBe(1);
+  invalidateVersion();
+});

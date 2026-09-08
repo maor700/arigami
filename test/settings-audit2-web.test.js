@@ -179,13 +179,16 @@ test('Health: "reminded you" incidents are hidden by default, with an opt-in che
   expect(html).toContain('Incidents (24h)');
 });
 
-test('Host page: version/CLI/restart/upgrade/backup + who-am-i on the page; manager, budgets, health, VNC, danger zone in the closed drawer', () => {
+test('Host page: version/CLI/restart/backup + who-am-i on the page; manager, legacy upgrade, budgets, health, VNC, danger zone in the closed drawer', () => {
   const html = render(h(HostPage, {}));
   const top = beforeDrawer(html);
   expect(top).toContain('Version');
   expect(top).toContain('Claude CLI');
   expect(top).toContain('Restart');
-  expect(top).toContain('Upgrade');
+  // VER1: the version row owns "Update" (pull/build, then a restart card); the
+  // one-shot "Upgrade & restart" buttons moved into the drawer.
+  expect(top).not.toContain('Upgrade');
+  expect(html).toContain('Upgrade');
   expect(top).toContain('Export / Import');
   expect(top).not.toContain('Supervisor');
   expect(top).not.toContain('Budgets');

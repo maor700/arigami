@@ -63,7 +63,8 @@ export function Field({ label, hint, children, wrap = false }) {
         <div className="text-[0.8125rem] font-bold text-fg">{label}</div>
         {hint && <div className="mt-0.5 text-[0.71875rem] text-fgdim">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      {/* VER1: max-w-full so a wide control that wrapped under the label can't run past the viewport (mobile) */}
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }
@@ -156,6 +157,7 @@ export function hostPost(path, method = 'POST', body) {
     if (!r.ok) {
       const e = new Error(b?.error || `HTTP ${r.status}`);
       e.status = r.status;
+      if (Array.isArray(b?.dirty)) e.dirty = b.dirty; // VER1: the dirty-checkout refusal names the files
       throw e;
     }
     return b;

@@ -213,7 +213,9 @@ export class RestartController {
 
 // ---- upgrade job --------------------------------------------------------------
 
-export interface UpgradeStep { name: string; cmd: string[]; cwd: string }
+export interface UpgradeStep { name: string; cmd: string[]; cwd: string; failMessage?: string }
+/** 'confirm' (VER1): pull + install + build, then WAIT — the restart is a separate, explicit click. */
+export type UpgradeWhen = RestartWhen | 'confirm';
 export interface UpgradeJob {
   id: string;
   startedAt: number;
@@ -221,21 +223,33 @@ export interface UpgradeJob {
   ok: boolean | null;
   step: string | null;
   error: string | null;
-  when: RestartWhen;
+  when: UpgradeWhen;
+  from: string | null; // version before the pull
+  to: string | null; // version after it (read from the updated checkout)
+  needsRestart: boolean; // VER1: built and waiting for the human's restart click
   log: string[]; // capped tail
 }
 
 export const DIRTY_ERROR = 'repo has uncommitted changes — commit or stash them before upgrading';
 export const ALLOW_ERROR = 'upgrade disabled by config (host.allowUpgrade=false)';
+export const NOT_FF_ERROR = 'the checkout has commits upstream does not — a fast-forward pull is impossible (see docs/GIT-REALIGN.md)';
 
 /** `git status --porcelain` → dirty? Untracked files are ignored: a ff-only pull never touches them. */
 export function isDirtyStatus(porcelain: string): boolean {
-  return porcelain.split('\n').some((l) => l.trim() && !l.startsWith('??'));
+  return dirtyFiles(porcelain).length > 0;
+}
+
+/** VER1: the tracked paths that make the checkout dirty, as "XY path" lines (untracked skipped) — what the UI lists. */
+export function dirtyFiles(porcelain: string): string[] {
+  return porcelain.split('\n').filter((l) => l.trim() && !l.startsWith('??')).map((l) => `${l.slice(0, 2).trim() || '?'} ${l.slice(3).trim()}`);
 }
 
 export function upgradePlan(root: string): UpgradeStep[] {
   return [
-    { name: 'fetch', cmd: ['git', 'fetch', '--quiet', '--prune'], cwd: root },
+    // no --prune: pruning is how a rewritten remote silently loses its merge base with this checkout
+    { name: 'fetch', cmd: ['git', 'fetch', '--quiet', '--tags'], cwd: root },
+    // VER1: fail EARLY, with a readable reason, instead of letting `pull --ff-only` print git's
+    { name: 'check', cmd: ['git', 'merge-base', '--is-ancestor', 'HEAD', '@{u}'], cwd: root, failMessage: NOT_FF_ERROR },
     { name: 'pull', cmd: ['git', 'pull', '--ff-only', '--quiet'], cwd: root },
     { name: 'install', cmd: ['bun', 'install', '--frozen-lockfile'], cwd: root },
     { name: 'build', cmd: ['bun', 'run', 'build'], cwd: path.join(root, 'web') },
@@ -256,6 +270,16 @@ function run(cmd: string[], cwd: string, onLine: (l: string) => void): Promise<n
     p.on('error', reject);
     p.on('close', (code) => { if (buf) onLine(buf); resolve(code ?? 1); });
   });
+}
+
+/** VER1: the dirty list the Settings card shows next to the update button (5s cache — the UI polls). */
+let dirtyCache: { at: number; root: string; files: string[] } | null = null;
+export async function dirtyNow(root = ROOT): Promise<string[]> {
+  if (dirtyCache && dirtyCache.root === root && Date.now() - dirtyCache.at < 5_000) return dirtyCache.files;
+  let files: string[] = [];
+  try { files = dirtyFiles(await gitStatus(root)); } catch {}
+  dirtyCache = { at: Date.now(), root, files };
+  return files;
 }
 
 function gitStatus(root: string): Promise<string> {
@@ -328,11 +352,13 @@ export function inContainer(): boolean {
   }
 }
 
-export function hostStatus() {
+export async function hostStatus() {
   const r = restarts.status();
   const docker = inContainer();
   return {
     manager: detectManager(),
+    // VER1: what blocks an upgrade (tracked changes in the running checkout), listed for the human
+    dirty: docker ? [] : await dirtyNow(),
     // F8: Docker mode — no git checkout to pull; upgrade = pull + recreate on the host machine.
     docker,
     image: docker ? process.env.ARIGAMI_IMAGE || null : null,
@@ -354,13 +380,16 @@ export function currentUpgrade(): UpgradeJob | null { return current; }
  * Resolves as soon as the job is accepted (progress streams on the bus as
  * `host` events {kind:'upgrade-progress'|'upgrade-done'|'upgrade-failed'}).
  */
-export async function startUpgrade(when: RestartWhen = 'now', root = ROOT): Promise<UpgradeJob> {
+export async function startUpgrade(when: UpgradeWhen = 'confirm', root = ROOT, plan: UpgradeStep[] = upgradePlan(root)): Promise<UpgradeJob> {
   if (cfg.host?.allowUpgrade === false) throw Object.assign(new Error(ALLOW_ERROR), { status: 403 });
   if (current && current.finishedAt === null) throw Object.assign(new Error('an upgrade is already running'), { status: 409 });
   if (detectManager() === 'none') throw new NoSupervisorError();
-  if (isDirtyStatus(await gitStatus(root))) throw Object.assign(new Error(DIRTY_ERROR), { status: 409 });
+  const dirty = dirtyFiles(await gitStatus(root));
+  if (dirty.length) throw Object.assign(new Error(DIRTY_ERROR), { status: 409, dirty });
 
-  const job: UpgradeJob = { id: `upg_${Date.now().toString(36)}`, startedAt: Date.now(), finishedAt: null, ok: null, step: null, error: null, when, log: [] };
+  const ver = await import('./version.js');
+  const job: UpgradeJob = { id: `upg_${Date.now().toString(36)}`, startedAt: Date.now(), finishedAt: null, ok: null, step: null, error: null, when, from: ver.currentVersion(root), to: null, needsRestart: false, log: [] };
+  dirtyCache = null;
   current = job;
   const logDir = path.join(ARIGAMI_DIR, 'logs');
   try { fs.mkdirSync(logDir, { recursive: true }); } catch {}
@@ -374,16 +403,26 @@ export async function startUpgrade(when: RestartWhen = 'now', root = ROOT): Prom
 
   (async () => {
     try {
-      for (const s of upgradePlan(root)) {
+      for (const s of plan) {
         job.step = s.name;
         line(`$ ${s.cmd.join(' ')}`);
         const code = await run(s.cmd, s.cwd, line);
-        if (code !== 0) throw new Error(`${s.name} failed (exit ${code})`);
+        if (code !== 0) throw new Error(s.failMessage || `${s.name} failed (exit ${code})`);
       }
       job.ok = true;
       job.finishedAt = Date.now();
+      job.to = ver.currentVersion(root);
+      ver.invalidateVersion();
+      if (when === 'confirm') {
+        // VER1: the new code is on disk; nothing runs it until the human clicks restart.
+        job.step = 'await-restart';
+        job.needsRestart = true;
+        line(`✓ ${job.from ?? '?'} → ${job.to} built — waiting for the restart click`);
+        bus.broadcast({ type: 'host', event: { kind: 'upgrade-done', jobId: job.id, when, needsRestart: true, from: job.from, to: job.to } });
+        return;
+      }
       job.step = 'restart';
-      bus.broadcast({ type: 'host', event: { kind: 'upgrade-done', jobId: job.id, when } });
+      bus.broadcast({ type: 'host', event: { kind: 'upgrade-done', jobId: job.id, when, needsRestart: false, from: job.from, to: job.to } });
       restarts.request(when, 'upgrade');
     } catch (e) {
       job.ok = false;

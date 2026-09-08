@@ -3181,7 +3181,7 @@ export async function handle(
     }
     if (p === '/__api/host/status' && m === 'GET') {
       const hc = await import('./host-control.js');
-      return json(res, hc.hostStatus());
+      return json(res, await hc.hostStatus());
     }
     // UPD1: the `claude` CLI updater — installed/latest/lastUpdate (lib/claude-update.js).
     if (p === '/__api/host/claude' && m === 'GET') {
@@ -3234,14 +3234,18 @@ export async function handle(
       try {
         if (sub === 'restart' && m === 'POST') {
           const r = hc.restarts.request(when, callerId ? `session ${callerId}` : 'cockpit');
-          return json(res, { ok: true, ...r, status: hc.hostStatus() });
+          return json(res, { ok: true, ...r, status: await hc.hostStatus() });
         }
         if (sub === 'restart' && m === 'DELETE') {
-          return json(res, { ok: true, cancelled: hc.restarts.cancel(), status: hc.hostStatus() });
+          return json(res, { ok: true, cancelled: hc.restarts.cancel(), status: await hc.hostStatus() });
         }
         if (sub === 'upgrade' && m === 'POST') {
-          const job = await hc.startUpgrade(when);
-          return json(res, { ok: true, jobId: job.id, when, status: hc.hostStatus() });
+          // VER1: the cockpit sends when=confirm — pull/install/build, then a restart card; the
+          // CLI/orchestrators may still ask for now|idle and get the old one-shot behaviour.
+          const upgWhen: 'now' | 'idle' | 'confirm' =
+            u.searchParams.get('when') === 'confirm' || body.when === 'confirm' ? 'confirm' : when;
+          const job = await hc.startUpgrade(upgWhen);
+          return json(res, { ok: true, jobId: job.id, when: upgWhen, status: await hc.hostStatus() });
         }
         // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,
         // deferred under memory pressure) · claude/auto {enabled} (the policy toggle).
@@ -3262,8 +3266,9 @@ export async function handle(
           }
         }
       } catch (e) {
-        const err = e as Error & { status?: number };
-        return json(res, { error: err.message, manager: hc.detectManager() }, err.status || 500);
+        const err = e as Error & { status?: number; dirty?: string[] };
+        // VER1: a dirty-checkout refusal carries the file list so the card can say WHAT is dirty
+        return json(res, { error: err.message, manager: hc.detectManager(), ...(err.dirty ? { dirty: err.dirty } : {}) }, err.status || 500);
       }
       return notFound(res);
     }
