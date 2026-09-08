@@ -786,6 +786,10 @@ let pongTimer = null;
 // reconnect-loop a healthy socket); the wake path then falls back to a plain
 // reconnect after a long enough time in the background.
 let pongSupport = null; // null = unknown, true = seen a pong, false = probe went unanswered
+// Unknown support + a silent probe is ambiguous (old host, or a dead link on
+// the very first probe). Reconnect on the first two — one reconnect is cheap
+// and a dead link recovers; a host that stays silent after that is old.
+let silentProbes = 0;
 let hiddenAt = 0;
 const LONG_HIDE_MS = 30_000;
 
@@ -806,7 +810,11 @@ function probe(timeoutMs, onSilent) {
   }
   pongTimer = setTimeout(() => {
     pongTimer = null;
-    if (pongSupport === true) { forceReconnect(); return; }
+    if (pongSupport === true || silentProbes < 2) {
+      silentProbes += 1;
+      forceReconnect();
+      return;
+    }
     pongSupport = false; // an old host: it did not (and will not) answer
     if (onSilent) onSilent();
   }, timeoutMs);
@@ -923,6 +931,7 @@ function connect() {
     if (msg && typeof msg.type === 'string') {
       if (msg.type === 'pong') {
         pongSupport = true;
+        silentProbes = 0;
         return;
       }
       fanoutWire(msg);

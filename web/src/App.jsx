@@ -901,7 +901,10 @@ function Cockpit() {
         )}
         {conn !== 'open' && (
           <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
-            {conn === 'connecting' ? t(reconnecting ? 'chrome.conn.reconnecting' : 'chrome.conn.connecting') : t('chrome.conn.offline')}
+            {/* CHATWS: once the link was up, both the retry wait and the attempt read
+                "reconnecting…" — "host offline" is misleading when it is the PHONE
+                that lost its network. */}
+            {reconnecting ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
         {main}
