@@ -106,9 +106,20 @@ function packagedBackend(root: string): UpdateBackend {
   };
 }
 
-/** The one piece of detection logic: compiled binary → packaged, container → docker, else git. */
-export function pickBackend(root: string = resourceRoot()): UpdateBackend {
-  if (isCompiledBinary()) return packagedBackend(root);
-  if (inContainer()) return dockerBackend(root);
+/**
+ * The one piece of detection logic: compiled binary → packaged, container →
+ * docker, else git. `deps` lets tests pick a branch deterministically
+ * instead of mocking `resource-root.js`/`host-control.js` globally — real
+ * callers (hostStatus(), the upgrade endpoint) never pass it, so detection
+ * stays exactly `isCompiledBinary()`/`inContainer()` in production.
+ */
+export function pickBackend(
+  root: string = resourceRoot(),
+  deps: { isCompiledBinary?: () => boolean; inContainer?: () => boolean } = {},
+): UpdateBackend {
+  const compiled = deps.isCompiledBinary ?? isCompiledBinary;
+  const container = deps.inContainer ?? inContainer;
+  if (compiled()) return packagedBackend(root);
+  if (container()) return dockerBackend(root);
   return gitBackend(root);
 }
