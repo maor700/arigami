@@ -2,6 +2,7 @@ export const strings = {
   // App — connection status
   'chrome.conn.connecting': 'מתחבר למארח…',
   'chrome.conn.offline': 'המארח לא זמין — מנסה שוב',
+  'chrome.conn.reconnecting': 'מתחבר מחדש…',
 
   // App — top bar
   'chrome.topbar.brain': 'מוח',

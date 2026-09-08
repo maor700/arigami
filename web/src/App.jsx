@@ -156,7 +156,7 @@ function Cockpit() {
   // NOTE: this can't be an early `return` here — every hook below still has
   // to run on every render (Rules of Hooks), so the branch happens at the
   // bottom, right before the final JSX return.
-  const { sessions, chats, chatLoaded, conn, config, pending } = storeState;
+  const { sessions, chats, chatLoaded, conn, reconnecting, config, pending } = storeState;
   const prefs = usePrefs();
   // Seed each view flag from the URL hash so a deep link / refresh lands on the
   // right page. The two sync effects below keep hash ↔ state aligned thereafter.
@@ -901,7 +901,7 @@ function Cockpit() {
         )}
         {conn !== 'open' && (
           <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
-            {conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
+            {conn === 'connecting' ? t(reconnecting ? 'chrome.conn.reconnecting' : 'chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
         {main}

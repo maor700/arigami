@@ -86,6 +86,8 @@ export const strings = {
   'chat.showEarlier': 'הצג קודמים ({n} מוסתרים)',
   'chat.loadEarlier': 'טען הודעות קודמות',
   'chat.loadingTranscript': 'טוען תמליל…',
+  'chat.loadingOlder': 'טוען הודעות קודמות…',
+  'chat.showFull': 'הצג הכל ({kb} KB)',
   'chat.noMessages': 'אין הודעות עדיין — כתוב משהו למטה.',
   'chat.working': 'עובד…',
   'chat.jumpToLatest': 'קפוץ לאחרון',

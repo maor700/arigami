@@ -343,15 +343,83 @@ export function getChat(id, since = 0) {
   if (since + 1 < firstInMem && t.seq > t.events.length) {
     // tail doesn't reach back far enough — read from disk
     try {
+      // One torn/corrupt line (a crash mid-append) must not hide the whole
+      // transcript — skip it, keep the rest.
       return fs
         .readFileSync(chatFile(id), 'utf8')
         .split('\n')
         .filter(Boolean)
-        .map((l) => JSON.parse(l))
-        .filter((e) => e.seq > since);
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter((e) => e && e.seq > since);
     } catch {}
   }
   return t.events.filter((e) => e.seq > since);
+}
+
+// CHATWS: the cockpit's page/resync loads are dominated by tool-result bodies
+// (one `cat` of a big file = 600KB in a single event; a 150-event tail of a
+// working session is routinely 2–9MB). The pane renders at most ~600 chars of
+// a result until "more" is clicked, so the wire form only needs a prefix:
+// `clipEvent` caps every long string in the event (result content, assistant
+// text, tool input fields) at `max` chars and marks the event
+// `{clipped:true, fullBytes}` so the client can fetch the full row on demand
+// (GET …/chat?seq=N). Pure — never mutates the stored event.
+// `text` (a user prompt / the assistant's prose) is READ in full in the pane,
+// so it only gets a generous safety cap; `content` (tool results) and `input`
+// (tool arguments) are previews behind a click and take the real cap.
+const CLIP_KEYS = { content: 1, input: 1, text: 16 };
+function clipValue(v, max, depth = 0) {
+  if (typeof v === 'string') return v.length > max ? { v: v.slice(0, max) + '…', c: true } : { v, c: false };
+  if (Array.isArray(v)) {
+    let c = false;
+    const out = v.map((x) => { const r = clipValue(x, max, depth + 1); c = c || r.c; return r.v; });
+    return { v: c ? out : v, c };
+  }
+  if (v && typeof v === 'object' && depth < 4) {
+    let c = false;
+    const out = {};
+    for (const k of Object.keys(v)) { const r = clipValue(v[k], max, depth + 1); c = c || r.c; out[k] = r.v; }
+    return { v: c ? out : v, c };
+  }
+  return { v, c: false };
+}
+export function clipEvent(ev, max) {
+  if (!ev || !(max > 0)) return ev;
+  let clipped = false;
+  let out = ev;
+  for (const k of Object.keys(CLIP_KEYS)) {
+    if (ev[k] == null) continue;
+    const r = clipValue(ev[k], max * CLIP_KEYS[k]);
+    if (r.c) {
+      if (out === ev) out = { ...ev };
+      out[k] = r.v;
+      clipped = true;
+    }
+  }
+  if (!clipped) return ev;
+  let fullBytes = 0;
+  try { fullBytes = Buffer.byteLength(JSON.stringify(ev)); } catch {}
+  return { ...out, clipped: true, fullBytes };
+}
+export function clipEvents(events, max) {
+  return max > 0 ? events.map((e) => clipEvent(e, max)) : events;
+}
+
+// One full (unclipped) event by seq — the "more" button's fetch. Tail first,
+// then a disk scan (one-off, on demand — never on the page-load path).
+export function getChatEvent(id, seq) {
+  const t = tail(id);
+  const hit = t.events.find((e) => e.seq === seq);
+  if (hit) return hit;
+  try {
+    for (const l of fs.readFileSync(chatFile(id), 'utf8').split('\n')) {
+      if (!l) continue;
+      let e = null;
+      try { e = JSON.parse(l); } catch { continue; }
+      if (e && e.seq === seq) return e;
+    }
+  } catch {}
+  return null;
 }
 
 // Read the last N lines from a JSONL file efficiently (reads from end of file).
@@ -387,12 +455,14 @@ function readTailLines(filePath, maxLines) {
 
 // Paginated: return the last `limit` events before `beforeSeq`.
 // Returns { events, hasMore, oldestSeq }.
-export function getChatPage(id, { limit = 100, beforeSeq = Infinity } = {}) {
+// `clip` (chars) → every event goes through clipEvent (see above); 0/absent =
+// the full rows, which is what every non-cockpit caller gets.
+export function getChatPage(id, { limit = 100, beforeSeq = Infinity, clip = 0 } = {}) {
   const t = tail(id);
   // If the tail buffer covers what we need, use it (fast path)
   if (beforeSeq >= Infinity && t.events.length >= limit) {
     const page = t.events.slice(-limit);
-    return { events: page, hasMore: t.events.length > limit || t.seq > t.events.length, oldestSeq: page[0]?.seq ?? 0 };
+    return { events: clipEvents(page, clip), hasMore: t.events.length > limit || t.seq > t.events.length, oldestSeq: page[0]?.seq ?? 0 };
   }
   // Read only what we need from disk (from the end)
   const needed = beforeSeq < Infinity ? limit + 500 : limit + 1; // overshoot for filtering
@@ -400,7 +470,7 @@ export function getChatPage(id, { limit = 100, beforeSeq = Infinity } = {}) {
   const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
   const page = filtered.slice(-limit);
   return {
-    events: page,
+    events: clipEvents(page, clip),
     hasMore: filtered.length > limit || (raw.length >= needed),
     oldestSeq: page[0]?.seq ?? 0,
   };

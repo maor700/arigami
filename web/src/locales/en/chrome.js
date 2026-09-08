@@ -2,6 +2,7 @@ export const strings = {
   // App — connection status
   'chrome.conn.connecting': 'connecting to host…',
   'chrome.conn.offline': 'host offline — retrying',
+  'chrome.conn.reconnecting': 'reconnecting…',
 
   // App — top bar
   'chrome.topbar.brain': 'Brain',

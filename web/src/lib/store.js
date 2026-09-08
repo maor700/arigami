@@ -2,7 +2,7 @@
 // snapshots. No optimistic updates — the server echoes every mutation via WS.
 import { useSyncExternalStore } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
-import { mergeChatEvents, foldSetupUpdates } from './chat-merge.js';
+import { mergeChatEvents, prependChatEvents, appendChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
 import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
@@ -22,6 +22,7 @@ let state = {
   drafts: {}, // sessionId -> unsent composer draft {text, attachments}
   lastSent: {}, // sessionId -> the draft most recently sent (for Esc-restore)
   conn: 'connecting', // 'open' | 'connecting' | 'down'
+  reconnecting: false, // CHATWS: 'connecting' after a link that was once up (→ "reconnecting…" pill)
   config: null, // GET /__api/config result (null until loaded / failed)
   // C1 auth: undefined = not yet checked, null = signed out (Login screen),
   // object = GET /__api/auth/me ({user, principal, isAdmin, authMode, hasAdmin, oidc}).
@@ -465,7 +466,9 @@ export async function loadUsage() {
   }
 }
 
-const INITIAL_PAGE = 150;
+// Tail-first: a short first page (the pane auto-loads earlier pages as you
+// scroll up / on "load earlier"), so a 1000-row transcript opens in one hop.
+const INITIAL_PAGE = 60;
 
 /* ---------------- full capabilities (lazy) ------------------------------- */
 // Session lists (REST + WS) carry claude.capabilities in a slim form
@@ -506,23 +509,64 @@ export async function ensureFullCapabilities(session) {
   }
 }
 
+// CHATWS: the cockpit asks for a CLIPPED tail — every long string in an event
+// (tool-result bodies above all) is cut at CLIP chars server-side and the row
+// is marked {clipped:true}; the pane fetches the full row on "more" (see
+// loadFullChatEvent). A working session's 150-event tail was 2–9MB unclipped.
+const CLIP = 1500;
+const chatInflight = new Set();
+
 export async function loadChat(sessionId) {
-  if (!sessionId || state.chatLoaded[sessionId]) return;
-  setState({ chatLoaded: { ...state.chatLoaded, [sessionId]: true } });
+  if (!sessionId || state.chatLoaded[sessionId] || chatInflight.has(sessionId)) return;
+  // chatLoaded flips only once the page has LANDED — while the request is in
+  // flight the pane shows its skeleton (App: loading = !chatLoaded && no rows).
+  chatInflight.add(sessionId);
   try {
-    const res = await api.get(`/sessions/${sessionId}/chat?limit=${INITIAL_PAGE}`);
+    const res = await api.get(`/sessions/${sessionId}/chat?limit=${INITIAL_PAGE}&clip=${CLIP}`);
     const events = Array.isArray(res) ? res : res?.events;
     if (Array.isArray(events)) {
       const live = state.chats[sessionId] || [];
       setState({
         chats: { ...state.chats, [sessionId]: foldSetupUpdates(mergeChatEvents(live, events)) },
+        chatLoaded: { ...state.chatLoaded, [sessionId]: true },
         chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
         chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
       });
     }
   } catch {
-    setState({ chatLoaded: { ...state.chatLoaded, [sessionId]: false } });
+    /* left unloaded — the next selection retries */
+  } finally {
+    chatInflight.delete(sessionId);
   }
+}
+
+// The full (unclipped) row for one event — replaces the clipped copy in place.
+const fullInflight = new Set();
+export async function loadFullChatEvent(sessionId, seq) {
+  if (!sessionId || !(seq > 0)) return null;
+  const key = `${sessionId}:${seq}`;
+  if (fullInflight.has(key)) return null;
+  fullInflight.add(key);
+  try {
+    const ev = await api.get(`/sessions/${sessionId}/chat?seq=${seq}`);
+    if (ev && ev.seq === seq) {
+      const cur = state.chats[sessionId] || [];
+      const idx = cur.findIndex((e) => e.seq === seq);
+      if (idx > -1) {
+        // Keep whatever the fold layered onto the clipped row (answered, …).
+        const { clipped: _c, fullBytes: _b, ...rest } = cur[idx];
+        const next = cur.slice();
+        next[idx] = { ...rest, ...ev, clipped: false };
+        setState({ chats: { ...state.chats, [sessionId]: next } });
+      }
+      return ev;
+    }
+  } catch {
+    /* the clipped preview stays */
+  } finally {
+    fullInflight.delete(key);
+  }
+  return null;
 }
 
 const OLDER_PAGE = 200;
@@ -532,12 +576,14 @@ export async function loadOlderChat(sessionId) {
   const oldest = (state.chatOldestSeq || {})[sessionId];
   if (oldest == null || oldest <= 1) return false;
   try {
-    const res = await api.get(`/sessions/${sessionId}/chat?limit=${OLDER_PAGE}&before=${oldest}`);
+    const res = await api.get(`/sessions/${sessionId}/chat?limit=${OLDER_PAGE}&before=${oldest}&clip=${CLIP}`);
     const events = Array.isArray(res) ? res : res?.events;
     if (Array.isArray(events) && events.length) {
       const live = state.chats[sessionId] || [];
       setState({
-        chats: { ...state.chats, [sessionId]: foldSetupUpdates(mergeChatEvents(events, live)) },
+        // an OLDER page in front of what is on screen (mergeChatEvents is for
+        // full snapshots — it would drop the page, see chat-merge.js)
+        chats: { ...state.chats, [sessionId]: foldSetupUpdates(prependChatEvents(events, live)) },
         chatHasMore: { ...(state.chatHasMore || {}), [sessionId]: res?.hasMore ?? false },
         chatOldestSeq: { ...(state.chatOldestSeq || {}), [sessionId]: res?.oldestSeq ?? 0 },
       });
@@ -557,16 +603,21 @@ export function chatHasMore(sessionId) {
 function refetchLoadedChats() {
   for (const sid of Object.keys(state.chatLoaded)) {
     if (!state.chatLoaded[sid]) continue;
-    // Only fetch events newer than what we already have (gap fill)
+    // Only fetch events newer than what we already have (gap fill). Locally
+    // injected rows have no seq — walk back to the last persisted one.
     const existing = state.chats[sid] || [];
-    const lastSeq = existing.length ? existing[existing.length - 1].seq || 0 : 0;
+    let lastSeq = 0;
+    for (let i = existing.length - 1; i >= 0; i--) {
+      if (existing[i]?.seq > 0) { lastSeq = existing[i].seq; break; }
+    }
     api
-      .get(`/sessions/${sid}/chat?since=${lastSeq}`)
+      .get(`/sessions/${sid}/chat?since=${lastSeq}&clip=${CLIP}`)
       .then((res) => {
         const events = Array.isArray(res) ? res : res?.events;
         if (Array.isArray(events) && events.length) {
           const live = state.chats[sid] || [];
-          setState({ chats: { ...state.chats, [sid]: mergeChatEvents(live, events) } });
+          // a since-slice goes AFTER what is on screen; the history stays
+          setState({ chats: { ...state.chats, [sid]: foldSetupUpdates(appendChatEvents(live, events)) } });
         }
       })
       .catch(() => {});
@@ -716,8 +767,107 @@ function scheduleReconnect() {
   }, delay);
 }
 
+// CHATWS — liveness. A backgrounded phone (or a dropped wifi) leaves a socket
+// that still reports OPEN while nothing can cross it; without a probe the
+// stream just stops and no `close` ever fires. The client pings the hub
+// ({type:'ping'} → {type:'pong'}) whenever the link has been silent for
+// PING_MS; a probe that gets no reply within PONG_TIMEOUT_MS tears the socket
+// down and reconnects at once (the reconnect refetches every loaded chat from
+// its last seq, so nothing emitted meanwhile is lost). Any inbound message
+// counts as proof of life, so a busy stream never pays for pings.
+const PING_MS = 25_000;
+const PONG_TIMEOUT_MS = 8_000;
+const WAKE_PONG_TIMEOUT_MS = 3_000;
+let lastRx = 0;
+let pingTimer = null;
+let pongTimer = null;
+// A host from before this change never answers a ping. Until the first pong
+// proves support, a silent probe is NOT treated as a dead link (it would
+// reconnect-loop a healthy socket); the wake path then falls back to a plain
+// reconnect after a long enough time in the background.
+let pongSupport = null; // null = unknown, true = seen a pong, false = probe went unanswered
+let hiddenAt = 0;
+const LONG_HIDE_MS = 30_000;
+
+function stopHeartbeat() {
+  if (pingTimer) clearInterval(pingTimer);
+  if (pongTimer) clearTimeout(pongTimer);
+  pingTimer = pongTimer = null;
+}
+
+function probe(timeoutMs, onSilent) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (pongTimer) return; // a probe is already out
+  try {
+    ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+  } catch {
+    forceReconnect();
+    return;
+  }
+  pongTimer = setTimeout(() => {
+    pongTimer = null;
+    if (pongSupport === true) { forceReconnect(); return; }
+    pongSupport = false; // an old host: it did not (and will not) answer
+    if (onSilent) onSilent();
+  }, timeoutMs);
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  pingTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastRx < PING_MS) return; // traffic proves the link
+    probe(PONG_TIMEOUT_MS);
+  }, PING_MS);
+}
+
+// Drop the current socket (without letting its onclose schedule a delayed
+// retry) and connect again right now.
+function forceReconnect() {
+  stopHeartbeat();
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  attempts = 0;
+  const old = ws;
+  ws = null;
+  if (old) {
+    old.onopen = old.onclose = old.onerror = old.onmessage = null;
+    try { old.close(); } catch { /* ignore */ }
+  }
+  if (state.auth === null) return; // signed out: Login will reconnect after success
+  connect();
+}
+
+// The page came back: foreground tab, bfcache restore, network back, focus.
+// OPEN → a short probe (a dead socket fails it and reconnects); anything else
+// → reconnect immediately, skipping whatever backoff was pending.
+function onWake() {
+  if (!started || state.auth === null) return;
+  if (typeof document !== 'undefined' && document.hidden) {
+    hiddenAt = Date.now();
+    return;
+  }
+  const hiddenFor = hiddenAt ? Date.now() - hiddenAt : 0;
+  hiddenAt = 0;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    if (Date.now() - lastRx <= 1000) return; // just heard from the host
+    if (pongSupport === false) {
+      // Old host, no probe possible: after a long background stint assume
+      // the worst and reconnect (cheap — the reconnect refetches the gap).
+      if (hiddenFor > LONG_HIDE_MS) forceReconnect();
+      return;
+    }
+    probe(WAKE_PONG_TIMEOUT_MS, () => { if (hiddenFor > LONG_HIDE_MS) forceReconnect(); });
+    return;
+  }
+  if (ws && ws.readyState === WebSocket.CONNECTING) return;
+  forceReconnect();
+}
+
 function connect() {
-  setState({ conn: 'connecting' });
+  setState({ conn: 'connecting', reconnecting: everConnected });
   try {
     ws = new WebSocket(wsUrl());
   } catch {
@@ -725,11 +875,15 @@ function connect() {
     scheduleReconnect();
     return;
   }
-  ws.onopen = () => {
+  const sock = ws;
+  sock.onopen = () => {
+    if (sock !== ws) return;
     const reconnected = everConnected;
     everConnected = true;
     attempts = 0;
-    setState({ conn: 'open' });
+    lastRx = Date.now();
+    setState({ conn: 'open', reconnecting: false });
+    startHeartbeat();
     loadSessions(); // pick up archived sessions the state replay may omit
     if (!state.config) loadConfig();
     // On a genuine reconnect (not the first open), refill any chat events that
@@ -740,19 +894,26 @@ function connect() {
     // a waiting badge for something already resolved until a full reload.
     if (reconnected) loadHealth();
   };
-  ws.onclose = () => {
+  sock.onclose = () => {
+    if (sock !== ws) return;
+    stopHeartbeat();
     setState({ conn: 'down' });
     if (state.auth === null) return; // signed out: Login will reconnect after success
     scheduleReconnect();
   };
-  ws.onerror = () => {
+  sock.onerror = () => {
     try {
-      ws.close();
+      sock.close();
     } catch {
       /* ignore */
     }
   };
-  ws.onmessage = (e) => {
+  sock.onmessage = (e) => {
+    lastRx = Date.now();
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      pongTimer = null;
+    }
     let msg;
     try {
       msg = JSON.parse(e.data);
@@ -760,10 +921,21 @@ function connect() {
       return;
     }
     if (msg && typeof msg.type === 'string') {
+      if (msg.type === 'pong') {
+        pongSupport = true;
+        return;
+      }
       fanoutWire(msg);
       handleEvent(msg);
     }
   };
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', onWake);
+  window.addEventListener('focus', onWake);
+  window.addEventListener('pageshow', onWake);
+  document.addEventListener('visibilitychange', onWake);
 }
 
 // EXT: a raw tap on the socket. The store's own `handleEvent` only knows the

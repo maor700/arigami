@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
+import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, loadFullChatEvent, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
@@ -283,8 +283,13 @@ function ToolDetail({ event }) {
   return <CodeBlock sign="" text={prettyInput(input)} />;
 }
 
-function ToolUse({ event }) {
+function ToolUse({ event, sessionId }) {
   const [open, setOpen] = useState(false);
+  // CHATWS: the wire row may carry clipped input (a big Write) — pull the full
+  // row the first time it is expanded.
+  useEffect(() => {
+    if (open && event.clipped && event.seq) loadFullChatEvent(sessionId, event.seq);
+  }, [open, event.clipped, event.seq, sessionId]);
   const name = event.name ?? event.tool ?? event.toolName ?? 'tool';
   const stats = diffStats(event);
   const summary = toolSummary(event);
@@ -316,15 +321,30 @@ function ToolUse({ event }) {
   );
 }
 
-function ToolResult({ event }) {
+function ToolResult({ event, sessionId }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [fetching, setFetching] = useState(false);
   const isError = event.isError ?? event.is_error ?? false;
   const text = textOf(event).trimEnd();
   if (!text) return null;
   const lines = text.split('\n');
-  const long = lines.length > 5 || text.length > 600;
+  // CHATWS: a clipped row (server cut the body for the wire) is always "long"
+  // — "more" first fetches the full row, then expands it.
+  const clipped = !!event.clipped;
+  const long = clipped || lines.length > 5 || text.length > 600;
   const shown = open || !long ? text : `${lines.slice(0, 5).join('\n').slice(0, 600)}…`;
+  const toggle = async () => {
+    if (!open && clipped && event.seq) {
+      setFetching(true);
+      await loadFullChatEvent(sessionId, event.seq);
+      setFetching(false);
+    }
+    setOpen((v) => !v);
+  };
+  const moreLabel = clipped && event.fullBytes
+    ? t('chat.showFull', { kb: Math.max(1, Math.round(event.fullBytes / 1024)) })
+    : t('chat.more');
   return (
     <div
       dir="ltr"
@@ -336,10 +356,11 @@ function ToolResult({ event }) {
       {long && (
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="ml-1.5 cursor-pointer text-[var(--term-faint)] underline hover:text-[var(--term-dim)]"
+          onClick={toggle}
+          disabled={fetching}
+          className="ml-1.5 cursor-pointer text-[var(--term-faint)] underline hover:text-[var(--term-dim)] disabled:opacity-50"
         >
-          {open ? t('chat.less') : t('chat.more')}
+          {fetching ? <span className="host-spinner inline-block h-2.5 w-2.5" /> : open ? t('chat.less') : moreLabel}
         </button>
       )}
     </div>
@@ -876,6 +897,35 @@ function ExtCard({ sessionId, event }) {
   );
 }
 
+// CHATWS: what the pane shows from the first paint until the tail page lands —
+// a few greyed rows shaped like a conversation, so the transcript never
+// "pops in" from an empty pane. Pure CSS pulse, no layout shift on arrival.
+function ChatSkeleton({ label }) {
+  const rows = [
+    { w: '38%', me: true },
+    { w: '72%' },
+    { w: '55%' },
+    { w: '30%', me: true },
+    { w: '80%' },
+    { w: '64%' },
+  ];
+  return (
+    <div className="chat-skeleton flex flex-col gap-3 py-3" data-testid="chat-skeleton" aria-busy="true" aria-label={label}>
+      {rows.map((r, i) => (
+        <div key={i} className={`flex ${r.me ? 'justify-end' : 'justify-start'}`}>
+          <div
+            className="h-3.5 animate-pulse rounded-md bg-[var(--term-hover)] opacity-70"
+            style={{ width: r.w, animationDelay: `${i * 0.12}s` }}
+          />
+        </div>
+      ))}
+      <div className="pt-1 text-center font-mono text-[10.5px] text-[var(--term-faint)]">
+        <span className="host-spinner inline-block h-2.5 w-2.5" /> {label}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- the pane ------------------------------------------------------ */
 
 // Memoized: the store keeps every settled event's object identity stable and
@@ -894,10 +944,10 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       const name = event.name ?? event.tool ?? event.toolName;
       if (name === 'AskUserQuestion')
         return <AskUserQuestion sessionId={sessionId} event={event} live={live} />;
-      return <ToolUse event={event} />;
+      return <ToolUse event={event} sessionId={sessionId} />;
     }
     case 'tool-result':
-      return <ToolResult event={event} />;
+      return <ToolResult event={event} sessionId={sessionId} />;
     case 'result':
       return <ResultLine event={event} />;
     case 'error':
@@ -983,12 +1033,24 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   const termFontSize = prefs.termFontSize;
   const view = termViewFrom(prefs, sessionId);
 
+  // CHATWS: scrolling near the top pulls the previous page by itself (the
+  // button below stays as the explicit path). The ref is filled once
+  // revealEarlier exists further down; a guard stops a second pull while one
+  // is in flight.
+  const topLoadRef = useRef(null);
+  const lastTopRef = useRef(0);
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickRef.current = dist < 48;
     setAway(dist > 160);
+    // Only a scroll that MOVED UP into the top band counts — the programmatic
+    // snap-to-bottom on load/switch also fires `scroll` while the pane is
+    // still short, and must not pull a page.
+    const up = el.scrollTop < lastTopRef.current;
+    lastTopRef.current = el.scrollTop;
+    if (up && el.scrollTop < 120 && dist > 160) topLoadRef.current?.();
   };
 
   const jumpToBottom = () => {
@@ -1025,6 +1087,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   // new session selected → snap to bottom, back to the default window
   useEffect(() => {
     stickRef.current = true;
+    lastTopRef.current = 0;
     setAway(false);
     setShown(WINDOW);
     const el = scrollRef.current;
@@ -1033,9 +1096,11 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
 
   const hiddenCount = Math.max(0, events.length - shown);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderBusyRef = useRef(false);
   const serverHasMore = chatHasMore(sessionId);
 
   const revealEarlier = async () => {
+    if (olderBusyRef.current) return;
     const el = scrollRef.current;
     anchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
     if (hiddenCount > 0) {
@@ -1043,12 +1108,18 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       setShown((n) => n + REVEAL);
     } else if (serverHasMore) {
       // Fetch older page from server
+      olderBusyRef.current = true;
       setLoadingOlder(true);
-      await loadOlderChat(sessionId);
-      setShown((n) => n + REVEAL);
-      setLoadingOlder(false);
+      try {
+        await loadOlderChat(sessionId);
+        setShown((n) => n + REVEAL);
+      } finally {
+        setLoadingOlder(false);
+        olderBusyRef.current = false;
+      }
     }
   };
+  topLoadRef.current = hiddenCount > 0 || serverHasMore ? revealEarlier : null;
 
   // Re-anchor after the earlier rows mount, before the browser paints.
   useLayoutEffect(() => {
@@ -1089,9 +1160,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
         )}
         {events.length === 0 &&
           (loading ? (
-            <div className="flex items-center justify-center gap-2 py-6 font-mono text-[11px] text-[var(--term-faint)]">
-              <span className="host-spinner h-3 w-3" /> {t('chat.loadingTranscript')}
-            </div>
+            <ChatSkeleton label={t('chat.loadingTranscript')} />
           ) : (
             <div className="py-6 text-center font-mono text-[11px] text-[var(--term-faint)]">
               {t('chat.noMessages')}

@@ -78,3 +78,55 @@ export function foldSetupUpdates(events) {
   }
   return out;
 }
+
+// CHATWS: the two PARTIAL-page merges. mergeChatEvents above assumes the
+// snapshot is the authoritative FULL transcript (anything older than its
+// newest row and absent from it "was persisted, so it is in the snapshot" →
+// dropped). A page is not that: an older page (load earlier) or a since-gap
+// (reconnect refill) covers only a slice, and every row already on screen
+// must survive it. Both helpers key rows by chatKey (id / requestId /
+// kind:ts) and by seq, keep order oldest→newest, and never duplicate.
+
+function keysOf(list) {
+  const ks = new Set();
+  const seqs = new Set();
+  for (const e of list || []) {
+    const k = chatKey(e);
+    if (k) ks.add(k);
+    if (e?.seq > 0) seqs.add(e.seq);
+  }
+  return { ks, seqs };
+}
+function known(e, { ks, seqs }) {
+  const k = chatKey(e);
+  return (k && ks.has(k)) || (e?.seq > 0 && seqs.has(e.seq));
+}
+
+/** An OLDER page goes in front of what is on screen. */
+export function prependChatEvents(older, existing) {
+  if (!Array.isArray(older) || !older.length) return existing || [];
+  const have = keysOf(existing);
+  const fresh = older.filter((e) => !known(e, have));
+  return fresh.length ? [...fresh, ...(existing || [])] : existing || [];
+}
+
+/** A NEWER slice (…/chat?since=seq) goes after what is on screen. Rows the
+ *  live socket already delivered are skipped; a streamed partial that the
+ *  persisted row supersedes (same key) is replaced in place. */
+export function appendChatEvents(existing, newer) {
+  if (!Array.isArray(newer) || !newer.length) return existing || [];
+  const cur = existing || [];
+  const have = keysOf(cur);
+  const byKey = new Map();
+  for (const e of newer) {
+    const k = chatKey(e);
+    if (k) byKey.set(k, e);
+  }
+  // replace in place where the key matches (persisted form wins)
+  const replaced = cur.map((e) => {
+    const k = chatKey(e);
+    return k && byKey.has(k) ? byKey.get(k) : e;
+  });
+  const fresh = newer.filter((e) => !known(e, have));
+  return fresh.length ? [...replaced, ...fresh] : replaced;
+}

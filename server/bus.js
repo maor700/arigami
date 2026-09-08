@@ -4,7 +4,38 @@ import { WebSocketServer } from 'ws';
 
 const wss = new WebSocketServer({ noServer: true });
 
+// CHATWS: liveness. A phone that goes to the background (or drops off wifi)
+// leaves a socket that LOOKS open on both ends — the server keeps a ghost
+// client, the browser never gets a `close` and so never reconnects. Two
+// halves: (1) the server pings every client on an interval (ws-level ping;
+// browsers answer with a pong automatically) and terminates the ones that
+// missed the previous round; (2) a client may send `{type:"ping"}` and gets
+// `{type:"pong", ts}` back — the only client→server message the hub accepts,
+// so page JS (which cannot see ws-level pings) can prove the link is alive.
+const HEARTBEAT_MS = 30_000;
+function heartbeat() {
+  for (const c of wss.clients) {
+    if (c.isAlive === false) { try { c.terminate(); } catch {} continue; }
+    c.isAlive = false;
+    try { c.ping(); } catch {}
+  }
+}
+const heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
+heartbeatTimer.unref?.();
+/** Test hook: run one heartbeat round now. */
+export function __heartbeat() { heartbeat(); }
+
 wss.on('connection', async (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', (data) => {
+    ws.isAlive = true;
+    let msg = null;
+    try { msg = JSON.parse(String(data)); } catch { return; }
+    if (msg?.type === 'ping') {
+      try { ws.send(JSON.stringify({ type: 'pong', ts: Date.now(), echo: msg.ts ?? null })); } catch {}
+    }
+  });
   // dynamic import breaks the state ⇄ bus import cycle
   const { listSessionsForWire, listListeners, listFolders } = await import('./state.js');
   let triggers = [];

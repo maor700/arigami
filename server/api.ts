@@ -5638,16 +5638,23 @@ export async function handle(
       }
     }
     if (sub === 'chat' && m === 'GET') {
+      // CHATWS: ?seq=N → the one FULL event (the "more" button of a clipped
+      // tool result). ?clip=CHARS (any mode) caps long strings per event —
+      // the cockpit passes it; every other consumer keeps the full rows.
+      const seqOne = Number(u.searchParams.get('seq'));
+      if (seqOne > 0) {
+        const ev = (claude as any).getChatEvent(id, seqOne);
+        return ev ? json(res, ev) : json(res, { error: 'no such event' }, 404);
+      }
+      const clip = Math.max(0, Number(u.searchParams.get('clip')) || 0);
       // Paginated mode: ?limit=N&before=SEQ → { events, hasMore, oldestSeq }
       const limit = Number(u.searchParams.get('limit'));
       if (limit > 0) {
         const beforeSeq = Number(u.searchParams.get('before')) || Infinity;
-        return json(res, (claude as any).getChatPage(id, { limit, beforeSeq }));
+        return json(res, (claude as any).getChatPage(id, { limit, beforeSeq, clip }));
       }
-      return json(
-        res,
-        claude.getChat(id, Number(u.searchParams.get('since')) || 0)
-      );
+      const evs = claude.getChat(id, Number(u.searchParams.get('since')) || 0);
+      return json(res, clip ? (claude as any).clipEvents(evs, clip) : evs);
     }
     if (sub === 'cleanup' && m === 'GET') {
       return json(res, await cleanupPlan(s));

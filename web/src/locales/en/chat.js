@@ -86,6 +86,8 @@ export const strings = {
   'chat.showEarlier': 'show earlier ({n} hidden)',
   'chat.loadEarlier': 'Load earlier messages',
   'chat.loadingTranscript': 'loading transcript…',
+  'chat.loadingOlder': 'loading earlier messages…',
+  'chat.showFull': 'show full ({kb} KB)',
   'chat.noMessages': 'No messages yet — say something below.',
   'chat.working': 'working…',
   'chat.jumpToLatest': 'Jump to latest',
