@@ -1422,6 +1422,15 @@ export function emitDomain(name: string, payload: Record<string, unknown>): void
 // bun server/extensions.ts list|validate <dir>|add <src> [--trust]|trust <name>|untrust <name>|
 //   remove <name>|update [name]|reload|enable <name>|disable <name>|wants-trust <dir>
 if (import.meta.main) {
+  // Wrapped in an async IIFE (not a real top-level await) so this module has
+  // no top-level await at all — `bun build --compile` refuses to bundle any
+  // `require()` of a module that transitively does, and skills.ts/state.ts
+  // both late-require this file. import.meta.main is false whenever this
+  // file is imported rather than run directly, so this whole block — and the
+  // process.exitCode / doCommit semantics it relies on — never executes in
+  // that case; behavior when run as a CLI is unchanged (the event loop still
+  // waits for this promise before the process can exit naturally).
+  void (async () => {
   const argv = process.argv.slice(2);
   const [cmd, arg] = argv;
   const flag = (f: string) => argv.includes(f);
@@ -1506,4 +1515,5 @@ if (import.meta.main) {
     process.stderr.write(`error: ${(e as Error).message}\n`);
     process.exitCode = 1;
   }
+  })();
 }

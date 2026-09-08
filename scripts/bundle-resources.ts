@@ -28,6 +28,19 @@
 // Deliberately NOT copied: deploy/, control-plane/, Dockerfile,
 // docker-compose.yml, install.sh, test/, node_modules/ — none of these are
 // read via resourceRoot() at runtime; they're build/deploy-time only.
+//
+// host-mcp.js and ext-mcp.js get an extra pass below: re-bundled with
+// `Bun.build({target:'bun'})` after the plain copy, overwriting it. Why:
+// bunExec()'s compiled-binary branch reaches them via
+// `await import(<absolute path on disk>)`, NOT through the main
+// executable's embedded module graph — loaded fresh from disk, their own
+// `import ... from '@modelcontextprotocol/sdk/...'` needs a real
+// node_modules tree next to them, which a bare resources/ doesn't ship.
+// Verified live: without this, `<binary> --mcp host` fails with
+// "Cannot find module '@modelcontextprotocol/sdk/...'". Bundling inlines
+// that dependency (and the local blocking-call.js import) so the files are
+// self-contained. policy-hook.js has no npm deps (only node: builtins +
+// fetch) so it's left as a plain copy.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -72,6 +85,18 @@ async function main(): Promise<void> {
     copy(abs, path.join(dest, src));
     console.log(`[bundle-resources] copied ${src}`);
   }
+
+  for (const name of ['host-mcp.js', 'ext-mcp.js']) {
+    const entry = path.join(REPO_ROOT, 'mcp', name);
+    const out = await Bun.build({ entrypoints: [entry], target: 'bun' });
+    if (!out.success) {
+      console.error(`[bundle-resources] failed to bundle mcp/${name}:`, out.logs.join('\n'));
+      process.exit(1);
+    }
+    await Bun.write(path.join(dest, 'mcp', name), await out.outputs[0].text());
+    console.log(`[bundle-resources] bundled mcp/${name} (inlines @modelcontextprotocol/sdk)`);
+  }
+
   console.log(`[bundle-resources] done → ${dest}`);
 }
 

@@ -68,10 +68,15 @@ let assignToJob: AssignFn | null = null;
 // host process holding it for its whole life IS the kill switch. Letting a
 // child inherit the handle would keep the job alive past the host's death and
 // defeat the entire mechanism.
-async function initJob(): Promise<void> {
+function initJob(): void {
   if (!isWin) return;
   try {
-    const { dlopen, FFIType, ptr } = await import('bun:ffi');
+    // Sync require (bun:ffi is a Bun builtin, no TLA) — not `await import()` —
+    // so this function stays synchronous: bun build --compile refuses to bundle
+    // a `require()` of any module that transitively has a top-level await, and
+    // supervise() below reads `assignToJob` synchronously right after spawn(),
+    // so a Promise-based init here would race every early child on Windows.
+    const { dlopen, FFIType, ptr } = require('bun:ffi') as typeof import('bun:ffi');
     const k32 = dlopen('kernel32.dll', {
       CreateJobObjectW: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
       SetInformationJobObject: {
@@ -114,7 +119,7 @@ async function initJob(): Promise<void> {
   }
 }
 
-await initJob();
+initJob();
 
 // --- pid records -------------------------------------------------------------
 

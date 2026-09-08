@@ -1,9 +1,12 @@
 # Desktop packaging (`bun build --compile`)
 
-Status: **not shippable yet**. `bunExec()` (server/lib/bun-exec.ts) and the
-resource bundler (scripts/bundle-resources.ts) are done and verified. The
-actual `bun build --compile server/index.ts` fails on a pre-existing
-architectural issue unrelated to this work — see "Known blocker" below.
+Status: **compiles and boots, live-verified**. `bun build --compile
+server/index.ts` produces a self-contained server binary; paired with
+`scripts/bundle-resources.ts`'s output next to it, the binary serves the
+cockpit and answers the API on a real port with no `~/.arigami`/repo
+checkout involved. Not yet tested: starting an actual Claude session from
+inside the binary (needs the `claude` CLI wired up — out of scope for this
+smoke test) and packaging into an actual Tauri app.
 
 ## What's here
 
@@ -43,7 +46,21 @@ architectural issue unrelated to this work — see "Known blocker" below.
   `docker-compose.yml`, `install.sh`, `test/`, `node_modules/` — none of
   these are read via `resourceRoot()` at runtime.
 
-## How to build (once the blocker below is fixed)
+  `host-mcp.js` and `ext-mcp.js` get an extra step: after the plain copy,
+  they're re-bundled with `Bun.build({target:'bun'})`, overwriting the
+  copies. Reason: `bunExec()`'s compiled-binary branch reaches them via
+  `await import(<absolute path on disk>)`, loaded fresh from disk — NOT
+  through the main executable's embedded module graph — so their own
+  `import ... from '@modelcontextprotocol/sdk/...'` needs a real
+  `node_modules` tree sitting next to them, which a bare `resources/`
+  directory doesn't have. Discovered live: `<binary> --mcp host` failed with
+  `Cannot find module '@modelcontextprotocol/sdk/server/index.js'` before
+  this was added. Bundling inlines the dependency (and the local
+  `blocking-call.js` import) so the files are self-contained.
+  `policy-hook.js` has no npm deps (only `node:` builtins + `fetch`), so it's
+  left as a plain copy.
+
+## How to build
 
 ```sh
 bun run build:web                                   # web/dist
@@ -54,93 +71,97 @@ bun scripts/bundle-resources.ts dist/resources       # next to the binary
 `resourceRoot()` expects the resources at `<dirname(execPath)>/resources`, so
 `dist/arigami-server` and `dist/resources/` must ship side by side.
 
-## Known blocker: `bun build --compile` fails today, on master, unrelated to this task
+## What was fixed to make `--compile` succeed
 
-Verified reproducible **before any of this task's changes** (checked out the
-call sites' original content and re-ran the same build — identical failure).
-`bun build --compile server/index.ts` errors out during bundling with:
+`bun build --compile` refuses to bundle any `require()` of a module that
+transitively contains a top-level `await` (the presence of `await` at module
+scope — even inside a runtime-`false` `if` — marks the whole module
+"asynchronous" for bundling purposes, independent of whether that branch ever
+runs). Two sources of top-level await were blocking every `require()` of
+`extensions.js`/`agent-policy.js` from `skills.ts`, `state.ts`, and
+`extensions.ts` itself:
 
-```
-error: This require call is not allowed because the transitive dependency
-"server/extensions.ts" contains a top-level await
-    at server/skills.ts:200   (extensionSkills())
-    at server/skills.ts:269   (autoCommit after a skill save)
-    at server/state.ts:1204   (resolveExtTab())
+1. **`server/lib/children.ts:71-122`** — `initJob()` was `async` solely
+   because of `await import('bun:ffi')`. `bun:ffi` is a Bun builtin (no
+   top-level await of its own, and — per an earlier spike — available inside
+   a compiled binary), so it's now loaded with a synchronous
+   `require('bun:ffi')` instead. `initJob()` is now a plain synchronous
+   function, and the call site is `initJob();` (no `await`). **Semantics are
+   unchanged**: `assignToJob` is still set during module evaluation, in the
+   same order, before any importer's code runs — `supervise()` (line ~201,
+   itself synchronous) reads `assignToJob` exactly as it did before. This was
+   the one piece flagged as Windows-safety-critical (job-object orphan
+   protection) and specifically NOT touched in an earlier pass of this task;
+   it's fixed now only because the fix keeps the synchronous-before-first-use
+   guarantee intact rather than replacing it with an async race.
+2. **`server/extensions.ts:1424-1509`** — the `bun server/extensions.ts
+   list|add|trust|…` CLI block (`if (import.meta.main) { … }`) had a real
+   top-level `await`. Wrapped its body in `void (async () => { … })()` — a
+   fire-and-forget async IIFE, not a real top-level await. Since this block
+   is the last statement in the file, the event loop still runs it to
+   completion before the process exits naturally either way, so the CLI's
+   `process.exitCode` / `doCommit()` behavior is unchanged. `import.meta.main`
+   is false whenever the file is imported (the normal server path), so this
+   block never executes there regardless.
 
-error: This require call is not allowed because the transitive dependency
-"server/lib/children.ts" contains a top-level await
-    at server/extensions.ts:926   (refreshFamilies(), require('./agent-policy.js'))
-```
+No other top-level-await sources turned up — `bun build --compile
+server/index.ts` now succeeds outright with just these two changes.
 
-Two independent root causes:
+## What WAS verified live (compiled binary, not just `bun run`)
 
-1. **`server/extensions.ts:1499`** has a real top-level `await` inside
-   `if (import.meta.main) { … }` (the `bun server/extensions.ts trust|untrust|enable|…`
-   CLI). Syntactically, ANY top-level `await` — even inside a runtime-false
-   `if` — marks the whole module as an "asynchronous module" for bundling
-   purposes, so every `require('./extensions.js')` elsewhere in the codebase
-   (skills.ts ×2, state.ts) becomes illegal under `--compile`. This one looks
-   low-risk to fix (the code path only runs when the file is executed
-   directly as a CLI, never during normal server import) but wasn't touched —
-   out of scope for this task and not verified against the CLI usage.
+All of this was run against the actual `bun build --compile` output, never
+against port 3099 or `~/.arigami` — isolated `ARIGAMI_DIR` under `/tmp`,
+`ARIGAMI_PORT=39231`, processes killed and `/tmp` cleaned up after.
 
-2. **`server/lib/children.ts:117`** — `await initJob();` — is a *real*,
-   unconditional top-level await that sets up the Windows job-object
-   (`CreateJobObjectW` + `KILL_ON_JOB_CLOSE`) BEFORE the module finishes
-   loading, which is what guarantees every child the host ever spawns is
-   covered by layer-1 orphan protection (see the comment block at the top of
-   that file). `server/extensions.ts:926` does
-   `require('./agent-policy.js')`, which transitively reaches this file, and
-   that require is what the compiler actually rejects.
-
-   **This one was deliberately NOT touched.** Making it non-blocking (e.g.
-   fire-and-forget the async init, or lazily await it on first `supervise()`
-   call) would open a real window, on every host restart, where children
-   spawned before the Windows job object exists get NO layer-1 protection for
-   their entire lifetime — not a cosmetic risk, and not one this session
-   could verify: there's no Windows box here to test against. Given the
-   desktop target is explicitly Mac **and** Windows, gambling on Windows
-   process-supervision safety to make a Linux smoke test compile felt like
-   the wrong trade.
-
-**What unblocking this needs:** either (a) remove the top-level `await` in
-`children.ts` behind a readiness-gate that every `supervise()` call site
-awaits before its first spawn (a real design change, needs Windows testing),
-or (b) convert the four late `require('./extensions.js' | './agent-policy.js')`
-call sites to `await import()` and propagate `async` to their callers (also
-non-trivial — `resolveExtTab()` in particular is called from a synchronous
-tab-creation path). Both are follow-up work, not something to rush through
-inside this task.
-
-## What WAS verified despite the blocker
-
-Since the actual binary can't be produced, the resource bundle and
-`bunExec()` were verified independently:
-
-- `bunExec('host' | 'policy' | 'ext')` output compared directly against the
-  exact strings/arrays the three call sites built by hand before — identical.
-- `bun scripts/bundle-resources.ts <dir>` run for real: produced a
-  **2.8 MB** resources directory (`web/dist` 2.0M, `skills` 312K, `profiles`
-  336K, `sdk` 56K, `mcp` 96K, `server/assets`+`pty-bridge.py` 28K,
-  `package.json`+`VERSION` 8K).
-- The real (non-compiled) `server/index.ts` was pointed at that bundle via
-  `ARIGAMI_ROOT=<bundle-dir>` (the same override `resourceRoot()` uses, so
-  this exercises the exact code path a compiled binary would take once it
-  can be built), on an isolated `ARIGAMI_DIR` under `/tmp` and a non-3099
-  port. It came up clean and served:
-  - `GET /__health` → `{"ok":true,...}`
+- **Binary size: 81 MB** (`arigami-server`, single file).
+- **Resources directory size: 3.7 MB** (`web/dist` 2.0M, `skills` 312K,
+  `profiles` 336K, `mcp` — now with bundled `host-mcp.js`/`ext-mcp.js` —
+  ~900K, `sdk` 56K, `server/assets`+`pty-bridge.py` 28K, `package.json`+
+  `VERSION` 8K). Up from 2.8 MB before the mcp-script bundling fix.
+- Ran the binary directly (not `bun run`): came up clean, no server-boot
+  errors, and served:
+  - `GET /__health` → `{"ok":true,"busySessions":0}`
   - `GET /__api/config` → `{"version":"0.1.0",...}` (read from the bundled
     `VERSION`/`package.json`)
   - `GET /__host/` → the built cockpit HTML (from bundled `web/dist`)
   - `GET /__ext-sdk.js` → served (from bundled `sdk/`)
+- **The re-exec dispatch itself** (`<binary> --mcp <kind>`), previously
+  unreachable without a working `--compile` build, now works for all three
+  kinds:
+  - `--mcp host` → host-mcp.js's MCP stdio server starts, no server-boot log
+    line appears, process stays alive waiting on stdio (confirmed via
+    `timeout` exit code 124 = still running, not crashed).
+  - `--mcp ext /nonexistent/module.ts` → ext-mcp.js starts, reports its own
+    app-level "failed to import" error for the missing module (expected —
+    this is ext-mcp.js's designed graceful-degradation, not an SDK-resolution
+    crash), and stays alive on stdio exactly like a real extension load
+    failure would.
+  - `--mcp policy` (no `ARIGAMI_SESSION_ID` set) → exits 0 immediately, per
+    policy-hook.js's own `if (!SID || !toolName) process.exit(0)` guard.
 
-  Not tested: actually starting a Claude session (needs the `claude` CLI
-  wired up in a way this smoke test didn't set up) and the compiled-binary
-  re-exec path itself (`--mcp <kind>` dispatch in `server/index.ts`) — that
-  code is unreachable without a working `--compile` build.
+Not tested: starting an actual Claude session end-to-end from the compiled
+binary (needs the `claude` CLI + a real session flow wired into this smoke
+test — out of scope here) and cross-compiling for macOS/Windows
+(`--compile-executable-path` / `bun build --compile --target=...`) — this was
+all verified on Linux/Bun 1.4.0 only, matching the rest of this task's
+verification.
 
-- `bun:ffi` / `bun:sqlite` availability inside a compiled binary, and
-  `await import()` of absolute on-disk paths inside one, were verified in
-  an earlier spike (not re-verified here) and are why `bunExec()`'s re-exec
-  design and the resource-bundling approach are safe bets once the blocker
-  above is cleared.
+## Test suite
+
+`bun run typecheck` — clean, no errors.
+
+`bun test` — same session, back-to-back, identical test/pass/fail counts and
+**byte-identical failing-test-name list** before vs. after the
+children.ts/extensions.ts fix (1126 tests, 1041 pass, 1 skip, 84 fail, both
+runs). The 84 failures are pre-existing/environmental — not caused by
+anything in this task — root-caused to two independent sources also
+reproducible against master with none of this branch's changes applied:
+`test/core.test.js` expects a session's `metadata` to start `{}`, but this
+live worker session itself has `chatMode:"simple"` set, which leaks into
+`state.createSession()`'s default; a chunk of `*-host.test.ts` /
+`ladder-replay` tests hit fixed timeouts (5000ms hook timeout, 15000ms
+ladder-replay) that this sandboxed environment's load doesn't always clear —
+an earlier run today saw 115 failures with the same root causes, confirming
+the count itself is flaky here, not a fixed regression signal. What's solid
+is the diff: zero new failures, zero accidentally-fixed failures, from the
+children.ts/extensions.ts change.
