@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Shared helper for the connect-* playbooks (S3 / JIT setup).
 #
-# Every connect-* skill drives THIS session's own Chrome (skills/_lib/chrome.sh)
-# through the same few primitives, so the security rules live in one place:
+# Every connect-* skill drives THIS session's own Chrome through the same few
+# primitives, so the security rules live in one place:
 #   - navigation only inside the playbook's DOMAIN ALLOWLIST (CONNECT_ALLOW),
 #   - the agent NEVER types passwords / 2FA / OTP codes — a login form is the
 #     take-over boundary (request_screen); `type` refuses secret-looking input
@@ -10,17 +10,30 @@
 #   - one evidence screenshot at the end, published as an artifact,
 #   - the result reported to the host with report_setup (MCP) or the REST twin.
 #
+# screen-agnostic (server/lib/screen-driver.ts): `open`/`nav`/`type`/`click`/
+# `shot` all go through the host's CDP-backed browser REST
+# (server/lib/browser-actions.ts, the same code behind the browser_* MCP
+# tools) instead of typing into the X11 root window or scrot-ing the desktop.
+# That works whether this session's desktop is Xvfb+VNC (server today) or a
+# real native window later (a mac/Windows app) — CDP talks to the Chrome
+# TAB, not the screen. Only `key` (a raw key combo with no page-level CDP
+# equivalent, e.g. alt+Tab) still falls back to xinput.py/XTEST, and only
+# when this session actually has a desktop (`$DISPLAY` set) — it fails with
+# a clear message otherwise, it does not silently no-op.
+#
 # Usage:
-#   connect.sh open  <url>                 allowlist-check, ensure the session Chrome is up, and SHOW <url>:
-#                                          a fresh Chrome starts on it; an already-running one is
-#                                          navigated there (same Ctrl+L path as `nav`) — never "already
-#                                          running, URL ignored" (F6)
-#   connect.sh nav   <url>                 allowlist-check, then Ctrl+L / type / Enter in the running Chrome
-#   connect.sh url                         print the current tab URL (from the profile's session file)
+#   connect.sh open  <url>                 allowlist-check, then POST /browser/open: ensures the
+#                                          session's Chrome exists and is showing <url> — a fresh
+#                                          Chrome starts on it, an already-running one is navigated
+#                                          there (never "already running, URL ignored" (F6))
+#   connect.sh nav   <url>                 allowlist-check, then POST /browser/navigate (CDP Page.navigate)
+#   connect.sh url                         print the current tab URL (from the profile's History db)
 #   connect.sh wait-url <regex> [secs]     poll until the current URL matches (default 60s); prints it; exit 1 on timeout
 #   connect.sh allowed <url>               exit 0 if the host of <url> is in CONNECT_ALLOW, else 1
-#   connect.sh shot  [name]                scrot of the session desktop → prints the PNG path (view it with Read)
-#   connect.sh click <x> <y> | key <combo> | type <text>    → xinput.py on this desktop
+#   connect.sh shot  [name]                CDP screenshot of the front TAB (not the desktop) → prints the PNG path (view it with Read)
+#   connect.sh click <x> <y>               POST /browser/click (CDP, viewport coordinates)
+#   connect.sh type  <text>                POST /browser/type (CDP Input.insertText; refuses password/OTP/CAPTCHA fields)
+#   connect.sh key   <combo>               xinput.py/XTEST fallback for a raw key combo — needs $DISPLAY, no CDP equivalent
 #   connect.sh api   <METHOD> <path> [json]   authenticated call to the host REST (prints body)
 #   connect.sh report <capability> <ok|fail> [evidence-path] [detail]
 #                                          POST /__api/setup/<capability>/report — the REST twin of report_setup
@@ -41,6 +54,30 @@ XI="$HERE/xinput.py"
 SHOTS="${TMPDIR:-/tmp}/connect-$SID"
 
 die() { echo "connect: $*" >&2; exit 1; }
+
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# One authenticated call to the host REST; prints the raw response body (no
+# trailing newline — callers that echo it add their own).
+api_call() {
+  local m="$1" p="$2" body="${3:-}"
+  if [ -n "$body" ]; then
+    curl -sS "${AUTH[@]}" -X "$m" "$HOST$p" -H 'content-type: application/json' -d "$body"
+  else
+    curl -sS "${AUTH[@]}" -X "$m" "$HOST$p"
+  fi
+}
+
+# POST {url} or {text} or {x,y} to a browser/<action> route and die with the
+# response body when it doesn't come back {"ok":true} — every nav/type/click
+# call below shares this so a policy 403 or a needsHuman refusal fails loudly
+# instead of the playbook sailing on as if it had worked.
+browser_call() {
+  local action="$1" body="$2" resp
+  resp="$(api_call POST "/__api/sessions/$SID/browser/$action" "$body")"
+  printf '%s' "$resp" | grep -q '"ok":true' || die "$action failed: $resp"
+  printf '%s\n' "$resp"
+}
 
 host_of() { printf '%s' "$1" | sed -E 's#^[a-zA-Z]+://##; s#[/?\#].*$##; s#^[^@]*@##; s#:[0-9]+$##' | tr 'A-Z' 'a-z'; }
 
@@ -95,20 +132,18 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   allowed) allowed "${1:?url}" ;;
   open)
-    require_allowed "${1:?url}"
-    out="$("$HERE/chrome.sh" "$1")"; printf '%s\n' "$out"
-    # open = "ensure Chrome + navigate": the host only passes the URL to a
-    # NEW Chrome; when one is already running (alreadyRunning:true) the URL
-    # would be ignored, so drive the address bar exactly like `nav`.
-    if printf '%s' "$out" | grep -q '"alreadyRunning":true'; then
-      sleep "${CONNECT_NAV_DELAY:-0.5}"
-      python3 "$XI" key ctrl+l && python3 "$XI" type "$1" && python3 "$XI" key Return
-    fi ;;
+    url="${1:?url}"
+    require_allowed "$url"
+    # open = "ensure Chrome + navigate": browser/open (browserActions.open)
+    # does both server-side now — a fresh Chrome starts on $url, an already-
+    # running one is CDP-navigated there. No client-side "was it already
+    # running?" branch or keyboard fallback needed any more (F6 still holds:
+    # never "already running, URL ignored").
+    browser_call open "{\"url\":\"$(esc "$url")\"}" ;;
   nav)
-    require_allowed "${1:?url}"
-    "$HERE/chrome.sh" >/dev/null  # make sure Chrome is up + focused
-    sleep "${CONNECT_NAV_DELAY:-0.5}"
-    python3 "$XI" key ctrl+l && python3 "$XI" type "$1" && python3 "$XI" key Return ;;
+    url="${1:?url}"
+    require_allowed "$url"
+    browser_call navigate "{\"url\":\"$(esc "$url")\"}" >/dev/null ;;
   url) current_url ;;
   wait-url)
     re="${1:?regex}"; secs="${2:-60}"; t=0
@@ -119,27 +154,37 @@ case "$cmd" in
     done
     echo "$(current_url)"; die "wait-url: no match for /$re/ after ${secs}s" ;;
   shot)
-    [ -n "${DISPLAY:-}" ] || die "DISPLAY not set — this session has no desktop yet"
     mkdir -p "$SHOTS"
     out="$SHOTS/${1:-shot}-$(date +%s).png"
-    scrot -o "$out" >/dev/null 2>&1 || import -window root "$out"
+    resp="$(api_call POST "/__api/sessions/$SID/browser/screenshot" "")"
+    b64="$(printf '%s' "$resp" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("base64") or "")
+except Exception:
+    print("")')"
+    [ -n "$b64" ] || die "shot failed: $resp"
+    printf '%s' "$b64" | base64 -d > "$out" || die "shot: could not decode/write $out"
     echo "$out" ;;
-  click) python3 "$XI" click "${1:?x}" "${2:?y}" "${3:-1}" ;;
-  key)   python3 "$XI" key "${1:?combo}" ;;
-  type)  python3 "$XI" type "${1:?text}" ;;
+  click)
+    x="${1:?x}"; y="${2:?y}"
+    browser_call click "{\"x\":$x,\"y\":$y}" >/dev/null ;;
+  key)
+    # No CDP equivalent for a raw key combo (alt+Tab, ctrl+w on the desktop
+    # itself, not a page) — this is the one primitive still tied to a real
+    # X11 desktop. Fail clearly instead of silently doing nothing when this
+    # session has none.
+    [ -n "${DISPLAY:-}" ] || die "key: no CDP equivalent for a raw key combo, and DISPLAY is not set — this session has no desktop"
+    python3 "$XI" key "${1:?combo}" ;;
+  type)
+    browser_call type "{\"text\":\"$(esc "${1:?text}")\"}" >/dev/null ;;
   api)
     m="${1:?METHOD}"; p="${2:?path}"; body="${3:-}"
-    if [ -n "$body" ]; then
-      curl -sS "${AUTH[@]}" -X "$m" "$HOST$p" -H 'content-type: application/json' -d "$body"
-    else
-      curl -sS "${AUTH[@]}" -X "$m" "$HOST$p"
-    fi; echo ;;
+    api_call "$m" "$p" "$body"; echo ;;
   report)
     cap="${1:?capability}"; ok="${2:?ok|fail}"; ev="${3:-}"; detail="${4:-}"
     okj=false; [ "$ok" = "ok" ] && okj=true
-    esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-    curl -sS "${AUTH[@]}" -X POST "$HOST/__api/setup/$(printf '%s' "$cap" | sed 's#/#%2F#g')/report" \
-      -H 'content-type: application/json' \
-      -d "{\"ok\":$okj,\"sessionId\":\"$SID\",\"evidence\":\"$(esc "$ev")\",\"detail\":\"$(esc "$detail")\"}"; echo ;;
+    api_call POST "/__api/setup/$(printf '%s' "$cap" | sed 's#/#%2F#g')/report" \
+      "{\"ok\":$okj,\"sessionId\":\"$SID\",\"evidence\":\"$(esc "$ev")\",\"detail\":\"$(esc "$detail")\"}"; echo ;;
   *) sed -n '2,30p' "$0"; exit 2 ;;
 esac

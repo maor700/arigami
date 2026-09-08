@@ -152,6 +152,21 @@ export async function pageScroll(sessionId: string, x: number, y: number, deltaX
 }
 
 /**
+ * PNG bytes of the front tab via CDP `Page.captureScreenshot` — the tab's own
+ * viewport, not the desktop/root window. This is what lets `connect.sh shot`
+ * (and any other evidence screenshot) stop depending on scrot/VNC: on a real
+ * machine (not this session's throwaway Xvfb) a root-window grab would show
+ * whatever else the human has open, so the connect-* playbooks need a capture
+ * that is scoped to the page they're driving, on every platform.
+ */
+export async function pageScreenshot(sessionId: string): Promise<Buffer> {
+  const page = await frontPage(sessionId);
+  const r = await cdpCall(page.webSocketDebuggerUrl!, 'Page.captureScreenshot', { format: 'png' }, 8000);
+  if (!r?.data) throw new Error('Page.captureScreenshot returned no data');
+  return Buffer.from(r.data as string, 'base64');
+}
+
+/**
  * Type `text` into whatever has focus on the session's desktop: CDP
  * Input.insertText on the front tab (unicode ok), else the screen driver's
  * own typeText (XTEST on x11 — ASCII only). Never logs the text — it may be

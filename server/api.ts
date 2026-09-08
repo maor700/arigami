@@ -5385,6 +5385,17 @@ export async function handle(
     if (sub === 'browser/close' && m === 'POST') {
       return json(res, browserActions.close(id));
     }
+    // screen-agnostic connect-*: a screenshot of the front TAB only (CDP
+    // Page.captureScreenshot), not the desktop/root window — what
+    // skills/_lib/connect.sh's `shot` calls instead of scrot/import.
+    if (sub === 'browser/screenshot' && m === 'POST') {
+      try {
+        const png = await browserActions.screenshot(id);
+        return json(res, { ok: true, base64: png.toString('base64') });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 503);
+      }
+    }
     // T8c / BROWSE1: explicit allocation for the machine side panel's empty
     // state — the same ensureDesktop() the browser_* tools and request_screen
     // use lazily, exposed so the HUMAN can trigger "give this session its own

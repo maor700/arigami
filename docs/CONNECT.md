@@ -43,8 +43,15 @@ human can flip it. Nothing runs automatically without that click.
 | `repo:<name>` | — (manual only) | — | the human picks/enters the repo on the card |
 
 All playbooks share `skills/_lib/connect.sh` (open in the session Chrome with
-an allowlist check, `wait-url`, screenshot, click/key/type, REST, report) and
-`skills/_lib/xinput.py` (XTEST driver — the session desktop has no xdotool).
+an allowlist check, `wait-url`, screenshot, click/type, REST, report). Screen-
+agnostic by construction: `open`/`nav`/`type`/`click`/`shot` all go through the
+host's CDP-backed browser REST (`server/lib/browser-actions.ts` — the same
+code behind the `browser_*` MCP tools) — navigation is `Page.navigate`, typing
+is `Input.insertText`, and the evidence screenshot is `Page.captureScreenshot`
+of the front **tab**, not a scrot of the whole desktop/root window. Only `key`
+(a raw key combo with no page-level CDP equivalent) still falls back to
+`skills/_lib/xinput.py` (XTEST), and only when the session actually has a
+desktop (`$DISPLAY` set) — none of the six playbooks below call it today.
 They all follow `skills/machine-work/SKILL.md` for narration, the four
 screenshot moments and the hand-over protocol.
 
