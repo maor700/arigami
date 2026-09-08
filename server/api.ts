@@ -3241,11 +3241,23 @@ export async function handle(
           return json(res, { ok: true, cancelled: hc.restarts.cancel(), status: await hc.hostStatus() });
         }
         if (sub === 'upgrade' && m === 'POST') {
+          // dispatch/update-backend: the plan comes from the active channel's
+          // backend now (git/docker/packaged) instead of always assuming git —
+          // startUpgrade()'s `plan` param is the seam this uses. On the git
+          // channel (every host this runs on today) backend.plan() is exactly
+          // upgradePlan(root), so this is byte-identical to before.
+          const { pickBackend } = await import('./lib/update-backend.js');
+          const backend = pickBackend();
+          const plan = backend.plan();
+          if (!plan) {
+            const pf = await backend.preflight();
+            return json(res, { error: pf.reason || `upgrade not available on the ${backend.channel} channel`, channel: backend.channel }, 501);
+          }
           // VER1: the cockpit sends when=confirm — pull/install/build, then a restart card; the
           // CLI/orchestrators may still ask for now|idle and get the old one-shot behaviour.
           const upgWhen: 'now' | 'idle' | 'confirm' =
             u.searchParams.get('when') === 'confirm' || body.when === 'confirm' ? 'confirm' : when;
-          const job = await hc.startUpgrade(upgWhen);
+          const job = await hc.startUpgrade(upgWhen, undefined, plan);
           return json(res, { ok: true, jobId: job.id, when: upgWhen, status: await hc.hostStatus() });
         }
         // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,

@@ -78,7 +78,7 @@ pm2 start "bun server/index.ts" --name arigami --cwd /opt/arigami && pm2 save
 | endpoint | behaviour |
 |---|---|
 | `GET /__api/version` | `{version, tag, available:{version, tag, release}, commit, branch, ahead, behind, sharedBase, updateAvailable}` — `version` is VERSION/package.json (minted by `bun run release`), `available` is the upstream tip's package.json + newest v* tag (+ GitHub's latest release on `?refresh=1`), `sharedBase:false` = no merge base with upstream. Cached 60 s; `?refresh=1` runs `git fetch --tags` first (≤ once / 5 min) |
-| `GET /__api/host/status` | `{manager, dirty:[…], uptimeSec, busySessions, pendingRestart:'now'\|'idle'\|null, phase, allowUpgrade, upgrade}` — `dirty` lists the tracked changes that would block an upgrade (VER1) |
+| `GET /__api/host/status` | `{manager, channel, dirty:[…], uptimeSec, busySessions, pendingRestart:'now'\|'idle'\|null, phase, allowUpgrade, upgrade}` — `dirty` lists the tracked changes that would block an upgrade (VER1). `channel` is `'git'\|'docker'\|'packaged'` (`server/lib/update-backend.ts`, dispatch/update-backend) — which `UpdateBackend` `POST /host/upgrade` will use; only `git` is wired to actually run today |
 | `POST /__api/host/restart?when=now` | stop accepting connections, give in-flight claude turns `host.drainTimeoutMs` (20 s) to finish, then exit 0 |
 | `POST /__api/host/restart?when=idle` | queue until no session is `working` (max `host.idleTimeoutMin`, 30 min), then as above. `DELETE` cancels while queued |
 | `POST /__api/host/upgrade?when=confirm\|now\|idle` | refuse (409, body carries `dirty:[…]`) if the checkout has uncommitted changes (untracked files are fine) or `host.allowUpgrade=false`; else `git fetch --tags` → `git merge-base --is-ancestor HEAD @{u}` (fails early with a readable reason when a ff pull is impossible — docs/GIT-REALIGN.md) → `git pull --ff-only` → `bun install --frozen-lockfile` → `cd web && bun run build`. `when=confirm` (the cockpit's **Update** button, VER1) then parks with `upgrade.needsRestart=true` and the human restarts from the card; `now\|idle` restart by themselves (CLI / orchestrators). Progress streams on `/__ws` as `{type:'host', event:{kind:'upgrade-progress', …}}`, `upgrade-done` carries `{needsRestart, from, to}`; log in `logs/upgrade.log` |
@@ -92,7 +92,10 @@ role once session-cookie auth lands.
 
 Manager detection: `ARIGAMI_SUPERVISOR` env (the units set `systemd`) →
 `INVOCATION_ID` (systemd) → `PM2_HOME`/`pm_id` (pm2) → `XPC_SERVICE_NAME` (launchd)
-→ `none`.
+→ `none`. `self` exists for a packaged app's own launcher (no daemon — the
+process that spawned us relaunches us after `exit 0`) but is override-only:
+there's no auto-detection for it, so it only fires when the launcher sets
+`ARIGAMI_SUPERVISOR=self` itself.
 
 Config (`config.json`):
 

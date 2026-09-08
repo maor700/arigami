@@ -33,7 +33,7 @@ import { resourceRoot } from './lib/resource-root.js';
 import * as state from './state.js';
 import * as bus from './bus.js';
 
-export type Manager = 'systemd' | 'launchd' | 'pm2' | 'docker' | 'none';
+export type Manager = 'systemd' | 'launchd' | 'pm2' | 'docker' | 'self' | 'none';
 export type RestartWhen = 'now' | 'idle';
 export type Phase = 'idle' | 'pending-idle' | 'draining' | 'exiting';
 
@@ -62,13 +62,21 @@ export function parentCommand(ppid: number = process.ppid): string {
  * THIS process's parent is that supervisor: pm2's God daemon, systemd
  * (pid 1 or the `systemd --user` manager), launchd (pid 1 on macOS).
  * `ARIGAMI_SUPERVISOR=<name|none>` still overrides (the shipped units set it).
+ *
+ * `self`: no daemon at all — whatever process spawned us (a packaged desktop
+ * app's launcher, a `while true; do ...; done` wrapper) is committed to
+ * relaunching us after exit(0), the same contract systemd/pm2 give. There is
+ * no reliable auto-detection for this (unlike docker's cgroup/pid-1 probe) —
+ * a shell parent looks identical whether or not it loops — so it is
+ * override-only: the packaged channel's launcher is expected to set
+ * `ARIGAMI_SUPERVISOR=self` before spawning the binary.
  */
 export function detectManager(
   env: NodeJS.ProcessEnv = process.env,
   proc: { ppid?: number; parentCommand?: string } = {},
 ): Manager {
   const forced = (env.ARIGAMI_SUPERVISOR || '').toLowerCase();
-  if (forced === 'systemd' || forced === 'launchd' || forced === 'pm2' || forced === 'docker') return forced;
+  if (forced === 'systemd' || forced === 'launchd' || forced === 'pm2' || forced === 'docker' || forced === 'self') return forced;
   if (forced === 'none') return 'none';
   const ppid = proc.ppid ?? process.ppid;
   // F8: inside a container the image's ENTRYPOINT (pid 1) is our parent and
@@ -356,8 +364,15 @@ export function inContainer(): boolean {
 export async function hostStatus() {
   const r = restarts.status();
   const docker = inContainer();
+  // dispatch/update-backend: same detection docker/packaged already used
+  // inline here, named — see server/lib/update-backend.ts. Dynamic import:
+  // that module statically imports this one, so this stays a lazy call
+  // (same pattern as the `version.js` import in startUpgrade below), not a
+  // module-scope one.
+  const { pickBackend } = await import('./lib/update-backend.js');
   return {
     manager: detectManager(),
+    channel: pickBackend(ROOT).channel,
     // VER1: what blocks an upgrade (tracked changes in the running checkout), listed for the human
     dirty: docker ? [] : await dirtyNow(),
     // F8: Docker mode — no git checkout to pull; upgrade = pull + recreate on the host machine.
