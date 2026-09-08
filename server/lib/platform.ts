@@ -149,6 +149,61 @@ export function shellArgs(cmd: string, login = true): string[] {
   return [bash, login ? '-lc' : '-c', cmd];
 }
 
+// --- Chrome/Chromium binary lookup -------------------------------------------
+// `google-chrome` (the Linux-only default) doesn't exist on macOS or Windows,
+// so the naive `CHROME_BIN || 'google-chrome'` used to spawn ENOENT on both —
+// silently, since supervise() swallows a child's 'error' event, so the caller
+// saw a fake "opened" pid with no browser behind it. This is the single place
+// both the real launch (lib/chrome.ts) and the health-check probe
+// (onboarding.ts) resolve "Chrome" from, so they never disagree.
+const MAC_CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+const WIN_CHROME_PATHS = [
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+];
+
+/**
+ * Ordered Chrome/Chromium candidates for this platform: CHROME_BIN /
+ * ARIGAMI_CHROME_BIN always win, in that order, on every platform — the Linux
+ * fallback chain (google-chrome, google-chrome-stable, chromium,
+ * chromium-browser) is unchanged from before. `env`/`platform` are injectable
+ * for testing without mocking process.env/process.platform.
+ */
+export function chromeCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  const named = [env.CHROME_BIN, env.ARIGAMI_CHROME_BIN].filter((b): b is string => !!b);
+  if (platform === 'win32') return [...named, ...WIN_CHROME_PATHS, 'chrome', 'chromium'];
+  if (platform === 'darwin') return [...named, ...MAC_CHROME_PATHS, 'google-chrome', 'chromium', 'chromium-browser'];
+  return [...named, 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'];
+}
+
+/**
+ * Resolve the first candidate that actually exists on disk — absolute paths
+ * (env override, macOS/Windows well-known locations) are checked directly,
+ * bare names go through `which()`. null when nothing on this host matches.
+ */
+export function findChromeBin(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): string | null {
+  for (const c of chromeCandidates(env, platform)) {
+    if (path.isAbsolute(c)) {
+      try {
+        if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+      } catch {
+        /* unreadable path — keep looking */
+      }
+      continue;
+    }
+    const found = which(c);
+    if (found) return found;
+  }
+  return null;
+}
+
 // --- pty --------------------------------------------------------------------
 // `claude setup-token` / `claude mcp login` are TTY programs. On POSIX the host
 // relays them through lib/pty-bridge.py (stdlib `pty`). Windows has no `pty`

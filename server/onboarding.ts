@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isWin, which, shellArgs, toPosixPath, HOME } from './lib/platform.js';
+import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
 import { hasCredentials } from './accounts.js';
@@ -1203,11 +1203,12 @@ export interface HealthDeps {
   screenEnabled?: () => boolean;
 }
 
+// Shared with lib/chrome.ts's chromeBin() (the actual launch) via
+// chromeCandidates() — the same ordered list, so the health-check probe and
+// the real browser never disagree about what "Chrome" means on this host.
 function chromeVersionSync(): string | null {
-  const bins = [process.env.CHROME_BIN, process.env.ARIGAMI_CHROME_BIN, 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']
-    .filter((b): b is string => !!b);
-  for (const b of bins) {
-    const bin = b.includes('/') ? b : which(b);
+  for (const b of chromeCandidates()) {
+    const bin = path.isAbsolute(b) ? b : which(b);
     if (!bin) continue;
     try {
       const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000 });

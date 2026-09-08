@@ -18,6 +18,7 @@ import { ARIGAMI_DIR } from './instance.js';
 import { supervise, killTree } from './children.js';
 import * as state from '../state.js';
 import { ensureDesktop } from './desktops.js';
+import { chromeCandidates, findChromeBin } from './platform.js';
 
 export const CHROME_BASE_DIR = path.join(ARIGAMI_DIR, 'chrome-base');
 export const CHROME_SESSIONS_DIR = path.join(ARIGAMI_DIR, 'chrome-sessions');
@@ -72,8 +73,17 @@ const running = new Map<string, ChildProcess>();
 
 // B2/§7.4: the browser binary is abstracted behind CHROME_BIN — google-chrome
 // on amd64, chromium on arm64 (the Docker image and install.sh both set it).
+// Off Linux (or when nothing on PATH matches), lib/platform.ts's
+// findChromeBin() also tries the macOS/Windows well-known install paths — see
+// its comment for why a missing binary throws here instead of returning a
+// name that only fails once spawn() gets it (silently: supervise() swallows
+// the child's 'error' event, so openChrome() would otherwise report success).
 export function chromeBin(): string {
-  return process.env.CHROME_BIN || 'google-chrome';
+  const found = findChromeBin();
+  if (found) return found;
+  throw new Error(
+    `Chrome/Chromium not found — looked for: ${chromeCandidates().join(', ')}. Set CHROME_BIN to its full path.`
+  );
 }
 
 // Inside a container the host runs as an unprivileged user without user
