@@ -23,3 +23,10 @@ audit/
 node_modules
 web/node_modules
 __pycache__/
+
+# Tauri desktop shell: build.sh's staged sidecar+resources, and Rust's own
+# build output. Neither is source — see desktop/build.sh.
+desktop/src-tauri/resources-staged/
+desktop/src-tauri/target/
+desktop/src-tauri/icons/
+desktop/src-tauri/gen/

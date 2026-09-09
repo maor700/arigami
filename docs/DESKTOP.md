@@ -165,3 +165,181 @@ an earlier run today saw 115 failures with the same root causes, confirming
 the count itself is flaky here, not a fixed regression signal. What's solid
 is the diff: zero new failures, zero accidentally-fixed failures, from the
 children.ts/extensions.ts change.
+
+## Tauri desktop shell (`desktop/`)
+
+Status: **written, not built, not run**. There is no Rust toolchain on this
+box, and Tauri cannot cross-compile Linux→macOS at all (needs Apple's SDK and
+linker) — the brief for this task said plainly not to install `rustup` to
+chase that (disk was already down to ~3.7 GB free once). Everything under
+`desktop/src-tauri/` is written from memory of the Tauri v2 API, unchecked by
+a compiler. What *was* proven on this box, against the real compiled binary
+(see "What was proven" below), is exactly the part that doesn't need Rust to
+verify: the resource layout, the readiness check's exact bytes, and the
+shutdown signal.
+
+### What's here
+
+- `desktop/src-tauri/Cargo.toml`, `tauri.conf.json`, `build.rs`,
+  `src/main.rs` — the Tauri project.
+- `desktop/src-tauri/capabilities/default.json` — the main window's
+  capability, with **no `remote` block** (see decision #2 below).
+- `desktop/src-tauri/splash-dist/index.html` — the boot splash. Static HTML,
+  no `<script>` at all: decision #4's polling happens in Rust, not JS, so the
+  splash needs zero Tauri JS APIs and therefore zero capability grants.
+- `desktop/build.sh` — stages the sidecar binary + its `resources/` sibling
+  into `desktop/src-tauri/resources-staged/`, the exact layout
+  `tauri.conf.json`'s `bundle.resources` map ships and `main.rs` reads back
+  via `resource_dir()`. It calls the two tools this doc already describes
+  (`bun run build:web`, `bun build --compile`, `bun scripts/bundle-resources.ts`)
+  — nothing new, just aimed at a different output directory. macOS only,
+  matching the audience of this doc.
+
+### Five decisions (do not change these without re-reading the "why")
+
+1. **The window loads `http://127.0.0.1:3099/__host/` via an ordinary
+   external URL, not a bundled `frontendDist` app.** `web/src/lib/hostUrl.js`
+   builds every iframe/tab `src` from `window.location.origin`, and the auth
+   cookie is `SameSite=Lax`. If the window's origin were anything other than
+   the real host origin (a `tauri://` or custom-scheme origin, as a bundled
+   SPA would get), every tab would become a cross-site iframe from the
+   cookie's point of view and silently 401.
+2. **No IPC to that origin.** `capabilities/default.json` has no `remote`
+   entry, so the cockpit — and everything same-origin with it, including
+   every extension tab rendered as an iframe — gets no `window.__TAURI__`
+   and no `invoke`. Per Tauri's own security advisory, on Windows an iframe
+   that's same-origin with the top-level window gets IPC access too; since
+   all our iframes are same-origin by construction, there is no safe way to
+   grant this to the cockpit without also granting it to every tab. Don't.
+3. **The shell is the supervisor.** `main.rs` sets `ARIGAMI_SUPERVISOR=self`
+   on the sidecar — `server/host-control.ts`'s `detectManager()` reads this
+   exact value, and without it the cockpit's restart/upgrade button gets a
+   409. The contract: the sidecar exits 0, `run_supervisor()` respawns it.
+   Only the *first* boot triggers the splash→navigate dance; every later
+   respawn (restart, upgrade, or a crash) is silent — the window is already
+   sitting on the real URL, and that page's own reconnect logic (built for
+   the ordinary browser product) is what recovers the UI.
+4. **A splash screen is mandatory.** The window starts on the local
+   `splash-dist/index.html`; a background thread does a raw HTTP GET of
+   `/__api/config` in a loop (`config_endpoint_ready()`), and only once that
+   answers does `main.rs` call `WebviewWindow::navigate()` to the real URL.
+   Without this, the very first paint would be the engine's own connection-
+   refused error page.
+5. **`ARIGAMI_ROOT` isn't set — the binary finds its resources by
+   position.** `server/lib/resource-root.ts`'s compiled-binary branch expects
+   `resources/` next to `process.execPath`. `desktop/build.sh` stages
+   `arigami-server` and `resources/` as siblings under
+   `resources-staged/`, and `tauri.conf.json` ships that whole directory
+   unchanged, so `dirname(execPath)` inside the bundle already has what
+   `resourceRoot()` wants with zero extra plumbing.
+
+### Build steps (macOS)
+
+```sh
+# once, if you don't already have them:
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cargo install tauri-cli --locked --version "^2.0"
+
+# once, to generate real app icons from the current brand mark:
+cd desktop/src-tauri
+cargo tauri icon ../../web/public/icon-512.png
+cd ../..
+
+# every time server/ or web/ changes:
+bash desktop/build.sh
+
+# dev run (opens a window against the freshly staged sidecar):
+cd desktop/src-tauri && cargo tauri dev
+
+# release build (.app under desktop/src-tauri/target/release/bundle/macos/):
+cd desktop/src-tauri && cargo tauri build
+```
+
+First run: the pairing code (needed once, in the cockpit's login screen) is
+**not** printed to a visible terminal — the sidecar's stdout/stderr are
+redirected to a log file (`~/Library/Logs/Arigami/arigami-server.log` on
+macOS, via `app.path().app_log_dir()`). It's also written to
+`~/.arigami/run/pairing-code` (same file `bin/host pair` reads/writes) —
+that's the easier place to check: `cat ~/.arigami/run/pairing-code`.
+
+### What was proven (this box, no Rust involved)
+
+Ran `desktop/build.sh` for real (it needed `bun install` in the repo root and
+`web/` first — this worktree, like others, ships without `node_modules/`),
+producing the actual compiled `arigami-server` binary and `resources/` tree
+under `desktop/src-tauri/resources-staged/`. Then, standing in for what
+`main.rs` does, ran that binary *directly from that staged location* — no
+`ARIGAMI_ROOT` override, so it had to find its own resources by position,
+exactly like the bundled app will:
+
+```
+ARIGAMI_DIR=/tmp/... ARIGAMI_PORT=39231 ARIGAMI_WA_AUTOSTART=0 \
+ARIGAMI_WA_DATA_DIR=/tmp/... ARIGAMI_SUPERVISOR=self \
+  ./desktop/src-tauri/resources-staged/arigami-server
+```
+
+(isolated `ARIGAMI_DIR`/port, WhatsApp autostart off, never port 3099 or
+`~/.arigami` — cleaned up after, per this task's rules.)
+
+- **Booted clean** and served `GET /__api/config` → `200`.
+- **Confirmed the exact bytes `config_endpoint_ready()` sends and checks**:
+  a raw `GET /__api/config HTTP/1.1\r\nHost: ...\r\nConnection: close\r\n\r\n`
+  over a bare TCP socket gets back a response starting with literally
+  `HTTP/1.1 200 OK` — so the hand-rolled HTTP client in `main.rs` (no crate,
+  one request ever) is checking for the right string.
+- **`kill -TERM <pid>` made it exit cleanly** — confirms `terminate()`'s use
+  of `libc::kill(pid, SIGTERM)` (not `Child::kill()`, which is `SIGKILL` on
+  Unix and would skip `server/index.ts`'s `shutdown()`/`killAll()` entirely)
+  reaches the handler it's meant to.
+
+That covers every byte in `main.rs` that talks to the sidecar over a
+filesystem path, a socket, or a signal. It does **not** cover a single line
+of actual Tauri/Rust API usage — window creation, the tray, `navigate()`,
+the dialog plugin — because none of that runs without a macOS build.
+
+### What's unverified — read this before debugging a build failure
+
+- **Every Tauri API call in `main.rs` is unverified**, not even
+  `cargo check`'d. The highest-risk ones, roughly in order of how likely they
+  are to have moved or need a version bump:
+  - `WebviewWindow::navigate(url)` — added at some point in the Tauri 2.x
+    line specifically for "start on a local page, jump to a remote one"
+    apps like this one. If `cargo tauri build` says it doesn't exist, bump
+    the `tauri` version pin in `Cargo.toml` before assuming the design is
+    wrong.
+  - `AppHandle::run_on_main_thread()`, `tauri_plugin_dialog`'s builder chain
+    (`.message().title().buttons().blocking_show()`), `MenuItem::with_id`,
+    `TrayIconBuilder`, `app.default_window_icon()`,
+    `app.path().resource_dir()` / `.app_log_dir()`.
+- **`tauri.conf.json`'s `bundle.resources` object-map form**
+  (`{"resources-staged": "resources-staged"}`) is assumed to copy the whole
+  directory tree unchanged into the bundle's resource dir. If the app builds
+  but the sidecar can't find its binary, check what actually landed under
+  the bundle's `Resources/` — the documented fallback is the array/glob form
+  (`"resources": ["resources-staged/**/*"]`).
+- **The icon files don't exist yet.** `tauri.conf.json` points at
+  `icons/32x32.png`, `icons/128x128.png`, `icons/128x128@2x.png`,
+  `icons/icon.icns`, `icons/icon.ico` — none of which are in the repo. The
+  build steps above run `cargo tauri icon` first; skipping that step is the
+  single most likely first-command failure.
+- **macOS code signing of the nested sidecar binary is unresearched.** For a
+  local/dev `cargo tauri build` this should be a non-issue, but if this ever
+  moves to Developer ID signing + notarization for distribution, an
+  unsigned Mach-O binary sitting inside `Resources/` may need its own
+  `codesign` pass (or `--deep`) — not looked into here.
+- **Windows quit is a known, deliberate gap, not an oversight.** `terminate()`
+  falls back to `taskkill /PID <pid> /T /F` on Windows — a hard kill, not the
+  graceful SIGTERM path `server/index.ts` listens for (`SIGBREAK` needs a
+  console process group + `GenerateConsoleCtrlEvent`, which needs Win32 FFI
+  I have no way to check here). Given nobody is building or running the
+  Windows target today, this trades "graceful" for "definitely no orphaned
+  process" and says so plainly rather than pretending it's solved.
+- **No crash-loop protection.** If the sidecar keeps failing after the first
+  successful boot, `run_supervisor()` will keep respawning it every 500ms,
+  forever. No backoff, no giving up.
+- **Port 3099 is hardcoded, with no collision handling.** If something else
+  on the Mac is already bound to it (e.g. a manual `bin/host start` from a
+  git checkout, run at the same time), the sidecar's own `hostlock.ts` will
+  refuse to bind, the splash will poll for 45s, then show a generic "didn't
+  answer in time" dialog — there's no detection or message specific to that
+  case.
