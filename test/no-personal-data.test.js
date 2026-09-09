@@ -44,6 +44,12 @@ const JID_PLACEHOLDERS = new Set(['1234567890', '1234567891', '12036300000000000
 
 // Reserved / non-routable mail domains are always fine (RFC 2606 + .local).
 const RESERVED_MAIL = /(?:^|\.)(?:example\.(?:com|org|net)|example|test|invalid|localhost|local|arpa)$/i;
+// A retina asset filename (`icons/128x128@2x.png`) parses as an address:
+// local part `128x128`, "domain" `2x.png`, and `png` is a valid-looking TLD.
+// `@2x`/`@3x` is the standard macOS/Tauri convention — `cargo tauri icon`
+// emits exactly those names — so the guard has to know a file extension from
+// a TLD rather than the convention having to bend around the guard.
+const ASSET_TLD = /\.(?:png|jpg|jpeg|gif|svg|webp|ico|icns|pdf|css|js|json|ts|tsx|jsx|md|html|txt|woff2?|ttf|otf|zip|tgz|gz)$/i;
 // Everything else needs to be listed here, on purpose. Free-mail providers
 // (gmail, outlook, …) are never listed — that is the point of the rule.
 const ALLOWED_MAIL_DOMAINS = new Set([
@@ -101,7 +107,7 @@ export function scanLine(line, terms = []) {
   }
   for (const m of stripped.matchAll(EMAIL_RE)) {
     const domain = m[1].toLowerCase();
-    if (RESERVED_MAIL.test(domain) || ALLOWED_MAIL_DOMAINS.has(domain)) continue;
+    if (RESERVED_MAIL.test(domain) || ALLOWED_MAIL_DOMAINS.has(domain) || ASSET_TLD.test(domain)) continue;
     hits.push('personal mailbox');
   }
   const lower = stripped.toLowerCase();
@@ -156,6 +162,9 @@ test('the rules themselves: real values are caught, zeroed examples are not', ()
   expect(scanLine('jid 1234567890@lid')).toEqual([]);
   expect(scanLine('mail someone@gmail.com')).toEqual(['personal mailbox']);
   expect(scanLine('mail dev@example.com and dev@fake-org.test')).toEqual([]);
+  // a retina asset path is not an address, but a real mailbox next to one still is
+  expect(scanLine('"icon": "icons/128x128@2x.png"')).toEqual([]);
+  expect(scanLine('logo@3x.svg and someone@gmail.com')).toEqual(['personal mailbox']);
   // the public repo slug survives a denylist term that is a substring of it
   expect(scanLine('git clone https://github.com/someone/arigami', ['someone'])).toEqual([]);
   expect(scanLine('hello Someone', ['someone'])).toEqual(['private denylist term']);
