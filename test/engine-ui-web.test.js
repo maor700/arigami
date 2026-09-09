@@ -10,6 +10,7 @@
 // shared list would offer Codex levels its model rejects and hide the one it
 // has, and would let a Claude model alias be POSTed to a Codex session.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -154,16 +155,27 @@ test('a Claude model is NOT dropped while its list is still loading', () => {
   expect(loaded.model).toBe('');
 });
 
-/* ---------- the picker renders four selects, engine first ----------------- */
+/* ---------- the engine choice is a VISIBLE toggle, not a hidden select ---- */
 
-test('the launcher picker renders the engine select FIRST, ahead of skill/model/effort', () => {
-  const html = render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }));
-  const selects = html.split('<select').length - 1;
-  expect(selects).toBe(4);
-  // engine's options come before the effort ladder's
-  expect(html.indexOf('Codex')).toBeGreaterThan(-1);
-  expect(html.indexOf('Codex')).toBeLessThan(html.indexOf('Extra high'));
+test('the engine choice is a two-button radio group, not a <select> among the others', () => {
+  const html = render(h(Launcher.EngineToggle, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }));
+  // a select would bury the alternative one click deep; both engines must be
+  // readable without opening anything
+  expect(html).not.toContain('<select');
+  expect(html).toContain('role="radiogroup"');
+  expect((html.match(/role="radio"/g) || []).length).toBe(2);
   expect(html).toContain('Claude');
+  expect(html).toContain('Codex');
+  // and the current one is marked, not just styled
+  expect(html).toMatch(/aria-checked="true"[^>]*>Claude</);
+  const codex = render(h(Launcher.EngineToggle, { options: { engine: 'codex' }, onChange() {} }));
+  expect(codex).toMatch(/aria-checked="true"[^>]*>Codex</);
+});
+
+test('the options picker keeps only skill/model/effort — the engine has left it', () => {
+  const html = render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }));
+  expect(html.split('<select').length - 1).toBe(3);
+  expect(html).not.toContain('Codex');
 });
 
 test('picking Codex swaps the model list and the effort ladder in the rendered picker', () => {
@@ -173,7 +185,18 @@ test('picking Codex swaps the model list and the effort ladder in the rendered p
   const codexHtml = render(h(Launcher.SessionOptionsPicker, { options: { engine: 'codex', skill: '', model: 'gpt-5.6-terra', effort: '' }, onChange() {} }));
   expect(codexHtml).toContain('GPT-5.6-Terra');
   expect(codexHtml).toContain('Ultra'); // terra's extra rung is really offered
-  expect(codexHtml).toContain('value="codex"');
+});
+
+test('the toggle sits OUTSIDE the collapsed "Advanced" block in the empty-session form', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'web/src/components/Launcher.jsx'), 'utf8');
+  const toggle = src.indexOf('<EngineToggle options={options} onChange={setOptions} className="mb-3" />');
+  const fold = src.indexOf("<div className={advanced ? '' : 'hidden'}>");
+  expect(toggle).toBeGreaterThan(-1);
+  expect(fold).toBeGreaterThan(-1);
+  // rendered before the fold opens → visible with Advanced collapsed
+  expect(toggle).toBeLessThan(fold);
+  // ...while skill/model/effort stay inside it
+  expect(src.indexOf('<SessionOptionsPicker options={options} onChange={setOptions} />')).toBeGreaterThan(fold);
 });
 
 /* ---------- the choice actually reaches the server ------------------------ */

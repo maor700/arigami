@@ -108,7 +108,7 @@ export const strings = {
   'launcher.plan.emptyInstead': 'Start an empty session instead',
 
   // session options (skill / model / effort)
-  'launcher.options.title': 'Engine, skill, model & effort',
+  'launcher.options.title': 'Skill, model & effort',
   'launcher.options.engine': 'Engine',
   'launcher.options.engineClaudeDesc': 'Anthropic Claude Code — the default engine',
   'launcher.options.engineCodexDesc': 'OpenAI Codex CLI',
@@ -128,7 +128,7 @@ export const strings = {
   'launcher.empty.deferRequired': 'A starting prompt or a chosen skill is required to defer an empty session.',
   'launcher.empty.createEmpty': 'Start →',
   'launcher.empty.advanced': 'Advanced',
-  'launcher.empty.advancedHint': 'name · working directory · permissions · engine, skill, model & effort',
+  'launcher.empty.advancedHint': 'name · working directory · permissions · skill, model & effort',
   'launcher.empty.promptFirst': 'What should this session do?',
   'launcher.empty.addToPending': 'Add to Pending',
   'launcher.empty.deferTitle': 'A starting prompt or a chosen skill is required to defer',

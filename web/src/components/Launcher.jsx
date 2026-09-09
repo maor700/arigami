@@ -490,19 +490,62 @@ function defaultSessionOptions(prefs, mode) {
   return { engine: d?.engine || '', skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
 }
 
-// Which engine, which skill (from GET /skills — whatever's actually bundled,
-// no fixed default), which model, which effort a new session starts with.
+// WHICH ENGINE a new session is born on. A visible segmented toggle, not a
+// <select> among the others and not behind the "Advanced" fold: this is a
+// first-class choice about what the session IS, made before anything else, so
+// it has to be readable at a glance and switchable in one click. The three
+// selects below it (skill/model/effort) stay in Advanced — they refine a
+// session, they don't define it.
 //
-// The engine select comes FIRST, and not only for reading order: it decides
-// what the model and effort selects next to it contain (see lib/engines.js —
-// Codex's model list is static and its effort ladder is per-model, with an
-// `ultra` rung Claude has no equivalent for). Every engine change therefore
-// runs coerceSessionOptions(), which drops a model/effort the new engine
-// doesn't offer instead of POSTing e.g. a Claude alias to a Codex session; a
-// model change re-runs it too, because on Codex the ladder moves with the
-// model. Picking Codex before its driver is registered is meant to fail loudly
-// at spawn (pickEngine throws) — this picker deliberately has no quiet
-// fall-back to Claude.
+// Switching runs coerceSessionOptions(), which drops a model/effort the new
+// engine doesn't offer instead of POSTing e.g. a Claude alias to a Codex
+// session (lib/engines.js: Codex's model list is static and its effort ladder
+// is per-model, with an `ultra` rung Claude has no equivalent for). Picking
+// Codex before its driver is registered is meant to fail loudly at spawn
+// (pickEngine throws) — there is deliberately no quiet fall-back to Claude.
+//
+// Exported for tests.
+export function EngineToggle({ options, onChange, className = '' }) {
+  const t = useT();
+  const { models: claudeModels } = useModels();
+  const current = options.engine || 'claude';
+  const pick = (value) =>
+    onChange(coerceSessionOptions({ ...options, engine: value === 'claude' ? '' : value }, claudeModels));
+  return (
+    <div className={`flex flex-wrap items-center gap-2 ${className}`}>
+      <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        {t('launcher.options.engine')}
+      </span>
+      <span
+        role="radiogroup"
+        aria-label={t('launcher.options.engine')}
+        className="inline-flex shrink-0 items-center overflow-hidden rounded-[7px] border-[1.5px] border-ink"
+      >
+        {engineOptions().map((o, i) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={current === o.value}
+            title={o.desc}
+            onClick={() => current !== o.value && pick(o.value)}
+            className={`cursor-pointer px-3 py-[5px] text-[11.5px] leading-none ${i ? 'border-s border-ink' : ''} ${
+              current === o.value ? 'bg-ink font-bold text-white' : 'bg-panel text-fgdim hover:text-fg'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+// Which skill (from GET /skills — whatever's actually bundled, no fixed
+// default), which model, which effort a new session starts with. The model and
+// effort lists are read off the engine EngineToggle picked (and, on Codex, off
+// the model too — the ladder moves with it), so these never offer a value the
+// chosen engine would reject.
 //
 // Exported for tests.
 export function SessionOptionsPicker({ options, onChange }) {
@@ -519,17 +562,6 @@ export function SessionOptionsPicker({ options, onChange }) {
   const setAndCoerce = (patch) => onChange(coerceSessionOptions({ ...options, ...patch }, claudeModels));
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2">
-      <select
-        value={engine}
-        onChange={(e) => setAndCoerce({ engine: e.target.value === 'claude' ? '' : e.target.value })}
-        className={selCls}
-        title={engineOptions().find((o) => o.value === engine)?.desc || ''}
-        aria-label={t('launcher.options.engine')}
-      >
-        {engineOptions().map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
       <select
         value={options.skill || ''}
         onChange={(e) => set({ skill: e.target.value })}
@@ -1161,6 +1193,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
       <div className="mt-auto flex flex-col gap-2 pt-3.5">
         {ticket && (
           <>
+            <EngineToggle options={options} onChange={onOptions} className="pb-2" />
             <SessionOptionsPicker options={options} onChange={onOptions} />
             <SessionPresetBar
               presets={prefs.sessionPresets}
@@ -1318,6 +1351,7 @@ function EmptyForm({ config, sessions, onCreated }) {
           placeholder={t('launcher.firstRun.placeholder')}
           className="mb-3 w-full resize-y rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] leading-snug outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
         />
+        <EngineToggle options={options} onChange={setOptions} className="mb-3" />
         <button type="button" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
           {advanced ? '▾' : '▸'} {t('launcher.empty.advanced')} <span className="font-normal">· {t('launcher.empty.advancedHint')}</span>
         </button>
@@ -1961,6 +1995,7 @@ function TriggerTab() {
           showHideOpen={false}
         />
 
+        <EngineToggle options={options} onChange={setOptions} className="pb-2" />
         <SessionOptionsPicker options={options} onChange={setOptions} />
         <SessionPresetBar
           presets={prefs.sessionPresets}

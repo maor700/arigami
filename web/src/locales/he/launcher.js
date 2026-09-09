@@ -108,7 +108,7 @@ export const strings = {
   'launcher.plan.emptyInstead': 'התחלת סשן ריק במקום',
 
   // session options (skill / model / effort)
-  'launcher.options.title': 'מנוע, מיומנות, מודל ומאמץ',
+  'launcher.options.title': 'מיומנות, מודל ומאמץ',
   'launcher.options.engine': 'מנוע',
   'launcher.options.engineClaudeDesc': 'Claude Code של Anthropic — מנוע ברירת המחדל',
   'launcher.options.engineCodexDesc': 'Codex CLI של OpenAI',
@@ -128,7 +128,7 @@ export const strings = {
   'launcher.empty.deferRequired': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות סשן ריק.',
   'launcher.empty.createEmpty': 'התחל ←',
   'launcher.empty.advanced': 'מתקדם',
-  'launcher.empty.advancedHint': 'שם · תיקיית עבודה · הרשאות · מנוע, סקיל, מודל ומאמץ',
+  'launcher.empty.advancedHint': 'שם · תיקיית עבודה · הרשאות · סקיל, מודל ומאמץ',
   'launcher.empty.promptFirst': 'מה הסשן הזה צריך לעשות?',
   'launcher.empty.addToPending': 'הוספה ל-Pending',
   'launcher.empty.deferTitle': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות',
