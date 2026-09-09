@@ -631,7 +631,15 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
 
 function spawnProc(s, resume) {
   const engine = pickEngine(s);
-  const sessionId = resume ? s.claude.sessionId : engine.sessionId.assign();
+  // 'assigned' (claude): mint the id now and pin it on argv. 'observed' (codex):
+  // the CLI mints its own and announces it on the first event, so there is
+  // nothing to pin — buildSpawn gets null and handleEvent stores the real id
+  // (sessionId.from) when it arrives. Both cases still resume off the STORED id.
+  const sessionId = resume
+    ? s.claude.sessionId
+    : engine.sessionId.mode === 'assigned'
+      ? engine.sessionId.assign()
+      : null;
   engine.prepare(s, { resume });
   const built = engine.buildSpawn(s, { resume, sessionId });
   const child = spawn(built.bin, built.args, { cwd: built.cwd, env: built.env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -679,7 +687,7 @@ function spawnProc(s, resume) {
   });
   child.stderr.on('data', (d) => { p.stderr = (p.stderr + d).slice(-4000); });
   child.on('error', (e) => {
-    appendChat(s.id, { kind: 'error', text: `claude failed to start: ${e.message}` });
+    appendChat(s.id, { kind: 'error', text: `${engine.id} failed to start: ${e.message}` });
     setClaude(s.id, { state: 'dead' });
     procs.delete(s.id);
   });
@@ -692,7 +700,7 @@ function spawnProc(s, resume) {
     // instant its process exits — deny it now instead of leaving the chat
     // card showing live Allow/Deny buttons for up to 10 minutes. Also mark
     // running bg shells (children of this proc) as exited.
-    reapSessionOnExit(s.id, 'claude process exited');
+    reapSessionOnExit(s.id, `${engine.id} process exited`);
     // a --resume that dies almost immediately usually means the claude session
     // is gone ("No conversation found") → retry once fresh, replaying messages
     if (p.resume && code !== 0 && Date.now() - p.spawnedAt < 5000 && !p.expectKill) {
@@ -706,7 +714,7 @@ function spawnProc(s, resume) {
       } catch {}
     }
     if (!p.expectKill && code !== 0) {
-      appendChat(s.id, { kind: 'error', text: `claude exited (code ${code})${p.stderr ? ': ' + p.stderr.trim().slice(0, 400) : ''}` });
+      appendChat(s.id, { kind: 'error', text: `${engine.id} exited (code ${code})${p.stderr ? ': ' + p.stderr.trim().slice(0, 400) : ''}` });
     }
     setClaude(s.id, { state: p.expectKill || code === 0 ? 'idle' : 'dead' });
   });
@@ -724,14 +732,11 @@ function spawnProc(s, resume) {
     }
     patchMcp(s.id, pend);
   }
-  // Eagerly handshake so the cockpit can show commands/agents/models the moment
-  // the proc is up — the `init` system event (mcp/tools/skills) only fires on the
-  // first turn, but `initialize` replies immediately and costs no turn.
-  try {
-    child.stdin.write(
-      JSON.stringify({ type: 'control_request', request_id: `req_${++reqSeq}`, request: { subtype: 'initialize' } }) + '\n'
-    );
-  } catch {}
+  // Whatever this engine has to say on stdin before the first user turn.
+  // claude: the eager `initialize` handshake (below). codex: nothing at all —
+  // its stdin IS the prompt, so anything written here would be read as part of
+  // the user's first message. See EngineDriver.handshake.
+  try { engine.handshake?.(p); } catch {}
   return p;
 }
 
@@ -804,7 +809,9 @@ function mcpServerForTool(id, toolName) {
 const MCP_DOWN_RE =
   /not connected|connection (?:closed|refused|reset|failed|error)|transport|disconnected|no such tool|tool .{0,60}not (?:found|available)|econnrefused|econnreset|epipe|socket hang up|unauthorized|401|403|forbidden|invalid[_ ](?:token|grant)|authentication|needs? (?:re-?)?auth/i;
 
-function noteMcpResult(id, server, block) {
+// Exported for the codex driver (server/codex.ts): its stream carries the same
+// live-tool-result health signal in a different shape.
+export function noteMcpResult(id, server, block) {
   const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
   if (!block.is_error) {
     patchMcp(id, { [server]: { status: 'connected', statusText: 'verified by live tool call', source: 'traffic' } });
@@ -884,7 +891,9 @@ export async function checkMcp(id, force = false) {
 // produced it. cache_read + cache_creation + input ≈ the prompt currently
 // occupying the model's context window (output isn't part of the next turn's
 // context). We surface it as claude.usage so the UI can show a live context %.
-function updateUsage(id, u) {
+// Exported for the codex driver, which maps codex's usage field names onto
+// claude's before calling this (server/codex.ts).
+export function updateUsage(id, u) {
   if (!u) return;
   const cacheRead = u.cache_read_input_tokens || 0;
   const cacheCreation = u.cache_creation_input_tokens || 0;
@@ -911,7 +920,7 @@ function updateUsage(id, u) {
 // the `result` event closes the turn: one 'turn' line in the agent's
 // activity.jsonl (tokens + cost delta), then the budget check — exceeded → one
 // final warning into the session (once per local day) and a 'budget' line.
-function noteTurnUsage(id, u) {
+export function noteTurnUsage(id, u) {
   const p = record(id);
   if (!p?.agent || !u) return;
   p.turn.input += u.input_tokens || 0;
@@ -920,7 +929,7 @@ function noteTurnUsage(id, u) {
   p.turn.cacheRead += u.cache_read_input_tokens || 0;
 }
 
-function recordTurn(id, j) {
+export function recordTurn(id, j) {
   const p = record(id);
   if (!p?.agent) return;
   const b = p.turn;
@@ -1815,7 +1824,7 @@ function saveAttachments(id, attachments) {
 const humanSize = (n) => (n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1024 / 1024).toFixed(1)}MB`);
 
 /** One list line per attachment — a rich, indented block for archives, a plain path for everything else. */
-function describeAttachment(a) {
+export function describeAttachment(a) {
   if (!a.archive) return `- ${a.name} → ${a.path}${a.isImage ? ' (image)' : ''}`;
   const ar = a.archive;
   if (ar.error) return `- 📦 ${a.name} → extraction failed: ${ar.error} (original kept at ${a.path})`;
@@ -2004,7 +2013,8 @@ export function chatModePrefix(metadata) {
 }
 
 // Engine-agnostic turn-text assembly (persona/memory bootstrap, LADDER1 preamble, Simple-mode reminder), run once before the engine's own writeMessage().
-function composeTurnText(p, text) {
+// Exported: server/codex.ts calls it too — the text is composed once, engine-agnostically, and only then encoded into each CLI's wire format.
+export function composeTurnText(p, text) {
   let txt = text || '';
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
   // LADDER1: one-shot preamble in front of the next message only, never persisted in the chat log.
@@ -2030,6 +2040,29 @@ function writeUserMessage(p, { text, attachments = [] }) {
   }
   if (!content.length) content.push({ type: 'text', text: '(empty message)' });
   p.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');
+}
+
+// engine-driver.ts's handshake() for claude — the eager `initialize` control
+// request. The cockpit can show commands/agents/models the moment the proc is
+// up (the `init` system event, which carries mcp/tools/skills, only fires on
+// the first turn), and its `control_response` reply is also the "proc is up"
+// signal restart() waits on. Costs no turn.
+function claudeHandshake(p) {
+  p.child.stdin.write(
+    JSON.stringify({ type: 'control_request', request_id: `req_${++reqSeq}`, request: { subtype: 'initialize' } }) + '\n'
+  );
+}
+
+// engine-driver.ts's interrupt() for claude — Esc, as a control request. The
+// SIGINT fallback stays for a stdin that is already gone.
+function claudeInterrupt(p) {
+  try {
+    p.child.stdin.write(
+      JSON.stringify({ type: 'control_request', request_id: `req_${++reqSeq}`, request: { subtype: 'interrupt' } }) + '\n'
+    );
+  } catch {
+    try { p.child.kill('SIGINT'); } catch {}
+  }
 }
 
 /**
@@ -2392,13 +2425,11 @@ export function interrupt(id) {
   const p = record(id);
   if (!isRunning(id)) return false;
   p.interruptedAt = Date.now(); // B34: the next error_during_execution result is this stop, not a failure
-  try {
-    p.child.stdin.write(
-      JSON.stringify({ type: 'control_request', request_id: `req_${++reqSeq}`, request: { subtype: 'interrupt' } }) + '\n'
-    );
-  } catch {
-    try { p.child.kill('SIGINT'); } catch {}
-  }
+  // How you stop a turn is the engine's own protocol — claude has a real
+  // `control_request/interrupt` on stdin, codex `exec` has only a signal (its
+  // stdin is already at EOF while the turn runs, so a write there is a silent
+  // no-op, not a fallback). See EngineDriver.interrupt.
+  try { pickEngine(getSession(id)).interrupt?.(p); } catch {}
   // Reflect the stop immediately — the user asked to stop, so drop the 'working'
   // badge now instead of relying on a trailing `result` that may not arrive on
   // an interrupt. A `result` that does land just re-sets idle (no-op).
@@ -2532,6 +2563,13 @@ export function setAccount(id, accountId) {
 // chat and tabs all survive. Main use: re-establish MCP server connections
 // (Linear/Notion/Figma) that dropped mid-session. Unlike restartWith this also
 // spawns when no proc is live (idle/dead), so it doubles as a manual revive.
+// An engine with no handshake (codex) has no "proc is up" reply to wait on —
+// it is usable the moment it spawns, so a restart must land on 'idle' instead
+// of leaving the cockpit stuck on 'restarting' forever. See EngineDriver.handshake.
+function readyOnSpawn(s) {
+  try { return typeof pickEngine(s).handshake !== 'function'; } catch { return false; }
+}
+
 export function restart(id, { silent = false } = {}) {
   const s = getSession(id);
   if (!s) throw new Error(`no such session: ${id}`);
@@ -2545,7 +2583,7 @@ export function restart(id, { silent = false } = {}) {
   // Progress signal for the cockpit: 'restarting' until the new proc's eager
   // initialize handshake replies (control_response flips it back to idle).
   // A proc that dies instead resolves via the close handler (idle/dead).
-  setClaude(id, { state: 'restarting' });
+  setClaude(id, { state: readyOnSpawn(s) ? 'idle' : 'restarting' });
   return getSession(id)?.claude;
 }
 
@@ -2572,7 +2610,7 @@ export function clearConversation(id) {
     }
   }
   spawnProc(getSession(id), false); // fresh session id, no --resume
-  setClaude(id, { state: 'restarting' });
+  setClaude(id, { state: readyOnSpawn(s) ? 'idle' : 'restarting' });
   return getSession(id)?.claude;
 }
 
@@ -2610,6 +2648,8 @@ const claudeDriver = {
   buildSpawn: buildClaudeSpawn,
   handleEvent,
   writeMessage: writeUserMessage,
+  handshake: claudeHandshake,
+  interrupt: claudeInterrupt,
   sessionId: { mode: 'assigned', assign: () => randomUUID() },
   permissions: claudePermissions,
   injectMcp: claudeInjectMcp,

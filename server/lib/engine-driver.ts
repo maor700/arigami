@@ -35,6 +35,28 @@ export interface EngineDriver {
   handleEvent(sessionId: string, rawEvent: unknown): void;
   /** Writes one already-composed turn (see composeTurnText in claude.js) to the process in the engine's wire format. */
   writeMessage(proc: unknown, msg: { text: string; attachments?: unknown[] }): void;
+  /**
+   * Anything the engine has to say on stdin the instant the process is up,
+   * before any user turn. claude sends its `control_request/initialize`
+   * handshake here (the reply is also the "proc is up" signal a restart waits
+   * on — see restart()'s `restarting` state). Added because spawnProc() used to
+   * write that claude-shaped JSON inline, in the engine-AGNOSTIC spawn path:
+   * for codex, whose stdin IS the prompt (`codex exec -`), the same bytes would
+   * be prepended to the user's first message.
+   *
+   * ABSENT (codex) means two things to the generic path: write nothing, and
+   * treat the process as usable the moment it spawns — there is no reply to
+   * wait for, so a session must not be left showing `restarting` forever.
+   */
+  handshake?(proc: unknown): void;
+  /**
+   * Stop the turn in flight without killing the session. claude has a real
+   * protocol for it (`control_request/interrupt` on stdin); codex `exec` has
+   * none — its stdin is already at EOF by the time a turn is running, so the
+   * only interrupt is a signal to the process. Optional: an engine that
+   * implements neither falls back to interrupt() in claude.js doing nothing.
+   */
+  interrupt?(proc: unknown): void;
   sessionId: EngineSessionIdPolicy;
   permissions: EnginePermissions;
   /** Extra argv so this session's process sees the shared MCP server dict (claude: --mcp-config inline JSON). */
