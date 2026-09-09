@@ -204,9 +204,19 @@ fn run_supervisor(app: AppHandle, quitting: Arc<AtomicBool>, current_pid: Arc<Mu
                         }
                     });
                 } else {
+                    // Resolved at runtime, not hardcoded: verified live on Linux
+                    // this lands at ~/.local/share/io.arigami.desktop/logs/ (the
+                    // bundle identifier, not the product name) — macOS's actual
+                    // path is unverified, so asserting one here would just be
+                    // another guess dressed up as a fact.
+                    let log_hint = app2
+                        .path()
+                        .app_log_dir()
+                        .map(|d| d.join("arigami-server.log").display().to_string())
+                        .unwrap_or_else(|_| "arigami-server.log (log dir unknown)".into());
                     show_fatal_and_quit(
                         &app2,
-                        "Arigami didn't answer in time. Check the log:\n~/Library/Logs/Arigami/arigami-server.log".into(),
+                        format!("Arigami didn't answer in time. Check the log:\n{log_hint}"),
                     );
                 }
             });
@@ -222,6 +232,17 @@ fn run_supervisor(app: AppHandle, quitting: Arc<AtomicBool>, current_pid: Arc<Mu
     }
 }
 
+/// The actual quit action, shared by the tray's "Quit" (after confirmation)
+/// and the raw-signal handler below (which cannot wait on a dialog — a
+/// signal handler needs to act immediately, not block on user input).
+fn quit_now(app: &AppHandle, quitting: &Arc<AtomicBool>, current_pid: &Arc<Mutex<Option<u32>>>) {
+    quitting.store(true, Ordering::SeqCst);
+    if let Some(pid) = *current_pid.lock().unwrap() {
+        terminate(pid);
+    }
+    app.exit(0);
+}
+
 fn confirm_and_quit(app: &AppHandle, quitting: Arc<AtomicBool>, current_pid: Arc<Mutex<Option<u32>>>) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -234,14 +255,9 @@ fn confirm_and_quit(app: &AppHandle, quitting: Arc<AtomicBool>, current_pid: Arc
             .title("Quit Arigami")
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show();
-        if !confirmed {
-            return;
+        if confirmed {
+            quit_now(&app2, &quitting, &current_pid);
         }
-        quitting.store(true, Ordering::SeqCst);
-        if let Some(pid) = *current_pid.lock().unwrap() {
-            terminate(pid);
-        }
-        app2.exit(0);
     });
 }
 
@@ -304,6 +320,20 @@ fn main() {
                 let quitting = quitting.clone();
                 let current_pid = current_pid.clone();
                 std::thread::spawn(move || run_supervisor(handle, quitting, current_pid));
+            }
+
+            // SIGTERM/SIGINT delivered straight to this process (shutdown,
+            // `kill <pid>`, not the tray) has no handler otherwise — found
+            // live: it orphaned the sidecar instead of running any of our
+            // cleanup. No confirmation dialog here on purpose: a signal
+            // handler has to act immediately, it can't block on user input.
+            {
+                let handle = handle.clone();
+                let quitting = quitting.clone();
+                let current_pid = current_pid.clone();
+                let _ = ctrlc::set_handler(move || {
+                    quit_now(&handle, &quitting, &current_pid);
+                });
             }
 
             Ok(())

@@ -168,15 +168,21 @@ children.ts/extensions.ts change.
 
 ## Tauri desktop shell (`desktop/`)
 
-Status: **written, not built, not run**. There is no Rust toolchain on this
-box, and Tauri cannot cross-compile Linux→macOS at all (needs Apple's SDK and
-linker) — the brief for this task said plainly not to install `rustup` to
-chase that (disk was already down to ~3.7 GB free once). Everything under
-`desktop/src-tauri/` is written from memory of the Tauri v2 API, unchecked by
-a compiler. What *was* proven on this box, against the real compiled binary
-(see "What was proven" below), is exactly the part that doesn't need Rust to
-verify: the resource layout, the readiness check's exact bytes, and the
-shutdown signal.
+Status: **built and run for real, on Linux — macOS itself still isn't
+built**. Tauri cannot cross-compile Linux→macOS at all (needs Apple's SDK and
+linker), so a macOS `.app` has never come out of this box and can't. But
+after the human explicitly asked for at least a Linux build, Rust *was*
+installed here (rustup + the Linux system deps: webkit2gtk-4.1, libgtk-3,
+libayatana-appindicator3, librsvg2, all -dev packages) and the full
+`cargo tauri build` pipeline was run for real — see "What was proven" below.
+Everything in `main.rs` compiled clean on the **first** attempt against the
+real Tauri 2.11 API (every call this doc used to flag as "unverified from
+memory" — `navigate()`, `run_on_main_thread()`, the dialog plugin, the tray
+— turned out correct). Actually *running* the built app on this session's
+own Xvfb display, on the other hand, immediately surfaced two real bugs that
+no amount of reading would have caught; both are fixed and re-verified live
+(see below). What remains genuinely unverified is now a much shorter,
+macOS-specific list.
 
 ### What's here
 
@@ -257,89 +263,124 @@ cd desktop/src-tauri && cargo tauri build
 
 First run: the pairing code (needed once, in the cockpit's login screen) is
 **not** printed to a visible terminal — the sidecar's stdout/stderr are
-redirected to a log file (`~/Library/Logs/Arigami/arigami-server.log` on
-macOS, via `app.path().app_log_dir()`). It's also written to
-`~/.arigami/run/pairing-code` (same file `bin/host pair` reads/writes) —
-that's the easier place to check: `cat ~/.arigami/run/pairing-code`.
+redirected to a log file via `app.path().app_log_dir()`. Verified live on
+Linux this lands at `~/.local/share/io.arigami.desktop/logs/arigami-server.log`
+(keyed by the bundle *identifier*, not "Arigami") — macOS's exact path is
+unverified, so don't take "~/Library/Logs/Arigami/" on faith; `find ~/Library/Logs
+-iname arigami-server.log` if it's not where you expect. Easier either way:
+the same code is also written to `~/.arigami/run/pairing-code` (the file
+`bin/host pair` reads/writes) — `cat ~/.arigami/run/pairing-code`.
 
-### What was proven (this box, no Rust involved)
+### What was proven (Linux, full Tauri build+run, done live in this session)
 
-Ran `desktop/build.sh` for real (it needed `bun install` in the repo root and
-`web/` first — this worktree, like others, ships without `node_modules/`),
-producing the actual compiled `arigami-server` binary and `resources/` tree
-under `desktop/src-tauri/resources-staged/`. Then, standing in for what
-`main.rs` does, ran that binary *directly from that staged location* — no
-`ARIGAMI_ROOT` override, so it had to find its own resources by position,
-exactly like the bundled app will:
+`cargo tauri build` succeeded outright on the first try — `.deb`, `.rpm`, and
+an `.AppImage`, all produced, zero compile errors against Tauri 2.11.5. That
+alone confirms every previously-"unverified from memory" API call actually
+exists with the signature used: `WebviewWindow::navigate()`,
+`AppHandle::run_on_main_thread()`, `tauri_plugin_dialog`'s
+`.message().title().buttons().blocking_show()` chain, `MenuItem::with_id`,
+`TrayIconBuilder`, `app.default_window_icon()`, `app.path().resource_dir()`
+and `.app_log_dir()`. Inspecting the built `.deb` (`dpkg -c`) also confirmed
+`tauri.conf.json`'s `bundle.resources` object-map form
+(`{"resources-staged": "resources-staged"}`) does exactly what it was
+assumed to: the whole staged tree landed intact at
+`usr/lib/Arigami/resources-staged/{arigami-server,resources/}`, sibling to
+nothing else — no glob-flattening surprise. That was the second-biggest risk
+in this doc and it's gone.
 
-```
-ARIGAMI_DIR=/tmp/... ARIGAMI_PORT=39231 ARIGAMI_WA_AUTOSTART=0 \
-ARIGAMI_WA_DATA_DIR=/tmp/... ARIGAMI_SUPERVISOR=self \
-  ./desktop/src-tauri/resources-staged/arigami-server
-```
+Then the built binary was actually **run** with a window, on this session's
+own Xvfb (`:99`) display — isolated `ARIGAMI_DIR`/`ARIGAMI_WA_DATA_DIR` under
+`/tmp`, `ARIGAMI_WA_AUTOSTART=0`, and a temporary non-3099 port patched into
+the `ARIGAMI_PORT` const for the duration of the test only (reverted before
+every commit — grep `const ARIGAMI_PORT` before trusting any build artifact
+left lying around). What ran clean, end to end, screenshotted for evidence:
 
-(isolated `ARIGAMI_DIR`/port, WhatsApp autostart off, never port 3099 or
-`~/.arigami` — cleaned up after, per this task's rules.)
+- The splash screen appeared, `config_endpoint_ready()`'s background poll
+  detected the sidecar, and `navigate()` swapped the window to the real
+  `/__host/` origin — landing on the actual cockpit **Sign-in** screen,
+  fully styled, logo and all. This is decisions #1 and #4 working exactly as
+  designed, not just compiling.
+- The pairing code appeared in `~/.arigami/run/pairing-code` as expected.
+- Killing the sidecar's pid directly (simulating a crash) made
+  `run_supervisor()` respawn it with a new pid automatically and the port
+  came back — decision #3's respawn contract, live.
+- Killing the *sidecar* with `SIGTERM` and, separately, the *whole app*'s
+  own pid with `SIGTERM`, both ended in a clean exit — confirming
+  `terminate()`'s `libc::kill(pid, SIGTERM)` (not `Child::kill()`, which is
+  `SIGKILL` on Unix and would skip `killAll()` entirely) reaches the handler
+  it's meant to.
 
-- **Booted clean** and served `GET /__api/config` → `200`.
-- **Confirmed the exact bytes `config_endpoint_ready()` sends and checks**:
-  a raw `GET /__api/config HTTP/1.1\r\nHost: ...\r\nConnection: close\r\n\r\n`
-  over a bare TCP socket gets back a response starting with literally
-  `HTTP/1.1 200 OK` — so the hand-rolled HTTP client in `main.rs` (no crate,
-  one request ever) is checking for the right string.
-- **`kill -TERM <pid>` made it exit cleanly** — confirms `terminate()`'s use
-  of `libc::kill(pid, SIGTERM)` (not `Child::kill()`, which is `SIGKILL` on
-  Unix and would skip `server/index.ts`'s `shutdown()`/`killAll()` entirely)
-  reaches the handler it's meant to.
+**Two real bugs turned up from running it that reading the code never would
+have caught, both fixed and re-verified live:**
 
-That covers every byte in `main.rs` that talks to the sidecar over a
-filesystem path, a socket, or a signal. It does **not** cover a single line
-of actual Tauri/Rust API usage — window creation, the tray, `navigate()`,
-the dialog plugin — because none of that runs without a macOS build.
+1. `tauri.conf.json` declared the main window in `app.windows` (config
+   auto-creates it) *and* `main.rs`'s `setup()` also built it via
+   `WebviewWindowBuilder`. Tauri auto-creates configured windows before
+   `setup()` runs, so the second creation panicked: `"a webview with label
+   'main' already exists"`, and the app never got past that on the very
+   first launch. Fixed by emptying `app.windows` in `tauri.conf.json` —
+   `main.rs`'s builder is now the only place "main" is created.
+2. Sending `SIGTERM` straight to the app's own pid (not through the tray —
+   e.g. a real `kill`, or a system shutdown) had no handler at all: Rust's
+   default disposition just terminates the process immediately, so
+   `run_supervisor()`'s cleanup never ran and `arigami-server` was left
+   **orphaned**, listening on its port with no parent. First fix attempt
+   (a plain `ctrlc` dependency) still didn't work — live-tested and still
+   orphaned the sidecar — because the `ctrlc` crate only catches `SIGINT` by
+   default; `SIGTERM` needs its `termination` Cargo feature explicitly
+   enabled. With that feature on, re-tested the identical scenario and the
+   sidecar now dies cleanly with the app every time.
 
-### What's unverified — read this before debugging a build failure
+Not run: the tray icon itself. `libayatana-appindicator` needs a session
+D-Bus / StatusNotifierWatcher that this session's bare Xvfb doesn't have
+(`Unable to get the session bus: … dbus-launch`), so the "Open"/"Quit" menu
+items were never actually clicked through a live UI — only their shared
+`quit_now()` logic, exercised via the direct-signal tests above. This is a
+property of this *sandbox*, not the code — macOS's tray (`NSStatusItem`) has
+no D-Bus dependency at all, so this specific gap is expected to not apply
+there, but that itself is unverified since no macOS build exists.
 
-- **Every Tauri API call in `main.rs` is unverified**, not even
-  `cargo check`'d. The highest-risk ones, roughly in order of how likely they
-  are to have moved or need a version bump:
-  - `WebviewWindow::navigate(url)` — added at some point in the Tauri 2.x
-    line specifically for "start on a local page, jump to a remote one"
-    apps like this one. If `cargo tauri build` says it doesn't exist, bump
-    the `tauri` version pin in `Cargo.toml` before assuming the design is
-    wrong.
-  - `AppHandle::run_on_main_thread()`, `tauri_plugin_dialog`'s builder chain
-    (`.message().title().buttons().blocking_show()`), `MenuItem::with_id`,
-    `TrayIconBuilder`, `app.default_window_icon()`,
-    `app.path().resource_dir()` / `.app_log_dir()`.
-- **`tauri.conf.json`'s `bundle.resources` object-map form**
-  (`{"resources-staged": "resources-staged"}`) is assumed to copy the whole
-  directory tree unchanged into the bundle's resource dir. If the app builds
-  but the sidecar can't find its binary, check what actually landed under
-  the bundle's `Resources/` — the documented fallback is the array/glob form
-  (`"resources": ["resources-staged/**/*"]`).
-- **The icon files don't exist yet.** `tauri.conf.json` points at
-  `icons/32x32.png`, `icons/128x128.png`, `icons/128x128@2x.png`,
-  `icons/icon.icns`, `icons/icon.ico` — none of which are in the repo. The
-  build steps above run `cargo tauri icon` first; skipping that step is the
-  single most likely first-command failure.
+### What's still unverified — narrower now, but read before debugging
+
+- **macOS itself was never built.** Every "proven" item above ran on Linux.
+  Tauri is designed to abstract window/tray/dialog/resource-path handling
+  per platform, and the Linux run is strong evidence the *design* is sound,
+  but macOS-specific bundling (a real `.app`, `Info.plist`, `.icns`
+  rendering, `NSStatusItem` tray behavior) has zero direct evidence.
+- **The tray was never clicked** (see above) — only `quit_now()`'s
+  underlying kill logic was exercised directly, not the menu event path
+  that calls it (`on_menu_event` → `confirm_and_quit` → the dialog →
+  `quit_now`). The dialog plugin's `.blocking_show()` return value in
+  particular (`bool`, true = confirmed) is still an assumption, not
+  something this session watched fire from an actual button click.
+- **The window's native close button (hide-not-quit) was never clicked
+  either** — this sandbox has no window manager decorations to click
+  (`wmctrl`/`xdotool` aren't installed here to simulate it). The
+  `WindowEvent::CloseRequested` handler compiles and is structurally
+  identical to the tray-quit path's shared state, but wasn't fired live.
 - **macOS code signing of the nested sidecar binary is unresearched.** For a
   local/dev `cargo tauri build` this should be a non-issue, but if this ever
   moves to Developer ID signing + notarization for distribution, an
   unsigned Mach-O binary sitting inside `Resources/` may need its own
   `codesign` pass (or `--deep`) — not looked into here.
 - **Windows quit is a known, deliberate gap, not an oversight.** `terminate()`
-  falls back to `taskkill /PID <pid> /T /F` on Windows — a hard kill, not the
-  graceful SIGTERM path `server/index.ts` listens for (`SIGBREAK` needs a
-  console process group + `GenerateConsoleCtrlEvent`, which needs Win32 FFI
-  I have no way to check here). Given nobody is building or running the
-  Windows target today, this trades "graceful" for "definitely no orphaned
+  falls back to `taskkill /PID <pid> /T /F` on Windows — a hard kill, not a
+  graceful signal `server/index.ts` has a handler for. Nobody is building or
+  running the Windows target today (not even the Linux validation above
+  touched it), so this trades "graceful" for "definitely no orphaned
   process" and says so plainly rather than pretending it's solved.
 - **No crash-loop protection.** If the sidecar keeps failing after the first
   successful boot, `run_supervisor()` will keep respawning it every 500ms,
-  forever. No backoff, no giving up.
+  forever. No backoff, no giving up. (The respawn-on-crash *mechanism itself*
+  is proven above — this flags the missing backoff on top of it, not the
+  respawn.)
 - **Port 3099 is hardcoded, with no collision handling.** If something else
   on the Mac is already bound to it (e.g. a manual `bin/host start` from a
   git checkout, run at the same time), the sidecar's own `hostlock.ts` will
   refuse to bind, the splash will poll for 45s, then show a generic "didn't
   answer in time" dialog — there's no detection or message specific to that
-  case.
+  case. Every live test in this session used a free test port and a server
+  that came up in well under a second, so `wait_for_ready()`'s 45s-timeout
+  branch and `show_fatal_and_quit()`'s dialog were never actually exercised
+  — only the happy path was. That branch is still exactly as unverified as
+  the rest of the dialog plugin (see above).

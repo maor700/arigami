@@ -7,18 +7,7 @@
     "frontendDist": "splash-dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Arigami",
-        "url": "index.html",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
-        "visible": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

@@ -14,6 +14,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 url = "2"
+# SIGTERM/SIGINT sent straight to this process (system shutdown, `kill`, not
+# the tray) has no handler by default — Rust's default disposition just dies,
+# orphaning the sidecar. Found live: killing this process's pid directly left
+# arigami-server running with no parent. The plain `ctrlc` crate only catches
+# SIGINT by default — also found live, the first fix attempt still orphaned
+# the sidecar because SIGTERM fell through to the default disposition. The
+# `termination` feature is what actually adds SIGTERM (and SIGHUP) to the set.
+ctrlc = { version = "3", features = ["termination"] }
 
 # SIGTERM (decision #3: the shell IS the supervisor, and server/index.ts's
 # shutdown() only runs on SIGTERM/SIGINT/SIGBREAK/SIGHUP — never on SIGKILL).
