@@ -162,6 +162,14 @@ struct Shell {
     local_wanted: AtomicBool,
     local_error: Mutex<Option<String>>,
     quitting: Arc<AtomicBool>,
+    /// One quit dialog at a time. A single Cmd/Ctrl+Q produced TWO stacked
+    /// confirmation dialogs, every time: the app-level on_menu_event and the
+    /// tray's own on_menu_event both fire for the same menu id (they are both
+    /// global listeners, not per-menu), so handle_menu ran twice. Both
+    /// registrations are kept — the tray path can't be exercised here to
+    /// prove which one is redundant — and the destructive action is made
+    /// idempotent instead.
+    asking_quit: AtomicBool,
     seq: AtomicU64,
     tray: Mutex<Option<TrayIcon<Wry>>>,
     /// What the menus and the tray currently SAY. refresh_chrome() is called
@@ -876,6 +884,9 @@ fn quit_now(app: &AppHandle, shell: &Arc<Shell>) {
 /// thread — calling it ON the main thread deadlocks. Everything here runs on
 /// a worker thread on purpose.
 fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
+    if shell.asking_quit.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app2 = app.clone();
     let shell2 = shell.clone();
     std::thread::spawn(move || {
@@ -897,6 +908,7 @@ fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
             .title("יציאה מ־Arigami")
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show();
+        shell2.asking_quit.store(false, Ordering::SeqCst);
         if confirmed {
             quit_now(&app2, &shell2);
         }
@@ -1191,6 +1203,7 @@ fn main() {
                 local_wanted: AtomicBool::new(false),
                 local_error: Mutex::new(None),
                 quitting: Arc::new(AtomicBool::new(false)),
+                asking_quit: AtomicBool::new(false),
                 seq: AtomicU64::new(0),
                 tray: Mutex::new(None),
                 chrome_sig: Mutex::new(String::new()),
