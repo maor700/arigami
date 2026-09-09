@@ -527,6 +527,16 @@ Arigami server on another port plus small Python stand-ins.
   per platform, and the Linux run is strong evidence the *design* is sound,
   but macOS-specific bundling (a real `.app`, `Info.plist`, `.icns`
   rendering, `NSStatusItem` tray behavior) has zero direct evidence.
+- **No real https / Tailscale machine was ever reached.** Every "remote" in
+  testing was plain http on loopback. So three things are untested end to
+  end: the webview loading a `tailscale serve` origin at all (certificate
+  handling included), the auth cookie actually arriving **with** `Secure`
+  over that origin (only the negative — `Secure` dropped on http — was
+  measured), and `probe()`'s https branch in practice. That branch is also
+  weaker by design: there is no TLS client in this shell, so for an https
+  origin "the port accepts a TCP connection" is the whole check — a
+  reachable host running something else entirely would still be navigated
+  to, and the shell page would then show whatever that host serves.
 - **The tray icon itself was still never clicked.** The menu *event* path
   it shares with the app menu (`on_menu_event` → `handle_menu` →
   `confirm_and_quit` → the dialog → `quit_now`) is now fully exercised from
