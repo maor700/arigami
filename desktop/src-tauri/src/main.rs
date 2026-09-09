@@ -164,6 +164,11 @@ struct Shell {
     quitting: Arc<AtomicBool>,
     seq: AtomicU64,
     tray: Mutex<Option<TrayIcon<Wry>>>,
+    /// What the menus and the tray currently SAY. refresh_chrome() is called
+    /// on every focus change, so without this the whole app menu (and its
+    /// accelerators) got rebuilt every time a window was clicked — on macOS
+    /// that is the application menu, rebuilt under the user's cursor.
+    chrome_sig: Mutex<String>,
     /// Which machine window the picker / menu / shortcut acts on.
     focused: Mutex<String>,
     win_seq: AtomicU64,
@@ -447,7 +452,7 @@ const BADGE_JS: &str = r#"
 (function(){
   try{
     if (window.top !== window.self) return;
-    var NAME = __NAME__, COLOR = __COLOR__, ID = '__arigami_machine_badge__';
+    var NAME = __NAME__, COLOR = __COLOR__, ID = '__arigami_machine_badge__', IPC = '';
     if (window.__arigamiBadgeTimer) { clearInterval(window.__arigamiBadgeTimer); }
     var mk = function(){
       var root = document.documentElement;
@@ -463,7 +468,7 @@ const BADGE_JS: &str = r#"
         + 'pointer-events:none;font:600 11px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
         + 'padding:3px 10px;border-radius:999px;background:' + COLOR + ';color:#111;'
         + 'box-shadow:0 1px 5px rgba(0,0,0,.4);opacity:.94;white-space:nowrap';
-      pill.textContent = NAME + (window.__TAURI__ || window.__TAURI_INTERNALS__ ? '  ⚠ IPC' : '');
+      pill.textContent = NAME + IPC;
       var strip = document.getElementById(ID + '_strip');
       if (!strip) {
         strip = document.createElement('div');
@@ -474,6 +479,20 @@ const BADGE_JS: &str = r#"
         + 'pointer-events:none;background:' + COLOR;
     };
     mk();
+    // Tauri injects __TAURI_INTERNALS__ (and, with withGlobalTauri, __TAURI__)
+    // into EVERY page in the webview, machine origins included — so the mere
+    // presence of those objects says nothing. What decides it is whether a
+    // command actually runs: the ACL rejects invoke() from an origin no
+    // capability covers ("shell_status not allowed. Plugin not found",
+    // observed live). So probe for real, once, and only warn if it resolves.
+    var inv = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke)
+           || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+    if (inv) {
+      try {
+        var p = inv('shell_status');
+        if (p && p.then) p.then(function(){ IPC = '  ⚠ IPC'; mk(); }, function(){});
+      } catch (e) {}
+    }
     window.__arigamiBadgeTimer = setInterval(mk, 3000);
   }catch(e){}
 })();
@@ -540,6 +559,13 @@ fn go_to_machine(app: &AppHandle, shell: &Arc<Shell>, label: &str, machine: Mach
         let _ = app.run_on_main_thread(move || {
             if let Some(w) = app2.get_webview_window(&label2) {
                 let _ = w.set_title(&title);
+                // Bring it forward. The main window's [x] only HIDES it, so
+                // without this a switch from the picker (or the tray) while
+                // it was hidden changed the machine and showed nothing at
+                // all — a dead end with no way back. Seen live.
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
             }
         });
     }
@@ -803,6 +829,22 @@ fn refresh_chrome(app: &AppHandle, shell: &Arc<Shell>) {
             .machine_of(&target)
             .map(|m| m.id)
             .unwrap_or_else(|| LOCAL_ID.into());
+        let sig = format!(
+            "{cur}\u{1}{}",
+            shell2
+                .all_machines()
+                .iter()
+                .map(|m| format!("{}={}", m.id, m.name))
+                .collect::<Vec<_>>()
+                .join("\u{2}")
+        );
+        {
+            let mut prev = shell2.chrome_sig.lock().unwrap();
+            if *prev == sig {
+                return;
+            }
+            *prev = sig;
+        }
         if let Ok(menu) = build_app_menu(&app2, &shell2, &cur) {
             let _ = app2.set_menu(menu);
         }
@@ -944,6 +986,17 @@ fn switch_machine(
     let machine = shell.find(&id).ok_or_else(|| "אין מכונה כזאת".to_string())?;
     let current = shell.machine_of(&target);
     if current.as_ref().map(|m| m.id.clone()).as_deref() == Some(id.as_str()) {
+        // Already there: don't reload the cockpit, but do surface the window —
+        // this is the only "bring it back" the picker has when the main
+        // window is hidden.
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(w) = app2.get_webview_window(&target) {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        });
         return Ok(());
     }
     // Is this switch the thing that turns the local server off? Say so before
@@ -1140,6 +1193,7 @@ fn main() {
                 quitting: Arc::new(AtomicBool::new(false)),
                 seq: AtomicU64::new(0),
                 tray: Mutex::new(None),
+                chrome_sig: Mutex::new(String::new()),
                 focused: Mutex::new(MAIN_WINDOW.into()),
                 win_seq: AtomicU64::new(0),
             });
