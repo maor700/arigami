@@ -1147,12 +1147,16 @@ fn main() {
 
             // Remember the machine we were on; fall back to this computer if
             // it was forgotten in the meantime.
-            let start = shell
-                .cfg
-                .lock()
-                .unwrap()
-                .last
-                .clone()
+            // The remembered id is read into its own binding FIRST, on
+            // purpose. Chaining `.and_then(|id| shell.find(&id))` straight
+            // off `cfg.lock().unwrap()` keeps that temporary guard alive for
+            // the whole statement, and find() -> all_machines() locks `cfg`
+            // again — std::sync::Mutex is not reentrant, so setup() hung on a
+            // futex here, forever, on every launch that had a remembered
+            // machine (i.e. every launch after the first, since save() always
+            // writes `last`). Found by running it; it compiles fine.
+            let last_id = shell.cfg.lock().unwrap().last.clone();
+            let start = last_id
                 .and_then(|id| shell.find(&id))
                 .unwrap_or_else(local_machine);
 
