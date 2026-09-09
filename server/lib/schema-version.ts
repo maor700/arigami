@@ -186,7 +186,9 @@ export function backupPath(file: string, from: number, now = new Date()): string
  * the caller decides whether that is fatal (for state.json and config.json it is).
  */
 export function migrateFile(file: string, schema: StateSchema, opts: { log?: (m: string) => void; now?: Date } = {}): MigrateFileResult {
-  const log = opts.log ?? ((m: string) => console.log(m));
+  // stderr, not stdout: `bin/host` subcommands print JSON on stdout and a boot
+  // notice landing in the middle of it would corrupt the caller's parse.
+  const log = opts.log ?? ((m: string) => console.error(m));
   let raw: string;
   try {
     raw = fs.readFileSync(file, 'utf8');
