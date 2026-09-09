@@ -109,6 +109,10 @@ export const strings = {
 
   // session options (skill / model / effort)
   'launcher.options.title': 'מיומנות, מודל ומאמץ',
+  'launcher.options.engine': 'מנוע',
+  'launcher.options.engineClaudeDesc': 'Claude Code של Anthropic — מנוע ברירת המחדל',
+  'launcher.options.engineCodexDesc': 'Codex CLI של OpenAI',
+  'launcher.options.codexModelDefaultDesc': 'המודל שקודקס בוחר בעצמו',
   'launcher.options.noSkill': 'בלי מיומנות — צ׳אט ריק',
 
   // empty session form

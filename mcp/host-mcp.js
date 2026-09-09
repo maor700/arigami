@@ -78,8 +78,9 @@ const TOOLS = [
       cwd: { type: 'string' },
       prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
       skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
-      model: { type: 'string', description: '`claude --model` value (alias or full id); omit for the CLI default' },
-      effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: '`claude --effort` value; omit for the CLI default' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session (default "claude"). NOT inherited from you: a child runs on the engine named here, so an engine choice never spreads through a tree unseen. An engine with no registered driver fails loudly at spawn rather than quietly falling back.' },
+      model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
+      effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], description: 'Reasoning effort. claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
       permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
       metadata: { type: 'object' },
       kind: { type: 'string', enum: ['mutating', 'readonly', 'full'], description: 'Spawn as your child: thin dispatch worker (mutating/readonly) or full regular session (full)' },
@@ -94,6 +95,7 @@ const TOOLS = [
     run: async (a) => {
       const body = {
         title: a.title, cwd: a.cwd, prompt: a.prompt, skill: a.skill, model: a.model, effort: a.effort,
+        ...(a.engine ? { engine: a.engine } : {}),
         permissionMode: a.permission_mode, metadata: a.metadata,
         ...(a.agent ? { agent: a.agent } : {}),
       };
@@ -193,7 +195,8 @@ const TOOLS = [
   {
     name: 'cronjob',
     description:
-      'Schedule a durable, host-owned job (survives restart — unlike Claude Code\'s own CronCreate, which is ' +
+      'Schedule a durable, host-owned job (survives restart — unlike a scheduler built into the agent CLI itself ' +
+      '(Claude Code\'s CronCreate), which is ' +
       'session-local and lost on close). action "create": schedule_kind "cron" (5-field expr, e.g. "0 9 * * 1-5"), ' +
       '"interval" (e.g. "30m"/"2h"/"1d", repeats from the last run), or "at" (ISO timestamp, fires once). ' +
       'session_mode "isolated" (default) spawns a fresh session per run with `prompt` as its first message + the host\'s ' +
@@ -849,7 +852,7 @@ const TOOLS = [
   {
     name: 'memory_write',
     description:
-      "Write to Arigami's own long-term memory (owned by the host, shared by EVERY session/worker on this instance — not Claude Code's per-project auto-memory, and not scoped to your cwd/worktree). " +
+      "Write to Arigami's own long-term memory (owned by the host, shared by EVERY session/worker on this instance — not your agent CLI's per-project auto-memory, and not scoped to your cwd/worktree). " +
       'target "user" = facts about the human (preferences, people, ~600 token cap), "memory" = standing facts/decisions/context (~900 token cap), "journal" = append-only log of what happened today (no cap, action must be "add"). ' +
       'action "add" appends a new bullet (silently deduped if an equivalent line already exists); "replace" needs old_text (the existing line to match) + content (its replacement); "remove" needs old_text (or content) to delete a line — "user"/"memory" only, not journal. ' +
       'Refused if the content looks like a credential/secret or a prompt-injection/exfiltration attempt, or would exceed the target\'s token cap — trim or replace an existing line first. Every write is logged (before/after) and undoable from the host UI/API.',

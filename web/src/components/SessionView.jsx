@@ -8,6 +8,7 @@ import { errText } from '../lib/errors.js';
 import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
+import { engineLabel, engineTermName } from '../lib/engines.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
@@ -388,7 +389,7 @@ function TerminalHeader({ session }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
       <Dot color={session.color} size={9} />
-      <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
+      <span className="shrink-0 font-bold whitespace-nowrap">{engineTermName(session.engine)}</span>
       <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
       <BornFromChip session={session} />
       {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
@@ -818,7 +819,7 @@ function PendingPromptsPanel({ session }) {
         </button>
         <label
           className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-fgdim"
-          title={t('rail.autoPlayPromptHint')}
+          title={t('rail.autoPlayPromptHint', { engine: engineLabel(session.engine) })}
         >
           <span
             onClick={toggleAuto}
@@ -1400,7 +1401,11 @@ function ChatFooter({ session }) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            placeholder={isDesktop ? t('rail.replyPlaceholder') : t('rail.replyPlaceholderShort')}
+            placeholder={
+              isDesktop
+                ? t('rail.replyPlaceholder', { engine: engineLabel(session.engine) })
+                : t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })
+            }
             className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-[#aaa] sm:text-[11.5px]"
             style={{ fieldSizing: 'content' }}
           />
@@ -1409,7 +1414,7 @@ function ChatFooter({ session }) {
         {working && (
           <button
             type="button"
-            title={t('rail.interruptClaude')}
+            title={t('rail.interruptClaude', { engine: engineLabel(session.engine) })}
             onClick={interrupt}
             className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
           >

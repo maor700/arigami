@@ -12,6 +12,12 @@ import * as bus from './bus.js';
 import * as vnc from './vnc.js';
 import * as screencast from './screencast.js';
 import { killAll, kickAutoPlayAll } from './claude.js';
+// Side-effect import: server/codex.ts calls registerEngine() at module load, the
+// same way claude.js does at the bottom of its own file. It has to be imported
+// from HERE and not from claude.js — codex.ts imports claude.js, so the reverse
+// edge would be a cycle. Without this line pickEngine() throws "engine not
+// implemented: codex" for every session that asked for it.
+import './codex.js';
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';

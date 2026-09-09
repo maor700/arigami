@@ -31,7 +31,7 @@ const DEFAULTS = {
   voiceHotkey: 'Cmd+Shift+V', // keyboard shortcut to start recording
   ticketPresets: [], // [{ id, name, filters }] — saved launcher ticket filters
   ticketDefaultPresetId: '', // id of the preset applied when the launcher opens
-  sessionPresets: [], // [{ id, name, skill, model, effort }] — saved launcher session options
+  sessionPresets: [], // [{ id, name, engine, skill, model, effort }] — saved launcher session options
   sessionDefaultPresetId: '', // id of the preset applied when the launcher opens, any tab
   sessionDefaultPresetByMode: { ticket: '', empty: '', trigger: '' }, // per-launcher-tab override
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
@@ -84,6 +84,10 @@ function sanitizePresets(arr) {
 function sanitizeSessionOptions(o) {
   const p = o && typeof o === 'object' ? o : {};
   return {
+    // '' = claude (the default engine) — same "unset means claude" rule the
+    // server's pickEngine() uses, so a preset saved before engines existed
+    // keeps launching Claude sessions.
+    engine: p.engine === 'codex' ? 'codex' : '',
     skill: typeof p.skill === 'string' ? p.skill : '',
     model: typeof p.model === 'string' ? p.model : '',
     effort: typeof p.effort === 'string' ? p.effort : '',

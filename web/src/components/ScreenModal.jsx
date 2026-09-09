@@ -25,6 +25,7 @@ import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenM
 import * as setupApi from '../lib/setup-api.js';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
+import { engineLabel } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
 
@@ -67,6 +68,8 @@ export default function ScreenModal({ context, onClose }) {
   // Resolve the request live from the store so an answer arriving from
   // elsewhere (timeout, other tab) drops us back to the plain view.
   const openReq = context?.requestId ? openScreenRequest(s, context.sessionId) : null;
+  // The note goes back to whichever engine drives THIS session, not to "Claude".
+  const engine = engineLabel(s.sessions.find((x) => x.id === context?.sessionId)?.engine);
   const req = openReq && openReq.requestId === context.requestId ? openReq : null;
 
   useEffect(() => {
@@ -227,7 +230,7 @@ export default function ScreenModal({ context, onClose }) {
               value={note}
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !busy && done()}
-              placeholder={t('chat.screenRequestNotePlaceholder')}
+              placeholder={t('chat.screenRequestNotePlaceholder', { engine })}
               className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1.5 text-[11.5px] text-fg outline-none placeholder:text-fgdim"
             />
             <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>

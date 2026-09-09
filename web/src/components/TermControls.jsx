@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { EFFORT_OPTIONS, EFFORT_LABEL } from '../lib/effort.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
@@ -120,6 +120,7 @@ function PermissionModal({ session, onClose }) {
   const t = useT();
   const current = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null); // mode awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
 
@@ -143,7 +144,7 @@ function PermissionModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchModeWarnBefore')}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
+        {t('rail.switchModeWarnBefore', { engine })}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -169,7 +170,7 @@ function PermissionModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.permissionMode')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
       options={PERMISSION_OPTIONS}
       value={current}
       onSelect={pick}
@@ -185,9 +186,14 @@ function ModelModal({ session, onClose }) {
   const t = useT();
   const current = session.claude?.modelChoice || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null); // model awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
-  const { models: options, loading, cliUpdate } = useModels();
+  // A running session's list follows ITS engine, not the cockpit's default:
+  // a Codex session must never be offered a Claude alias (see lib/engines.js).
+  const { models: claudeModels, loading, cliUpdate } = useModels();
+  const options = modelOptionsFor(session.engine, claudeModels);
+  const isClaude = normalizeEngine(session.engine) === 'claude';
   const modelLabel = Object.fromEntries(options.map((o) => [o.value, o.label]));
 
   const apply = async (model) => {
@@ -210,7 +216,7 @@ function ModelModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchModelWarnBefore')}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
+        {t('rail.switchModelWarnBefore', { engine })}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -236,13 +242,19 @@ function ModelModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.model')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
       options={options}
       value={current}
       onSelect={pick}
       onClose={onClose}
       footer={confirmFooter}
+      // Both of these are about the `claude` CLI specifically: "refresh" re-runs
+      // its model handshake, and the update chip points at ITS installed
+      // version. Codex's list is static (lib/engines.js) and its CLI is
+      // updated elsewhere — showing either on a Codex session would offer a
+      // button that does nothing and a version that isn't the one running.
       headerExtra={
+        isClaude && (
         <span className="flex shrink-0 items-center gap-1.5">
           {cliUpdate?.updateAvailable && (
             // UPD1: a newer `claude` CLI (= a newer model list) is waiting — one
@@ -267,6 +279,7 @@ function ModelModal({ session, onClose }) {
             {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
           </button>
         </span>
+        )
       }
     />
   );
@@ -276,8 +289,12 @@ function ModelModal({ session, onClose }) {
 
 function EffortModal({ session, onClose }) {
   const t = useT();
+  // Codex's ladder is per-model (and has an `ultra` rung Claude lacks), so the
+  // session's own model decides the options — not one shared list.
+  const options = effortOptionsFor(session.engine, session.claude?.modelChoice);
   const current = session.claude?.effort || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -300,7 +317,7 @@ function EffortModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchEffortWarnBefore')}<b>{EFFORT_LABEL[pending] || pending}</b>{t('rail.switchEffortWarnAfter')}
+        {t('rail.switchEffortWarnBefore', { engine })}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -326,8 +343,8 @@ function EffortModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.effort')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
-      options={EFFORT_OPTIONS}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
+      options={options}
       value={current}
       onSelect={pick}
       onClose={onClose}
@@ -337,6 +354,25 @@ function EffortModal({ session, onClose }) {
 }
 
 /* ---------- the dropdown menu --------------------------------------------- */
+
+/**
+ * A row that states a fact instead of opening a picker. Used where an engine
+ * has no choice to offer — showing a clickable picker there would tell the
+ * human they had constrained the session when nothing changed.
+ */
+function StaticRow({ label, value, note, danger }) {
+  return (
+    <div className="w-full px-3 py-2 text-start text-[12px] text-fg">
+      <div className="flex items-center gap-2">
+        <span className="flex-1">{label}</span>
+        <span className={`shrink-0 font-mono text-[10.5px] ${danger ? 'font-bold text-danger' : 'text-fgdim'}`}>
+          {value}
+        </span>
+      </div>
+      {note && <div className="mt-0.5 text-[10.5px] leading-snug text-fgdim">{note}</div>}
+    </div>
+  );
+}
 
 function MenuRow({ label, value, danger, onClick }) {
   return (
@@ -360,15 +396,17 @@ export default function TermControls({ session }) {
   const view = termViewFrom(prefs, session.id);
   const ctx = session.claude?.usage;
   const perm = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
+  const permModes = hasPermissionModes(session.engine); // see lib/engines.js
   // Model row: show the user's explicit pick, else what the running default resolved to.
-  const { models: modelOptions } = useModels();
+  const { models: claudeModels } = useModels();
+  const modelOptions = modelOptionsFor(session.engine, claudeModels);
   const modelChoice = session.claude?.modelChoice || 'default';
   const reportedModel = session.claude?.model || session.claude?.capabilities?.model;
   const modelValue =
     modelChoice !== 'default'
       ? modelOptions.find((o) => o.value === modelChoice)?.label || modelChoice
       : prettyModel(reportedModel) || t('rail.permDefault');
-  const effortValue = EFFORT_LABEL[session.claude?.effort || 'default'];
+  const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
   const restarting = session.claude?.state === 'restarting';
   const [open, setOpen] = useState(false);
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'effort'
@@ -418,12 +456,21 @@ export default function TermControls({ session }) {
           <MenuRow label={t('rail.direction')} value={view.dir} onClick={() => openModal('dir')} />
           <MenuRow label={t('rail.theme')} value={view.theme} onClick={() => openModal('theme')} />
           <span className="block h-px bg-hair" />
-          <MenuRow
-            label={t('rail.permissionMode')}
-            value={PERMISSION_LABEL[perm] || perm}
-            danger={perm === 'bypassPermissions'}
-            onClick={() => openModal('permission')}
-          />
+          {permModes ? (
+            <MenuRow
+              label={t('rail.permissionMode')}
+              value={PERMISSION_LABEL[perm] || perm}
+              danger={perm === 'bypassPermissions'}
+              onClick={() => openModal('permission')}
+            />
+          ) : (
+            <StaticRow
+              label={t('rail.permissionMode')}
+              value="bypassPermissions"
+              note={t('rail.noPermissionModes', { engine: engineLabel(session.engine) })}
+              danger
+            />
+          )}
           <MenuRow label={t('rail.model')} value={modelValue} onClick={() => openModal('model')} />
           <MenuRow label={t('rail.effort')} value={effortValue} onClick={() => openModal('effort')} />
           <span className="block h-px bg-hair" />

@@ -1964,6 +1964,7 @@ export function startTicketSession(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  engine?: string; // 'claude' (default) | 'codex' — see Session.engine
   metadata?: Record<string, unknown>;
   permissionMode?: string;
   cwd?: string;
@@ -1983,6 +1984,7 @@ export function startTicketSession(opts: {
     metadata: { ticket: id, ...(opts.metadata || {}) },
     model: opts.model,
     effort: opts.effort,
+    engine: opts.engine,
   });
   spawnSafe(s.id);
   try {
@@ -2035,6 +2037,7 @@ export function startEmptySession(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  engine?: string; // 'claude' (default) | 'codex' — see Session.engine
   agent?: string | null; // A2: born from an agent (cron runs) — see applyAgentToSession
   metadata?: Record<string, unknown>;
 }): { id: string } {
@@ -2046,6 +2049,7 @@ export function startEmptySession(opts: {
     permissionMode: o.permissionMode || 'bypassPermissions',
     model: o.model,
     effort: o.effort,
+    engine: opts.engine,
     metadata: o.metadata || {},
     color: o.color,
   });
@@ -3848,6 +3852,7 @@ export async function handle(
           skill: body.skill,
           model: body.model,
           effort: body.effort,
+          engine: body.engine,
         });
         return json(res, trigger, 201);
       } catch (e) {
@@ -3903,6 +3908,7 @@ export async function handle(
           skill: body.skill,
           model: body.model,
           effort: body.effort,
+          engine: body.engine,
         });
         return json(res, item, 201);
       }
@@ -3911,6 +3917,7 @@ export async function handle(
         skill: body.skill,
         model: body.model,
         effort: body.effort,
+        engine: body.engine,
       });
       return item ? json(res, item, 201) : badRequest(res, 'already queued or has a live session');
     }
@@ -4854,6 +4861,9 @@ export async function handle(
             ? await runCleanup(s)
             : undefined;
         artifacts.removeSession(id); // published snapshots die with the session
+        // A codex session's per-session $CODEX_HOME (config + thread history)
+        // dies with it too. Dynamically imported: codex.ts imports this module.
+        import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
         state.deleteSession(id);
         return json(res, { ok: true, ...(cleanup ? { cleanup } : {}) });
       }

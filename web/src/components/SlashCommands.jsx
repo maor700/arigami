@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store.js';
 import { t, useT } from '../lib/i18n.js';
+import { engineLabel, normalizeEngine } from '../lib/engines.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -223,6 +224,10 @@ const MCP_STATUS = {
 };
 
 const TABS = [
+  // 'usage' = Claude subscription meters + which Claude ACCOUNT this session
+  // runs on. Both are properties of the claude CLI's auth, not of a session in
+  // general — a Codex session has neither, so the tab is dropped for it rather
+  // than shown reading someone else's quota. tabsFor() below.
   ['usage', 'dialogs.tabUsage'],
   ['mcp', null], // MCP — product noun, not translated
   ['skills', 'dialogs.tabSkills'],
@@ -231,6 +236,11 @@ const TABS = [
   ['commands', 'dialogs.tabCommands'],
   ['info', 'dialogs.tabInfo'],
 ];
+
+/** TABS minus the ones that only make sense for the claude engine. */
+function tabsFor(engine) {
+  return normalizeEngine(engine) === 'claude' ? TABS : TABS.filter(([id]) => id !== 'usage');
+}
 
 // The full usage object for an account: live per-account broadcast, else the
 // compact lastUsage snapshot from the accounts list, else nothing.
@@ -250,7 +260,7 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
   const activeId = accounts?.activeId;
   const sessAccId = session?.claude?.accountId || activeId;
   const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
-  if (!list.length) return <Pending />;
+  if (!list.length) return <Pending engine={engineLabel(session?.engine)} />;
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-md border border-hair bg-bg px-3 py-2 text-[11.5px] text-fgdim">
@@ -370,9 +380,9 @@ function DescList({ items, onPick }) {
   );
 }
 
-const Pending = () => (
+const Pending = ({ engine }) => (
   <p className="text-[12px] text-fgdim">
-    {t('dialogs.loadsAfterFirstMessage')}
+    {t('dialogs.loadsAfterFirstMessage', { engine })}
   </p>
 );
 
@@ -385,7 +395,12 @@ export function CapabilitiesPanel({ capabilities, session, initialTab = 'command
 
 function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   const t = useT();
-  const [tab, setTab] = useState(initialTab);
+  // Every "…Code" string in this panel describes the ENGINE behind the session.
+  const engine = engineLabel(session?.engine);
+  const tabs = tabsFor(session?.engine);
+  // `/usage` on a Codex session would otherwise open a tab that no longer
+  // exists and render an empty panel.
+  const [tab, setTab] = useState(tabs.some(([id]) => id === initialTab) ? initialTab : 'info');
   const { accounts, accountUsage } = useStore();
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -405,7 +420,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
-          <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.claudeCodeCapabilities')}</span>
+          <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.claudeCodeCapabilities', { engine })}</span>
           {caps.model && (
             <span className="rounded-full border border-hair px-2 py-0.5 font-mono text-[10px] text-fgdim">
               {caps.model}
@@ -421,7 +436,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         </div>
 
         <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-hair px-3 pt-2 [scrollbar-width:none]">
-          {TABS.map(([id, labelKey]) => {
+          {tabs.map(([id, labelKey]) => {
             const label = labelKey ? t(labelKey) : 'MCP';
             const count = {
               mcp: caps.mcpServers?.length,
@@ -451,7 +466,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 text-fg">
           {!started && (
             <p className="mb-3 text-[12px] text-fgdim">
-              {t('dialogs.claudeCodeNotStarted')}
+              {t('dialogs.claudeCodeNotStarted', { engine })}
             </p>
           )}
 
@@ -467,13 +482,13 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
             (caps.skills?.length ? (
               <Grouped names={caps.skills} onPick={(n) => onPickCommand?.(n)} />
             ) : (
-              <Pending />
+              <Pending engine={engine} />
             ))}
 
-          {tab === 'tools' && (caps.tools?.length ? <Pills names={caps.tools} /> : <Pending />)}
+          {tab === 'tools' && (caps.tools?.length ? <Pills names={caps.tools} /> : <Pending engine={engine} />)}
 
           {tab === 'agents' &&
-            (agents.length ? <DescList items={agents} /> : <Pending />)}
+            (agents.length ? <DescList items={agents} /> : <Pending engine={engine} />)}
 
           {tab === 'commands' &&
             (caps.commands?.length ? (
@@ -481,7 +496,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
             ) : caps.slashCommands?.length ? (
               <Grouped names={caps.slashCommands} onPick={(n) => onPickCommand?.(n)} />
             ) : (
-              <Pending />
+              <Pending engine={engine} />
             ))}
 
           {tab === 'info' && (

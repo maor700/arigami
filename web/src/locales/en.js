@@ -60,7 +60,7 @@ export const en = {
   'settings.screenTitle': 'Screen share',
   'settings.pushTitle': 'Push notifications',
   'settings.pushEnable': 'Enable push notifications',
-  'settings.pushHint': 'Get notified on your phone when listeners fire or Claude needs input',
+  'settings.pushHint': 'Get notified on your phone when listeners fire or the agent needs input',
   'settings.vncPassword': 'VNC password',
   'settings.vncPassword.hint': 'Sent to the embedded viewer when the VNC server asks for VNC-auth. Leave empty if the server has no password.',
   'settings.vncPassword.set': 'A password is set',
