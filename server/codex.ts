@@ -97,7 +97,10 @@ export function codexHomeFor(sessionId: string): string {
 // 38.35s and the call went through. So this is deliberately pinned to the
 // host's own SCREEN_REQUEST_TIMEOUT_MS (server/api.ts, 30 minutes): the engine
 // must not give up before the card the human is looking at does.
-const TOOL_TIMEOUT_SEC = 30 * 60;
+// The knob exists mainly so the give-up path above can be exercised for real
+// (a 15s timeout reproduces in seconds what 1800s would take half an hour to
+// show); lowering it in production trades human response time for nothing.
+const TOOL_TIMEOUT_SEC = Number(process.env.ARIGAMI_CODEX_TOOL_TIMEOUT_SEC) || 30 * 60;
 const STARTUP_TIMEOUT_SEC = 20;
 
 // Codex silently falls back to its default model when `-m` names something it
@@ -151,9 +154,19 @@ function stateOf(id: string): CodexSessionState {
   return st;
 }
 
-/** Drop everything remembered about a session (its process is gone for good). */
-export function forgetCodexSession(id: string): void {
+/**
+ * A deleted session takes its $CODEX_HOME with it. That directory holds the
+ * thread history `codex exec resume` reads, so it CANNOT be cleaned per turn —
+ * but once the session is gone it is dead weight, and this host runs close to
+ * full. Called from api.ts's DELETE handler, next to artifacts.removeSession().
+ */
+export function removeCodexSession(id: string): void {
   sessions.delete(id);
+  try {
+    fs.rmSync(codexHomeFor(id), { recursive: true, force: true });
+  } catch (e) {
+    console.error(`[codex] could not remove ${codexHomeFor(id)}: ${(e as Error).message}`);
+  }
 }
 
 // ---- prepare(): $CODEX_HOME ------------------------------------------------

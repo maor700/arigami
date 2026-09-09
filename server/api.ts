@@ -4854,6 +4854,9 @@ export async function handle(
             ? await runCleanup(s)
             : undefined;
         artifacts.removeSession(id); // published snapshots die with the session
+        // A codex session's per-session $CODEX_HOME (config + thread history)
+        // dies with it too. Dynamically imported: codex.ts imports this module.
+        import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
         state.deleteSession(id);
         return json(res, { ok: true, ...(cleanup ? { cleanup } : {}) });
       }

@@ -448,3 +448,40 @@ test('attachments are listed by path — codex takes images only at spawn', () =
   expect(r.ok).toBe(true);
   expect(r.out[0].written).toContain('- a.png → /tmp/a.png (image)');
 });
+
+// ---- lifecycle -------------------------------------------------------------
+
+test('deleting a session takes its $CODEX_HOME with it', () => {
+  // The thread history lives in that directory, so it survives every turn —
+  // which makes cleaning it up on delete the only thing standing between a
+  // long-lived host and a disk full of dead codex homes.
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const fs=await import('node:fs');" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const home=cx.codexHomeFor(s.id);' +
+      'const before=fs.existsSync(home);' +
+      'cx.removeCodexSession(s.id);' +
+      'emit({before,after:fs.existsSync(home)});',
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ before: true, after: false });
+});
+
+test('the tool timeout is overridable, so the give-up path can be exercised', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const fs=await import('node:fs');" +
+      "const path=await import('node:path');" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'emit({toml:fs.readFileSync(path.join(cx.codexHomeFor(s.id),"config.toml"),"utf8")});',
+    env({ ARIGAMI_CODEX_TOOL_TIMEOUT_SEC: '15' })
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].toml).toContain('tool_timeout_sec = 15');
+});
