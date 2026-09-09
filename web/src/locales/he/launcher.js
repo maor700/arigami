@@ -128,7 +128,7 @@ export const strings = {
   'launcher.empty.deferRequired': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות סשן ריק.',
   'launcher.empty.createEmpty': 'התחל ←',
   'launcher.empty.advanced': 'מתקדם',
-  'launcher.empty.advancedHint': 'שם · תיקיית עבודה · הרשאות · סקיל, מודל ומאמץ',
+  'launcher.empty.advancedHint': 'שם · תיקיית עבודה · הרשאות · מנוע, סקיל, מודל ומאמץ',
   'launcher.empty.promptFirst': 'מה הסשן הזה צריך לעשות?',
   'launcher.empty.addToPending': 'הוספה ל-Pending',
   'launcher.empty.deferTitle': 'נדרש פרומפט התחלה או מיומנות נבחרת כדי לדחות',
