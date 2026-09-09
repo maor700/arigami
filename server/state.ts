@@ -244,6 +244,8 @@ export interface Session {
   activeTabId: string;
   artifacts?: Artifact[];
   claude: ClaudeState;
+  // Agent-engine CLI driving this session — 'claude' (default) or 'codex'; read by pickEngine() (lib/engine-driver.ts).
+  engine?: 'claude' | 'codex';
   bg: unknown[];
   pendingPrompts?: PendingPrompt[];
   promptAutoPlay?: boolean;
@@ -516,6 +518,7 @@ export function createSession({
   model,
   effort,
   color,
+  engine,
 }: {
   title?: string;
   cwd?: string;
@@ -524,6 +527,7 @@ export function createSession({
   model?: string | null;
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
+  engine?: string | null; // 'claude' (default) | 'codex' — see Session.engine
 } = {}): Session {
   funnel.firstTime('session.first'); // K5 funnel — once per instance
   // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
@@ -559,6 +563,8 @@ export function createSession({
     action: null,
     tabs: [firstTab],
     activeTabId: firstTab.id,
+    // Recorded as-asked, even if unimplemented — pickEngine() is what refuses to spawn it.
+    engine: engine === 'codex' ? 'codex' : 'claude',
     claude: {
       sessionId: null,
       state: 'idle',
