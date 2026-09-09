@@ -12,6 +12,7 @@ import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import {
   SCHEMA_VERSION_KEY, FIRST_VERSION, SchemaVersionError,
@@ -242,6 +243,27 @@ test('state.json v1 → v2 keeps every session and only drops the transient flag
   expect(r.doc.folders).toEqual(old.folders);
   expect(r.doc.colorIndex).toBe(3);
 });
+
+test('a pre-migration backup never travels inside an exported archive', () => {
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, 'memory'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'memory', 'USER.md'), '- fixture\n');
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ [SCHEMA_VERSION_KEY]: 2, sessions: [] }));
+  fs.writeFileSync(path.join(dir, 'state.json.bak-v1-20260101-000000'), JSON.stringify({ sessions: [{ id: 'stale' }] }));
+  const out = path.join(tmp(), 'a.tar.gz');
+
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts');
+     await bk.exportFullToFile(${JSON.stringify(out)});
+     emit({ done: true });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  const entries = spawnSync('tar', ['-tzf', out], { encoding: 'utf8' }).stdout.split('\n').map((e) => e.replace(/^\.\//, ''));
+  expect(entries).toContain('state.json');
+  // a restored dir carrying a stale pre-migration copy would be a trap
+  expect(entries.some((e) => e.includes('.bak-v1-'))).toBe(false);
+}, 60_000);
 
 test('stamp puts the version first and replaces an existing one', () => {
   const out = stamp({ b: 2 }, FIXTURE);
