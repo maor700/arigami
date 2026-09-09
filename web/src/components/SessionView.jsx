@@ -819,7 +819,7 @@ function PendingPromptsPanel({ session }) {
         </button>
         <label
           className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-fgdim"
-          title={t('rail.autoPlayPromptHint')}
+          title={t('rail.autoPlayPromptHint', { engine: engineLabel(session.engine) })}
         >
           <span
             onClick={toggleAuto}
@@ -1414,7 +1414,7 @@ function ChatFooter({ session }) {
         {working && (
           <button
             type="button"
-            title={t('rail.interruptClaude')}
+            title={t('rail.interruptClaude', { engine: engineLabel(session.engine) })}
             onClick={interrupt}
             className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
           >
