@@ -195,6 +195,8 @@ export const strings = {
   'rail.effortHigh': 'High',
   'rail.effortXhigh': 'Extra high',
   'rail.effortMax': 'Max',
+  // Codex-only rung (gpt-5.6-terra) — above max; Claude has no equivalent.
+  'rail.effortUltra': 'Ultra',
   'rail.switchEffortWarnBefore': 'Claude is working in this session. Switching to ',
   'rail.switchEffortWarnAfter': ' will stop the current run and resume the same conversation in this terminal with the new effort level.',
   'rail.clearConversation': 'Clear conversation',

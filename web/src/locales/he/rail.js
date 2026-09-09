@@ -195,6 +195,8 @@ export const strings = {
   'rail.effortHigh': 'גבוהה',
   'rail.effortXhigh': 'גבוהה מאוד',
   'rail.effortMax': 'מקסימלית',
+  // דרגה של Codex בלבד (gpt-5.6-terra) — מעל מקסימלית; לקלוד אין מקבילה.
+  'rail.effortUltra': 'אולטרה',
   'rail.switchEffortWarnBefore': 'Claude עובד בסשן הזה. מעבר אל ',
   'rail.switchEffortWarnAfter': ' יעצור את הריצה הנוכחית וימשיך את אותה שיחה בטרמינל הזה עם רמת המאמץ החדשה.',
   'rail.clearConversation': 'ניקוי שיחה',

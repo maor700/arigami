@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { EFFORT_OPTIONS, EFFORT_LABEL } from '../lib/effort.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
@@ -187,7 +187,10 @@ function ModelModal({ session, onClose }) {
   const working = session.claude?.state === 'working';
   const [pending, setPending] = useState(null); // model awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
-  const { models: options, loading, cliUpdate } = useModels();
+  // A running session's list follows ITS engine, not the cockpit's default:
+  // a Codex session must never be offered a Claude alias (see lib/engines.js).
+  const { models: claudeModels, loading, cliUpdate } = useModels();
+  const options = modelOptionsFor(session.engine, claudeModels);
   const modelLabel = Object.fromEntries(options.map((o) => [o.value, o.label]));
 
   const apply = async (model) => {
@@ -276,6 +279,9 @@ function ModelModal({ session, onClose }) {
 
 function EffortModal({ session, onClose }) {
   const t = useT();
+  // Codex's ladder is per-model (and has an `ultra` rung Claude lacks), so the
+  // session's own model decides the options — not one shared list.
+  const options = effortOptionsFor(session.engine, session.claude?.modelChoice);
   const current = session.claude?.effort || 'default';
   const working = session.claude?.state === 'working';
   const [pending, setPending] = useState(null);
@@ -300,7 +306,7 @@ function EffortModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchEffortWarnBefore')}<b>{EFFORT_LABEL[pending] || pending}</b>{t('rail.switchEffortWarnAfter')}
+        {t('rail.switchEffortWarnBefore')}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -327,7 +333,7 @@ function EffortModal({ session, onClose }) {
     <OptionsModal
       title={t('rail.effort')}
       subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
-      options={EFFORT_OPTIONS}
+      options={options}
       value={current}
       onSelect={pick}
       onClose={onClose}
@@ -361,14 +367,15 @@ export default function TermControls({ session }) {
   const ctx = session.claude?.usage;
   const perm = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
   // Model row: show the user's explicit pick, else what the running default resolved to.
-  const { models: modelOptions } = useModels();
+  const { models: claudeModels } = useModels();
+  const modelOptions = modelOptionsFor(session.engine, claudeModels);
   const modelChoice = session.claude?.modelChoice || 'default';
   const reportedModel = session.claude?.model || session.claude?.capabilities?.model;
   const modelValue =
     modelChoice !== 'default'
       ? modelOptions.find((o) => o.value === modelChoice)?.label || modelChoice
       : prettyModel(reportedModel) || t('rail.permDefault');
-  const effortValue = EFFORT_LABEL[session.claude?.effort || 'default'];
+  const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
   const restarting = session.claude?.state === 'restarting';
   const [open, setOpen] = useState(false);
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'effort'

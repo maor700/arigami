@@ -78,8 +78,9 @@ const TOOLS = [
       cwd: { type: 'string' },
       prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
       skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
-      model: { type: 'string', description: '`claude --model` value (alias or full id); omit for the CLI default' },
-      effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: '`claude --effort` value; omit for the CLI default' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session (default "claude"). NOT inherited from you: a child runs on the engine named here, so an engine choice never spreads through a tree unseen. An engine with no registered driver fails loudly at spawn rather than quietly falling back.' },
+      model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
+      effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], description: 'Reasoning effort. claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
       permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
       metadata: { type: 'object' },
       kind: { type: 'string', enum: ['mutating', 'readonly', 'full'], description: 'Spawn as your child: thin dispatch worker (mutating/readonly) or full regular session (full)' },
@@ -94,6 +95,7 @@ const TOOLS = [
     run: async (a) => {
       const body = {
         title: a.title, cwd: a.cwd, prompt: a.prompt, skill: a.skill, model: a.model, effort: a.effort,
+        ...(a.engine ? { engine: a.engine } : {}),
         permissionMode: a.permission_mode, metadata: a.metadata,
         ...(a.agent ? { agent: a.agent } : {}),
       };

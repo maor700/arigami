@@ -108,7 +108,11 @@ export const strings = {
   'launcher.plan.emptyInstead': 'Start an empty session instead',
 
   // session options (skill / model / effort)
-  'launcher.options.title': 'Skill, model & effort',
+  'launcher.options.title': 'Engine, skill, model & effort',
+  'launcher.options.engine': 'Engine',
+  'launcher.options.engineClaudeDesc': 'Anthropic Claude Code — the default engine',
+  'launcher.options.engineCodexDesc': 'OpenAI Codex CLI',
+  'launcher.options.codexModelDefaultDesc': "Use Codex's own default model",
   'launcher.options.noSkill': 'No skill — blank chat',
 
   // empty session form

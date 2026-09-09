@@ -41,8 +41,9 @@ export interface LinearFilterTrigger {
   autonomous: boolean; // skip ALL questions — run unattended (bypass perms + no-pause directive)
   injectPrompt: string; // extra instructions appended to the task prompt on start
   skill?: string; // skill dir name to run (e.g. 'onboarding'); '' = plain ticket prompt
-  model?: string; // `claude --model` value; '' = CLI default
-  effort?: string; // `claude --effort` value; '' = CLI default
+  model?: string; // engine model value; '' = engine default
+  effort?: string; // reasoning-effort value; '' = engine default
+  engine?: string; // 'claude' (default) | 'codex' — which CLI its sessions run on
   filters: Record<string, unknown>; // FilterBar facet shape (assignee/state/labels/labelOp/…)
   seen: string[]; // high-water mark; dismissed items stay here
   primed: boolean; // false until the first successful fetch seeds `seen`
@@ -103,8 +104,9 @@ export interface PendingItem {
   permissionMode?: string; // kind 'empty'
   prompt?: string; // custom starting prompt (overrides the default on start)
   skill?: string; // skill dir name to run; '' = plain prompt
-  model?: string; // `claude --model` value; '' = CLI default
-  effort?: string; // `claude --effort` value; '' = CLI default
+  model?: string; // engine model value; '' = engine default
+  effort?: string; // reasoning-effort value; '' = engine default
+  engine?: string; // 'claude' (default) | 'codex' — which CLI the started session runs on
 }
 
 interface QueueSettings {
@@ -343,7 +345,7 @@ export function deferTicket(
   ticket: string,
   title?: string,
   prompt?: string,
-  opts?: { skill?: string; model?: string; effort?: string }
+  opts?: { skill?: string; model?: string; effort?: string; engine?: string }
 ): PendingItem | null {
   const up = String(ticket || '').toUpperCase();
   if (!up) return null;
@@ -358,6 +360,7 @@ export function deferTicket(
     skill: opts?.skill,
     model: opts?.model,
     effort: opts?.effort,
+    engine: opts?.engine,
   });
   persist();
   emitPending();
@@ -374,6 +377,7 @@ export function deferEmpty(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  engine?: string;
 }): PendingItem {
   enqueue({
     kind: 'empty',
@@ -384,6 +388,7 @@ export function deferEmpty(opts: {
     skill: opts.skill,
     model: opts.model,
     effort: opts.effort,
+    engine: opts.engine,
     triggerId: null,
     triggerName: 'Manual',
   });
@@ -411,6 +416,7 @@ export async function startPending(
       skill: item.skill,
       model: item.model,
       effort: item.effort,
+      engine: item.engine,
       metadata: { fromQueue: true },
     });
     db.pending = db.pending.filter((p) => p.id !== id);
@@ -445,6 +451,7 @@ export async function startPending(
     skill: item.skill ?? t?.skill,
     model: item.model ?? t?.model,
     effort: item.effort ?? t?.effort,
+    engine: item.engine ?? t?.engine,
     metadata: {
       fromQueue: true,
       ...(item.triggerId
@@ -512,6 +519,7 @@ export async function createTrigger(input: {
   skill?: string;
   model?: string;
   effort?: string;
+  engine?: string;
 }): Promise<LinearFilterTrigger> {
   const t: LinearFilterTrigger = {
     id: 'trig_' + nano(),
@@ -523,6 +531,9 @@ export async function createTrigger(input: {
     skill: typeof input.skill === 'string' ? input.skill : '',
     model: typeof input.model === 'string' ? input.model : '',
     effort: typeof input.effort === 'string' ? input.effort : '',
+    // '' = claude, exactly like an absent Session.engine — a trigger armed
+    // before engines existed keeps firing Claude sessions.
+    engine: input.engine === 'codex' ? 'codex' : '',
     filters: input.filters && typeof input.filters === 'object' ? input.filters : {},
     seen: [],
     primed: false,
@@ -568,6 +579,12 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
     if (typeof patch.skill === 'string') t.skill = patch.skill;
     if (typeof patch.model === 'string') t.model = patch.model;
     if (typeof patch.effort === 'string') t.effort = patch.effort;
+    // Unlike create (where an unrecognized value just falls back to the
+    // default), an unrecognized PATCH value is ignored: silently moving a live
+    // codex trigger back onto claude because of a typo is the quiet wrong-CLI
+    // failure this whole seam exists to avoid. 'claude'/'' set it explicitly.
+    if (patch.engine === 'codex') t.engine = 'codex';
+    else if (patch.engine === 'claude' || patch.engine === '') t.engine = '';
     if (patch.filters && typeof patch.filters === 'object') {
       t.filters = patch.filters as Record<string, unknown>;
       // Filter changed → re-prime so old matches under the new filter don't all fire.

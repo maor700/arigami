@@ -27,7 +27,7 @@ import {
   setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
-import { EFFORT_OPTIONS } from '../lib/effort.js';
+import { engineOptions, modelOptionsFor, effortOptionsFor, coerceSessionOptions } from '../lib/engines.js';
 import { Wave, Dot, YellowButton, tint } from './ui.jsx';
 import { t, useT } from '../lib/i18n.js';
 import { fmtDateTime } from '../lib/time.js';
@@ -92,6 +92,7 @@ export function buildTicketPayload(ticket, config, sessions, permissionMode, pro
     metadata: { ticket: id },
     ...(permissionMode ? { permissionMode } : {}),
     ...(promptOverride && promptOverride.trim() ? { prompt: promptOverride.trim() } : {}),
+    engine: sessionOpts?.engine || undefined,
     skill: sessionOpts?.skill || undefined,
     model: sessionOpts?.model || undefined,
     effort: sessionOpts?.effort || undefined,
@@ -472,7 +473,12 @@ function PresetBar({ presets, defaultId, current, onApply }) {
 }
 
 function sessionOptionsEqual(a, b) {
-  return (a?.skill || '') === (b?.skill || '') && (a?.model || '') === (b?.model || '') && (a?.effort || '') === (b?.effort || '');
+  return (
+    (a?.engine || '') === (b?.engine || '') &&
+    (a?.skill || '') === (b?.skill || '') &&
+    (a?.model || '') === (b?.model || '') &&
+    (a?.effort || '') === (b?.effort || '')
+  );
 }
 
 // This launcher tab's ('ticket' | 'empty' | 'trigger') own default wins over
@@ -481,21 +487,49 @@ function sessionOptionsEqual(a, b) {
 function defaultSessionOptions(prefs, mode) {
   const id = prefs.sessionDefaultPresetByMode[mode] || prefs.sessionDefaultPresetId;
   const d = prefs.sessionPresets.find((p) => p.id === id);
-  return { skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
+  return { engine: d?.engine || '', skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
 }
 
-// Which skill (from GET /skills — whatever's actually bundled, no fixed
-// default), which model, which effort a new session starts with.
-function SessionOptionsPicker({ options, onChange }) {
+// Which engine, which skill (from GET /skills — whatever's actually bundled,
+// no fixed default), which model, which effort a new session starts with.
+//
+// The engine select comes FIRST, and not only for reading order: it decides
+// what the model and effort selects next to it contain (see lib/engines.js —
+// Codex's model list is static and its effort ladder is per-model, with an
+// `ultra` rung Claude has no equivalent for). Every engine change therefore
+// runs coerceSessionOptions(), which drops a model/effort the new engine
+// doesn't offer instead of POSTing e.g. a Claude alias to a Codex session; a
+// model change re-runs it too, because on Codex the ladder moves with the
+// model. Picking Codex before its driver is registered is meant to fail loudly
+// at spawn (pickEngine throws) — this picker deliberately has no quiet
+// fall-back to Claude.
+//
+// Exported for tests.
+export function SessionOptionsPicker({ options, onChange }) {
   const t = useT();
   const [skills, setSkills] = useState([]);
   useEffect(() => {
     api.get('/skills').then((r) => setSkills(r?.skills || [])).catch(() => {});
   }, []);
-  const { models } = useModels();
+  const { models: claudeModels } = useModels();
+  const engine = options.engine || 'claude';
+  const modelOptions = modelOptionsFor(engine, claudeModels);
+  const effortOptions = effortOptionsFor(engine, options.model);
   const set = (patch) => onChange({ ...options, ...patch });
+  const setAndCoerce = (patch) => onChange(coerceSessionOptions({ ...options, ...patch }, claudeModels));
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2">
+      <select
+        value={engine}
+        onChange={(e) => setAndCoerce({ engine: e.target.value === 'claude' ? '' : e.target.value })}
+        className={selCls}
+        title={engineOptions().find((o) => o.value === engine)?.desc || ''}
+        aria-label={t('launcher.options.engine')}
+      >
+        {engineOptions().map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
       <select
         value={options.skill || ''}
         onChange={(e) => set({ skill: e.target.value })}
@@ -509,10 +543,11 @@ function SessionOptionsPicker({ options, onChange }) {
       </select>
       <select
         value={options.model || 'default'}
-        onChange={(e) => set({ model: e.target.value === 'default' ? '' : e.target.value })}
+        onChange={(e) => setAndCoerce({ model: e.target.value === 'default' ? '' : e.target.value })}
         className={selCls}
+        title={modelOptions.find((o) => o.value === (options.model || 'default'))?.desc || ''}
       >
-        {models.map((o) => (
+        {modelOptions.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
@@ -520,8 +555,9 @@ function SessionOptionsPicker({ options, onChange }) {
         value={options.effort || 'default'}
         onChange={(e) => set({ effort: e.target.value === 'default' ? '' : e.target.value })}
         className={selCls}
+        aria-label={t('rail.effort')}
       >
-        {EFFORT_OPTIONS.map((o) => (
+        {effortOptions.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
@@ -1225,6 +1261,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
+        engine: options.engine || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -1255,6 +1292,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
+        engine: options.engine || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -1874,6 +1912,7 @@ function TriggerTab() {
         filters,
         autonomous,
         injectPrompt,
+        engine: options.engine || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -2162,6 +2201,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         ticket: selected.id,
         title: selected.title || selected.id,
         ...(ticketPrompt.trim() ? { prompt: ticketPrompt } : {}),
+        engine: sessionOpts.engine || undefined,
         skill: sessionOpts.skill || undefined,
         model: sessionOpts.model || undefined,
         effort: sessionOpts.effort || undefined,
