@@ -4741,6 +4741,7 @@ export async function handle(
         model: body.model,
         effort: body.effort,
         color: agentColor,
+        engine: body.engine,
       });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into

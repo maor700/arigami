@@ -63,9 +63,10 @@ test('the mode is patchable through the normal metadata path and the per-turn pr
   expect(text).toMatch(/not your tool use/);
 });
 
-test('writeUserMessage prepends the reminder per turn (source-level: after the first-turn bootstrap, before the text)', () => {
+test('composeTurnText prepends the reminder per turn (source-level: after the first-turn bootstrap, before the text)', () => {
+  // Prefix assembly moved out of writeUserMessage into engine-agnostic composeTurnText() — same order/output.
   const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/claude.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function writeUserMessage('), src.indexOf('export function budgetRefusalFor'));
+  const fn = src.slice(src.indexOf('function composeTurnText('), src.indexOf('function writeUserMessage('));
   const boot = fn.indexOf('memoryBootstrapPrefix(p)');
   const mode = fn.indexOf('chatModePrefix(getSession(p.id)?.metadata)');
   expect(boot).toBeGreaterThan(-1);

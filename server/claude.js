@@ -27,6 +27,7 @@ import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
 import { pickDriver } from './lib/screen-driver.js';
+import { pickEngine, registerEngine } from './lib/engine-driver.js';
 import {
   planReplay,
   shapeForCompaction,
@@ -152,6 +153,17 @@ export function mcpConfigFor(s) {
   if (!Object.keys(ext).length && !Object.keys(own).length) return MCP_CONFIG;
   return JSON.stringify({ mcpServers: { ...HOST_SERVERS, ...ext, ...own } });
 }
+
+// engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).
+function claudeModelArgs({ model, effort } = {}) {
+  return [...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])];
+}
+
+function claudeInjectMcp(s) {
+  return ['--mcp-config', mcpConfigFor(s)];
+}
+
+const claudePermissions = { kind: 'mcp-tool', tool: 'mcp__arigami__permission_prompt' };
 
 // ---- background shells (agent `run_in_background` bashes) -------------------
 // Surfaced from stream-json: a Bash tool_use with run_in_background:true, paired
@@ -553,8 +565,8 @@ function policyArgs(s) {
   ];
 }
 
-function spawnProc(s, resume) {
-  const claudeSid = resume ? s.claude.sessionId : randomUUID();
+// engine-driver.ts's buildSpawn() for claude — same [bin, args, env, cwd] spawnProc() used to build inline; sessionId arrives already resolved.
+function buildClaudeSpawn(s, { resume, sessionId }) {
   const args = [
     '-p',
     '--input-format', 'stream-json',
@@ -564,11 +576,10 @@ function spawnProc(s, resume) {
     '--permission-mode', s.claude?.permissionMode || 'bypassPermissions',
     // Model is opt-in: only pass --model when the user picked one (an alias like
     // 'opus'/'sonnet'/'haiku' or a full id). Otherwise let Claude Code's default win.
-    ...(s.claude?.modelChoice ? ['--model', s.claude.modelChoice] : []),
-    ...(s.claude?.effort ? ['--effort', s.claude.effort] : []),
+    ...claudeModelArgs({ model: s.claude?.modelChoice, effort: s.claude?.effort }),
     ...(s.claude?.autoCompactTokens ? ['--autocompact', String(s.claude.autoCompactTokens)] : []),
-    '--mcp-config', mcpConfigFor(s),
-    '--permission-prompt-tool', 'mcp__arigami__permission_prompt',
+    ...claudeInjectMcp(s),
+    ...(claudePermissions.kind === 'mcp-tool' ? ['--permission-prompt-tool', claudePermissions.tool] : []),
     // Register the bundled skill pack (skills/) as a plugin so sessions can
     // invoke them as /arigami:<skill> — they appear in the chat palette. The
     // user/bundle skills ($ARIGAMI_DIR/skills) ride along as a second plugin
@@ -576,50 +587,54 @@ function spawnProc(s, resume) {
     // extensions' generated docs as a third (/arigami-ext:<skill>), only when
     // one exists. See pluginDirArgs().
     ...pluginDirArgs(),
-    ...(resume ? ['--resume', claudeSid] : ['--session-id', claudeSid]),
+    ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId]),
     // A3: host-enforced tool/domain allowlist (agent-policy.ts) — real CLI
     // denials + a PreToolUse hook that asks the host before every call.
     ...policyArgs(s),
   ];
   const cwd = untildify(s.cwd) || HOME;
-  const accountEnvSnapshot = accountEnv(s);
   const screenHandle = pickDriver().peek(s.id);
-  const child = spawn(claudeBin(), args, {
-    cwd,
-    env: {
-      ...baseEnv(),
-      ...accountEnvSnapshot,
-      ARIGAMI_SESSION_ID: s.id,
-      // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
-      // to reach THIS host. It is never a link for a human — the host hands out
-      // relative paths (ARIGAMI_PUBLIC_PATH) that resolve on any origin. See
-      // server/lib/public-url.ts.
-      ARIGAMI_URL: cfg.hostBase,
-      ARIGAMI_PUBLIC_PATH: '/__host/',
-      ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
-      // C1: per-session internal bearer token — host-mcp.js, skills' curl and
-      // the review prompt authenticate with it; it dies with the session.
-      ARIGAMI_TOKEN: auth.tokenForSession(s.id),
-      // A1: the agent this session was born from — host-mcp.js defaults
-      // memory_write/memory_search to its namespace.
-      ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
-      ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
-      ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
-      // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
-      // its dev server binds the slot the host reserved (metadata.port).
-      ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
-      // Per-session desktop (T8): set only if allocated before this spawn
-      // (needs_screen:true at create_session, or a respawn after a lazy
-      // allocation from an earlier request_screen/capture_screen/browser-open
-      // in this session). A desktop allocated while this process is already
-      // running only takes effect on its next spawn — env can't be changed
-      // on a live child. spawnProc() is called synchronously from many call
-      // sites, so this uses the driver's synchronous peek() rather than the
-      // async childEnv() (server/lib/screen-driver.ts).
-      ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const env = {
+    ...baseEnv(),
+    ...accountEnv(s),
+    ARIGAMI_SESSION_ID: s.id,
+    // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
+    // to reach THIS host. It is never a link for a human — the host hands out
+    // relative paths (ARIGAMI_PUBLIC_PATH) that resolve on any origin. See
+    // server/lib/public-url.ts.
+    ARIGAMI_URL: cfg.hostBase,
+    ARIGAMI_PUBLIC_PATH: '/__host/',
+    ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
+    // C1: per-session internal bearer token — host-mcp.js, skills' curl and
+    // the review prompt authenticate with it; it dies with the session.
+    ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+    // A1: the agent this session was born from — host-mcp.js defaults
+    // memory_write/memory_search to its namespace.
+    ...(typeof s.metadata?.agent === 'string' && s.metadata.agent ? { ARIGAMI_AGENT: s.metadata.agent } : {}),
+    ARIGAMI_SKILLS: path.join(ROOT, 'skills'), // host skill pack for the session
+    ARIGAMI_USER_SKILLS: USER_SKILLS_DIR, // user/bundle skills (override shipped by name)
+    // Dispatcher: a needsServer worker gets a host-allocated port as $PORT so
+    // its dev server binds the slot the host reserved (metadata.port).
+    ...(s.metadata?.port ? { PORT: String(s.metadata.port) } : {}),
+    // Per-session desktop (T8): set only if allocated before this spawn
+    // (needs_screen:true at create_session, or a respawn after a lazy
+    // allocation from an earlier request_screen/capture_screen/browser-open
+    // in this session). A desktop allocated while this process is already
+    // running only takes effect on its next spawn — env can't be changed
+    // on a live child. spawnProc() is called synchronously from many call
+    // sites, so this uses the driver's synchronous peek() rather than the
+    // async childEnv() (server/lib/screen-driver.ts).
+    ...(screenHandle?.display ? { DISPLAY: String(screenHandle.display) } : {}),
+  };
+  return { bin: claudeBin(), args, env, cwd };
+}
+
+function spawnProc(s, resume) {
+  const engine = pickEngine(s);
+  const sessionId = resume ? s.claude.sessionId : engine.sessionId.assign();
+  engine.prepare(s, { resume });
+  const built = engine.buildSpawn(s, { resume, sessionId });
+  const child = spawn(built.bin, built.args, { cwd: built.cwd, env: built.env, stdio: ['pipe', 'pipe', 'pipe'] });
   // A session's claude spawns its own tree (MCP servers, tool shells). Put it
   // under supervision so that tree dies with the host instead of outliving it
   // holding the inherited listen socket.
@@ -629,7 +644,7 @@ function spawnProc(s, resume) {
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
     capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
-    hadToken: !!accountEnvSnapshot.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
+    hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
     resume,
@@ -646,7 +661,7 @@ function spawnProc(s, resume) {
     lastCostUsd: 0, // A3: the CLI's cumulative total_cost_usd at the last result → per-turn delta
   };
   procs.set(s.id, p);
-  if (!resume) setClaude(s.id, { sessionId: claudeSid });
+  if (!resume) setClaude(s.id, { sessionId });
   // A3: a session run in the agent's ledger (first spawn only — a resume is the same run).
   if (!resume && agentSlug) appendActivity(agentSlug, { kind: 'session', sessionId: s.id, model: s.claude?.modelChoice || null, detail: s.title || '' });
 
@@ -659,7 +674,7 @@ function spawnProc(s, resume) {
       if (!line.trim()) continue;
       let j;
       try { j = JSON.parse(line); } catch { continue; }
-      try { handleEvent(s.id, j); } catch (e) { console.error('[claude] event error:', e.message); }
+      try { engine.handleEvent(s.id, j); } catch (e) { console.error('[claude] event error:', e.message); }
     }
   });
   child.stderr.on('data', (d) => { p.stderr = (p.stderr + d).slice(-4000); });
@@ -684,7 +699,8 @@ function spawnProc(s, resume) {
       setClaude(s.id, { sessionId: null });
       try {
         const np = spawnProc(sess, false);
-        for (const text of p.sent) writeUserMessage(np, text);
+        const retryEngine = pickEngine(sess);
+        for (const text of p.sent) retryEngine.writeMessage(np, { text: composeTurnText(np, text) });
         if (p.sent.length) np.sent.push(...p.sent);
         return;
       } catch {}
@@ -1987,18 +2003,23 @@ export function chatModePrefix(metadata) {
   return metadata && metadata.chatMode === 'simple' ? SIMPLE_MODE_REMINDER : '';
 }
 
-function writeUserMessage(p, text, attachments = []) {
-  const content = [];
+// Engine-agnostic turn-text assembly (persona/memory bootstrap, LADDER1 preamble, Simple-mode reminder), run once before the engine's own writeMessage().
+function composeTurnText(p, text) {
   let txt = text || '';
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
-  // LADDER1: the compacted-context / interim digest goes in front of the first
-  // message on the respawned proc — once, never persisted in the chat log (the
-  // human sees a one-line receipt instead of a wall of replayed transcript).
+  // LADDER1: one-shot preamble in front of the next message only, never persisted in the chat log.
   if (p.preamble) {
     txt = p.preamble + txt;
     p.preamble = '';
   }
   txt = chatModePrefix(getSession(p.id)?.metadata) + txt;
+  return txt;
+}
+
+// engine-driver.ts's writeMessage() for claude — text is already composed; this just encodes attachments + the stdin envelope.
+function writeUserMessage(p, { text, attachments = [] }) {
+  const content = [];
+  let txt = text || '';
   if (attachments.length) {
     const list = attachments.map(describeAttachment).join('\n');
     txt += (txt ? '\n\n' : '') + `📎 Attached ${attachments.length} file(s) — read them as needed:\n${list}`;
@@ -2062,7 +2083,7 @@ export function sendMessage(id, text, attachments = [], { system = false } = {})
       : {}),
   });
   setClaude(id, { state: 'working' });
-  writeUserMessage(p, text, saved);
+  pickEngine(getSession(id)).writeMessage(p, { text: composeTurnText(p, text), attachments: saved });
   p.sent.push(text);
   return true;
 }
@@ -2580,3 +2601,18 @@ function interimDigest(id, sinceIso) {
     `:\n=== INTERIM TURNS ===\n${text}\n=== END OF INTERIM ===\n\n`
   );
 }
+
+// Claude's EngineDriver — registered here (not exported) so engine-driver.ts never imports this file back.
+/** @type {import('./lib/engine-driver.js').EngineDriver} */
+const claudeDriver = {
+  id: 'claude',
+  prepare() {},
+  buildSpawn: buildClaudeSpawn,
+  handleEvent,
+  writeMessage: writeUserMessage,
+  sessionId: { mode: 'assigned', assign: () => randomUUID() },
+  permissions: claudePermissions,
+  injectMcp: claudeInjectMcp,
+  modelArgs: claudeModelArgs,
+};
+registerEngine(claudeDriver);
