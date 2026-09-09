@@ -68,11 +68,18 @@ test('a config.json copied from the default instance cannot point a non-default 
   expect(r.out[0].chat).toBe(path.join(dir, 'chat'));
 });
 
+// ARIGAMI_DIR is set EXPLICITLY to the historical path rather than left empty.
+// Under a test runner an unset ARIGAMI_DIR is deliberately redirected to a temp
+// dir (server/lib/instance.ts) so no test can write into the developer's live
+// instance — which means "leave it empty and expect ~/.arigami" no longer
+// describes the default instance, it describes the guard. Asking for the path
+// by name is the documented way to test the real thing, and this test only
+// READS DEFAULTS, so nothing is written there.
 test('the default instance keeps its historical defaults (backward compatible)', () => {
   const r = runInChild(
     "const inst=await import('./server/lib/instance.ts');const {DEFAULTS}=await import('./server/lib/config.ts');" +
       'emit({isDefault:inst.IS_DEFAULT_INSTANCE,port:DEFAULTS.port,vnc:DEFAULTS.screen.portRange,disp:DEFAULTS.screen.displayBase,dev:DEFAULTS.devServerPorts[0],state:DEFAULTS.stateFile});',
-    { ARIGAMI_DIR: '', ARIGAMI_PORT: '' }
+    { ARIGAMI_DIR: '~/.arigami', ARIGAMI_PORT: '' }
   );
   if (!r.ok) throw new Error(r.error);
   expect(r.out[0]).toEqual({ isDefault: true, port: 3099, vnc: [5901, 5950], disp: 100, dev: 3020, state: '~/.arigami/state.json' });
