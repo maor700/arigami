@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Arigami</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #1f1f1f;
+    color: #F9D312;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .wrap { text-align: center; }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    margin: 0 auto 16px;
+    border: 3px solid rgba(249, 211, 18, .25);
+    border-top-color: #F9D312;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  p { opacity: .7; font-size: 13px; }
+</style>
+</head>
+<body>
+  <!--
+    Deliberately no <script>: decision #4 (docs/DESKTOP.md) has main.rs poll
+    /__api/config and call window.navigate() once it answers. This page never
+    calls invoke() or anything else Tauri-side, so it needs no capability
+    grants beyond the default (capabilities/default.json) regardless of what
+    the webview injects here.
+  -->
+  <div class="wrap">
+    <div class="spinner"></div>
+    <p>Starting Arigami&hellip;</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,36 @@
+[package]
+name = "arigami-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Arigami desktop shell (Tauri v2) — window, tray, splash and lifecycle around the arigami-host sidecar binary"
+license = "Apache-2.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon is a non-default Cargo feature in Tauri v2 — required for the
+# TrayIconBuilder/menu APIs main.rs uses.
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+url = "2"
+# SIGTERM/SIGINT sent straight to this process (system shutdown, `kill`, not
+# the tray) has no handler by default — Rust's default disposition just dies,
+# orphaning the sidecar. Found live: killing this process's pid directly left
+# arigami-server running with no parent. The plain `ctrlc` crate only catches
+# SIGINT by default — also found live, the first fix attempt still orphaned
+# the sidecar because SIGTERM fell through to the default disposition. The
+# `termination` feature is what actually adds SIGTERM (and SIGHUP) to the set.
+ctrlc = { version = "3", features = ["termination"] }
+
+# SIGTERM (decision #3: the shell IS the supervisor, and server/index.ts's
+# shutdown() only runs on SIGTERM/SIGINT/SIGBREAK/SIGHUP — never on SIGKILL).
+# std::process::Child::kill() sends SIGKILL on Unix, which is why this needs
+# libc directly instead. Windows has no SIGTERM equivalent and isn't built
+# from here today — see main.rs's terminate_gracefully().
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "arigami-desktop"
+path = "src/main.rs"
