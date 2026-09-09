@@ -20,6 +20,8 @@ import { broadcast } from './bus.js';
 import { cfg, nano } from './state.js';
 import * as state from './state.js';
 import * as cronSchedule from './cron-schedule.js';
+import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
+import { TRIGGERS_SCHEMA } from './lib/state-schemas.js';
 import type { Schedule } from './cron-schedule.js';
 
 const STORE = path.join(
@@ -131,6 +133,19 @@ let loaded = false;
 // Exported for tests only (see test/cron-trigger.test.js) — startTriggerScheduler()
 // also starts the poll/drain intervals, which would hang a one-shot test process.
 export function load(): void {
+  // Forward-migrate before the first read (lib/schema-version.ts). On a file
+  // written by a NEWER build we leave `loaded` false, which the flush() guard
+  // below already turns into "never write over the store" — the human's
+  // triggers stay on disk, intact, for the build that understands them.
+  try {
+    migrateFile(STORE, TRIGGERS_SCHEMA);
+  } catch (e) {
+    if (e instanceof SchemaVersionError) {
+      console.error(`[triggers] ${e.message} Triggers are not running this boot.`);
+      return;
+    }
+    throw e;
+  }
   loaded = true;
   try {
     const j = JSON.parse(fs.readFileSync(STORE, 'utf8')) as {
@@ -179,11 +194,11 @@ export function flush(): void {
     fs.writeFileSync(
       STORE,
       JSON.stringify(
-        {
+        stamp({
           triggers: [...db.triggers.values()],
           pending: db.pending,
           settings: db.settings,
-        },
+        }, TRIGGERS_SCHEMA),
         null,
         2
       )

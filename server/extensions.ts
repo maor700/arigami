@@ -25,6 +25,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { ARIGAMI_DIR } from './lib/instance.js';
+import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
+import { EXTENSIONS_SCHEMA } from './lib/state-schemas.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { bunExec } from './lib/bun-exec.js';
 import { appendIncident } from './incidents.js';
@@ -51,6 +53,29 @@ export const EXT_DIR = path.join(USER_DIR, 'extensions');
 export const USER_SKILLS_TARGET = path.join(USER_DIR, 'skills');
 export const USER_MCP_CATALOG = path.join(USER_DIR, 'mcp-catalog.json');
 export const EXT_STATE_FILE = path.join(ARIGAMI_DIR, 'extensions.json');
+
+// Forward-migration of extensions.json (lib/schema-version.ts), run once on the
+// first read. A file from a NEWER build is refused: we report "no extensions"
+// (loudly, once) and BLOCK every write, so the human's enable flags, settings
+// and secrets survive untouched for the build that wrote them. Unlike
+// state.json/config.json this does not take the host down — an unreadable
+// extension state costs the extensions, not the cockpit.
+let extMigrated = false;
+let extRefused = false;
+function ensureExtMigrated(): void {
+  if (extMigrated) return;
+  extMigrated = true;
+  try {
+    migrateFile(EXT_STATE_FILE, EXTENSIONS_SCHEMA);
+  } catch (e) {
+    if (e instanceof SchemaVersionError) {
+      extRefused = true;
+      console.error(`[ext] ${e.message} Extensions are disabled this boot and extensions.json will not be written.`);
+      return;
+    }
+    throw e;
+  }
+}
 export const EXT_PLUGIN_DIR = path.join(ARIGAMI_DIR, 'ext-plugin');
 /** Legacy location of the user skill pack — becomes a symlink into user/ (§1). */
 export const LEGACY_SKILLS_DIR = path.join(ARIGAMI_DIR, 'skills');
@@ -277,6 +302,8 @@ const EMPTY_STATE: ExtState = { enabled: {}, settings: {}, secrets: {}, sha: {},
 const objOf = (v: unknown): Record<string, any> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as any) : {});
 
 export function readState(): ExtState {
+  ensureExtMigrated();
+  if (extRefused) return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
   try {
     const raw = JSON.parse(fs.readFileSync(EXT_STATE_FILE, 'utf8'));
     return {
@@ -295,8 +322,10 @@ export function readState(): ExtState {
 }
 
 export function writeState(s: ExtState): void {
+  ensureExtMigrated();
+  if (extRefused) return;
   fs.mkdirSync(path.dirname(EXT_STATE_FILE), { recursive: true });
-  fs.writeFileSync(EXT_STATE_FILE, JSON.stringify(s, null, 2), { mode: 0o600 });
+  fs.writeFileSync(EXT_STATE_FILE, JSON.stringify(stamp(s as unknown as Record<string, unknown>, EXTENSIONS_SCHEMA), null, 2), { mode: 0o600 });
   try { fs.chmodSync(EXT_STATE_FILE, 0o600); } catch {}
 }
 

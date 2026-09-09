@@ -5,6 +5,8 @@ import path from 'node:path';
 // entrypoints (tests, the MCP server) that don't go through server/index.ts.
 import { HOME } from './platform.js';
 import { ARIGAMI_DIR, DEFAULT_ARIGAMI_DIR, IS_DEFAULT_INSTANCE, PORT_SHIFT } from './instance.js';
+import { migrateFile, stamp, SchemaVersionError } from './schema-version.js';
+import { CONFIG_SCHEMA } from './state-schemas.js';
 export const tilde = (p: string | undefined): string => {
   return p && p.startsWith('~')
     ? path.join(HOME, p.slice(1))
@@ -502,6 +504,19 @@ function envOverrides(): Partial<Config> {
   return o;
 }
 
+// Forward-migrate config.json before the first read (lib/schema-version.ts).
+// A file already at the current version is not touched at all — which is every
+// existing installation, since config.json is at v1. A file from a NEWER build
+// (rollback after an update) throws here: config is imported by everything, so
+// the host stops at boot with the reason printed instead of quietly falling
+// back to defaults and then overwriting the human's settings with them.
+try {
+  migrateFile(path.join(CONFIG_DIR, 'config.json'), CONFIG_SCHEMA);
+} catch (e) {
+  if (e instanceof SchemaVersionError) console.error(`[config] ${e.message}`);
+  throw e;
+}
+
 const merged = deepMerge(
   deepMerge(DEFAULTS, loadFile()),
   envOverrides()
@@ -573,12 +588,22 @@ export function publicUrl(p: string): string {
 // Persist a partial auth config (Settings → Users; `bin/host` CLI). Same
 // merge pattern as updateScreenConfig. Note the live `cfg.auth` object is
 // PATCHED in place (not replaced) because server/auth.ts holds a reference.
+/**
+ * The single write path for config.json. Stamps the schema version (the update*
+ * helpers rebuild the file from loadFile(), which drops every key outside
+ * DEFAULTS — without this the field would be erased on the next settings save
+ * and the migration would re-run on every boot).
+ */
+function writeConfigFile(out: Record<string, unknown>): void {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(stamp(out, CONFIG_SCHEMA), null, 2) + '\n');
+}
+
 export function updateAuthConfig(patch: Partial<AuthConfig>): AuthConfig {
   ensureConfigFile();
   const file = loadFile() as Partial<Config>;
   const next: AuthConfig = { ...cfg.auth, ...patch };
   const out = { ...file, auth: { ...(file.auth || {}), ...patch } } as any;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   Object.assign(cfg.auth, next);
   return cfg.auth;
 }
@@ -587,7 +612,7 @@ export function ensureConfigFile(): void {
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
     if (!fs.existsSync(CONFIG_FILE)) {
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULTS, null, 2) + '\n');
+      writeConfigFile(DEFAULTS as unknown as Record<string, unknown>);
     }
   } catch {}
 }
@@ -602,7 +627,7 @@ export function updateScreenConfig(patch: Partial<ScreenConfig>): ScreenConfig {
   if (!next.vncPassword) delete next.vncPassword;
   const out = { ...file, screen: { ...(file.screen || {}), ...patch } } as any;
   if (!patch.vncPassword && 'vncPassword' in patch) delete out.screen.vncPassword;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   cfg.screen = next;
   return next;
 }
@@ -615,7 +640,7 @@ export function updateBrainConfig(patch: Partial<BrainConfig>): BrainConfig {
   const file = loadFile() as Partial<Config>;
   const next: BrainConfig = { ...cfg.brain, ...patch };
   const out = { ...file, brain: next } as any;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   cfg.brain = next;
   return next;
 }
@@ -629,7 +654,7 @@ export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
   const file = loadFile() as Partial<Config>;
   const next: HostConfig = { ...cfg.host, ...patch };
   const out = { ...file, host: { ...(file.host || {}), ...patch } } as any;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   cfg.host = next;
   return next;
 }
@@ -639,7 +664,7 @@ export function updateTelemetryConfig(patch: Partial<TelemetryConfig>): Telemetr
   const file = loadFile() as Partial<Config>;
   const next: TelemetryConfig = { ...cfg.telemetry, ...patch };
   const out = { ...file, telemetry: { ...(file.telemetry || {}), ...patch } } as any;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   cfg.telemetry = next;
   return next;
 }
@@ -651,7 +676,7 @@ export function updateMemoryLearningConfig(patch: Partial<MemoryLearningConfig>)
   const file = loadFile() as Partial<Config>;
   const next: MemoryLearningConfig = { ...cfg.memory.learning, ...patch };
   const out = { ...file, memory: { ...(file.memory || {}), learning: { ...((file.memory as any)?.learning || {}), ...patch } } } as any;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2) + '\n');
+  writeConfigFile(out);
   cfg.memory = { ...cfg.memory, learning: next };
   return next;
 }

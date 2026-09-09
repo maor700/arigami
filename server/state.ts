@@ -5,6 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { broadcast, emitLocal } from './bus.js';
 import { ladderBadge } from './supervisor.js'; // pure — no cycle
 import { cfg, ensureConfigFile } from './lib/config.js';
+import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
+import { STATE_SCHEMA } from './lib/state-schemas.js';
 import { pickSessionAccount } from './accounts.js';
 import * as funnel from './funnel.js';
 
@@ -309,7 +311,24 @@ const db: {
   folders: Map<string, Folder>;
 } = { colorIndex: 0, sessions: new Map(), listeners: new Map(), folders: new Map() };
 
+// Set when state.json was written by a NEWER Arigami than this build (a
+// rollback after an update — see lib/schema-version.ts rule 4). We refuse to
+// read it AND we never write over it: the whole point of stopping is that the
+// human's sessions are still in that file, intact, for the newer build.
+let refusedTooNew = false;
+
 function load(): void {
+  // Forward-migrate before the first read. A file already at the current
+  // version is not touched; anything older is backed up next to itself first.
+  try {
+    migrateFile(STATE_FILE, STATE_SCHEMA);
+  } catch (e) {
+    if (e instanceof SchemaVersionError) {
+      refusedTooNew = true;
+      console.error(`[state] ${e.message}`);
+    }
+    throw e; // fatal: better to stop than to boot with an empty session list
+  }
   try {
     const j = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as {
       colorIndex?: number;
@@ -353,17 +372,19 @@ function persist(): void {
 export function flushState(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
+  // Never overwrite a state.json we refused to read (see refusedTooNew).
+  if (refusedTooNew) return;
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(
       STATE_FILE,
       JSON.stringify(
-        {
+        stamp({
           colorIndex: db.colorIndex,
           sessions: [...db.sessions.values()],
           listeners: [...db.listeners.values()],
           folders: [...db.folders.values()],
-        },
+        }, STATE_SCHEMA),
         null,
         2
       )
