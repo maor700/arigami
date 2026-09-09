@@ -4,7 +4,33 @@
 // via Baileys' messages.upsert event, so polling here gives near-real-time
 // delivery at a fraction of the cost of a model polling itself.
 
-import { DatabaseSync } from 'node:sqlite';
+// `node:sqlite` is absent from Bun on Windows (verified live: Bun 1.3.6 x64,
+// every import form — static, dynamic and `require`, and `--external` at
+// compile time doesn't help). A *static* import here made this whole module
+// unloadable, which `bun server/index.ts` survives only by luck: index.ts
+// reaches listeners.js through `import().catch()`, so the throw is swallowed
+// and the host boots with the entire listener subsystem silently off. A
+// compiled binary (`bun build --compile`, i.e. the desktop sidecar) resolves
+// the graph eagerly at boot instead and died outright with "No such built-in
+// module: node:sqlite" before ever listening. Resolving it on first use keeps
+// this module loadable everywhere, so listeners work on Windows and only the
+// WhatsApp-specific calls fail — with a message that says why. Same lazy
+// `require(...) as typeof import(...)` idiom as server/lib/chrome-cdp.ts:58.
+import type { DatabaseSync } from 'node:sqlite';
+
+let DatabaseSyncCtor: typeof DatabaseSync | undefined;
+function sqlite(): typeof DatabaseSync {
+  if (!DatabaseSyncCtor) {
+    try {
+      DatabaseSyncCtor = (require('node:sqlite') as typeof import('node:sqlite')).DatabaseSync;
+    } catch {
+      throw new Error(
+        'the WhatsApp listener needs node:sqlite, which this Bun build does not provide (notably Bun on Windows) — WhatsApp is unavailable on this host',
+      );
+    }
+  }
+  return DatabaseSyncCtor;
+}
 import { WA_DB_PATH } from './whatsapp-bridge.js';
 
 export interface WhatsAppWatermark extends Record<string, unknown> {
@@ -43,7 +69,7 @@ export function fetchWhatsappMessages(
 ): { messages: WhatsAppRow[]; error?: string } {
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new (sqlite())(dbPath, { open: true });
 
     const params: string[] = [since];
     let groupFilter: string;
@@ -92,7 +118,7 @@ export function fetchWhatsappMessages(
 // ---- group subscription management (shared via whatsapp.db) -----------------
 
 function openDb(dbPath: string): DatabaseSync {
-  const db = new DatabaseSync(dbPath, { open: true });
+  const db = new (sqlite())(dbPath, { open: true });
   db.exec(`CREATE TABLE IF NOT EXISTS group_subscriptions (
     jid TEXT PRIMARY KEY,
     added_at TEXT DEFAULT (datetime('now'))
@@ -257,7 +283,7 @@ export function resolveContacts(dbPath: string, raws: string[]): ResolvedContact
 function displayNameFor(dbPath: string, jids: string[]): string | null {
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new (sqlite())(dbPath, { open: true });
     for (const j of jids) {
       const c = db.prepare(`SELECT name FROM chats WHERE jid = ? AND name IS NOT NULL AND name != ''`).get(j) as { name: string } | undefined;
       if (c?.name) return c.name;
@@ -284,7 +310,7 @@ function displayNameFor(dbPath: string, jids: string[]): string | null {
 function lookupGroupByName(dbPath: string, term: string): Array<{ jid: string; name: string }> {
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new (sqlite())(dbPath, { open: true });
     return db.prepare(`SELECT jid, name FROM chats WHERE jid LIKE '%@g.us' AND name LIKE ? LIMIT 10`)
       .all(`%${term}%`) as unknown as Array<{ jid: string; name: string }>;
   } catch {
@@ -309,7 +335,7 @@ export interface ContactCandidate {
 export function lookupContactByName(dbPath: string, term: string): ContactCandidate[] {
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new (sqlite())(dbPath, { open: true });
     // Find contacts whose phone-book name matches the term
     const contacts = db.prepare(
       `SELECT jid, name, notify, phone_number FROM contacts
@@ -354,7 +380,7 @@ export function resolveActiveJid(dbPath: string, jid: string): string {
   const phoneNum = jid.replace('@s.whatsapp.net', '');
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new (sqlite())(dbPath, { open: true });
 
     // Look for a LID contact that maps this phone number
     const lidContact = db

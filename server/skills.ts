@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import { cfg } from './state.js';
 import { runClaudeOneShot } from './lib/oneshot.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { linkDir } from './lib/platform.js';
 
 const ROOT = resourceRoot();
 /** Shipped pack (git-tracked). Read-only at runtime. */
@@ -300,7 +301,7 @@ export function ensureUserPlugin(): string {
     try { ok = fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === USER_SKILLS_DIR; } catch {}
     if (!ok) {
       try { fs.rmSync(link, { recursive: true, force: true }); } catch {}
-      fs.symlinkSync(USER_SKILLS_DIR, link, 'dir');
+      linkDir(USER_SKILLS_DIR, link);
     }
   } catch { /* best-effort: sessions still get the shipped pack */ }
   return USER_PLUGIN_DIR;

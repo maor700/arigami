@@ -28,5 +28,10 @@ __pycache__/
 # build output. Neither is source — see desktop/build.sh.
 desktop/src-tauri/resources-staged/
 desktop/src-tauri/target/
+# ...and the alternate target dir used to build installers while a previous
+# build is still running (Windows locks a running .exe), plus the installers
+# themselves once copied out for hand-off.
+desktop/src-tauri/target-installer/
+desktop/dist/
 desktop/src-tauri/icons/
 desktop/src-tauri/gen/

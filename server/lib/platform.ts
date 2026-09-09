@@ -221,6 +221,23 @@ export function ptyArgs(bridge: string, cmd: string[]): string[] {
   return [winpty, '-Xallow-non-tty', '-Xplain', ...cmd];
 }
 
+// --- directory links --------------------------------------------------------
+// `fs.symlinkSync(target, link, 'dir')` needs SeCreateSymbolicLinkPrivilege on
+// Windows — i.e. an elevated process or Developer Mode. An unprivileged host
+// just gets EPERM, which is what the desktop sidecar hit live:
+//   [ext] error: EPERM: operation not permitted, symlink '...user\skills' -> '...skills'
+// leaving $ARIGAMI_DIR/skills and user/skills as two unrelated real directories
+// instead of one pointing at the other. A NTFS *junction* is the same thing for
+// directories, needs no privilege at all, and Node reports it as a symlink
+// (`lstat().isSymbolicLink()` is true, `readlinkSync()` resolves it), so every
+// existing isSymlink()/readlink() check keeps working unchanged.
+//
+// Junctions only support absolute local directory targets — which is all any
+// caller here uses — so `target` is resolved to an absolute path first.
+export function linkDir(target: string, link: string): void {
+  fs.symlinkSync(path.resolve(target), link, isWin ? 'junction' : 'dir');
+}
+
 // --- process liveness -------------------------------------------------------
 /** True when `pid` exists. Used instead of `kill -0` plumbing. */
 export function pidAlive(pid: number): boolean {

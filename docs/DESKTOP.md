@@ -168,12 +168,17 @@ children.ts/extensions.ts change.
 
 ## Tauri desktop shell (`desktop/`)
 
-Status: **built and run for real, on Linux — macOS itself still isn't
-built**. Tauri cannot cross-compile Linux→macOS at all (needs Apple's SDK and
-linker), so a macOS `.app` has never come out of this box and can't. But
-after the human explicitly asked for at least a Linux build, Rust *was*
-installed here (rustup + the Linux system deps: webkit2gtk-4.1, libgtk-3,
-libayatana-appindicator3, librsvg2, all -dev packages) and the full
+Status: **built and run for real on Linux and on Windows 11 — macOS itself
+still isn't built**. Tauri cannot cross-compile to macOS at all (needs Apple's
+SDK and linker), so a macOS `.app` has never come out of this box and can't.
+The Windows pass (MSI + NSIS installers, GUI driven live) is written up in
+"What was proven (Windows 11)" below, including the three Windows-only bugs it
+turned up.
+
+On the Linux side: after the human explicitly asked for at least a Linux
+build, Rust *was* installed here (rustup + the Linux system deps:
+webkit2gtk-4.1, libgtk-3, libayatana-appindicator3, librsvg2, all -dev
+packages) and the full
 `cargo tauri build` pipeline was run for real — see "What was proven" below.
 Everything in `main.rs` compiled clean on the **first** attempt against the
 real Tauri 2.11 API (every call this doc used to flag as "unverified from
@@ -198,15 +203,19 @@ macOS-specific list.
   `tauri.conf.json`'s `bundle.resources` map ships and `main.rs` reads back
   via `resource_dir()`. It calls the two tools this doc already describes
   (`bun run build:web`, `bun build --compile`, `bun scripts/bundle-resources.ts`)
-  — nothing new, just aimed at a different output directory. macOS only,
-  matching the audience of this doc.
+  — nothing new, just aimed at a different output directory. Runs unmodified
+  on macOS, Linux and Windows (Git Bash): `bun build --compile` targets the
+  host, so on Windows it stages `arigami-server.exe`, which is exactly the
+  name `resolve_server_binary()` looks for there.
 
-### Five decisions (do not change these without re-reading the "why")
+### Seven decisions (do not change these without re-reading the "why")
 
-1. **The window loads `http://127.0.0.1:3099/__host/` via an ordinary
-   external URL, not a bundled `frontendDist` app.** `web/src/lib/hostUrl.js`
-   builds every iframe/tab `src` from `window.location.origin`, and the auth
-   cookie is `SameSite=Lax`. If the window's origin were anything other than
+1. **The window loads `http://127.0.0.1:<port>/__host/` via an ordinary
+   external URL, not a bundled `frontendDist` app.** (The port is
+   `arigami_port()` — 4099 by default, see decision #5.)
+   `web/src/lib/hostUrl.js` builds every iframe/tab `src` from
+   `window.location.origin`, and the auth cookie is `SameSite=Lax`. If the
+   window's origin were anything other than
    the real host origin (a `tauri://` or custom-scheme origin, as a bundled
    SPA would get), every tab would become a cross-site iframe from the
    cookie's point of view and silently 401.
@@ -231,7 +240,108 @@ macOS-specific list.
    answers does `main.rs` call `WebviewWindow::navigate()` to the real URL.
    Without this, the very first paint would be the engine's own connection-
    refused error page.
-5. **`ARIGAMI_ROOT` isn't set — the binary finds its resources by
+5. **The app is its own INSTANCE: its own `ARIGAMI_DIR` and its own port.**
+   It originally hardcoded :3099 and inherited `~/.arigami`, i.e. the same
+   identity as any `bin/host` the user runs — which `hostlock.ts` correctly
+   refuses, so the app simply could not start on a machine where the host was
+   already running. That is not fixable by changing the port alone:
+   `judgeHostInfo()` *does* let a differing port through, but then warns
+   "two hosts sharing one dir share state.json/chat and is unsupported".
+   Sharing state is the hazard; the port is only how it surfaced.
+
+   So the sidecar is spawned with `ARIGAMI_DIR=<home>/.arigami-desktop` and
+   `ARIGAMI_PORT=4099`. That pairing is not invented here — it is the
+   convention the rest of the system already follows: `server/lib/config.ts`
+   says a non-default `ARIGAMI_DIR` "also shifts every default port range
+   (+1000) so a second instance started with no config at all doesn't fight
+   the first one for ports", and `bin/host` encodes the same rule
+   (`[ "$DIR" != "$HOME/.arigami" ] && PORT=4099`). Both are overridable via
+   the `ARIGAMI_DIR` / `ARIGAMI_PORT` env vars.
+
+   **The consequence is a product decision, not just a technical one:** the
+   desktop app is a *second, independent* Arigami. It has its own sessions,
+   its own memory, its own pairing code — the cockpit you use in a browser on
+   :3099 is not the one in this window. If what you want instead is one
+   Arigami reachable from both, the app should *attach* to a running host
+   rather than spawn a sidecar (skip the spawn, skip the supervisor, and do
+   NOT terminate on quit a host it did not start). That alternative is not
+   implemented.
+
+   Deliberately **not** auto-probing for a free port: launching the app twice
+   would then start a second host sharing `~/.arigami-desktop` on some other
+   port — exactly the unsupported shared-state case above. A fixed port tied
+   to a fixed dir makes the second launch refuse, which is correct.
+
+   That refusal has to be detected BEFORE the first spawn, and
+   `run_supervisor()` now does exactly that: if `config_endpoint_ready()`
+   answers before we have started anything, the port is not ours and the app
+   says so and quits. Skipping this shipped a bug — `wait_for_ready()` only
+   asks "does the port answer", so a second copy would watch hostlock.ts
+   refuse its own sidecar, see the FIRST copy's host answering, mint a handoff
+   token with its own per-run secret, send it to a host holding a different
+   secret, and land the user on **"Sign-in failed"**. (The earlier auth-off
+   build hid the same collision by silently showing the other instance's
+   cockpit.) Verified live: with a real app on :4099, a second copy shows the
+   port-taken dialog in ~0.1s and spawns nothing at all.
+
+   *Verified live on Windows:* with a real `bin/host` serving :3099, the app
+   booted its own sidecar on :4099 against `~/.arigami-desktop`, showed its
+   own first-run pairing screen, and left the :3099 host untouched.
+
+6. **No pairing code on this machine — without disarming auth for everyone.**
+   Pairing exists to stop a stranger on the network reaching the host, and
+   docs/AUTH.md states the premise: "possession of the code == possession of
+   the host's filesystem". Whoever double-clicked the app already has the
+   filesystem, so the code proves nothing *here*. It is also physically
+   unreachable — it is printed next to the listen line and written to
+   `run/pairing-code`, and an installed `.exe`/`.msi` gives the user no
+   terminal. Pairing was a dead end at the first screen. That was a real bug
+   report, not a hypothetical.
+
+   **`ARIGAMI_AUTH=off` was tried first and is the WRONG trade.** The gate has
+   no notion of a request's origin — `auth.ts`'s `principal()` returns
+   `{kind:'off'}` for *every* request — so it admits any second device that can
+   reach the port too. The loopback bind is not the protection it appears to
+   be: the supported way to reach a host remotely is `tailscale serve`, which
+   forwards **to** loopback, so `validateAuthBind()` still passes while the
+   whole tailnet gets in unauthenticated. `server/index.ts:382` warns exactly
+   this, and AUTH.md §4 says it in as many words. The user's own question
+   ("and on a second device I *do* get the pairing screen?") is what surfaced
+   it; the answer under auth-off was no, in the worst way.
+
+   **What it does instead:** auth stays at its default (`pairing`), and only
+   this window is let in — via `server/handoff.ts`, which already exists for
+   the same problem in a different shape ("the code it would ask for lives
+   inside a pod the user cannot open a shell on"). `main.rs` generates a random
+   32-byte secret per app run, passes it to the sidecar as
+   `ARIGAMI_HANDOFF_SECRET`, mints a token in that module's exact wire format —
+   `base64url(JSON) + "." + base64url(HMAC-SHA256(secret, payloadB64))`, no-pad
+   base64url to match Node's — and navigates the window to
+   `/__api/auth/handoff?t=…` instead of `/__host/`. That endpoint sets the
+   session cookie and 302s to the cockpit.
+
+   The security properties are handoff.ts's, not ones invented here: the token
+   is single-use (`jti`, persisted so a restart cannot re-open a spent one),
+   the verifier caps its life at 10 minutes regardless of what the minter asked
+   for, and the whole mechanism is inert without the secret. The secret never
+   touches disk — the only two parties that need it are the app and the child
+   it spawned — and if the OS gives us no randomness we set nothing and the
+   user gets the ordinary pairing screen rather than a weak key.
+
+   Note this makes `main.rs` a **third implementation** of that wire format,
+   alongside `server/handoff.ts` and `control-plane/src/handoff.ts`, which
+   `test/handoff-contract.test.ts` cross-checks against each other. The Rust
+   minter is not in that test; it was validated end-to-end instead (below), so
+   a format drift would break the desktop sign-in without failing that suite.
+
+   *Verified live on Windows*, against a wiped `~/.arigami-desktop`:
+   `authMode` stayed `pairing`; `/__api/auth/me` with no cookie returned
+   **401**, i.e. a second device still gets the pairing screen (code present in
+   `run/pairing-code`); and the app window nonetheless landed **inside the
+   cockpit** with no typing — `users.json` gained `<user>@desktop.local` as
+   admin and `handoff-used.json` recorded the token as spent.
+
+7. **`ARIGAMI_ROOT` isn't set — the binary finds its resources by
    position.** `server/lib/resource-root.ts`'s compiled-binary branch expects
    `resources/` next to `process.execPath`. `desktop/build.sh` stages
    `arigami-server` and `resources/` as siblings under
@@ -240,6 +350,15 @@ macOS-specific list.
    `resourceRoot()` wants with zero extra plumbing.
 
 ### Build steps (macOS)
+
+Windows is the same three commands with different prerequisites — install Rust
+via [rustup](https://rustup.rs) (the `x86_64-pc-windows-msvc` default host,
+which needs the **VS Build Tools** C++ workload plus a Windows SDK) and run
+`bash desktop/build.sh` from Git Bash; `cargo tauri build` then writes an MSI
+to `target/release/bundle/msi/` and an NSIS installer to
+`target/release/bundle/nsis/`. The `cargo tauri icon` step below is **not
+optional there**: `icons/` is gitignored, and a Windows bundle cannot be built
+without the `icon.ico` it generates.
 
 ```sh
 # once, if you don't already have them:
@@ -261,17 +380,33 @@ cd desktop/src-tauri && cargo tauri dev
 cd desktop/src-tauri && cargo tauri build
 ```
 
-First run: the pairing code (needed once, in the cockpit's login screen) is
-**not** printed to a visible terminal — the sidecar's stdout/stderr are
-redirected to a log file via `app.path().app_log_dir()`. Verified live on
-Linux this lands at `~/.local/share/io.arigami.desktop/logs/arigami-server.log`
-(keyed by the bundle *identifier*, not "Arigami") — macOS's exact path is
-unverified, so don't take "~/Library/Logs/Arigami/" on faith; `find ~/Library/Logs
--iname arigami-server.log` if it's not where you expect. Easier either way:
-the same code is also written to `~/.arigami/run/pairing-code` (the file
-`bin/host pair` reads/writes) — `cat ~/.arigami/run/pairing-code`.
+First run: **you are not asked for a pairing code** — the window signs itself
+in with a handoff token (decision #6) and opens straight on the cockpit. Auth
+itself stays on, so a second device still gets the pairing screen; its code is
+in `$ARIGAMI_DIR/run/pairing-code` as always. This paragraph used to explain
+where to dig that code out of, and that advice was the bug: it assumed whoever
+runs the app can reach a terminal or a `cat`, which is false for anyone who
+installed from the `.exe`/`.msi`.
+
+The sidecar's stdout/stderr still go to a log file via
+`app.path().app_log_dir()` — that is the place to look when it will not start.
+Verified live: `~/.local/share/io.arigami.desktop/logs/arigami-server.log` on
+Linux and `%LOCALAPPDATA%\io.arigami.desktop\logs\arigami-server.log` on
+Windows (both keyed by the bundle *identifier*, not "Arigami"). macOS's exact
+path is still unverified, so don't take "~/Library/Logs/Arigami/" on faith;
+`find ~/Library/Logs -iname arigami-server.log` if it isn't where you expect.
 
 ### What was proven (Linux, full Tauri build+run, done live in this session)
+
+> **Stale in parts — read with decisions #5 and #6 in mind.** This section
+> records a Linux run made *before* the app became its own instance (own
+> `ARIGAMI_DIR` + :4099) and before handoff sign-in replaced the pairing
+> screen. The compile/bundle/respawn/signal findings below still hold; the
+> specific observations about landing on the **Sign-in screen**, about the
+> window using **:3099**, and about the code appearing in
+> `~/.arigami/run/pairing-code` describe behaviour that no longer exists.
+> Nobody has re-run Linux since those two decisions — that is the honest
+> state, not a claim that it broke.
 
 `cargo tauri build` succeeded outright on the first try — `.deb`, `.rpm`, and
 an `.AppImage`, all produced, zero compile errors against Tauri 2.11.5. That
@@ -301,6 +436,8 @@ left lying around). What ran clean, end to end, screenshotted for evidence:
   fully styled, logo and all. This is decisions #1 and #4 working exactly as
   designed, not just compiling.
 - The pairing code appeared in `~/.arigami/run/pairing-code` as expected.
+  *(Superseded: see decisions #5 and #6 — the app now uses its own dir and
+  signs the local window in without a code.)*
 - Killing the sidecar's pid directly (simulating a crash) made
   `run_supervisor()` respawn it with a new pid automatically and the port
   came back — decision #3's respawn contract, live.
@@ -340,6 +477,114 @@ property of this *sandbox*, not the code — macOS's tray (`NSStatusItem`) has
 no D-Bus dependency at all, so this specific gap is expected to not apply
 there, but that itself is unverified since no macOS build exists.
 
+### What was proven (Windows 11, full build+run, done live)
+
+**The Windows target is now built and run — installers produced, GUI verified.**
+`desktop/build.sh` needed no changes; `cargo tauri build` produced both an MSI
+and an NSIS installer, and the app was launched and driven for real. Toolchain
+used: Rust 1.93 (`x86_64-pc-windows-msvc`), VS 2022 Build Tools + Windows SDK
+10.0.22621, Bun 1.3.6, `cargo-tauri` ^2 (Tauri 2.11.5). `main.rs` compiled
+clean with **zero changes** — it was already correctly Windows-aware
+(`arigami-server.exe`, the `taskkill` quit path).
+
+Two prerequisites are easy to miss on a fresh clone:
+
+- `desktop/src-tauri/icons/` is **gitignored**, so it does not exist after a
+  clone, and `tauri.conf.json`'s `bundle.icon` list references it — including
+  `icon.ico`, which is mandatory for a Windows bundle. Run
+  `cargo tauri icon ../../web/public/icon-512.png` once, as the macOS steps
+  above already say.
+- `cargo install tauri-cli --locked --version "^2.0"`.
+
+**Two real bugs blocked the Windows build; both were fixed and re-verified.**
+Neither is reachable by reading the code:
+
+1. **`node:sqlite` does not exist in Bun on Windows** (1.3.6 x64 — verified in
+   every form: static import, dynamic import, `require`, and `--external` at
+   compile time doesn't help either). `server/listeners-whatsapp.ts` imported
+   `DatabaseSync` from it *statically*, which made that whole module — and so
+   `server/listeners.ts` — unloadable. Plain `bun server/index.ts` survives
+   this only by accident: `index.ts` reaches `listeners.js` through
+   `import().catch()`, so the throw is swallowed and **the host boots on
+   Windows with the entire listener subsystem silently disabled**. A compiled
+   binary resolves its graph eagerly and died at boot instead, before ever
+   listening: `error: No such built-in module: node:sqlite`. Fixed by
+   resolving `node:sqlite` on first use behind a `try`/`catch` (the same lazy
+   `require(...) as typeof import(...)` idiom as `server/lib/chrome-cdp.ts:58`),
+   so the module always loads, listeners work on Windows, and only the
+   WhatsApp-specific calls fail — with a message that says why.
+2. **`isCompiledBinary()`'s virtual-filesystem marker is platform-specific.**
+   It tested for `/$bunfs/`, which is the Linux/macOS spelling. On Windows a
+   compiled Bun binary reports
+   `import.meta.url = file:///B:/%7EBUN/root/<binary>` (and
+   `import.meta.path = B:\~BUN
+oot\<binary>`), so detection returned false,
+   `resourceRoot()` took the repo-checkout fallback, and the sidecar resolved
+   its root to a path *inside* the virtual filesystem. The symptom was not a
+   crash: it served the "UI not built yet" placeholder at version `0.0.0`,
+   with `/__ext-sdk.js` 404. `server/lib/resource-root.ts` now matches both
+   markers.
+
+A third Windows-only defect turned up from running the shipped sidecar, fixed
+the same way:
+
+3. **Directory symlinks need privilege on Windows.**
+   `fs.symlinkSync(target, link, 'dir')` requires
+   `SeCreateSymbolicLinkPrivilege` — an elevated process or Developer Mode —
+   so an ordinary run got
+   `EPERM: operation not permitted, symlink '...user\skills' -> '...skills'`
+   and left `$ARIGAMI_DIR/skills` and `user/skills` as two unrelated real
+   directories. All five call sites (`server/extensions.ts` ×4,
+   `server/skills.ts` ×1) now go through `linkDir()` in
+   `server/lib/platform.ts`, which uses an NTFS **junction** on Windows: same
+   semantics for directories, no privilege needed, and Node still reports it
+   as a symlink (`lstat().isSymbolicLink()` true, `readlinkSync()` resolves),
+   so every existing `isSymlink()`/readlink check keeps working untouched —
+   verified directly. This took `test/extensions.test.ts` on Windows from
+   4 failures to 2; the 2 that remain are Windows artifacts in the test
+   fixtures themselves (one asserts POSIX mode `0600`, which reports `666`;
+   the other compares a `path.join()` result against a hardcoded
+   `user/skills/...` forward-slash string).
+
+**What ran clean, end to end** — isolated `ARIGAMI_DIR`, and for the GUI a
+temporary non-3099 port patched into the `ARIGAMI_PORT` const for the duration
+of the test only (reverted, `main.rs` byte-identical to HEAD afterwards; grep
+`const ARIGAMI_PORT` before trusting any build artifact left lying around):
+
+- `cargo tauri build` → `Arigami_0.1.0_x64_en-US.msi` (44.5 MB) and
+  `Arigami_0.1.0_x64-setup.exe` (29.7 MB), plus a 9.3 MB unbundled shell.
+- The MSI payload was extracted with `msiexec /a` (an administrative install —
+  it unpacks without registering anything) and the layout is intact:
+  `Arigami/arigami-desktop.exe` beside
+  `Arigami/resources-staged/{arigami-server.exe, resources/}`. This is the
+  Windows counterpart of the `dpkg -c` check above, and it confirms the same
+  thing: `bundle.resources`' object-map form ships the tree unflattened.
+- **The sidecar shipped inside the MSI**, run from that installed layout,
+  served `/__health` `{"ok":true,...}`, `/__api/config` at version `0.1.0`
+  (from the bundled `VERSION`, i.e. bug 2 really is fixed), the real cockpit
+  HTML from the bundled `web/dist`, and `/__ext-sdk.js` 200.
+- The `--mcp` re-exec dispatch works on Windows: `--mcp host` starts and stays
+  alive on stdio, `--mcp policy` exits immediately per its own guard.
+- **The GUI**: the window opened titled "Arigami" with the app icon, the
+  splash's Rust-side poll detected the sidecar, and `navigate()` swapped the
+  window to the real origin — landing on the actual cockpit **sign-in** screen,
+  fully styled, logo and Hebrew RTL correct. Decisions #1 and #4, live on
+  Windows.
+- **Decision #3's respawn**: killing the sidecar's pid directly made
+  `run_supervisor()` respawn it with a new pid and the port came back, with the
+  app still alive.
+- **The window's close button — fired live for the first time on any
+  platform.** `WindowEvent::CloseRequested` hides rather than quits: after a
+  `WM_CLOSE`, `IsWindowVisible` went false while the app process, the sidecar
+  and the port all stayed up. (The Linux run explicitly could not test this.)
+
+Still not exercised on Windows: the **tray menu** (same as Linux — the
+`on_menu_event` → `confirm_and_quit` → dialog → `quit_now` path, and the
+dialog plugin's `.blocking_show()` return value, are still assumptions), and
+`wait_for_ready()`'s 45s-timeout branch with its `show_fatal_and_quit()`
+dialog. And see the orphan finding in the next section — hard-killing the app
+does leave the sidecar behind.
+
 ### What's still unverified — narrower now, but read before debugging
 
 - **macOS itself was never built.** Every "proven" item above ran on Linux.
@@ -363,24 +608,58 @@ there, but that itself is unverified since no macOS build exists.
   moves to Developer ID signing + notarization for distribution, an
   unsigned Mach-O binary sitting inside `Resources/` may need its own
   `codesign` pass (or `--deep`) — not looked into here.
-- **Windows quit is a known, deliberate gap, not an oversight.** `terminate()`
-  falls back to `taskkill /PID <pid> /T /F` on Windows — a hard kill, not a
-  graceful signal `server/index.ts` has a handler for. Nobody is building or
-  running the Windows target today (not even the Linux validation above
-  touched it), so this trades "graceful" for "definitely no orphaned
-  process" and says so plainly rather than pretending it's solved.
-- **No crash-loop protection.** If the sidecar keeps failing after the first
-  successful boot, `run_supervisor()` will keep respawning it every 500ms,
-  forever. No backoff, no giving up. (The respawn-on-crash *mechanism itself*
-  is proven above — this flags the missing backoff on top of it, not the
-  respawn.)
-- **Port 3099 is hardcoded, with no collision handling.** If something else
-  on the Mac is already bound to it (e.g. a manual `bin/host start` from a
-  git checkout, run at the same time), the sidecar's own `hostlock.ts` will
-  refuse to bind, the splash will poll for 45s, then show a generic "didn't
-  answer in time" dialog — there's no detection or message specific to that
-  case. Every live test in this session used a free test port and a server
-  that came up in well under a second, so `wait_for_ready()`'s 45s-timeout
-  branch and `show_fatal_and_quit()`'s dialog were never actually exercised
-  — only the happy path was. That branch is still exactly as unverified as
-  the rest of the dialog plugin (see above).
+- **Windows quit is a real gap, now measured.** `terminate()` falls back to
+  `taskkill /PID <pid> /T /F` on Windows — a hard kill, not a graceful signal
+  `server/index.ts` has a handler for. That trade ("graceful" for "no orphan")
+  holds only when the shell itself gets to run its cleanup. It doesn't when
+  the shell is killed outright: **live-tested on Windows, `Stop-Process -Force`
+  on the app's own pid (what Task Manager's "End task" does) leaves
+  `arigami-server.exe` orphaned, still bound to the port with no parent** —
+  the identical failure the Linux run hit and fixed with `ctrlc`'s
+  `termination` feature. That fix cannot cover this case on Windows: the app
+  is `windows_subsystem = "windows"` so it has no console to receive control
+  events, and `TerminateProcess` is unhandleable by design. The fix that would
+  work is a **Job Object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — the
+  kernel then kills the sidecar when the shell's handle closes, however the
+  shell died. `server/lib/children.ts`'s `initJob()` already does exactly this
+  for session children via `bun:ffi`, so the pattern is established in this
+  codebase; it just isn't applied in `main.rs`. Not implemented.
+- **Port 3099 is still hardcoded** — that part has not changed. What *is*
+  handled now is the collision it causes. This was not a hypothetical: a user
+  launched the Windows build while a `bin/host` already owned :3099 and got a
+  **new console window twice a second, without end**. Two defects combined,
+  and both are fixed:
+  1. `spawn_server()` SUCCEEDS in this scenario — the process starts fine and
+     the failure happens *inside* the sidecar, when `hostlock.ts` refuses to
+     bind. So the `Err(e)` arm never ran; `child.wait()` returned immediately
+     and the loop went straight round again, 500ms later, forever.
+     `run_supervisor()` now counts consecutive exits faster than
+     `HEALTHY_RUN` (10s) and gives up after `MAX_FAST_EXITS` (5), setting
+     `quitting` *before* it shows the dialog — `show_fatal_and_quit()` hands
+     the dialog to the main thread and returns immediately, so without that
+     store the loop would take another lap underneath it. A run that lasts
+     10s or more resets the counter, so ordinary restart/upgrade cycles are
+     untouched.
+  2. Rust's `Command` on Windows gives a console-subsystem child **its own
+     console window**, and `arigami-server.exe` is one (that is what
+     `bun build --compile` emits). The sidecar spawn now sets
+     `CREATE_NO_WINDOW`. Linux never showed this — there is no console to
+     pop — so it could only surface once a human ran the Windows build.
+
+  `crash_loop_message()` also distinguishes the two causes rather than
+  guessing: if the port answers while our own child keeps dying, something
+  else owns it, and the dialog says so by name ("a bin/host checkout, a
+  Docker container, or a second copy of this app") instead of the generic
+  "didn't answer in time".
+
+  **Verified live on Windows** against a real `bin/host` holding :3099:
+  exactly 5 spawn attempts in the log and then silence, zero new `conhost`
+  or `cmd` processes (15/5 before, 15/5 after), the dialog captured on
+  screen naming port 3099 and the log path, and the app exiting on its own
+  with no orphaned sidecar. Note one accident of this path: because
+  `wait_for_ready()` polls the *port* and the port is answering — someone
+  else's host — the window navigates to that host's cockpit before the guard
+  fires. Harmless, arguably even useful, but it is not deliberate.
+
+  Still unexercised: `wait_for_ready()`'s 45s-timeout branch (the guard now
+  fires first in the collision case, which was the realistic way to reach it).
