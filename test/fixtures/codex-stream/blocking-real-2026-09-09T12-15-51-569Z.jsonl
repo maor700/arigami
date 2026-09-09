@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a08618-912c-7201-9252-a1d1ac2d3b77"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll invoke the requested host screen prompt and return its result exactly as received, including any timing information."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"request_screen","arguments":{"prompt":"CODEX-POC blocking-timeout probe B (real) — the owner, please click Done","reason":"other","hint":"Automated POC test — just click Done on the card, no action needed on the machine"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The handoff is active and waiting for the card’s Done action."}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"request_screen","arguments":{"prompt":"CODEX-POC blocking-timeout probe B (real) — the owner, please click Done","reason":"other","hint":"Automated POC test — just click Done on the card, no action needed on the machine"},"result":{"content":[{"type":"text","text":"{\"ok\":true,\"takenOver\":false,\"note\":\"cancelled by user\"}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"{\"tool_return\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"ok\\\":true,\\\"takenOver\\\":false,\\\"note\\\":\\\"cancelled by user\\\"}\"}]},\"elapsed_ms\":38351}"}}
+{"type":"turn.completed","usage":{"input_tokens":87581,"cached_input_tokens":67584,"cache_write_input_tokens":0,"output_tokens":450,"reasoning_output_tokens":182}}

@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a08617-ba0c-78e3-b690-fee632a4f753"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll issue that host request exactly as specified and return its raw result verbatim."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"request_screen","arguments":{"prompt":"CODEX-POC blocking-timeout probe A (short) — please ignore, do not click","reason":"other","hint":"automated test, will self-resolve"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"request_screen","arguments":{"prompt":"CODEX-POC blocking-timeout probe A (short) — please ignore, do not click","reason":"other","hint":"automated test, will self-resolve"},"result":null,"error":{"message":"tool call error: tool call failed for `arigami/request_screen`\n\nCaused by:\n    timed out awaiting tools/call after 15s"},"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"content\":[{\"type\":\"text\",\"text\":\"tool call error: tool call failed for `arigami/request_screen`\\n\\nCaused by:\\n    timed out awaiting tools/call after 15s\"}],\"isError\":true}"}}
+{"type":"turn.completed","usage":{"input_tokens":62903,"cached_input_tokens":43264,"cache_write_input_tokens":0,"output_tokens":251,"reasoning_output_tokens":62}}
