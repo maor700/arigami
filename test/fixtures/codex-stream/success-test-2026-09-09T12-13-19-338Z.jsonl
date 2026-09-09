@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"01a08616-3f7d-71c2-9a85-de4b285dd45a"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll set the requested status, then publish that exact artifact path and report the returned identifier."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"set_status","arguments":{"status":"CODEX-POC-OK-a1b2c3"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"arigami","tool":"set_status","arguments":{"status":"CODEX-POC-OK-a1b2c3"},"result":{"content":[{"type":"text","text":"{\"ok\":true}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"arigami","tool":"publish_artifact","arguments":{"path":"/tmp/codex-poc-scratch/hello.html","title":"Codex POC artifact","open":false},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"arigami","tool":"publish_artifact","arguments":{"path":"/tmp/codex-poc-scratch/hello.html","title":"Codex POC artifact","open":false},"result":{"content":[{"type":"text","text":"{\"artifact_id\":\"e7xgUUJ2b38\",\"path\":\"/__artifacts/e7xgUUJ2b38/\",\"version\":1,\"bytes\":125,\"files\":1,\"warnings\":[],\"share_url\":null,\"share_exp\":null}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"Published artifact `e7xgUUJ2b38`.\n\nPath: `/__artifacts/e7xgUUJ2b38/`"}}
+{"type":"turn.completed","usage":{"input_tokens":113904,"cached_input_tokens":96000,"cache_write_input_tokens":0,"output_tokens":298,"reasoning_output_tokens":52}}
