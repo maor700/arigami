@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
@@ -120,6 +120,7 @@ function PermissionModal({ session, onClose }) {
   const t = useT();
   const current = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null); // mode awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
 
@@ -143,7 +144,7 @@ function PermissionModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchModeWarnBefore')}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
+        {t('rail.switchModeWarnBefore', { engine })}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -169,7 +170,7 @@ function PermissionModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.permissionMode')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
       options={PERMISSION_OPTIONS}
       value={current}
       onSelect={pick}
@@ -185,12 +186,14 @@ function ModelModal({ session, onClose }) {
   const t = useT();
   const current = session.claude?.modelChoice || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null); // model awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
   // A running session's list follows ITS engine, not the cockpit's default:
   // a Codex session must never be offered a Claude alias (see lib/engines.js).
   const { models: claudeModels, loading, cliUpdate } = useModels();
   const options = modelOptionsFor(session.engine, claudeModels);
+  const isClaude = normalizeEngine(session.engine) === 'claude';
   const modelLabel = Object.fromEntries(options.map((o) => [o.value, o.label]));
 
   const apply = async (model) => {
@@ -213,7 +216,7 @@ function ModelModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchModelWarnBefore')}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
+        {t('rail.switchModelWarnBefore', { engine })}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -239,13 +242,19 @@ function ModelModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.model')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
       options={options}
       value={current}
       onSelect={pick}
       onClose={onClose}
       footer={confirmFooter}
+      // Both of these are about the `claude` CLI specifically: "refresh" re-runs
+      // its model handshake, and the update chip points at ITS installed
+      // version. Codex's list is static (lib/engines.js) and its CLI is
+      // updated elsewhere — showing either on a Codex session would offer a
+      // button that does nothing and a version that isn't the one running.
       headerExtra={
+        isClaude && (
         <span className="flex shrink-0 items-center gap-1.5">
           {cliUpdate?.updateAvailable && (
             // UPD1: a newer `claude` CLI (= a newer model list) is waiting — one
@@ -270,6 +279,7 @@ function ModelModal({ session, onClose }) {
             {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
           </button>
         </span>
+        )
       }
     />
   );
@@ -284,6 +294,7 @@ function EffortModal({ session, onClose }) {
   const options = effortOptionsFor(session.engine, session.claude?.modelChoice);
   const current = session.claude?.effort || 'default';
   const working = session.claude?.state === 'working';
+  const engine = engineLabel(session.engine); // "X is working" names THIS session's engine
   const [pending, setPending] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -306,7 +317,7 @@ function EffortModal({ session, onClose }) {
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
       <div className="text-[12.5px] text-[#4a3f12]">
-        {t('rail.switchEffortWarnBefore')}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
+        {t('rail.switchEffortWarnBefore', { engine })}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
         <button
@@ -332,7 +343,7 @@ function EffortModal({ session, onClose }) {
   return (
     <OptionsModal
       title={t('rail.effort')}
-      subtitle={working ? t('rail.claudeWorkingSwitch') : t('rail.appliesToTerminal')}
+      subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
       options={options}
       value={current}
       onSelect={pick}

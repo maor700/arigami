@@ -108,7 +108,12 @@ const STARTUP_TIMEOUT_SEC = 20;
 // from a session's modelChoice would look like it worked. Only pass through
 // names that plausibly belong to codex.
 const CODEX_MODEL_RE = /^(?:gpt|codex|o[0-9])[a-zA-Z0-9._-]*$/;
-const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+// Must stay a SUPERSET of every rung the cockpit's picker can offer
+// (web/src/lib/engines.js CODEX_MODELS[].efforts) — an effort that reaches
+// here and is not in this set is dropped, and the turn then runs at the
+// model's own default while the UI still shows the rung the human picked.
+// `ultra` is gpt-5.6-terra's top rung; claude has no equivalent.
+const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 
 // ---- TOML -----------------------------------------------------------------
 
@@ -361,6 +366,7 @@ function codexModelArgs({ model, effort }: { model?: string | null; effort?: str
   if (model && CODEX_MODEL_RE.test(model)) out.push('-m', model);
   else if (model) console.warn(`[codex] ignoring model "${model}" — not a codex model name`);
   if (effort && EFFORTS.has(effort)) out.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`);
+  else if (effort && effort !== 'default') console.warn(`[codex] ignoring effort "${effort}" — not a codex reasoning level`);
   return out;
 }
 

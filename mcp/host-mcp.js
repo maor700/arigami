@@ -195,7 +195,8 @@ const TOOLS = [
   {
     name: 'cronjob',
     description:
-      'Schedule a durable, host-owned job (survives restart — unlike Claude Code\'s own CronCreate, which is ' +
+      'Schedule a durable, host-owned job (survives restart — unlike a scheduler built into the agent CLI itself ' +
+      '(Claude Code\'s CronCreate), which is ' +
       'session-local and lost on close). action "create": schedule_kind "cron" (5-field expr, e.g. "0 9 * * 1-5"), ' +
       '"interval" (e.g. "30m"/"2h"/"1d", repeats from the last run), or "at" (ISO timestamp, fires once). ' +
       'session_mode "isolated" (default) spawns a fresh session per run with `prompt` as its first message + the host\'s ' +
@@ -851,7 +852,7 @@ const TOOLS = [
   {
     name: 'memory_write',
     description:
-      "Write to Arigami's own long-term memory (owned by the host, shared by EVERY session/worker on this instance — not Claude Code's per-project auto-memory, and not scoped to your cwd/worktree). " +
+      "Write to Arigami's own long-term memory (owned by the host, shared by EVERY session/worker on this instance — not your agent CLI's per-project auto-memory, and not scoped to your cwd/worktree). " +
       'target "user" = facts about the human (preferences, people, ~600 token cap), "memory" = standing facts/decisions/context (~900 token cap), "journal" = append-only log of what happened today (no cap, action must be "add"). ' +
       'action "add" appends a new bullet (silently deduped if an equivalent line already exists); "replace" needs old_text (the existing line to match) + content (its replacement); "remove" needs old_text (or content) to delete a line — "user"/"memory" only, not journal. ' +
       'Refused if the content looks like a credential/secret or a prompt-injection/exfiltration attempt, or would exceed the target\'s token cap — trim or replace an existing line first. Every write is logged (before/after) and undoable from the host UI/API.',

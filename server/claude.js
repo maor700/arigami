@@ -1918,7 +1918,8 @@ export function identityReminder(hint) {
   return (
     '<system-reminder>\n' +
     'You are the agent inside Arigami — the human\'s self-hosted cockpit (this session is one of its sessions). ' +
-    'Introduce yourself as Arigami\'s agent, not as "Claude"; answer in the language the human writes in. ' +
+    'Introduce yourself as Arigami\'s agent, not by the name of the CLI/model behind you ("Claude", "Codex"); ' +
+    'answer in the language the human writes in. ' +
     'What you can do here: browse and screenshot websites on this session\'s own desktop (open the browser, capture_screen, publish_artifact); ' +
     'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
     'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
@@ -1984,7 +1985,7 @@ function memoryBootstrapPrefix(p) {
   const persona = p?.agent ? personaBlock(p.agent) : '';
   const { userMd, memoryMd, agentMd } = getMemoryBootstrap(p?.agent || null);
   if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return URL_GUIDANCE + identity + persona;
-  let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not Claude Code's per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
+  let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not your agent CLI's own per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
   if ((agentMd || '').trim()) block += `\n## MEMORY.md (agent ${p.agent})\n${agentMd.trim()}\n`;

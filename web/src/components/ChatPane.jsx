@@ -17,6 +17,7 @@ import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js'
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
+import { engineLabel } from '../lib/engines.js';
 import {
   faArrowDown,
   faArrowRotateRight,
@@ -723,6 +724,9 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
 // Once answered the card freezes to a static line and unmounts the viewer,
 // so old resolved cards in history don't hold open VNC connections.
 function ScreenRequestCard({ sessionId, event }) {
+  // "<engine> wants you to look at the screen" — the request came from THIS
+  // session's engine, so a Codex session must not say Claude.
+  const engine = engineLabel(useStore().sessions.find((s) => s.id === sessionId)?.engine);
   const t = useT();
   const [busy, setBusy] = useState(false);
   const answered = event.answered;
@@ -752,7 +756,7 @@ function ScreenRequestCard({ sessionId, event }) {
     <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
       <div className="flex items-center gap-2 font-mono text-[11px]">
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest')}</span>
+        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest', { engine })}</span>
         {reasonLabel && (
           <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
             {reasonLabel}

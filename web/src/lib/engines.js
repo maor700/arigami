@@ -36,6 +36,34 @@ export function normalizeEngine(engine) {
   return ENGINE_IDS.includes(engine) ? engine : DEFAULT_ENGINE;
 }
 
+// Product names, not translated strings — the same word in both languages.
+// `label` is what UI copy calls the engine when it names the thing the human is
+// talking to ("Codex is working…", "Reply to Codex…"); `term` is the CLI-ish
+// lowercase form the terminal header wears next to the session name.
+const ENGINE_NAMES = {
+  claude: { label: 'Claude Code', term: 'claude-code' },
+  codex: { label: 'Codex', term: 'codex' },
+};
+
+/**
+ * How to NAME this session's engine in UI copy.
+ *
+ * The rule these two exist to enforce: a string that describes the ENGINE (who
+ * is working, who wants the screen, whose capabilities these are) must follow
+ * the session's engine; a string that describes ARIGAMI, or genuinely describes
+ * the Claude Code CLI itself (its install, its keychain item, its subscription
+ * usage), keeps saying Claude. Hence `{engine}` placeholders in the locales
+ * rather than a search-and-replace.
+ */
+export function engineLabel(engine) {
+  return ENGINE_NAMES[normalizeEngine(engine)].label;
+}
+
+/** Lowercase CLI-ish name for the terminal header. */
+export function engineTermName(engine) {
+  return ENGINE_NAMES[normalizeEngine(engine)].term;
+}
+
 // Labels are product names, not translated strings; the option list is a
 // function (not a frozen const) so a language switch re-renders it.
 export function engineOptions() {

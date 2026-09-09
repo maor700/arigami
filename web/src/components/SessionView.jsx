@@ -8,6 +8,7 @@ import { errText } from '../lib/errors.js';
 import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
+import { engineLabel, engineTermName } from '../lib/engines.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
@@ -388,7 +389,7 @@ function TerminalHeader({ session }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
       <Dot color={session.color} size={9} />
-      <span className="shrink-0 font-bold whitespace-nowrap">claude-code</span>
+      <span className="shrink-0 font-bold whitespace-nowrap">{engineTermName(session.engine)}</span>
       <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
       <BornFromChip session={session} />
       {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
@@ -1400,7 +1401,11 @@ function ChatFooter({ session }) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            placeholder={isDesktop ? t('rail.replyPlaceholder') : t('rail.replyPlaceholderShort')}
+            placeholder={
+              isDesktop
+                ? t('rail.replyPlaceholder', { engine: engineLabel(session.engine) })
+                : t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })
+            }
             className="max-h-32 min-w-0 flex-1 resize-none bg-transparent text-[16px] leading-relaxed outline-none placeholder:text-[#aaa] sm:text-[11.5px]"
             style={{ fieldSizing: 'content' }}
           />

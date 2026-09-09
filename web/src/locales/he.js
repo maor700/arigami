@@ -57,7 +57,7 @@ export const he = {
   'settings.screenTitle': 'שיתוף מסך',
   'settings.pushTitle': 'התראות פוש',
   'settings.pushEnable': 'הפעל התראות פוש',
-  'settings.pushHint': 'קבלו התראה לטלפון כשמאזין מופעל או כשקלוד צריך קלט',
+  'settings.pushHint': 'קבלו התראה לטלפון כשמאזין מופעל או כשהסוכן צריך קלט',
   'settings.vncPassword': 'סיסמת VNC',
   'settings.vncPassword.hint': 'נשלחת לתצוגה המוטמעת כששרת ה-VNC דורש אימות. השאר ריק אם לשרת אין סיסמה.',
   'settings.vncPassword.set': 'סיסמה מוגדרת',
