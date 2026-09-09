@@ -313,6 +313,15 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
    Never a white screen, never a dead end. `probe()` retries a remote three
    times before giving up; the local machine gets 60s (it has to boot).
 
+#### Known limitation: on Linux, two open windows share one menu bar
+
+`app.set_menu()` sets **one** menu for the whole app, so with two machine
+windows open on Linux both menu bars read `מכונה: <the focused window's
+machine>`. The title bar and the in-page pill are per window and stay
+correct, so the indicator is never wrong — just doubled. On macOS there is
+only one menu bar to begin with and it belongs to the focused window, which
+is exactly the intended behaviour, so this is Linux-only and cosmetic.
+
 #### Known limitation: cookies ignore the port
 
 Cookies are scoped by **host**, not by origin — so two machines on the *same
@@ -465,6 +474,8 @@ Arigami server on another port plus small Python stand-ins.
   back, and still sent after a full app restart (they persist in
   `$XDG_DATA_HOME/io.arigami.desktop/cookies`). `Secure` cookies were
   dropped on http, as expected.
+- Evidence gallery (screenshots of all of the above):
+  `/__artifacts/keP6lAedbX4/`.
 - **Decision #2 holds, measured.** A stand-in machine whose page tries
   `invoke('shell_status')` got `"shell_status not allowed. Plugin not
   found"`. Stronger than assumed: this stayed true even after temporarily
