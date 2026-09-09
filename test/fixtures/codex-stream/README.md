@@ -12,5 +12,6 @@
 | `full-kinds-*.jsonl` | agent_message + command_execution + file_change באותו תור |
 | `error-badmodel-*.jsonl` | מודל לא-קיים בקונפיג — נופל חזרה בשקט, לא שגיאה |
 | `error-noauth-*.jsonl` | CODEX_HOME בלי auth.json — item.type=error + turn.failed אמיתיים |
+| `reasoning-test-*.jsonl` | gpt-5.6-terra, effort=high, model_reasoning_summary=detailed — עדיין בלי item.type=reasoning (ENGINES.md מגבלה 6) |
 
 ראו את הדוח המלא ב-artifact שפורסם (הנתיב בדיווח ל-request_review).
