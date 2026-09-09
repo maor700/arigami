@@ -174,6 +174,8 @@ export const strings = {
   // ---- TermControls.jsx: modals + menu ----
   'rail.close': 'סגירה',
   'rail.permissionMode': 'מצב הרשאות',
+  // ל-Codex אין מצבים בכלל — ראו docs/ENGINES.md.
+  'rail.noPermissionModes': 'ל-{engine} אין מצבי הרשאה — הוא תמיד רץ בלי sandbox ובלי לשאול. ה-worktree הוא הגבול.',
   'rail.claudeWorkingSwitch': '{engine} עובד — מעבר יעצור את הריצה הנוכחית.',
   'rail.appliesToTerminal': 'חל על סשן הטרמינל הזה.',
   'rail.switchModeWarnBefore': '{engine} עובד בסשן הזה. מעבר אל ',

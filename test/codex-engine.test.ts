@@ -300,9 +300,17 @@ test('model and effort: a codex model and effort ride argv, a claude alias does 
   expect(b.args).toContain('-c');
   expect(b.args[b.args.indexOf('-c') + 1]).toBe('model_reasoning_effort="high"');
 
+  // `ultra` is gpt-5.6-terra's top rung and the launcher offers it (see
+  // CODEX_MODELS in web/src/lib/engines.js) — so it must reach argv. If the
+  // server dropped it, the turn would quietly run at the model's default while
+  // the cockpit kept showing "Ultra".
+  const top = built("{modelChoice:'gpt-5.6-terra',effort:'ultra'}", false, null);
+  expect(top.args[top.args.indexOf('-c') + 1]).toBe('model_reasoning_effort="ultra"');
+
   // Codex silently falls back to its default for a model it doesn't know, so a
   // claude alias leaking in from the launcher would look like it had worked.
-  const alias = built("{modelChoice:'opus',effort:'ultra'}", false, null);
+  // Same for an effort rung no codex model has.
+  const alias = built("{modelChoice:'opus',effort:'medium-high'}", false, null);
   expect(alias.args).not.toContain('-m');
   expect(alias.args).not.toContain('-c');
 });

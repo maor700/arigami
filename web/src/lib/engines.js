@@ -59,6 +59,20 @@ export function engineLabel(engine) {
   return ENGINE_NAMES[normalizeEngine(engine)].label;
 }
 
+/**
+ * Does this engine have permission MODES to pick between?
+ *
+ * claude does (default / acceptEdits / plan / bypassPermissions, enforced by a
+ * PreToolUse hook). `codex exec` does not: it has no live-approval channel and
+ * always runs with --dangerously-bypass-approvals-and-sandbox (server/codex.ts;
+ * docs/ENGINES.md limits 1-2). Offering the picker anyway would let the human
+ * select "plan" and believe the session was constrained while nothing changed —
+ * so a codex session is told what it runs as instead of being asked.
+ */
+export function hasPermissionModes(engine) {
+  return normalizeEngine(engine) === 'claude';
+}
+
 /** Lowercase CLI-ish name for the terminal header. */
 export function engineTermName(engine) {
   return ENGINE_NAMES[normalizeEngine(engine)].term;

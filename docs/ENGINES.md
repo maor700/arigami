@@ -133,6 +133,12 @@ Codex מוותר על קריאת כלי MCP אחרי `tool_timeout_sec` ומדו
   שה-UI ממשיך להראות את הרמה שהאדם בחר.
 - **טאב `/usage` לא קיים בסשן codex.** הוא מודד מנוי ו**חשבון של Claude**;
   לסשן codex אין לא זה ולא זה.
+- **בורר מצב-ההרשאות לא מוצג בסשן codex.** במקומו יושבת שורה שמצהירה
+  `bypassPermissions` ומסבירה למה. בורר שאפשר לבחור בו "plan" בזמן שהשרת מריץ
+  בכל מקרה `--dangerously-bypass-approvals-and-sandbox` הוא שקר בממשק.
+  הפרדיקט: `hasPermissionModes()` ב-`web/src/lib/engines.js`.
+- **כפתור "רענון רשימת המודלים" ותג עדכון-ה-CLI לא מוצגים בסשן codex** — שניהם
+  מדברים על ה-CLI של claude.
 - **מחיקת סשן מנקה את `$CODEX_HOME` שלו** (`config/codex/<sessionId>`) — שם
   יושבת היסטוריית השיחה.
 

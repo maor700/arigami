@@ -174,6 +174,8 @@ export const strings = {
   // ---- TermControls.jsx: modals + menu ----
   'rail.close': 'Close',
   'rail.permissionMode': 'Permission mode',
+  // Codex has no modes at all — see docs/ENGINES.md.
+  'rail.noPermissionModes': '{engine} has no permission modes — it always runs unsandboxed, without asking. The worktree is the boundary.',
   'rail.claudeWorkingSwitch': '{engine} is working — switching will stop the current run.',
   'rail.appliesToTerminal': 'Applies to this terminal session.',
   'rail.switchModeWarnBefore': '{engine} is working in this session. Switching to ',

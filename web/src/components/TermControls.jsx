@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
@@ -355,6 +355,25 @@ function EffortModal({ session, onClose }) {
 
 /* ---------- the dropdown menu --------------------------------------------- */
 
+/**
+ * A row that states a fact instead of opening a picker. Used where an engine
+ * has no choice to offer — showing a clickable picker there would tell the
+ * human they had constrained the session when nothing changed.
+ */
+function StaticRow({ label, value, note, danger }) {
+  return (
+    <div className="w-full px-3 py-2 text-start text-[12px] text-fg">
+      <div className="flex items-center gap-2">
+        <span className="flex-1">{label}</span>
+        <span className={`shrink-0 font-mono text-[10.5px] ${danger ? 'font-bold text-danger' : 'text-fgdim'}`}>
+          {value}
+        </span>
+      </div>
+      {note && <div className="mt-0.5 text-[10.5px] leading-snug text-fgdim">{note}</div>}
+    </div>
+  );
+}
+
 function MenuRow({ label, value, danger, onClick }) {
   return (
     <button
@@ -377,6 +396,7 @@ export default function TermControls({ session }) {
   const view = termViewFrom(prefs, session.id);
   const ctx = session.claude?.usage;
   const perm = session.claude?.permissionMode || session.claude?.capabilities?.permissionMode || 'default';
+  const permModes = hasPermissionModes(session.engine); // see lib/engines.js
   // Model row: show the user's explicit pick, else what the running default resolved to.
   const { models: claudeModels } = useModels();
   const modelOptions = modelOptionsFor(session.engine, claudeModels);
@@ -436,12 +456,21 @@ export default function TermControls({ session }) {
           <MenuRow label={t('rail.direction')} value={view.dir} onClick={() => openModal('dir')} />
           <MenuRow label={t('rail.theme')} value={view.theme} onClick={() => openModal('theme')} />
           <span className="block h-px bg-hair" />
-          <MenuRow
-            label={t('rail.permissionMode')}
-            value={PERMISSION_LABEL[perm] || perm}
-            danger={perm === 'bypassPermissions'}
-            onClick={() => openModal('permission')}
-          />
+          {permModes ? (
+            <MenuRow
+              label={t('rail.permissionMode')}
+              value={PERMISSION_LABEL[perm] || perm}
+              danger={perm === 'bypassPermissions'}
+              onClick={() => openModal('permission')}
+            />
+          ) : (
+            <StaticRow
+              label={t('rail.permissionMode')}
+              value="bypassPermissions"
+              note={t('rail.noPermissionModes', { engine: engineLabel(session.engine) })}
+              danger
+            />
+          )}
           <MenuRow label={t('rail.model')} value={modelValue} onClick={() => openModal('model')} />
           <MenuRow label={t('rail.effort')} value={effortValue} onClick={() => openModal('effort')} />
           <span className="block h-px bg-hair" />
