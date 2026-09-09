@@ -492,3 +492,43 @@ process.on('SIGINT', shutdown);
 // that's what the job object in lib/children.ts is for.
 process.on('SIGBREAK', shutdown);
 process.on('SIGHUP', shutdown);
+
+// Parent-death watchdog. Every signal above assumes something delivers a
+// signal; when the launcher is a GUI app that assumption breaks. Measured on
+// macOS: SIGTERM to the Tauri shell left this process running and still
+// holding its port — six orphans accumulated across one afternoon of test
+// launches. SIGKILL to the shell would do the same on any platform, by
+// definition, and no handler can ever fix that from the parent's side.
+//
+// So the child checks instead of waiting to be told. A launcher that sets
+// ARIGAMI_PARENT_PID is asserting "I supervise you; if I'm gone, go away" —
+// on Unix an orphan is reparented to init, so ppid flipping to 1 (or simply
+// away from the pid we were handed) is unambiguous. Opt-in via the env var, so
+// a bare `bun server/index.ts` or a systemd unit is completely unaffected.
+const PARENT_PID = Number(process.env.ARIGAMI_PARENT_PID || 0);
+if (PARENT_PID > 1) {
+  const watchdog = setInterval(() => {
+    // The existence probe is PRIMARY, deliberately. Checking `process.ppid`
+    // first and only probing when it changed reads naturally and is wrong off
+    // Unix: reparenting-to-init is a POSIX behaviour, so on Windows ppid stays
+    // pointing at the dead parent forever and that version of this check would
+    // never have fired at all. `process.kill(pid, 0)` is a permission/existence
+    // test on every platform Node and Bun support (Windows included — the
+    // signal is ignored there, but 0 still means "does this pid exist").
+    let gone = false;
+    try {
+      process.kill(PARENT_PID, 0);
+    } catch {
+      gone = true; // ESRCH — the parent really is gone
+    }
+    // Secondary, and only meaningful on Unix: a reparent proves the original
+    // parent died even if its pid has since been recycled by something else.
+    if (!gone && process.ppid !== PARENT_PID) gone = true;
+    if (gone) {
+      console.log(`[host] supervisor ${PARENT_PID} is gone — shutting down rather than orphaning`);
+      clearInterval(watchdog);
+      shutdown();
+    }
+  }, 2000);
+  watchdog.unref?.();
+}

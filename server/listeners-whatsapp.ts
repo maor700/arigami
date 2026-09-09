@@ -4,7 +4,17 @@
 // via Baileys' messages.upsert event, so polling here gives near-real-time
 // delivery at a fraction of the cost of a model polling itself.
 
-import { DatabaseSync } from 'node:sqlite';
+// bun:sqlite, NOT node:sqlite. Bun has no `node:sqlite` module at all (it is a
+// Node 22+ builtin), and the difference is invisible from source: server/index.ts
+// reaches this file through a dynamic `import('./listeners.js')`, so the module
+// never loads unless a WhatsApp listener is used. `bun build --compile` bundles
+// eagerly, so a node:sqlite import there kills the compiled sidecar at startup
+// with "No such built-in module: node:sqlite" before it binds a port — which is
+// how the desktop shell shipped a binary that could never boot.
+// The APIs used here (exec / prepare().all|get|run / close) are identical; bun
+// opens the file by default, so node:sqlite's `{ open: true }` has no counterpart
+// and is simply dropped.
+import { Database } from 'bun:sqlite';
 import { WA_DB_PATH } from './whatsapp-bridge.js';
 
 export interface WhatsAppWatermark extends Record<string, unknown> {
@@ -41,9 +51,9 @@ export function fetchWhatsappMessages(
   groupJid?: string | null,
   contactJids?: string[] | null
 ): { messages: WhatsAppRow[]; error?: string } {
-  let db: DatabaseSync | undefined;
+  let db: Database | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new Database(dbPath);
 
     const params: string[] = [since];
     let groupFilter: string;
@@ -91,8 +101,8 @@ export function fetchWhatsappMessages(
 
 // ---- group subscription management (shared via whatsapp.db) -----------------
 
-function openDb(dbPath: string): DatabaseSync {
-  const db = new DatabaseSync(dbPath, { open: true });
+function openDb(dbPath: string): Database {
+  const db = new Database(dbPath);
   db.exec(`CREATE TABLE IF NOT EXISTS group_subscriptions (
     jid TEXT PRIMARY KEY,
     added_at TEXT DEFAULT (datetime('now'))
@@ -255,9 +265,9 @@ export function resolveContacts(dbPath: string, raws: string[]): ResolvedContact
 // Best display name for a JID set: chats.name first (a group's name lives
 // there), then the contacts row of any JID in the set.
 function displayNameFor(dbPath: string, jids: string[]): string | null {
-  let db: DatabaseSync | undefined;
+  let db: Database | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new Database(dbPath);
     for (const j of jids) {
       const c = db.prepare(`SELECT name FROM chats WHERE jid = ? AND name IS NOT NULL AND name != ''`).get(j) as { name: string } | undefined;
       if (c?.name) return c.name;
@@ -282,9 +292,9 @@ function displayNameFor(dbPath: string, jids: string[]): string | null {
 }
 
 function lookupGroupByName(dbPath: string, term: string): Array<{ jid: string; name: string }> {
-  let db: DatabaseSync | undefined;
+  let db: Database | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new Database(dbPath);
     return db.prepare(`SELECT jid, name FROM chats WHERE jid LIKE '%@g.us' AND name LIKE ? LIMIT 10`)
       .all(`%${term}%`) as unknown as Array<{ jid: string; name: string }>;
   } catch {
@@ -307,9 +317,9 @@ export interface ContactCandidate {
 }
 
 export function lookupContactByName(dbPath: string, term: string): ContactCandidate[] {
-  let db: DatabaseSync | undefined;
+  let db: Database | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new Database(dbPath);
     // Find contacts whose phone-book name matches the term
     const contacts = db.prepare(
       `SELECT jid, name, notify, phone_number FROM contacts
@@ -352,9 +362,9 @@ export function resolveActiveJid(dbPath: string, jid: string): string {
   if (!jid.endsWith('@s.whatsapp.net')) return jid;
 
   const phoneNum = jid.replace('@s.whatsapp.net', '');
-  let db: DatabaseSync | undefined;
+  let db: Database | undefined;
   try {
-    db = new DatabaseSync(dbPath, { open: true });
+    db = new Database(dbPath);
 
     // Look for a LID contact that maps this phone number
     const lidContact = db

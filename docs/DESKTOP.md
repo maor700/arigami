@@ -261,6 +261,17 @@ cd desktop/src-tauri && cargo tauri dev
 cd desktop/src-tauri && cargo tauri build
 ```
 
+**The compiled sidecar is a different risk surface from `bun server/index.ts`.**
+`bun build --compile` resolves every import eagerly; running from source does
+not, because `server/index.ts` reaches most of the tree through dynamic
+`import()`. A module Bun cannot resolve is therefore invisible from source and
+fatal in the bundle. That is not hypothetical: `server/listeners-whatsapp.ts`
+imported `node:sqlite` (a Node 22 builtin Bun does not implement), which no
+test caught — all 1033 pass — and which killed the packaged sidecar at startup
+with `No such built-in module: node:sqlite` before it bound a port. It now uses
+`bun:sqlite` like the rest of the codebase. If you add a dependency, compile
+and boot the sidecar once; source-only testing will not tell you.
+
 First run: the pairing code (needed once, in the cockpit's login screen) is
 **not** printed to a visible terminal — the sidecar's stdout/stderr are
 redirected to a log file via `app.path().app_log_dir()`. Verified live on
@@ -369,18 +380,35 @@ there, but that itself is unverified since no macOS build exists.
   running the Windows target today (not even the Linux validation above
   touched it), so this trades "graceful" for "definitely no orphaned
   process" and says so plainly rather than pretending it's solved.
-- **No crash-loop protection.** If the sidecar keeps failing after the first
-  successful boot, `run_supervisor()` will keep respawning it every 500ms,
-  forever. No backoff, no giving up. (The respawn-on-crash *mechanism itself*
-  is proven above — this flags the missing backoff on top of it, not the
-  respawn.)
-- **Port 3099 is hardcoded, with no collision handling.** If something else
-  on the Mac is already bound to it (e.g. a manual `bin/host start` from a
-  git checkout, run at the same time), the sidecar's own `hostlock.ts` will
-  refuse to bind, the splash will poll for 45s, then show a generic "didn't
-  answer in time" dialog — there's no detection or message specific to that
-  case. Every live test in this session used a free test port and a server
-  that came up in well under a second, so `wait_for_ready()`'s 45s-timeout
-  branch and `show_fatal_and_quit()`'s dialog were never actually exercised
-  — only the happy path was. That branch is still exactly as unverified as
-  the rest of the dialog plugin (see above).
+- ~~**No crash-loop protection.**~~ **FIXED for the case that matters.** A
+  sidecar that exits three times *before ever becoming ready* now stops the
+  loop and shows the fatal dialog with the log path, instead of respawning
+  forever — the failure mode measured live was 477 restarts in a couple of
+  minutes with nothing on screen. After the first successful boot, unlimited
+  respawns are still correct and unchanged: that is the restart/upgrade path
+  and the page recovers itself. There is still no *backoff* between the three
+  attempts.
+- ~~**Port 3099 is hardcoded, with no collision handling.**~~ **FIXED, and the
+  real behaviour was worse than this entry claimed.** The prediction was
+  "sidecar can't bind, splash times out, generic dialog". What actually
+  happened on macOS, against a 23-day-old host on 3099: readiness was a bare
+  "did anything answer on 3099", so the shell **adopted the stranger's
+  server**, navigated the window to it, and displayed a completely different
+  and much older cockpit — while its own sidecar crash-looped 477 times
+  unnoticed. No dialog, no error, looked like success.
+  Three changes, each needed:
+  - The port is now scanned from a range (default **3300–4000**, lowest free
+    first) instead of fixed. Overridable: `ARIGAMI_DESKTOP_PORT` pins one
+    exact port, `ARIGAMI_DESKTOP_PORT_RANGE="LOW-HIGH"` moves the range. The
+    range sits above the dev-server ports (3020–3030) and below the
+    dispatcher's (4200–4299) on purpose.
+  - Occupancy is probed by **connecting, not binding**. A bind probe is wrong
+    on a dual-stack machine: a server holding the IPv6 wildcard `*:3099`
+    leaves `127.0.0.1:3099` still bindable, so the first version of this fix
+    reported "free" for an occupied port and walked straight back into the
+    collision. Caught only by running it.
+  - Readiness now requires the responder to echo this launch's
+    `ARIGAMI_INSTANCE_ID` on `/__api/config` (`server/api.ts`, anonymous
+    branch). A 200 alone is not proof it is ours. The id is not a secret and
+    is not accepted as authentication anywhere — it only ever gets compared by
+    the process that generated it.

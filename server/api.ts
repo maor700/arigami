@@ -3284,7 +3284,22 @@ export async function handle(
     if (p === '/__api/config' && m === 'GET') {
       // Anonymous callers (login screen, bin/host health) get the minimum the
       // Login screen needs — never the full config.
-      if (!(req as any).auth) return json(res, { version: VERSION, ...auth.publicInfo() });
+      //
+      // `instanceId` echoes ARIGAMI_INSTANCE_ID when a launcher set it (the
+      // Tauri desktop shell does). It lets that launcher tell "my sidecar
+      // answered" apart from "something answered on the port I guessed",
+      // which is otherwise indistinguishable and caused the shell to attach
+      // its window to an unrelated, much older host. Not a credential and not
+      // accepted as one anywhere: it is only ever compared by the process that
+      // generated it, so exposing it on this deliberately-public endpoint
+      // gives an attacker nothing. Absent unless the env var is set, so a
+      // normal `bin/host start` response is byte-identical to before.
+      if (!(req as any).auth)
+        return json(res, {
+          version: VERSION,
+          ...(process.env.ARIGAMI_INSTANCE_ID ? { instanceId: process.env.ARIGAMI_INSTANCE_ID } : {}),
+          ...auth.publicInfo(),
+        });
       const { groqApiKey, composioApiKey, screen, auth: authCfg, ...pub } = cfg as any;
       const { vncPassword, ...screenPub } = screen || {};
       const { clientSecret, ...oidcPub } = authCfg?.oidc || {};
