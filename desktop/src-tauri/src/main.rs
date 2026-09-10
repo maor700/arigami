@@ -1794,8 +1794,32 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running arigami-desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building arigami-desktop")
+        // The last word on the sidecar. quit_now() covers our own quit paths
+        // (the menu item, the tray, a signal), but it is not the only way out:
+        // macOS's Dock → Quit and anything else that terminates the app
+        // through the event loop never touch it, and the sidecar was left
+        // running — reparented to launchd, still holding :4099, which then
+        // trips the port guard on the next launch. Seen three times on macOS.
+        // RunEvent::Exit is the one place every ordinary exit passes through.
+        //
+        // This cannot cover a SIGKILL / Force Quit; nothing in this process
+        // can. server/index.ts's own parent watch is what handles that.
+        .run(|handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let shell = handle.state::<Arc<Shell>>().inner().clone();
+                shell.quitting.store(true, Ordering::SeqCst);
+                shell.local_wanted.store(false, Ordering::SeqCst);
+                let pid = *shell.local_pid.lock().unwrap();
+                if let Some(pid) = pid {
+                    terminate(pid);
+                    // shutdown() → killAll() needs a moment, and we are the
+                    // last thing holding the process alive.
+                    std::thread::sleep(Duration::from_millis(600));
+                }
+            }
+        });
 }
 
 #[cfg(test)]

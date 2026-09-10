@@ -504,3 +504,27 @@ process.on('SIGINT', shutdown);
 // that's what the job object in lib/children.ts is for.
 process.on('SIGBREAK', shutdown);
 process.on('SIGHUP', shutdown);
+
+// Desktop shell (decision #3): the shell owns this process, and a shell that
+// dies without getting to run its cleanup — Force Quit, SIGKILL, a crash —
+// leaves us running, reparented to launchd/init, still holding the port. That
+// then trips the shell's own port guard on the next launch, so the app cannot
+// start until someone finds and kills us by hand. Observed three times on
+// macOS. Nothing on the shell's side can cover SIGKILL, so watch from here:
+// ppid changing (to 1, or to anything else) means the parent is gone.
+//
+// Unix only. Windows has no reparent-to-1 convention; there the answer is the
+// job object in lib/children.ts, and it is not applied to the shell yet (see
+// docs/DESKTOP.md, "Windows quit is a real gap").
+if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32') {
+  const bornUnder = process.ppid;
+  const watch = setInterval(() => {
+    const now = process.ppid;
+    if (now === bornUnder && now !== 1) return;
+    console.error(`[host] the desktop shell (pid ${bornUnder}) is gone — shutting down rather than orphaning`);
+    clearInterval(watch);
+    shutdown();
+  }, 2000);
+  // Never hold the process open on our own account.
+  (watch as unknown as { unref?: () => void }).unref?.();
+}

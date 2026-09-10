@@ -866,6 +866,26 @@ does leave the sidecar behind.
   moves to Developer ID signing + notarization for distribution, an
   unsigned Mach-O binary sitting inside `Resources/` may need its own
   `codesign` pass (or `--deep`) — not looked into here.
+- **Orphaned sidecars on quit — fixed, in two layers.** `quit_now()` only
+  ever covered the app's *own* exits (the menu item, the tray, a signal
+  through `ctrlc`). macOS's Dock → Quit and anything else that leaves through
+  the event loop never touched it, so the sidecar kept running, reparented to
+  launchd, still holding :4099 — which then trips the port guard on the next
+  launch, leaving an app that will not start until someone finds the stray
+  process by hand. Seen three times on macOS before it was chased down.
+  1. `RunEvent::Exit` in `main()` is the choke point every ordinary exit
+     passes through; it SIGTERMs the child and gives `shutdown()`/`killAll()`
+     600ms. *Verified*: `tell application "Arigami" to quit` — sidecar gone in
+     1s.
+  2. Nothing in the shell can cover Force Quit, so the sidecar watches from
+     its own side: with `ARIGAMI_SUPERVISOR=self` on a Unix host,
+     `server/index.ts` polls `process.ppid` every 2s and runs its normal
+     `shutdown()` the moment the parent is gone. *Verified*: `kill -9` on the
+     app — the sidecar logged "the desktop shell (pid …) is gone — shutting
+     down rather than orphaning" and exited 2s later, port free.
+
+  Windows is not covered by layer 2 (no reparent-to-1 convention); the job
+  object below is still the answer there.
 - **Windows quit is a real gap, now measured.** `terminate()` falls back to
   `taskkill /PID <pid> /T /F` on Windows — a hard kill, not a graceful signal
   `server/index.ts` has a handler for. That trade ("graceful" for "no orphan")
