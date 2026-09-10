@@ -351,7 +351,33 @@ non-Linux host.
 
 ---
 
-## 5. A trap in the test suite, if you add tests here
+## 5. Regression evidence
+
+The full suite was run on this branch and on its merge-base (`be7b55c`) in
+identical conditions — a worktree of master with the same `node_modules` and a
+built `web/dist`, so the two runs differ only by this branch's code. Comparing
+the **failing-test-name sets** (the counts themselves are flaky on this box;
+`docs/DESKTOP.md` documents the same ~85 environmental failures):
+
+| | baseline `be7b55c` | this branch |
+| --- | --- | --- |
+| passing | 1178 | 1220 |
+| distinct failing names | 75 | 75 |
+
+The two failing-name sets are **identical** — no new failures, and none
+accidentally fixed either. The +42 passing are this branch's own tests. Every
+one of the five new test files produced no failure output at all in the full
+run.
+
+The pre-existing failures were spot-checked against a clean checkout rather
+than assumed: `test/core.test.js` (session metadata defaults leak from the
+worker session's own env) and `test/browse1-host.test.ts` (a 5s hook timeout,
+plus the global-stub problem in §6) fail identically with none of this
+branch's changes applied.
+
+---
+
+## 6. A trap in the test suite, if you add tests here
 
 A dozen `*-web.test.js` files replace `globalThis.fetch` and
 `globalThis.WebSocket` with inert stubs in `beforeAll` and never put them back,
