@@ -1,6 +1,7 @@
 // Sessions store: single WS connection (auto-reconnect with backoff) + REST
 // snapshots. No optimistic updates — the server echoes every mutation via WS.
 import { useSyncExternalStore } from 'react';
+import { clearShellSignInGuard } from './shell.js';
 import { api, setUnauthorizedHandler } from './api.js';
 import { mergeChatEvents, prependChatEvents, appendChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
@@ -979,6 +980,11 @@ export async function loadAuth() {
     }
     if (!me.ok) throw new Error(`HTTP ${me.status}`);
     setState({ auth: body, authInfo: { authMode: body.authMode, hasAdmin: body.hasAdmin, oidc: body.oidc } });
+    // A session exists, so the desktop shell's automatic sign-in (if that is
+    // what produced it) worked — arm it again for the next time the cookie
+    // dies. Without this the latch is per tab and a second import in the same
+    // window lands on the pairing screen with no automatic retry.
+    clearShellSignInGuard();
     return body;
   } catch {
     // Host unreachable: leave auth unknown; the ws banner reports "offline".

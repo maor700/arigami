@@ -355,14 +355,19 @@ macOS-specific list.
    `SIGNIN_SENTINEL_PATH`, `on_navigation` cancels it and re-navigates that
    window to a freshly minted token. Only a window whose machine is `local`
    may ask — `canSignIn` in the payload — because a remote host holds a
-   different secret. One automatic attempt per tab (a `sessionStorage` key),
-   then a "Sign in as this computer" button, so a handoff that cannot succeed
-   cannot become a navigation loop.
+   different secret. The loop guard is a `sessionStorage` key **cleared by
+   `loadAuth()` the moment a session exists**, not a per-tab latch: the first
+   version of this fix latched per tab, `sessionStorage` survives reloads, and
+   a SECOND import in the same window therefore skipped the automatic sign-in
+   and dropped the user back on the pairing screen — reported live, after the
+   fix. Scoped to a failure instead, a handoff that cannot succeed still gets
+   exactly one automatic try and then a "Sign in as this computer" button.
 
-   *Verified live on macOS*: deleting the window's user out of `users.json`
-   (what an import effectively does) invalidated its session; within 20s the
-   cockpit hit 401, rendered the login screen, signed itself back in, and
-   `handoff-used.json` went from one spent token to two — no code typed.
+   *Verified live on macOS*, twice back to back in one window — the case
+   that broke: deleting the window's user out of `users.json` (what an import
+   effectively does) invalidated its session; within 20s each time the
+   cockpit hit 401, rendered the login screen and signed itself back in, with
+   `handoff-used.json` going 1 → 2 → 3. No code typed.
 
    Note this makes `main.rs` a **third implementation** of that wire format,
    alongside `server/handoff.ts` and `control-plane/src/handoff.ts`, which

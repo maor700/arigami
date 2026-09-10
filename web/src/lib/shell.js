@@ -41,10 +41,14 @@ export function openMachines() {
 // server/handoff.ts). Only meaningful on the local machine: the token is
 // signed with the secret the shell handed its OWN sidecar.
 //
-// AUTO_KEY caps the automatic attempt at one per tab. Without it a handoff
-// that cannot succeed — no secret, a clock far enough off that `exp` is
-// already past — would bounce between the login screen and the sentinel
-// forever. After the first try the user gets a button instead.
+// AUTO_KEY stops a handoff that cannot succeed — no secret, a clock far
+// enough off that `exp` is already past — from bouncing between the login
+// screen and the sentinel forever. It is cleared the moment a session
+// actually exists (clearShellSignInGuard(), called from loadAuth), NOT once
+// per tab: sessionStorage survives reloads, so a per-tab latch meant the
+// SECOND thing to invalidate the cookie in one window — a second import —
+// silently skipped the automatic sign-in and dropped the user back on the
+// pairing screen. Reported live, after the first fix.
 const AUTO_KEY = 'arigami-shell-signin-tried';
 
 export function canShellSignIn() {
@@ -56,7 +60,16 @@ export function shellSignIn() {
   return !!(s && typeof s.signIn === 'function' && s.signIn());
 }
 
-/** One automatic attempt per tab. Returns true if it navigated. */
+/**
+ * Forget the last automatic attempt. Called when the cockpit finds a live
+ * session: whatever the shell did worked, so the next time the cookie dies
+ * the window may sign itself in again without the user doing anything.
+ */
+export function clearShellSignInGuard() {
+  try { sessionStorage.removeItem(AUTO_KEY); } catch { /* private mode */ }
+}
+
+/** One automatic attempt per failure. Returns true if it navigated. */
 export function shellSignInOnce() {
   if (!canShellSignIn()) return false;
   try {
