@@ -156,6 +156,12 @@ CDP reaches the **Chrome window**. It cannot touch:
 - a UAC elevation prompt (secure desktop);
 - anything before/after the browser is running.
 
+Sharper than "browser only": the screencast is the page **viewport**. Even
+within Chrome, the tab strip, the address bar and Chrome's own modal dialogs
+(the print dialog, a permission prompt, "leave site?") are outside the frame
+and outside CDP `Input`'s reach. So "complete a login" works; "switch tabs by
+clicking the tab strip" does not.
+
 That is the desktop half, and it is §3.
 
 ---
@@ -296,6 +302,10 @@ follows is honest about everything that is *not* covered by that.
   US layout. A Hebrew or other non-Latin layout on Windows should be checked —
   `insertText` handles the characters, but named-key/modifier behaviour is
   worth one pass.
+- Every live check here ran **headless** Chrome. CDP's `Page.startScreencast`
+  and `Input.*` are the same headed, but anything touching a real window is
+  not: `Page.bringToFront` (which `handOver` calls) has nothing to raise in
+  headless, so its behaviour on a real Windows desktop is inferred, not seen.
 
 **§3 (Option B) — the driver is written and proven against a real VNC server,
 so what is left is everything on the WINDOWS side of the socket:**
