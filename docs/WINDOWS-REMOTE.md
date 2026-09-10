@@ -107,8 +107,12 @@ host declares rather than something the client assumes.**
   `GET /__api/screen/status` returns `{driver, viewer}`. The cockpit picks
   noVNC or screencast from that. **This is the seam that makes §3 a driver
   change instead of a client rewrite.**
-- **`/__vnc` stops lying.** On a host whose driver isn't x11 it closes with
-  code `4004` and logs why, instead of dialling a VNC server that isn't there.
+- **`/__vnc` goes through the driver.** It used to call the X11-only
+  `desktops.ts` directly; it now hands the socket to `driver.attachViewer`, so
+  any RFB-speaking driver gets the bridge for free (that is how §3's driver
+  needs no client code). A driver that does *not* speak RFB is refused with
+  code `4004` and a log line, instead of dialling a VNC server that isn't
+  there and leaving the client on "connecting…" forever.
 - **The UI says what it can't do.** When the transport's scope is `browser`,
   the interactive view carries a "Browser window only" chip explaining that a
   native dialog outside the Chrome window will not appear.
