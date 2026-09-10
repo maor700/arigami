@@ -58,7 +58,7 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
 
   return (
     <div className={`thin-scroll flex shrink-0 flex-col overflow-y-auto bg-panel ${className}`}>
-      <div className="px-3 pt-3 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+      <div className="px-3 pt-3 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
         {t('dialogs.hostSkillPack')} · {skills.length}
       </div>
       {skills.map((s) => (
@@ -80,14 +80,14 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
             <SourceBadge skill={s} />
           </span>
           {s.description && (
-            <span className="line-clamp-2 text-[10.5px] leading-snug text-fgdim">{s.description}</span>
+            <span className="line-clamp-2 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">{s.description}</span>
           )}
         </button>
       ))}
 
       {sessionSkills?.length > 0 && (
         <>
-          <div className="px-3 pt-4 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+          <div className="px-3 pt-4 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
             {t('dialogs.alsoInThisSession')}
             {sessionTitle && <span className="font-normal normal-case"> · {sessionTitle}</span>}
           </div>
@@ -96,14 +96,14 @@ function SkillList({ skills, selected, onSelect, sessionSkills, sessionTitle, cl
               .sort((a, b) => (a === '(built-in)' ? -1 : b === '(built-in)' ? 1 : a.localeCompare(b)))
               .map((ns) => (
                 <div key={ns}>
-                  <div className="mb-1 text-[9px] font-bold tracking-wide text-fgdim/80 uppercase">
+                  <div className="mb-1 text-[11px] md:text-[9px] font-bold tracking-wide text-fgdim/80 uppercase">
                     {ns} · {grouped[ns].length}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {grouped[ns].map((n) => (
                       <span
                         key={n}
-                        className="rounded-md border border-hair bg-bg px-1.5 py-0.5 font-mono text-[9.5px] text-fgdim"
+                        className="rounded-md border border-hair bg-bg px-1.5 py-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim"
                       >
                         {n}
                       </span>
@@ -204,7 +204,7 @@ function DetailPane({ name, aiSummary }) {
     <div className="flex min-h-0 flex-1 flex-col bg-white">
       <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="font-mono text-[13px] font-bold text-fg">{name}</span>
-        <span className="font-mono text-[10px] text-fgdim">/SKILL.md</span>
+        <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">/SKILL.md</span>
         {detail && <SourceBadge skill={detail} title />}
         <div className="ml-auto flex items-center gap-2">
           {editing ? (
@@ -269,7 +269,7 @@ function DetailPane({ name, aiSummary }) {
 
             {detail.supporting?.length > 0 && (
               <div className="mt-8 border-t border-hair pt-4">
-                <div className="mb-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+                <div className="mb-2 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
                   {t('dialogs.supportingFilesReadOnly')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -278,7 +278,7 @@ function DetailPane({ name, aiSummary }) {
                       key={f.name}
                       type="button"
                       onClick={() => setShowFile(showFile?.name === f.name ? null : f)}
-                      className={`cursor-pointer rounded-md border px-2 py-1 font-mono text-[10.5px] ${
+                      className={`cursor-pointer rounded-md border px-2 py-1 font-mono text-[11.5px] md:text-[10.5px] ${
                         showFile?.name === f.name ? 'border-ink bg-chip text-fg' : 'border-hair text-fgdim hover:border-ink'
                       }`}
                     >
@@ -287,7 +287,7 @@ function DetailPane({ name, aiSummary }) {
                   ))}
                 </div>
                 {showFile && (
-                  <pre className="thin-scroll mt-3 max-h-96 overflow-auto rounded-md border border-hair bg-bg px-3 py-2 font-mono text-[10.5px] leading-relaxed text-fg">
+                  <pre className="thin-scroll mt-3 max-h-96 overflow-auto rounded-md border border-hair bg-bg px-3 py-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed text-fg">
                     {showFile.content ?? t('dialogs.binaryFile', { size: showFile.size })}
                   </pre>
                 )}
@@ -381,7 +381,7 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
         </span>
         <div className="ml-auto flex items-center gap-2">
           {analysisMeta?.generatedAt && (
-            <span className={`text-[10px] ${analysisMeta.stale ? 'text-[#b8791f]' : 'text-fgdim'}`}>
+            <span className={`text-[11.5px] md:text-[10px] ${analysisMeta.stale ? 'text-[#b8791f]' : 'text-fgdim'}`}>
               {analysisMeta.stale ? t('dialogs.analysisStale') : t('dialogs.analyzed')} · {new Date(analysisMeta.generatedAt).toLocaleString()}
             </span>
           )}
@@ -479,7 +479,7 @@ function ProposalList({ proposals, selectedId, onSelect, className }) {
   const t = useT();
   return (
     <div className={`thin-scroll flex shrink-0 flex-col overflow-y-auto bg-panel ${className}`}>
-      <div className="px-3 pt-3 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+      <div className="px-3 pt-3 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
         {t('dialogs.skillProposals')} · {proposals.length}
       </div>
       {proposals.length === 0 && (
@@ -499,12 +499,12 @@ function ProposalList({ proposals, selectedId, onSelect, className }) {
             {p.isNew && (
               <span className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
             )}
-            {p.flags.length > 0 && <span className="text-[9.5px] text-[#9c3b33]" title={p.flags.join(', ')}>⚠ {p.flags.length}</span>}
+            {p.flags.length > 0 && <span className="text-[11px] md:text-[9.5px] text-[#9c3b33]" title={p.flags.join(', ')}>⚠ {p.flags.length}</span>}
           </span>
-          <span className={`text-[9.5px] font-bold tracking-wide uppercase ${STATUS_CLS[p.status] || 'text-fgdim'}`}>
+          <span className={`text-[11px] md:text-[9.5px] font-bold tracking-wide uppercase ${STATUS_CLS[p.status] || 'text-fgdim'}`}>
             {t(`dialogs.proposalStatus.${p.status}`)}
           </span>
-          <span className="line-clamp-1 text-[10.5px] leading-snug text-fgdim">{p.rationale}</span>
+          <span className="line-clamp-1 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">{p.rationale}</span>
         </button>
       ))}
     </div>
@@ -569,12 +569,12 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="font-mono text-[13px] font-bold text-fg">{detail.name}</span>
         {detail.isNew && (
-          <span className="rounded-full border border-hair px-1.5 text-[9px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
+          <span className="rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
         )}
-        <span className="rounded-md border border-[#cdb9ea] bg-[#f3eefc] px-1.5 py-0.5 text-[9.5px] font-bold text-[#5a3aa6]">
+        <span className="rounded-md border border-[#cdb9ea] bg-[#f3eefc] px-1.5 py-0.5 text-[11px] md:text-[9.5px] font-bold text-[#5a3aa6]">
           {t('dialogs.aiProposed')}
         </span>
-        <span className={`text-[10.5px] font-bold uppercase ${STATUS_CLS[detail.status] || 'text-fgdim'}`}>
+        <span className={`text-[11.5px] md:text-[10.5px] font-bold uppercase ${STATUS_CLS[detail.status] || 'text-fgdim'}`}>
           {t(`dialogs.proposalStatus.${detail.status}`)}
         </span>
         {pending && (
@@ -627,7 +627,7 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
             </div>
           )}
           {detail.flags.length > 0 && (
-            <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[10.5px]">
+            <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11.5px] md:text-[10.5px]">
               <span className="font-bold text-[#9c3b33]">{t('dialogs.flags')}:</span>
               {detail.flags.map((f) => (
                 <span key={f} className="rounded-md border border-[#e2c4c0] bg-[#FBECEA] px-1.5 py-0.5 text-[#9c3b33]">{f}</span>
@@ -805,14 +805,14 @@ export default function SkillsView({ session, onClose }) {
             >
               {mItem === 'detail' ? t('dialogs.detailEdit') : mItem === 'graph' ? t('dialogs.graph') : t('dialogs.skillProposals')}
               {mItem === 'proposals' && pendingProposals > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#9c3b33] px-1 text-[9px] font-bold text-white">
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#9c3b33] px-1 text-[11px] md:text-[9px] font-bold text-white">
                   {pendingProposals}
                 </span>
               )}
             </button>
           ))}
         </div>
-        {analyzeErr && <span className="text-[10.5px] text-[#9c3b33]">{analyzeErr}</span>}
+        {analyzeErr && <span className="text-[11.5px] md:text-[10.5px] text-[#9c3b33]">{analyzeErr}</span>}
         <button
           type="button"
           onClick={onClose}

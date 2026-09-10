@@ -8,7 +8,7 @@ import { api } from '../../lib/api.js';
 import { faCircleNotch, faCheck, faXmark, faArrowUpRightFromSquare, faImage } from '@fortawesome/free-solid-svg-icons';
 
 // Always rendered inside the chat card (term-accent palette), never on a panel.
-const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-[var(--term-accent-border)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
+const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-[var(--term-accent-border)] px-2 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
 
 // Evidence is `/__artifacts/<id>/` (relative — works from the phone). Offer
 // "open as tab" (sandboxed iframe in the session) plus a plain relative link.
@@ -37,7 +37,7 @@ export default function AutoConnect({ sessionId, state = 'auto', lines = [], det
         </div>
       )}
       {lines.length > 0 && (
-        <ol dir="auto" className="max-h-[160px] overflow-auto rounded-[8px] border border-[var(--term-accent-border)] px-3 py-2 font-mono text-[10.5px] leading-relaxed text-[var(--term-accent-dim)]">
+        <ol dir="auto" className="max-h-[160px] overflow-auto rounded-[8px] border border-[var(--term-accent-border)] px-3 py-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed text-[var(--term-accent-dim)]">
           {lines.slice(-30).map((l, i) => <li key={i}>› {l}</li>)}
         </ol>
       )}

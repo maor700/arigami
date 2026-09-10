@@ -38,7 +38,7 @@ function StatusPill({ status }) {
   };
   return (
     <span
-      className={`shrink-0 rounded-full border px-2 py-px text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}
+      className={`shrink-0 rounded-full border px-2 py-px text-[11px] md:text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}
     >
       {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
     </span>
@@ -56,7 +56,7 @@ function StepRow({ step, onFix, busy }) {
       <div className="min-w-0 flex-1">
         <div className="truncate text-[12px] font-semibold text-fg">{step.title}</div>
         {step.detail && (
-          <div className="truncate font-mono text-[10px] text-fgdim">{step.detail}</div>
+          <div className="truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{step.detail}</div>
         )}
       </div>
       {fixable && (
@@ -76,7 +76,7 @@ function StepRow({ step, onFix, busy }) {
 function Section({ title, children }) {
   return (
     <div className="mb-4 overflow-hidden rounded-[10px] border border-border bg-panel">
-      <div className="border-b border-hair px-3 py-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+      <div className="border-b border-hair px-3 py-2 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
         {title}
       </div>
       {children}
@@ -179,7 +179,7 @@ export function AddRepo({ onAdd, busy }) {
         className={MONO}
       />
       {kind === 'local' && (
-        <div className="text-[10px] text-fgdim">
+        <div className="text-[11.5px] md:text-[10px] text-fgdim">
           {detecting ? t('launcher.setup.scanning')
             : detect ? (detect.exists
               ? <><Icon icon={faCheck} /> {detect.isGit ? t('launcher.setup.gitRepo') : t('launcher.setup.folder')}{detect.toolchain?.pm ? ` · ${detect.toolchain.pm}` : ''}{t('launcher.setup.copiedMinus')}</>
@@ -207,7 +207,7 @@ export function AddRepo({ onAdd, busy }) {
       )}
       {candidates.length > 0 ? (
         <div className="rounded-[7px] border border-border bg-panel px-2 py-1.5">
-          <div className="mb-1 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.setup.envFilesToCopy')}</div>
+          <div className="mb-1 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.setup.envFilesToCopy')}</div>
           {candidates.map((f) => (
             <label key={f} className="flex cursor-pointer items-center gap-1.5 py-0.5 text-[11.5px] text-fg">
               <input type="checkbox" checked={picked.includes(f)} onChange={() => toggle(f)} />
@@ -217,7 +217,7 @@ export function AddRepo({ onAdd, busy }) {
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <label className="text-[10.5px] text-fgdim">{t('launcher.setup.envLabel')}</label>
+          <label className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('launcher.setup.envLabel')}</label>
           <select value={simpleEnv} onChange={(e) => setSimpleEnv(e.target.value)} className="rounded-[7px] border border-border bg-panel px-2 py-1 text-[11.5px] text-fg">
             <option value="none">{t('launcher.setup.envNone')}</option>
             <option value="file">{t('launcher.setup.envFile')}</option>
@@ -258,7 +258,7 @@ function MinimalHero({ claude, onStart, onRecheck, onRunWizard, busy }) {
         <ol className="mt-3 flex flex-col gap-3">
           <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[10px]">{claude?.ok ? <Icon icon={faCheck} /> : '1'}</span>
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{claude?.ok ? <Icon icon={faCheck} /> : '1'}</span>
               {t('setup.minimal.connectClaude')}
             </div>
             {claude?.ok ? (
@@ -266,7 +266,7 @@ function MinimalHero({ claude, onStart, onRecheck, onRunWizard, busy }) {
             ) : !cli ? (
               <div className="mt-2">
                 <p className="text-[11px] leading-snug text-[#8a6d1f]">{t('wizard.claude.noCli')}</p>
-                <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[10.5px] select-all">npm i -g @anthropic-ai/claude-code</code>
+                <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">npm i -g @anthropic-ai/claude-code</code>
                 <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
               </div>
             ) : (
@@ -275,7 +275,7 @@ function MinimalHero({ claude, onStart, onRecheck, onRunWizard, busy }) {
           </li>
           <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[10px]">2</span>
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">2</span>
               {t('setup.minimal.start')}
             </div>
             <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
@@ -430,7 +430,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
         <span className="text-[13px] font-bold">{t('launcher.setup.title')}</span>
         {env && (
-          <span className="rounded-[5px] border border-border px-[7px] py-px font-mono text-[10px] text-fgdim">
+          <span className="rounded-[5px] border border-border px-[7px] py-px font-mono text-[11.5px] md:text-[10px] text-fgdim">
             {env.container ? t('launcher.setup.container') : t('launcher.setup.native')} · {env.strategy}
           </span>
         )}
@@ -505,7 +505,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                       disabled={busy}
                       onClick={() => removeRepo(name)}
                       title={t('launcher.setup.removeTitle')}
-                      className="ml-auto cursor-pointer text-[10.5px] text-fgdim hover:text-[#9c3b33] disabled:opacity-50"
+                      className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-[#9c3b33] disabled:opacity-50"
                     >
                       {t('launcher.setup.remove')}
                     </button>
@@ -532,7 +532,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                         {prof.title || prof.name}
                       </div>
                       {prof.description && (
-                        <div className="mt-0.5 text-[10.5px] leading-snug text-fgdim">
+                        <div className="mt-0.5 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
                           {prof.description}
                         </div>
                       )}

@@ -39,7 +39,7 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
   return (
     <div data-agent-connections={agent.slug} className="flex flex-col gap-3">
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-1 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownTitle')}</div>
+        <div className="mb-1 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownTitle')}</div>
         <div className="mb-2 text-[11px] text-fgdim">{t('agent.conn.ownHint', { name: agent.name })}</div>
         <div className={LIST}>
           {own.map((c) => (
@@ -47,12 +47,12 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
               {pill(c)}
               <span className="min-w-0 flex-1 truncate">
                 <span className="font-bold">{capTitle(t, c.id)}</span>
-                {c.detail && <span dir="ltr" className="ms-2 font-mono text-[10px] text-fgdim">{c.detail}</span>}
+                {c.detail && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}</span>}
               </span>
               {c.ok && c.resolvedFrom === owner && (
-                <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-[10px] text-fgdim hover:text-[#9c3b33]">{t('agent.conn.disconnect')}</button>
+                <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('agent.conn.disconnect')}</button>
               )}
-              <button type="button" disabled={busy} className={c.ok && c.resolvedFrom === owner ? 'cursor-pointer text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onConnect?.(c)}>
+              <button type="button" disabled={busy} className={c.ok && c.resolvedFrom === owner ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onConnect?.(c)}>
                 {c.ok && c.resolvedFrom === owner ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('agent.conn.connect')}
               </button>
             </div>
@@ -65,23 +65,23 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
         </div>
       </div>
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faGlobe} /> {t('agent.conn.hostTitle')}</div>
+        <div className="mb-1 flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faGlobe} /> {t('agent.conn.hostTitle')}</div>
         <div className="mb-2 text-[11px] text-fgdim">{t('agent.conn.hostHint')}</div>
         <div className={LIST}>
           {host.map((c) => (
             <div key={c.id} className={ROW}>
               <StatusPill status={c.ok ? 'ok' : 'todo'} label={c.ok ? t('setup.connections.on') : t('setup.connections.off')} />
-              <span className="min-w-0 flex-1 truncate"><span className="font-bold">{capTitle(t, c.id)}</span>{c.detail && <span dir="ltr" className="ms-2 font-mono text-[10px] text-fgdim">{c.detail}</span>}</span>
+              <span className="min-w-0 flex-1 truncate"><span className="font-bold">{capTitle(t, c.id)}</span>{c.detail && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}</span>}</span>
             </div>
           ))}
         </div>
       </div>
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('setup.connections.audit')}</div>
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('setup.connections.audit')}</div>
         {audit.length === 0 ? (
           <div className="text-[11px] text-fgdim">{t('setup.connections.noAudit')}</div>
         ) : (
-          <div dir="ltr" className="max-h-[160px] overflow-auto font-mono text-[10px] text-fgdim">
+          <div dir="ltr" className="max-h-[160px] overflow-auto font-mono text-[11.5px] md:text-[10px] text-fgdim">
             {audit.map((a, i) => (
               <div key={i} className="flex flex-wrap gap-x-2 border-b border-hair py-1 last:border-b-0">
                 <span>{fmtWhen(a.at)}</span>

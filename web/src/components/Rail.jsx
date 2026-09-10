@@ -100,7 +100,7 @@ function WaitingBadge({ items, t }) {
   return (
     <span
       title={title}
-      className="flex h-[0.9375rem] min-w-[0.9375rem] shrink-0 items-center justify-center rounded-full border border-ink bg-brand px-1 font-mono text-[0.625rem] font-bold text-[#1a1a1a]"
+      className="flex h-[0.9375rem] min-w-[0.9375rem] shrink-0 items-center justify-center rounded-full border border-ink bg-brand px-1 font-mono text-[0.6875rem] md:text-[0.625rem] font-bold text-[#1a1a1a]"
     >
       {items.length > 1 ? items.length : '!'}
     </span>
@@ -141,7 +141,7 @@ function StateDots({ kids }) {
 function ParentChip({ info, onSelect, t }) {
   if (!info) return null;
   const cls =
-    'flex min-w-0 max-w-[8.125rem] shrink-0 items-center gap-1 truncate rounded-full border border-border px-1.5 py-px font-mono text-[0.5625rem] text-fgdim';
+    'flex min-w-0 max-w-[8.125rem] shrink-0 items-center gap-1 truncate rounded-full border border-border px-1.5 py-px font-mono text-[0.6875rem] md:text-[0.5625rem] text-fgdim';
   const inner = (
     <>
       <Dot color={info.color} size={7} className="shrink-0" />
@@ -335,13 +335,16 @@ const SEL_CLS =
 const HOVER_CLS = 'hover:bg-fg/[.035]';
 const REVEAL_CLS = 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100';
 const META_CLS = 'mt-[0.1875rem] flex items-center gap-1.5 text-[0.6875rem] leading-[1.3] text-fgdim';
-const TIME_CLS = 'ms-auto shrink-0 font-mono text-[0.625rem] text-fgdim';
+const TIME_CLS = 'ms-auto shrink-0 font-mono text-[0.6875rem] md:text-[0.625rem] text-fgdim';
 // H4 V2 — the children of a folder: 22px indent and one 1px vertical hairline
 // (hair colour, never the project's) running down their side, no glyphs; 8px of
 // air after each group (12px). Nest the same class again for depth 2 (+22px).
 const KIDS_CLS =
   "relative mb-3 ps-[1.375rem] before:pointer-events-none before:absolute before:start-[0.9375rem] before:top-0.5 before:bottom-1.5 before:w-px before:bg-hair before:content-['']";
-const DOTS_CLS = 'shrink-0 cursor-pointer self-start rounded px-0.5 py-0.5 text-[0.8125rem] leading-none text-fgdim hover:text-fg';
+// The row's ⋯ menu. It painted at 17×17 — a coin-flip under a fingertip — so
+// on a phone it keeps the same glyph and grows its padding to a ~32px box.
+const DOTS_CLS =
+  'shrink-0 cursor-pointer self-start rounded px-2 py-[0.4375rem] text-[0.8125rem] leading-none text-fgdim hover:text-fg md:px-0.5 md:py-0.5';
 // The status word stays quiet (fgdim) — per feedback the only colour a row
 // carries is its own dot/avatar; "needs you" and the working spinner are the
 // two exceptions. Custom statuses are free text — truncate, never overflow.
@@ -355,7 +358,7 @@ function NeedsYouPill({ title, icon, children }) {
   return (
     <span
       title={title}
-      className="pulse-yellow flex h-4 shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-sans text-[0.625rem] font-semibold leading-none text-[#1a1a1a]"
+      className="pulse-yellow flex h-4 shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-sans text-[0.6875rem] md:text-[0.625rem] font-semibold leading-none text-[#1a1a1a]"
     >
       {icon && <Icon icon={icon} />}
       {children}
@@ -427,7 +430,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
         <span className="flex items-center gap-2">
           <Truncate text={label} dir={dirOf(label)} className={`min-w-0 flex-1 text-left font-sans leading-tight [[dir=rtl]_&]:text-right ${titleCls}`} />
           {port != null && (
-            <span className={`shrink-0 font-mono text-[0.65625rem] text-fgdim ${REVEAL_CLS}`}>:{port}</span>
+            <span className={`shrink-0 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim ${REVEAL_CLS}`}>:{port}</span>
           )}
           <span className="flex shrink-0 items-center gap-1.5">
             {watch && (
@@ -440,7 +443,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                         : t('rail.watchingSource', { n: watch.count })) +
                       (watch.fired ? t('rail.firedSuffix', { n: watch.fired }) : '')
                 }
-                className={`flex items-center gap-0.5 font-mono text-[0.625rem] leading-none ${
+                className={`flex items-center gap-0.5 font-mono text-[0.6875rem] md:text-[0.625rem] leading-none ${
                   watch.errored ? 'pulse-yellow text-danger' : 'text-fgdim'
                 }`}
               >
@@ -453,7 +456,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
                 type="button"
                 onClick={(e) => { e.stopPropagation(); tip.toggle(); }}
                 title={t('rail.summary')}
-                className="flex h-[0.9375rem] w-[0.9375rem] shrink-0 items-center justify-center text-[0.6875rem] text-fgdim"
+                className="-my-2 flex h-[1.75rem] w-[1.75rem] shrink-0 items-center justify-center text-[0.6875rem] text-fgdim"
               >
                 <Icon icon={faCircleInfo} />
               </button>
@@ -488,7 +491,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
               data-row-agent={agent.slug}
               title={t('session.bornFromTitle', { name: agent.name })}
               onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
-              className="shrink-0 cursor-pointer text-[0.65625rem] hover:underline"
+              className="shrink-0 cursor-pointer py-1.5 text-[0.6875rem] hover:underline md:py-0 md:text-[0.65625rem]"
               style={{ color: agent.color || undefined }}
             >
               · {agent.name}
@@ -496,7 +499,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
           )}
           {secondary && <Truncate as="span" text={`· ${secondary}`} dir={dirOf(secondary)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
           {session.metadata?.fromTriggerName && (
-            <TriggerTag name={session.metadata.fromTriggerName} showName={false} className="shrink-0 text-[0.625rem]" />
+            <TriggerTag name={session.metadata.fromTriggerName} showName={false} className="shrink-0 text-[0.6875rem] md:text-[0.625rem]" />
           )}
           <span className={TIME_CLS}>{relTime(session.updatedAt || session.createdAt)}</span>
         </span>
@@ -582,11 +585,11 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
           type="button"
           onClick={onToggle}
           title={hiddenWaiting ? t('rail.waitingInsideClick', { n: hiddenWaiting }) : t('agent.oneLiner')}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem]"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem] py-1.5 md:py-0"
         >
-          <span className={`text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
-          <span className="font-mono text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
-          <span className={`font-mono text-[0.59375rem] ${hiddenWaiting ? 'font-bold text-fg' : 'text-fgdim'}`}>
+          <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
+          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
+          <span className={`font-mono text-[0.6875rem] md:text-[0.59375rem] ${hiddenWaiting ? 'font-bold text-fg' : 'text-fgdim'}`}>
             {list.length}
             {hiddenWaiting ? ` · !${hiddenWaiting > 1 ? hiddenWaiting : ''}` : ''}
           </span>
@@ -597,16 +600,16 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
           data-rail-team-new
           onClick={onNewAgent}
           title={t('rail.teamNewAgent')}
-          className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-[0.1875rem] font-mono text-[0.625rem] leading-none text-fgdim hover:border-ink hover:text-fg"
+          className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-2 font-mono text-[0.6875rem] leading-none text-fgdim hover:border-ink hover:text-fg md:py-[0.1875rem] md:text-[0.625rem]"
         >
           {t('rail.teamNewAgent')}
         </button>
       </div>
       {open && list.length === 0 && (
-        <div className="px-2 py-1.5 text-[0.625rem] text-fgdim italic">{t('rail.teamEmpty')}</div>
+        <div className="px-2 py-1.5 text-[0.6875rem] md:text-[0.625rem] text-fgdim italic">{t('rail.teamEmpty')}</div>
       )}
       {open && list.length > 0 && (
-        <div className="px-2 pb-1 text-[0.59375rem] leading-tight text-fgdim italic">{t('agent.oneLiner')}</div>
+        <div className="px-2 pb-1 text-[0.6875rem] md:text-[0.59375rem] leading-tight text-fgdim italic">{t('agent.oneLiner')}</div>
       )}
       {open &&
         list.map((a) => {
@@ -733,10 +736,10 @@ export function insertAt(ids, from, target, zone) {
 function GroupHeader({ label, count }) {
   return (
     <div className="flex items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1">
-      <span className="font-mono text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
+      <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
         {label}
       </span>
-      <span className="font-mono text-[0.59375rem] text-fgdim">{count}</span>
+      <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{count}</span>
       <span className="h-px flex-1 bg-hair" />
     </div>
   );
@@ -901,7 +904,7 @@ function FolderRow({
           e.stopPropagation();
           onToggle();
         }}
-        className="-mx-1.5 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center text-[0.625rem] leading-none text-fgdim hover:text-fg"
+        className="-mx-1.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center text-[0.6875rem] leading-none text-fgdim hover:text-fg md:h-6 md:w-6 md:text-[0.625rem]"
       >
         <span className={collapsed ? 'mirror-rtl' : undefined}>
           <Icon icon={collapsed ? faCaretRight : faCaretDown} />
@@ -968,7 +971,7 @@ function FolderRow({
               ]
                 .filter(Boolean)
                 .join(' · ')}
-              className={`shrink-0 cursor-pointer rounded-full px-1.5 font-mono text-[0.625rem] leading-4 ${
+              className={`shrink-0 cursor-pointer rounded-full px-2 py-1.5 font-mono text-[0.6875rem] leading-4 md:px-1.5 md:py-0 md:text-[0.625rem] ${
                 hot ? 'border border-brand bg-transparent font-semibold text-fg' : 'text-fgdim'
               }`}
             >
@@ -1078,7 +1081,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       }`}
     >
       {over && <DropLine pos={over} />}
-      <span className="shrink-0 cursor-grab text-[0.625rem] leading-none text-fgdim" title={t('rail.dragToReorder')}>
+      <span className="shrink-0 cursor-grab text-[0.6875rem] md:text-[0.625rem] leading-none text-fgdim" title={t('rail.dragToReorder')}>
         <Icon icon={faGripVertical} />
       </span>
       <span className="shrink-0 font-mono text-[0.6875rem] font-bold text-fgdim">
@@ -1087,7 +1090,7 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       <Truncate text={item.title} className="min-w-0 flex-1 text-[0.71875rem] text-fgdim" />
       <span
         title={t('rail.fromX', { x: item.triggerName })}
-        className="max-w-[4.25rem] shrink-0 truncate rounded-[4px] bg-chip px-1.5 py-px text-[0.5625rem] text-fgdim"
+        className="max-w-[4.25rem] shrink-0 truncate rounded-[4px] bg-chip px-1.5 py-px text-[0.6875rem] md:text-[0.5625rem] text-fgdim"
       >
         {item.triggerName}
       </span>
@@ -1176,20 +1179,20 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem]"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem] py-1.5 md:py-0"
           title={open ? t('rail.collapse') : t('rail.expand')}
         >
-          <span className={`text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
-          <span className="font-mono text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
+          <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
+          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
             {t('rail.pendingTasks')}
           </span>
-          <span className="font-mono text-[0.59375rem] text-fgdim">{pending.length}</span>
+          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{pending.length}</span>
         </button>
         <button
           type="button"
           onClick={onOpenTriggers}
           title={t('rail.manageTriggers')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 py-[0.125rem] text-[0.59375rem] text-fgdim hover:border-ink"
+          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 py-1.5 text-[0.6875rem] text-fgdim hover:border-ink md:py-[0.125rem] md:text-[0.59375rem]"
         >
           <Icon icon={faBolt} /> {t('rail.triggers')}
         </button>
@@ -1197,13 +1200,13 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           type="button"
           onClick={toggleAutoplay}
           title={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}
-          className={`flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[5px] border text-[0.625rem] leading-none ${
+          className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[5px] border text-[0.6875rem] leading-none md:h-5 md:w-5 md:text-[0.625rem] ${
             queue.autoplay ? 'border-ink bg-brand text-fg' : 'border-border bg-panel text-fgdim hover:border-ink'
           }`}
         >
           <Icon icon={queue.autoplay ? faPause : faPlay} />
         </button>
-        <span title={t('rail.maxConcurrent')} className="flex shrink-0 items-center gap-0.5 text-[0.59375rem] text-fgdim">
+        <span title={t('rail.maxConcurrent')} className="flex shrink-0 items-center gap-0.5 text-[0.6875rem] md:text-[0.59375rem] text-fgdim">
           <span>×</span>
           <input
             type="number"
@@ -1215,7 +1218,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur();
             }}
-            className="w-8 rounded-[4px] border border-border bg-panel px-1 py-px text-center font-mono text-[0.625rem] outline-none focus:border-ink"
+            className="w-8 rounded-[4px] border border-border bg-panel px-1 py-px text-center font-mono text-[0.6875rem] md:text-[0.625rem] outline-none focus:border-ink"
           />
         </span>
       </div>
@@ -1310,7 +1313,7 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
             left: Math.round(Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8))),
           }}
         >
-          <div className="border-b border-hair px-2.5 pb-1 pt-1 text-[0.5625rem] tracking-[0.08em] text-fgdim uppercase">
+          <div className="border-b border-hair px-2.5 pb-1 pt-1 text-[0.6875rem] md:text-[0.5625rem] tracking-[0.08em] text-fgdim uppercase">
             {t('rail.runningAs')}
           </div>
           <div className="flex items-center gap-2 border-b border-hair px-2.5 py-1.5">
@@ -1340,9 +1343,9 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
         title={t('rail.profileSettings')}
         className="flex items-center gap-1.5 rounded-[6px] border border-border px-1.5 py-1 text-fgdim hover:border-ink hover:text-fg"
       >
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-chip text-[0.625rem] font-bold text-fg">{initial}</span>
-        <span className="max-w-[5.25rem] truncate text-[0.65625rem]">{label}</span>
-        <span className="text-[0.5625rem]"><Icon icon={faCaretDown} /></span>
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-chip text-[0.6875rem] md:text-[0.625rem] font-bold text-fg">{initial}</span>
+        <span className="max-w-[5.25rem] truncate text-[0.6875rem] md:text-[0.65625rem]">{label}</span>
+        <span className="text-[0.6875rem] md:text-[0.5625rem]"><Icon icon={faCaretDown} /></span>
       </button>
       {menu}
     </div>
@@ -1845,7 +1848,13 @@ export default function Rail({
       className={`flex shrink-0 flex-col border-e border-border bg-rail transition-transform md:relative md:z-auto md:translate-x-0 ${
         isDesktop
           ? 'relative'
-          : `fixed inset-y-0 left-0 z-50 w-[82%] max-w-[20rem] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
+          // The drawer lives on the START edge — the same edge the hamburger
+          // that opens it sits on. `left-0`/`-translate-x-full` were physical,
+          // so in Hebrew (RTL) the button was top-RIGHT and the drawer still
+          // slid in from the LEFT, across the whole screen.
+          : `fixed inset-y-0 start-0 z-50 w-[82%] max-w-[20rem] ${
+              mobileOpen ? 'translate-x-0' : rtl ? 'translate-x-full' : '-translate-x-full'
+            }`
       }`}
       // The stored width is at UI size medium; it follows --ui-scale like the rows do.
       style={isDesktop ? { width: `calc(${railWidth}px * var(--ui-scale, 1))` } : undefined}
@@ -1902,7 +1911,7 @@ export default function Rail({
             placeholder={t('rail.searchSessions')}
             className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-fgdim sm:text-xs"
           />
-          <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[0.625rem] text-fgdim">
+          <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[0.6875rem] md:text-[0.625rem] text-fgdim">
             /
           </span>
         </div>
@@ -1910,7 +1919,7 @@ export default function Rail({
 
       {/* header row + flat/grouped toggle */}
       <div className="flex items-center gap-2 px-[0.8125rem] pt-[0.5625rem] pb-1">
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.65625rem] tracking-[0.08em] text-fgdim uppercase">
+        <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] md:text-[0.65625rem] tracking-[0.08em] text-fgdim uppercase">
           {mode === 'grouped' ? t('rail.groupedByStatus') : t('rail.activeCount', { n: active.length })}
         </span>
         {mode === 'flat' && (
@@ -1918,7 +1927,7 @@ export default function Rail({
             type="button"
             title={t('rail.newFolder')}
             onClick={() => setFolderDialog({ type: 'new' })}
-            className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-[0.1875rem] text-[0.6875rem] leading-none text-fgdim hover:border-ink hover:text-fg"
+            className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-2 text-[0.6875rem] leading-none text-fgdim hover:border-ink hover:text-fg md:py-[0.1875rem]"
           >
             <Icon icon={faFolderPlus} />
           </button>
@@ -1933,7 +1942,7 @@ export default function Rail({
               type="button"
               title={title}
               onClick={() => setMode(key)}
-              className={`cursor-pointer px-[0.5625rem] py-[0.1875rem] text-[0.6875rem] leading-none ${
+              className={`cursor-pointer px-[0.5625rem] py-2 text-[0.6875rem] leading-none md:py-[0.1875rem] ${
                 i ? 'border-s border-border' : ''
               } ${mode === key ? 'bg-ink text-white' : 'bg-panel text-fgdim'}`}
             >
@@ -1975,7 +1984,7 @@ export default function Rail({
                     dir={dirOf(f.name)}
                     className="min-w-0 flex-1 text-left font-sans text-[0.875rem] font-medium leading-tight text-fg2 [[dir=rtl]_&]:text-right"
                   />
-                  <span className="shrink-0 px-1.5 font-mono text-[0.625rem] leading-4 text-fgdim">
+                  <span className="shrink-0 px-1.5 font-mono text-[0.6875rem] md:text-[0.625rem] leading-4 text-fgdim">
                     {(folderKids.get(f.id) || []).length}
                   </span>
                 </div>
@@ -2059,7 +2068,7 @@ export default function Rail({
                     <div className={KIDS_CLS}>
                       {kids.map((s) => sessionRowEl(s, { mark: true }))}
                       {kids.length === 0 && (
-                        <div className="px-2 py-1.5 text-[0.625rem] text-fgdim italic">
+                        <div className="px-2 py-1.5 text-[0.6875rem] md:text-[0.625rem] text-fgdim italic">
                           {t('rail.emptyFolderDrop')}
                         </div>
                       )}
@@ -2114,13 +2123,13 @@ export default function Rail({
             <button
               type="button"
               onClick={() => setArchivedOpen((v) => !v)}
-              className="flex w-full cursor-pointer items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1"
+              className="flex w-full cursor-pointer items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1 max-md:py-2.5"
             >
-              <span className={`text-[0.5625rem] text-fgdim ${archivedOpen ? '' : 'mirror-rtl'}`}><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
-              <span className="font-mono text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
+              <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${archivedOpen ? '' : 'mirror-rtl'}`}><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
+              <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
                 {t('rail.archived')}
               </span>
-              <span className="font-mono text-[0.59375rem] text-fgdim">{archived.length}</span>
+              <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{archived.length}</span>
               <span className="h-px flex-1 bg-hair" />
             </button>
             {archivedOpen &&
@@ -2149,7 +2158,7 @@ export default function Rail({
       {serverCount > 0 && <UsageMini usage={activeUsage} />}
 
       {/* footer */}
-      <div className="flex items-center gap-1.5 border-t border-hair px-[0.8125rem] py-2.5 font-mono text-[0.65625rem] text-fgdim">
+      <div className="flex items-center gap-1.5 border-t border-hair px-[0.8125rem] py-2.5 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim">
         <span
           className="h-2 w-2 rounded-full"
           style={{ background: proxyUp ? '#3C9A4E' : conn === 'open' ? '#CE8324' : '#d2d2d2' }}
@@ -2161,7 +2170,7 @@ export default function Rail({
             composer mic dictates; this one goes through the router. */}
         <MicButton
           mode="command"
-          className="flex h-[1.375rem] w-[1.625rem] items-center justify-center rounded-[5px] border text-[0.6875rem]"
+          className="flex h-8 w-9 items-center justify-center rounded-[5px] border text-[0.6875rem] md:h-[1.375rem] md:w-[1.625rem]"
         />
         {screenAvailable && (
           <button
@@ -2169,18 +2178,19 @@ export default function Rail({
             onClick={() => setScreenModal(true)}
             title={t('rail.screen')}
             aria-label={t('rail.screen')}
-            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[1.125rem] text-fgdim hover:border-ink hover:text-fg"
+            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-2 leading-[1.75rem] text-fgdim hover:border-ink hover:text-fg md:px-1.5 md:leading-[1.125rem]"
           >
             <Icon icon={faDisplay} />
           </button>
         )}
-        {onOpenShortcuts && (
+        {/* Keyboard shortcuts: nothing to press on a phone — desktop only. */}
+        {onOpenShortcuts && isDesktop && (
           <button
             type="button"
             onClick={onOpenShortcuts}
             title={t('rail.keyboardShortcutsTitle')}
             aria-label={t('rail.keyboardShortcuts')}
-            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[1.125rem] text-fgdim hover:border-ink hover:text-fg"
+            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-2 leading-[1.75rem] text-fgdim hover:border-ink hover:text-fg md:px-1.5 md:leading-[1.125rem]"
           >
             ?
           </button>

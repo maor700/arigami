@@ -20,7 +20,7 @@ import { toastError, toastSuccess } from '../lib/toast.js';
 import * as setupApi from '../lib/setup-api.js';
 import { faPlay, faTrash, faComments, faClock, faSatelliteDish, faPlus } from '@fortawesome/free-solid-svg-icons';
 
-const btn = 'cursor-pointer rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40';
+const btn = 'cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40';
 
 /** "in 3h" / "in 2d" — the forward twin of relTime, for next-run times. */
 export function untilTime(ms, t) {
@@ -86,7 +86,7 @@ export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
       <div className="flex items-center gap-1.5">
         <button type="submit" data-routine-save disabled={busy || !prompt.trim() || !value.trim()} className={btn}>{t('agent.routine.form.save')}</button>
         <button type="button" onClick={onCancel} className={btn}>{t('agent.routine.form.cancel')}</button>
-        <span className="text-[10px] text-fgdim">{t('agent.routine.form.hint')}</span>
+        <span className="text-[11.5px] md:text-[10px] text-fgdim">{t('agent.routine.form.hint')}</span>
       </div>
     </form>
   );
@@ -100,7 +100,7 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
     <div data-agent-routine={agent.slug} className="flex flex-col gap-3">
       <div className="rounded-[10px] border border-hair p-3">
         <div className="mb-2 flex items-center gap-2">
-          <span className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faClock} /> {t('agent.routine.cron')} · {cron.length}</span>
+          <span className="flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faClock} /> {t('agent.routine.cron')} · {cron.length}</span>
           <button type="button" data-routine-add onClick={onAdd} className={`ms-auto ${btn}`}><Icon icon={faPlus} /> {t('agent.routine.addForm')}</button>
           <button type="button" data-routine-add-chat onClick={onAddViaChat} className={btn}><Icon icon={faComments} /> {t('agent.routine.add')}</button>
         </div>
@@ -114,7 +114,7 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
             </button>
             <span className="min-w-0 flex-1">
               <span dir="auto" className="block truncate font-mono font-bold">{c.name}</span>
-              <span dir="ltr" className="block truncate font-mono text-[10px] text-fgdim">
+              <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">
                 {c.schedule?.kind}: {c.schedule?.value}
                 {c.enabled && c.nextRunAt ? ` · ${t('launcher.cron.metaNextRun')} ${untilTime(c.nextRunAt, t)}` : ''}
                 {c.lastRun ? ` · ${t('launcher.cron.metaLastRun')} ${relTime(c.lastRun)}` : ''}
@@ -126,14 +126,14 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
         ))}
       </div>
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faSatelliteDish} /> {t('agent.routine.listeners')} · {listeners.length}</div>
+        <div className="mb-2 flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faSatelliteDish} /> {t('agent.routine.listeners')} · {listeners.length}</div>
         {listeners.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.routine.noListeners')}</div>}
         {listeners.map((l) => (
           <div key={l.id} data-routine-listener={l.id} className="flex items-center gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0">
             <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: l.status === 'errored' ? '#9c3b33' : agent.color }} />
             <span className="min-w-0 flex-1">
               <span dir="auto" className="block truncate font-mono font-bold">{l.label}</span>
-              <span dir="ltr" className="block truncate font-mono text-[10px] text-fgdim">{l.type} · {l.status}{l.firedCount ? ` · ×${l.firedCount}` : ''}</span>
+              <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{l.type} · {l.status}{l.firedCount ? ` · ×${l.firedCount}` : ''}</span>
             </span>
             <button type="button" disabled={busy} onClick={() => onCancelListener?.(l)} className={`${btn} hover:text-[#9c3b33]`}>{t('agent.routine.cancelListener')}</button>
           </div>

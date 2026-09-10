@@ -121,7 +121,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
             <button type="button" className={BTN2} onClick={copy}>{copied ? <Icon icon={faCheck} /> : t('setup.oauth.copyLink')}</button>
           </div>
         )}
-        {link.url && <div dir="ltr" className="break-all rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[10px] text-fgdim select-all">{link.url}</div>}
+        {link.url && <div dir="ltr" className="break-all rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11.5px] md:text-[10px] text-fgdim select-all">{link.url}</div>}
         {flow === 'device' && (
           <div className={`${CARD} px-4 py-3`}>
             <div className="text-[11.5px] text-fgdim">{t('setup.oauth.deviceCode')}</div>

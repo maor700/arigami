@@ -181,7 +181,7 @@ export default function VoiceHUD() {
                   style={{ width: `${Math.min(100, Math.round((level || 0) * 140))}%`, background: (level || 0) > 0.03 ? 'var(--color-brand, #E3B341)' : '#d9534f' }}
                 />
               </div>
-              <div className="mt-1 font-mono text-[10px] text-fgdim">
+              <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">
                 {(level || 0) > 0.03 ? <>{t('dialogs.voiceMicPicking')} <Icon icon={faCheck} /></> : t('dialogs.voiceNoInput')}
               </div>
             </div>
@@ -208,7 +208,7 @@ export default function VoiceHUD() {
             const target = sessions.find((s) => s.id === a.sessionId);
             return (
               <div key={i} className="mb-2 rounded-[9px] border border-border bg-bg p-2.5" data-voice-inject>
-                <div className="mb-1.5 font-mono text-[10px] tracking-[0.05em] text-fgdim uppercase">
+                <div className="mb-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.05em] text-fgdim uppercase">
                   {t('dialogs.voiceSendTo', { target: target ? sessionLabel(target) : t('dialogs.voiceCurrentSession') })}
                 </div>
                 <textarea
@@ -239,7 +239,7 @@ export default function VoiceHUD() {
           })}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
+        <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
           {/* VOICE1: the mic language, changeable right here (same pref as Settings) */}
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="shrink-0">{t('dialogs.voiceLang')}</span>

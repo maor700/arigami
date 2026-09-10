@@ -11,8 +11,8 @@ import { PILL } from '../setup/shared.jsx';
 export const BTN =
   'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[0.71875rem] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
 export const BTN_SM = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[0.6875rem] text-fg hover:bg-brand disabled:opacity-40';
-export const BTN_PRIMARY = 'cursor-pointer rounded-lg border border-ink bg-brand px-2.5 py-1 text-[0.65625rem] font-bold text-fg hover:opacity-90 disabled:opacity-50';
-export const BTN_DANGER = 'cursor-pointer rounded-lg border border-hair bg-white px-2.5 py-1 text-[0.65625rem] text-[#9c3b33] hover:bg-[#FBECEA] disabled:opacity-50';
+export const BTN_PRIMARY = 'cursor-pointer rounded-lg border border-ink bg-brand px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] font-bold text-fg hover:opacity-90 disabled:opacity-50';
+export const BTN_DANGER = 'cursor-pointer rounded-lg border border-hair bg-white px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] text-[#9c3b33] hover:bg-[#FBECEA] disabled:opacity-50';
 export const INPUT = 'rounded-lg border-[1.5px] border-ink bg-panel px-2 py-1 font-mono text-[0.6875rem] text-fg outline-none disabled:opacity-60';
 export const ROW = 'flex items-center justify-between gap-2 border-b border-hair py-1.5 text-[0.71875rem] last:border-b-0';
 export const LIST = 'mt-2 rounded-lg border border-hair px-3 py-1';
@@ -72,7 +72,7 @@ export function Field({ label, hint, children, wrap = false }) {
 // ok | todo | pending | error | running | off — same palette as the setup cards.
 export function StatusPill({ status, label }) {
   const cls = PILL[status === 'off' ? 'blocked' : status] || PILL.blocked;
-  return <span className={`shrink-0 rounded-full border px-2 py-px text-[0.59375rem] font-bold uppercase ${cls}`}>{label}</span>;
+  return <span className={`shrink-0 rounded-full border px-2 py-px text-[0.6875rem] md:text-[0.59375rem] font-bold uppercase ${cls}`}>{label}</span>;
 }
 
 // Anchored section heading. `id` is the deep-link segment
@@ -81,10 +81,10 @@ export function Section({ id, title, onRefresh, children, first = false }) {
   const t = useT();
   return (
     <section id={id ? `settings-${id}` : undefined} className={first ? '' : 'mt-7'}>
-      <div className="mb-2 flex items-center font-mono text-[0.625rem] tracking-[0.08em] text-fgdim uppercase">
+      <div className="mb-2 flex items-center font-mono text-[0.6875rem] md:text-[0.625rem] tracking-[0.08em] text-fgdim uppercase">
         {title}
         {onRefresh && (
-          <button type="button" onClick={onRefresh} className="ms-auto cursor-pointer text-[0.65625rem] font-normal normal-case hover:text-fg">
+          <button type="button" onClick={onRefresh} className="ms-auto cursor-pointer text-[0.6875rem] md:text-[0.65625rem] font-normal normal-case hover:text-fg">
             <Icon icon={faRotateRight} /> {t('settings.refresh')}
           </button>
         )}
@@ -187,10 +187,10 @@ export function Advanced({ section, ids = [], children, hint }) {
       onToggle={(e) => setOpen(e.currentTarget.open)}
       className="mt-8 rounded-xl border border-dashed border-hair"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-mono text-[0.625rem] tracking-[0.08em] text-fgdim uppercase select-none hover:text-fg [&::-webkit-details-marker]:hidden">
-        <span className={`text-[0.625rem] transition-transform ${open ? '' : 'rtl:rotate-90 ltr:-rotate-90'}`}><Icon icon={faChevronDown} /></span>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-mono text-[0.6875rem] md:text-[0.625rem] tracking-[0.08em] text-fgdim uppercase select-none hover:text-fg [&::-webkit-details-marker]:hidden">
+        <span className={`text-[0.6875rem] md:text-[0.625rem] transition-transform ${open ? '' : 'rtl:rotate-90 ltr:-rotate-90'}`}><Icon icon={faChevronDown} /></span>
         {t('settings.advanced')}
-        {hint && <span className="ms-auto text-[0.625rem] font-normal normal-case tracking-normal">{hint}</span>}
+        {hint && <span className="ms-auto text-[0.6875rem] md:text-[0.625rem] font-normal normal-case tracking-normal">{hint}</span>}
       </summary>
       <div className="border-t border-dashed border-hair px-3 pb-4 [&>section:first-child]:mt-3">{children}</div>
     </details>

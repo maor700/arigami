@@ -78,10 +78,10 @@ export function UsersAdvanced() {
             <div key={u.id} className={ROW}>
               <span className="min-w-0 truncate">
                 <span className="font-bold">{u.email}</span>
-                <span className="ms-2 font-mono text-[10px] text-fgdim">{u.role}{u.oidcSub ? ' · oidc' : ''}</span>
+                <span className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{u.role}{u.oidcSub ? ' · oidc' : ''}</span>
               </span>
               {admin && u.id !== auth.user?.id && (
-                <button type="button" onClick={() => delUser(u.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-fg">{t('auth.settings.remove')}</button>
+                <button type="button" onClick={() => delUser(u.id)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg">{t('auth.settings.remove')}</button>
               )}
             </div>
           ))}
@@ -109,9 +109,9 @@ export function UsersAdvanced() {
                 <div key={tk.id} className={ROW}>
                   <span className="min-w-0 truncate">
                     <span className="font-bold">{tk.label}</span>
-                    <span className="ms-2 font-mono text-[10px] text-fgdim">{tk.email} · {tk.createdAt?.slice(0, 10)}</span>
+                    <span className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{tk.email} · {tk.createdAt?.slice(0, 10)}</span>
                   </span>
-                  <button type="button" onClick={() => delToken(tk.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-fg">{t('auth.settings.revoke')}</button>
+                  <button type="button" onClick={() => delToken(tk.id)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg">{t('auth.settings.revoke')}</button>
                 </div>
               ))}
             </div>
@@ -160,7 +160,7 @@ export function ScreenShare() {
             <button type="button" disabled={busy || !value} onClick={() => submit(value)} className={BTN}>{t('settings.vncPassword.save')}</button>
             {hasPassword && <button type="button" disabled={busy} onClick={() => submit('')} className={BTN}>{t('settings.vncPassword.clear')}</button>}
           </span>
-          <span className="font-mono text-[10.5px] text-fgdim">{savedTick ? t('settings.vncPassword.saved') : hasPassword ? t('settings.vncPassword.set') : t('settings.vncPassword.unset')}</span>
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{savedTick ? t('settings.vncPassword.saved') : hasPassword ? t('settings.vncPassword.set') : t('settings.vncPassword.unset')}</span>
         </div>
       </Field>
     </Section>

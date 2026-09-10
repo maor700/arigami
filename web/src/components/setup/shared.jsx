@@ -32,7 +32,7 @@ export const PILL = {
 export function Pill({ status, label }) {
   const t = useT();
   return (
-    <span className={`shrink-0 rounded-full border px-2 py-px text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
+    <span className={`shrink-0 rounded-full border px-2 py-px text-[11px] md:text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
       {label ?? t(`setup.state.${status}`)}
     </span>
   );

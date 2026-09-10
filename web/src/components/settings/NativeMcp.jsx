@@ -29,20 +29,20 @@ function McpCard({ cap, busy, onConnect, onDisconnect, ownerName }) {
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate text-[12px] font-bold text-fg">{cap.title || capTitle(t, cap.id)}</span>
             {cap.ok && <StatusPill status="ok" label={t('integrations.connected')} />}
-            {d.auth === 'bearer' && <span className="rounded-full border border-hair px-1.5 py-px text-[9.5px] text-fgdim">{t('mcp.auth.token')}</span>}
-            {byo && <span className="rounded-full border border-hair px-1.5 py-px text-[9.5px] text-fgdim">{t('mcp.auth.byo')}</span>}
+            {d.auth === 'bearer' && <span className="rounded-full border border-hair px-1.5 py-px text-[11px] md:text-[9.5px] text-fgdim">{t('mcp.auth.token')}</span>}
+            {byo && <span className="rounded-full border border-hair px-1.5 py-px text-[11px] md:text-[9.5px] text-fgdim">{t('mcp.auth.byo')}</span>}
           </div>
-          <p className="mt-0.5 text-[10.5px] leading-snug text-fgdim">
+          <p className="mt-0.5 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
             {cap.ok ? t('mcp.card.connected', { name: d.name || '' }) : d.note || t('mcp.card.hint')}
           </p>
           {cap.ok && d.tools && (
-            <p dir="ltr" className="mt-0.5 font-mono text-[9.5px] text-fgdim">{d.tools}{cap.resolvedFrom && cap.resolvedFrom !== cap.owner ? ` · ${ownerName?.(cap.resolvedFrom) || ''}` : ''}</p>
+            <p dir="ltr" className="mt-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim">{d.tools}{cap.resolvedFrom && cap.resolvedFrom !== cap.owner ? ` · ${ownerName?.(cap.resolvedFrom) || ''}` : ''}</p>
           )}
         </div>
       </div>
       <div className="flex items-center justify-end gap-2">
         {d.docs && (
-          <a href={d.docs} target="_blank" rel="noreferrer" className="text-[10px] text-fgdim underline hover:text-fg">
+          <a href={d.docs} target="_blank" rel="noreferrer" className="text-[11.5px] md:text-[10px] text-fgdim underline hover:text-fg">
             {t('mcp.docs')} <Icon icon={faArrowUpRightFromSquare} />
           </a>
         )}

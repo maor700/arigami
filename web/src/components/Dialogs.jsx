@@ -80,11 +80,11 @@ export function ArchiveDialog({ session, onClose }) {
                 {t('dialogs.alsoRemoveWorktree')}
               </span>
               {session.metadata?.worktree && (
-                <span className="mt-0.5 block font-mono text-[10.5px] text-fgdim">
+                <span className="mt-0.5 block font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
                   {session.metadata.worktree}
                 </span>
               )}
-              <span className="mt-1 block font-mono text-[10px] leading-relaxed text-fgdim">
+              <span className="mt-1 block font-mono text-[11.5px] md:text-[10px] leading-relaxed text-fgdim">
                 {cleanup.map((c, i) => (
                   <span key={i} className="block truncate">
                     {c}
@@ -148,7 +148,7 @@ export function EditSessionDialog({ session, onClose }) {
         </div>
         <div className="flex flex-col gap-3 px-[18px] pt-3.5">
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.title')}</span>
+            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.title')}</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -158,7 +158,7 @@ export function EditSessionDialog({ session, onClose }) {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.status')}</span>
+            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.status')}</span>
             <input
               value={status}
               onChange={(e) => setStatus(e.target.value)}
@@ -174,7 +174,7 @@ export function EditSessionDialog({ session, onClose }) {
             </datalist>
           </label>
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.description')}</span>
+            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.description')}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -217,7 +217,7 @@ function FolderNameShell({ title, children, name, setName, busy, error, submitLa
         </div>
         <div className="px-[18px] pt-3.5">
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
               {t('dialogs.folderName')}
             </span>
             <input
@@ -368,7 +368,7 @@ export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
         </div>
         <div className="px-[18px] pt-3.5">
           <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
               {t('dialogs.controllerWorkingDir')}
             </span>
             <input
@@ -492,7 +492,7 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
           </p>
         </div>
         {hasCleanup && (
-          <div className="mx-[18px] mt-3.5 rounded-[9px] border-[1.5px] border-danger/30 bg-danger/10 p-[10px_12px] font-mono text-[10.5px] leading-[1.8] text-danger">
+          <div className="mx-[18px] mt-3.5 rounded-[9px] border-[1.5px] border-danger/30 bg-danger/10 p-[10px_12px] font-mono text-[11.5px] md:text-[10.5px] leading-[1.8] text-danger">
             {cleanup.map((c, i) => (
               <div key={i} className="truncate">
                 {c}

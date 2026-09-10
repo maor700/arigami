@@ -10,6 +10,7 @@ import { usePrefs, setPrefs } from '../../lib/prefs.js';
 import { useT } from '../../lib/i18n.js';
 import { Field, Segmented, Section, Toggle } from './shared.jsx';
 import VoiceLangPicker from '../VoiceLangPicker.jsx';
+import { useIsDesktop } from '../../lib/useMedia.js';
 
 // Device labels are only exposed after mic permission was granted once —
 // until then offer a one-tap "Allow" that requests access and re-enumerates.
@@ -77,6 +78,17 @@ function MicPicker({ value, onChange }) {
 export function VoiceMain({ recording, setRecording }) {
   const prefs = usePrefs();
   const t = useT();
+  const desktop = useIsDesktop();
+  // Both controls here exist only to serve a keyboard chord: the hotkey itself,
+  // and hold-vs-toggle, which describes how that chord behaves while held.
+  // A phone has neither, and its mic button always toggles — so on touch the
+  // pair is dead UI. Say what does work instead.
+  if (!desktop)
+    return (
+      <Field label={t('chrome.voice.hotkey')} hint={t('chrome.voice.hotkey.touchHint')}>
+        <span className="text-[11.5px] text-fgdim">{t('chrome.voice.hotkey.touch')}</span>
+      </Field>
+    );
   return (
     <>
       <Field label={t('chrome.voice.hotkey')} hint={t('chrome.voice.hotkey.hint')}>

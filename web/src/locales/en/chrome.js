@@ -65,6 +65,8 @@ export const strings = {
   'chrome.voice.hotkey': 'Record hotkey',
   'chrome.voice.hotkey.hint': 'Works everywhere. With the cursor in the chat message box it dictates into the message; anywhere else it opens the voice-command window. Press again while listening to stop; press while the window is open to listen again. Click Record, then press the keys.',
   'chrome.voice.hotkey.pressKeys': 'Press keys…',
+  'chrome.voice.hotkey.touch': 'Tap the mic button to start and stop.',
+  'chrome.voice.hotkey.touchHint': 'A recording hotkey needs a keyboard — on a phone the mic button in the composer and in the sessions drawer does the same job.',
   'chrome.voice.hotkey.record': 'Record',
   'chrome.voice.hotkey.listening': 'Listening…',
   'chrome.voice.autoSend': 'Auto-send prompts',

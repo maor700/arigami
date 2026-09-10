@@ -26,7 +26,7 @@ import {
 function Pill({ status }) {
   const t = useT();
   return (
-    <span className={`shrink-0 rounded-full border px-2 py-px text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
+    <span className={`shrink-0 rounded-full border px-2 py-px text-[11px] md:text-[9.5px] font-bold uppercase ${PILL[status] || PILL.blocked}`}>
       {t(`wizard.status.${status}`)}
     </span>
   );
@@ -163,18 +163,18 @@ function ProfileStep({ step, refresh, onSkip }) {
             >
               <div className="flex items-center gap-2">
                 <span className="text-[12.5px] font-bold text-fg">{b.title || b.name}</span>
-                <span className="rounded-full border border-hair px-1.5 text-[9px] uppercase text-fgdim">{b.trusted ? t('wizard.profile.trusted') : 'ext'}</span>
-                {isPending && <span className="rounded-full border border-[#e7d3a8] bg-[#FBF3E0] px-1.5 text-[9px] uppercase text-[#8a6d1f]">{t('wizard.profile.pending')}</span>}
+                <span className="rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] uppercase text-fgdim">{b.trusted ? t('wizard.profile.trusted') : 'ext'}</span>
+                {isPending && <span className="rounded-full border border-[#e7d3a8] bg-[#FBF3E0] px-1.5 text-[11px] md:text-[9px] uppercase text-[#8a6d1f]">{t('wizard.profile.pending')}</span>}
               </div>
               {b.description && <div className="mt-0.5 text-[11px] leading-snug text-fgdim">{b.description}</div>}
-              <div className="mt-1 font-mono text-[10px] text-fgdim">{(b.skills || []).length} skills · {b.cron || 0} cron{b.hasMemorySeed ? ' · memory' : ''}</div>
+              <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{(b.skills || []).length} skills · {b.cron || 0} cron{b.hasMemorySeed ? ' · memory' : ''}</div>
             </button>
           );
         })}
       </div>
       <div className="mt-3 flex flex-col gap-2">
         <input className={INPUT} value={url} onChange={(e) => { setUrl(e.target.value); if (e.target.value) setSelected(null); }} placeholder={t('wizard.profile.urlPlaceholder')} spellCheck={false} />
-        {url && <div className="text-[10.5px] text-fgdim">{t('wizard.profile.external')}</div>}
+        {url && <div className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('wizard.profile.external')}</div>}
         <div className="flex flex-wrap gap-2">
           <button type="button" className={BTN} disabled={busy || !(selected || url.trim())} onClick={() => apply(url.trim() || selected)}>
             {busy ? t('wizard.profile.applying') : t('wizard.profile.apply')}
@@ -255,7 +255,7 @@ function TelemetryStep({ step, refresh }) {
       </div>
       <button type="button" className={`${BTN2} mt-2`} onClick={show}>{preview ? t('telemetry.hidePreview') : t('telemetry.preview')}</button>
       {preview && (
-        <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[10.5px] leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
+        <pre dir="ltr" className="mt-3 max-h-[240px] overflow-auto rounded-[8px] border border-hair bg-bg p-3 font-mono text-[11.5px] md:text-[10.5px] leading-snug text-fg">{JSON.stringify(preview, null, 2)}</pre>
       )}
       <ErrorBox err={err} />
     </>
@@ -293,12 +293,12 @@ function HealthStep({ step, refresh, onOpen }) {
         <div className={`${CARD} mt-3 overflow-hidden`}>
           {health.checks.map((c) => (
             <div key={c.id} className="flex items-center gap-2.5 border-b border-hair px-3 py-2 last:border-0">
-              <span className={`w-[52px] shrink-0 rounded-full border px-2 py-px text-center text-[9.5px] font-bold uppercase ${c.ok ? PILL.ok : c.required ? PILL.error : PILL.blocked}`}>
+              <span className={`w-[52px] shrink-0 rounded-full border px-2 py-px text-center text-[11px] md:text-[9.5px] font-bold uppercase ${c.ok ? PILL.ok : c.required ? PILL.error : PILL.blocked}`}>
                 {c.ok ? t('wizard.health.pass') : c.required ? t('wizard.health.fail') : t('wizard.health.optional')}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-[12px] font-semibold text-fg">{t(`wizard.health.check.${c.id}`)}</div>
-                <div className="truncate font-mono text-[10px] text-fgdim">{c.detail}</div>
+                <div className="truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}</div>
               </div>
             </div>
           ))}
@@ -413,7 +413,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
                 onClick={() => setIdx(i)}
                 className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${i === cur ? 'border-ink bg-brand font-bold' : 'border-border bg-panel text-fgdim hover:border-ink'}`}
               >
-                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] ${s.status === 'ok' ? 'bg-[#2f7d4f] text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'bg-bg text-fg border border-border'}`}>
+                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] md:text-[9px] ${s.status === 'ok' ? 'bg-[#2f7d4f] text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'bg-bg text-fg border border-border'}`}>
                   {s.status === 'ok' ? <Icon icon={faCheck} /> : i + 1}
                 </span>
                 <span className="hidden sm:inline">{t(STEP_TITLE[s.id])}</span>
@@ -428,7 +428,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
         {step && (
           <div className={`${CARD} px-5 py-5`}>
             <div className="mb-1 flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-fgdim">{t('wizard.stepOf', { n: cur + 1, total: steps.length })}</span>
+              <span className="font-mono text-[11.5px] md:text-[10px] uppercase tracking-[0.08em] text-fgdim">{t('wizard.stepOf', { n: cur + 1, total: steps.length })}</span>
               <Pill status={step.status} />
             </div>
             <h2 className="mb-2 text-[16px] font-bold">{t(STEP_TITLE[step.id])}</h2>

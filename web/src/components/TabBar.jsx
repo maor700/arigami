@@ -211,11 +211,22 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
     api.del(`/sessions/${session.id}/tabs/${tab.id}`).catch(() => {});
   };
 
+  // On a phone the strip is far narrower than its tabs, so it scrolls. Without
+  // this, opening a session whose active tab is the 6th one showed tabs 1–3 and
+  // no hint that the tab you are looking at is off to the side.
+  const stripRef = useRef(null);
+  useEffect(() => {
+    const el = stripRef.current?.querySelector('[data-tab-active="1"]');
+    if (!el || !stripRef.current) return;
+    if (stripRef.current.scrollWidth <= stripRef.current.clientWidth + 4) return;
+    el.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [activeTabId, tabs.length]);
+
   return (
     <div className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-hair bg-panel px-3">
       {/* session-color edge strip */}
       <span
-        className="absolute top-0 bottom-0 left-0 w-[0.1875rem]"
+        className="absolute top-0 bottom-0 start-0 w-[0.1875rem]"
         style={{ background: color }}
       />
       {/* mobile: hamburger opens the rail drawer (there's no separate top bar
@@ -225,13 +236,16 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           type="button"
           aria-label={t('rail.openSessions')}
           onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
-          className="mr-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[0.8125rem] text-fg md:hidden"
+          className="me-2 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center self-center rounded-[7px] border-[1.5px] border-border bg-bg text-[0.8125rem] text-fg md:hidden"
         >
           <Icon icon={faBars} />
         </button>
       )}
 
-      <div className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]">
+      <div
+        ref={stripRef}
+        className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]"
+      >
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
           const isSession = tab.type === 'session';
@@ -239,12 +253,13 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
             <button
               key={tab.id}
               type="button"
+              data-tab-active={active ? '1' : '0'}
               onClick={() => activate(tab)}
               className={`group flex cursor-pointer items-center gap-1.5 border-b-2 px-2.5 text-xs ${
                 active
                   ? 'border-brand font-bold text-fg'
                   : 'border-transparent text-fgdim hover:text-fg'
-              } ${isSession ? 'min-w-[4rem] flex-[0_1_auto]' : 'shrink-0'}`}
+              } ${isSession ? 'min-w-[7.5rem] shrink-0 md:min-w-[4rem] md:flex-[0_1_auto] md:shrink' : 'shrink-0'}`}
             >
               {isSession ? (
                 <>
@@ -276,7 +291,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                     role="button"
                     title={t('rail.closeTab')}
                     onClick={(e) => closeTab(e, tab)}
-                    className="-mr-1 ml-0.5 hidden rounded px-0.5 text-[0.6875rem] text-fgdim hover:text-fg group-hover:inline [@media(pointer:coarse)]:inline"
+                    className="-me-1 ms-0.5 hidden rounded px-1 py-1 text-[0.6875rem] text-fgdim hover:text-fg group-hover:inline [@media(pointer:coarse)]:inline"
                   >
                     <Icon icon={faXmark} />
                   </span>
@@ -294,7 +309,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           +
         </button>
       </div>
-      <div className="ml-auto shrink-0" />
+      <div className="ms-auto shrink-0" />
       {addOpen && <AddTabPopover sessionId={session.id} onClose={() => setAddOpen(false)} />}
     </div>
   );

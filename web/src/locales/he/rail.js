@@ -273,6 +273,7 @@ export const strings = {
   'rail.autoPlayHoldActionHint': 'אוטו-פליי דולק ובקשות ממתינות, אבל התור עצור עד שתענה על הכרטיס שלמעלה',
   'rail.autoPlay': 'ניגון אוטומטי',
   'rail.queuedPromptsHint': 'בקשות בתור — גררו כדי לסדר מחדש, ▶ כדי להתחיל עכשיו',
+  'rail.queuedPromptsHintTouch': 'בקשות בתור — ▶ כדי להתחיל עכשיו',
   'rail.interruptSendNow': 'הפסיקו את העבודה הנוכחית ושלחו את הבקשה הזו עכשיו',
   'rail.sendPromptNow': 'שלחו את הבקשה הזו עכשיו',
   'rail.removeFromQueue': 'הסרה מהתור',

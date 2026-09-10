@@ -47,7 +47,7 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
               {seg('auto', faWandMagicSparkles, t('setup.mode.auto'))}
               {seg('manual', faHand, t('setup.mode.manual'))}
             </div>
-            {!autoAllowed && <div className="mt-1 text-[10.5px] text-fgdim">{identity ? t('setup.mode.autoUnavailable') : t('setup.mode.needsIdentity')}</div>}
+            {!autoAllowed && <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{identity ? t('setup.mode.autoUnavailable') : t('setup.mode.needsIdentity')}</div>}
           </div>
         )}
         <div className="mt-3">

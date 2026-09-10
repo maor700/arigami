@@ -45,7 +45,7 @@ function PermissionList({ permissions }) {
           <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-fgdim" />
           <span className="min-w-0">
             {permissionLabel(t, p)}
-            <code dir="ltr" className="ms-1.5 font-mono text-[10px] text-fgdim">{p}</code>
+            <code dir="ltr" className="ms-1.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">{p}</code>
           </span>
         </li>
       ))}
@@ -297,14 +297,14 @@ function SettingsForm({ ext }) {
 
   return (
     <div className="mt-2 border-t border-hair pt-2">
-      <div className="mb-1 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('ext.settings')}</div>
+      <div className="mb-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('ext.settings')}</div>
       {fields.map((f) => (
         <div key={f.key} className="flex items-center gap-3 border-b border-hair py-2 last:border-b-0">
           <div className="min-w-0 flex-1">
             <div className="text-[11.5px] font-bold text-fg">{f.title}</div>
-            {f.description && <div className="mt-0.5 text-[10.5px] text-fgdim">{f.description}</div>}
+            {f.description && <div className="mt-0.5 text-[11.5px] md:text-[10.5px] text-fgdim">{f.description}</div>}
             {f.fallback !== undefined && f.type !== 'boolean' && (
-              <div className="mt-0.5 font-mono text-[9.5px] text-fgdim" dir="ltr">
+              <div className="mt-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim" dir="ltr">
                 {t('ext.settings.default', { v: String(f.fallback) })}
               </div>
             )}
@@ -418,7 +418,7 @@ export function ExtensionCard({ ext }) {
       }
       tone={ext.state === 'error' ? 'danger' : 'default'}
     >
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[9.5px] text-fgdim" dir="ltr">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim" dir="ltr">
         <span>{ext.name}</span>
         {ext.version && <span>· {t('ext.version', { v: ext.version })}</span>}
         {ext.apiVersion != null && <span>· {t('ext.apiVersion', { n: ext.apiVersion })}</span>}
@@ -439,10 +439,10 @@ export function ExtensionCard({ ext }) {
           sandboxed extension that never asked says nothing. */}
       {(ext.trusted || ext.trustRequested) && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className={`rounded-full border-[1.5px] border-ink px-2 py-0.5 text-[10.5px] ${ext.trusted ? 'bg-chip text-fg' : 'bg-panel text-fgdim'}`}>
+          <span className={`rounded-full border-[1.5px] border-ink px-2 py-0.5 text-[11.5px] md:text-[10.5px] ${ext.trusted ? 'bg-chip text-fg' : 'bg-panel text-fgdim'}`}>
             {t(ext.trusted ? 'ext.tier.trusted' : 'ext.tier.sandboxed')}
           </span>
-          <span className="min-w-0 flex-1 text-[10.5px] text-fgdim">
+          <span className="min-w-0 flex-1 text-[11.5px] md:text-[10.5px] text-fgdim">
             {t(ext.trusted ? 'ext.tier.trusted.hint' : 'ext.tier.asked.hint')}
           </span>
           <button type="button" disabled={busy} onClick={() => setTrust(!ext.trusted)} className={ext.trusted ? BTN_SM : BTN_DANGER}>
@@ -453,7 +453,7 @@ export function ExtensionCard({ ext }) {
 
       {ext.error && <ErrorLine>{ext.error}</ErrorLine>}
       {(ext.warnings || []).length > 0 && (
-        <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-[10.5px] text-fgdim">
+        <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">
           <div className="font-bold">{t('ext.warnings')}</div>
           <ul className="mt-0.5 list-inside list-disc">
             {ext.warnings.map((w, i) => <li key={i}>{w}</li>)}

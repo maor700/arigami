@@ -35,7 +35,7 @@ export function UsageBar({ label, win, sub }) {
           {t('dialogs.percentLeft', { pct: left })}
         </span>
         {reset && (
-          <span className="font-mono text-[10px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
+          <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
         )}
       </div>
       <div className={`w-full overflow-hidden rounded-full bg-hair ${sub ? 'h-1.5' : 'h-2.5'}`}>
@@ -59,7 +59,7 @@ export function UsageChip({ usage }) {
   return (
     <span className="flex items-center gap-1" title={t('dialogs.subscriptionUsageTitle')}>
       <span className="h-2 w-2 rounded-full" style={{ background: leftColor(left) }} />
-      <span className="font-mono text-[10px] tabular-nums">{left}%</span>
+      <span className="font-mono text-[11.5px] md:text-[10px] tabular-nums">{left}%</span>
     </span>
   );
 }
@@ -78,18 +78,18 @@ function MiniBar({ title, win }) {
   return (
     <div title={`${t('dialogs.spentPct', { title, pct: used })}${reset ? ` · ${t('dialogs.resetsIn', { t: reset })}` : ''}`}>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-[9.5px] tracking-[0.04em] text-fgdim uppercase">
+        <span className="min-w-0 truncate font-mono text-[11px] md:text-[9.5px] tracking-[0.04em] text-fgdim uppercase">
           {title}
         </span>
         {reset && (
-          <span className="shrink-0 font-mono text-[9px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
+          <span className="shrink-0 font-mono text-[11px] md:text-[9px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
         )}
       </div>
       <div className="mt-[3px] flex items-center gap-1.5">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hair">
           <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: leftColor(left) }} />
         </div>
-        <span className="shrink-0 font-mono text-[9.5px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
           {used}%
         </span>
       </div>
@@ -111,7 +111,7 @@ export function UsageMini({ usage }) {
       <button
         type="button"
         onClick={() => setPrefs({ usageExpanded: !expanded })}
-        className="flex cursor-pointer items-center gap-1.5 font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase hover:text-fg"
+        className="flex cursor-pointer items-center gap-1.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg md:py-0 md:text-[9px]"
       >
         <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
         <Icon icon={expanded ? faChevronUp : faChevronDown} />
@@ -158,7 +158,7 @@ export default function Usage({ usage }) {
         </div>
       )}
       {usage.fetchedAt && (
-        <div className="mt-3 font-mono text-[9.5px] text-fgdim">
+        <div className="mt-3 font-mono text-[11px] md:text-[9.5px] text-fgdim">
           {untilTime(usage.fetchedAt + 60000) === 'now' ? t('dialogs.updatedJustNow') : t('dialogs.updatedRecently')}
         </div>
       )}

@@ -54,12 +54,12 @@ export function ActionCard({ sessionId, action }) {
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
         <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.actionNeeded')}</span>
         {action.agent && (
-          <span data-action-agent={action.agent.slug} className="flex items-center gap-1 rounded-full border border-[var(--term-accent-border)] px-1.5 py-px text-[10px] text-[var(--term-accent-fg)]">
+          <span data-action-agent={action.agent.slug} className="flex items-center gap-1 rounded-full border border-[var(--term-accent-border)] px-1.5 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
             <AgentAvatar agent={action.agent} size={14} />
             <span dir="auto">{action.agent.name}</span>
           </span>
         )}
-        {action.kind && <span className="rounded-full bg-[var(--term-accent-border)] px-1.5 py-px font-mono text-[9.5px] text-[var(--term-accent-fg)]">{action.kind}</span>}
+        {action.kind && <span className="rounded-full bg-[var(--term-accent-border)] px-1.5 py-px font-mono text-[11px] md:text-[9.5px] text-[var(--term-accent-fg)]">{action.kind}</span>}
         <button
           type="button"
           disabled={busy}
@@ -105,7 +105,7 @@ export function ActionCard({ sessionId, action }) {
 export function ActionAutoLine({ event }) {
   const t = useT();
   return (
-    <div data-action-auto-line className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+    <div data-action-auto-line className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
       {event.agent && <AgentAvatar agent={event.agent} size={14} />}
       <span className="font-bold">{t('chat.actionAutoApproved', { kind: event.actionKind || '' })}</span>
       <span dir="auto" className="min-w-0 truncate">{event.prompt}</span>
@@ -149,15 +149,15 @@ export function ActionBar({ session }) {
         <Icon icon={faCheck} />
       </span>
       {action.agent && (
-        <span data-action-agent={action.agent.slug} className="flex shrink-0 items-center gap-1 rounded-full border border-hair bg-panel px-1.5 py-px text-[10.5px] text-fg">
+        <span data-action-agent={action.agent.slug} className="flex shrink-0 items-center gap-1 rounded-full border border-hair bg-panel px-1.5 py-px text-[11.5px] md:text-[10.5px] text-fg">
           <AgentAvatar agent={action.agent} size={14} />
           <span dir="auto">{action.agent.name}</span>
-          {action.kind && <span className="font-mono text-[9.5px] text-fgdim">· {action.kind}</span>}
+          {action.kind && <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">· {action.kind}</span>}
         </span>
       )}
       <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
         {action.prompt}{' '}
-        <span className="font-mono text-[10px] text-[#8a7a2f]">
+        <span className="font-mono text-[11.5px] md:text-[10px] text-[#8a7a2f]">
           {t('rail.revealedBy')}
         </span>
         {err && (
@@ -168,7 +168,7 @@ export function ActionBar({ session }) {
       </span>
       <span className="ms-auto flex shrink-0 flex-wrap items-center gap-2">
         {canAuto && (
-          <label data-action-auto className="flex cursor-pointer items-center gap-1 text-[10.5px] text-[#6b5d20]">
+          <label data-action-auto className="flex cursor-pointer items-center gap-1 text-[11.5px] md:text-[10.5px] text-[#6b5d20]">
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
             {t('chat.actionAutoApproveShort')}
           </label>

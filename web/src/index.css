@@ -245,7 +245,8 @@ body {
 .md ul,
 .md ol {
   margin: 0.45em 0;
-  padding-left: 1.4em;
+  /* logical: a Hebrew list indents from the right, like its text */
+  padding-inline-start: 1.4em;
 }
 .md li {
   margin: 0.15em 0;
@@ -276,9 +277,9 @@ body {
   text-underline-offset: 2px;
 }
 .md blockquote {
-  border-left: 3px solid var(--term-border);
+  border-inline-start: 3px solid var(--term-border);
   margin: 0.55em 0;
-  padding: 0 0 0 10px;
+  padding-inline-start: 10px;
   color: var(--term-dim);
 }
 .md table {
@@ -352,7 +353,7 @@ body {
 .md-light ul,
 .md-light ol {
   margin: 0.5em 0;
-  padding-left: 1.5em;
+  padding-inline-start: 1.5em;
 }
 .md-light code {
   font-family: var(--font-mono);
@@ -381,9 +382,9 @@ body {
   text-underline-offset: 2px;
 }
 .md-light blockquote {
-  border-left: 3px solid #e2e2e2;
+  border-inline-start: 3px solid #e2e2e2;
   margin: 0.6em 0;
-  padding: 0 0 0 12px;
+  padding-inline-start: 12px;
   color: #777;
 }
 .md-light table {
@@ -461,3 +462,50 @@ body {
 .diff-syntax .hljs-regexp { color: var(--sx-regexp); }
 .diff-syntax .hljs-strong { font-weight: 700; }
 .diff-syntax .hljs-emphasis { font-style: italic; }
+
+/* =====================================================================
+   Touch / phone
+   =====================================================================
+   The cockpit is laid out at desktop density: 10–12px controls, hover-only
+   affordances, fields sized for a mouse. Three of those choices are actively
+   broken on a phone, and they are fixed here — once, globally — rather than
+   in every component that happens to render a field or a button.
+
+   Everything below keys off `pointer: coarse` (a finger), not a viewport
+   width: an iPad in landscape is 1024px wide and still has no mouse, while a
+   narrow desktop window has a cursor and wants the dense layout. */
+@media (pointer: coarse) {
+  /* iOS Safari zooms the whole page in whenever a focused field's font-size is
+     under 16px — and it never zooms back out; the human is left panning a
+     cockpit that no longer fits. Every Settings field, the rail's concurrency
+     box and (in landscape, past the `sm:` breakpoint) the composer were under
+     that line. Lift the TEXT to 16px and leave the box's own padding alone.
+     This is unlayered CSS, so it beats Tailwind's `text-[11.5px]` in
+     @layer utilities without any !important. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+
+  /* No 300ms "is this a double-tap-to-zoom?" delay on anything tappable. */
+  a[href],
+  button,
+  summary,
+  label,
+  select,
+  [role='button'],
+  [role='tab'],
+  input[type='checkbox'],
+  input[type='radio'] {
+    touch-action: manipulation;
+  }
+
+  /* Checkboxes render at ~13px at the default UI scale — under a fingertip
+     that is a miss, and the label is not always clickable. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    min-width: 1.0625rem;
+    min-height: 1.0625rem;
+  }
+}

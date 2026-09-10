@@ -83,7 +83,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
                 >
                   <span className="w-[11px] shrink-0 text-center text-[11px] text-fgdim">{a.icon ? typeof a.icon === 'string' ? a.icon : <Icon icon={a.icon} /> : '⌘'}</span>
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{a.label}</span>
-                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.command')}</span>
+                  <span className="font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.command')}</span>
                 </button>
               );
             }
@@ -101,7 +101,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
                 <Dot color={s.color} size={11} />
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{sessionLabel(s)}</span>
                 {s.id === selectedId && (
-                  <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.current')}</span>
+                  <span className="font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.current')}</span>
                 )}
                 {working && <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />}
                 {attn && !working && <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-danger" />}
@@ -109,7 +109,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
             );
           })}
         </div>
-        <div className="flex items-center gap-3 border-t border-hair px-4 py-2 font-mono text-[10px] text-fgdim">
+        <div className="flex items-center gap-3 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
           <span>{t('rail.qsMove')}</span>
           <span>{t('rail.qsRun')}</span>
           <span>{t('rail.qsClose')}</span>
