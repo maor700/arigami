@@ -11,7 +11,7 @@
 //   2. Unbounded on-demand search (FTS5 via bun:sqlite) over those files plus
 //      journal/*.md and episodes/*.md — zero token cost until actually queried.
 //
-// Gate (spec "סגור-תחילה"): every write to USER.md/MEMORY.md/journal is
+// Gate (spec "סגור-תחילה" — close-first): every write to USER.md/MEMORY.md/journal is
 // sanitized (credential/prompt-injection/exfiltration heuristics), deduped
 // against existing lines, capped in size, and logged append-only with a full
 // before/after snapshot (memory/.log.jsonl) so any change is undoable.
@@ -762,7 +762,7 @@ export function listMemory(agent?: string | null): MemoryFileSummary[] {
   };
   const slug = normalizeAgent(agent);
   if (slug) {
-    // One agent's namespace only (the Agent page → זיכרון tab).
+    // One agent's namespace only (the Agent page → "זיכרון" (memory) tab).
     for (const rel of agentRelPaths(slug)) {
       const full = resolveRel(rel);
       const content = readFileSafe(full);

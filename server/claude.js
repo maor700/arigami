@@ -1014,7 +1014,7 @@ function parseResetAt(text) {
 }
 
 // RES1 — one line in $ARIGAMI_DIR/incidents.jsonl per automatic recovery, so
-// Settings → מארח → בריאות can answer "what did the host do while I slept".
+// Settings → "מארח" (Host) → "בריאות" (Health) can answer "what did the host do while I slept".
 // Never allowed to fail the recovery it is describing.
 function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
   try {

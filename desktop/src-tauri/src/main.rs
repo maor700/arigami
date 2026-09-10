@@ -246,8 +246,8 @@ fn quit_now(app: &AppHandle, quitting: &Arc<AtomicBool>, current_pid: &Arc<Mutex
 fn confirm_and_quit(app: &AppHandle, quitting: Arc<AtomicBool>, current_pid: Arc<Mutex<Option<u32>>>) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        // Decision from the task brief: "תן אישור לפני יציאה, ואל תסתיר את
-        // זה" — say plainly that quitting kills every active session, don't
+        // Decision from the task brief: "confirm before quitting, and don't
+        // downplay it" — say plainly that quitting kills every active session, don't
         // soften it into generic "quit?" copy.
         let confirmed = app2
             .dialog()

@@ -54,7 +54,7 @@ function Notifications() {
   );
 }
 
-// A2: "שייך ל:" — the hub shows the host's (global) connections or ONE agent's.
+// A2: "שייך ל:" (belongs to:) — the hub shows the host's (global) connections or ONE agent's.
 function OwnerFilter({ owner, agents, onChange }) {
   const t = useT();
   if (!agents?.length) return null;

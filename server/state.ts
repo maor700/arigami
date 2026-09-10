@@ -301,7 +301,7 @@ export interface Listener {
   authFails: number; // consecutive auth failures
   lastPolledAt?: number;
   lastError?: string | null;
-  agent?: string | null; // A2: the agent the arming session was born from (metadata.agent) — the agent's שגרה
+  agent?: string | null; // A2: the agent the arming session was born from (metadata.agent) — the agent's "שגרה" (routine)
 }
 
 // ---- Store ----

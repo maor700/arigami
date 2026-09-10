@@ -20,9 +20,10 @@ not, and what you are trusting when you install one.
 
 ## 1. Build one from the chat
 
-You do not have to write any of this by hand. **Ask the session for it** — "תבנה לי
-טאב עם טופס שמחזיר פרומפט", "תעקוב אחרי ה-RSS של X ותעיר אותי", "תן לי כלי שקורא
-מה-Notion DB", "תריץ typecheck לפני כל merge" — and the built-in skill
+You do not have to write any of this by hand. **Ask the session for it** — "build
+me a tab with a form that returns a prompt", "watch X's RSS feed and notify me",
+"give me a tool that reads from the Notion DB", "run typecheck before every
+merge" — and the built-in skill
 [`skills/build-extension`](../skills/build-extension/SKILL.md) (`/extend`) takes it
 from there:
 

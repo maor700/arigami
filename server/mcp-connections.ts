@@ -86,7 +86,7 @@ export function removeConnection(owner: string, cap: string): boolean {
 
 export const findConnection = (owner: string, cap: string): McpConnection | null => readConnections(owner).find((c) => c.cap === cap) ?? null;
 
-/** Every owner that has a connections file, with its records (Settings → "שייך ל"). */
+/** Every owner that has a connections file, with its records (Settings → "שייך ל" (belongs to)). */
 export function allConnections(): Array<{ owner: string; connections: McpConnection[] }> {
   const out = [{ owner: GLOBAL, connections: readConnections(GLOBAL) }];
   let slugs: string[] = [];

@@ -929,7 +929,7 @@ const TOOLS = [
       sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
     }),
   },
-  // ---- A1 agents ("צוות") — persistent identities sessions are born from ----
+  // ---- A1 agents ("צוות" (team)) — persistent identities sessions are born from ----
   {
     name: 'create_agent',
     description:

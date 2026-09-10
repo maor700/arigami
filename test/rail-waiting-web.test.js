@@ -1,5 +1,5 @@
 // RES1 §4, toned down (2026-08-30, then further per direct feedback): the
-// rail no longer surfaces "ממתין לך" as a full-width pulsing bar, and it no
+// rail no longer surfaces "waiting for you" as a full-width pulsing bar, and it no
 // longer has a separate aggregated section at all. A waiting item is only a
 // small, static badge on the row it belongs to — the agent's row when the
 // blocked session was born from one, otherwise the session's own row — rolled

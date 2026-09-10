@@ -1,4 +1,4 @@
-// SIMPLE1 web: the "פשוט" (Simple) chat view.
+// SIMPLE1 web: the "Simple" chat view.
 //   · chatModeOf: stored mode wins; unset → terminal on desktop, simple on a phone
 //   · hiddenInSimple: tool calls / results / thinking / status fold; prose,
 //     questions, permissions, cards, errors stay

@@ -1,17 +1,17 @@
-# קבצי JSONL גולמיים — POC Codex
+# Raw JSONL files — Codex POC
 
-כל קובץ הוא הפלט הגולמי, ללא עריכה, של `codex exec --json` דרך `scripts/codex-poc.ts`.
-קובץ `.stderr.log` תואם (כשקיים) הוא הלוג הנפרד ל-stderr של אותה הרצה.
+Each file is the raw output, unedited, of `codex exec --json` via `scripts/codex-poc.ts`.
+The matching `.stderr.log` file (when present) is the separate stderr log for that same run.
 
-| קובץ | מטרה |
+| file | purpose |
 |---|---|
-| `success-test-*.jsonl` | מבחן ההצלחה המרכזי: set_status + publish_artifact |
-| `timeout-short-*.jsonl` | request_action — לא חוסם בפועל (ראו הדוח) |
-| `blocking-short-*.jsonl` | request_screen, tool_timeout_sec=15, אף אחד לא ענה — טיים-אאוט אמיתי |
-| `blocking-real-*.jsonl` | request_screen, tool_timeout_sec=180, מאור ענה בפועל אחרי ~38 שניות |
-| `full-kinds-*.jsonl` | agent_message + command_execution + file_change באותו תור |
-| `error-badmodel-*.jsonl` | מודל לא-קיים בקונפיג — נופל חזרה בשקט, לא שגיאה |
-| `error-noauth-*.jsonl` | CODEX_HOME בלי auth.json — item.type=error + turn.failed אמיתיים |
-| `reasoning-test-*.jsonl` | gpt-5.6-terra, effort=high, model_reasoning_summary=detailed — עדיין בלי item.type=reasoning (ENGINES.md מגבלה 6) |
+| `success-test-*.jsonl` | the main success test: set_status + publish_artifact |
+| `timeout-short-*.jsonl` | request_action — doesn't actually block (see the report) |
+| `blocking-short-*.jsonl` | request_screen, tool_timeout_sec=15, nobody answered — a real timeout |
+| `blocking-real-*.jsonl` | request_screen, tool_timeout_sec=180, the owner actually answered after ~38 seconds |
+| `full-kinds-*.jsonl` | agent_message + command_execution + file_change in the same turn |
+| `error-badmodel-*.jsonl` | a model that doesn't exist in the config — falls back silently, no error |
+| `error-noauth-*.jsonl` | CODEX_HOME without auth.json — real item.type=error + turn.failed |
+| `reasoning-test-*.jsonl` | gpt-5.6-terra, effort=high, model_reasoning_summary=detailed — still no item.type=reasoning (ENGINES.md limitation 6) |
 
-ראו את הדוח המלא ב-artifact שפורסם (הנתיב בדיווח ל-request_review).
+See the full report in the published artifact (the path is in the report to request_review).

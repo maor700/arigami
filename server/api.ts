@@ -1022,7 +1022,7 @@ function resolveSetupsFor(capability: string, detail: string, human = true, owne
   return n;
 }
 
-// ---- A1 agents ("צוות") ----------------------------------------------------------
+// ---- A1 agents ("צוות" (team)) ----------------------------------------------------------
 
 /**
  * The {kind:'agent-card'} chat card (like SetupCard/MergeCard): create_agent /
@@ -1240,14 +1240,14 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
 }
 
 /**
- * UX2 — "אמץ סוכן": a session already underway takes on an existing agent's
+ * UX2 — "אמץ סוכן" (adopt agent): a session already underway takes on an existing agent's
  * persona/skills/model/connections/policy for its NEXT turn onward, without
  * spawning a new session. `metadata.agent` is the single source both A3's
  * per-turn policy/budget checks (claude.js policyArgs / budgetRefusalFor) and
  * mcpConfigFor read fresh on every spawn, so setting it here is enough — the
  * only extra step is telling the model (a queued `[host]` line with the
  * adopted persona) and leaving a chat receipt so the human can revert.
- * `adoptedFrom` remembers what to restore ("החזר לרגיל") — null if the session
+ * `adoptedFrom` remembers what to restore ("החזר לרגיל" (revert to normal)) — null if the session
  * had no agent at all before adopting.
  */
 function adoptAgentIntoSession(sessionId: string, agentSlug: string): { session: NonNullable<ReturnType<typeof state.getSession>>; agent: agents.AgentView } {
@@ -1305,7 +1305,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     settleAgentCard(String(body.sessionId || ''), cm[1], { state: 'cancelled' }, '[host] The human cancelled the Agent card — do not create the agent.');
     return json(res, { ok: true });
   }
-  // A3: Settings → מארח → תקציבים — agent × model × daily cap × used today.
+  // A3: Settings → מארח (Host) → תקציבים (Budgets) — agent × model × daily cap × used today.
   if (p === '/__api/agents/budgets' && m === 'GET') {
     const rows = agents.listAgentViews().map((a) => {
       const b = ledger.budgetState(a.slug)!;
@@ -1362,7 +1362,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     return json(res, { ...view, audit: caps.readAudit(50, owner), browserProfile: fs.existsSync(chrome.agentBrowserDir(slug)) });
   }
   if (sub === 'routine' && m === 'GET') {
-    // A2: the agent's שגרה — cron jobs whose runs are born from it + listeners its sessions armed.
+    // A2: the agent's "שגרה" (routine) — cron jobs whose runs are born from it + listeners its sessions armed.
     const t = await import('./triggers.js');
     const cron = t.listTriggers().filter((x: any) => x.type === 'cron' && x.agent === slug).map((x: any) => ({ ...x, nextRunAt: t.nextRunFor(x) }));
     const listeners = state.listListeners().filter((l: any) => l.agent === slug);
@@ -3014,7 +3014,7 @@ export async function handle(
     if (p === '/__mcp/agent-card' && m === 'POST') {
       return handleAgentCard(res, await readBody(req));
     }
-    // ---- A1 agents ("צוות") REST (server/agents.ts) ----
+    // ---- A1 agents ("צוות" (team)) REST (server/agents.ts) ----
     if (p === '/__api/agents' || p.startsWith('/__api/agents/')) {
       return await handleAgents(req, res, u, p, m || 'GET');
     }
@@ -3913,7 +3913,7 @@ export async function handle(
     }
     if (p === '/__api/pending' && m === 'GET') {
       const t = await import('./triggers.js');
-      // RES1 §3: the aggregated "ממתין לך" queue rides along here too, so the
+      // RES1 §3: the aggregated "ממתין לך" (waiting for you) queue rides along here too, so the
       // one endpoint answers "what is waiting for me" in full.
       const sup = await import('./supervisor-loop.js');
       const waiting = await sup.waitingQueue().catch(() => []);
@@ -3963,7 +3963,7 @@ export async function handle(
       return notFound(res);
     }
     // ---- RES1 — the supervisor's read surface -------------------------------
-    // /health      the per-session health map + the "ממתין לך" queue + a 24h
+    // /health      the per-session health map + the "ממתין לך" (waiting for you) queue + a 24h
     //              incident tally, plus per-account/model quota with reset times.
     // /health/incidents?hours=  what the supervisor actually did.
     // /waiting     the queue on its own (the rail pill polls/streams this).
@@ -4472,7 +4472,7 @@ export async function handle(
     }
     // ---- LEARN1: autonomous memory learning (server/memory-learning.ts) ------
     // GET  /memory/learning            status: mode, pending, next run, recent runs, manual-block preview
-    // POST /memory/learning/run        "למד עכשיו" — one triage run; applies in auto mode (or {apply:true})
+    // POST /memory/learning/run        "למד עכשיו" (learn now) — one triage run; applies in auto mode (or {apply:true})
     // POST /memory/learning/apply      manual mode: apply a stored run {runId, keys?} or approve pre-pass clusters {keys}
     // POST /memory/learning/mode       {mode:'auto'|'manual', minBatch?, maxAgeHours?}
     // POST /memory/learning/undo/:seq  revert one applied line by its write-log seq
@@ -5073,7 +5073,7 @@ export async function handle(
         return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
       }
     }
-    // UX2: "אמץ סוכן" — this session takes on an existing agent from its next
+    // UX2: "אמץ סוכן" (adopt agent) — this session takes on an existing agent from its next
     // turn on, without spawning anything. Reversible via .../adopt-agent/revert.
     if (sub === 'adopt-agent' && m === 'POST') {
       const body = (await readBody(req)) as any;

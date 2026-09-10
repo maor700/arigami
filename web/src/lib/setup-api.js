@@ -1,5 +1,5 @@
 // S2 — client for the just-in-time setup contract (SPEC-ARIGAMI-JIT-SETUP,
-// "חוזים משותפים"). One place that knows the REST routes S1 exposes:
+// "חוזים משותפים" — shared contracts). One place that knows the REST routes S1 exposes:
 //
 //   GET  /__api/setup/capabilities        → { identity, capabilities:[…], audit:[…] }
 //   POST /__api/setup/:capability         manual payload per manual.kind

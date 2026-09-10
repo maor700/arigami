@@ -5,7 +5,7 @@
 //   skills/<name>/SKILL.md       — skills to stage into the host pack
 //   memory-seed/USER.md|MEMORY.md — bootstrap memory (merged, never overwrites)
 //   cron.json                    — [{name, prompt, schedule:{kind,value}, enabled?}]
-//   agents/<slug>/agent.json     — A4: agents ("צוות") the bundle ships (+ persona.md, assets/)
+//   agents/<slug>/agent.json     — A4: agents ("צוות" (team)) the bundle ships (+ persona.md, assets/)
 //   README.md                    — human description
 //
 // Sources, in resolution order (see resolveSource):

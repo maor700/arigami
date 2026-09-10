@@ -6,10 +6,10 @@
 // (mic, recognition language, auto-send; plus hotkey/mode while voice is off),
 // the Brain heartbeat and the telemetry toggle. prefs keys are unchanged.
 // The origami logo chooser stays out of the UI (SETTINGS-IA §1.1 #4).
-// LEARN1: the זיכרון section (autonomous memory learning — mode, learning log,
+// LEARN1: the memory ("זיכרון") section (autonomous memory learning — mode, learning log,
 // pending strip, manual block) sits here, on the page, under the chrome block:
 // it is about how the assistant behaves for the human, like language/voice,
-// not about the machine (מארח). Deep link: #/settings/appearance/memory.
+// not about the machine (host, "מארח"). Deep link: #/settings/appearance/memory.
 import { usePrefs, setPrefs, PREF_LIMITS, UI_SCALE_IDS } from '../../lib/prefs.js';
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';

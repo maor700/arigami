@@ -1,8 +1,8 @@
 // LADDER1 — "running below its configured model" badge.
 //
 // Shown on the rail row and in the chat header while the supervisor's model
-// ladder has a session on a weaker rung (RES1): "רץ על הייקו · מכסת Fable
-// מתאפסת ב-18:50". The state is derived ONCE on the server
+// ladder has a session on a weaker rung (RES1), e.g. "רץ על הייקו · מכסת Fable
+// מתאפסת ב-18:50" (running on Haiku · Fable quota resets at 18:50). The state is derived ONCE on the server
 // (session.claude.ladder, state.toWireSession → supervisor.ladderBadge) so both
 // places agree, and it is null on the top rung — the badge simply disappears on
 // the climb back. Quiet by design: no toast, no pulse; the chat gets one system

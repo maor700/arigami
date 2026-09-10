@@ -1,5 +1,5 @@
 // Settings — one screen, FOUR categories + a collapsed "Advanced" drawer per
-// page (AUDIT2, docs/SETTINGS-IA.md §6): כללי · חיבורים · מארח · הרחבות. A left rail on
+// page (AUDIT2, docs/SETTINGS-IA.md §6): General ("כללי") · Connections ("חיבורים") · Host ("מארח") · Extensions ("הרחבות"). A left rail on
 // desktop, horizontal chips on phones, deep-linkable as
 // #/settings/<category>[/<section>]. Each category is its own file under
 // ./settings/; this shell only owns the nav, the Escape/hotkey-recording key

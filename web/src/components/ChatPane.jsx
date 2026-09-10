@@ -962,7 +962,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // A4: a composer @mention / `/as` handed the text to an agent.
       return <DelegatedLine event={event} />;
     case 'agent-adopt':
-      // UX2: "אמץ סוכן" — this session took on (or gave back) an agent's identity.
+      // UX2: "אמץ סוכן" (adopt agent) — this session took on (or gave back) an agent's identity.
       return <AgentAdoptLine event={event} sessionId={sessionId} />;
     case 'system':
       return <SystemLine event={event} />;

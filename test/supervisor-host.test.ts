@@ -6,7 +6,7 @@
 //   · limit                 → account switch → model downgrade → restore
 //   · a child that goes terminal without report_to_master → synthesized report
 //   · a WAITING_HUMAN session → never nudged, never respawned, only queued for
-//     the human in the "ממתין לך" queue
+//     the human in the "waiting for you" queue
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';

@@ -1,4 +1,4 @@
-# Agents ("צוות") — A1 + A2 + A3 + A4 + A5 + M1 + UX1 + UX2
+# Agents ("צוות" / team) — A1 + A2 + A3 + A4 + A5 + M1 + UX1 + UX2
 
 An **agent is who**; a **session is what/when**. An agent is a persistent identity — persona,
 referenced (shared) skills, its own memory namespace, default model, tool/domain allowlists and
@@ -9,8 +9,8 @@ can have many sessions; each agent also has a **home chat** — one long-lived, 
 session for DMs (get-or-create).
 
 Decisions (PRD-ARIGAMI-AGENTS, approved 2026-08-30): agents are a layer **on top of** sessions;
-the Rail "צוות" section sits **below** the sessions/folders section; **no per-agent private
-skills** — agents reference shared skills by name. (UX1 later made the home chat the **בית** tab of
+the Rail "צוות" (team) section sits **below** the sessions/folders section; **no per-agent private
+skills** — agents reference shared skills by name. (UX1 later made the home chat the **בית** (home) tab of
 the agent surface instead of a rail row — see the last section.)
 
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
@@ -80,29 +80,29 @@ virtual path `agents/<slug>/…`).
 - `create_agent({name, slug?, emoji?, color?, model?, persona?, skills?, tools?, domains?, budget?, confirm?})`
   — `confirm` defaults to **true**: the host posts an editable `{kind:'agent-card'}` in the
   calling session's chat and returns `{card:true, cardId, state:'pending'}`; nothing is written
-  until the human clicks **צור סוכן** (→ `POST /__api/agents`, the card flips to `created` and the
-  session gets a `[host] …` message with the slug) or **בטל**. `confirm:false` creates at once.
+  until the human clicks **צור סוכן** (create agent) (→ `POST /__api/agents`, the card flips to `created` and the
+  session gets a `[host] …` message with the slug) or **בטל** (cancel). `confirm:false` creates at once.
 - `list_agents()` — the team.
 - `update_agent({slug, …fields})` — applied immediately; an `updated` card shows which fields changed.
 - `create_session({agent, …})` — see above. `task_session` is unchanged.
 
 ## Web
 
-- **Rail → "צוות"** (`TeamSection` in `Rail.jsx`): collapsible, rendered below folders/free
+- **Rail → "צוות"** (team) (`TeamSection` in `Rail.jsx`): collapsible, rendered below folders/free
   sessions and above archived (hidden while searching). Row = emoji avatar in the agent color,
   name, status (`working` when any live session of the agent is mid-turn, else its **work**-session
-  count / `idle`), skills line, ⋯ → בית / ריצות / פרסונה. Click → the **agent surface**
+  count / `idle`), skills line, ⋯ → בית (home) / ריצות (runs) / פרסונה (persona). Click → the **agent surface**
   (`#/agents/<slug>`, UX1 — it used to open the home chat as a session).
-  **+ סוכן חדש** starts a normal session with a prefilled
-  "תקים סוכן…" prompt (the agent then calls `create_agent` with `confirm:true`).
+  **+ סוכן חדש** (+ new agent) starts a normal session with a prefilled
+  "set up an agent…" prompt (the agent then calls `create_agent` with `confirm:true`).
   Sessions born from an agent show the agent's emoji instead of the color dot, plus a
   "· <agent>" chip (UX1); the agent's own home chat is not listed here at all.
 - **AgentCard** (`AgentCard.jsx`, `{kind:'agent-card'}`): name, slug, emoji, model select
   (from `/models`), budget, tool checkboxes, skills multi-select (from `GET /__api/skills`),
-  persona textarea, [צור סוכן] [בטל]. `agent-card-update` events patch the card in place (live
+  persona textarea, [צור סוכן (create agent)] [בטל (cancel)]. `agent-card-update` events patch the card in place (live
   via the store, on reload via `foldSetupUpdates`).
 - **Agent surface** `#/agents/<slug>[/<tab>]` (`AgentView.jsx`): its own header treatment +
-  tabs בית · פרסונה · זיכרון · חיבורים · שגרה · פעילות · ריצות — see **UX1** below.
+  tabs בית (home) · פרסונה (persona) · זיכרון (memory) · חיבורים (connections) · שגרה (routine) · פעילות (activity) · ריצות (runs) — see **UX1** below.
 - Mobile: the same section inside the rail drawer.
 
 ## Tests / gates
@@ -152,7 +152,7 @@ filters.
 ### The setup card saves to the agent
 
 `request_setup` from a session born from an agent opens a card with `owner: 'agent:<slug>'`
-(persisted in `setup-pending.json`, shown as a chip "עבור <agent>" in the chat). Every path that
+(persisted in `setup-pending.json`, shown as a chip "for <agent>" in the chat). Every path that
 closes it writes to the agent:
 
 - `POST /__api/setup/identity {action:'verify', sessionId}` / the take-over resolve → the agent's
@@ -180,11 +180,11 @@ collapse to `global`.
 
 ### Web
 
-Settings → **חיבורים** gets a **"שייך ל:"** select (כללי / each agent). With an agent selected the
+Settings → **חיבורים** (connections) gets a **"שייך ל:"** (belongs to:) select (כללי (general) / each agent). With an agent selected the
 hub shows the agent's view (`settings/AgentConnections.jsx`): the ownable capabilities with
-**משלו / משותף (מארח) / לא מחובר**, the host-level list, the browser-profile line and the
+**משלו** (its own) **/ משותף (מארח)** (shared (host)) **/ לא מחובר** (not connected), the host-level list, the browser-profile line and the
 agent's audit; the global audit shows an owner column. The same panel is the Agent page tab
-**חיבורים**. "חבר לסוכן" opens `ConnectDialog` with the owner — AUTO spawns a session **born from
+**חיבורים**. "חבר לסוכן" (connect to agent) opens `ConnectDialog` with the owner — AUTO spawns a session **born from
 the agent** (`connectViaSession(cap, {agent})`), MANUAL steps carry `owner` in their payloads.
 
 ## Persistent Chrome profile per agent — `agents/<slug>/browser/`
@@ -217,13 +217,13 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
 - `Listener.agent` — stamped by `state.addListener` from the arming session's `metadata.agent`.
 - `GET /__api/agents/:slug/routine` → `{cron: [ …, nextRunAt ], listeners}`; `GET /__api/triggers`
   rows carry `agent`.
-- Web: Agent page tab **שגרה** (`RoutineList.jsx`): cron jobs with enable/disable (`PATCH
+- Web: Agent page tab **שגרה** (routine) (`RoutineList.jsx`): cron jobs with enable/disable (`PATCH
   /triggers/:id`), run now, delete, next/last run; listeners with cancel. Adding: the **"הוסף שגרה"**
-  form (A5 — schedule kind + expression + prompt → `POST /__api/triggers`), or "הוסף דרך הצ׳אט",
-  which opens the agent's **existing home chat** — since UX1, the surface's בית tab — with the ask
+  (add routine) form (A5 — schedule kind + expression + prompt → `POST /__api/triggers`), or "הוסף דרך הצ׳אט" (add via chat),
+  which opens the agent's **existing home chat** — since UX1, the surface's בית (home) tab — with the ask
   prefilled. The Rail team
-  row of an **idle** agent with an enabled job shows its next run ("⏰ בעוד 3שע") instead of
-  "פנוי" (`nextCronFor(slug, triggers)`).
+  row of an **idle** agent with an enabled job shows its next run ("⏰ in 3h") instead of
+  **"פנוי"** (free/idle) (`nextCronFor(slug, triggers)`).
 
 ## Tests
 
@@ -326,7 +326,7 @@ reason), `budget` (the daily warning). `readActivity(slug,{since,kinds})`, `tota
 | POST | `/__api/sessions/:id/action` `{prompt, buttons, kind?}` | the action now carries `agent` + `kind`; `{…, autoApproved:true, value}` when the host answered |
 | POST | `/__api/sessions/:id/action/answer` `{value, autoApprove?}` | `autoApprove:true` adds the action's kind to `agent.json autoApprove` |
 
-## request_action — agent card + "אשר אוטומטית פעולות מסוג זה מעכשיו"
+## request_action — agent card + "automatically approve actions of this kind from now on"
 
 `request_action({prompt, buttons, kind?})` — `kind` is a short machine tag
 (`^[a-z0-9][a-z0-9:._-]{0,39}$`: `send-email`, `merge`, `post:facebook`). From a session born from
@@ -335,16 +335,16 @@ the sticky `ActionBar`, both in `web/src/components/ActionCard.jsx`) shows the a
 when a kind is present, the toggle. Answering with it ticked stores the kind; the next action of
 that kind from any of the agent's sessions is answered **by the host at once** with the primary
 button (else the first), logged as `action {auto:true}`, and shown as an `action-auto` receipt line
-in the chat. The Agent page → פרסונה → advanced lists the auto-approved kinds (untick to revoke).
+in the chat. The Agent page → פרסונה (persona) → advanced lists the auto-approved kinds (untick to revoke).
 
 ## Web
 
-- **Agent page → פעילות** (`AgentView.jsx ActivityTab`): range chips today / 7d / 30d, a totals
+- **Agent page → פעילות** (activity) (`AgentView.jsx ActivityTab`): range chips today / 7d / 30d, a totals
   strip (tokens, cost, turns, runs, actions, artifacts, denied) + the budget line, the ledger rows
   (time · kind · what · tokens/cost, session id opens the session), the agent's sessions, and the
   A1 episodes collapsed below.
-- **Settings → מארח → תקציבים** (`settings/Budgets.jsx`): agent × model × daily cap (inline, Save on
-  change) × used today (tokens / cap · % · $, "נוצל" pill when exhausted).
+- **Settings → מארח (host) → תקציבים** (budgets) (`settings/Budgets.jsx`): agent × model × daily cap (inline, Save on
+  change) × used today (tokens / cap · % · $, **"נוצל"** (used up) pill when exhausted).
 - Agent page → פרסונה → advanced: `web` tool family, a **domains** field, the auto-approved kinds.
 
 ## Tests
@@ -413,8 +413,8 @@ Sending a message that mentions agents (and has text left after the tokens are s
 
 Either way the **caller's** chat gets a `{kind:'delegated', agent:{slug,name,emoji,color}, target,
 targetTitle, how, delivered, mode, text}` line — rendered by `DelegatedLine.jsx`. UX1 reworded it to
-name the destination in a sentence: **"נפתח בבית של <agent>"** + **פתח בית** (the agent surface's
-בית tab) vs **"נוצר סשן עבודה «title» עם <agent>"** + **פתח סשן**. Budget (A3) is
+name the destination in a sentence: **"Opened in <agent>'s home"** + **פתח בית** (open home) (the agent surface's
+בית tab) vs **"Created work session «title» with <agent>"** + **פתח סשן** (open session). Budget (A3) is
 honoured: a spent agent gets no new child/home/session (429); an unknown agent is 404, empty text 400.
 
 ### REST
@@ -559,9 +559,9 @@ server (e.g. `gmail`) keeps the old per-call filtering.
 
 ## #8 / trip-up #2 — the Routine tab
 
-"הוסף דרך הצ׳אט" spawned a brand-new session on every click; it now opens the agent's **existing**
+"הוסף דרך הצ׳אט" (add via chat) spawned a brand-new session on every click; it now opens the agent's **existing**
 home chat (`GET /__api/agents/:slug/home`) with the ask prefilled in its composer draft. And chat is
-no longer the only path: **"הוסף שגרה"** opens an inline form (schedule kind `cron` / `interval` /
+no longer the only path: **"הוסף שגרה"** (add routine) opens an inline form (schedule kind `cron` / `interval` /
 `at` + expression + prompt + optional name) that posts to `POST /__api/triggers {type:'cron',
 agent}` — `routinePayload()` is the pure builder, unit-tested.
 
@@ -616,7 +616,7 @@ Full picture (provider per service, the spike results, export rules):
   `sales` connecting Linear gets `linear--sales`, not the host's `linear`.
 - It is recorded in `$ARIGAMI_DIR/agents/<slug>/connections.json`
   (`[{cap, slug, name, url, auth, at, byIdentity}]` — names and URLs, never a
-  token) and shown in the Connections hub under **שייך ל**.
+  token) and shown in the Connections hub under **שייך ל** (belongs to).
 - Registration uses `local` scope with the agent's directory as `cwd`, so no other
   agent's session sees the server; the host injects it into the owner's sessions
   with `--mcp-config`, under the grant name.
@@ -642,14 +642,14 @@ a brokered Gmail account at the same time.
 
 ---
 
-# UX1 — "בית" vs "עבודה"
+# UX1 — "בית" (home) vs "עבודה" (work)
 
 The complaint the spec starts from: clicking a Team row and being handed work by
 an agent both ended in *a session that looks like every other session*. Nothing
 said what each surface was for. UX1 splits them in the UI (no new concepts, no
 routing changes):
 
-- **Agent (בית)** — a *place*: who the agent is, what it remembers, what it is
+- **Agent (בית — home)** — a *place*: who the agent is, what it remembers, what it is
   connected to, what it runs on a schedule, what it costs. Talking to it is a DM.
 - **Work session** — a *job*: a transcript, changes, review/merge. It may be born
   from an agent, and then it wears the agent's face.
@@ -678,28 +678,28 @@ it from reading as a work session): a 40px avatar, the name + `@slug`, the
 persona's first real line, live status (working / next scheduled run / idle —
 `SurfaceStatus`, the home chat counts as "working" but never as a run), the daily
 budget as a bar (`BudgetBar`, `GET /__api/agents/budgets`), the agent's color
-washed over the chrome, and the one-liner *בית = לדבר עם הסוכן. סשן = עבודה שהוא
-מבצע.* Tabs (horizontal, scrollable on a phone; each deep-linkable):
+washed over the chrome, and the one-liner *home = talking to the agent. session = the work it's
+doing.* Tabs (horizontal, scrollable on a phone; each deep-linkable):
 
 | tab | |
 |---|---|
-| **בית** | the DM chat, embedded (`AgentHomeChat` in `SessionView.jsx`: transcript + composer, no tab bar, no `claude-code` header). Opening the tab is what get-or-creates the home session |
-| פרסונה / זיכרון / חיבורים / שגרה / פעילות | A1–A3, unchanged (פעילות lost its sessions list to ריצות) |
-| **ריצות** | every session born from the agent with its state and cost — `sessions[]` of `GET /agents/:slug/activity` now carries `tokens`/`costUsd`/`turns` per session, summed over the WHOLE ledger so an old run still shows what it cost |
+| **בית** (home) | the DM chat, embedded (`AgentHomeChat` in `SessionView.jsx`: transcript + composer, no tab bar, no `claude-code` header). Opening the tab is what get-or-creates the home session |
+| פרסונה (persona) / זיכרון (memory) / חיבורים (connections) / שגרה (routine) / פעילות (activity) | A1–A3, unchanged (פעילות lost its sessions list to ריצות (runs)) |
+| **ריצות** (runs) | every session born from the agent with its state and cost — `sessions[]` of `GET /agents/:slug/activity` now carries `tokens`/`costUsd`/`turns` per session, summed over the WHOLE ledger so an old run still shows what it cost |
 
-The בית composer carries a hint chip — *רוצה שיבצע משימה? כתוב /as או גרור
-לתיקייה* — that turns the human's last message (`lastHumanText`) into a real work
+The בית (home) composer carries a hint chip — *want it to do a task? Type /as or
+drag into a folder* — that turns the human's last message (`lastHumanText`) into a real work
 session through the existing `POST /__api/sessions/:id/delegate {mode:'as'}`.
 
 ## A work session says whose job it is
 
 It stays in the Sessions section, wearing the agent avatar plus a "· <agent>"
-chip in the rail row and **"סשן עבודה · נולד מ-<agent>"** (`BornFromChip`) in the
+chip in the rail row and **"Work session · born from <agent>"** (`BornFromChip`) in the
 session header — both link back to the agent surface.
 
 The delegate receipt (`DelegatedLine`) now says which of the two happened, in a
-sentence instead of a suffix: **"נפתח בבית של <agent>"** with **[פתח בית]** (→ the
-surface's בית tab) vs **"נוצר סשן עבודה «title» עם <agent>"** with **[פתח סשן]**
+sentence instead of a suffix: **"Opened in <agent>'s home"** with **[פתח בית]** (open home) (→ the
+surface's בית tab) vs **"Created work session «title» with <agent>"** with **[פתח סשן]** (open session)
 (a child adds "in this project"). The `@mention` routing rules themselves are
 unchanged — only the wording is.
 
@@ -713,9 +713,9 @@ the rail (no home row, the "· <agent>" chip) and `agents-a4-web` the receipt.
 
 ## Known limits (UX1)
 
-- זיכרון stays a tab of the surface even though the spec's list omits it —
+- זיכרון (memory) stays a tab of the surface even though the spec's list omits it —
   dropping it would have deleted an A1 feature.
-- The בית tab creates the home session on open, exactly like the old rail row
+- The בית (home) tab creates the home session on open, exactly like the old rail row
   did; a spent daily budget refuses it with the same 429 (shown inline).
 - The hint chip acts on the last **human** message; `[host]` lines and forwarded
   mentions are skipped. There is no multi-message selection.
@@ -724,7 +724,7 @@ the rail (no home row, the "· <agent>" chip) and `agents-a4-web` the receipt.
 
 # UX2 — creating an agent is a surface, not a session
 
-The complaint: clicking "+ סוכן חדש" spawned a session whose only job was to
+The complaint: clicking "+ סוכן חדש" (+ new agent) spawned a session whose only job was to
 *interview* the human and eventually call `create_agent` — a work session for
 work that was never work. UX2 removes that detour: creating an agent opens the
 same surface an existing agent already has (`AgentView.jsx`), just in **create
@@ -741,24 +741,24 @@ skips its `GET /agents/:slug` + `/agents/budgets` fetches entirely, building a
 local draft object instead (`{name: draftName, emoji:'🤖', color, persona:'', …}`).
 
 **The surface reads the same in both modes.** All seven tabs render; only
-פרסונה is enabled before the agent exists — the rest (`בית` / `זיכרון` /
-`חיבורים` / `שגרה` / `פעילות` / `ריצות`) are visibly present but `disabled`,
-with a `title` hint ("יהיה זמין אחרי היצירה") so the surface doesn't look
+פרסונה (persona) is enabled before the agent exists — the rest (`בית` (home) / `זיכרון` (memory) /
+`חיבורים` (connections) / `שגרה` (routine) / `פעילות` (activity) / `ריצות` (runs)) are visibly present but `disabled`,
+with a `title` hint ("will be available after creation") so the surface doesn't look
 broken, just not-yet-applicable. The header drops the `@slug` line and the
 status/budget row (there is no session or ledger yet); the persona form gains
 one extra field only in create mode — an explicit **slug** input (Hebrew names
 don't survive `slugify`, so `createAgent` needs one explicitly, exactly like
 the `{kind:'agent-card'}` chat card already does).
 
-`PersonaTab`'s save button becomes **"צור סוכן"** and calls `POST /__api/agents`
-(instead of `PATCH /__api/agents/:slug`); the delete button becomes **"ביטול"**
+`PersonaTab`'s save button becomes **"צור סוכן"** (create agent) and calls `POST /__api/agents`
+(instead of `PATCH /__api/agents/:slug`); the delete button becomes **"ביטול"** (cancel)
 and just closes the surface (`onClose`) — nothing was written, there is nothing
 to undo. On success, `AgentView`'s `onCreated(agent)` callback (wired in
 `App.jsx`) flips the surface into normal existing-agent mode for the real slug,
-still on the פרסונה tab. **The home chat is not created at this point** — it
+still on the פרסונה (persona) tab. **The home chat is not created at this point** — it
 stays exactly as lazy as UX1 left it (`ensureHomeSession`, minted on first
 `GET /agents/:slug/home`, i.e. only when the human clicks the newly-available
-**"פתח צ׳אט בית"** button or the agent is first delegated to).
+**"פתח צ׳אט בית"** (open home chat) button or the agent is first delegated to).
 
 ## `/agent new [name]` — same surface, from a session
 
@@ -766,7 +766,7 @@ The composer's `/agent new [name]` (`resolveSubmission` → `{type:'agent-new',
 name}`, unchanged parsing) now resolves in `SessionView.jsx`'s `runHostCommand`
 to `openAgent('__new__', 'persona', name)` instead of `POST
 /sessions/:id/agent-card` — same create-mode surface as the rail button, with
-`name` prefilled. Leaving the draft (✕ or "ביטול") behaves exactly like leaving
+`name` prefilled. Leaving the draft (✕ or "ביטול" (cancel)) behaves exactly like leaving
 any other agent surface reached this way (`/team`, a mention receipt, …) — back
 to the rail, nothing session-specific to restore.
 
@@ -788,7 +788,7 @@ thing: an *agent* proposing a new agent, not a human clicking a button.
 Neither path spawns a session either; they always operated on the
 *already-open* session's chat.
 
-## "אמץ סוכן" — a session adopts an existing agent, no new session
+## "אמץ סוכן" (adopt agent) — a session adopts an existing agent, no new session
 
 `/adopt <agent>` (composer, autocompletes like `/as`) calls `POST
 /__api/sessions/:id/adopt-agent {agent}`. `adoptAgentIntoSession` (`server/api.ts`):
@@ -799,9 +799,9 @@ Neither path spawns a session either; they always operated on the
 2. Sets `metadata.agent = slug` and remembers what ran before it
    (`metadata.adoptedFrom`, `null` if the session had no agent at all).
 3. Appends a `{kind:'agent-adopt', agent:{slug,name,emoji,color}, prevAgent}`
-   chat card (`AgentAdoptLine.jsx`) — a plain-language receipt: *"{name} אומץ
-   לסשן הזה"* + a note that earlier turns ran without it, and a **"החזר
-   לרגיל"** button.
+   chat card (`AgentAdoptLine.jsx`) — a plain-language receipt: *"{name} was
+   adopted into this session"* + a note that earlier turns ran without it, and a **"Revert
+   to normal"** button.
 4. Queues a `[host]` line carrying the agent's persona block
    (`agents.personaBlock`) via `deliverToSession` (sent now if idle, queued
    with auto-play if busy) — so the model itself learns what it just became,
@@ -925,9 +925,9 @@ one was never needed for reading (only the OLD memory note's *pre-F8* recollecti
   allocation failure (screen sharing off, port range exhausted) still falls through to the global
   fallback — the pre-existing behaviour for that edge case.
 - `ScreenSidePanel.jsx` — no `ScreenView` (and therefore no `/__vnc?session=…` connection) is
-  rendered until `own` is known to be true; `own === false` renders `ScreenEmptyState` instead: "לסשן
-  הזה אין עדיין מכונה" + a button that calls `screen/allocate` + a clearly separate "המכונה המשותפת ←"
-  link that opens the existing global modal (`setScreenModal(true)`, no `sessionId` — always was a
+  rendered until `own` is known to be true; `own === false` renders `ScreenEmptyState` instead: "This
+  session doesn't have a machine yet" + a button that calls `screen/allocate` + a clearly separate "The
+  shared machine →" link that opens the existing global modal (`setScreenModal(true)`, no `sessionId` — always was a
   distinct code path, just not distinctly *labelled*: the rail icon's title changed from "מסך"/"Screen"
   to "המכונה המשותפת"/"Shared machine").
 

@@ -1,4 +1,4 @@
-// Agents ("צוות", PRD-ARIGAMI-AGENTS §1–§3 A1). An agent is WHO: a persistent
+// Agents ("צוות" (team), PRD-ARIGAMI-AGENTS §1–§3 A1). An agent is WHO: a persistent
 // identity a session can be born from — persona, referenced (shared) skills,
 // its own memory namespace, default model, tool/domain allowlists and a budget.
 // Sessions stay the unit of work (WHAT/WHEN): `create_session({agent})` inherits

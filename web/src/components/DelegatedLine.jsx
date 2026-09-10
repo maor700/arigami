@@ -1,10 +1,10 @@
 // A4 — the {kind:'delegated'} receipt line: a composer @mention or `/as` handed
 // the text to an agent.
 // UX1 — the line says WHICH of the two things happened, in words:
-//   home    → "נפתח בבית של <agent>"      + [פתח בית]  → the agent surface, בית tab
-//   session → "נוצר סשן עבודה «title» עם <agent>" + [פתח סשן] → the work session
+//   home    → "נפתח בבית של <agent>" (opened in <agent>'s home) + [פתח בית] (open home) → the agent surface, home ("בית") tab
+//   session → "נוצר סשן עבודה «title» עם <agent>" (work session «title» created with <agent>) + [פתח סשן] (open session) → the work session
 //   child   → the same, plus "in this project"
-// (it used to read "הוקצה ל-<agent>" with the destination as a small suffix —
+// (it used to read "הוקצה ל-<agent>" (assigned to <agent>) with the destination as a small suffix —
 // which is exactly the confusion this spec is about).
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
@@ -78,9 +78,9 @@ export function DelegatedLine({ event }) {
 }
 
 /**
- * UX2 — the {kind:'agent-adopt'} receipt: "אמץ סוכן" applied (or reverted). Says
+ * UX2 — the {kind:'agent-adopt'} receipt: "אמץ סוכן" (adopt agent) applied (or reverted). Says
  * plainly that only turns from now on run under the adopted agent, and offers
- * "החזר לרגיל" while it's still in effect.
+ * "החזר לרגיל" (revert to normal) while it's still in effect.
  */
 export function AgentAdoptLine({ event, sessionId }) {
   const t = useT();

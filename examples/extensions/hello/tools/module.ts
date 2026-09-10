@@ -13,7 +13,7 @@ export const tools: ToolDef[] = [
       required: ['text'],
     },
     run(args: { text: string }, ctx) {
-      const greeting = String((ctx.settings as Record<string, unknown>)?.greeting || 'שלום');
+      const greeting = String((ctx.settings as Record<string, unknown>)?.greeting || 'hello');
       return { echo: `${greeting}, ${String(args.text)}`, extDir: ctx.extDir };
     },
   },
