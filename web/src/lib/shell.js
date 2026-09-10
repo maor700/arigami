@@ -36,3 +36,32 @@ export function openMachines() {
   const s = shellInfo();
   if (s && typeof s.openPicker === 'function') s.openPicker();
 }
+
+// Ask the shell to sign this window in (a fresh single-use handoff token —
+// server/handoff.ts). Only meaningful on the local machine: the token is
+// signed with the secret the shell handed its OWN sidecar.
+//
+// AUTO_KEY caps the automatic attempt at one per tab. Without it a handoff
+// that cannot succeed — no secret, a clock far enough off that `exp` is
+// already past — would bounce between the login screen and the sentinel
+// forever. After the first try the user gets a button instead.
+const AUTO_KEY = 'arigami-shell-signin-tried';
+
+export function canShellSignIn() {
+  return !!shellInfo()?.canSignIn;
+}
+
+export function shellSignIn() {
+  const s = shellInfo();
+  return !!(s && typeof s.signIn === 'function' && s.signIn());
+}
+
+/** One automatic attempt per tab. Returns true if it navigated. */
+export function shellSignInOnce() {
+  if (!canShellSignIn()) return false;
+  try {
+    if (sessionStorage.getItem(AUTO_KEY)) return false;
+    sessionStorage.setItem(AUTO_KEY, '1');
+  } catch { /* private mode: fall through and try once */ }
+  return shellSignIn();
+}

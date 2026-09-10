@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { afterLogin } from '../lib/store.js';
 import { useT } from '../lib/i18n.js';
 import { Logo } from './Logo.jsx';
+import { canShellSignIn, shellSignIn, shellSignInOnce } from '../lib/shell.js';
 
 // C1 — full-page sign-in. Pairing: the one-time code printed by the host at
 // boot (or `bin/host pair`). OIDC: a redirect to /__api/auth/oidc/start when the
@@ -14,6 +15,16 @@ export default function Login({ info }) {
   const [error, setError] = useState(null);
   const hasAdmin = !!info?.hasAdmin;
   const oidc = !!info?.oidc;
+  // Desktop shell, local machine: nobody should ever be asked for a pairing
+  // code on the computer the app is installed on — the code is printed to a
+  // log file an installed app gives no way to open. The shell mints a
+  // single-use handoff token instead (docs/DESKTOP.md decision #6). This runs
+  // here, and not only on first boot, because a full import replaces
+  // users.json and sessions.json and restarts the host: the cookie dies with
+  // no navigation to hang the handoff on, and this screen is where the user
+  // lands. Reported live.
+  const shellSignin = canShellSignIn();
+  useEffect(() => { shellSignInOnce(); }, []);
 
   const submit = async () => {
     if (busy || !code.trim()) return;
@@ -48,6 +59,16 @@ export default function Login({ info }) {
         {hasAdmin ? t('auth.login.subPaired') : t('auth.login.subFirst')}
         {!hasAdmin && <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-fgdim">{t('auth.login.whereCode')}</div>}
       </div>
+
+      {shellSignin && (
+        <button
+          type="button"
+          onClick={shellSignIn}
+          className="mb-4 w-[20rem] max-w-[90%] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-2.5 text-sm font-bold text-fg hover:bg-brand"
+        >
+          {t('auth.login.shellSignin')}
+        </button>
+      )}
 
       {oidc && (
         <button

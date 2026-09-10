@@ -96,6 +96,7 @@ export const strings = {
   'auth.login.subFirst': 'First run: enter the one-time pairing code so only you can get in — it makes this device the admin.',
   'auth.login.whereCode': 'The code is printed in the host’s startup log: the terminal you started it from, or `docker compose logs arigami` for Docker. To mint a new one: `bin/host pair` (Docker: `docker compose exec arigami bin/host pair`).',
   'auth.login.subPaired': 'Enter a pairing code (an admin can issue one in Settings → Users, or run `bin/host pair` on the host).',
+  'auth.login.shellSignin': 'Sign in as this computer',
   'auth.login.oidc': 'Sign in with your identity provider',
   'auth.login.emailPlaceholder': 'your email (optional)',
   'auth.login.pair': 'Pair this device',

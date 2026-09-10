@@ -96,6 +96,7 @@ export const strings = {
   'auth.login.subFirst': 'הפעלה ראשונה: הזינו את קוד הצימוד החד-פעמי כדי שרק אתם תוכלו להיכנס — המכשיר הזה הופך לאדמין.',
   'auth.login.whereCode': 'הקוד מודפס בלוג העלייה של המארח: בטרמינל שממנו הפעלתם אותו, או `docker compose logs arigami` ב-Docker. לקוד חדש: `bin/host pair` (ב-Docker: `docker compose exec arigami bin/host pair`).',
   'auth.login.subPaired': 'הזינו קוד צימוד (אדמין יכול להנפיק בהגדרות ← משתמשים, או `bin/host pair` על המארח).',
+  'auth.login.shellSignin': 'כניסה כמחשב הזה',
   'auth.login.oidc': 'כניסה עם ספק הזהות',
   'auth.login.emailPlaceholder': 'אימייל (אופציונלי)',
   'auth.login.pair': 'צמד מכשיר זה',

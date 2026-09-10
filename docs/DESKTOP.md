@@ -345,6 +345,25 @@ macOS-specific list.
    it spawned — and if the OS gives us no randomness we set nothing and the
    user gets the ordinary pairing screen rather than a weak key.
 
+   **It is not first-boot-only.** It used to be, and that stranded people:
+   a full import replaces `users.json` *and* `sessions.json` and restarts the
+   host, so the window's cookie dies with no navigation left to hang a
+   handoff on, and the user lands on a pairing screen whose code an installed
+   app gives no way to read (`announcePairing()` does not even print one once
+   an imported admin exists). Reported live. The login screen now asks the
+   shell itself: `web/src/lib/shell.js`'s `shellSignInOnce()` navigates to
+   `SIGNIN_SENTINEL_PATH`, `on_navigation` cancels it and re-navigates that
+   window to a freshly minted token. Only a window whose machine is `local`
+   may ask — `canSignIn` in the payload — because a remote host holds a
+   different secret. One automatic attempt per tab (a `sessionStorage` key),
+   then a "Sign in as this computer" button, so a handoff that cannot succeed
+   cannot become a navigation loop.
+
+   *Verified live on macOS*: deleting the window's user out of `users.json`
+   (what an import effectively does) invalidated its session; within 20s the
+   cockpit hit 401, rendered the login screen, signed itself back in, and
+   `handoff-used.json` went from one spent token to two — no code typed.
+
    Note this makes `main.rs` a **third implementation** of that wire format,
    alongside `server/handoff.ts` and `control-plane/src/handoff.ts`, which
    `test/handoff-contract.test.ts` cross-checks against each other. The Rust

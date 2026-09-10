@@ -57,6 +57,13 @@ const SUPERVISOR_ENV_VALUE: &str = "self";
 // catches that too and puts the window back.
 const MACHINES_SENTINEL_PATH: &str = "/__arigami-shell/machines";
 
+// The other half of the same channel: "this window has no session, sign it
+// in". The handoff in decision #6 only ran on the FIRST boot, so anything
+// that invalidated the cookie afterwards — a full import replaces users.json
+// and sessions.json and restarts the host — stranded the user on a pairing
+// screen whose code an installed app gives no way to read. Reported live.
+const SIGNIN_SENTINEL_PATH: &str = "/__arigami-shell/signin";
+
 const MAIN_WINDOW: &str = "main";
 const PICKER_WINDOW: &str = "picker";
 const LOCAL_ID: &str = "local";
@@ -912,6 +919,11 @@ const BADGE_JS: &str = r#"
     // Decision #2 forbids IPC to this origin, so the callback is a navigation
     // the shell cancels — see MACHINES_SENTINEL_PATH in main.rs.
     DATA.openPicker = function(){ location.href = location.origin + DATA.sentinel; };
+    DATA.signIn = function(){
+      if (!DATA.canSignIn) return false;
+      location.href = location.origin + DATA.signinSentinel;
+      return true;
+    };
     window.__arigami = DATA;
     try { window.dispatchEvent(new CustomEvent('arigami:shell', { detail: DATA })); } catch (e) {}
 
@@ -947,6 +959,11 @@ fn badge_js(shell: &Arc<Shell>, current: &Machine) -> String {
         "current": current.id,
         "color": shell.color_of(&current.id),
         "sentinel": MACHINES_SENTINEL_PATH,
+        "signinSentinel": SIGNIN_SENTINEL_PATH,
+        // Only a LOCAL window may ask for a sign-in: the token is signed with
+        // the secret we handed our own sidecar, and a remote machine holds a
+        // different one — sending it there is the "Sign-in failed" case.
+        "canSignIn": current.local,
     });
     BADGE_JS.replace(
         "__DATA__",
@@ -1097,6 +1114,8 @@ fn create_machine_window(
 
     let guard = local_page.clone();
     let app_nav = app.clone();
+    let shell_nav = shell.clone();
+    let label_nav = label.clone();
     let shell_pl = shell.clone();
     let shell_sn = shell.clone();
     let label_sn = label.clone();
@@ -1120,6 +1139,15 @@ fn create_machine_window(
             // does is carry the click across the origin boundary.
             if u.path() == MACHINES_SENTINEL_PATH {
                 open_picker(&app_nav);
+                return false;
+            }
+            // Re-run the handoff for THIS window. Cancelled like the other
+            // sentinel; the navigation that matters is the one we do here,
+            // to a freshly minted single-use token.
+            if u.path() == SIGNIN_SENTINEL_PATH {
+                if shell_nav.machine_of(&label_nav).map(|m| m.local).unwrap_or(false) {
+                    nav(&app_nav, &label_nav, first_boot_url(), false);
+                }
                 return false;
             }
             if is_app_url(u) {
