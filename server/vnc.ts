@@ -51,9 +51,42 @@ export async function bridgeToVnc(ws: WebSocket, sessionId: string | null): Prom
   ws.on('error', () => { try { tcp.destroy(); } catch {} });
 }
 
+// /__vnc is the RFB endpoint, and more than one driver speaks RFB: x11 bridges
+// to the per-session Xvfb it spawned, winvnc bridges to a VNC service running
+// on a Windows machine (which has ONE console desktop, so it deliberately
+// ignores ?session=). Rather than encode either of those here, hand the socket
+// to whichever driver is active and let it decide — `attachViewer` exists for
+// exactly this, and both implementations call `bridgeToVnc` above with the
+// argument that is right for them.
+//
+// A driver that does NOT speak RFB (native-window, on the desktop app) used to
+// end up here anyway, because the cockpit opened /__vnc unconditionally: the
+// bridge then dialled a VNC server that does not exist on that host and the
+// socket died with no explanation — the "black rectangle that says
+// disconnected" that made remote control on Windows look broken rather than
+// unimplemented. Now it is refused with a distinguishable code, and the client
+// is expected to read the transport off /__api/screen/status instead.
+//
+// The driver is resolved lazily: screen-driver-x11.ts imports THIS module, so
+// a top-level import would be a cycle.
 wss.on('connection', (ws: WebSocket, req: any) => {
   const sessionId = new URL(req.url || '/', 'http://localhost').searchParams.get('session');
-  void bridgeToVnc(ws, sessionId);
+  void (async () => {
+    let driver: import('./lib/screen-driver.js').ScreenDriver | null = null;
+    try {
+      driver = (await import('./lib/screen-driver.js')).pickDriver();
+    } catch {
+      // Never block the historical path on a probe failure — bridge as before.
+      return void bridgeToVnc(ws, sessionId);
+    }
+    const viewer = await driver.viewer(sessionId).catch(() => null);
+    if (viewer && viewer.transport !== 'rfb') {
+      console.warn(`[vnc] /__vnc requested but this host's screen transport is '${viewer.transport}' — the client should read it from /__api/screen/status`);
+      try { ws.close(4004, 'no-rfb-transport'); } catch {}
+      return;
+    }
+    await driver.attachViewer(ws, sessionId);
+  })();
 });
 
 export function handleUpgrade(req: any, socket: any, head: Buffer): void {

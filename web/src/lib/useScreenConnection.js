@@ -18,16 +18,68 @@
 // consumers (a tab kept mounted but display:none) have zero size, so they
 // never win ownership. A desktop's connection tears down shortly after its
 // last consumer leaves.
+//
+// TRANSPORT (windows-remote-parity): the connection above is RFB *when the
+// host has a VNC desktop to bridge to* — i.e. the x11 driver, which is Linux.
+// The desktop app on Windows or macOS runs the native-window driver
+// (server/lib/screen-driver-native.ts): no Xvfb, no x11vnc, nothing listening
+// on 5900. This file used to open /__vnc regardless, so on those hosts every
+// screen view — the chat card, the side panel, and the take-over modal — was
+// a black rectangle reading "disconnected", and a request_screen the agent
+// raised could not be answered at all. The host now reports which transport it
+// speaks (GET /screen/status → {driver, viewer}), and this picks accordingly:
+// noVNC for `rfb`, ScreencastConnection for `screencast`. Both expose the same
+// small surface (a canvas inside the host div, a settable `viewOnly`,
+// `disconnect()`, connect/disconnect events), so everything below —
+// ownership, mirroring, teardown, the `data-vnc-input` hotkey guard — is
+// shared verbatim and neither transport has a special case in it.
 import { useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc';
 import { api } from './api.js';
+import { ScreencastConnection } from './screencastClient.js';
 
 export const SCREEN_PRIORITY = { panel: 1, card: 2, modal: 3 };
 
-function vncWsUrl(sessionId) {
+function wsUrl(path) {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}${path}`;
+}
+
+function vncWsUrl(sessionId) {
   const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : '';
-  return `${proto}://${window.location.host}/__vnc${q}`;
+  return wsUrl(`/__vnc${q}`);
+}
+
+/**
+ * Which transport this host speaks for this desktop. Cached per scope for the
+ * lifetime of the tab: the driver is a property of the HOST process, so it
+ * cannot change without a restart, and re-asking on every card/panel/modal
+ * mount would put a round trip in front of every connection.
+ */
+const transports = new Map();
+/** Exported for the unit test — this is the whole transport decision, and it has to degrade safely on an older host. */
+export async function resolveTransport(scope, sessionId) {
+  if (transports.has(scope)) return transports.get(scope);
+  const p = (async () => {
+    try {
+      const q = sessionId ? `?session=${encodeURIComponent(sessionId)}` : '';
+      const st = await api.get(`/screen/status${q}`);
+      return st?.viewer?.transport === 'screencast'
+        ? { transport: 'screencast', path: st.viewer.path, interactive: st.viewer.interactive !== false, scope: st.viewer.scope || 'browser' }
+        : { transport: 'rfb', path: st?.viewer?.path || null, interactive: true, scope: st?.viewer?.scope || 'desktop' };
+    } catch {
+      // An unreachable/older host answers nothing useful — RFB is what every
+      // host before this change spoke, so it is the safe default.
+      return { transport: 'rfb', path: null, interactive: true, scope: 'desktop' };
+    }
+  })();
+  transports.set(scope, p);
+  return p;
+}
+
+/** Test hook: forget the cached probes (a tab has no other way to re-probe, by design — the driver cannot change without a host restart). */
+export function resetScreenTransportCache() {
+  transports.clear();
 }
 
 const TEARDOWN_GRACE_MS = 400; // survive unmount→remount churn (tab/session switch)
@@ -44,8 +96,13 @@ function scopeKey(sessionId) {
 
 function newConn() {
   return {
-    rfb: null,
-    host: null, // the element RFB renders into; reparented to the owner
+    rfb: null, // RFB (x11 hosts) or ScreencastConnection (native-window hosts)
+    connecting: false, // a transport probe is in flight — don't start a second
+    generation: 0, // bumped per connect attempt; a stale probe resolving is dropped
+    transport: null, // 'rfb' | 'screencast', once known
+    scope: null, // 'desktop' | 'browser' — how much of the machine this shows
+    interactive: true, // whether input reaches the machine over this transport
+    host: null, // the element the transport renders into; reparented to the owner
     status: 'idle', // idle | connecting | connected | disconnected | error
     errorDetail: '',
     errorKind: '', // 'needs-password' — the consumer translates
@@ -71,41 +128,67 @@ function setStatus(c, s, detail = '', kind = '') {
 }
 
 function connect(c, sessionId) {
-  if (c.rfb) return;
-  c.host = document.createElement('div');
-  c.host.style.cssText = 'position:absolute;inset:0;';
-  const url = vncWsUrl(sessionId);
-  // Cheap diagnostic (T8b): a tab that's been open since before a deploy
-  // keeps running its old bundle indefinitely — no HTTP caching involved, so
-  // no cache fix would touch it — which looks IDENTICAL from the outside to
-  // an actual per-session-scope regression. This line makes the two instantly
-  // distinguishable from the console without re-deriving the whole call chain.
-  console.info('[screen] connecting to', sessionId ? `session ${sessionId}` : 'the global desktop', url);
-  const r = new RFB(c.host, url, { wsProtocols: ['binary'] });
-  c.rfb = r;
-  r.scaleViewport = true;
-  r.viewOnly = true;
+  if (c.rfb || c.connecting) return;
+  c.connecting = true;
   setStatus(c, 'connecting');
-  r.addEventListener('connect', () => { if (c.rfb === r) setStatus(c, 'connected'); });
-  r.addEventListener('disconnect', () => { if (c.rfb === r) setStatus(c, 'disconnected'); });
-  // TightVNC & co. send a human-readable reason on security rejection —
-  // surface it verbatim rather than leaving a silent black rectangle.
-  r.addEventListener('securityfailure', (e) => { if (c.rfb === r) setStatus(c, 'error', e.detail?.reason || ''); });
-  // VNC-auth: fetch the password configured in Settings → Screen share (one
-  // password, shared by the global desktop and every per-session one).
-  r.addEventListener('credentialsrequired', async () => {
-    let password = '';
-    try { password = (await api.get('/screen/credentials'))?.password || ''; } catch {}
-    if (c.rfb !== r) return;
-    if (password) r.sendCredentials({ password });
-    else setStatus(c, 'error', '', 'needs-password');
+  // The transport probe is one awaited round trip (cached per scope), so the
+  // connection is built asynchronously from here. `assign()` is a no-op while
+  // `c.rfb` is null and runs again below once it isn't, so ownership settles
+  // the same way it always did — just one tick later on the very first mount.
+  const gen = ++c.generation;
+  void resolveTransport(scopeKey(sessionId), sessionId).then((t) => {
+    // Everything left while we were probing (fast tab switch): the teardown
+    // already ran, and connecting now would leak a socket nobody closes.
+    if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
+    c.host = document.createElement('div');
+    c.host.style.cssText = 'position:absolute;inset:0;';
+    c.transport = t.transport;
+    c.scope = t.scope;
+    c.interactive = t.interactive;
+    const url = t.transport === 'screencast' ? wsUrl(t.path) : vncWsUrl(sessionId);
+    // Cheap diagnostic (T8b): a tab that's been open since before a deploy
+    // keeps running its old bundle indefinitely — no HTTP caching involved, so
+    // no cache fix would touch it — which looks IDENTICAL from the outside to
+    // an actual per-session-scope regression. This line makes the two instantly
+    // distinguishable from the console without re-deriving the whole call chain.
+    // The transport name is here for the same reason: "which one did this tab
+    // pick" is the first question when a screen is black on a desktop-app host.
+    console.info('[screen] connecting to', sessionId ? `session ${sessionId}` : 'the global desktop', url, `(${t.transport})`);
+    const r = t.transport === 'screencast'
+      ? new ScreencastConnection(c.host, url)
+      : new RFB(c.host, url, { wsProtocols: ['binary'] });
+    c.rfb = r;
+    c.connecting = false;
+    r.scaleViewport = true;
+    r.viewOnly = true;
+    r.addEventListener('connect', () => { if (c.rfb === r) setStatus(c, 'connected'); });
+    r.addEventListener('disconnect', () => { if (c.rfb === r) setStatus(c, 'disconnected'); });
+    // The screencast bridge reports its own failures in-band (no Chrome tab
+    // for this session, CDP unreachable) and then closes — without this the
+    // close alone would show a bare "disconnected" and hide the actual reason,
+    // which is usually the actionable one ("call browser_open first").
+    r.addEventListener('screencasterror', (e) => { if (c.rfb === r) setStatus(c, 'error', e.detail?.message || ''); });
+    // TightVNC & co. send a human-readable reason on security rejection —
+    // surface it verbatim rather than leaving a silent black rectangle.
+    r.addEventListener('securityfailure', (e) => { if (c.rfb === r) setStatus(c, 'error', e.detail?.reason || ''); });
+    // VNC-auth: fetch the password configured in Settings → Screen share (one
+    // password, shared by the global desktop and every per-session one).
+    r.addEventListener('credentialsrequired', async () => {
+      let password = '';
+      try { password = (await api.get('/screen/credentials'))?.password || ''; } catch {}
+      if (c.rfb !== r) return;
+      if (password) r.sendCredentials({ password });
+      else setStatus(c, 'error', '', 'needs-password');
+    });
+    assign(c);
   });
-  assign(c);
 }
 
 function disconnect(c) {
   const r = c.rfb;
   c.rfb = null;
+  c.connecting = false;
+  c.generation++; // a transport probe still in flight must not build a connection now
   try { r?.disconnect(); } catch {}
   c.host?.remove();
   c.host = null;
@@ -132,7 +215,11 @@ function assign(c) {
     else c.host.remove();
     emit(c);
   }
-  c.rfb.viewOnly = best ? !!best.viewOnly : true;
+  // `interactive === false` means the TRANSPORT carries no input at all (a
+  // screencast with no session behind it has no page to aim CDP at). Forcing
+  // viewOnly there keeps the canvas from silently swallowing clicks that were
+  // never going to arrive anywhere.
+  c.rfb.viewOnly = c.interactive === false ? true : best ? !!best.viewOnly : true;
   // Flag the live canvas while it's actually accepting input, so app-wide
   // keyboard shortcuts (App.jsx, ChatPane.jsx) can tell "typing into the
   // remote machine" apart from "nothing focused" and back off instead of
@@ -220,15 +307,32 @@ function unregister(scope, x) {
 
 function snapshot(c) {
   return c
-    ? { status: c.status, errorDetail: c.errorDetail, errorKind: c.errorKind, ownerId: c.ownerId }
-    : { status: 'idle', errorDetail: '', errorKind: '', ownerId: null };
+    ? {
+        status: c.status,
+        errorDetail: c.errorDetail,
+        errorKind: c.errorKind,
+        ownerId: c.ownerId,
+        transport: c.transport,
+        // 'browser' tells the take-over UI to say what it is NOT showing (a
+        // native dialog outside the Chrome window) instead of leaving the
+        // human to discover it when a file picker never appears.
+        viewScope: c.scope,
+        interactive: c.interactive,
+      }
+    : { status: 'idle', errorDetail: '', errorKind: '', ownerId: null, transport: null, viewScope: null, interactive: true };
 }
 
 // Test/debug hook: how many live consumers share a desktop's (single)
 // connection. `sessionId` omitted = the global desktop.
 export function screenConnectionInfo(sessionId) {
   const c = conns.get(scopeKey(sessionId));
-  return { connected: !!c?.rfb, consumers: c?.consumers.length || 0, ownerId: c?.ownerId ?? null, status: c?.status || 'idle' };
+  return {
+    connected: !!c?.rfb,
+    consumers: c?.consumers.length || 0,
+    ownerId: c?.ownerId ?? null,
+    status: c?.status || 'idle',
+    transport: c?.transport || null,
+  };
 }
 
 /**

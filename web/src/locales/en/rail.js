@@ -16,6 +16,11 @@ export const strings = {
   'rail.screenNeedsYou': 'The machine is waiting for you — open the session',
   'rail.screenNeedsYouShort': 'needs you',
   'rail.screenNeedsPassword': 'This VNC server requires a password — set it in Settings → Screen share.',
+  // windows-remote-parity: this host streams the session's browser window over
+  // CDP instead of a whole VNC desktop (the desktop app on Windows/macOS).
+  // Said out loud so a missing native dialog reads as a known limit, not a bug.
+  'rail.screenBrowserScope': 'Browser window only',
+  'rail.screenBrowserScopeHint': 'This machine has no desktop server, so the view and your clicks reach the browser window only — a native dialog outside it will not appear here.',
   'rail.listenerErrored': 'A listener errored — open the session',
   'rail.watchingSource': 'Watching {n} source',
   'rail.watchingSources': 'Watching {n} sources',

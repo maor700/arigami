@@ -26,11 +26,27 @@
  */
 export type SurfaceHandle = { readonly kind: string } & Record<string, unknown>;
 
-/** How a viewer should reach this desktop. Replaces handing vncHost/vncPort/password to callers outside the driver. */
+/**
+ * How a viewer should reach this desktop. Replaces handing vncHost/vncPort/
+ * password to callers outside the driver.
+ *
+ * `interactive` — whether input (mouse/keyboard) reaches the machine over
+ * this transport, or the viewer can only watch. The cockpit needs this to be
+ * a property of the TRANSPORT rather than an assumption baked into the client:
+ * useScreenConnection.js used to hardcode "RFB, therefore interactive", which
+ * silently made every non-x11 host unusable for a take-over. A `false` here is
+ * a real answer ("look, don't touch"), not a missing feature — the UI can then
+ * say so instead of showing a canvas that eats clicks.
+ *
+ * `scope` — how much of the machine the viewer actually sees: the whole
+ * desktop (x11's framebuffer) or just the browser window (CDP screencast).
+ * Surfaced so the take-over UI can tell the human what they are NOT getting
+ * before they need it (a native file dialog opening outside the frame).
+ */
 export type ViewerDescriptor =
-  | { transport: 'rfb'; path: string; needsPassword: boolean }
-  | { transport: 'screencast'; path: string }
-  | { transport: 'native'; note: string };
+  | { transport: 'rfb'; path: string; needsPassword: boolean; interactive: boolean; scope: 'desktop' | 'browser' }
+  | { transport: 'screencast'; path: string; interactive: boolean; scope: 'desktop' | 'browser' }
+  | { transport: 'native'; note: string; interactive: boolean; scope: 'desktop' | 'browser' };
 
 export interface CaptureResult {
   png: Buffer;
@@ -41,7 +57,7 @@ export interface CaptureResult {
 }
 
 export interface ScreenDriver {
-  readonly id: 'x11' | 'native-window';
+  readonly id: 'x11' | 'native-window' | 'winvnc';
   /** Can this driver run at all on this host right now (binaries present, platform match)? */
   available(): Promise<{ ok: boolean; reason?: string }>;
   /** Lazily allocate/spawn (or reuse) this session's own desktop. Throws on failure — callers fall back to whatever `peek()`/global default they already had. */
@@ -66,8 +82,18 @@ export interface ScreenDriver {
   handOver(sessionId: string): Promise<{ focused: boolean; note?: string }>;
   /** The human is done; the agent resumes. */
   handBack(sessionId: string): Promise<void>;
-  /** Reachability + ownership for status UI (sidebar icon, machine panel). */
-  status(sessionId?: string | null): Promise<{ available: boolean; own: boolean; detail?: string; display?: string }>;
+  /**
+   * Reachability + ownership for status UI (sidebar icon, machine panel).
+   *
+   * `perSession` — whether this host can give a session a machine OF ITS OWN.
+   * True on x11 (a private Xvfb per session) and native-window (a private
+   * Chrome per session); FALSE on winvnc, because Windows has one console
+   * desktop that every session shares. The machine side panel keys off it:
+   * without it, a shared-desktop host reports `own:false` forever and the
+   * panel offers to "allocate a machine" that already exists and can never be
+   * allocated — an empty state in front of a working desktop.
+   */
+  status(sessionId?: string | null): Promise<{ available: boolean; own: boolean; perSession?: boolean; detail?: string; display?: string }>;
 }
 
 /**
@@ -75,13 +101,24 @@ export interface ScreenDriver {
  * never Linux+Xvfb — see isCompiledBinary()'s own doc for why that signal,
  * not just `process.platform`, is what actually distinguishes "dev checkout"
  * from "shipped app"). `env`/`platform` are injectable for tests.
- * ARIGAMI_SCREEN_DRIVER=x11|native-window overrides the decision outright —
- * the only way to exercise native-window on a Linux dev box.
+ * ARIGAMI_SCREEN_DRIVER=x11|native-window|winvnc overrides the decision
+ * outright — the only way to exercise a foreign host's shape on a Linux dev
+ * box, and how every non-Linux path in this repo is tested.
+ *
+ * `winvnc` (whole-desktop control of a Windows machine through a VNC service
+ * running on it — screen-driver-winvnc.ts) is **opt-in on win32**, never
+ * inferred: deciding it by probing a port would make driver selection async
+ * everywhere, and a single slow probe at the wrong moment would silently
+ * downgrade the whole machine to browser-only. A Windows host without the
+ * service keeps native-window — browser-window control still works there, so
+ * the failure mode of not opting in is "less", never "nothing".
  */
 export function pickDriver(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): ScreenDriver {
   const forced = env.ARIGAMI_SCREEN_DRIVER;
   if (forced === 'native-window') return nativeDriver();
   if (forced === 'x11') return x11Driver();
+  if (forced === 'winvnc') return winVncDriver();
+  if (platform === 'win32' && env.ARIGAMI_WIN_VNC === '1') return winVncDriver();
   if (platform !== 'linux' || isCompiledBinary()) return nativeDriver();
   return x11Driver();
 }
@@ -93,6 +130,7 @@ export function pickDriver(env: NodeJS.ProcessEnv = process.env, platform: NodeJ
 // one-line addition instead of a restructure.
 import { createX11Driver } from './screen-driver-x11.js';
 import { createNativeDriver } from './screen-driver-native.js';
+import { createWinVncDriver } from './screen-driver-winvnc.js';
 import { isCompiledBinary } from './resource-root.js';
 let _x11: ScreenDriver | null = null;
 function x11Driver(): ScreenDriver {
@@ -103,4 +141,9 @@ let _native: ScreenDriver | null = null;
 function nativeDriver(): ScreenDriver {
   if (!_native) _native = createNativeDriver();
   return _native;
+}
+let _winvnc: ScreenDriver | null = null;
+function winVncDriver(): ScreenDriver {
+  if (!_winvnc) _winvnc = createWinVncDriver();
+  return _winvnc;
 }

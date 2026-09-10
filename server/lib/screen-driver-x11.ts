@@ -106,6 +106,11 @@ export function createX11Driver(): ScreenDriver {
         transport: 'rfb',
         path: sessionId ? `/__vnc?session=${encodeURIComponent(sessionId)}` : '/__vnc',
         needsPassword: !!cfg.screen?.vncPassword,
+        // RFB carries pointer/keyboard both ways, and the framebuffer is the
+        // WHOLE Xvfb display — every window on it, not just a browser. This is
+        // the bar the other drivers are measured against.
+        interactive: true,
+        scope: 'desktop',
       };
     },
 
@@ -127,7 +132,9 @@ export function createX11Driver(): ScreenDriver {
       const own = !!sessionId && !!ownMeta(sessionId)?.vncPort;
       const target = desktops.screenTarget(sessionId);
       const available = !!cfg.screen?.enabled && (await probeVnc(target.vncHost, target.vncPort));
-      return { available, own, display: target.display };
+      // Xvfb gives every session a display of its own — the panel may offer
+      // to allocate one.
+      return { available, own, perSession: true, display: target.display };
     },
   };
 }
