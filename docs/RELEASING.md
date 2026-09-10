@@ -156,6 +156,8 @@ by hand in the VER1 commit and never tagged, so "everything since the last tag"
 would have meant the entire history.
 
 `auto` handles that: with no tag, the boundary is the commit that last wrote
-`VERSION`. The first automated release therefore covers the ~47 commits that
-landed since v0.1.0 was minted, and — no breaking changes, several `feat:` —
-lands on **v0.2.0**. After that the tag exists and the normal rule takes over.
+`VERSION`. The first automated release therefore covers exactly the commits
+that landed since v0.1.0 was minted — no breaking changes among them and
+several `feat:`, so it lands on **v0.2.0**. After that the tag exists and the
+normal "since the last tag" rule takes over. To see it before it happens:
+`bun scripts/release.ts auto --dry-run`.
