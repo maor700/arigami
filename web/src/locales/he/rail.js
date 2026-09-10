@@ -16,6 +16,7 @@ export const strings = {
   'rail.screenNeedsYou': 'המכונה ממתינה לך — פתחו את הסשן',
   'rail.screenNeedsYouShort': 'נדרש אתה',
   'rail.screenNeedsPassword': 'שרת ה-VNC דורש סיסמה — הגדר אותה בהגדרות ← שיתוף מסך.',
+  'rail.screenNoSharedMachine': 'למארח הזה אין מכונה משותפת — פתחו סשן והשתמשו במכונה שלו.',
   'rail.screenBrowserScope': 'חלון הדפדפן בלבד',
   'rail.screenBrowserScopeHint': 'למכונה הזו אין שרת שולחן עבודה, לכן התצוגה והלחיצות שלך מגיעות לחלון הדפדפן בלבד — חלון מערכת שנפתח מחוצה לו לא יוצג כאן.',
   'rail.listenerErrored': 'מאזין נכשל — פתחו את הסשן',

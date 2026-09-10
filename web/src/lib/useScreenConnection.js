@@ -140,6 +140,20 @@ function connect(c, sessionId) {
     // Everything left while we were probing (fast tab switch): the teardown
     // already ran, and connecting now would leak a socket nobody closes.
     if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
+    // A screencast transport with no session has nothing to show: the "shared
+    // machine" of the x11 world is the global :99 desktop, and a host running
+    // the native-window driver simply has no such thing — a session's Chrome
+    // window is the only surface there. Opening the socket anyway would get a
+    // raw "requires ?session=" back from the bridge and show it as a
+    // connection error, which reads like a fault rather than an absence.
+    if (t.transport === 'screencast' && !sessionId) {
+      c.connecting = false;
+      c.transport = t.transport;
+      c.scope = t.scope;
+      c.interactive = false;
+      setStatus(c, 'error', '', 'no-shared-machine');
+      return;
+    }
     c.host = document.createElement('div');
     c.host.style.cssText = 'position:absolute;inset:0;';
     c.transport = t.transport;

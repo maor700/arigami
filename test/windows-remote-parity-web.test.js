@@ -147,6 +147,22 @@ test('transport pick: the probe is cached per scope — one round trip, not one 
   expect(calls).toBe(1);
 });
 
+test('transport pick: screencast with no session is an ABSENCE, not a connection error', async () => {
+  // A host on the native-window driver has no shared desktop at all — the x11
+  // world's global :99 has no equivalent there. The rail's global screen view
+  // must say so rather than opening a socket that comes back with a raw
+  // "requires ?session=" and rendering it as a fault.
+  const { resolveTransport, resetScreenTransportCache } = await import(web('lib/useScreenConnection.js'));
+  resetScreenTransportCache();
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ driver: 'native-window', viewer: { transport: 'screencast', path: '/__screencast', interactive: false, scope: 'browser' } }),
+    { headers: { 'content-type': 'application/json' } }
+  );
+  const t = await resolveTransport('', null);
+  expect(t.transport).toBe('screencast');
+  expect(t.interactive).toBe(false);
+});
+
 // ---- the letterbox math ----------------------------------------------------
 
 test('canvasToPage: an exactly-fitting canvas maps 1:1 after scaling', () => {

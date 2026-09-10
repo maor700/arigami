@@ -19,6 +19,7 @@ export const strings = {
   // windows-remote-parity: this host streams the session's browser window over
   // CDP instead of a whole VNC desktop (the desktop app on Windows/macOS).
   // Said out loud so a missing native dialog reads as a known limit, not a bug.
+  'rail.screenNoSharedMachine': 'This host has no shared machine — open a session and use its own machine instead.',
   'rail.screenBrowserScope': 'Browser window only',
   'rail.screenBrowserScopeHint': 'This machine has no desktop server, so the view and your clicks reach the browser window only — a native dialog outside it will not appear here.',
   'rail.listenerErrored': 'A listener errored — open the session',

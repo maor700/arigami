@@ -34,7 +34,10 @@ export default function ScreenView({
     sessionId,
   });
 
-  const detail = errorKind === 'needs-password' ? t('rail.screenNeedsPassword') : errorDetail;
+  const detail =
+    errorKind === 'needs-password' ? t('rail.screenNeedsPassword')
+    : errorKind === 'no-shared-machine' ? t('rail.screenNoSharedMachine')
+    : errorDetail;
   useEffect(() => {
     onStatusChange?.(status, detail);
   }, [status, detail, onStatusChange]);
