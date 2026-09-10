@@ -8,6 +8,7 @@ import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
 import { Dot, tint, TriggerTag } from './ui.jsx';
 import { Logo } from './Logo.jsx';
+import { useShell, openMachines } from '../lib/shell.js';
 import {
   CreateFolderDialog,
   FolderNameDialog,
@@ -1115,6 +1116,39 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
   );
 }
 
+// The desktop shell's machine switcher. Hidden in a browser (no
+// window.__arigami) and hidden while "this computer" is the only machine —
+// there is nothing to switch to, and a control that never does anything is
+// worse than no control. The way to get a second machine is Settings › Host ›
+// Machines, which opens the same window this chip does.
+//
+// Deliberately quiet: a dot in the machine's colour and the name in the dim
+// foreground, not a filled brand-coloured pill. The 3px strip the shell paints
+// across the top of the window is the loud signal; this is the label for it.
+function MachineChip() {
+  const t = useT();
+  const shell = useShell();
+  const machines = shell?.machines || [];
+  if (!shell || machines.length < 2) return null;
+  const cur = machines.find((m) => m.id === shell.current) || machines[0];
+  return (
+    <button
+      type="button"
+      onClick={openMachines}
+      title={t('rail.machines.switch')}
+      aria-label={t('rail.machines.switch')}
+      className="ms-auto flex min-w-0 max-w-[8rem] cursor-pointer items-center gap-1.5 rounded-[5px] border border-border px-1.5 py-0.5 text-[0.6875rem] text-fgdim hover:border-ink hover:text-fg"
+    >
+      <span
+        className="h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ background: shell.color || '#9CA3AF' }}
+      />
+      <span className="truncate">{cur?.name || ''}</span>
+      <span aria-hidden="true" className="shrink-0 opacity-60">⌄</span>
+    </button>
+  );
+}
+
 // Stuck to the bottom of the sidebar, always visible (even with no items) so the
 // autoplay control is always reachable. Collapsible; header carries the triggers
 // shortcut + autoplay ▶/⏸ + concurrency cap.
@@ -1870,10 +1904,13 @@ export default function Rail({
           style={{ transform: rtl ? 'translateX(-2px)' : 'translateX(2px)' }}
         />
       )}
-      {/* brand row: the origami mark + wordmark (the tab bar's glyph moved here) */}
+      {/* brand row: the origami mark + wordmark (the tab bar's glyph moved here),
+          and — desktop shell only, and only once a second machine exists — the
+          machine switcher, end-justified against the wordmark. */}
       <div className="flex items-center gap-2 px-[0.8125rem] pt-3 pb-1">
         <Logo size="1.25rem" />
         <span className="text-[0.8125rem] font-bold tracking-wide text-fg">Arigami</span>
+        <MachineChip />
       </div>
       {/* new session (+ mobile drawer close) + search */}
       <div className="border-b border-hair px-[0.8125rem] pt-2 pb-3">

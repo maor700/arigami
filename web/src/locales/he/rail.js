@@ -116,6 +116,7 @@ export const strings = {
   'status.awaitingTakeover': 'מחכה להשתלטות',
   'rail.hebrew': 'עברית',
   'rail.dragToResize': 'גררו לשינוי גודל',
+  'rail.machines.switch': 'החלפת מכונה',
   'rail.newSession': 'סשן חדש',
   'rail.closeSessions': 'סגירת סשנים',
   'rail.searchSessions': 'חיפוש סשנים…',

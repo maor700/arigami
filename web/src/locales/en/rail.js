@@ -119,6 +119,7 @@ export const strings = {
   'status.awaitingTakeover': 'Awaiting take-over',
   'rail.hebrew': 'Hebrew',
   'rail.dragToResize': 'Drag to resize',
+  'rail.machines.switch': 'Switch machine',
   'rail.newSession': 'New session',
   'rail.closeSessions': 'Close sessions',
   'rail.searchSessions': 'Search sessions…',

@@ -394,12 +394,49 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
   window alone.
 - **The indicator is deliberately unmissable**, because the two machines
   render a byte-identical cockpit and one day the human will run something
-  heavy on the wrong one. There are four, all live at once: the window title
-  (`Arigami — <name> (מקומי|מרוחק)`), a menu titled `מכונה: <name>`, the tray
-  tooltip, and — injected into the machine page itself — a coloured strip
-  along the top plus a name pill in the corner. The strip/pill colour is per
-  machine (local keeps the brand yellow). The injection is one-way `eval`,
-  **not** IPC: it hands the page nothing.
+  heavy on the wrong one. The window title (`Arigami — <name> (מקומי|מרוחק)`),
+  a menu titled `מכונה: <name>`, the tray tooltip, and a coloured strip the
+  shell paints across the top of the page — all live at once, all per machine
+  (local keeps the brand yellow).
+- **The switcher itself is the cockpit's, not the shell's.** It used to be a
+  filled brand-coloured pill the shell injected at bottom-left, which is
+  exactly where `web/src/components/Rail.jsx` keeps the rail footer's
+  buttons — it hid them. It now renders inside the cockpit's own brand row,
+  end-justified against the wordmark, as a quiet bordered chip: a dot in the
+  machine's colour and the name in `text-fgdim`. The strip is the loud
+  signal; the chip is its label.
+
+  **It does not exist until there is a second machine.** With only "this
+  computer" there is nothing to switch to, and a control that never does
+  anything is worse than none. The way to get a second one is
+  **Settings › Host › מכונות**, which opens the same machines window — that
+  section is the entry point, and it too renders only inside the shell.
+
+  The channel is a global, not IPC. On page load (and again on every
+  `refresh_chrome`, so the chip appears the moment a machine is added, with
+  no reload) the shell evaluates a script that sets `window.__arigami`
+  (`{machines, current, color, sentinel, openPicker}`) and fires an
+  `arigami:shell` event; `web/src/lib/shell.js` is the whole cockpit-side
+  surface. Outside the shell that global never exists, so the browser
+  product is untouched. `openPicker()` navigates to `sentinel`
+  (`MACHINES_SENTINEL_PATH`), which `on_navigation` recognises and cancels —
+  decision #2 stands, the origin still gets no `invoke()`.
+
+  One trap, hit live: `refresh_chrome` re-evaluates the payload per window,
+  and doing that while holding the `windows` lock deadlocks the main thread
+  (`machine_of()` takes the same non-reentrant `Mutex`). The app came up with
+  no window and no sidecar at all. Snapshot the labels first.
+- **A machine has to BE an Arigami.** `add_machine()` used to store any
+  address at all, so a typo became a "machine" the window would navigate to.
+  It now fetches `<origin>/__api/config` first and requires the `version` and
+  `authMode` fields — that route is public, so no cookie is needed. http goes
+  over the raw `TcpStream` already in this file; https shells out to `curl`
+  (macOS and Windows 10+ both ship it) because there is no TLS client here,
+  and a missing `curl` refuses the add rather than waving it through. The
+  command is `async` so the up-to-6s check runs off the main thread — a sync
+  command would freeze every window while the dialog waited. Covered by
+  `cargo test` in `main.rs` (accept / not-Arigami / 404 / nothing listening);
+  the https-via-curl path is not covered there.
 - **Keyboard**: `Cmd/Ctrl+Alt+1..9` jumps straight to a machine,
   `Cmd/Ctrl+Shift+M` opens the machines window. Both are ordinary menu
   accelerators, so they ship to macOS as-is.
@@ -430,8 +467,8 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 
 `app.set_menu()` sets **one** menu for the whole app, so with two machine
 windows open on Linux both menu bars read `מכונה: <the focused window's
-machine>`. The title bar and the in-page pill are per window and stay
-correct, so the indicator is never wrong — just doubled. On macOS there is
+machine>`. The title bar, the strip and the in-page chip are per window and
+stay correct, so the indicator is never wrong — just doubled. On macOS there is
 only one menu bar to begin with and it belongs to the focused window, which
 is exactly the intended behaviour, so this is Linux-only and cosmetic.
 

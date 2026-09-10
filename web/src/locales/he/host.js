@@ -1,5 +1,10 @@
 // הגדרות → כרטיס Host (B4-lite): גרסה, הפעלה מחדש, שדרוג.
 export const strings = {
+  'host.machines': 'מכונות',
+  'host.machines.linked': 'מכונות מקושרות',
+  'host.machines.hint': 'אפליקציית שולחן העבודה יכולה להצביע על יותר מ-Arigami אחד — המחשב הזה, או שרת מרוחק דרך Tailscale. אחרי שיש יותר מאחת, מחליפים ביניהן מהצ\'יפ שליד הלוגו.',
+  'host.machines.count': '{n} מקושרות',
+  'host.machines.manage': 'ניהול מכונות…',
   'host.title': 'מארח',
   'host.version': 'גרסה',
   'host.version.hint': 'הגרסה שרצה מול הגרסה הזמינה ב-upstream. עדכון = משיכה, התקנה ובנייה; ההפעלה מחדש רק אחרי אישור שלך.',

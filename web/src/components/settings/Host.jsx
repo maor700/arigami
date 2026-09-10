@@ -20,6 +20,7 @@ import { relTime } from '../../lib/time.js';
 import Budgets from './Budgets.jsx';
 import Health from './Health.jsx';
 import { WhoAmI, UsersAdvanced, ScreenShare, DangerZone } from './Access.jsx';
+import { useShell, openMachines } from '../../lib/shell.js';
 
 export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-legacy', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
 
@@ -119,6 +120,33 @@ function BackupOptions({ memory, setMemory, force, setForce, disabled }) {
           {t('host.importForce')}
         </label>
       </div>
+    </Section>
+  );
+}
+
+// Desktop shell only: the entry point for linking a second Arigami — another
+// computer, a VPS over Tailscale — and the only way in until one exists. Once
+// there are two, the rail's brand row grows a switcher (Rail.jsx › MachineChip)
+// and this stays as the place to add, rename or forget one.
+//
+// The list, and the window that edits it, both live in the shell
+// (desktop/src-tauri/src/main.rs); the cockpit only reads window.__arigami and
+// asks for that window. In a browser useShell() is null and nothing renders.
+function Machines() {
+  const t = useT();
+  const shell = useShell();
+  if (!shell) return null;
+  const n = (shell.machines || []).length;
+  return (
+    <Section id="machines" title={t('host.machines')}>
+      <Field label={t('host.machines.linked')} hint={t('host.machines.hint')}>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-fgdim">{t('host.machines.count', { n })}</span>
+          <button type="button" className={BTN} onClick={openMachines}>
+            {t('host.machines.manage')}
+          </button>
+        </div>
+      </Field>
     </Section>
   );
 }
@@ -362,6 +390,7 @@ export default function Host({ section = '' }) {
         )}
       </Section>
 
+      <Machines />
       <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} memory={memory} force={force} />
       <WhoAmI />
 

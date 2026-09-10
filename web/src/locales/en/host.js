@@ -1,5 +1,10 @@
 // Settings → Host card (B4-lite): version, restart, upgrade.
 export const strings = {
+  'host.machines': 'Machines',
+  'host.machines.linked': 'Linked machines',
+  'host.machines.hint': 'The desktop app can point at more than one Arigami — this computer, or a remote host over Tailscale. Once there is more than one, the chip next to the logo switches between them.',
+  'host.machines.count': '{n} linked',
+  'host.machines.manage': 'Manage machines…',
   'host.title': 'Host',
   'host.version': 'Version',
   'host.version.hint': 'What runs here vs what upstream offers. Update = pull, install, build; the restart waits for your OK.',

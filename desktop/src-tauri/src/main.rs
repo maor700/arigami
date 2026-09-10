@@ -246,6 +246,12 @@ struct Shell {
     /// real waste, not an aesthetic one.
     local_wanted: AtomicBool,
     local_error: Mutex<Option<String>>,
+    /// Set by run_supervisor() when it refuses to keep trying: the port is
+    /// held by something that is not our child, or the sidecar crash-looped.
+    /// Lives here rather than inside the loop so the shell page's "try again"
+    /// (retry_connect → go_to_machine) can clear it — with one machine there
+    /// is no "switch away and back" to fall back on.
+    local_blocked: AtomicBool,
     quitting: Arc<AtomicBool>,
     /// One quit dialog at a time. A single Cmd/Ctrl+Q produced TWO stacked
     /// confirmation dialogs, every time: the app-level on_menu_event and the
@@ -578,16 +584,25 @@ fn resolve_addr(host: &str, port: u16) -> Option<SocketAddr> {
 
 /// Hand-rolled HTTP/1.1 GET — this shell makes a handful of requests ever, so
 /// an HTTP client crate isn't worth the surface. Returns the status code.
-fn http_status(mut stream: TcpStream, host: &str, port: u16, path: &str) -> Option<u16> {
+fn http_get(mut stream: TcpStream, host: &str, port: u16, path: &str) -> Option<(u16, String)> {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(2500)));
     let req =
         format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).ok()?;
     let mut buf = Vec::new();
     let _ = stream.read_to_end(&mut buf);
-    let text = String::from_utf8_lossy(&buf);
-    let line = text.lines().next()?;
-    line.split_whitespace().nth(1)?.parse::<u16>().ok()
+    let text = String::from_utf8_lossy(&buf).to_string();
+    let code = text.lines().next()?.split_whitespace().nth(1)?.parse::<u16>().ok()?;
+    // Headers end at the first blank line; everything after is the body.
+    let body = text
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_default();
+    Some((code, body))
+}
+
+fn http_status(stream: TcpStream, host: &str, port: u16, path: &str) -> Option<u16> {
+    http_get(stream, host, port, path).map(|(code, _)| code)
 }
 
 /// Is this machine actually there?
@@ -596,6 +611,63 @@ fn http_status(mut stream: TcpStream, host: &str, port: u16, path: &str) -> Opti
 /// connect only — there is no TLS client in this shell (see docs/DESKTOP.md
 /// for why), so "the port accepts connections" is as far as the check goes;
 /// a reachable host running something else would still get navigated to.
+/// Is this origin actually an Arigami host? `add_machine()` used to take any
+/// address at all, so a typo — or any website — became a "machine" that the
+/// window would then navigate to. `/__api/config` is the cheapest positive
+/// proof: it is public (no cookie needed, verified against a live host) and
+/// its body names the two fields below, which no unrelated site returns.
+///
+/// http goes over the raw TcpStream this file already uses. https cannot —
+/// there is no TLS client here, and decision #4's "no HTTP crate for one
+/// request" stops being true the moment we need a real body — so it shells
+/// out to `curl`, which ships with macOS and with Windows 10+. If curl is
+/// missing the add is refused rather than silently allowed: an unverified
+/// machine is the thing being fixed.
+fn verify_arigami(origin: &str) -> Result<(), String> {
+    let u = url::Url::parse(origin).map_err(|e| format!("כתובת לא תקינה: {e}"))?;
+    let https = u.scheme() == "https";
+    let host = u
+        .host_str()
+        .ok_or_else(|| "חסר שם מארח בכתובת".to_string())?
+        .to_string();
+    let port = u.port().unwrap_or(if https { 443 } else { 80 });
+
+    let body = if https {
+        let out = Command::new("curl")
+            .args([
+                "-fsS",
+                "--max-time",
+                "6",
+                &format!("{origin}/__api/config"),
+            ])
+            .output()
+            .map_err(|_| {
+                "לא הצלחתי לבדוק כתובת https — curl לא זמין על המכונה הזאת".to_string()
+            })?;
+        if !out.status.success() {
+            return Err(format!("אין מענה מ־{host} או שהוא ענה בשגיאה"));
+        }
+        String::from_utf8_lossy(&out.stdout).to_string()
+    } else {
+        let addr = resolve_addr(&host, port)
+            .ok_or_else(|| format!("לא הצלחתי לתרגם את {host} לכתובת — Tailscale מחובר?"))?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(3000))
+            .map_err(|_| format!("אין מענה מ־{host}:{port}"))?;
+        let (code, body) = http_get(stream, &host, port, "/__api/config")
+            .ok_or_else(|| format!("{host}:{port} ענה, אבל לא כשרת HTTP"))?;
+        if code != 200 {
+            return Err(format!("השרת ענה {code} ולא 200"));
+        }
+        body
+    };
+
+    if body.contains("\"authMode\"") && body.contains("\"version\"") {
+        Ok(())
+    } else {
+        Err(format!("{host} עונה, אבל זה לא שרת Arigami"))
+    }
+}
+
 fn probe(origin: &str, require_ok: bool) -> Result<(), String> {
     let u = url::Url::parse(origin).map_err(|e| format!("כתובת לא תקינה: {e}"))?;
     let https = u.scheme() == "https";
@@ -681,10 +753,12 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
     let mut child: Option<Child> = None;
     let mut started: Option<Instant> = None;
     let mut fast_exits: u32 = 0;
-    // Set once the crash-loop guard trips; cleared when local stops being
-    // wanted, so switching away and back is the user-reachable retry.
-    let mut blocked = false;
     loop {
+        // Someone cleared the block (go_to_machine, i.e. "try again" or a
+        // switch back to this computer). Give the guard a full budget again.
+        if fast_exits >= MAX_FAST_EXITS && !shell.local_blocked.load(Ordering::SeqCst) {
+            fast_exits = 0;
+        }
         if shell.quitting.load(Ordering::SeqCst) {
             if let Some(mut c) = child.take() {
                 stop_child(&mut c);
@@ -710,7 +784,7 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                     if started.map(|t| t.elapsed() < HEALTHY_RUN).unwrap_or(false) {
                         fast_exits += 1;
                         if fast_exits >= MAX_FAST_EXITS {
-                            blocked = true;
+                            shell.local_blocked.store(true, Ordering::SeqCst);
                             *shell.local_error.lock().unwrap() = Some(crash_loop_message(&app));
                         }
                     } else {
@@ -719,9 +793,9 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                     started = None;
                 }
             }
-            (false, true) if blocked => {}
+            (false, true) if shell.local_blocked.load(Ordering::SeqCst) => {}
             (false, true) if config_endpoint_ready() => {
-                blocked = true;
+                shell.local_blocked.store(true, Ordering::SeqCst);
                 *shell.local_error.lock().unwrap() = Some(port_taken_message());
             }
             (false, true) => match spawn_server(&app) {
@@ -742,7 +816,7 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
             (false, false) => {
                 // Nobody wants the local machine — drop the block so pointing
                 // a window back at "this computer" tries again from scratch.
-                blocked = false;
+                shell.local_blocked.store(false, Ordering::SeqCst);
                 fast_exits = 0;
             }
         }
@@ -784,47 +858,37 @@ const BADGE_JS: &str = r#"
 (function(){
   try{
     if (window.top !== window.self) return;
-    var NAME = __NAME__, COLOR = __COLOR__, ID = '__arigami_machine_badge__', IPC = '';
+    var DATA = __DATA__, ID = '__arigami_machine_strip__';
+    // The colour strip is the shell's only remaining pixels. The machine chip
+    // itself is the COCKPIT's now (web/src/components/Rail.jsx): it belongs
+    // beside the wordmark, in the product's own colours, and it must not
+    // appear at all until there is a second machine to switch to. All the
+    // shell does here is hand the page the facts and a way to call back.
+    var old = document.getElementById('__arigami_machine_badge__');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
     if (window.__arigamiBadgeTimer) { clearInterval(window.__arigamiBadgeTimer); }
+
     var mk = function(){
       var root = document.documentElement;
       if (!root) return;
-      var pill = document.getElementById(ID);
-      if (!pill) {
-        pill = document.createElement('div');
-        pill.id = ID;
-        pill.setAttribute('dir','rtl');
-        root.appendChild(pill);
-      }
-      // Top edge, centred, hanging off the colour strip. It used to sit at
-      // bottom-left, which is exactly where the cockpit's rail footer keeps
-      // its buttons (web/src/components/Rail.jsx) — pointer-events:none meant
-      // clicks still landed, but the buttons were hidden behind it.
-      pill.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);'
-        + 'z-index:2147483647;cursor:pointer;user-select:none;'
-        + 'font:600 11px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-        + 'padding:2px 12px 3px;border-radius:0 0 9px 9px;background:' + COLOR + ';color:#111;'
-        + 'box-shadow:0 1px 5px rgba(0,0,0,.35);opacity:.92;white-space:nowrap';
-      pill.title = 'החלף מכונה (Cmd/Ctrl+Shift+M)';
-      pill.textContent = NAME + IPC + '  ⌄';
-      if (!pill.__arigamiWired) {
-        pill.__arigamiWired = true;
-        pill.addEventListener('mouseenter', function(){ pill.style.opacity = '1'; });
-        pill.addEventListener('mouseleave', function(){ pill.style.opacity = '.92'; });
-        pill.addEventListener('click', function(){
-          location.href = location.origin + __SENTINEL__;
-        });
-      }
-      var strip = document.getElementById(ID + '_strip');
+      var strip = document.getElementById(ID);
       if (!strip) {
         strip = document.createElement('div');
-        strip.id = ID + '_strip';
+        strip.id = ID;
         root.appendChild(strip);
       }
       strip.style.cssText = 'position:fixed;top:0;left:0;right:0;height:3px;z-index:2147483647;'
-        + 'pointer-events:none;background:' + COLOR;
+        + 'pointer-events:none;background:' + DATA.color;
     };
     mk();
+    window.__arigamiBadgeTimer = setInterval(mk, 3000);
+
+    // Decision #2 forbids IPC to this origin, so the callback is a navigation
+    // the shell cancels — see MACHINES_SENTINEL_PATH in main.rs.
+    DATA.openPicker = function(){ location.href = location.origin + DATA.sentinel; };
+    window.__arigami = DATA;
+    try { window.dispatchEvent(new CustomEvent('arigami:shell', { detail: DATA })); } catch (e) {}
+
     // Tauri injects __TAURI_INTERNALS__ (and, with withGlobalTauri, __TAURI__)
     // into EVERY page in the webview, machine origins included — so the mere
     // presence of those objects says nothing. What decides it is whether a
@@ -836,22 +900,32 @@ const BADGE_JS: &str = r#"
     if (inv) {
       try {
         var p = inv('shell_status');
-        if (p && p.then) p.then(function(){ IPC = '  ⚠ IPC'; mk(); }, function(){});
+        if (p && p.then) p.then(function(){
+          window.__arigami.ipcLeak = true;
+          try { window.dispatchEvent(new CustomEvent('arigami:shell', { detail: window.__arigami })); } catch (e) {}
+        }, function(){});
       } catch (e) {}
     }
-    window.__arigamiBadgeTimer = setInterval(mk, 3000);
   }catch(e){}
 })();
 "#;
 
-fn badge_js(name: &str, color: &str) -> String {
-    BADGE_JS
-        .replace(
-            "__SENTINEL__",
-            &serde_json::to_string(MACHINES_SENTINEL_PATH).unwrap_or_else(|_| "\"\"".into()),
-        )
-        .replace("__NAME__", &serde_json::to_string(name).unwrap_or_else(|_| "\"?\"".into()))
-        .replace("__COLOR__", &serde_json::to_string(color).unwrap_or_else(|_| "\"#fff\"".into()))
+fn badge_js(shell: &Arc<Shell>, current: &Machine) -> String {
+    // Everything the cockpit needs to draw (or hide) the switcher: the list,
+    // which one this window is on, this machine's colour for the strip, and
+    // the sentinel path for the callback. `machines.length < 2` is what the
+    // cockpit checks — one machine means there is nothing to switch to and
+    // the chip must not exist.
+    let payload = serde_json::json!({
+        "machines": shell.all_machines(),
+        "current": current.id,
+        "color": shell.color_of(&current.id),
+        "sentinel": MACHINES_SENTINEL_PATH,
+    });
+    BADGE_JS.replace(
+        "__DATA__",
+        &serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into()),
+    )
 }
 
 // ------------------------------------------------------------- navigation
@@ -899,6 +973,9 @@ fn go_to_machine(app: &AppHandle, shell: &Arc<Shell>, label: &str, machine: Mach
     recompute_local_wanted(shell);
     if machine.local {
         *shell.local_error.lock().unwrap() = None;
+        // "try again" has to actually try again: without this the supervisor
+        // stays parked and wait_local_ready() just times out after 60s.
+        shell.local_blocked.store(false, Ordering::SeqCst);
     }
 
     let title = window_title(&machine);
@@ -1043,8 +1120,7 @@ fn create_machine_window(
                 return;
             }
             if let Some(m) = shell_pl.machine_of(&label_pl) {
-                let js = badge_js(&m.name, &shell_pl.color_of(&m.id));
-                let _ = webview.eval(&js);
+                let _ = webview.eval(&badge_js(&shell_pl, &m));
             }
         })
         .build()?;
@@ -1238,6 +1314,26 @@ fn refresh_chrome(app: &AppHandle, shell: &Arc<Shell>) {
                 let _ = tray.set_tooltip(Some(format!("Arigami — {name}")));
             }
         }
+        // The cockpit draws the switcher from window.__arigami, so the list it
+        // holds has to move with the menus — adding the second machine is
+        // exactly the moment the chip has to appear, without a reload.
+        //
+        // Snapshot first, THEN eval: machine_of() takes the same `windows`
+        // lock, and std::sync::Mutex is not reentrant, so doing this inside
+        // the iteration deadlocked the main thread — the app came up with no
+        // window and no sidecar at all.
+        let targets: Vec<(String, Machine)> = shell2
+            .windows
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(label, w)| (label.clone(), w.machine.clone()))
+            .collect();
+        for (label, m) in targets {
+            if let Some(w) = app2.get_webview_window(&label) {
+                let _ = w.eval(&badge_js(&shell2, &m));
+            }
+        }
     });
 }
 
@@ -1422,7 +1518,11 @@ fn switch_machine(
 }
 
 #[tauri::command]
-fn add_machine(
+// `async` on purpose: a sync command runs on the main thread, and
+// verify_arigami() blocks on the network for up to ~6s — that would freeze
+// every window, cockpit included, while the dialog waits. The blocking part
+// goes to spawn_blocking and this only awaits it.
+async fn add_machine(
     app: AppHandle,
     state: State<'_, Arc<Shell>>,
     name: String,
@@ -1432,6 +1532,15 @@ fn add_machine(
     let origin = normalize_origin(&address)?;
     if shell.all_machines().iter().any(|m| m.origin == origin) {
         return Err("המכונה הזאת כבר ברשימה".into());
+    }
+    // A machine is an Arigami host, not any URL. Checked before it is stored,
+    // so a bad address is a message in the dialog rather than an entry that
+    // navigates the window somewhere else entirely.
+    {
+        let o = origin.clone();
+        tauri::async_runtime::spawn_blocking(move || verify_arigami(&o))
+            .await
+            .map_err(|_| "בדיקת הכתובת נכשלה".to_string())??;
     }
     let name = {
         let n = name.trim();
@@ -1577,6 +1686,7 @@ fn main() {
                 local_pid: Mutex::new(None),
                 local_wanted: AtomicBool::new(false),
                 local_error: Mutex::new(None),
+                local_blocked: AtomicBool::new(false),
                 quitting: Arc::new(AtomicBool::new(false)),
                 asking_quit: AtomicBool::new(false),
                 seq: AtomicU64::new(0),
@@ -1632,4 +1742,53 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running arigami-desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    /// One-shot HTTP server on a free port; returns its origin.
+    fn serve_once(status: &'static str, body: &'static str) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let res = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(res.as_bytes());
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    #[test]
+    fn accepts_a_real_arigami_config() {
+        let origin = serve_once("200 OK", r#"{"version":"0.1.0","authMode":"pairing","hasAdmin":true}"#);
+        assert!(verify_arigami(&origin).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_site_that_is_not_arigami() {
+        // 200, valid HTTP, just not us — the case the picker used to accept.
+        let origin = serve_once("200 OK", "<!doctype html><title>hello</title>");
+        assert!(verify_arigami(&origin).is_err());
+    }
+
+    #[test]
+    fn rejects_a_host_with_no_config_route() {
+        let origin = serve_once("404 Not Found", "nope");
+        assert!(verify_arigami(&origin).is_err());
+    }
+
+    #[test]
+    fn rejects_an_address_nothing_answers() {
+        // Port 1 on loopback: bindable only by root, never listening here.
+        assert!(verify_arigami("http://127.0.0.1:1").is_err());
+    }
 }
