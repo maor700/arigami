@@ -866,3 +866,48 @@ test('localizeSessionsForImport: clears folders that do not exist here and every
   expect(bk.localizeSessionsForImport(same, null)).toEqual({ cwds: 0, conversations: 0 });
   expect(fs.readFileSync(path.join(same, 'state.json'), 'utf8')).toBe(before);
 });
+
+// `include` has been in the manifest since buildManifest() was written, and
+// importFull ignored it: a partial archive replaced the WHOLE dir, so
+// importing "just my memory and agents" took users.json, config.json, chat/
+// and every session with it. A partial archive is an overlay now.
+test('importFull: a partial archive replaces only its own entries and leaves the rest of the dir alone', async () => {
+  const src = tmp('arigami-src-');
+  fs.mkdirSync(path.join(src, 'memory'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'memory', 'MEMORY.md'), '# from the source\n');
+  fs.mkdirSync(path.join(src, 'agents', 'chief'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'agents', 'chief', 'agent.json'), '{"slug":"chief"}');
+  fs.writeFileSync(path.join(src, 'state.json'), JSON.stringify({ sessions: [{ id: 'sess_SOURCE' }] }));
+  fs.writeFileSync(path.join(src, 'users.json'), JSON.stringify({ users: [{ email: 'source@x' }] }));
+
+  const archive = path.join(tmp(), 'partial.tgz');
+  const e = runInChild(
+    `const bk = await import('./server/backup.ts');
+     await bk.exportFullToFile(${JSON.stringify(archive)}, { include: ['memory', 'agents'] });
+     emit({ done: true });`,
+    { ARIGAMI_DIR: src },
+  );
+  expect(e.ok).toBe(true);
+
+  const dest = tmp('arigami-dest-');
+  fs.mkdirSync(path.join(dest, 'memory'), { recursive: true });
+  fs.writeFileSync(path.join(dest, 'memory', 'MEMORY.md'), '# the destination had its own\n');
+  fs.writeFileSync(path.join(dest, 'state.json'), JSON.stringify({ sessions: [{ id: 'sess_MINE' }] }));
+  fs.writeFileSync(path.join(dest, 'users.json'), JSON.stringify({ users: [{ email: 'mine@x' }] }));
+
+  const r = runInChild(
+    `const bk = await import('./server/backup.ts');
+     const out = await bk.importFull(${JSON.stringify(archive)}, { force: true, busyCount: 0 });
+     emit({ partial: out.partial, restored: out.restored.sort() });`,
+    { ARIGAMI_DIR: dest },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ partial: true, restored: ['agents', 'memory'] });
+
+  // what the archive carried: replaced
+  expect(fs.readFileSync(path.join(dest, 'memory', 'MEMORY.md'), 'utf8')).toBe('# from the source\n');
+  expect(fs.existsSync(path.join(dest, 'agents', 'chief', 'agent.json'))).toBe(true);
+  // what it did not: untouched, which is the whole point
+  expect(JSON.parse(fs.readFileSync(path.join(dest, 'state.json'), 'utf8')).sessions[0].id).toBe('sess_MINE');
+  expect(JSON.parse(fs.readFileSync(path.join(dest, 'users.json'), 'utf8')).users[0].email).toBe('mine@x');
+}, 60_000);

@@ -492,15 +492,18 @@ async function handleHostImport(
       return json(res, { ok: true, kind, ...report });
     }
     const r = await bk.importFull(file, { force, whatsapp, busyCount: hc.busySessions });
-    // The whole $ARIGAMI_DIR on disk is the imported one now, but this process
-    // still holds the PRE-import state in memory — and shutdown() flushes
-    // before it exits, so the restart below used to come up with the imported
-    // chat/ and agents/ (files on disk, untouched) and the old session list
-    // (state.json, rewritten on the way out). Reported live as "the import
-    // brought only the agents, not the sessions". Stop writing: from here on
-    // the bytes on disk are the import's, not ours.
-    state.freezeState('full import');
-    (await import('./triggers.js')).freezeTriggers('full import');
+    // The dir on disk is the imported one now, but this process still holds
+    // the PRE-import world in memory — and shutdown() flushes before it exits,
+    // so the restart below used to come up with the imported chat/ and agents/
+    // (files on disk, untouched) and the old session list (state.json,
+    // rewritten on the way out). Reported live as "the import brought only the
+    // agents, not the sessions".
+    //
+    // Per file, not wholesale: a PARTIAL archive leaves state.json alone, and
+    // freezing it there would strand the sessions this host still owns —
+    // they'd stop being written for the rest of the process's life.
+    if (r.restored.includes('state.json')) state.freezeState('import restored state.json');
+    if (r.restored.includes('triggers.json')) (await import('./triggers.js')).freezeTriggers('import restored triggers.json');
     broadcast({ type: 'host', event: { kind: 'import-done', mode: 'full', backupDir: r.backupDir, version: r.manifest.version } });
     // F4 #3: no supervisor → say so and stay up (the data dir is already
     // swapped; `bin/host restart` finishes the job). Never exit unsupervised.

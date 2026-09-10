@@ -55,10 +55,22 @@ function BackupField({ disabled, onRestarting, reload, memory, force }) {
   const [importing, setImporting] = useState(false);
   const fileRef = useRef(null);
 
+  // 'partial' is a full-format archive limited to the entries a person
+  // actually wants to carry between machines: their memory (the whole of it —
+  // notes, episodes, journal, the sqlite), their agents and their cron jobs.
+  // The manifest records `include`, and importFull() overlays those entries
+  // instead of replacing the data dir, so sessions, chat and accounts on the
+  // receiving host survive.
+  const PARTIAL_INCLUDE = 'memory,agents,triggers.json';
+
   const download = async (mode) => {
     setExporting(mode);
     try {
-      const r = await fetch(`/__api/host/export?mode=${mode}${mode === 'bundle' && !memory ? '&memory=0' : ''}`);
+      const qs =
+        mode === 'partial'
+          ? `mode=full&include=${PARTIAL_INCLUDE}`
+          : `mode=${mode}${mode === 'bundle' && !memory ? '&memory=0' : ''}`;
+      const r = await fetch(`/__api/host/export?${qs}`);
       if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b?.error || `HTTP ${r.status}`); }
       const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `arigami-${mode}.tgz`;
       const url = URL.createObjectURL(await r.blob());
@@ -79,6 +91,7 @@ function BackupField({ disabled, onRestarting, reload, memory, force }) {
     try {
       const r = await hostPost(`/host/import${force ? '?force=1' : ''}`, 'POST', file);
       if (r.kind === 'bundle') toast(t('host.importDoneBundle', { name: r.name, repos: r.repos?.length || 0, skills: r.skills?.length || 0, cron: r.cron?.length || 0 }));
+      else if (r.partial) { if (r.restart?.scheduled) onRestarting?.(); toast(t('host.importDonePartial', { what: (r.restored || []).join(', '), bak: r.backupDir || '—' })); }
       else if (r.restart?.scheduled) { onRestarting?.(); toast(t('host.importDoneFull', { version: r.manifest?.version || '?', bak: r.backupDir || '—' })); }
       else toast(t('host.importDoneFullNoRestart', { bak: r.backupDir || '—' }));
       reload?.();
@@ -96,11 +109,15 @@ function BackupField({ disabled, onRestarting, reload, memory, force }) {
       <Field label={t('host.backup')} hint={t('host.backup.hint')} wrap>
         <span className="flex flex-wrap items-center justify-end gap-2">
           <button type="button" disabled={off} onClick={() => download('full')} className={BTN}>{exporting === 'full' ? t('host.exporting') : t('host.exportFull')}</button>
+          <button type="button" disabled={off} onClick={() => download('partial')} className={BTN}>{exporting === 'partial' ? t('host.exporting') : t('host.exportPartial')}</button>
           <button type="button" disabled={off} onClick={() => download('bundle')} className={BTN}>{exporting === 'bundle' ? t('host.exporting') : t('host.exportBundle')}</button>
           <button type="button" disabled={off} onClick={() => fileRef.current?.click()} className={BTN}>{importing ? t('host.importing') : t('host.import')}</button>
           <input ref={fileRef} type="file" accept=".tgz,.tar.gz,application/gzip,application/x-gzip" className="hidden" onChange={onFile} />
         </span>
       </Field>
+      {/* The two things a cross-machine restore cannot bring, said before the
+          import rather than discovered as "claude failed to start". */}
+      <div className="max-w-[34rem] text-[11px] leading-relaxed text-fgdim">{t('host.import.crossMachine')}</div>
     </Section>
   );
 }

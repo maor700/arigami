@@ -144,6 +144,10 @@ export interface ImportResult {
   clearedCwds: number;
   /** sessions whose Claude Code conversation id was cleared — that store never travels in a backup */
   clearedConversations: number;
+  /** the top-level entries actually put in place (a partial archive restores only its own) */
+  restored: string[];
+  /** the archive declared `include` — an overlay, not a whole-dir replacement */
+  partial: boolean;
 }
 
 export class ImportError extends Error {
@@ -674,7 +678,36 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     if (resolved !== rawConfig) fs.writeFileSync(stagedConfig, JSON.stringify(resolved, null, 2) + '\n');
   }
 
-  const localized = localizeSessionsForImport(staging, manifest.host?.platform);
+  // A PARTIAL archive (exported with `include`) is an overlay, not a
+  // replacement. The manifest has said which top-level entries it carries
+  // since buildManifest() was written; importFull simply never read it, and
+  // swapped the whole dir regardless — so importing "just my memory and
+  // agents" silently took users.json, config.json, chat/ and every session
+  // with it. Merging is what makes `include` usable at all.
+  const staged = fs.readdirSync(staging).filter((n) => n !== MANIFEST_NAME);
+  const partial = Array.isArray(manifest.include) && manifest.include.length > 0;
+  const localized = staged.includes('state.json')
+    ? localizeSessionsForImport(staging, manifest.host?.platform)
+    : { cwds: 0, conversations: 0 };
+
+  if (partial) {
+    const bak = path.join(parent, `${path.basename(dir)}.bak-${ts}`);
+    fs.mkdirSync(bak, { recursive: true });
+    for (const n of staged) {
+      const from = path.join(dir, n);
+      if (fs.existsSync(from)) fs.renameSync(from, path.join(bak, n));
+      fs.renameSync(path.join(staging, n), path.join(dir, n));
+    }
+    // the record of where this came from, alongside the entries it replaced
+    fs.copyFileSync(path.join(staging, MANIFEST_NAME), path.join(dir, MANIFEST_NAME));
+    fs.rmSync(staging, { recursive: true, force: true });
+    return {
+      manifest, restoredTo: dir, backupDir: bak, entries: entries.length, restartRequired: true,
+      whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp,
+      clearedCwds: localized.cwds, clearedConversations: localized.conversations,
+      restored: staged, partial: true,
+    };
+  }
 
   let backupDir: string | null = null;
   if (!fs.existsSync(dir)) {
@@ -694,7 +727,12 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     }
   }
   fs.rmSync(staging, { recursive: true, force: true });
-  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp, clearedCwds: localized.cwds, clearedConversations: localized.conversations };
+  return {
+    manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true,
+    whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp,
+    clearedCwds: localized.cwds, clearedConversations: localized.conversations,
+    restored: staged, partial: false,
+  };
 }
 
 function moveIfExists(from: string, to: string): void {
