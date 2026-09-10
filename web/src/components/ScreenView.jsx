@@ -26,7 +26,7 @@ export default function ScreenView({
   const t = useT();
   const containerRef = useRef(null); // the owner's host div gets parented here
   const mirrorRef = useRef(null); // non-owner: painted from the shared canvas
-  const { status, errorDetail, errorKind, isOwner } = useScreenConnection({
+  const { status, errorDetail, errorKind, isOwner, viewScope } = useScreenConnection({
     containerRef,
     mirrorRef,
     priority,
@@ -34,7 +34,10 @@ export default function ScreenView({
     sessionId,
   });
 
-  const detail = errorKind === 'needs-password' ? t('rail.screenNeedsPassword') : errorDetail;
+  const detail =
+    errorKind === 'needs-password' ? t('rail.screenNeedsPassword')
+    : errorKind === 'no-shared-machine' ? t('rail.screenNoSharedMachine')
+    : errorDetail;
   useEffect(() => {
     onStatusChange?.(status, detail);
   }, [status, detail, onStatusChange]);
@@ -52,6 +55,17 @@ export default function ScreenView({
       <div className={`absolute inset-0 flex items-center justify-center ${isOwner ? 'hidden' : ''}`}>
         <canvas ref={mirrorRef} className="max-h-full max-w-full" />
       </div>
+      {/* On a host with no desktop server the view IS the browser window —
+          badge it, in the interactive view only (the card and the panel are
+          small enough that a chip over them is noise). */}
+      {status === 'connected' && viewScope === 'browser' && !viewOnly && (
+        <div
+          title={t('rail.screenBrowserScopeHint')}
+          className="pointer-events-none absolute end-2 top-2 rounded-full border border-white/20 bg-black/60 px-2 py-[2px] font-mono text-[9.5px] font-bold uppercase tracking-wide text-white/70"
+        >
+          {t('rail.screenBrowserScope')}
+        </div>
+      )}
       {status !== 'connected' && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
           <div className="max-w-[420px] rounded-[10px] border border-white/15 bg-black/70 px-4 py-3 text-center font-mono text-[12px] text-white/80">

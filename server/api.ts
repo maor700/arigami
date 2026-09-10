@@ -3513,9 +3513,25 @@ export async function handle(
       // tells the caller whether `available`/`display` describe THIS session's
       // own desktop or the shared fallback — the machine side panel must never
       // render the fallback as if it were the session's, see ScreenSidePanel.jsx.
+      //
+      // `driver`/`viewer` (windows-remote-parity): which transport this host's
+      // screen actually speaks. The cockpit used to assume RFB unconditionally
+      // and open /__vnc for everyone — which on any non-x11 host (the desktop
+      // app on Windows or macOS) connects to a VNC server that is not there
+      // and leaves the human staring at a black "disconnected" box. The client
+      // now picks its transport from this, so adding a third one later (a real
+      // VNC service ON the Windows box) is a driver change, not a client one.
       const sessionId = u.searchParams.get('session') || undefined;
-      const st = await pickDriver().status(sessionId);
-      return json(res, { available: st.available, ...(sessionId ? { display: st.display, own: st.own } : {}) });
+      const driver = pickDriver();
+      const st = await driver.status(sessionId);
+      const viewer = await driver.viewer(sessionId).catch(() => null);
+      return json(res, {
+        available: st.available,
+        driver: driver.id,
+        ...(viewer ? { viewer } : {}),
+        ...(st.perSession != null ? { perSession: st.perSession } : {}),
+        ...(sessionId ? { display: st.display, own: st.own } : {}),
+      });
     }
     // Settings → screen: the VNC-auth password. Never echoed back — the UI
     // only learns whether one is set. Empty string clears it.

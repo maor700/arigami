@@ -39,7 +39,13 @@ function useOwnDesktop(sessionId, hasRequest) {
     if (hasRequest) { setOwn(true); return; }
     let stop = false;
     api.get(`/screen/status?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => { if (!stop) setOwn(!!r?.own); })
+      // `perSession:false` (the winvnc driver — a Windows machine with ONE
+      // console desktop that every session shares) means no session can ever
+      // own a machine here, which is a different thing from "hasn't got one
+      // yet". Without this the panel would sit on its empty state forever,
+      // offering to allocate a machine that already exists, in front of a
+      // perfectly working desktop.
+      .then((r) => { if (!stop) setOwn(r?.perSession === false ? true : !!r?.own); })
       .catch(() => { if (!stop) setOwn(false); });
     return () => { stop = true; };
   }, [sessionId, hasRequest]);

@@ -119,6 +119,15 @@ export function createNativeDriver(): ScreenDriver {
       return {
         transport: 'screencast',
         path: sessionId ? `/__screencast?session=${encodeURIComponent(sessionId)}` : '/__screencast',
+        // Interactive since the input relay landed (server/screencast.ts):
+        // mouse, wheel and keyboard reach the page over the same socket the
+        // frames come back on. Only ever true WITH a session — the global
+        // (no-session) form has no Chrome tab to aim at.
+        interactive: !!sessionId,
+        // The honest limit: CDP reaches the Chrome WINDOW. A native file
+        // dialog, the taskbar or a UAC prompt is outside it. Closing that
+        // needs a capture+SendInput path ON the machine — docs/WINDOWS-REMOTE.md.
+        scope: 'browser',
       };
     },
 
@@ -150,6 +159,9 @@ export function createNativeDriver(): ScreenDriver {
       return {
         available: port != null,
         own: port != null,
+        // Each session gets its own Chrome (and therefore its own window),
+        // so "this session's machine" is a real thing here.
+        perSession: true,
         detail: port != null ? undefined : 'no Chrome DevTools port for this session yet',
       };
     },

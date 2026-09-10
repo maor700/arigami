@@ -92,8 +92,11 @@ test('native driver: peek/childEnv/viewer carry no per-session display state', (
   expect(out.peek).toEqual({ kind: 'native-window' });
   expect(out.peekNull).toBeNull();
   expect(out.childEnv).toEqual({});
-  expect(out.viewer).toEqual({ transport: 'screencast', path: '/__screencast?session=s1' });
-  expect(out.viewerNoSession).toEqual({ transport: 'screencast', path: '/__screencast' });
+  // windows-remote-parity added `interactive`/`scope` to every descriptor —
+  // the client picks its transport from this, and now also learns whether
+  // input reaches the machine at all and how much of it is on screen.
+  expect(out.viewer).toEqual({ transport: 'screencast', path: '/__screencast?session=s1', interactive: true, scope: 'browser' });
+  expect(out.viewerNoSession).toEqual({ transport: 'screencast', path: '/__screencast', interactive: false, scope: 'browser' });
 });
 
 test('native driver: ensure/release/handBack are no-ops that never throw', () => {
