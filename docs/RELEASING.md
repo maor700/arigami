@@ -34,13 +34,25 @@ hand:
 | `package.json` `version` | `release.ts` | the source of truth |
 | `VERSION` | `release.ts` | the host + Docker builds (no JSON parsing) |
 | `web/package.json`, `control-plane/package.json` | `release.ts` | so every package agrees |
+| `desktop/src-tauri/tauri.conf.json` | `release.ts` | the desktop app's About dialog + installer names |
+| `deploy/helm/arigami-control-plane/Chart.yaml` `appVersion` | `release.ts` | which app version the chart deploys |
 | `CHANGELOG.md` | `release.ts` | the GitHub Release body |
 | tag `vX.Y.Z` | `release.ts` | what release.yml publishes from |
 | `GET /__api/version` | — | the cockpit's Settings → Host → Version |
 
+The list lives in one place — `MIRRORED` in `scripts/release.ts`. A file that
+does not exist is skipped, so the list can run ahead of the repo. Two
+deliberate exclusions: a chart's own `version:` (that is the chart's revision,
+not the app's) and `deploy/helm/arigami-tenant`, whose `appVersion` is
+`"latest"` on purpose because it tracks the rolling image. `setChartAppVersion`
+only ever rewrites something that already looks like a semver, so `"latest"`
+survives even by accident.
+
 Because `/__api/version` reads `VERSION`/`package.json` at runtime, bumping the
-file is all it takes for the number in the UI to change. There is no separate
-"version shown to users" to keep in sync.
+file is all it takes for the number in the cockpit to change. There is no
+separate "version shown to users" to keep in sync. The Docker images are the
+exception — they bake `VERSION` at build time, which is why the tag build also
+republishes `:latest` (see below).
 
 ## Picking the number
 
