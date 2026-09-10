@@ -507,6 +507,27 @@ Confirmed live (a machine on `127.0.0.1:39484` was handed the cookie set by
 vs. a Tailscale name), so this doesn't bite; it is listed because it is
 invisible if you hit it.
 
+### A full import and the running process
+
+`importFull()` swaps the whole `$ARIGAMI_DIR` on disk and asks host-control
+for a restart. The process doing the swapping is still up, and it still holds
+the PRE-import world in memory — so on the way out `shutdown()`'s very first
+call, `flushState()`, wrote the old session list straight over the imported
+`state.json`. Everything that lives as plain files (`agents/`, `chat/`,
+`uploads/`) survived, and the session list did not. It surfaced as **"the
+import brought only the agents, not the sessions"**, which is exactly what it
+looks like from the cockpit.
+
+`server/state.ts`'s `freezeState()` (and `triggers.ts`'s `freezeTriggers()`)
+are the guard, called from `handleHostImport` the moment `importFull` returns:
+same shape as the existing `refusedTooNew` flag — once the bytes on disk are
+not ours to own, stop writing them, debounced `persist()` included.
+
+Proven both ways with two real hosts (an export from A imported into B, then B
+shut down): without the freeze B's `state.json` came back as B's own session,
+with it the imported ones survived. `test/state-migrations.test.ts` keeps both
+directions.
+
 ### Build steps (macOS)
 
 Windows is the same three commands with different prerequisites — install Rust

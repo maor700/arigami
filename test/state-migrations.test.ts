@@ -424,3 +424,55 @@ test('an extensions.json from a newer build disables extensions but keeps the fi
   expect(r.out[0].enabled).toEqual([]);          // reported as "no extensions"
   expect(fs.readFileSync(f, 'utf8')).toBe(body); // the write was blocked
 }, 30_000);
+
+// A full import (server/backup.ts) swaps $ARIGAMI_DIR on disk under a
+// still-running host. That host keeps the PRE-import state in memory and
+// flushes it on the way out — shutdown() calls flushState() first — so the
+// restart that finishes the import came up with the imported chat/ and
+// agents/ (plain files, untouched) and the OLD session list. Reported live as
+// "the import brought only the agents, not the sessions". freezeState() is
+// the guard; these two tests are the before/after of that report.
+test('freezeState stops a later flush from clobbering an imported state.json', () => {
+  const dir = tmp('arigami-freeze-');
+  fs.writeFileSync(
+    path.join(dir, 'state.json'),
+    JSON.stringify({ [SCHEMA_VERSION_KEY]: 2, colorIndex: 0, sessions: [{ id: 'sess_OLD', title: 'old' }], listeners: [], folders: [] }, null, 2),
+  );
+
+  const r = runInChild(
+    `const st = await import('./server/state.ts');
+     const fs = await import('node:fs');
+     const file = ${JSON.stringify(path.join(dir, 'state.json'))};
+     // the import lands: the dir on disk is now somebody else's
+     st.freezeState('test');
+     fs.writeFileSync(file, JSON.stringify({ ${JSON.stringify(SCHEMA_VERSION_KEY)}: 2, colorIndex: 0,
+       sessions: [{ id: 'sess_IMPORTED', title: 'imported' }], listeners: [], folders: [] }, null, 2));
+     // ...and the host shuts down, which flushes
+     st.flushState();
+     emit({ ids: JSON.parse(fs.readFileSync(file, 'utf8')).sessions.map((s) => s.id) });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].ids).toEqual(['sess_IMPORTED']);
+});
+
+test('without the freeze, that same flush writes the pre-import sessions back', () => {
+  const dir = tmp('arigami-freeze-');
+  fs.writeFileSync(
+    path.join(dir, 'state.json'),
+    JSON.stringify({ [SCHEMA_VERSION_KEY]: 2, colorIndex: 0, sessions: [{ id: 'sess_OLD', title: 'old' }], listeners: [], folders: [] }, null, 2),
+  );
+
+  const r = runInChild(
+    `const st = await import('./server/state.ts');
+     const fs = await import('node:fs');
+     const file = ${JSON.stringify(path.join(dir, 'state.json'))};
+     fs.writeFileSync(file, JSON.stringify({ ${JSON.stringify(SCHEMA_VERSION_KEY)}: 2, colorIndex: 0,
+       sessions: [{ id: 'sess_IMPORTED', title: 'imported' }], listeners: [], folders: [] }, null, 2));
+     st.flushState();
+     emit({ ids: JSON.parse(fs.readFileSync(file, 'utf8')).sessions.map((s) => s.id) });`,
+    { ARIGAMI_DIR: dir },
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].ids).toEqual(['sess_OLD']);
+});

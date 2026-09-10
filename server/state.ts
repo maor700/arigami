@@ -367,15 +367,35 @@ load();
 let saveTimer: NodeJS.Timeout | null = null;
 
 function persist(): void {
+  if (dirSwapped) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(flushState, 500);
+}
+
+// A full import (server/backup.ts importFull) swaps the whole $ARIGAMI_DIR on
+// disk under this still-running process, which keeps the OLD state in memory
+// and then writes it back — shutdown() flushes before it exits, so the
+// restart that finishes the import came up with the imported chat/ and
+// agents/ but the pre-import session list. Reported live: "the import brought
+// only the agents, not the sessions". Same shape as refusedTooNew: once the
+// bytes on disk are not ours to own, stop writing them.
+let dirSwapped = false;
+export function freezeState(reason: string): void {
+  if (dirSwapped) return;
+  dirSwapped = true;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  // stderr, not stdout: test/_child.js parses this module's stdout as JSON,
+  // and state.ts's own diagnostics already go to console.error.
+  console.error(`[state] persistence frozen (${reason}) — the data dir on disk is no longer this process's to write`);
 }
 
 export function flushState(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
-  // Never overwrite a state.json we refused to read (see refusedTooNew).
-  if (refusedTooNew) return;
+  // Never overwrite a state.json we refused to read (see refusedTooNew), nor
+  // one a full import just put there (see freezeState).
+  if (refusedTooNew || dirSwapped) return;
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(

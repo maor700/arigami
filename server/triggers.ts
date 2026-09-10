@@ -181,7 +181,19 @@ export function load(): void {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+// See state.ts's freezeState: after a full import the dir on disk is the
+// imported one, and anything this process writes over it is a clobber.
+let dirSwapped = false;
+export function freezeTriggers(reason: string): void {
+  if (dirSwapped) return;
+  dirSwapped = true;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  console.error(`[triggers] persistence frozen (${reason})`);
+}
+
 function persist(): void {
+  if (dirSwapped) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(flush, 500);
 }
@@ -189,8 +201,9 @@ export function flush(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
   // Never persist a db we never loaded — that would clobber the on-disk store
-  // with defaults (see the `loaded` note above).
-  if (!loaded) return;
+  // with defaults (see the `loaded` note above), nor one a full import just
+  // put there (see freezeTriggers).
+  if (!loaded || dirSwapped) return;
   try {
     fs.mkdirSync(path.dirname(STORE), { recursive: true });
     fs.writeFileSync(

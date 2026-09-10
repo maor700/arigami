@@ -516,11 +516,16 @@ process.on('SIGHUP', shutdown);
 // Unix only. Windows has no reparent-to-1 convention; there the answer is the
 // job object in lib/children.ts, and it is not applied to the shell yet (see
 // docs/DESKTOP.md, "Windows quit is a real gap").
-if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32') {
+// `bornUnder === 1` means there is no parent to lose — we were started
+// detached, or adopted before this line ran. Reparenting is the only signal
+// available here, so with nothing to reparent FROM the watch cannot tell
+// anything and must not arm: it would shut the host down on its first tick.
+// Found immediately, by starting a test host from a detached subshell.
+if (process.env.ARIGAMI_SUPERVISOR === 'self' && process.platform !== 'win32' && process.ppid !== 1) {
   const bornUnder = process.ppid;
   const watch = setInterval(() => {
     const now = process.ppid;
-    if (now === bornUnder && now !== 1) return;
+    if (now === bornUnder) return;
     console.error(`[host] the desktop shell (pid ${bornUnder}) is gone — shutting down rather than orphaning`);
     clearInterval(watch);
     shutdown();
