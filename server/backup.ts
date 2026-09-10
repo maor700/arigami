@@ -142,6 +142,8 @@ export interface ImportResult {
   whatsappSkipped: boolean;
   /** sessions whose folder does not exist on this machine and was cleared (cross-platform restore) */
   clearedCwds: number;
+  /** sessions whose Claude Code conversation id was cleared — that store never travels in a backup */
+  clearedConversations: number;
 }
 
 export class ImportError extends Error {
@@ -244,7 +246,8 @@ export function resolveConfigPathsForImport(raw: Record<string, unknown> | null,
 }
 
 /**
- * Cross-platform restore, part two: a session's `cwd`.
+ * Cross-platform restore, part two: everything a restored session says about
+ * the machine it came from — its folder, and its Claude Code conversation.
  *
  * resolveConfigPathsForImport() drops the source's reposDir/defaultCwd so this
  * host falls back to its own — but every RESTORED SESSION still carries the
@@ -259,16 +262,37 @@ export function resolveConfigPathsForImport(raw: Record<string, unknown> | null,
  * from the cockpit. Remapping onto this host's reposDir would only move the
  * failure — the repo it names isn't cloned here either.
  *
+ * The same goes for `claude.sessionId`. Claude Code keeps its conversations in
+ * $CLAUDE_CONFIG_DIR (`~/.claude`), which is OUTSIDE $ARIGAMI_DIR and so is in
+ * no backup — and it keys them by project directory, the very cwd we just
+ * cleared. A restored id therefore names a conversation that cannot be here:
+ * claude.js spawns `--resume <id>`, the CLI answers "No conversation found
+ * with session ID: …", and the 5s retry in spawnProc() starts it fresh
+ * anyway. Clearing the id up front skips the doomed attempt and the alarming
+ * line in the transcript; Arigami's own transcript (chat/) travelled in the
+ * archive and still renders, it is the CLI's context that is gone either way.
+ *
  * Only when the platform differs, mirroring resolveConfigPathsForImport: a
- * same-platform restore onto the same layout must stay byte-identical.
+ * same-platform restore is usually the same machine restoring itself, where
+ * both the folders and the conversations really are still there.
  */
-export function resolveSessionCwdsForImport(stagingDir: string, manifestPlatform: string | undefined | null): number {
-  if (!manifestPlatform || manifestPlatform === process.platform) return 0;
+export function localizeSessionsForImport(
+  stagingDir: string,
+  manifestPlatform: string | undefined | null,
+): { cwds: number; conversations: number } {
+  const none = { cwds: 0, conversations: 0 };
+  if (!manifestPlatform || manifestPlatform === process.platform) return none;
   const file = path.join(stagingDir, 'state.json');
   const doc = readJson<{ sessions?: Record<string, unknown>[] }>(file);
-  if (!doc || !Array.isArray(doc.sessions)) return 0;
+  if (!doc || !Array.isArray(doc.sessions)) return none;
   let cleared = 0;
+  let conversations = 0;
   for (const s of doc.sessions) {
+    const claude = (s.claude && typeof s.claude === 'object' ? s.claude : null) as Record<string, unknown> | null;
+    if (claude && typeof claude.sessionId === 'string' && claude.sessionId) {
+      claude.sessionId = null;
+      conversations++;
+    }
     const meta = (s.metadata && typeof s.metadata === 'object' ? s.metadata : null) as Record<string, unknown> | null;
     for (const [obj, key] of [[s, 'cwd'], [meta, 'worktree']] as [Record<string, unknown> | null, string][]) {
       if (!obj) continue;
@@ -279,8 +303,8 @@ export function resolveSessionCwdsForImport(stagingDir: string, manifestPlatform
       cleared++;
     }
   }
-  if (cleared) fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n');
-  return cleared;
+  if (cleared || conversations) fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n');
+  return { cwds: cleared, conversations };
 }
 
 function safeName(s: string): boolean {
@@ -650,7 +674,7 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     if (resolved !== rawConfig) fs.writeFileSync(stagedConfig, JSON.stringify(resolved, null, 2) + '\n');
   }
 
-  const clearedCwds = resolveSessionCwdsForImport(staging, manifest.host?.platform);
+  const localized = localizeSessionsForImport(staging, manifest.host?.platform);
 
   let backupDir: string | null = null;
   if (!fs.existsSync(dir)) {
@@ -670,7 +694,7 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     }
   }
   fs.rmSync(staging, { recursive: true, force: true });
-  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp, clearedCwds };
+  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp, clearedCwds: localized.cwds, clearedConversations: localized.conversations };
 }
 
 function moveIfExists(from: string, to: string): void {

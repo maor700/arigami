@@ -823,7 +823,7 @@ test('bun server/backup.ts export/inspect/import CLI', () => {
 // is nowhere here — and spawning claude with a cwd that does not exist fails
 // with ENOENT naming the BINARY, not the folder ("claude failed to start:
 // ENOENT … posix_spawn '/…/claude'"). Reported live.
-test('resolveSessionCwdsForImport: clears folders that do not exist here, keeps the ones that do, and leaves a same-platform restore alone', () => {
+test('localizeSessionsForImport: clears folders that do not exist here and every stale Claude conversation id, keeps what is real, and leaves a same-platform restore alone', () => {
   const other = process.platform === 'linux' ? 'darwin' : 'linux';
   const here = tmp('arigami-cwd-'); // a folder that really is on this machine
 
@@ -833,7 +833,7 @@ test('resolveSessionCwdsForImport: clears folders that do not exist here, keeps 
       path.join(dir, 'state.json'),
       JSON.stringify({
         sessions: [
-          { id: 'a', cwd: '/home/arigami/repos' },
+          { id: 'a', cwd: '/home/arigami/repos', claude: { sessionId: 'a2ce2c55-cad9-45dd-b7eb-7f457bf21b33', modelChoice: 'opus' } },
           { id: 'b', cwd: here },
           { id: 'c', cwd: '~/repos' },
           { id: 'd', cwd: '/home/arigami/repos', metadata: { worktree: '/home/arigami/repos/.dispatch-worktrees/x', agent: 'chief' } },
@@ -845,7 +845,7 @@ test('resolveSessionCwdsForImport: clears folders that do not exist here, keeps 
   };
 
   const dir = write();
-  expect(bk.resolveSessionCwdsForImport(dir, other)).toBe(3); // a.cwd, d.cwd, d.metadata.worktree
+  expect(bk.localizeSessionsForImport(dir, other)).toEqual({ cwds: 3, conversations: 1 }); // a.cwd, d.cwd, d.metadata.worktree
   const out = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).sessions;
   expect(out[0].cwd).toBeUndefined();
   expect(out[1].cwd).toBe(here); // exists → kept
@@ -854,11 +854,15 @@ test('resolveSessionCwdsForImport: clears folders that do not exist here, keeps 
   expect(out[3].metadata.worktree).toBeUndefined();
   expect(out[3].metadata.agent).toBe('chief'); // only the path keys are touched
   expect(out[4].cwd).toBeUndefined();
+  // the conversation lives in ~/.claude, which no backup carries — resuming it
+  // here only produces "No conversation found with session ID: …"
+  expect(out[0].claude.sessionId).toBeNull();
+  expect(out[0].claude.modelChoice).toBe('opus'); // only the id is dropped
 
   // same platform, and an archive with no host.platform: byte-identical
   const same = write();
   const before = fs.readFileSync(path.join(same, 'state.json'), 'utf8');
-  expect(bk.resolveSessionCwdsForImport(same, process.platform)).toBe(0);
-  expect(bk.resolveSessionCwdsForImport(same, null)).toBe(0);
+  expect(bk.localizeSessionsForImport(same, process.platform)).toEqual({ cwds: 0, conversations: 0 });
+  expect(bk.localizeSessionsForImport(same, null)).toEqual({ cwds: 0, conversations: 0 });
   expect(fs.readFileSync(path.join(same, 'state.json'), 'utf8')).toBe(before);
 });
