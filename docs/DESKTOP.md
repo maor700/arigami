@@ -357,6 +357,26 @@ cd desktop/src-tauri && cargo tauri dev
 cd desktop/src-tauri && cargo tauri build
 ```
 
+### The same thing, in CI
+
+`.github/workflows/desktop.yml` runs exactly the sequence above — icons,
+`desktop/build.sh`, `tauri build` — on four runners (Linux x64, Windows x64,
+macOS arm64, macOS Intel) and attaches the resulting installers to the GitHub
+Release for the tag. It uses the npm `@tauri-apps/cli` (via `bun x`) rather than
+`cargo install tauri-cli`, which would compile the CLI from source on every
+runner.
+
+It is deliberately not part of every release: on a private repo on the Free
+plan macOS minutes bill ×10 and Windows ×2, so a full matrix is roughly
+200-330 billed minutes. A tag you push by hand builds them; an automated
+release only does when the `DESKTOP_INSTALLERS` repository variable is `true`.
+docs/RELEASING.md has the full table.
+
+Nothing is signed. Adding that means a Developer ID certificate + an
+app-specific password for notarisation on macOS, and a code-signing
+certificate on Windows, as repository secrets — until then both platforms warn
+on first launch.
+
 First run: the pairing code (needed once, in the cockpit's login screen) is
 **not** printed to a visible terminal — the sidecar's stdout/stderr are
 redirected to a log file via `app.path().app_log_dir()`. Verified live on
