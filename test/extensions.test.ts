@@ -172,7 +172,7 @@ test('loading hello contributes a tool server, a skill, a listener type, a gate 
   expect(o.servers['ext-hello'].args[1]).toBe(path.join(dir, 'user', 'extensions', 'hello', 'tools', 'module.ts'));
   expect(o.servers['ext-hello'].cwd).toBe(path.join(dir, 'user', 'extensions', 'hello'));
   expect(o.servers['ext-hello'].env.EXT_NAME).toBe('hello');
-  expect(JSON.parse(o.servers['ext-hello'].env.EXT_SETTINGS).greeting).toBe('שלום'); // manifest default
+  expect(JSON.parse(o.servers['ext-hello'].env.EXT_SETTINGS).greeting).toBe('hello'); // manifest default
 
   // A3 family
   expect(o.families).toEqual({ 'ext:hello': ['mcp__ext-hello__*', 'mcp__ext-hello-*'] });

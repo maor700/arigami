@@ -39,7 +39,7 @@ const SUPERVISOR_ENV_VALUE: &str = "self";
 const MAIN_WINDOW: &str = "main";
 const PICKER_WINDOW: &str = "picker";
 const LOCAL_ID: &str = "local";
-const LOCAL_NAME: &str = "המחשב הזה";
+const LOCAL_NAME: &str = "This computer";
 // The local machine keeps the brand colour; remotes get visibly different
 // ones. Two machines show a byte-identical cockpit, so colour + name is the
 // only thing standing between the human and running something heavy on the
@@ -96,7 +96,7 @@ struct StoredConfig {
 fn normalize_origin(input: &str) -> Result<String, String> {
     let s = input.trim();
     if s.is_empty() {
-        return Err("צריך כתובת".into());
+        return Err("An address is required".into());
     }
     let with_scheme = if s.contains("://") {
         s.to_string()
@@ -108,11 +108,11 @@ fn normalize_origin(input: &str) -> Result<String, String> {
         let plain = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok();
         format!("{}://{}", if plain { "http" } else { "https" }, s)
     };
-    let u = url::Url::parse(&with_scheme).map_err(|e| format!("כתובת לא תקינה: {e}"))?;
+    let u = url::Url::parse(&with_scheme).map_err(|e| format!("Invalid address: {e}"))?;
     if u.scheme() != "http" && u.scheme() != "https" {
-        return Err("רק http או https".into());
+        return Err("Only http or https".into());
     }
-    let host = u.host_str().ok_or_else(|| "חסר שם מארח בכתובת".to_string())?;
+    let host = u.host_str().ok_or_else(|| "The address has no host name".to_string())?;
     let mut origin = format!("{}://{}", u.scheme(), host);
     if let Some(p) = u.port() {
         origin.push_str(&format!(":{p}"));
@@ -126,9 +126,9 @@ fn host_url(origin: &str) -> String {
 
 fn window_title(m: &Machine) -> String {
     if m.local {
-        format!("Arigami — {} (מקומי)", m.name)
+        format!("Arigami — {} (local)", m.name)
     } else {
-        format!("Arigami — {} (מרוחק)", m.name)
+        format!("Arigami — {} (remote)", m.name)
     }
 }
 
@@ -324,24 +324,24 @@ fn http_status(mut stream: TcpStream, host: &str, port: u16, path: &str) -> Opti
 /// for why), so "the port accepts connections" is as far as the check goes;
 /// a reachable host running something else would still get navigated to.
 fn probe(origin: &str, require_ok: bool) -> Result<(), String> {
-    let u = url::Url::parse(origin).map_err(|e| format!("כתובת לא תקינה: {e}"))?;
+    let u = url::Url::parse(origin).map_err(|e| format!("Invalid address: {e}"))?;
     let https = u.scheme() == "https";
     let host = u
         .host_str()
-        .ok_or_else(|| "חסר שם מארח בכתובת".to_string())?
+        .ok_or_else(|| "The address has no host name".to_string())?
         .to_string();
     let port = u.port().unwrap_or(if https { 443 } else { 80 });
     let addr = resolve_addr(&host, port)
-        .ok_or_else(|| format!("לא הצלחתי לתרגם את {host} לכתובת — Tailscale מחובר?"))?;
+        .ok_or_else(|| format!("Couldn't resolve {host} to an address — is Tailscale connected?"))?;
     let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(3000))
-        .map_err(|_| format!("אין מענה מ־{host}:{port} — המכונה כבויה או ש־Tailscale מנותק"))?;
+        .map_err(|_| format!("No answer from {host}:{port} — the machine is off or Tailscale is disconnected"))?;
     if https {
         return Ok(());
     }
     let code = http_status(stream, &host, port, "/__api/config")
-        .ok_or_else(|| format!("{host}:{port} ענה, אבל לא כשרת HTTP"))?;
+        .ok_or_else(|| format!("{host}:{port} answered, but not as an HTTP server"))?;
     if require_ok && code != 200 {
-        return Err(format!("השרת ענה {code} ולא 200"));
+        return Err(format!("The server answered {code} instead of 200"));
     }
     Ok(())
 }
@@ -414,7 +414,7 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                 }
                 Err(e) => {
                     *shell.local_error.lock().unwrap() = Some(format!(
-                        "לא הצלחתי להפעיל את שרת Arigami המקומי: {e}\nלוג: {}",
+                        "Couldn't start the local Arigami server: {e}\nLog: {}",
                         log_path(&app).display()
                     ));
                     std::thread::sleep(Duration::from_secs(2));
@@ -437,7 +437,7 @@ fn wait_local_ready(shell: &Arc<Shell>, origin: &str, timeout: Duration) -> Resu
         }
         if Instant::now() > deadline {
             return Err(format!(
-                "שרת Arigami המקומי לא ענה בזמן על {origin}. אולי משהו אחר תופס את הפורט?"
+                "The local Arigami server didn't answer in time on {origin}. Is something else holding the port?"
             ));
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -728,7 +728,7 @@ fn open_picker(app: &AppHandle) {
             return;
         }
         let _ = WebviewWindowBuilder::new(&app2, PICKER_WINDOW, WebviewUrl::App("picker.html".into()))
-            .title("מכונות — Arigami")
+            .title("Machines — Arigami")
             .inner_size(560.0, 620.0)
             .min_inner_size(420.0, 420.0)
             .build();
@@ -755,7 +755,7 @@ fn machines_submenu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri
     items.push(Box::new(MenuItem::with_id(
         app,
         "picker",
-        "מכונות…",
+        "Machines…",
         true,
         Some("CmdOrCtrl+Shift+M"),
     )?));
@@ -763,8 +763,8 @@ fn machines_submenu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri
     let title = machines
         .iter()
         .find(|m| m.id == current)
-        .map(|m| format!("מכונה: {}", m.name))
-        .unwrap_or_else(|| "מכונה".into());
+        .map(|m| format!("Machine: {}", m.name))
+        .unwrap_or_else(|| "Machine".into());
     Submenu::with_items(app, title, true, &refs)
 }
 
@@ -774,7 +774,7 @@ fn machines_submenu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri
 /// application menu on macOS, and the Edit submenu is what keeps ⌘C/⌘V alive
 /// there once an app sets a custom menu at all.
 fn build_app_menu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri::Result<Menu<Wry>> {
-    let quit = MenuItem::with_id(app, "quit", "יציאה מ־Arigami", true, Some("CmdOrCtrl+Q"))?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Arigami", true, Some("CmdOrCtrl+Q"))?;
     let app_menu = Submenu::with_items(
         app,
         "Arigami",
@@ -788,7 +788,7 @@ fn build_app_menu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri::
     )?;
     let edit = Submenu::with_items(
         app,
-        "עריכה",
+        "Edit",
         true,
         &[
             &PredefinedMenuItem::undo(app, None)?,
@@ -818,9 +818,9 @@ fn build_tray_menu(app: &AppHandle, shell: &Arc<Shell>, current: &str) -> tauri:
         )?));
     }
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
-    items.push(Box::new(MenuItem::with_id(app, "picker", "מכונות…", true, None::<&str>)?));
-    items.push(Box::new(MenuItem::with_id(app, "show", "פתח את Arigami", true, None::<&str>)?));
-    items.push(Box::new(MenuItem::with_id(app, "quit", "יציאה", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(app, "picker", "Machines…", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(app, "show", "Open Arigami", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?));
     let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = items.iter().map(|b| b.as_ref()).collect();
     Menu::with_items(app, &refs)
 }
@@ -889,11 +889,16 @@ fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
     }
     let app2 = app.clone();
     let shell2 = shell.clone();
+    // Decision from the task brief: "confirm before quitting, and don't
+    // downplay it" — say plainly that quitting kills every active session, don't
+    // soften it into generic "quit?" copy.
     std::thread::spawn(move || {
         let extra = if shell2.local_wanted.load(Ordering::SeqCst) {
             let n = busy_sessions(&local_machine().origin);
             if n > 0 {
-                format!("\n\nיש {n} סשנים פעילים על המחשב הזה — הם ייסגרו.")
+                format!("
+
+There are {n} active sessions on this computer — they will be closed.")
             } else {
                 String::new()
             }
@@ -903,9 +908,9 @@ fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
         let confirmed = app2
             .dialog()
             .message(format!(
-                "יציאה מכבה את שרת Arigami המקומי ומסיימת כל סשן פעיל עליו.{extra}\n\nלהמשיך?"
+                "Quitting shuts down the local Arigami server and ends every active session on it.{extra}\n\nContinue?"
             ))
-            .title("יציאה מ־Arigami")
+            .title("Quit Arigami")
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show();
         shell2.asking_quit.store(false, Ordering::SeqCst);
@@ -995,7 +1000,7 @@ fn switch_machine(
 ) -> Result<(), String> {
     let shell = state.inner().clone();
     let target = target_of(&window, &shell);
-    let machine = shell.find(&id).ok_or_else(|| "אין מכונה כזאת".to_string())?;
+    let machine = shell.find(&id).ok_or_else(|| "No such machine".to_string())?;
     let current = shell.machine_of(&target);
     if current.as_ref().map(|m| m.id.clone()).as_deref() == Some(id.as_str()) {
         // Already there: don't reload the cockpit, but do surface the window —
@@ -1029,10 +1034,10 @@ fn switch_machine(
                 let ok = app
                     .dialog()
                     .message(format!(
-                        "מעבר ל־{} מכבה את השרת המקומי — {n} סשנים פעילים עליו ייסגרו.\n\nלהמשיך?",
+                        "Switching to {} shuts down the local server — {n} active sessions on it will be closed.\n\nContinue?",
                         machine.name
                     ))
-                    .title("מעבר מכונה")
+                    .title("Switch machine")
                     .buttons(MessageDialogButtons::OkCancel)
                     .blocking_show();
                 if !ok {
@@ -1056,7 +1061,7 @@ fn add_machine(
     let shell = state.inner().clone();
     let origin = normalize_origin(&address)?;
     if shell.all_machines().iter().any(|m| m.origin == origin) {
-        return Err("המכונה הזאת כבר ברשימה".into());
+        return Err("This machine is already in the list".into());
     }
     let name = {
         let n = name.trim();
@@ -1091,10 +1096,10 @@ fn add_machine(
 fn forget_machine(app: AppHandle, state: State<'_, Arc<Shell>>, id: String) -> Result<(), String> {
     let shell = state.inner().clone();
     if id == LOCAL_ID {
-        return Err("אי אפשר להסיר את המחשב הזה".into());
+        return Err("This computer can't be removed".into());
     }
     if shell.windows.lock().unwrap().values().any(|w| w.machine.id == id) {
-        return Err("המכונה פתוחה בחלון — עבור למכונה אחרת קודם".into());
+        return Err("The machine is open in a window — switch to another machine first".into());
     }
     shell.cfg.lock().unwrap().machines.retain(|m| m.id != id);
     shell.save();
@@ -1105,7 +1110,7 @@ fn forget_machine(app: AppHandle, state: State<'_, Arc<Shell>>, id: String) -> R
 #[tauri::command]
 fn open_new_window(app: AppHandle, state: State<'_, Arc<Shell>>, id: String) -> Result<(), String> {
     let shell = state.inner().clone();
-    let machine = shell.find(&id).ok_or_else(|| "אין מכונה כזאת".to_string())?;
+    let machine = shell.find(&id).ok_or_else(|| "No such machine".to_string())?;
     let label = format!("machine-{}", shell.win_seq.fetch_add(1, Ordering::SeqCst) + 2);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {

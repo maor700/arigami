@@ -1,6 +1,6 @@
 // The cockpit must call a session's engine by ITS name.
 //
-// The rule under test (docs/ENGINES.md, "הכלל לגבי טקסט בממשק"): a string that
+// The rule under test (docs/ENGINES.md, "the rule for UI text"): a string that
 // describes the ENGINE — who is working, who wants the screen, whose
 // capabilities these are, what you are replying to — follows `session.engine`.
 // A string that describes ARIGAMI, or that genuinely describes the Claude Code

@@ -16,7 +16,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = path.join(ROOT, 'skills');
 const LIB = path.join(SKILLS, '_lib');
 
-// The only hosts a playbook may navigate (spec "כללי אוטומציה" §2 + provider
+// The only hosts a playbook may navigate (spec "automation rules" §2 + provider
 // domains for non-Google Composio toolkits). Extend deliberately, never ad hoc.
 const APPROVED_DOMAINS = new Set([
   'accounts.google.com', 'myaccount.google.com', 'google.com',

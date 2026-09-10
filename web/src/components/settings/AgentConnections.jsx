@@ -1,9 +1,9 @@
-// A2 — an agent's connections ("שייך ל: <agent>"). One presentational list
+// A2 — an agent's connections ("Belongs to: <agent>"). One presentational list
 // (AgentConnections — pure props, SSR-testable) and its container
 // (AgentConnectionsPanel — fetches GET /__api/agents/:slug/connections, re-reads
 // on every setup.* bus event, wires connect / disconnect FOR the agent).
-// Used by the Agent page (tab חיבורים) and by Settings → חיבורים when the
-// "שייך ל" filter points at an agent.
+// Used by the Agent page (the Connections tab) and by Settings → Connections when the
+// "Belongs to" filter points at an agent.
 //
 // Rows: the OWNABLE capabilities (identity, composio:*) say where they
 // resolved from — the agent's own connection, the host's shared one (a

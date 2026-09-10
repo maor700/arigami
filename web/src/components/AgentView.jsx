@@ -1,7 +1,7 @@
 // The **agent surface** (#/agents/<slug>[/<tab>]) — a PLACE, not a session.
 //
 // UX1: clicking a Team row lands here, not in "just another session". The
-// surface owns the agent's home chat (the בית tab — the DM, embedded), so a
+// surface owns the agent's home chat (the Home tab — the DM, embedded), so a
 // home chat is no longer a rail row at all; work sessions born from the agent
 // stay in the Sessions section and link back here (SessionView BornFromChip).
 // Its own header treatment — big avatar, persona line, live status, budget bar,
@@ -312,7 +312,7 @@ function ActivityTab({ agent, onOpenSession }) {
 }
 
 /**
- * UX1 — the **בית** tab: the agent's home chat, embedded. Opening the tab is
+ * UX1 — the **Home** tab: the agent's home chat, embedded. Opening the tab is
  * what get-or-creates the home session (`GET /__api/agents/:slug/home`, the same
  * call the rail row used to make), so the DM keeps its transcript, its ledger
  * and its id — it just stopped being a rail row.
@@ -356,7 +356,7 @@ function HomeTab({ agent, onOpenSession }) {
 }
 
 /**
- * UX1 — the **ריצות** tab: every session born from this agent (the work it did),
+ * UX1 — the **Runs** tab: every session born from this agent (the work it did),
  * with its state and what it cost. The home chat is not a run — it is the tab
  * next door.
  */
@@ -389,7 +389,7 @@ export function RunsTab({ agent, onOpenSession }) {
   const [data, setData] = useState(null);
   useEffect(() => {
     let stop = false;
-    // limit=1 — the ledger rows belong to the פעילות tab; we only want sessions[].
+    // limit=1 — the ledger rows belong to the Activity tab; we only want sessions[].
     api.get(`/agents/${agent.slug}/activity?range=30d&limit=1`)
       .then((d) => { if (!stop) setData(d); })
       .catch(() => { if (!stop) setData({ sessions: [] }); });
@@ -649,14 +649,14 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   // Create mode: an in-memory draft, never fetched — there is nothing on disk
-  // yet. Only the פרסונה tab makes sense until POST /agents returns a slug.
+  // yet. Only the Persona tab makes sense until POST /agents returns a slug.
   const draft = { slug: null, name: draftName || '', emoji: '🤖', color: DRAFT_COLOR, model: '', persona: '', skills: [], tools: [], budget: null, domains: [], autoApprove: [], updatedAt: 0 };
   const agent = isNew ? draft : (fetched || (agents || []).find((a) => a.slug === slug) || null);
   const color = agent?.color || '#c4c4c4';
   const effectiveTab = isNew ? 'persona' : tab;
-  // A tab that opens "the agent's home session" (Routine → הוסף דרך הצ׳אט, an
-  // activity row) means the בית tab — leaving the surface for it and being
-  // bounced back by App would only flicker.
+  // A tab that opens "the agent's home session" (Routine → "Add via the chat",
+  // an activity row) means the Home tab —
+  // leaving the surface for it and being bounced back by App would only flicker.
   const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
   const closePop = () => setPop(null);
 

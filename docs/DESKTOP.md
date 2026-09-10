@@ -269,7 +269,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 
 - **The list** lives in `app_config_dir()/machines.json`: `{machines: [{id,
   name, origin, local}], last}`. Only *remote* machines and the last choice
-  are persisted; **"המחשב הזה"** is synthesised at runtime (`local_machine()`)
+  are persisted; **"This computer"** is synthesised at runtime (`local_machine()`)
   so its port always matches the build. `normalize_origin()` turns what the
   human types into an origin: an explicit scheme wins; otherwise a hostname
   gets `https` (that's what `tailscale serve` gives you) and a bare IP or
@@ -282,7 +282,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 - **The indicator is deliberately unmissable**, because the two machines
   render a byte-identical cockpit and one day the human will run something
   heavy on the wrong one. There are four, all live at once: the window title
-  (`Arigami — <name> (מקומי|מרוחק)`), a menu titled `מכונה: <name>`, the tray
+  (`Arigami — <name> (local|remote)`), a menu titled `Machine: <name>`, the tray
   tooltip, and — injected into the machine page itself — a coloured strip
   along the top plus a name pill in the corner. The strip/pill colour is per
   machine (local keeps the brand yellow). The injection is one-way `eval`,
@@ -316,7 +316,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 #### Known limitation: on Linux, two open windows share one menu bar
 
 `app.set_menu()` sets **one** menu for the whole app, so with two machine
-windows open on Linux both menu bars read `מכונה: <the focused window's
+windows open on Linux both menu bars read `Machine: <the focused window's
 machine>`. The title bar and the in-page pill are per window and stay
 correct, so the indicator is never wrong — just doubled. On macOS there is
 only one menu bar to begin with and it belongs to the focused window, which
@@ -471,9 +471,9 @@ under `/tmp`, `ARIGAMI_WA_AUTOSTART=0`. The "remote" machines were a second
 Arigami server on another port plus small Python stand-ins.
 
 - **Boot on the remembered machine.** Config read, machine restored, title
-  reads `Arigami — <name> (מרוחק)`. The local sidecar did **not** start,
+  reads `Arigami — <name> (remote)`. The local sidecar did **not** start,
   because the remembered machine was remote.
-- **Every switch path**: the picker's "עבור", a menu item, the `Ctrl+Alt+N`
+- **Every switch path**: the picker's "Switch", a menu item, the `Ctrl+Alt+N`
   accelerator, and a chip on the error page. All four navigate the window
   and retitle it.
 - **`Ctrl+Shift+M`** opens the machines window; `Escape` closes it.

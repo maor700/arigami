@@ -671,8 +671,8 @@ production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
   rollout across cohorts — the reconcile loop upgrades every running tenant
   whose digest differs, in table order.
 - **Dormancy automation** — moved to K8S-5 by explicit user decision
-  (SPEC-ARIGAMI-K8S3.md: "כרגע אני רוצה לגרום לזה לעבוד כמו שצריך, אחר כך
-  נאפטם עלויות"). `suspendTenant`/`resumeTenant` remain real levers; the
+  (SPEC-ARIGAMI-K8S3.md: "right now I want to make this work properly; we'll
+  optimize costs later"). `suspendTenant`/`resumeTenant` remain real levers; the
   admin page is still the only thing pulling them.
 - **Quotas UI.** The chart's `ResourceQuota`/`LimitRange` are fixed at
   provision time from the chart's own defaults (or `CP_HELM_EXTRA_VALUES`);

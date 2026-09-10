@@ -57,7 +57,7 @@
 //     ever hit a real quota wall (reproducing one means burning a live
 //     account's usage limit). It pattern-matches the one wrapper shape that IS
 //     verified live (error-noauth's "unexpected status <code> ..."), nothing
-//     more. See ENGINES.md limit 6ב.
+//     more. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -278,8 +278,8 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
       appendChat(s.id, {
         kind: 'system',
         text:
-          `⤷ המנוע כאן הוא Codex, ולכן שרתי ה-MCP המרוחקים של הסוכן (${skipped.join(', ')}) לא זמינים בסשן הזה — ` +
-          `האישורים שלהם שייכים ל-Claude. אל תסתמך על הכלים שלהם; כלי הבית של אריגמי כן עובדים.`,
+          `⤷ The engine here is Codex, so the agent's remote MCP servers (${skipped.join(', ')}) aren't available in this session — ` +
+          `their credentials belong to Claude. Don't rely on their tools; Arigami's own host tools still work.`,
       });
     }
   }
@@ -610,14 +610,14 @@ function reapGivenUpHostTool(id: string, tool: string | null): void {
 const RATE_LIMIT_RE =
   /unexpected status 429\b|rate_limit_reached|workspace_(?:owner|member)_(?:credits_depleted|usage_limit_reached)|\brate[ -]?limit(?:ed|s)?\b|\busage limit\b|\bquota\b|\bcredits? (?:depleted|exhausted)\b/i;
 
-/** A human-readable Hebrew note appended alongside the raw error, or null if this doesn't look like a quota wall. */
+/** A human-readable note appended alongside the raw error, or null if this doesn't look like a quota wall. */
 function rateLimitNote(message: string): string | null {
   if (!RATE_LIMIT_RE.test(message)) return null;
   const resetHint = message.match(/reset[s]?\s*(?:at|in|on)\s*[^,."')]+/i);
   let note =
-    '⤷ נראה שזו מכסה (rate limit / credits / usage limit) של Codex שנגמרה, לא שגיאה בקוד — ' +
-    'הבדיקה הזו לא אומתה מול מכסה אמיתית (ראו הערה ב-server/codex.ts), אז יכול להיות שהזיהוי שגוי.';
-  if (resetHint) note += ` Codex ציין: "${resetHint[0]}".`;
+    "⤷ This looks like Codex's quota (rate limit / credits / usage limit) ran out, not a code error — " +
+    'this check has not been verified against a real quota exhaustion (see the note in server/codex.ts), so the detection could be wrong.';
+  if (resetHint) note += ` Codex said: "${resetHint[0]}".`;
   return note;
 }
 

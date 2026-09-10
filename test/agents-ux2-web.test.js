@@ -1,5 +1,5 @@
 // UX2 web: creating an agent is a SURFACE (AgentView in create mode), not a
-// session — the rail button and `/agent new` both open it; "אמץ סוכן" is a
+// session — the rail button and `/agent new` both open it; "Adopt agent" is a
 // composer command (`/adopt <agent>`) with a chat receipt + revert button.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
@@ -53,13 +53,13 @@ test('AgentView create mode: a draft, not a fetched agent — disabled tabs with
   prefs.setPrefs({ language: 'he' });
   const html = render(h(AgentView, { slug: '__new__', tab: 'persona', draftName: 'שרה', onClose: noop, onTab: noop, onOpenSession: noop, onCreated: noop }));
   expect(html).toContain('data-agent-page="__new__"');
-  // only פרסונה is enabled; the rest carry the "available after creation" hint
+  // only persona is enabled; the rest carry the "available after creation" hint
   expect(html).toContain('data-agent-tab="persona"');
   for (const id of ['home', 'memory', 'connections', 'routine', 'activity', 'runs']) {
     expect(html).toMatch(new RegExp(`data-agent-tab="${id}"[^>]*disabled`));
   }
   expect(html).toContain('יהיה זמין אחרי היצירה');
-  expect(html).toContain('צור סוכן'); // primary action, not "שמור"
+  expect(html).toContain('צור סוכן'); // primary action, not "Save"
   expect(html).not.toContain('מחק סוכן'); // no delete in create mode
   expect(html).not.toContain('פתח צ׳אט בית'); // no home button before the agent exists
   expect(html).toContain('data-agent-field="slug"');

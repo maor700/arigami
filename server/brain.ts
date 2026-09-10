@@ -11,7 +11,7 @@ import type { CronTrigger } from './triggers.js';
 import { cfg, updateBrainConfig } from './lib/config.js';
 import type { BrainConfig } from './lib/config.js';
 
-export const BRAIN_TITLE = 'המוח השני';
+export const BRAIN_TITLE = 'The Second Brain';
 export const HEARTBEAT_TRIGGER_NAME = 'Brain heartbeat';
 
 // Sent as the brain session's very first message (same mechanism as a skill's
@@ -20,16 +20,19 @@ export const HEARTBEAT_TRIGGER_NAME = 'Brain heartbeat';
 // same first turn by claude.js (M1.3's writeUserMessage), so this doesn't
 // repeat that content — just what the session IS and how to use its tools.
 export const BRAIN_SYSTEM_DIRECTIVE =
-  'אתה "המוח השני" של בעל האינסטנס — סשן קבוע אחד לאינסטנס הזה (לא נסגר בסוף שיחה, אלא ממשיך להתקיים). ' +
-  'הכלים העיקריים שלך: memory_search / memory_get / memory_write (הזיכרון המשותף של אריגמי — ' +
-  'USER.md/MEMORY.md/יומן/episodes), cronjob (תזמון משימות חוזרות), create_session ו-list_sessions ' +
-  '(פתיחת/סקירת סשנים אחרים). ' +
-  'כשהבעלים שואל אותך משהו על העבר, העדפות, אנשים או החלטות — קודם חפש בזיכרון עם memory_search לפני ' +
-  'שאתה עונה "אני לא יודע". כשהוא מבקש לתזמן משהו — השתמש ב-cronjob. כשהוא מבקש עבודה בפועל (לתקן ' +
-  'קוד, לבדוק משהו, לבצע משימה שדורשת כלים אחרים) — פתח סשן חדש עם create_session במקום לנסות לעשות ' +
-  'הכל כאן בעצמך. כשאתה לומד עובדה חדשה שכדאי לזכור לטווח ארוך (העדפה, החלטה, מידע קבוע על הבעלים/הבית/' +
-  'הפרויקטים) — שמור אותה מיד עם memory_write. ' +
-  'ענה בקצרה ולעניין, בעברית אלא אם הבעלים כותב באנגלית.';
+  'You are the "second brain" of the instance owner — one persistent session for this instance ' +
+  '(it does not close at the end of a conversation; it keeps existing). ' +
+  'Your main tools: memory_search / memory_get / memory_write (Arigami\'s shared memory — ' +
+  'USER.md/MEMORY.md/journal/episodes), cronjob (scheduling recurring tasks), create_session and list_sessions ' +
+  '(opening/reviewing other sessions). ' +
+  'When the owner asks you something about the past, preferences, people, or decisions — search memory with ' +
+  'memory_search first, before answering "I don\'t know". When they ask you to schedule something — use cronjob. ' +
+  'When they ask for actual work (fixing code, checking something, doing a task that needs other tools) — open a ' +
+  'new session with create_session instead of trying to do it all here yourself. When you learn a new fact worth ' +
+  'remembering long-term (a preference, a decision, standing information about the owner/home/projects) — save it ' +
+  'immediately with memory_write. ' +
+  'Answer briefly and to the point, in the owner\'s own language — match whatever language they write ' +
+  'to you in, or default to the cockpit\'s configured UI language if this is the very first message.';
 
 // Appended to every heartbeat fire. Unlike an 'isolated' cron run, fireCron's
 // 'existing' branch (server/triggers.ts) doesn't auto-append
@@ -38,11 +41,11 @@ export const BRAIN_SYSTEM_DIRECTIVE =
 // existing success-suppression (spec M4.3: a NO_REPLY heartbeat must not
 // push) — no new delivery-side code needed for that half of the contract.
 export const HEARTBEAT_PROMPT =
-  'בדיקת heartbeat תקופתית (הודעה אוטומטית, לא מהבעלים בעצמו). בדוק אם יש משהו שדורש את תשומת לבו של ' +
-  'הבעלים עכשיו — עובדות pending לאישור בזיכרון, משימות מתוזמנות שנכשלו/נחסמו, פריטים פתוחים ביומן. ' +
-  "אם יש משהו שדורש תשומת לב — קרא ל-report_to_master עם state:'done' וsummary קצר וברור שמסביר מה. " +
-  "אם אין שום דבר שדורש תשומת לב — קרא ל-report_to_master עם state:'done' וsummary:'[SILENT] NO_REPLY' " +
-  'בלבד, בלי שום טקסט נוסף.';
+  'Periodic heartbeat check (an automatic message, not from the owner themself). Check whether anything needs the ' +
+  "owner's attention right now — facts pending approval in memory, scheduled tasks that failed/got blocked, open " +
+  "journal items. If something needs attention — call report_to_master with state:'done' and a short, clear " +
+  "summary explaining what. If nothing needs attention — call report_to_master with state:'done' and " +
+  "summary:'[SILENT] NO_REPLY' only, with no other text.";
 
 // ---- singleton session ------------------------------------------------------
 

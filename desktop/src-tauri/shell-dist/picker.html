@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="he" dir="rtl">
+<html lang="en" dir="auto">
 <head>
 <meta charset="utf-8" />
-<title>מכונות</title>
+<title>Machines</title>
 <style>
   :root { color-scheme: dark; }
   html, body { height: 100%; margin: 0; background: #1f1f1f; color: #e8e8e8;
@@ -35,15 +35,15 @@
 </style>
 </head>
 <body>
-  <header>המכונה שחלון Arigami מציג. מעבר = החלון עובר ל־origin אחר; כל מכונה שומרת התחברות משלה.</header>
+  <header>The machine this Arigami window shows. Switching moves the window to another origin; each machine keeps its own login.</header>
   <ul id="list"></ul>
   <form id="add">
-    <input id="nm" placeholder="שם" />
+    <input id="nm" placeholder="Name" />
     <input id="addr" placeholder="vps.my-tailnet.example" />
-    <button class="primary" type="submit">הוסף</button>
+    <button class="primary" type="submit">Add</button>
   </form>
   <div class="err" id="err"></div>
-  <footer>בלי סכימה: שם מארח יקבל https, כתובת IP או localhost יקבלו http. השרת המקומי רץ רק כשחלון מציג את "המחשב הזה".</footer>
+  <footer>Without a scheme: a host name gets https, an IP address or localhost gets http. The local server runs only while a window is showing "This computer".</footer>
 <script>
   var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
   var list = document.getElementById('list');
@@ -66,8 +66,8 @@
       var name = document.createElement('div'); name.className = 'name';
       name.textContent = m.name;
       var tag = document.createElement('span'); tag.className = 'tag';
-      tag.textContent = (m.current ? 'מוצג עכשיו' : '') +
-        (m.open_in.length > 1 ? ' · ' + m.open_in.length + ' חלונות' : '');
+      tag.textContent = (m.current ? 'Showing now' : '') +
+        (m.open_in.length > 1 ? ' · ' + m.open_in.length + ' windows' : '');
       name.appendChild(tag);
       var org = document.createElement('div'); org.className = 'origin'; org.textContent = m.origin;
       who.appendChild(name); who.appendChild(org);
@@ -75,17 +75,17 @@
 
       if (!m.current) {
         var go = document.createElement('button');
-        go.className = 'primary'; go.textContent = 'עבור';
+        go.className = 'primary'; go.textContent = 'Switch';
         go.onclick = function () { err.textContent = ''; invoke('switch_machine', { id: m.id }).catch(say); };
         li.appendChild(go);
       }
       var nw = document.createElement('button');
-      nw.textContent = 'חלון חדש';
+      nw.textContent = 'New window';
       nw.onclick = function () { err.textContent = ''; invoke('open_new_window', { id: m.id }).catch(say); };
       li.appendChild(nw);
       if (!m.local) {
         var rm = document.createElement('button');
-        rm.className = 'ghost'; rm.textContent = '✕'; rm.title = 'הסר מהרשימה';
+        rm.className = 'ghost'; rm.textContent = '✕'; rm.title = 'Remove from the list';
         rm.onclick = function () { err.textContent = ''; invoke('forget_machine', { id: m.id }).then(function(){ sig=''; }).catch(say); };
         li.appendChild(rm);
       }
@@ -111,7 +111,7 @@
     tick();
     setInterval(tick, 700);
   } else {
-    say('אין גישה ל־Tauri מהחלון הזה');
+    say('No access to Tauri from this window');
   }
 </script>
 </body>

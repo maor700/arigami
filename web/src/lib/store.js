@@ -31,7 +31,7 @@ let state = {
   wizardTick: 0, // B3: bumps on every onboarding.step bus event (Wizard.jsx re-reads)
   setupTick: 0, // S2: bumps on every setup.* bus event (Connections card / Setup re-read)
   // RES1: the supervisor's health map (sessionId → {state, reason, dot, since})
-  // and the aggregated "ממתין לך" queue. Both arrive as a `health` bus event
+  // and the aggregated "waiting for you" queue. Both arrive as a `health` bus event
   // whenever they change; `loadHealth()` is the initial snapshot.
   health: {},
   waiting: [],

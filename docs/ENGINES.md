@@ -1,196 +1,197 @@
-# מנועי-סוכן (engines)
+# Agent Engines (engines)
 
-**מנוע** הוא ה-CLI שמריץ בפועל את התור של הסשן. עד עכשיו היה אחד — `claude`.
-היום יש שניים: `claude` ו-`codex` (ה-CLI של OpenAI). הבחירה נעשית פעם אחת,
-ביצירת הסשן, ונשמרת ב-`session.engine`.
+**Engine** is the CLI that actually runs the session's turn. Until now there was only one — `claude`.
+Today there are two: `claude` and `codex` (OpenAI's CLI). The choice is made once,
+at session creation, and is stored in `session.engine`.
 
-- התפר: `server/lib/engine-driver.ts` (`EngineDriver`, `registerEngine`, `pickEngine`)
-- המימושים: `server/claude.js` ו-`server/codex.ts`
-- צד-הקוקפיט: `web/src/lib/engines.js`
-- בדיקות: `test/codex-engine.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
+- The seam: `server/lib/engine-driver.ts` (`EngineDriver`, `registerEngine`, `pickEngine`)
+- The implementations: `server/claude.js` and `server/codex.ts`
+- Cockpit side: `web/src/lib/engines.js`
+- Tests: `test/codex-engine.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
 
-## איך בוחרים
+## How it's chosen
 
-בלאנצ'ר, בורר המנוע הוא ה-select הראשון מארבעה, כי הוא קובע את התוכן של שניים
-מהאחרים: רשימת המודלים ורמות המאמץ הן פר-מנוע ולא אוצר-מילים משותף.
+In the launcher, the engine picker is the first select of four, because it determines the content of two
+of the others: the model list and the effort levels are per-engine, not a shared vocabulary.
 
-- **claude** — רשימת המודלים נמשכת מה-CLI (`server/models.js`), וסולם המאמץ
-  אחיד לכל מודל (`--effort`, low…max).
-- **codex** — הרשימה סטטית ב-`web/src/lib/engines.js` (הועתקה מ-
-  `$CODEX_HOME/models_cache.json`, codex-cli 0.153.4). המאמץ אינו דגל אלא מפתח
-  קונפיג `model_reasoning_effort`, והסולם הוא תכונה של **המודל**:
-  gpt-5.6-terra מוסיף `ultra` מעל `max`, ו-gpt-5.5 עוצר ב-`xhigh`.
+- **claude** — the model list is pulled from the CLI (`server/models.js`), and the effort scale
+  is uniform across every model (`--effort`, low…max).
+- **codex** — the list is static in `web/src/lib/engines.js` (copied from
+  `$CODEX_HOME/models_cache.json`, codex-cli 0.153.4). Effort isn't a flag but a config
+  key, `model_reasoning_effort`, and the scale is a property of the **model**:
+  gpt-5.6-terra adds `ultra` above `max`, and gpt-5.5 stops at `xhigh`.
 
-המנוע **אינו עובר בירושה לילדים**: `create_session` מקבל `engine` מפורש, וסשן
-שנולד מסשן codex ייוולד על claude אם לא נאמר אחרת. בחירת מנוע לא מתפשטת בעץ
-מתחת לרדאר.
+The engine **is not inherited by children**: `create_session` takes an explicit `engine`, and a session
+born from a codex session is born on claude unless stated otherwise. Engine choice doesn't propagate
+through the tree under the radar.
 
-מנוע שאין לו דרייבר רשום נכשל ברעש ב-spawn, ולא נופל חזרה בשקט ל-claude.
+An engine with no registered driver fails loudly at spawn, and does not silently fall back to claude.
 
-## מה עובד ב-Codex
+## What works on Codex
 
-אומת חי, לא בתיאוריה: הסשן עולה בקוקפיט, מקבל הודעה, קורא לכלי-בית של אריגמי
-דרך MCP (`set_status`, `publish_artifact` נמדדו), ו-`codex exec resume` זוכר
-תורים קודמים. המיומנויות (skills) עוברות verbatim דרך symlink —
-`$CODEX_HOME/skills/arigami` → `SKILLS_DIR` — וה-namespace יוצא `arigami:<name>`,
-בדיוק השם שה-persona כבר מבטיחה. 13 המיומנויות נטענות בלי אזהרות frontmatter.
+Verified live, not in theory: the session comes up in the cockpit, receives a message, calls
+Arigami's home tools via MCP (`set_status`, `publish_artifact` were measured), and `codex exec resume` remembers
+previous turns. Skills pass through verbatim via a symlink —
+`$CODEX_HOME/skills/arigami` → `SKILLS_DIR` — and the namespace comes out as `arigami:<name>`,
+exactly the name the persona already promises. All 13 skills load with no frontmatter warnings.
 
-לוג-הצ'אט, ה-bus, הפרסונות, אתחול-הזיכרון, מצב "פשוט", ה-worktrees והקוקפיט —
-כולם אגנוסטיים למנוע ולא נגעו.
+The chat log, the bus, personas, memory bootstrapping, "simple" mode, worktrees, and the cockpit —
+all of it is engine-agnostic and untouched.
 
-שני הבדלים מבניים שכדאי להכיר לפני דיבוג:
+Two structural differences worth knowing before debugging:
 
-1. **תהליך אחד לכל תור.** `codex exec` אינו שיחה ארוכת-חיים על stdin/stdout.
-   הוא קורא prompt אחד, מריץ תור, ויוצא 0. התור הבא הוא
-   `codex exec resume <thread_id>` חדש מול אותו `$CODEX_HOME`. משמעות מעשית:
-   stdin ב-EOF לאורך כל התור.
-2. **מזהה השיחה נצפה, לא מוקצה.** ל-codex אין `--session-id`; הוא ממציא מזהה
-   ומכריז עליו ב-`thread.started`.
+1. **One process per turn.** `codex exec` is not a long-lived conversation over stdin/stdout.
+   It reads a single prompt, runs one turn, and exits 0. The next turn is a fresh
+   `codex exec resume <thread_id>` against the same `$CODEX_HOME`. Practical consequence:
+   stdin sits at EOF for the entire turn.
+2. **The conversation id is observed, not assigned.** codex has no `--session-id`; it invents an id
+   and announces it in `thread.started`.
 
-## המגבלות — מה שלא עובד, במפורש
+## Limitations — what doesn't work, explicitly
 
-הרשימה הזו היא הסיבה שהמסמך קיים. אל תרככו אותה.
+This list is the reason this document exists. Do not soften it.
 
-### 1. אין sandbox מקומי
+### 1. No local sandbox
 
-ה-bubblewrap המובנה של Codex **לא עולה על המכונה הזו** —
-`bwrap: loopback: Failed RTM_NEWADDR`. לכן התהליך רץ תמיד עם
-`--dangerously-bypass-approvals-and-sandbox`, לא כאופציה אלא ככפייה בקוד.
-הבידוד היחיד שנשאר הוא ה-worktree של הסשן.
+Codex's built-in bubblewrap **does not come up on this machine** —
+`bwrap: loopback: Failed RTM_NEWADDR`. So the process always runs with
+`--dangerously-bypass-approvals-and-sandbox`, not as an option but forced in code.
+The only isolation that remains is the session's worktree.
 
-לקלוד יש הפרדה שאין כאן: מצבי הרשאה, PreToolUse hook, `--disallowedTools`.
-סשן codex הוא, מבחינת הרשאות, המקבילה של `bypassPermissions` — תמיד.
+Claude has separation that doesn't exist here: permission modes, the PreToolUse hook, `--disallowedTools`.
+A codex session is, permission-wise, the equivalent of `bypassPermissions` — always.
 
-### 2. אין גשר-אישורים חי
+### 2. No live approval bridge
 
-ל-`codex exec` אין מקבילה ל-`--permission-prompt-tool`. לכן
-`permissions.kind === 'none'`: אין כרטיס אישור בצ'אט, ואף פעולה לא נעצרת
-לשאול. אישור אמיתי קיים רק במסלול `app-server` של Codex — **שלא מומש כאן**.
+`codex exec` has no equivalent of `--permission-prompt-tool`. Hence
+`permissions.kind === 'none'`: no approval card in the chat, and no action ever stops
+to ask. Real approval exists only in Codex's `app-server` track — **which is not implemented here**.
 
-### 3. סוכנים עם allowlist מסורבים
+### 3. Agents with an allowlist are refused
 
-`codexPrepare()` **זורק** אם הסוכן של הסשן מחזיק allowlist של כלים/דומיינים:
+`codexPrepare()` **throws** if the session's agent holds a tool/domain allowlist:
 
 > `agent "<slug>" has a tool/domain allowlist, and the codex engine cannot enforce it`
 
-זו החלטה מכוונת. אכיפת A3 בנויה על PreToolUse hook שאין ל-codex, ולהריץ סוכן
-כזה בכל זאת אומר שהפרסונה מבטיחה אכיפה שלא קיימת. כישלון רועש ב-spawn עדיף.
-מריצים סוכן כזה על claude.
+This is a deliberate decision. A3 enforcement is built on the PreToolUse hook, which codex doesn't have,
+and running such an agent anyway would mean the persona promises enforcement that doesn't exist.
+A loud failure at spawn is preferable. Run that kind of agent on claude instead.
 
-### 4. מענקי MCP מרוחקים מדולגים
+### 4. Remote MCP grants are skipped
 
-ל-Codex מאגר-אישורים (OAuth) משלו תחת `$CODEX_HOME`. מענק שאריגמי הנפיקה עבור
-claude פשוט לא שמיש שם, ולכן שרתי MCP מסוג `url` **מדולגים** בבניית ה-config.
-שרת מרוחק שתרצו בסשן codex ידרוש OAuth נפרד, משלו.
+Codex has its own credential store (OAuth) under `$CODEX_HOME`. A grant Arigami issued for
+claude simply isn't usable there, so `url`-type MCP servers **are skipped** when building the config.
+A remote server you want in a codex session will need its own, separate OAuth.
 
-### 5. סולם המודלים לא רץ; הכיווץ **נבדק בפועל ונמצא בלתי-ישים** מ-`exec`
+### 5. The model ladder doesn't run; compaction **was actually tested and found not viable** from `exec`
 
-RES1 (ירידה למודל חלש כשהמכסה נגמרת ועלייה בחזרה) הוא claude-shaped ו**אינו
-רץ** על סשן codex — ללא שינוי.
+RES1 (dropping to a weaker model when the quota runs out, and climbing back) is claude-shaped and
+**does not run** on a codex session — unchanged.
 
-LADDER1 (כיווץ ההקשר לפני replay) **נבדק, לא רק הונח שהוא לא רץ.** לבינארי יש
-שני מפתחות קונפיג אמיתיים — `model_auto_compact_token_limit` (סף בטוקנים)
-ו-`model_auto_compact_token_limit_scope` (`total` | `body_after_prefix`) —
-שנראים כמו המימוש המובנה שחסר כאן. הרצתי חמישה תורים אמיתיים על אותו thread עם
-`-c model_auto_compact_token_limit=3000` (שני ערכי ה-scope, בנפרד), וגם עם
-`--enable context_management` (הדגל שחוסם את המפתחות האלה — הן "under
-development" ברשימת `codex features list`) — עד שההקשר גדל ל-41,474 טוקנים,
-**פי ~14 מהסף שהוגדר, ואף כיווץ לא קרה**: אין אירוע `context_compaction` או
-`compaction_trigger` בזרם, ו-`cached_input_tokens` רק גדל בין תור לתור, אף פעם
-לא קטן.
+LADDER1 (compacting the context before replay) **was tested, not just assumed not to run.** The
+binary has two real config keys — `model_auto_compact_token_limit` (a token threshold)
+and `model_auto_compact_token_limit_scope` (`total` | `body_after_prefix`) —
+that look like the built-in implementation missing here. I ran five real turns on the same thread with
+`-c model_auto_compact_token_limit=3000` (both scope values, separately), and also with
+`--enable context_management` (the flag that gates these keys — they're listed as "under
+development" in `codex features list`) — until the context grew to 41,474 tokens,
+**about 14x the configured threshold, and no compaction ever happened**: no `context_compaction` or
+`compaction_trigger` event appears in the stream, and `cached_input_tokens` only grew from turn to turn, never
+shrinking.
 
-הסבר סביר (לא רק ניחוש): הקריאה שבאמת **מפעילה** כיווץ —
-`thread/compact/start` — קיימת רק בפרוטוקול ה-app-server (JSON-RPC), לא
-ב-`exec` (מגבלה 2 למעלה). מי שקורא לה כנראה הלקוח האינטראקטיבי (ה-TUI), שרץ
-כתהליך אחד ארוך-חיים וצופה בשימוש בין תורים. `codex exec` הוא **תהליך אחד לכל
-תור**; אין תהליך חי בין תורים שיכול "לצפות" בכלום, אז גם אם ה-watcher קיים
-בליבה, דפוס ההרצה שאריגמי משתמשת בו לא יכול להפעיל אותו.
+A plausible explanation (not just a guess): the call that actually **triggers** compaction —
+`thread/compact/start` — exists only in the app-server protocol (JSON-RPC), not
+in `exec` (limitation 2 above). Whoever calls it is probably the interactive client (the TUI), which runs
+as a single long-lived process and watches usage between turns. `codex exec` is **one process per
+turn**; there is no live process between turns that could "watch" anything, so even if the watcher exists
+in the core, the run pattern Arigami uses can't trigger it.
 
-**המסקנה: הכיווץ לא סגיר דרך `exec` בלי לממש app-server. סשן codex שנתקע
-במכסת-הקשר נתקע — אין רשת, בדיוק כמו שנכתב כאן קודם.** מי שרוצה לנסות שוב:
-אל תסתפקו בהוספת המפתח ל-config.toml ותחשבו שסיימתם — זה בדיוק מה שנוסה כאן.
+**Conclusion: compaction is not achievable via `exec` without implementing app-server. A codex session
+that gets stuck on the context quota stays stuck — no safety net, exactly as written here before.**
+Anyone who wants to try again: don't settle for adding the key to config.toml and thinking you're done —
+that's exactly what was tried here.
 
-### 6. `item.type === 'reasoning'` לא נצפה מעולם — גם עם מאמץ מלא
+### 6. `item.type === 'reasoning'` was never observed — even at full effort
 
-הטיפול בו קיים ב-`handleEvent`, אבל **באף הרצה אמיתית הוא לא הופיע**, כולל
-הרצה ייעודית עם `gpt-5.6-terra`, `model_reasoning_effort="high"` ו-
-`model_reasoning_summary="detailed"` (הפיקסצ'ר:
-`test/fixtures/codex-stream/reasoning-test-*.jsonl`). ה-`usage` שחזר מאותה
-הרצה כן דיווח `reasoning_output_tokens: 73` — המודל **כן** חושב — הפריט פשוט
-לא נפלט על זרם ה-`exec --json`, גם עם כל הדגלים שאמורים להבליט אותו. הטיפול
-ב-`handleEvent` נשאר כתוב הגנתית ולא מוכח. אם מישהו ירצה לנסות שוב: זה נבדק
-ולא עבד, אז כדאי לחפש במשטח ה-app-server (שם יש `item/reasoning/textDelta`
-בפרוטוקול) לפני שמנסים שוב על `exec`.
+Handling for it exists in `handleEvent`, but **it did not appear in any real run**, including
+a dedicated run with `gpt-5.6-terra`, `model_reasoning_effort="high"` and
+`model_reasoning_summary="detailed"` (fixture:
+`test/fixtures/codex-stream/reasoning-test-*.jsonl`). The `usage` returned from that same
+run did report `reasoning_output_tokens: 73` — the model **does** reason — the item is simply
+never emitted on the `exec --json` stream, even with every flag that's supposed to surface it. The handling
+in `handleEvent` remains written defensively and unproven. If someone wants to try again: this was tested
+and didn't work, so it's worth looking at the app-server surface (which has `item/reasoning/textDelta`
+in its protocol) before trying again on `exec`.
 
-### 6ב. זיהוי מכסה (rate limit) — הגנתי, **לא אומת**
+### 6b. Quota (rate limit) detection — defensive, **not verified**
 
-ל-Codex יש סוג מתועד `RateLimitReachedType` (`rate_limit_reached`,
+Codex has a documented type `RateLimitReachedType` (`rate_limit_reached`,
 `workspace_owner_credits_depleted`, `workspace_member_credits_depleted`,
 `workspace_owner_usage_limit_reached`, `workspace_member_usage_limit_reached`)
-— אבל הוא שדה מובנה בהתראת `account/rateLimits/updated` של פרוטוקול
-ה-app-server, לא של `exec`. לא ניסיתי לשחזר מכסה אמיתית: זה דורש לצרוך בפועל
-את כל המכסה של חשבון חי, ואין לזה הצדקה רק כדי לתעד הודעת שגיאה. **הזיהוי
-ב-`handleEvent` (`rateLimitNote()` ב-`server/codex.ts`) הוא ניחוש מסומן ככזה
-בקוד** — ביטוי רגולרי על הטקסט של `turn.failed`/`error` (התבנית `unexpected
-status <קוד> ...` כן אומתה חי על 401, `error-noauth` fixture; ההשערה שקוד 429
-עוטף באותה צורה, ושמות ה-enum אולי מוטבעים כמילים בגוף השגיאה, לא אומתו).
-כשמתקבלת שגיאה שנראית כמו מכסה, האדם מקבל הודעת מערכת נוספת שמסבירה זאת
-ומציינת במפורש שהזיהוי לא אומת — לא רק שגיאה גנרית, אבל גם לא מצג-שווא של
-ודאות.
+— but it's a field embedded in the `account/rateLimits/updated` notification of the
+app-server protocol, not of `exec`. I did not try to reproduce a real quota hit: that would require
+actually consuming a live account's entire quota, and there's no justification for that just to
+document an error message. **The detection in `handleEvent` (`rateLimitNote()` in `server/codex.ts`)
+is a guess, flagged as such in the code** — a regex over the text of `turn.failed`/`error` (the pattern `unexpected
+status <code> ...` was verified live on a 401, the `error-noauth` fixture; the hypothesis that code 429
+wraps the same way, and that the enum names might be embedded as words in the error body, was not verified).
+When an error that looks like a quota hit is received, the human gets an additional system message explaining
+this and explicitly noting that the detection is unverified — not just a generic error, but also not a false
+show of certainty.
 
-### 7. הסשן יורש את env המארח במלואו
+### 7. The session inherits the host's env in full
 
-תהליך ה-codex מקבל את `process.env` של המארח כולו (פרט ל-
-`CLAUDE_CODE_OAUTH_TOKEN` ו-`ANTHROPIC_API_KEY`, שנמחקים במפורש), ובכלל זה
-`ARIGAMI_TOKEN` — טוקן חי שמדבר עם ה-host האמיתי.
+The codex process receives the host's entire `process.env` (except for
+`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`, which are explicitly stripped), including
+`ARIGAMI_TOKEN` — a live token that talks to the real host.
 
-**זו פאריטי עם קלוד ולא רגרסיה.** גם סשן claude עובד בדיוק ככה. נכתב כאן
-במפורש כי בהיעדר sandbox (מגבלה 1) ובהיעדר גשר-אישורים (מגבלה 2), זה מה שסשן
-codex יכול להגיע אליו בלי שאף אחד יעצור אותו.
+**This is parity with claude, not a regression.** A claude session works exactly the same way. It's spelled out
+here explicitly because, with no sandbox (limitation 1) and no approval bridge (limitation 2), this is what a
+codex session can reach without anyone stopping it.
 
-### 8. `~/.codex/skills/.system/` נמחקת בכל שדרוג
+### 8. `~/.codex/skills/.system/` is wiped on every upgrade
 
-זו החבילה של Codex עצמו — היא נמחקת ונכתבת מחדש בכל שדרוג של ה-CLI. **שום דבר
-שלנו לא ישב שם, לעולם.** אנחנו גם לא מקשרים אותה פנימה: לסשני אריגמי אין שימוש
-ב-imagegen/skill-creator, וההשמטה חוסכת מקום בתקציב-ההקשר של המיומנויות.
+This is Codex's own bundle — it's deleted and rewritten on every CLI upgrade. **Nothing of
+ours ever sits there, ever.** We also don't symlink it in: Arigami sessions have no use
+for imagegen/skill-creator, and leaving it out saves room in skills' context budget.
 
 ### 9. `tool_timeout_sec = 1800`
 
-Codex מוותר על קריאת כלי MCP אחרי `tool_timeout_sec` ומדווח עליה ככישלון.
-כלי-הבית החוסמים של אריגמי (`request_screen`, `permission_prompt`) ממתינים
-ל**אדם**, לדקות. נמדד: עם 15 שניות בקשת-מסך מתה אחרי 15.1 שניות בדיוק; עם 180
-שניות אדם אמיתי ענה ב-38.35 שניות והקריאה עברה.
+Codex gives up on an MCP tool call after `tool_timeout_sec` and reports it as a failure.
+Arigami's blocking home tools (`request_screen`, `permission_prompt`) wait
+on a **human**, for minutes. Measured: with 15 seconds, a screen request died at exactly 15.1 seconds; with 180
+seconds a real human answered in 38.35 seconds and the call went through.
 
-לכן הערך מוצמד ל-`SCREEN_REQUEST_TIMEOUT_MS` של המארח — 30 דקות. הכפתור
-`ARIGAMI_CODEX_TOOL_TIMEOUT_SEC` קיים בעיקר כדי שאפשר יהיה לתרגל את מסלול
-הוויתור בשניות במקום בחצי שעה. הורדה שלו בפרודקשן מוכרת זמן-תגובה של אדם תמורת
-כלום.
+So the value is pinned to the host's `SCREEN_REQUEST_TIMEOUT_MS` — 30 minutes. The
+`ARIGAMI_CODEX_TOOL_TIMEOUT_SEC` knob exists mainly so the give-up path can be exercised
+in seconds instead of half an hour. Lowering it in production sells a human's response time for
+nothing.
 
-### 10. עוד דברים קטנים שכדאי לדעת
+### 10. Other small things worth knowing
 
-- **שם מודל לא מוכר נבלע בשקט.** Codex נופל למודל ברירת-המחדל שלו בלי שגיאה
-  ובלי אזהרה, ולכן `codexModelArgs()` מסנן בעצמו לפי `CODEX_MODEL_RE` וכותב
-  warning ללוג. אותו דבר לרמת מאמץ לא-מוכרת.
-- **`EFFORTS` ב-`server/codex.ts` חייב להישאר superset** של כל רמה שהבורר
-  בקוקפיט מציע (`CODEX_MODELS[].efforts` ב-`web/src/lib/engines.js`). רמה
-  שמגיעה לשרת ולא נמצאת ב-set נזרקת, והתור רץ בברירת-המחדל של המודל בזמן
-  שה-UI ממשיך להראות את הרמה שהאדם בחר.
-- **טאב `/usage` לא קיים בסשן codex.** הוא מודד מנוי ו**חשבון של Claude**;
-  לסשן codex אין לא זה ולא זה.
-- **בורר מצב-ההרשאות לא מוצג בסשן codex.** במקומו יושבת שורה שמצהירה
-  `bypassPermissions` ומסבירה למה. בורר שאפשר לבחור בו "plan" בזמן שהשרת מריץ
-  בכל מקרה `--dangerously-bypass-approvals-and-sandbox` הוא שקר בממשק.
-  הפרדיקט: `hasPermissionModes()` ב-`web/src/lib/engines.js`.
-- **כפתור "רענון רשימת המודלים" ותג עדכון-ה-CLI לא מוצגים בסשן codex** — שניהם
-  מדברים על ה-CLI של claude.
-- **מחיקת סשן מנקה את `$CODEX_HOME` שלו** (`config/codex/<sessionId>`) — שם
-  יושבת היסטוריית השיחה.
+- **An unrecognized model name is silently swallowed.** Codex falls back to its default model with no error
+  and no warning, so `codexModelArgs()` filters it itself against `CODEX_MODEL_RE` and writes a
+  warning to the log. Same for an unrecognized effort level.
+- **`EFFORTS` in `server/codex.ts` must remain a superset** of every level the cockpit
+  picker offers (`CODEX_MODELS[].efforts` in `web/src/lib/engines.js`). A level
+  that reaches the server and isn't in the set gets dropped, and the turn runs at the model's default while
+  the UI keeps showing the level the human chose.
+- **The `/usage` tab doesn't exist in a codex session.** It measures a Claude subscription and **account**;
+  a codex session has neither.
+- **The permission-mode picker isn't shown in a codex session.** In its place sits a line stating
+  `bypassPermissions` and explaining why. A picker where "plan" could be chosen while the server runs
+  `--dangerously-bypass-approvals-and-sandbox` regardless would be a lie in the UI.
+  The predicate: `hasPermissionModes()` in `web/src/lib/engines.js`.
+- **The "refresh model list" button and the CLI-update badge are not shown in a codex session** — both
+  talk about claude's CLI.
+- **Deleting a session cleans up its `$CODEX_HOME`** (`config/codex/<sessionId>`) — that's where
+  the conversation history lives.
 
-## הכלל לגבי טקסט בממשק
+## The rule for text in the UI
 
-מחרוזת שמתארת את **המנוע** (מי עובד עכשיו, מי מבקש את המסך, של מי היכולות
-האלה) חייבת לעקוב אחרי `session.engine` — לכן ה-locales מחזיקים placeholder
-`{engine}` ולא את המילה "Claude". מחרוזת שמתארת את **אריגמי**, או שבאמת מתארת
-את ה-CLI של Claude Code עצמו (ההתקנה שלו, פריט ה-keychain שלו, ניצול המנוי
-שלו), ממשיכה לומר Claude. שני העוזרים לזה:
-`engineLabel()` ו-`engineTermName()` ב-`web/src/lib/engines.js`.
+A string that describes the **engine** (who's working right now, who's requesting the screen, whose
+capabilities these are) must follow `session.engine` — that's why the locales hold a placeholder
+`{engine}` and not the word "Claude". A string that describes **Arigami**, or that genuinely describes
+the Claude Code CLI itself (its installation, its keychain item, its subscription
+usage), keeps saying Claude. The two helpers for this:
+`engineLabel()` and `engineTermName()` in `web/src/lib/engines.js`.

@@ -499,7 +499,7 @@ describe('the model ladder', () => {
   });
 });
 
-// ------------------------------------------------------ the "ממתין לך" queue
+// ------------------------------------------------------ the "waiting for you" queue
 
 describe('waitingRow — what is blocked, since when, and the one unblocking action', () => {
   const since = new Date(ago(5 * 60_000)).toISOString();

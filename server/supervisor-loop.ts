@@ -10,7 +10,7 @@
 //      line, and each one refusing to touch a WAITING_HUMAN session
 //   §3 orchestration liveness — synthesize a child's missing report, re-deliver
 //      an ask the child never got, and aggregate everything a human owes into
-//      the "ממתין לך" queue
+//      the "waiting for you" queue
 //
 // The loop never restarts the host and never touches anything outside a session.
 import {

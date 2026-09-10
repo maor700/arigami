@@ -1,7 +1,7 @@
-// UX1 web: "בית" (a place) vs "סשן עבודה" (a job).
+// UX1 web: "home" (a place) vs "work session" (a job).
 //   · the agent SURFACE — accent header, big avatar, persona line, live status,
-//     budget bar, and the tabs בית / … / ריצות
-//   · the ריצות tab lists the work sessions with their cost, never the home chat
+//     budget bar, and the tabs home / … / runs
+//   · the runs tab lists the work sessions with their cost, never the home chat
 //   · a work session says whose job it is (BornFromChip) — the home chat doesn't
 //   · the composer's "turn the last message into a work session" acts on the last
 //     HUMAN line (lastHumanText)

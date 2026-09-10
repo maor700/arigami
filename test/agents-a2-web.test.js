@@ -3,7 +3,7 @@
 // ownable capability and whether the browser profile exists; the Routine
 // list renders cron jobs (enabled state, next run) + listeners; the SetupCard
 // raised by an agent session wears an owner chip; the Connections hub offers
-// the "שייך ל" owner filter with the agents.
+// the "belongs to" owner filter with the agents.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

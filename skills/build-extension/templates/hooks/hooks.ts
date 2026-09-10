@@ -16,7 +16,7 @@ export const hooks: Hooks = {
       ctx.log(`merge.done — ${ev.branch} → ${ev.base} (${String(ev.sha || '').slice(0, 7)})`);
       await ctx.notify({
         title: '{{title}}',
-        body: `מוזג: ${ev.branch} → ${ev.base}`,
+        body: `Merged: ${ev.branch} → ${ev.base}`,
         tag: 'merge',
         sessionId: ev.sessionId,
       });
@@ -31,7 +31,7 @@ export const hooks: Hooks = {
       if (r.code === 0) return { ok: true };
       // The reason is shown to the human on the merge card — make it actionable,
       // and keep it short: the tail of stderr is usually the whole story.
-      return { ok: false, reason: `${cmd} נכשל (exit ${r.code}${r.timedOut ? ', timeout' : ''}):\n${(r.stderr || r.stdout).slice(-800)}` };
+      return { ok: false, reason: `${cmd} failed (exit ${r.code}${r.timedOut ? ', timeout' : ''}):\n${(r.stderr || r.stdout).slice(-800)}` };
     },
   },
 };

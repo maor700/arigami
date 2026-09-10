@@ -82,7 +82,7 @@ export interface CronTrigger {
   deliver: CronDeliver;
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
-  agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's "שגרה"
+  agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's routine
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
   lastRun: number | null; // ms epoch of the last fire attempt
@@ -796,7 +796,7 @@ export async function createCronTrigger(input: {
   if (sessionMode !== 'isolated' && !(sessionMode.startsWith('existing:') && sessionMode.length > 'existing:'.length))
     throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
   // A2: the agent the runs are born from. Explicit `agent` wins; a cron job
-  // created FROM an agent's session defaults to that agent (its שגרה); an
+  // created FROM an agent's session defaults to that agent (its routine); an
   // unknown slug is refused. `agent: ''` = explicitly none.
   let agent: string | null = null;
   if (input.agent !== undefined && input.agent !== null) {

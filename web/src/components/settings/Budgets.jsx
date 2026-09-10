@@ -1,4 +1,4 @@
-// A3 — Settings › Host › תקציבים: one row per agent (avatar/name × model × daily
+// A3 — Settings › Host › Budgets: one row per agent (avatar/name × model × daily
 // token cap × used today). Caps are edited inline → PATCH /__api/agents/:slug
 // {budget:{tokensPerDay}}; the "used" column is GET /__api/agents/budgets
 // (today's 'turn' lines of the agent's activity ledger, host-local day).

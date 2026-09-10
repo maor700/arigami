@@ -294,11 +294,12 @@ Two layers, same shape as the Hermes/OpenClaw comparison in
   what happened today) and `episodes/*.md` (session summaries), all indexed
   with FTS5 (`bun:sqlite`, file-granularity rows, `tokenize='trigram'`).
   Trigram (substring, not whole-token) indexing is deliberate: Hebrew glues
-  single-letter prefixes (ה/ו/ב/ל/מ/ש/כ) directly onto the next word with no
-  boundary, so the FTS5 default (`unicode61`, whole-token) tokenizes "הסודי"
-  as one token a query for "סודי" alone can never match — trigram matches it
-  as a substring like any other language, no hand-maintained prefix-letter
-  list needed (M1b). A DB created before this fix self-heals in place (drop +
+  single-letter prefixes (he/vav/bet/lamed/mem/shin/kaf — roughly "the/and/in/to/from/that/as")
+  directly onto the next word with no boundary, so the FTS5 default
+  (`unicode61`, whole-token) tokenizes "ha-sodi" ("the-secret", one glued token)
+  as one token a query for the bare "sodi" ("secret") alone can never match — trigram
+  matches it as a substring like any other language, no hand-maintained
+  prefix-letter list needed (M1b). A DB created before this fix self-heals in place (drop +
   full re-scan from disk) the first time `memory.ts`'s `db()` runs after
   upgrade — detected via `sqlite_master`, not a separate migration step.
   Ranking: FTS5 `rank` (bm25) first, then a hit containing the whole query as
@@ -307,7 +308,7 @@ Two layers, same shape as the Hermes/OpenClaw comparison in
   called; snippets capped ~700 chars. Trade-off: queries under 3 characters
   can't match anything (inherent to trigram).
 
-**Gate** (spec "סגור-תחילה" — start closed): every write to
+**Gate** (spec "closed-first" — start closed): every write to
 USER.md/MEMORY.md/journal is (1) `sanitize()`d against credential-shaped
 strings, prompt-injection phrasing, and exfiltration patterns — refused
 outright, not stored; (2) deduped against existing lines (normalized,

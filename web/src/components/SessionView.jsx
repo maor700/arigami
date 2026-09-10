@@ -312,9 +312,9 @@ function MachineChip({ session }) {
 
 /**
  * UX1 — a session born from an agent is a JOB, not the agent. It keeps the
- * agent's face, and says so in words: "סשן עבודה · נולד מ-<agent>", linking back
+ * agent's face, and says so in words: "Work session · born from <agent>", linking back
  * to the agent surface. The agent's own home chat never renders this header (it
- * is the בית tab of the agent surface instead).
+ * is the Home tab of the agent surface instead).
  */
 export function BornFromChip({ session, className = '' }) {
   const tt = useT();
@@ -338,7 +338,7 @@ export function BornFromChip({ session, className = '' }) {
   );
 }
 
-/* ---------- SIMPLE1: chat view toggle (פשוט | טרמינל) --------------------- */
+/* ---------- SIMPLE1: chat view toggle (Simple | Terminal) --------------------- */
 
 // Per-session, persisted in metadata.chatMode (the host reads it every turn).
 // The Simple default for an unset session on a phone-width viewport is what
@@ -1641,7 +1641,7 @@ function ContentTab({ tab }) {
 /* ---------- the session view ------------------------------------------------ */
 
 /**
- * UX1 — the agent's home chat, embedded as the **בית** tab of the agent surface.
+ * UX1 — the agent's home chat, embedded as the **Home** tab of the agent surface.
  * The same transcript and composer a session has, minus the session chrome (no
  * tab bar, no "claude-code" terminal header): this is a DM with the agent, not a
  * job. It is no longer reachable as a rail row — the surface owns it.

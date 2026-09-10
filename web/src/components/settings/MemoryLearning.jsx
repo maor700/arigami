@@ -1,9 +1,9 @@
-// Settings › General › זיכרון (LEARN1 — the approved mock at
+// Settings › General › Memory (LEARN1 — the approved mock at
 // /tmp/memory-learning-mock/index.html): the mode segmented control with its
-// explanatory line + "next run", "למד עכשיו", the learning log (collapsed run
-// rows → grouped נכנסו / מוזגו / נדחו with a reason and a per-line "בטל"), the
+// explanatory line + "next run", "Learn now", the learning log (collapsed run
+// rows → grouped entered / merged / rejected with a reason and a per-line "Undo"), the
 // "N proposals waiting" strip, and — in manual mode — the pre-checked block
-// with "מיון חכם" + "אשר N מסומנות". This replaces the Brain view's raw
+// with "Smart sort" + "Approve N marked". This replaces the Brain view's raw
 // pending-approval tab: that list now IS the manual block.
 // Data: GET /__api/memory/learning (server/memory-learning.ts status()).
 import { useEffect, useMemo, useState } from 'react';
@@ -164,7 +164,7 @@ function RunRow({ run, open, onToggle, t, onUndo, busy }) {
 const TAG_CLS = 'mt-[3px] shrink-0 rounded-md border border-hair px-1.5 text-[11.5px] md:text-[10px] text-fgdim';
 
 // Manual mode. Before a smart sort: the pre-pass clusters (checked) + the
-// deterministic drops (unchecked, struck through). After "מיון חכם": the stored
+// deterministic drops (unchecked, struck through). After "Smart sort": the stored
 // proposed run's items (ENTER/MERGE checked, DROP unchecked). One approve button.
 function ManualBlock({ st, t, reload, setBusyGlobal }) {
   const [checked, setChecked] = useState(() => new Set());

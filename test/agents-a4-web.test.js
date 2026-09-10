@@ -163,7 +163,7 @@ test('DelegatedLine: a work session names its title, a home hand-off says "נפ�
   expect(html).toContain('data-delegated-open="s_child"');
   expect(html).toContain('פתח סשן');
   expect(html).toContain('write it');
-  // home → the agent surface's בית tab, not a session
+  // home → the agent surface's home tab, not a session
   const home = render(h(DelegatedLine, { event: { ...ev, how: 'home', delivered: 'queued' } }));
   expect(home).toContain('נפתח בבית של Mila');
   expect(home).toContain('data-delegated-open-home="mila"');

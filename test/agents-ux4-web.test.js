@@ -1,8 +1,8 @@
-// UX4 web: "אי אפשר למחוק אייג'נט קיים" — the rail's Team row menu offers a
+// UX4 web: "can't delete an existing agent" — the rail's Team row menu offers a
 // delete action (the only place the rail exposed before was the persona
 // tab's buried, unlabeled trailing button), and the agent surface header
 // carries the same delete action so it is reachable from every tab and on
-// mobile, not just at the bottom of פרסונה.
+// mobile, not just at the bottom of the persona tab.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,4 +1,4 @@
-// A1 web: the Rail renders the "צוות"/Team section BELOW the sessions and
+// A1 web: the Rail renders the "Team" section BELOW the sessions and
 // ABOVE archived, agent rows show emoji + status, a session born from an
 // agent wears the agent's emoji, the AgentCard renders its pending form and
 // its created summary, and agent-card updates fold on reload.
@@ -53,7 +53,7 @@ afterAll(() => {
 
 const sessions = [
   { id: 'sess_free', title: 'free one', status: 'In Progress', color: '#2C6BD6', metadata: {}, claude: { state: 'idle' }, createdAt: '2026-08-30T10:00:00Z' },
-  // UX1: the home chat is the agent surface's בית tab — it must NOT be a rail row…
+  // UX1: the home chat is the agent surface's home tab — it must NOT be a rail row…
   { id: 'sess_home', title: 'Marketing Lead', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead', agentHome: true }, claude: { state: 'working' }, createdAt: '2026-08-30T10:00:00Z' },
   // …while a work session born from the agent stays in the Sessions section.
   { id: 'sess_work', title: 'landing page copy', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead' }, claude: { state: 'idle' }, createdAt: '2026-08-30T10:30:00Z' },
@@ -77,7 +77,7 @@ test('Rail (he): the צוות section sits below the sessions and above archived
   expect(html).toContain('+ סוכן חדש');
   expect(html).toContain('data-rail-agent="marketing-lead"');
   expect(html).toContain('data-rail-agent="ops"');
-  // marketing-lead has a working session → "עובד"; ops has none → "פנוי"
+  // marketing-lead has a working session → "busy"; ops has none → "available"
   const mk = html.slice(html.indexOf('data-rail-agent="marketing-lead"'), html.indexOf('data-rail-agent="ops"'));
   expect(mk).toContain('עובד');
   expect(mk).toContain('dispatch');

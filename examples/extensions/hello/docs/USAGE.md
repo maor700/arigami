@@ -27,7 +27,7 @@ a tool, a listener, hooks and a tab hang together.
 
 ## Settings
 
-`greeting` (default `שלום`) — what the tool and the tab greet with. Change it in
+`greeting` (default `hello`) — what the tool and the tab greet with. Change it in
 Settings → Extensions, or with
 `PATCH /__api/extensions/hello {"settings":{"greeting":"hi"}}`.
 

@@ -3,7 +3,7 @@
      same-origin — no cookie, no /__api, no framework, no bundler. Everything
      goes through window.arigami (see the skill's reference/browser-sdk.md).
      This one collects a structured choice and turns it into ONE prompt. -->
-<html lang="he" dir="rtl">
+<html lang="en" dir="auto">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -31,23 +31,23 @@
   </head>
   <body>
     <h1>{{title}}</h1>
-    <p class="sub" id="sub">מתחבר לקוקפיט…</p>
+    <p class="sub" id="sub">Connecting to the cockpit…</p>
 
     <fieldset>
-      <legend>מה לכלול</legend>
+      <legend>What to include</legend>
       <!-- Replace these with the real choices. The VALUE is what reaches the prompt. -->
-      <label><input type="checkbox" name="opt" value="אפשרות א'" checked /> אפשרות א'</label>
-      <label><input type="checkbox" name="opt" value="אפשרות ב'" /> אפשרות ב'</label>
-      <label><input type="checkbox" name="opt" value="אפשרות ג'" /> אפשרות ג'</label>
+      <label><input type="checkbox" name="opt" value="Option A" checked /> Option A</label>
+      <label><input type="checkbox" name="opt" value="Option B" /> Option B</label>
+      <label><input type="checkbox" name="opt" value="Option C" /> Option C</label>
     </fieldset>
 
     <fieldset>
-      <legend>הערה חופשית</legend>
-      <textarea id="note" placeholder="משהו שחשוב שאדע?"></textarea>
+      <legend>Free-text note</legend>
+      <textarea id="note" placeholder="Anything I should know?"></textarea>
     </fieldset>
 
     <div class="row">
-      <button id="send" disabled>שלח לצ'אט</button>
+      <button id="send" disabled>Send to chat</button>
     </div>
     <pre id="log">—</pre>
 
@@ -62,20 +62,20 @@
       const buildPrompt = () => {
         const picked = [...document.querySelectorAll('input[name="opt"]:checked')].map((el) => el.value);
         const note = $('note').value.trim();
-        return `{{title}}: ${picked.length ? picked.join(', ') : 'שום דבר נבחר'}` + (note ? `\nהערה: ${note}` : '');
+        return `{{title}}: ${picked.length ? picked.join(', ') : 'nothing selected'}` + (note ? `\nNote: ${note}` : '');
       };
 
       (async () => {
         try {
           const ctx = await arigami.ready();
-          $('sub').textContent = (ctx.settings && ctx.settings.intro) || 'בחר ושלח — זה נכנס לצ׳אט של הסשן הזה.';
+          $('sub').textContent = (ctx.settings && ctx.settings.intro) || 'Pick and send — this goes into this session\'s chat.';
           $('send').disabled = false;
-          log('מוכן.');
+          log('Ready.');
           arigami.subscribe(['chat'], (ev) => {
             if (ev && ev.kind === 'result') arigami.setStatus({ badge: '✓' }).catch(() => {});
           });
         } catch (e) {
-          $('sub').textContent = 'הדף לא רץ בתוך טאב של Arigami';
+          $('sub').textContent = 'This page is not running inside an Arigami tab';
           log(String((e && e.message) || e));
         }
       })();
@@ -87,10 +87,10 @@
           // queued with auto-play, so it plays as soon as the turn ends.
           const r = await arigami.sendPrompt(buildPrompt());
           await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
-          log(r.delivered === 'now' ? 'נשלח.' : 'נכנס לתור — יופעל כשהסשן מתפנה.');
+          log(r.delivered === 'now' ? 'Sent.' : 'Queued — will run when the session is free.');
         } catch (e) {
           // A rejection here is almost always a permission missing from manifest.json.
-          log('שגיאה: ' + ((e && e.message) || e));
+          log('Error: ' + ((e && e.message) || e));
         } finally {
           $('send').disabled = false;
         }

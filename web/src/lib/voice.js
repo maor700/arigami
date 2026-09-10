@@ -12,7 +12,7 @@
 // shown in the HUD and, when it asked a question (plan.kind 'ask') or just
 // answered one ('answer'), the mic re-opens by itself for the next turn with
 // the previous turns as history. The loop ends when an action ran ('act'), on
-// a stop word ("סיים"/"ביטול"/"stop"), Esc / the ✕, or 8s without speech on an
+// a stop word ("stop"/"cancel"/"done" in any UI language — STOP_WORDS below), Esc / the ✕, or 8s without speech on an
 // auto-opened turn. Command mode never writes into the composer — only an
 // explicit inject_prompt (confirmed in the HUD) reaches a session.
 //
@@ -51,7 +51,7 @@ let maxTimer = null;
 const MAX_RECORD_MS = 90_000; // safety cap so a forgotten recording can't balloon
 
 // Live input metering — lets the user SEE whether the mic is picking them up,
-// and lets us reject silent clips (Whisper hallucinates "תודה רבה" on silence).
+// and lets us reject silent clips (Whisper hallucinates a stock "thank you" phrase on silence).
 let audioCtx = null;
 let levelTimer = null;
 let maxLevel = 0;
@@ -221,7 +221,7 @@ async function finalize(mimeType, mode) {
     return;
   }
   // The mic never rose above near-silence → don't ship silence to Whisper (it
-  // would hallucinate, e.g. "תודה רבה"). Tell the user to check their input.
+  // would hallucinate a stock "thank you" phrase). Tell the user to check their input.
   if (peak < 0.03) {
     if (state.auto) { endConversation('silence'); return; }
     set({ status: 'error', error: 'No sound from the mic. Check the input device and that your browser has macOS microphone permission (System Settings → Privacy → Microphone).' });

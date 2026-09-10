@@ -37,15 +37,15 @@ Ending frame: artifact on the phone + green child session in the rail.
 
 Ending frame: rail with the incident session green, the run record open.
 
-### 3. `il-whatsapp-business` — "העסק שלך עונה בוואטסאפ. אתה מאשר." (~35 s, Hebrew UI, RTL)
+### 3. `il-whatsapp-business` — "Your business replies on WhatsApp. You approve it." (~35 s, Hebrew UI, RTL)
 
 | t | shot | caption (HE / EN) |
 |---|---|---|
-| 0–5 | Settings → WhatsApp paired (green); Skills shows `whatsapp-inbox-triage` + `followup` | "מחובר לוואטסאפ של העסק / Paired to the business WhatsApp" |
-| 5–12 | A (fake) customer message lands on the phone: *"כמה עולה תיקון דוד שמש?"* → chat: *"תעבור על הוואטסאפ"* → classification `הצעת-מחיר` + a Hebrew draft with the price from `BUSINESS.md` | "מסווג ומנסח מהמחירון / Classifies, drafts from your price list" |
-| 12–20 | Phone: action bar **שלח / ערוך / דלג / אני אטפל** → tap **שלח** → the message appears in WhatsApp; a follow-up line is added to `followups.md` | "שום הודעה לא יוצאת בלי אישור / Nothing is sent without your tap" |
-| 20–28 | Three days later (cut): *"מעקבים"* → reminder draft for the same customer → again buttons | "מעקב אחרי הצעות ותורים / Quotes and appointments followed up" |
-| 28–35 | Morning: `morning-digest` artifact on the phone — חדש / ממתין / דחוף / מעקבים להיום | "כל בוקר, סיכום / Every morning, a digest" |
+| 0–5 | Settings → WhatsApp paired (green); Skills shows `whatsapp-inbox-triage` + `followup` | "Connected to the business WhatsApp / Paired to the business WhatsApp" |
+| 5–12 | A (fake) customer message lands on the phone: *"How much does fixing a solar water heater cost?"* → chat: *"Go through WhatsApp"* → classification `quote-request` + a Hebrew draft with the price from `BUSINESS.md` | "Classifies and drafts from the price list / Classifies, drafts from your price list" |
+| 12–20 | Phone: action bar **Send / Edit / Skip / I'll handle it** → tap **Send** → the message appears in WhatsApp; a follow-up line is added to `followups.md` | "No message goes out without approval / Nothing is sent without your tap" |
+| 20–28 | Three days later (cut): *"Follow-ups"* → reminder draft for the same customer → again buttons | "Follow-up on quotes and appointments / Quotes and appointments followed up" |
+| 28–35 | Morning: `morning-digest` artifact on the phone — new / pending / urgent / follow-ups for today | "Every morning, a summary / Every morning, a digest" |
 
 Ending frame: WhatsApp thread with the sent reply next to the cockpit action bar.
 
