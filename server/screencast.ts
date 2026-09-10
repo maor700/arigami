@@ -123,10 +123,15 @@ export function inputToCdp(msg: any): { method: string; params: Record<string, u
       params.deltaY = dy;
       params.button = 'none';
     } else if (type === 'mouseMoved') {
-      // While dragging, `buttons` (the bitmask of what is held) is what makes
-      // Chrome treat the move as a drag rather than a hover.
-      params.button = msg.button === 'none' ? 'none' : button;
-      params.buttons = Number(msg.buttons) || 0;
+      // A move is a HOVER unless something is actually held. The client sends
+      // the DOM's `e.button`, which is 0 ("left") on a plain pointermove — so
+      // taking it at face value would tell Chrome the left button is involved
+      // in every mouse movement. `buttons` (the bitmask of what is held) is
+      // the field that distinguishes the two, and it is also what makes Chrome
+      // treat a move as a drag rather than a hover.
+      const held = Number(msg.buttons) || 0;
+      params.button = held ? button : 'none';
+      params.buttons = held;
     } else {
       params.button = button;
       params.clickCount = Number(msg.clickCount) || 1;

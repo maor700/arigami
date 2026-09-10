@@ -37,10 +37,18 @@ test('inputToCdp: a click becomes Input.dispatchMouseEvent with rounded page coo
   expect(down!.params).toMatchObject({ type: 'mousePressed', x: 13, y: 40, button: 'left', clickCount: 1, buttons: 1 });
   const up = inputToCdp({ type: 'mouse', action: 'up', x: 12, y: 40 });
   expect(up!.params).toMatchObject({ type: 'mouseReleased', button: 'left' });
-  const move = inputToCdp({ type: 'mouse', action: 'move', x: 1, y: 2, buttons: 1 });
+  const move = inputToCdp({ type: 'mouse', action: 'move', x: 1, y: 2, button: 'left', buttons: 1 });
   // A move mid-drag must carry `buttons`, or Chrome reads it as a hover and
   // the drag never happens — the failure looks like "drag does nothing".
-  expect(move!.params).toMatchObject({ type: 'mouseMoved', buttons: 1 });
+  expect(move!.params).toMatchObject({ type: 'mouseMoved', buttons: 1, button: 'left' });
+});
+
+test('inputToCdp: a plain hover is button "none", not "left"', () => {
+  // The DOM reports e.button === 0 ("left") on every pointermove, held or not.
+  // Forwarding that verbatim would tell Chrome the left button is involved in
+  // every movement of the mouse; `buttons` is the field that knows better.
+  const hover = inputToCdp({ type: 'mouse', action: 'move', x: 1, y: 2, button: 'left', buttons: 0 });
+  expect(hover!.params).toMatchObject({ type: 'mouseMoved', button: 'none', buttons: 0 });
 });
 
 test('inputToCdp: NaN/absent coordinates are dropped, never handed to Chrome', () => {
