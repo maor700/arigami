@@ -63,7 +63,7 @@ re-running is a no-op):
 | `--no-service` | install everything, start nothing |
 | `--dry-run` | print the plan, change nothing |
 | `--repo URL` / `--branch B` | where to clone from (defaults: GitHub `master`) |
-| `update` | the upgrade path: `git pull --ff-only` → `bun install` → web build → restart. The cockpit's **Update** button (Settings → Host → Version, `POST /__api/host/upgrade?when=confirm`) does the same pull/install/build and then waits for your restart click. Versions are minted with `bun run release <patch\|minor\|major>` (package.json + VERSION + CHANGELOG.md + tag `vX.Y.Z`; pushing the tag publishes the GitHub Release) |
+| `update` | the upgrade path: `git pull --ff-only` → `bun install` → web build → restart. The cockpit's **Update** button (Settings → Host → Version, `POST /__api/host/upgrade?when=confirm`) does the same pull/install/build and then waits for your restart click. Versions are normally minted **automatically**: a green CI run on master triggers `.github/workflows/version-bump.yml`, which bumps by conventional commits, tags `vX.Y.Z` and publishes. By hand it is still `bun run release <patch\|minor\|major>` + `git push --follow-tags`. `bin/host upgrade [--check]` is the CLI update path on a live host. See docs/RELEASING.md |
 
 ### Environment (`--unattended`)
 

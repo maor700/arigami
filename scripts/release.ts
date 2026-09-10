@@ -1,16 +1,29 @@
 #!/usr/bin/env bun
-// `bun run release <patch|minor|major|X.Y.Z> [--dry-run] [--no-commit] [--since <ref>]`
+// `bun run release <patch|minor|major|X.Y.Z|auto> [--dry-run] [--no-commit] [--since <ref>]`
 //
 // The one place a version is minted. Source of truth: package.json `version`,
 // mirrored to VERSION (a plain file the host / Docker builds read without
-// parsing JSON) and to web/package.json + control-plane/package.json so every
-// package in the repo says the same number. CHANGELOG.md gets a section
+// parsing JSON) and to every other file that carries the number — see
+// MIRRORED: the web + control-plane packages, the desktop app's
+// tauri.conf.json (what the About dialog and the installers say) and the
+// control-plane chart's appVersion. CHANGELOG.md gets a section
 // rendered from the conventional commits since the last `v*` tag
 // (feat/fix/refactor/docs/test/chore/perf/ci/build…, subjects verbatim — the
 // Hebrew titles in this repo stay as they are). Then one commit
-// `chore(release): vX.Y.Z` and an annotated tag `vX.Y.Z`. NOTHING is pushed:
-// `git push --follow-tags` is the human's move, and the tag push is what
-// makes .github/workflows/release.yml publish the GitHub Release + images.
+// `chore(release): vX.Y.Z` and an annotated tag `vX.Y.Z`. A human running this
+// still has to `git push --follow-tags` themselves; the tag push is what makes
+// .github/workflows/release.yml publish the GitHub Release + images.
+//
+// `auto` picks the bump from the same conventional commits instead of the
+// human naming it: any breaking-change commit → major, else any `feat` →
+// minor, else `patch`. It exits 3 (no files touched) when there is nothing
+// releasable since the last tag — that is not an error, just "skip". This is
+// what .github/workflows/version-bump.yml runs unattended on every push to
+// master: it commits + tags with the bot's own git identity, pushes with
+// `--follow-tags`, then `gh workflow run release.yml --ref vX.Y.Z` (a
+// workflow_dispatch call — the one event GITHUB_TOKEN pushes are still
+// allowed to trigger — because the tag push itself, being GITHUB_TOKEN-
+// authored, does NOT auto-fire release.yml's `on.push.tags`).
 //
 // `bun scripts/release.ts notes vX.Y.Z` prints that version's CHANGELOG
 // section (what release.yml uses as the GitHub Release body).
@@ -35,7 +48,40 @@ export const SECTIONS: { key: string; title: string; types: string[] }[] = [
   { key: 'other', title: 'Other', types: [] },
 ];
 
+/**
+ * Every file that carries the version, package.json first (the source of
+ * truth). A `Chart.yaml` gets its `appVersion` rewritten, everything else its
+ * `"version"` field. Missing files are skipped, so this list is safe to keep
+ * ahead of the repo. `deploy/helm/arigami-tenant` is deliberately absent: its
+ * appVersion is "latest" on purpose.
+ */
+export const MIRRORED = [
+  'package.json',
+  'web/package.json',
+  'control-plane/package.json',
+  'desktop/src-tauri/tauri.conf.json', // the desktop app's user-visible version
+  'deploy/helm/arigami-control-plane/Chart.yaml', // appVersion only
+];
+
 export function isSemver(s: string): boolean { return /^\d+\.\d+\.\d+$/.test(s); }
+
+/** Pick a bump from conventional commits: any breaking → major, else any feat → minor, else patch. */
+export function autoBump(commits: Commit[]): Bump {
+  const parsed = commits.filter((c) => !isNoise(c)).map(parseConventional);
+  if (parsed.some((p) => p.breaking)) return 'major';
+  if (parsed.some((p) => p.type === 'feat')) return 'minor';
+  return 'patch';
+}
+
+/**
+ * While the major is 0 nothing is promised to be stable, so a breaking change
+ * moves the minor (0.1.x → 0.2.0) instead of minting 1.0.0. Calling something
+ * 1.0.0 is a statement about the project, not about one commit — it stays a
+ * human decision (`bun run release major`), never the bot's.
+ */
+export function clampZeroVer(bump: Bump, current: string): Bump {
+  return bump === 'major' && /^0\./.test(current) ? 'minor' : bump;
+}
 
 export function bumpVersion(current: string, bump: Bump | string): string {
   if (isSemver(bump)) return bump;
@@ -124,6 +170,21 @@ export function setPackageVersion(text: string, version: string): string {
   return text.replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`);
 }
 
+/**
+ * Helm's `appVersion` is "the version of the app this chart deploys", so it
+ * should follow the release — but ONLY when it is a version. The tenant chart
+ * deliberately says `appVersion: "latest"` (it tracks the rolling image, not a
+ * number) and pinning that to a release would quietly change what the chart
+ * deploys. So: rewrite a semver, leave anything else exactly as it is.
+ * The chart's own `version:` is untouched — that is the chart's revision, a
+ * different thing that the chart's maintainer bumps.
+ */
+export function setChartAppVersion(text: string, version: string): string {
+  // [ \t] and not \s: \s includes \n, and a greedy \s*$ would swallow the
+  // file's trailing newline when appVersion is the last line.
+  return text.replace(/^(appVersion:[ \t]*"?)(\d+\.\d+\.\d+[^"\s]*)("?)[ \t]*$/m, `$1${version}$3`);
+}
+
 export function repoUrlFromPackage(pkg: { repository?: { url?: string } | string }): string | null {
   const raw = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url || '';
   const m = /github\.com[/:]([^/]+)\/([^/.]+)/.exec(raw);
@@ -148,6 +209,29 @@ export function lastTag(cwd: string): string | null {
   return r.status === 0 ? r.stdout.trim() || null : null;
 }
 
+/** The commit that last wrote VERSION — where the version now in package.json was minted. */
+export function lastVersionCommit(cwd: string): string | null {
+  const r = spawnSync('git', ['log', '--format=%H', '-1', '--', 'VERSION'], { cwd, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() || null : null;
+}
+
+/**
+ * Where "since the last release" starts, for `auto`. Normally the last `v*`
+ * tag. But a version can exist without a tag — this repo's own v0.1.0 was
+ * hand-written into VERSION/CHANGELOG by the VER1 commit and never tagged, and
+ * with no tag `commitsSince(null)` means the entire history, which would make
+ * the first automated release render a changelog of everything ever. So when
+ * there is no tag, fall back to the commit that last wrote VERSION: the
+ * changelog then covers exactly what landed since the current version was
+ * minted. Only `auto` uses this; a human's explicit `--since` always wins, and
+ * the manual `bun run release patch` path is unchanged.
+ */
+export function releaseBoundary(cwd: string): { ref: string | null; fromTag: boolean } {
+  const tag = lastTag(cwd);
+  if (tag) return { ref: tag, fromTag: true };
+  return { ref: lastVersionCommit(cwd), fromTag: false };
+}
+
 export function commitsSince(cwd: string, since: string | null): Commit[] {
   const range = since ? `${since}..HEAD` : 'HEAD';
   const out = git(['log', range, '--format=%H%x1f%s%x1f%b%x1e'], cwd);
@@ -165,14 +249,19 @@ function dirtyTracked(cwd: string): string[] {
 
 export function usage(): string {
   return [
-    'usage: bun run release <patch|minor|major|X.Y.Z> [--dry-run] [--no-commit] [--since <ref>]',
+    'usage: bun run release <patch|minor|major|X.Y.Z|auto> [--dry-run] [--no-commit] [--since <ref>]',
     '       bun scripts/release.ts notes <vX.Y.Z>',
     '',
+    '  auto         pick patch/minor/major from the conventional commits since the last tag;',
+    '               exits 3 (nothing written) when there is nothing releasable',
     '  --dry-run    print the CHANGELOG section + what would change; touch nothing',
     '  --no-commit  write the files, skip the commit + tag',
     '  --since REF  changelog from REF instead of the last v* tag (first release: --since <sha>)',
   ].join('\n');
 }
+
+/** `auto` found nothing releasable. Exit code, not an error — version-bump.yml treats it as a skip. */
+export const NOTHING_TO_RELEASE = 3;
 
 export function main(argv: string[], root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')): number {
   const args = [...argv];
@@ -199,13 +288,32 @@ export function main(argv: string[], root = path.resolve(path.dirname(new URL(im
   if (!cmd || cmd === '--help' || cmd === '-h') { console.log(usage()); return cmd ? 0 : 2; }
 
   const current = String(pkg.version || '0.0.0');
-  const next = bumpVersion(current, cmd);
-  const tag = `v${next}`;
-  const prev = since ?? lastTag(root);
+  // `auto` falls back to the commit that minted VERSION when no v* tag exists;
+  // every other path keeps the original "last tag, or the whole history" rule.
+  const boundary = cmd === 'auto' ? releaseBoundary(root) : { ref: lastTag(root), fromTag: true };
+  const prev = since ?? boundary.ref;
   const commits = commitsSince(root, prev);
-  const section = renderSection(commits, { version: next, date: localDate(), previousTag: since ? null : prev, repoUrl: repoUrlFromPackage(pkg) });
 
-  const files = ['package.json', 'VERSION', 'CHANGELOG.md', 'web/package.json', 'control-plane/package.json'].filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || fs.existsSync(path.join(root, f)));
+  let bump: string = cmd;
+  if (cmd === 'auto') {
+    const releasable = commits.filter((c) => !isNoise(c));
+    const from = since ? since : (boundary.ref ? (boundary.fromTag ? boundary.ref : `${boundary.ref.slice(0, 7)} (VERSION was last written there — no v* tag yet)`) : 'the first commit');
+    if (!releasable.length) {
+      console.log(`nothing to release since ${from} — skipping`);
+      return NOTHING_TO_RELEASE;
+    }
+    const raw = autoBump(commits);
+    bump = clampZeroVer(raw, current);
+    if (bump !== raw) console.log(`auto: a breaking change, but ${current} is pre-1.0 — minor, not major (1.0.0 stays a human call)`);
+    console.log(`auto: ${releasable.length} commit(s) since ${from} → ${bump}`);
+  }
+
+  const next = bumpVersion(current, bump);
+  const tag = `v${next}`;
+  // A compare link needs a tag on both ends; a raw-SHA boundary gets no link.
+  const section = renderSection(commits, { version: next, date: localDate(), previousTag: since || !boundary.fromTag ? null : prev, repoUrl: repoUrlFromPackage(pkg) });
+
+  const files = [...MIRRORED, 'VERSION', 'CHANGELOG.md'].filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || fs.existsSync(path.join(root, f)));
   console.log(`release: ${current} → ${next} (${tag})`);
   console.log(`changelog: ${commits.filter((c) => !isNoise(c)).length} commits since ${prev ?? 'the first commit'}`);
   console.log(`files: ${files.join(', ')}`);
@@ -221,9 +329,11 @@ export function main(argv: string[], root = path.resolve(path.dirname(new URL(im
   }
 
   fs.writeFileSync(pkgPath, setPackageVersion(pkgText, next));
-  for (const sub of ['web/package.json', 'control-plane/package.json']) {
+  for (const sub of MIRRORED.slice(1)) {
     const p = path.join(root, sub);
-    if (fs.existsSync(p)) fs.writeFileSync(p, setPackageVersion(fs.readFileSync(p, 'utf8'), next));
+    if (!fs.existsSync(p)) continue;
+    const rewrite = sub.endsWith('Chart.yaml') ? setChartAppVersion : setPackageVersion;
+    fs.writeFileSync(p, rewrite(fs.readFileSync(p, 'utf8'), next));
   }
   fs.writeFileSync(path.join(root, 'VERSION'), `${next}\n`);
   fs.writeFileSync(changelogPath, insertSection(changelog, section));

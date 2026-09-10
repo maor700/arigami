@@ -365,6 +365,101 @@ profile() {
   esac
 }
 
+# ---- upgrade -----------------------------------------------------------------
+# `host upgrade` — the CLI side of what the cockpit's Settings > Version button
+# does, so an install can be updated over ssh or from cron without a browser.
+#
+# It deliberately does NOT reimplement the upgrade (fetch → ff-only pull →
+# install → build → restart). That sequence lives in server/host-control.ts,
+# knows how to drain busy sessions, and refuses on a dirty checkout; a second
+# copy of it in shell would drift and would happily clobber uncommitted work.
+# So this asks the RUNNING host to do it, which means the host must be up and
+# an admin ARIGAMI_TOKEN exported — the same contract as `host ext` / `profile`.
+#
+# The other shell path is `install.sh update`: same git steps, but it restarts
+# the host flat rather than draining it, and works with the host DOWN. Use that
+# one for a dead host; use this one on a live host with sessions running.
+#
+# `--check` only reports (no token needed for the read), and exits 1 when
+# there is nothing to update, so cron can do: host upgrade --check && host upgrade
+# Two tiny readers instead of a JSON parser (curl+sed is all bin/host may
+# assume). grep -o yields matches in document order, so `head -1` is the FIRST
+# occurrence — which matters: /__api/version carries "version" twice, once at
+# the top level and once inside "available", and a greedy sed would hand back
+# the wrong one and report an up-to-date host as needing an update.
+json_str() { # json_str <key> — first "key":"value"
+  grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/^[^:]*:[[:space:]]*"//;s/"$//'
+}
+json_bool() { # json_bool <key> — first "key":true|false
+  grep -o "\"$1\"[[:space:]]*:[[:space:]]*\(true\|false\)" | head -1 | sed 's/^[^:]*:[[:space:]]*//'
+}
+
+upgrade_cmd() {
+  check_only=0
+  when=confirm
+  for a in "$@"; do
+    case "$a" in
+      --check) check_only=1 ;;
+      --now) when=now ;;
+      --idle) when=idle ;;
+      -h|--help) echo "usage: host upgrade [--check] [--now|--idle]"; return 0 ;;
+      *) rl "unknown flag: $a"; echo "usage: host upgrade [--check] [--now|--idle]"; return 2 ;;
+    esac
+  done
+
+  if ! health; then
+    rl "host is not running"
+    dl "  this asks the RUNNING host to upgrade itself (it drains busy sessions first)."
+    dl "  with the host down, use the installer's own path instead: bash $ROOT/install.sh update"
+    return 1
+  fi
+
+  # ?refresh=1 makes the host fetch before answering (rate-limited its side).
+  v="$(curl -fsS -m 60 "$URL/__api/version?refresh=1" 2>/dev/null || true)"
+  [ -n "$v" ] || { rl "could not read $URL/__api/version"; return 1; }
+  cur="$(printf '%s' "$v" | json_str version)"
+  avail="$(printf '%s' "$v" | sed -n 's/.*"available":{\([^}]*\).*/\1/p' | json_str version)"
+  has="$(printf '%s' "$v" | json_bool updateAvailable)"
+
+  if [ -z "$cur" ]; then
+    rl "could not read a version out of $URL/__api/version"
+    dl "  the host answered, but not with the shape this expects — check: curl -s $URL/__api/version"
+    return 1
+  fi
+  echo "  current:   $cur"
+  echo "  available: ${avail:-$cur}"
+  if [ "$has" != "true" ]; then
+    gl "  up to date"
+    [ "$check_only" = 1 ] && return 1
+    return 0
+  fi
+  yl "  an update is available"
+  [ "$check_only" = 1 ] && return 0
+
+  if [ -z "${ARIGAMI_TOKEN:-}" ]; then
+    rl "no ARIGAMI_TOKEN — the upgrade endpoint is admin-only"
+    dl "  export ARIGAMI_TOKEN=<admin api token> and re-run, or press Update in Settings > Version"
+    return 1
+  fi
+
+  # X-Arigami-Confirm is required by every POST under /__api/host (server/api.ts).
+  out="$(curl -fsS -m 900 -X POST "$URL/__api/host/upgrade?when=$when" \
+    -H "Authorization: Bearer $ARIGAMI_TOKEN" \
+    -H 'X-Arigami-Confirm: yes' \
+    -H 'content-type: application/json' --data '{}' 2>&1)" || {
+      rl "upgrade refused"
+      # the body carries the reason: dirty:[…], allowUpgrade=false, or a channel that cannot self-upgrade
+      printf '%s\n' "$out" | head -5
+      return 1
+    }
+  printf '%s\n' "$out" | head -3
+  case "$when" in
+    confirm) yl "  pulled and built — confirm the restart in the cockpit, or: bin/host restart" ;;
+    *) gl "  upgrading; the host restarts itself ($when)" ;;
+  esac
+  dl "  progress: bin/host logs -f · $DIR/logs/upgrade.log"
+}
+
 # EXT — extensions (server/extensions.ts). Same shape as `profile`: when the
 # host is up and an admin ARIGAMI_TOKEN is exported the commands go through
 # REST (so the LIVE process reloads); with the host down they run in-process
@@ -625,8 +720,9 @@ case "${1:-status}" in
   import) shift; import_cmd "$@" ;;
   install) install ;;
   uninstall) uninstall ;;
+  upgrade) shift; upgrade_cmd "$@" ;;
   *)
-    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|user list|user remove <id|email>|profile list|apply <src>|ext list|add <src>|remove <name>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|upgrade [--check]|user list|user remove <id|email>|profile list|apply <src>|ext list|add <src>|remove <name>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
     exit 1
     ;;
 esac

@@ -3187,6 +3187,14 @@ export async function handle(
       const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
       return json(res, cu.status());
     }
+    // The self-update watcher's view: what it last saw upstream, which channel
+    // this install updates through, and whether it is allowed to apply it
+    // (lib/self-update.ts). Read-only — applying still goes through
+    // POST /__api/host/upgrade, with its confirm header and admin check.
+    if (p === '/__api/host/self-update' && m === 'GET') {
+      const su = await (await import('./lib/self-update.js')).selfUpdater();
+      return json(res, u.searchParams.get('check') === '1' ? await su.check() : su.status());
+    }
     // ---- B4-full: export / import (server/backup.ts). Admin only; GET export
     // is a plain download (cookie or API token) so `curl -OJ` works too.
     if (p === '/__api/host/export' && m === 'GET') {

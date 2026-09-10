@@ -451,6 +451,12 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/claude-update.js')
     .then((m: any) => m.startClaudeUpdater())
     .catch((e: any) => console.error('[host] claude updater failed to start:', e?.message));
+  // The same idea for Arigami itself: notice a new release without anyone
+  // opening Settings. Checks every few hours (cfg.host.updateCheck), announces
+  // once per version, and only applies it when cfg.host.autoUpgrade is on.
+  import('./lib/self-update.js')
+    .then((m: any) => m.startSelfUpdater())
+    .catch((e: any) => console.error('[host] self updater failed to start:', e?.message));
   // LEARN1: autonomous memory learning — triages the pending queue when enough
   // proposals piled up / 48h passed (cfg.memory.learning), never under memory pressure.
   import('./memory-learning.js')
