@@ -328,3 +328,17 @@ checklist for the first one that does.
 
 §2 is real, tested end to end in a real browser, and on by default for every
 non-Linux host.
+
+---
+
+## 5. A trap in the test suite, if you add tests here
+
+A dozen `*-web.test.js` files replace `globalThis.fetch` and
+`globalThis.WebSocket` with inert stubs in `beforeAll` and never put them back,
+and bun runs every test file in **one process**. Any test that needs a real
+socket or a real HTTP client therefore cannot use the globals: the new host
+tests here go through `node:http` and the `ws` package's own client instead.
+
+This is worth knowing because the symptom is maximally misleading — the tests
+pass alone and hang in a full run, which reads exactly like the connection bug
+they exist to catch.
