@@ -89,6 +89,18 @@ const dirs: string[] = [];
 let vncPort = 0;
 let display = '';
 
+// One host per DRIVER, booted lazily and reused. Booting a fresh
+// `bun server/index.ts` per test cost ~3 boots in this file alone, and in a
+// full-suite run (which is already spawning dozens of processes) the third one
+// did not come up inside the test's budget. Nothing here mutates a host, so
+// sharing is safe and the file went from 3 boots to 2.
+const hosts = new Map<string, Promise<string>>();
+function host(key: string, env: Record<string, string>): Promise<string> {
+  let p = hosts.get(key);
+  if (!p) { p = startHost(env); hosts.set(key, p); }
+  return p;
+}
+
 /** Boot an isolated host with the given screen env; returns its base URL. */
 async function startHost(env: Record<string, string>): Promise<string> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wrpv-host-'));
@@ -125,7 +137,7 @@ async function startHost(env: Record<string, string>): Promise<string> {
   h.stderr!.on('data', (d) => { log += d; });
   const base = `http://127.0.0.1:${port}`;
   const t0 = Date.now();
-  while (Date.now() - t0 < 30000) {
+  while (Date.now() - t0 < 60000) {
     try { if ((await httpJson(base + '/__api/config')).status === 200) return base; } catch {}
     await sleep(100);
   }
@@ -163,7 +175,7 @@ beforeAll(async () => {
   for (let i = 0; i < 60 && !fs.existsSync(`/tmp/.X11-unix/X${n}`); i++) await sleep(100);
   procs.push(spawn('x11vnc', ['-display', display, '-rfbport', String(vncPort), '-localhost', '-shared', '-forever', '-noxdamage', '-quiet', '-nopw'], { stdio: 'ignore' }));
   if (!(await waitTcp(vncPort))) throw new Error('x11vnc did not come up');
-}, 60000);
+}, 90000);
 
 afterAll(() => {
   for (const p of procs) { try { p.kill('SIGKILL'); } catch {} }
@@ -171,7 +183,7 @@ afterAll(() => {
 });
 
 test.skipIf(!HAVE_VNC)('winvnc host: declares an rfb transport AND its /__vnc bridge really reaches the VNC service', async () => {
-  const base = await startHost({
+  const base = await host('winvnc', {
     ARIGAMI_SCREEN_DRIVER: 'winvnc',
     ARIGAMI_VNC_HOST: '127.0.0.1',
     ARIGAMI_VNC_PORT: String(vncPort),
@@ -185,26 +197,26 @@ test.skipIf(!HAVE_VNC)('winvnc host: declares an rfb transport AND its /__vnc br
   // so this is the whole client story for a Windows machine.
   const banner = await rfbBanner(base);
   expect(banner).toMatch(/^RFB \d{3}\.\d{3}/);
-}, 60000);
+}, 90000);
 
 test.skipIf(!HAVE_VNC)('winvnc host: a ?session= is ignored rather than sent down the Xvfb-only path', async () => {
   // bridgeToVnc's per-session branch calls ensureDesktop(), which is Xvfb-only
   // and rejects on Windows. The driver passes null on purpose; if that ever
   // regressed, this socket would close with no data instead of a banner.
-  const base = await startHost({
+  const base = await host('winvnc', {
     ARIGAMI_SCREEN_DRIVER: 'winvnc',
     ARIGAMI_VNC_HOST: '127.0.0.1',
     ARIGAMI_VNC_PORT: String(vncPort),
   });
   const banner = await rfbBanner(base, '?session=no-such-session');
   expect(banner).toMatch(/^RFB \d{3}\.\d{3}/);
-}, 60000);
+}, 90000);
 
 test.skipIf(!HAVE_VNC)('x11 host: the historical path still bridges after /__vnc was switched to the driver', async () => {
   // The regression guard for the platform everyone actually runs on: with no
   // session, screenTarget() falls back to the configured global desktop, which
   // here is the x11vnc this test spawned.
-  const base = await startHost({
+  const base = await host('x11', {
     ARIGAMI_SCREEN_DRIVER: 'x11',
     ARIGAMI_VNC_HOST: '127.0.0.1',
     ARIGAMI_VNC_PORT: String(vncPort),
@@ -214,4 +226,4 @@ test.skipIf(!HAVE_VNC)('x11 host: the historical path still bridges after /__vnc
   expect(st.viewer.transport).toBe('rfb');
   const banner = await rfbBanner(base);
   expect(banner).toMatch(/^RFB \d{3}\.\d{3}/);
-}, 60000);
+}, 90000);
