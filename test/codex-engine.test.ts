@@ -219,7 +219,7 @@ test('a turn.failed shaped like a 429 gets a plain-language quota note, not just
   expect(r.ok).toBe(true);
   const { events } = r.out[0];
   expect(kinds(events)).toEqual(['error', 'system']);
-  expect(events[1].text).toContain('מכסה');
+  expect(events[1].text).toContain('quota');
   expect(events[1].text).toContain('resets in 2 hours');
 });
 

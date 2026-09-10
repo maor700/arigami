@@ -1,4 +1,4 @@
-// A2 — an agent's routine ("שגרה"): the cron jobs whose isolated runs are born
+// A2 — an agent's routine: the cron jobs whose isolated runs are born
 // from the agent (cronjob({agent}) / POST /__api/triggers {agent}) and the
 // listeners its sessions armed. Presentational list (RoutineList — pure
 // props, SSR-testable) + container (RoutinePanel — GET /__api/agents/:slug/routine,

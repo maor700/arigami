@@ -68,9 +68,11 @@ a select, a date) and the *result* is a prompt. The pattern, end to end:
 4. `setStatus({badge:'⏳'})` on send, and flip it from `subscribe(['chat'], …)` when a
    result arrives.
 
-Keep the page RTL-aware (`<html lang="he" dir="rtl">` when the human works in Hebrew)
-and use `color-scheme: light dark` with `Canvas`/`CanvasText` so it matches the
-cockpit's theme in both modes — the template does both.
+Keep the page RTL-aware: write it in English by default with `<html lang="en" dir="auto">`,
+so direction follows whatever language the page's text ends up in — and put the human's
+own UI text in the language they use in the chat (or picked in Settings → Appearance →
+Language), never hardcode one. Use `color-scheme: light dark` with `Canvas`/`CanvasText`
+so it matches the cockpit's theme in both modes — the template does all of this.
 
 ## Errors
 

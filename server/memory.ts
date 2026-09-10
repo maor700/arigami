@@ -11,7 +11,7 @@
 //   2. Unbounded on-demand search (FTS5 via bun:sqlite) over those files plus
 //      journal/*.md and episodes/*.md — zero token cost until actually queried.
 //
-// Gate (spec "סגור-תחילה" — close-first): every write to USER.md/MEMORY.md/journal is
+// Gate (spec "close-first"): every write to USER.md/MEMORY.md/journal is
 // sanitized (credential/prompt-injection/exfiltration heuristics), deduped
 // against existing lines, capped in size, and logged append-only with a full
 // before/after snapshot (memory/.log.jsonl) so any change is undoable.
@@ -245,12 +245,13 @@ let _db: Database | null = null;
 
 // M1b fix: unicode61 (the FTS5 default) tokenizes on word boundaries, so it
 // only ever matches whole tokens. Hebrew attaches single-letter prefixes
-// (ה/ו/ב/ל/מ/ש/כ — "the/and/in/to/from/that/as") directly onto the next word
-// with no boundary ("הסודי" is ONE token) — a query for "סודי" can never match
-// "הסודי" that way, and neither would naive prefix (`term*`) search, since the
-// extra letter is prepended, not appended. `trigram` indexes every 3-character
-// substring instead of whole tokens, so "סודי" matches inside "הסודי" (and
-// inside "וסודי", "בסודי", …) the same way it would for any other substring —
+// (he/vav/bet/lamed/mem/shin/kaf — "the/and/in/to/from/that/as") directly onto
+// the next word with no boundary ("ha-sodi", the-secret, is ONE token) — a
+// query for the bare word "sodi" can never match "ha-sodi" that way, and neither
+// would naive prefix (`term*`) search, since the extra letter is prepended, not
+// appended. `trigram` indexes every 3-character substring instead of whole
+// tokens, so the bare word matches inside its prefixed forms (the-, and-, in-,
+// …) the same way it would for any other substring —
 // no hand-maintained list of Hebrew prefix letters needed, and it degrades
 // gracefully for English/mixed content too. Trade-off: queries under 3 chars
 // can't match anything (inherent to trigram, not worth working around here).
@@ -762,7 +763,7 @@ export function listMemory(agent?: string | null): MemoryFileSummary[] {
   };
   const slug = normalizeAgent(agent);
   if (slug) {
-    // One agent's namespace only (the Agent page → "זיכרון" (memory) tab).
+    // One agent's namespace only (the Agent page → Memory tab).
     for (const rel of agentRelPaths(slug)) {
       const full = resolveRel(rel);
       const content = readFileSafe(full);

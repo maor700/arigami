@@ -57,7 +57,7 @@
 //     ever hit a real quota wall (reproducing one means burning a live
 //     account's usage limit). It pattern-matches the one wrapper shape that IS
 //     verified live (error-noauth's "unexpected status <code> ..."), nothing
-//     more. See ENGINES.md limit 6ב.
+//     more. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
 import path from 'node:path';

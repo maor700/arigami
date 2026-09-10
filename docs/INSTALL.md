@@ -150,7 +150,7 @@ my-bundle/
 ├── memory-seed/USER.md   # optional
 ├── memory-seed/MEMORY.md # optional
 ├── cron.json             # [{name, prompt, schedule:{kind:"cron|interval|at", value}, enabled?, agent?}]
-└── agents/<slug>/        # A4, optional — agents ("צוות" / team) the bundle ships
+└── agents/<slug>/        # A4, optional — agents (Team) the bundle ships
     ├── agent.json        #   {name, emoji?, color?, model?, skills?[], tools?[], domains?[], budget?, autoApprove?[]} — no secrets
     ├── persona.md        #   ≤ ~20 lines "who you are + limits"
     └── assets/           #   brand/style references (optional)

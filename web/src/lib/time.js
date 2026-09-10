@@ -1,6 +1,6 @@
 import { t, currentLang } from './i18n.js';
 
-// A number with its unit: '12m' in English, '12 דק' in Hebrew (B4 — the gap is a locale string).
+// A number with its unit, e.g. '12m' — the unit and the gap before it are locale strings (B4), so other languages render their own.
 const nu = (n, unitKey) => `${n}${t('time.unitGap')}${t(unitKey)}`;
 
 // B22: absolute dates follow the UI language, not the browser's (en-US dates

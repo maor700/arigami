@@ -929,13 +929,13 @@ const TOOLS = [
       sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
     }),
   },
-  // ---- A1 agents ("צוות" (team)) — persistent identities sessions are born from ----
+  // ---- A1 agents (the Team section) — persistent identities sessions are born from ----
   {
     name: 'create_agent',
     description:
       'Create a persistent AGENT (who): name, emoji, persona (≤~20 lines "who you are + limits", goes into the system prompt of every session born from it), ' +
       'default model, referenced SHARED skills (names from GET /__api/skills — agents have no private skills), tool/domain allowlists and a daily token budget. ' +
-      'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under "צוות"; sessions born from it (create_session({agent})) carry its emoji/color. ' +
+      'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under Team; sessions born from it (create_session({agent})) carry its emoji/color. ' +
       'confirm (default true): post an editable Agent card in THIS chat — the human confirms/cancels there and you get a message with the decision; nothing is written before that. ' +
       'confirm:false creates it immediately (only when the human already spelled out every field). Returns the card payload {cardId, state, agent?}. ' +
       'KEEP IT SIMPLE: ask the human only for name, emoji and a few persona lines; leave model/budget/tools/domains/skills unset unless they asked — the card hides them under "advanced settings" and everything has a sensible default.',
@@ -960,7 +960,7 @@ const TOOLS = [
   },
   {
     name: 'list_agents',
-    description: 'List the agents ("צוות") on this host: slug, name, emoji, color, model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
+    description: 'List the agents (the Team section) on this host: slug, name, emoji, color, model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
     inputSchema: obj({}),
     run: async () => (await api('GET', '/__api/agents')).agents,
   },

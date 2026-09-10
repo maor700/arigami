@@ -553,15 +553,15 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   );
 }
 
-// A1 — the "צוות" (team) section: one row per agent, BELOW folders/free
+// A1 — the Team section: one row per agent, BELOW folders/free
 // sessions and above the archived group. Status: working when any live session
 // born from the agent is mid-turn, else its WORK-session count / idle.
 // A2: an idle agent with an enabled cron job shows its NEXT run instead
 // ("⏰ in 3h"), read from the store's triggers (`agent` + `nextRunAt`).
-// UX1: a row is a door to the agent SURFACE (#/agents/<slug>), whose home ("בית") tab is
+// UX1: a row is a door to the agent SURFACE (#/agents/<slug>), whose Home tab is
 // the DM chat — the home chat is not a session row anymore, so "click an agent"
 // and "open a session" stopped looking like the same act. ⋯ still offers both
-// doors explicitly (בית / the persona page).
+// doors explicitly (Home / the persona page).
 export { nextCronFor };
 export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, menuFor, setMenuFor, waitingByAgent }) {
   const t = useT();
@@ -1383,7 +1383,7 @@ export default function Rail({
   const [mode, setMode] = useState('flat'); // 'flat' | 'grouped'
   const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(true); // A1: the team ("צוות") section
+  const [teamOpen, setTeamOpen] = useState(true); // A1: the Team section
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
   const [screenAvailable, setScreenAvailable] = useState(false);
   // Global (not per-session) screen-share — poll availability so the icon
@@ -1465,7 +1465,7 @@ export default function Rail({
   // selected thing is the AGENT — keeping the session row highlighted as well
   // lit up two rows at once and read as "both are open".
   const selectedRow = agentOpen ? null : selectedId;
-  // UX1: an agent's home chat is the home ("בית") tab of its agent surface, not a row
+  // UX1: an agent's home chat is the Home tab of its agent surface, not a row
   // here. It stays in the API, resumable and counted in the agent's ledger — it
   // just stops competing with the work sessions for the same list. Everything
   // below (search, folders, drag, archived) works off the filtered view; the
@@ -2098,7 +2098,7 @@ export default function Rail({
           </div>
         )}
 
-        {/* A1: the team ("צוות") — below folders/free sessions, above archived */}
+        {/* A1: the Team section — below folders/free sessions, above archived */}
         {!q && (
           <TeamSection
             agents={agents}

@@ -3,7 +3,7 @@
 // Every automatic action the supervisor takes (and every automatic recovery
 // claude.js already did on its own — account switch, auth refresh, model
 // downgrade) writes one line here, next to the chat receipt in the affected
-// session. Settings → מארח (Host) → בריאות (Health) reads the last 24h of it, so "what did the
+// session. Settings → Host → Health reads the last 24h of it, so "what did the
 // host do while I was asleep" is answerable without grepping logs.
 //
 // Append-only JSONL, one bounded read (the tail we ever parse), and a size cap

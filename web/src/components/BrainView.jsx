@@ -2,7 +2,7 @@
 // memory.ts's search/capped-docs/journal/episodes/log/pending (M1), the cron
 // trigger list (M2, reused via Launcher.jsx's exported CronSubPanel — not
 // duplicated), and the skill-proposals queue (M3, reused via SkillsView.jsx's
-// exported ProposalsPane). "שאל את המוח" (ask the brain, M4.2) finds-or-creates the singleton
+// exported ProposalsPane). "Ask the brain" (M4.2) finds-or-creates the singleton
 // brain session and jumps to it as an ordinary session — no embedded chat
 // engine here, SessionView already owns that.
 import { useEffect, useState } from 'react';
@@ -371,7 +371,7 @@ function LogPane({ onChanged }) {
 }
 
 /* ---------- pending facts: LEARN1 — the raw approve/reject list moved to
-   Settings › General ("כללי") › Memory ("זיכרון") (the manual-mode block of autonomous learning). The
+   Settings › General › Memory (the manual-mode block of autonomous learning). The
    header keeps a pending-count link there instead of a tab. ------------------ */
 
 /* ---------- memory tab: composes everything above --------------------------- */

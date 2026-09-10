@@ -3,7 +3,7 @@
 Six agents that behave like a small marketing team, plus the three shared skills they lean on.
 Everything is a **generic template**: the product is `<your-product>` (a placeholder), there are
 no accounts, no brand names and no repos. Apply it, then edit each agent's persona and connect
-the accounts you actually use (Settings → חיבורים (Connections) → "שייך ל:" (Assign to:) the agent).
+the accounts you actually use (Settings → Connections → "Assign to:" the agent).
 
 | agent | slug | role | default tools | domains |
 |---|---|---|---|---|
@@ -25,7 +25,7 @@ the accounts you actually use (Settings → חיבורים (Connections) → "ש
 
 ## How the team is meant to be used
 
-1. Apply the bundle. The six agents appear in the Rail under **צוות** (team); each has a home chat.
+1. Apply the bundle. The six agents appear in the Rail under **Team**; each has a home chat.
 2. Open a project folder (or any chat) and type `@awesome plan the launch of <your-product>` —
    from a project controller this spawns a child session born from awesome; from a normal chat
    it lands in awesome's home chat. `/team` lists who is busy. `/as mila write three subject
@@ -49,6 +49,6 @@ persona edits win) unless you pass `--force` (`{"force":true}` over REST). Asset
 ## Make it yours
 
 - Replace `<your-product>` in `memory-seed/MEMORY.md` and the personas with the real product.
-- Give Richi a Gmail (Settings → חיבורים (Connections) → שייך ל: (Assign to:) Richi) and Fibi the social accounts you use.
+- Give Richi a Gmail (Settings → Connections → Assign to: Richi) and Fibi the social accounts you use.
 - Tighten or loosen `tools` / `domains` / `budget` per agent — the host enforces them (A3). `publish` is what lets an agent deliver an artifact; a PUBLIC share link always asks the human first (A5).
 - Bundle format: `docs/INSTALL.md` §3; agents: `docs/AGENTS.md` → A4.

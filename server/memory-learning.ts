@@ -9,7 +9,7 @@
 //
 // Every run is persisted to $ARIGAMI_DIR/memory/learning-runs.jsonl (append-only:
 // one line per run, then `patch` lines for apply/undo; folded on read) with the
-// write-log seq of each applied line so "בטל" (undo) can revert exactly that line.
+// write-log seq of each applied line so Undo can revert exactly that line.
 //
 // Modes (cfg.memory.learning.mode): `auto` — the scheduler runs when ≥minBatch
 // proposals accumulated OR maxAgeHours passed since the last run, applies, and

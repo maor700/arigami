@@ -1,9 +1,9 @@
 # Repo realignment: local master vs. origin/master
 
 **Status (measured 2026-09-08 on /opt/arigami):** the local `master` and `origin/master` have no
-common base (`git merge-base` is empty). So `git pull --ff-only` — the flow behind the "עדכן"
-(Update) button in Settings — always fails, and a plain `git push` is rejected too. The "גרסה"
-(Version) screen shows this as "no common base" and disables updates until realignment happens.
+common base (`git merge-base` is empty). So `git pull --ff-only` — the flow behind the Update
+button in Settings — always fails, and a plain `git push` is rejected too. The Version
+screen shows this as "no common base" and disables updates until realignment happens.
 
 ## What happened
 
@@ -92,7 +92,7 @@ Before starting, regardless of option:
 2. Merge the pending branches (dispatch/*) into local master first, so the rebase only has to
    happen once.
 3. After realignment: `bun run release minor` → tag `v0.2.0` → `git push --follow-tags` — the
-   first tag cut from the realigned repo, and from that point the "עדכן" (Update) button in
+   first tag cut from the realigned repo, and from that point the Update button in
    Settings works (ff-only against origin).
 
 **Do not execute this automatically.** This is a decision for the instance owner (a choice card
@@ -140,4 +140,4 @@ done:
 
 **What's left:** the push to origin hasn't happened yet (waiting on explicit approval). After
 that: `bun run release minor` → `v0.2.0` → `git push --follow-tags`, and from that moment the
-"עדכן" (Update) button in Settings works ff-only against origin.
+Update button in Settings works ff-only against origin.

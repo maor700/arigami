@@ -212,7 +212,7 @@ function Cockpit() {
   // ⌘1–9, ⌘⇧↑/↓ prev-next, and the quick switcher all follow the visual d&d
   // order — new/unordered sessions sink to the end, keeping insertion order.
   // UX1: an agent's home chat is not a row in that list (it is the home
-  // ("בית") tab of the agent surface), so it is not part of this order either
+  // tab of the agent surface), so it is not part of this order either
   // — and, crucially, is never what the auto-selection below lands on.
   const active = sessions
     .filter((s) => !s.archived && !s.metadata?.agentHome)
@@ -599,7 +599,7 @@ function Cockpit() {
     return () => window.removeEventListener('host:select-session', onJump);
   }, [sessions]);
 
-  // UX1: the home chat is the agent surface's home ("בית") tab, not a session page. Any
+  // UX1: the home chat is the agent surface's Home tab, not a session page. Any
   // route that lands on one (a deep link, the quick switcher, a push, an older
   // bookmark) is bounced to the surface — the transcript is the same, the frame
   // is the one that says "this is a DM with the agent, not a job".
@@ -614,7 +614,7 @@ function Cockpit() {
   }, [selectedId, sessions]);
 
   // A4: open an agent page from anywhere (the /team panel).
-  // UX1: `tab` picks the surface's tab — a "פתח בית" (open home) receipt opens the DM.
+  // UX1: `tab` picks the surface's tab — an "Open home" receipt opens the DM.
   useEffect(() => {
     const onOpen = (e) => {
       const slug = e.detail?.slug;
@@ -767,7 +767,7 @@ function Cockpit() {
         onOpenSession={(id) => { setAgentOpen(null); setSelectedId(id); }}
         // UX2: create mode's POST succeeded — flip the surface into normal
         // (existing-agent) mode for the new slug, still on the persona
-        // ("פרסונה") tab (its own "פתח בית" (open home) button is what lazily mints the home chat).
+        // tab (its own "Open home" button is what lazily mints the home chat).
         onCreated={(a) => { setAgentOpen(a.slug); setAgentTab('persona'); setAgentDraftName(''); }}
       />
     );

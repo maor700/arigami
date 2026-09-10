@@ -24,7 +24,7 @@ export function parseHash(hash) {
     case 'skills': return { view: 'skills' };
     case 'brain': return { view: 'brain' };
     // UX1: #/agents/<slug>[/<tab>] — the agent surface is deep-linkable per tab
-    // (a receipt's "open home" lands straight on the home ("בית") tab).
+    // (a receipt's "open home" lands straight on the Home tab).
     case 'agents': return seg[1] ? { view: 'agent', slug: decodeURIComponent(seg[1]), tab: seg[2] ? decodeURIComponent(seg[2]) : '' } : { view: 'home' };
     case 'setup': return { view: 'setup' };
     case 'wizard': return { view: 'home', wizard: true };

@@ -11,7 +11,7 @@ import type { CronTrigger } from './triggers.js';
 import { cfg, updateBrainConfig } from './lib/config.js';
 import type { BrainConfig } from './lib/config.js';
 
-export const BRAIN_TITLE = 'המוח השני';
+export const BRAIN_TITLE = 'The Second Brain';
 export const HEARTBEAT_TRIGGER_NAME = 'Brain heartbeat';
 
 // Sent as the brain session's very first message (same mechanism as a skill's
@@ -31,7 +31,8 @@ export const BRAIN_SYSTEM_DIRECTIVE =
   'new session with create_session instead of trying to do it all here yourself. When you learn a new fact worth ' +
   'remembering long-term (a preference, a decision, standing information about the owner/home/projects) — save it ' +
   'immediately with memory_write. ' +
-  'Answer briefly and to the point, in Hebrew unless the owner writes in English.';
+  'Answer briefly and to the point, in the owner\'s own language — match whatever language they write ' +
+  'to you in, or default to the cockpit\'s configured UI language if this is the very first message.';
 
 // Appended to every heartbeat fire. Unlike an 'isolated' cron run, fireCron's
 // 'existing' branch (server/triggers.ts) doesn't auto-append

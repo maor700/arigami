@@ -162,7 +162,7 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   const rows = teamRows(agents, sessions);
-  // UX1: both doors lead to the agent surface — home ("בית") is a tab of it, not a session.
+  // UX1: both doors lead to the agent surface — Home is a tab of it, not a session.
   const openHome = (a) => {
     window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug, tab: 'home' } }));
     onClose();

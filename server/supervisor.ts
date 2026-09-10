@@ -484,7 +484,7 @@ export function shouldRestoreModel(restoreAt: string | null | undefined, now: nu
   return Number.isFinite(t) && now >= t;
 }
 
-// ---- the "ממתין לך" (waiting for you) queue (§3) ----------------------------------------------
+// ---- the "waiting for you" queue (§3) ----------------------------------------------
 // One row per thing that needs the human, each saying WHAT is blocked, SINCE
 // when, and the ONE action that unblocks it. Labels are i18n keys, not text —
 // the cockpit renders them in the user's language.

@@ -1014,7 +1014,7 @@ function parseResetAt(text) {
 }
 
 // RES1 — one line in $ARIGAMI_DIR/incidents.jsonl per automatic recovery, so
-// Settings → "מארח" (Host) → "בריאות" (Health) can answer "what did the host do while I slept".
+// Settings → Host → Health can answer "what did the host do while I slept".
 // Never allowed to fail the recovery it is describing.
 function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
   try {
@@ -1993,7 +1993,7 @@ function memoryBootstrapPrefix(p) {
   return URL_GUIDANCE + identity + persona + block;
 }
 
-// SIMPLE1: the "פשוט" chat view. While a session is in Simple mode the human
+// SIMPLE1: the "Simple" chat view. While a session is in Simple mode the human
 // only sees the assistant's prose (tool activity is folded behind a counter),
 // so the model has to actually answer like a person: a line or two. USER.md
 // carries the same preference globally; this is the hard per-session rule.
@@ -2001,7 +2001,7 @@ function memoryBootstrapPrefix(p) {
 // flipping the toggle takes effect on the next message without a restart.
 export const SIMPLE_MODE_REMINDER =
   '<system-reminder>\n' +
-  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" (פשוט) view, where only ' +
+  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" view, where only ' +
   'your prose reaches them — tool calls, edits, bash output and thinking are folded away behind a counter. ' +
   'Hard rule for what you write to the human in this chat: at most two sentences by default — the outcome and the one ' +
   'thing that matters. Details only when asked. No headers, tables, bullet lists, code dumps or step-by-step narration ' +

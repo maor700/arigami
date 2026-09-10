@@ -1,8 +1,8 @@
 // LADDER1 — "running below its configured model" badge.
 //
 // Shown on the rail row and in the chat header while the supervisor's model
-// ladder has a session on a weaker rung (RES1), e.g. "רץ על הייקו · מכסת Fable
-// מתאפסת ב-18:50" (running on Haiku · Fable quota resets at 18:50). The state is derived ONCE on the server
+// ladder has a session on a weaker rung (RES1), e.g. "running on Haiku · Fable
+// quota resets at 18:50" (rendered in the cockpit's UI language). The state is derived ONCE on the server
 // (session.claude.ladder, state.toWireSession → supervisor.ladderBadge) so both
 // places agree, and it is null on the top rung — the badge simply disappears on
 // the climb back. Quiet by design: no toast, no pulse; the chat gets one system
@@ -11,8 +11,6 @@ import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faStairs } from '@fortawesome/free-solid-svg-icons';
 
-const FAMILY_HE = { haiku: 'הייקו', sonnet: 'סונט', opus: 'אופוס', fable: 'פייבל', mythos: 'מיתוס' };
-
 /** 'claude-haiku-4-5-20251001' | 'haiku' → 'haiku' (the model family, lower-case). */
 export function modelFamily(v) {
   const s = String(v || '').toLowerCase();
@@ -20,10 +18,16 @@ export function modelFamily(v) {
   return s.replace(/\[.*?\]/g, '').trim() || 'default';
 }
 
-/** Hebrew name for the RUNNING model (the badge reads as a sentence); English for the configured one. */
-export function runningName(v, lang) {
+/**
+ * Localized name for the RUNNING model (the badge reads as a sentence, so the
+ * name follows the UI language via the `rail.model.*` locale keys); an unknown
+ * family falls back to its capitalized id. The configured model stays English.
+ */
+export function runningName(v, t) {
   const f = modelFamily(v);
-  if (lang === 'he' && FAMILY_HE[f]) return FAMILY_HE[f];
+  const key = `rail.model.${f}`;
+  const s = typeof t === 'function' ? t(key) : key;
+  if (s && s !== key) return s;
   return f.charAt(0).toUpperCase() + f.slice(1);
 }
 export function configuredName(v) {
@@ -43,9 +47,9 @@ export function resetTime(iso) {
 }
 
 /** The badge text, split so the rail can show only the first half on narrow rows. */
-export function ladderText(ladder, t, lang) {
+export function ladderText(ladder, t) {
   if (!ladder) return null;
-  const running = t('rail.ladderRunningOn', { model: runningName(ladder.running, lang) });
+  const running = t('rail.ladderRunningOn', { model: runningName(ladder.running, t) });
   const time = resetTime(ladder.resetAt);
   const resets = time ? t('rail.ladderResetsAt', { model: configuredName(ladder.configured), time }) : '';
   return { running, resets, full: resets ? `${running} · ${resets}` : running };
@@ -60,8 +64,7 @@ export default function LadderBadge({ session, compact = false, className = '' }
   const t = useT();
   const ladder = session?.claude?.ladder;
   if (!ladder) return null;
-  const lang = typeof document !== 'undefined' ? document.documentElement.lang || 'he' : 'he';
-  const txt = ladderText(ladder, t, lang);
+  const txt = ladderText(ladder, t);
   const title = [txt.full, t('rail.ladderTitle', { model: configuredName(ladder.configured) }), ladder.compacted ? t('rail.ladderCompacted') : '']
     .filter(Boolean)
     .join(' · ');
@@ -72,7 +75,7 @@ export default function LadderBadge({ session, compact = false, className = '' }
       className={`inline-flex h-[15px] shrink-0 items-center gap-1 rounded-full border border-[#b8860b]/50 bg-[#b8860b]/15 px-1.5 font-mono text-[11px] md:text-[9px] leading-none text-[#d9a521] ${className}`}
     >
       <Icon icon={faStairs} />
-      <span className="whitespace-nowrap">{compact ? runningName(ladder.running, lang) : txt.full}</span>
+      <span className="whitespace-nowrap">{compact ? runningName(ladder.running, t) : txt.full}</span>
     </span>
   );
 }

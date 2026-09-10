@@ -48,10 +48,11 @@ runs sandboxed and **cannot** call `/__api`; everything goes through `window.ari
 ## 1. Clarify — at most ONE question
 
 Read the request, pick the contribution kind(s) from the table, and ask **one**
-question only if you genuinely cannot start without the answer. Good single questions:
+question only if you genuinely cannot start without the answer. Good single questions
+(ask in the human's own language — these are just illustrative in English):
 
-> "טאב עם טופס שמחזיר פרומפט לצ'אט, או מאזין שמעיר אותי כשמשהו משתנה?"
-> "מה בדיוק לבדוק לפני merge — typecheck, טסטים, או שניהם?"
+> "A tab with a form that returns a prompt to the chat, or a listener that pings me when something changes?"
+> "What exactly should be checked before merge — typecheck, tests, or both?"
 
 Everything else you **decide yourself** and show — a name (`^[a-z0-9][a-z0-9-]*$`,
 derived from what they asked), the fields of a form, the poll interval. It is faster
@@ -183,7 +184,7 @@ The human will want changes. Edit the file, and:
   re-run `bin/host ext validate` first, every time.
 * a **new tool** or a **new doc/skill** — still needs a new session.
 
-Keep the loop tight: change one thing, show it, ask "ככה?" — not a list of options.
+Keep the loop tight: change one thing, show it, ask "Like this?" (in the human's own language) — not a list of options.
 
 ---
 
@@ -198,11 +199,13 @@ Keep the loop tight: change one thing, show it, ask "ככה?" — not a list of 
        commit -q -m "arigami: extension $NAME"
    ```
 
-2. **Tell them where it lives and what it costs**, in two sentences, no lists:
+2. **Tell them where it lives and what it costs**, in two sentences, no lists — in the
+   human's own language (illustrative English below):
 
-   > הקוד יושב אצלך ב-`~/.arigami/user/extensions/<name>/` — ריפו גיט שלך, נפרד לגמרי
-   > מהליבה, ונכנס לגיבוי. שים לב: קוד של הרחבה רץ בתוך ההוסט עם ההרשאות שלו (כמו סקיל
-   > עם Bash), וההרשאות שהיא מבקשת רשומות ב-`manifest.json`.
+   > Your code lives at `~/.arigami/user/extensions/<name>/` — your own git repo, entirely
+   > separate from the core, and it's included in backups. Note: extension code runs inside
+   > the host with its own permissions (like a skill with Bash), and the permissions it asks
+   > for are listed in `manifest.json`.
 
 3. If they want it off the machine: `git -C ~/.arigami/user remote add origin <url>` —
    or `gh repo create <name> --private --source ~/.arigami/user --push` if `gh` is

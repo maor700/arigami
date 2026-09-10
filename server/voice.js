@@ -4,7 +4,8 @@
 //
 // The browser records a short clip (push-to-talk) and posts it here; we never
 // expose the Groq key to the client. The router is intentionally model-driven
-// so Hebrew + Hebrew/English code-switching ("תעבור ל-session של ה-PR") works.
+// so Hebrew + Hebrew/English code-switching (a Hebrew sentence with "session" /
+// "PR" left in Latin script) works.
 import { cfg } from './lib/config.js';
 import { readToken } from './usage.js';
 
@@ -97,7 +98,7 @@ const COMMANDS = `
 - restore_session {sessionId} — unarchive a session
 - focus_input {} — focus the chat composer
 - set_theme {mode} — "light"|"dark"|"toggle"
-- set_terminal {sessionId?, theme?, dir?} — theme "light"|"dark"; dir "auto"|"ltr"|"rtl" (RTL/ימין-לשמאל = "rtl")
+- set_terminal {sessionId?, theme?, dir?} — theme "light"|"dark"; dir "auto"|"ltr"|"rtl" (right-to-left = "rtl")
 - open_settings {} — open settings
 - dismiss {} — close any open overlay (settings / new-session dialog / a dialog) and return to the current view
 - interrupt {sessionId?} — stop the working agent

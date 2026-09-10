@@ -100,9 +100,9 @@ over → Done, this happens automatically — no need to call it yourself.
 ### 1. Opening message
 Before touching the machine, post one line in chat:
 
-> עובד על המכונה: **<goal>** — <2–4 steps you expect> · אתקע רק ב-login/2FA/CAPTCHA/תשלום, ואז אבקש שתשתלט.
+> Working on the machine: **<goal>** — <2–4 steps you expect> · I'll only get stuck at login/2FA/CAPTCHA/payment, and then I'll ask you to take over.
 
-(English is fine if the human writes English; match their language.)
+(Write this in the human's own language — match whatever language they've been writing to you in, English included.)
 Set `set_progress` with those steps.
 
 ### 2. Capture only at the required moments
@@ -171,7 +171,7 @@ happened — trust it but verify:
 - If it timed out (`note` says so): stop, `report_to_master`/`request_action`
   with what's pending; do not keep the machine busy.
 
-Then post one line ("✓ מחובר, ממשיך ל-<next step>") and update `set_progress`.
+Then post one line ("✓ Connected, moving on to <next step>" — in the human's own language) and update `set_progress`.
 
 ### 5. Summary at the end
 Final chat message, short:
