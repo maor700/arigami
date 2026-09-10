@@ -1,0 +1,168 @@
+# The version bot. Every green master build asks "is there anything to
+# release?" and, if there is, mints the next version by itself — so the number
+# in the UI, in /__api/version and on the images tracks master without anyone
+# remembering to run `bun run release`.
+#
+# Why `workflow_run` and not `push`: a release tag is a promise, and we only
+# make it about a commit CI already went green on. This fires after the CI
+# workflow finishes on master and gives up unless it succeeded.
+#
+# The chain, and the one piece of GitHub trivia that makes it work:
+#   CI green on master
+#     → `bun scripts/release.ts auto` (bump from the conventional commits;
+#        exit 3 = nothing releasable, which is a skip, not a failure)
+#     → commit `chore(release): vX.Y.Z` + annotated tag, pushed with the
+#        automatic GITHUB_TOKEN
+#     → `gh workflow run release.yml --ref vX.Y.Z`
+#
+# That last line is not decoration. Anything GITHUB_TOKEN pushes is deliberately
+# barred from triggering further workflow runs (GitHub's recursion guard), so
+# the tag we just pushed does NOT fire release.yml's `on.push.tags` the way a
+# human's `git push --follow-tags` would. workflow_dispatch is the documented
+# exception to that rule, so we fire it explicitly. The same guard is what keeps
+# this bot from looping on its own commit — its push re-triggers nothing.
+#
+# `also_latest` rides along on the dispatch so the tag build re-publishes
+# `:latest` from the release commit. Without it `:latest` would keep the VERSION
+# of the commit *before* the bump, and a Docker install polling /__api/version
+# would compare itself against a stale number.
+name: Version bump
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Work out the bump and print it, change nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # the release commit + tag
+  actions: write # `gh workflow run release.yml`
+
+# One bot at a time. Two merges landing together must not both try to mint a
+# version; the second waits, then finds master has moved and steps aside.
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # A red (or cancelled) CI run releases nothing. Manual dispatch skips the check.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0 # full history + tags: the changelog and `git describe` need them
+
+      # No `bun install`: scripts/release.ts imports nothing but node: builtins,
+      # so installing would only add a minute and a way for a drifted lockfile
+      # to block a release that has nothing to do with dependencies.
+      - uses: oven-sh/setup-bun@v2
+
+      # The run was queued against one commit; by the time we got the runner,
+      # master may already be somewhere else. Releasing the newer tip under the
+      # older commit's green tick is exactly the promise we said we would not
+      # make — so step aside. Nothing is lost: `auto` releases everything since
+      # the last tag, so whichever run goes last still covers these commits.
+      - name: master must still be the commit CI passed on
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -eu
+          tip="$(git rev-parse HEAD)"
+          green="${{ github.event.workflow_run.head_sha }}"
+          if [ "$tip" != "$green" ]; then
+            echo "::notice::master moved on ($tip) since CI passed on $green — leaving it to that build's own run"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+
+      # Defence in depth. The bot's own push cannot re-trigger CI, so this
+      # should never fire — but a human who runs `bun run release` by hand and
+      # pushes it does trigger CI, and we must not bump their release again.
+      - name: not already a release commit
+        run: |
+          set -eu
+          subject="$(git log -1 --format=%s)"
+          case "$subject" in
+            'chore(release):'*)
+              echo "::notice::HEAD is already $subject — nothing for the bot to do"
+              echo "SKIP=1" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: git identity for the release commit
+        if: env.SKIP != '1'
+        run: |
+          git config user.name 'arigami-release-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: mint the next version
+        if: env.SKIP != '1'
+        id: bump
+        run: |
+          set -eu
+          args='auto'
+          if [ '${{ inputs.dry_run }}' = 'true' ]; then args='auto --dry-run'; fi
+
+          set +e
+          bun scripts/release.ts $args | tee /tmp/release.log
+          code=${PIPESTATUS[0]}
+          set -e
+
+          # 3 is the script's "nothing releasable since the last tag" — a skip.
+          if [ "$code" = '3' ]; then
+            echo "::notice::$(tail -n1 /tmp/release.log)"
+            echo 'released=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$code" = '0' ] || exit "$code"
+
+          if [ '${{ inputs.dry_run }}' = 'true' ]; then
+            echo 'released=false' >> "$GITHUB_OUTPUT"
+            { echo '## Dry run — no version was minted'; echo; echo '```'; cat /tmp/release.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          version="$(tr -d '[:space:]' < VERSION)"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      # --follow-tags carries the annotated tag along with the commit. If master
+      # moved between the guard above and here the push is rejected and the job
+      # fails loudly, which is the right outcome: the tag exists only locally,
+      # nothing was published, and the next green build will mint it cleanly.
+      - name: push the release commit + tag
+        if: steps.bump.outputs.released == 'true'
+        run: git push --follow-tags origin HEAD:master
+
+      # The tag push above cannot trigger release.yml (GITHUB_TOKEN), so ask for
+      # it by name. This is what builds/publishes the images for the version and
+      # writes the GitHub Release from the CHANGELOG section.
+      - name: publish the release (build images + GitHub Release)
+        if: steps.bump.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          set -eu
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f also_latest=true
+          echo "::notice::dispatched release.yml for $TAG"
+
+      - name: summary
+        if: always()
+        run: |
+          if [ '${{ steps.bump.outputs.released }}' = 'true' ]; then
+            echo "### Released ${{ steps.bump.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Images and the GitHub Release are being built by `release.yml`.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ '${{ env.SKIP }}' = '1' ]; then
+            echo '### Skipped — nothing for the bot to do on this commit' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '### No release — nothing releasable since the last tag' >> "$GITHUB_STEP_SUMMARY"
+          fi

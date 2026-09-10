@@ -4,6 +4,13 @@
 #   tag v X.Y.Z     → …:X.Y.Z + :X.Y + :sha-<7> for both, plus a GitHub Release
 #                     "vX.Y.Z" whose body is that version's CHANGELOG.md section
 #                     (VER1 — `bun run release` mints the tag and the section).
+#
+# Who pushes that tag: normally nobody by hand. version-bump.yml mints it after
+# CI goes green on master and then *dispatches this workflow* on the new tag —
+# a GITHUB_TOKEN tag push is barred from triggering workflows, so the automated
+# path arrives here through workflow_dispatch (with also_latest=true) rather
+# than through `on.push.tags`. A human's own `git push --follow-tags` still
+# lands on `on.push.tags` as before. Both routes build the same thing.
 # amd64 + arm64 via buildx/QEMU. Each image is smoke-tested on amd64 before push.
 #
 # Two images, one repo: the tenant runtime (root Dockerfile) and the
@@ -18,6 +25,18 @@ on:
     branches: [master]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      # version-bump.yml dispatches this workflow on the tag it just minted, and
+      # asks for `latest` along with the semver tags. Without it `latest` would
+      # still be the build from *before* the version bump — the images would
+      # ship a VERSION one release behind, and a Docker install polling
+      # /__api/version would never see itself as up to date. Off for a plain
+      # manual dispatch, and a `push` event carries no inputs at all, so the
+      # existing "latest = master" behaviour is untouched.
+      also_latest:
+        description: Also publish this build as :latest
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -63,6 +82,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.also_latest }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short
@@ -128,6 +148,7 @@ jobs:
           images: ${{ env.CP_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.also_latest }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short

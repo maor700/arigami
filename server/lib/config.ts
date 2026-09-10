@@ -124,6 +124,14 @@ export interface HostConfig {
   idleTimeoutMin: number;
   claudeAutoUpdate: boolean;
   claudeUpdateMinFreeMb: number;
+  // Periodically ask whether a newer Arigami release exists (server/lib/
+  // self-update.ts). On by default — it is a `git fetch` every few hours, and
+  // an install nobody opens the Settings page on has no other way to find out.
+  updateCheck: boolean;
+  // Apply what that check finds, unattended. OFF by default and deliberately
+  // so: an upgrade restarts the host. When on, the upgrade is queued
+  // `when:'idle'` so it waits for busy sessions instead of killing them.
+  autoUpgrade: boolean;
 }
 
 // C1 — host auth. `mode:'off'` is ONLY legal when `bind` is loopback (the
@@ -148,8 +156,14 @@ export interface AuthConfig {
 // D3 — opt-in telemetry (server/telemetry.ts). OFF by default. `enabled`
 // ships the K5 funnel milestones (names + timestamps) plus version/os/arch/
 // docker to `endpoint`; env ARIGAMI_TELEMETRY=1|0 overrides the file and
-// DO_NOT_TRACK=1 forces it off regardless. `updateCheck` gates the daily
-// "is upstream ahead" fetch in server/version.ts (never sends anything).
+// DO_NOT_TRACK=1 forces it off regardless.
+//
+// `updateCheck` here is DEAD and kept only so an existing config file does not
+// fail to parse: it was declared for a daily "is upstream ahead" fetch that was
+// never written, and nothing has ever read it. That check now exists for real
+// as `host.updateCheck` (server/lib/self-update.ts) — set it there. Left in
+// place rather than deleted because removing a field is a state migration; do
+// not wire anything to this one.
 export interface TelemetryConfig {
   enabled: boolean;
   updateCheck: boolean;
@@ -353,6 +367,8 @@ export const DEFAULTS: Config = {
     claudeUpdateMinFreeMb: 700,
     drainTimeoutMs: 20_000,
     idleTimeoutMin: 30,
+    updateCheck: true,
+    autoUpgrade: false,
   },
   notify: {
     whatsappJid: '',

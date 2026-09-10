@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import {
   bumpVersion, parseConventional, groupCommits, renderSection, insertSection, extractSection,
   setPackageVersion, repoUrlFromPackage, isNoise, lastTag, commitsSince, main, CHANGELOG_HEADER,
+  autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit,
 } from '../scripts/release.ts';
 
 test('bumpVersion: patch/minor/major and an explicit X.Y.Z', () => {
@@ -138,4 +139,160 @@ test('main: dry run touches nothing; a real patch release writes VERSION/CHANGEL
     expect(out.join('').split('\n')[0]).toMatch(/^## v0\.1\.1 — /);
     expect(main(['notes', 'v9.9.9'], repo)).toBe(1);
   } finally { console.log = origLog; console.error = origErr; }
+});
+
+test('autoBump: breaking → major, feat → minor, anything else → patch; noise never decides', () => {
+  const c = (subject: string, body = '') => ({ sha: 'a'.repeat(40), subject, body });
+  expect(autoBump([c('feat(a): x'), c('refactor(b)!: y')])).toBe('major');
+  expect(autoBump([c('fix(a): x'), c('refactor(b): y', 'BREAKING CHANGE: z')])).toBe('major');
+  expect(autoBump([c('fix(a): x'), c('feat(b): y')])).toBe('minor');
+  expect(autoBump([c('fix(a): x'), c('docs: y'), c('B2: not conventional')])).toBe('patch');
+  expect(autoBump([])).toBe('patch');
+  // a merge subject carrying "feat" and a release commit are noise — neither lifts the bump
+  expect(autoBump([c('Merge child/x: feat גדול'), c('chore(release): v9.9.9'), c('fix: real')])).toBe('patch');
+});
+
+test('main auto: picks the bump from the commits, exits 3 when there is nothing releasable', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-auto-'));
+  const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0",\n  "repository": {"url": "git+https://github.com/o/r.git"}\n}\n');
+  g('add', '.'); g('commit', '-q', '-m', 'chore: init');
+  g('tag', '-a', 'v0.1.0', '-m', 'v0.1.0');
+
+  const logs: string[] = [];
+  const origLog = console.log; console.log = (...a: any[]) => { logs.push(a.join(' ')); };
+  try {
+    // nothing since the tag → skip, no files written, no commit
+    expect(main(['auto'], repo)).toBe(NOTHING_TO_RELEASE);
+    expect(NOTHING_TO_RELEASE).toBe(3);
+    expect(fs.existsSync(path.join(repo, 'VERSION'))).toBe(false);
+    expect(g('log', '-1', '--format=%s')).toBe('chore: init');
+    expect(logs.join('\n')).toContain('nothing to release');
+
+    // a merge commit alone is still nothing releasable (its parts are listed on their own)
+    logs.length = 0;
+    fs.writeFileSync(path.join(repo, 'm.txt'), 'm'); g('add', '.'); g('commit', '-q', '-m', 'Merge child/x: משהו');
+    expect(main(['auto'], repo)).toBe(NOTHING_TO_RELEASE);
+
+    // a fix → patch
+    logs.length = 0;
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a'); g('add', '.'); g('commit', '-q', '-m', 'fix(a): a broke');
+    expect(main(['auto'], repo)).toBe(0);
+    expect(logs.join('\n')).toContain('→ patch');
+    expect(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8')).toBe('0.1.1\n');
+    expect(g('log', '-1', '--format=%s')).toBe('chore(release): v0.1.1');
+    expect(g('tag', '-l')).toContain('v0.1.1');
+
+    // a feat since v0.1.1 → minor
+    logs.length = 0;
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'b'); g('add', '.'); g('commit', '-q', '-m', 'feat(b): הוספת b');
+    expect(main(['auto'], repo)).toBe(0);
+    expect(logs.join('\n')).toContain('→ minor');
+    expect(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8')).toBe('0.2.0\n');
+
+    // a breaking change since v0.2.0 → still pre-1.0, so minor (0.3.0), not 1.0.0
+    logs.length = 0;
+    fs.writeFileSync(path.join(repo, 'c.txt'), 'c'); g('add', '.'); g('commit', '-q', '-m', 'refactor(c)!: drop the old route');
+    expect(main(['auto'], repo)).toBe(0);
+    expect(logs.join('\n')).toContain('pre-1.0');
+    expect(logs.join('\n')).toContain('→ minor');
+    expect(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8')).toBe('0.3.0\n');
+    expect(JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8')).version).toBe('0.3.0');
+
+    // the release commit it just made is itself noise → the next auto run skips
+    logs.length = 0;
+    expect(main(['auto'], repo)).toBe(NOTHING_TO_RELEASE);
+
+    // past 1.0 the clamp is off: a breaking change is a major
+    logs.length = 0;
+    expect(main(['1.0.0'], repo)).toBe(0);
+    fs.writeFileSync(path.join(repo, 'd.txt'), 'd'); g('add', '.'); g('commit', '-q', '-m', 'feat(d)!: another break');
+    expect(main(['auto'], repo)).toBe(0);
+    expect(logs.join('\n')).toContain('→ major');
+    expect(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8')).toBe('2.0.0\n');
+  } finally { console.log = origLog; }
+
+  const cl = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  expect(cl.indexOf('## v2.0.0')).toBeLessThan(cl.indexOf('## v0.3.0'));
+  expect(cl).toContain('### Breaking');
+});
+
+test('clampZeroVer: pre-1.0 never auto-mints 1.0.0; an explicit major still can', () => {
+  expect(clampZeroVer('major', '0.1.0')).toBe('minor');
+  expect(clampZeroVer('major', '0.99.3')).toBe('minor');
+  expect(clampZeroVer('minor', '0.1.0')).toBe('minor');
+  expect(clampZeroVer('patch', '0.1.0')).toBe('patch');
+  expect(clampZeroVer('major', '1.0.0')).toBe('major');
+  expect(clampZeroVer('major', '2.4.1')).toBe('major');
+});
+
+test('releaseBoundary: the last v* tag, else the commit that last wrote VERSION', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-bound-'));
+  const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
+  g('add', '.'); g('commit', '-q', '-m', 'chore: init');
+  // no VERSION and no tag → nothing to anchor to
+  expect(releaseBoundary(repo)).toEqual({ ref: null, fromTag: false });
+
+  // VERSION written by hand, still no tag (this repo's own v0.1.0 situation)
+  fs.writeFileSync(path.join(repo, 'VERSION'), '0.1.0\n'); g('add', '.'); g('commit', '-q', '-m', 'feat(release): VERSION by hand');
+  const verSha = g('rev-parse', 'HEAD');
+  expect(releaseBoundary(repo)).toEqual({ ref: verSha, fromTag: false });
+  expect(lastVersionCommit(repo)).toBe(verSha);
+
+  // later commits do not move the boundary — only a VERSION write does
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a'); g('add', '.'); g('commit', '-q', '-m', 'fix(a): a');
+  expect(releaseBoundary(repo)).toEqual({ ref: verSha, fromTag: false });
+
+  // once a tag exists it wins
+  g('tag', '-a', 'v0.1.0', '-m', 'v0.1.0');
+  expect(releaseBoundary(repo)).toEqual({ ref: 'v0.1.0', fromTag: true });
+});
+
+test('main auto with no tag: changelog starts at the VERSION commit, not at the dawn of the repo', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-notag-'));
+  const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0",\n  "repository": {"url": "git+https://github.com/o/r.git"}\n}\n');
+  g('add', '.'); g('commit', '-q', '-m', 'feat(ancient): מלפני הגרסה הראשונה');
+  fs.writeFileSync(path.join(repo, 'VERSION'), '0.1.0\n');
+  fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), CHANGELOG_HEADER + '## v0.1.0 — 2026-09-08\n\nthe first numbered version\n');
+  g('add', '.'); g('commit', '-q', '-m', 'feat(release): VERSION + CHANGELOG by hand (VER1)');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a'); g('add', '.'); g('commit', '-q', '-m', 'fix(a): שייך לגרסה הבאה');
+
+  const logs: string[] = [];
+  const origLog = console.log; console.log = (...a: any[]) => { logs.push(a.join(' ')); };
+  try { expect(main(['auto'], repo)).toBe(0); } finally { console.log = origLog; }
+
+  expect(logs.join('\n')).toContain('no v* tag yet');
+  expect(logs.join('\n')).toContain('1 commit(s)');
+  expect(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8')).toBe('0.1.1\n');
+  const cl = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const section = cl.slice(cl.indexOf('## v0.1.1'), cl.indexOf('## v0.1.0'));
+  expect(section).toContain('שייך לגרסה הבאה');
+  expect(section).not.toContain('מלפני הגרסה הראשונה'); // the pre-v0.1.0 commit stays out
+  expect(section).not.toContain('VER1');
+  expect(section.split('\n')[0]).toMatch(/^## v0\.1\.1 — \d{4}-\d{2}-\d{2}$/); // no compare link off a raw sha
+  expect(cl).toContain('## v0.1.0 — 2026-09-08'); // the hand-written section survives
+});
+
+test('main auto --dry-run touches nothing but still reports the bump it would take', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-dry-'));
+  const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'package.json'), '{\n  "name": "x",\n  "version": "2.3.4"\n}\n');
+  g('add', '.'); g('commit', '-q', '-m', 'feat: first');
+
+  const logs: string[] = [];
+  const origLog = console.log; console.log = (...a: any[]) => { logs.push(a.join(' ')); };
+  try {
+    expect(main(['auto', '--dry-run'], repo)).toBe(0);
+  } finally { console.log = origLog; }
+  expect(logs.join('\n')).toContain('release: 2.3.4 → 2.4.0 (v2.4.0)');
+  expect(logs.join('\n')).toContain('dry run');
+  expect(fs.existsSync(path.join(repo, 'VERSION'))).toBe(false);
+  expect(g('status', '--porcelain')).toBe('');
+  expect(g('tag', '-l')).toBe('');
 });
