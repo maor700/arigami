@@ -188,11 +188,18 @@ macOS-specific list.
 
 - `desktop/src-tauri/Cargo.toml`, `tauri.conf.json`, `build.rs`,
   `src/main.rs` — the Tauri project.
-- `desktop/src-tauri/capabilities/default.json` — the main window's
-  capability, with **no `remote` block** (see decision #2 below).
-- `desktop/src-tauri/splash-dist/index.html` — the boot splash. Static HTML,
-  no `<script>` at all: decision #4's polling happens in Rust, not JS, so the
-  splash needs zero Tauri JS APIs and therefore zero capability grants.
+- `desktop/src-tauri/capabilities/default.json` — the capability for the
+  shell's own windows (`main`, `machine-*`, `picker`), with **no `remote`
+  block** (see decision #2 below).
+- `desktop/src-tauri/shell-dist/` (was `splash-dist/`) — the shell's own two
+  pages, the only pages in the app that are ours:
+  - `index.html` — what a machine window shows while it connects, and where
+    it parks if the machine doesn't answer. It polls the `shell_status`
+    command; the actual probing still happens in Rust.
+  - `picker.html` — the machines window: list, switch, "open in a new
+    window", add, forget.
+  `tauri.conf.json` sets `withGlobalTauri: true` so these two plain HTML
+  files can call `window.__TAURI__.core.invoke` with no bundler.
 - `desktop/build.sh` — stages the sidecar binary + its `resources/` sibling
   into `desktop/src-tauri/resources-staged/`, the exact layout
   `tauri.conf.json`'s `bundle.resources` map ships and `main.rs` reads back
@@ -221,16 +228,23 @@ macOS-specific list.
    on the sidecar — `server/host-control.ts`'s `detectManager()` reads this
    exact value, and without it the cockpit's restart/upgrade button gets a
    409. The contract: the sidecar exits 0, `run_supervisor()` respawns it.
-   Only the *first* boot triggers the splash→navigate dance; every later
+   Only the *first* boot triggers the connect→navigate dance; every later
    respawn (restart, upgrade, or a crash) is silent — the window is already
    sitting on the real URL, and that page's own reconnect logic (built for
-   the ordinary browser product) is what recovers the UI.
-4. **A splash screen is mandatory.** The window starts on the local
-   `splash-dist/index.html`; a background thread does a raw HTTP GET of
-   `/__api/config` in a loop (`config_endpoint_ready()`), and only once that
-   answers does `main.rs` call `WebviewWindow::navigate()` to the real URL.
-   Without this, the very first paint would be the engine's own connection-
-   refused error page.
+   the ordinary browser product) is what recovers the UI. The sidecar now
+   runs **only while some window is pointed at "this computer"**
+   (`local_wanted`): switch every window away and it is stopped with
+   SIGTERM; switch back and it is started again. Every `claude` under it is
+   300MB+, so a local server nobody is looking at is real waste.
+4. **A shell page of our own is mandatory.** The window starts on the local
+   `shell-dist/index.html`; a background thread probes the chosen machine
+   (`probe()` / `wait_local_ready()`), and only once it answers does
+   `main.rs` call `WebviewWindow::navigate()` to `<origin>/__host/`. Without
+   this, the very first paint would be the engine's own connection-refused
+   error page. The same page is also where a window parks when a machine
+   doesn't answer — with the error, a "try again" button and one-click chips
+   onto the other machines. **A machine that is asleep is a normal state,
+   not a failure**, and it must never be a white screen.
 5. **`ARIGAMI_ROOT` isn't set — the binary finds its resources by
    position.** `server/lib/resource-root.ts`'s compiled-binary branch expects
    `resources/` next to `process.execPath`. `desktop/build.sh` stages
@@ -239,6 +253,84 @@ macOS-specific list.
    unchanged, so `dirname(execPath)` inside the bundle already has what
    `resourceRoot()` wants with zero extra plumbing.
 
+### The machine switcher (one shell, this computer *or* the VPS)
+
+The point: sometimes the work needs a stronger machine, or software that
+isn't on the Mac. So one shell runs the local Arigami **and** mirrors a
+remote one (the VPS over Tailscale).
+
+**The law that dictates the whole shape** is decision #1 above, applied
+twice: the window's origin must be exactly the machine serving the API.
+`web/src/lib/hostUrl.js` builds every tab from `window.location.origin` and
+the auth cookie is `SameSite=Lax` per origin. So **switching machines is a
+navigation of the window**, never a client-side merge of two machines' data
+— that isn't possible at all. Each machine keeps its own cookie in the app's
+one jar, so a switch is a navigation, not a re-login (verified — see below).
+
+- **The list** lives in `app_config_dir()/machines.json`: `{machines: [{id,
+  name, origin, local}], last}`. Only *remote* machines and the last choice
+  are persisted; **"המחשב הזה"** is synthesised at runtime (`local_machine()`)
+  so its port always matches the build. `normalize_origin()` turns what the
+  human types into an origin: an explicit scheme wins; otherwise a hostname
+  gets `https` (that's what `tailscale serve` gives you) and a bare IP or
+  `localhost` gets `http`. A machine is an origin — any path or query is
+  stripped.
+- **Switching** is `go_to_machine()`: show our own page, probe, navigate (or
+  park on the error page). A newer switch always wins over a slow one — each
+  gets a `generation` and a connect thread that lost the race leaves the
+  window alone.
+- **The indicator is deliberately unmissable**, because the two machines
+  render a byte-identical cockpit and one day the human will run something
+  heavy on the wrong one. There are four, all live at once: the window title
+  (`Arigami — <name> (מקומי|מרוחק)`), a menu titled `מכונה: <name>`, the tray
+  tooltip, and — injected into the machine page itself — a coloured strip
+  along the top plus a name pill in the corner. The strip/pill colour is per
+  machine (local keeps the brand yellow). The injection is one-way `eval`,
+  **not** IPC: it hands the page nothing.
+- **Keyboard**: `Cmd/Ctrl+Alt+1..9` jumps straight to a machine,
+  `Cmd/Ctrl+Shift+M` opens the machines window. Both are ordinary menu
+  accelerators, so they ship to macOS as-is.
+- **"Open in a new window"** creates a `machine-N` window with its own
+  machine, its own status and its own title. Two machines side by side in
+  one app is a supported state; the local sidecar runs if *any* window wants
+  it, and stops when the last one leaves.
+
+#### The two traps, both tested rather than assumed
+
+1. **`Secure` cookies and http.** A cookie with `Secure` is not stored on an
+   http origin, so a uniform policy would break the local machine. Tested
+   directly against this engine with a stand-in machine that sets one plain
+   and one `Secure` cookie: only the plain one ever came back. There is
+   nothing to fix — `server/auth.ts`'s `cookieHeader()` already adds `Secure`
+   only when `requestIsSecure(req)`, i.e. never for the local sidecar on
+   `http://127.0.0.1`, always for a machine reached over `tailscale serve`
+   https. The rule for this shell is: **don't set `ARIGAMI_PUBLIC_URL` or any
+   https hint on the local sidecar**, and don't try to normalise the two
+   machines onto one policy.
+2. **A machine that doesn't answer is normal.** DNS failure, TCP timeout and
+   a non-200 all end on the shell's own page with a Hebrew explanation
+   naming the host, a "try again" button, and chips onto the other machines.
+   Never a white screen, never a dead end. `probe()` retries a remote three
+   times before giving up; the local machine gets 60s (it has to boot).
+
+#### Known limitation: on Linux, two open windows share one menu bar
+
+`app.set_menu()` sets **one** menu for the whole app, so with two machine
+windows open on Linux both menu bars read `מכונה: <the focused window's
+machine>`. The title bar and the in-page pill are per window and stay
+correct, so the indicator is never wrong — just doubled. On macOS there is
+only one menu bar to begin with and it belongs to the focused window, which
+is exactly the intended behaviour, so this is Linux-only and cosmetic.
+
+#### Known limitation: cookies ignore the port
+
+Cookies are scoped by **host**, not by origin — so two machines on the *same
+hostname, different ports* share one cookie jar and will log each other out.
+Confirmed live (a machine on `127.0.0.1:39484` was handed the cookie set by
+`127.0.0.1:39485`). In real use the machines are different hosts (localhost
+vs. a Tailscale name), so this doesn't bite; it is listed because it is
+invisible if you hit it.
+
 ### Build steps (macOS)
 
 ```sh
@@ -246,12 +338,16 @@ macOS-specific list.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cargo install tauri-cli --locked --version "^2.0"
 
-# once, to generate real app icons from the current brand mark:
+# once, to generate real app icons from the current brand mark.
+# desktop/src-tauri/icons/ is gitignored, and `bundle.icon` lists those
+# files, so a fresh clone does NOT build until this has been run:
 cd desktop/src-tauri
 cargo tauri icon ../../web/public/icon-512.png
 cd ../..
 
-# every time server/ or web/ changes:
+# every time server/ or web/ changes. Also required before the FIRST build:
+# tauri-build fails with `resource path 'resources-staged' doesn't exist`
+# if this hasn't produced the directory yet.
 bash desktop/build.sh
 
 # dev run (opens a window against the freshly staged sidecar):
@@ -295,8 +391,10 @@ the `ARIGAMI_PORT` const for the duration of the test only (reverted before
 every commit — grep `const ARIGAMI_PORT` before trusting any build artifact
 left lying around). What ran clean, end to end, screenshotted for evidence:
 
-- The splash screen appeared, `config_endpoint_ready()`'s background poll
-  detected the sidecar, and `navigate()` swapped the window to the real
+- The boot page appeared (then `splash-dist/index.html`, now
+  `shell-dist/index.html`), the background poll — then
+  `config_endpoint_ready()`, now `wait_local_ready()`/`probe()` — detected
+  the sidecar, and `navigate()` swapped the window to the real
   `/__host/` origin — landing on the actual cockpit **Sign-in** screen,
   fully styled, logo and all. This is decisions #1 and #4 working exactly as
   designed, not just compiling.
@@ -340,6 +438,88 @@ property of this *sandbox*, not the code — macOS's tray (`NSStatusItem`) has
 no D-Bus dependency at all, so this specific gap is expected to not apply
 there, but that itself is unverified since no macOS build exists.
 
+### What the machine switcher was proven to do (Linux, live, with screenshots)
+
+The switcher landed as a WIP commit that **had never been compiled or run** —
+a previous worker was killed mid-task. It compiled clean on the first
+`cargo check` (zero errors, zero warnings), and then running it found six
+real bugs in a row. Everything below was exercised on this session's Xvfb
+(`:99`, which does have a window manager and a tint2 panel), against a
+deliberately isolated setup: `ARIGAMI_DESKTOP_PORT=39481` (never 3099),
+`ARIGAMI_DIR`/`ARIGAMI_WA_DATA_DIR`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME` all
+under `/tmp`, `ARIGAMI_WA_AUTOSTART=0`. The "remote" machines were a second
+Arigami server on another port plus small Python stand-ins.
+
+- **Boot on the remembered machine.** Config read, machine restored, title
+  reads `Arigami — <name> (מרוחק)`. The local sidecar did **not** start,
+  because the remembered machine was remote.
+- **Every switch path**: the picker's "עבור", a menu item, the `Ctrl+Alt+N`
+  accelerator, and a chip on the error page. All four navigate the window
+  and retitle it.
+- **`Ctrl+Shift+M`** opens the machines window; `Escape` closes it.
+- **The sidecar follows the window.** Switch away from "this computer" and
+  the local port stops listening; switch back and it answers again. Opening
+  the local machine in a *second* window started it while the first window
+  stayed on the remote; closing that second window stopped it again.
+- **An unreachable machine** ends on the shell's error page with the host
+  named and one-click chips onto the other machines — screenshotted.
+- **The main window's [x] hides** (app and sidecar live on); an extra
+  `machine-N` window's [x] closes for real. Neither had ever been clicked
+  before this session.
+- **The quit dialog** (`tauri_plugin_dialog`'s `.blocking_show()`) really
+  does return `bool`: Cancel kept the app running, OK exited it and took the
+  local sidecar with it. Also never exercised before.
+- **`SIGTERM` to the app's own pid** exits cleanly with no orphaned sidecar.
+- **Cookies**: set on machine A, still sent to A after switching to B and
+  back, and still sent after a full app restart (they persist in
+  `$XDG_DATA_HOME/io.arigami.desktop/cookies`). `Secure` cookies were
+  dropped on http, as expected.
+- Evidence gallery (screenshots of all of the above):
+  `/__artifacts/keP6lAedbX4/`.
+- **Decision #2 holds, measured.** A stand-in machine whose page tries
+  `invoke('shell_status')` got `"shell_status not allowed. Plugin not
+  found"`. Stronger than assumed: this stayed true even after temporarily
+  adding an explicit `remote: {urls: [...]}` grant for that origin to
+  `capabilities/default.json` (reverted immediately) — app commands are not
+  reachable from a machine origin under any capability we could write.
+
+**Six bugs found by running it, all fixed and re-verified:**
+
+1. **A guaranteed startup deadlock.** `shell.cfg.lock().unwrap().last.clone()
+   .and_then(|id| shell.find(&id))` keeps the temporary `MutexGuard` alive
+   for the whole statement, and `find()` → `all_machines()` locks `cfg`
+   again. `std::sync::Mutex` is not reentrant, so `setup()` hung on a futex
+   forever — no window, no tray, no server. It only triggers when `last` is
+   present, i.e. **every launch after the first**, since `save()` always
+   writes it. Located with `strace`; nothing about reading the code suggests
+   it.
+2. **The badge's `⚠ IPC` warning was a permanent false alarm.** It tested for
+   the presence of `window.__TAURI__`, but Tauri injects
+   `__TAURI_INTERNALS__` (and, with `withGlobalTauri`, `__TAURI__`) into
+   *every* page in the webview, machine origins included. The warning fired
+   on every machine page, which is exactly as useless as never firing. It
+   now probes a real `invoke()` and warns only if it resolves.
+3. **Switching while the main window was hidden was a dead end.** The [x]
+   hides the main window; a switch from the picker then changed the machine
+   and showed nothing. `go_to_machine()` now shows/unminimizes/focuses its
+   window, and picking the machine a window is already on surfaces it
+   instead of being a silent no-op.
+4. **`Ctrl+Q` opened two stacked quit dialogs**, every time. The app-level
+   `on_menu_event` and the tray's own `on_menu_event` are both global
+   listeners for the same menu ids, so `handle_menu` ran twice. Both
+   registrations are kept (the tray path can't be exercised here to prove
+   which is redundant) and the destructive action was made idempotent with
+   an `asking_quit` flag.
+5. **The whole app menu was rebuilt on every window focus change** — on
+   macOS that is the application menu, rebuilt under the user's cursor, and
+   on Linux it emitted five `Gtk-WARNING … no accelerator installed` lines
+   per switch. `refresh_chrome()` now compares a signature first and skips
+   when nothing changed; the warnings went to zero.
+6. `desktop/src-tauri/icons/` is gitignored, so a fresh clone cannot build
+   until `cargo tauri icon` has been run — and `tauri-build` also refuses to
+   build at all while `resources-staged/` is missing. Neither is a code bug,
+   but both stop a first build dead; see "Build steps".
+
 ### What's still unverified — narrower now, but read before debugging
 
 - **macOS itself was never built.** Every "proven" item above ran on Linux.
@@ -347,17 +527,28 @@ there, but that itself is unverified since no macOS build exists.
   per platform, and the Linux run is strong evidence the *design* is sound,
   but macOS-specific bundling (a real `.app`, `Info.plist`, `.icns`
   rendering, `NSStatusItem` tray behavior) has zero direct evidence.
-- **The tray was never clicked** (see above) — only `quit_now()`'s
-  underlying kill logic was exercised directly, not the menu event path
-  that calls it (`on_menu_event` → `confirm_and_quit` → the dialog →
-  `quit_now`). The dialog plugin's `.blocking_show()` return value in
-  particular (`bool`, true = confirmed) is still an assumption, not
-  something this session watched fire from an actual button click.
-- **The window's native close button (hide-not-quit) was never clicked
-  either** — this sandbox has no window manager decorations to click
-  (`wmctrl`/`xdotool` aren't installed here to simulate it). The
-  `WindowEvent::CloseRequested` handler compiles and is structurally
-  identical to the tray-quit path's shared state, but wasn't fired live.
+- **No real https / Tailscale machine was ever reached.** Every "remote" in
+  testing was plain http on loopback. So three things are untested end to
+  end: the webview loading a `tailscale serve` origin at all (certificate
+  handling included), the auth cookie actually arriving **with** `Secure`
+  over that origin (only the negative — `Secure` dropped on http — was
+  measured), and `probe()`'s https branch in practice. That branch is also
+  weaker by design: there is no TLS client in this shell, so for an https
+  origin "the port accepts a TCP connection" is the whole check — a
+  reachable host running something else entirely would still be navigated
+  to, and the shell page would then show whatever that host serves.
+- **The tray icon itself was still never clicked.** The menu *event* path
+  it shares with the app menu (`on_menu_event` → `handle_menu` →
+  `confirm_and_quit` → the dialog → `quit_now`) is now fully exercised from
+  the app menu, and `.blocking_show()`'s `bool` return was watched from real
+  Cancel and OK clicks — but no Linux tray widget ever appeared to click, so
+  `TrayIconBuilder`'s own menu and tooltip are inferred from the app menu's
+  behaviour, not observed. macOS's `NSStatusItem` has no D-Bus dependency,
+  so this gap is expected not to apply there; that expectation is untested.
+- ~~The window's native close button was never clicked~~ — it has been now
+  (there is a window manager on `:99` after all, and `wmctrl`/`xdotool` are
+  installed): the main window hides, an extra `machine-N` window closes for
+  real, and closing the last window on "this computer" stops the sidecar.
 - **macOS code signing of the nested sidecar binary is unresearched.** For a
   local/dev `cargo tauri build` this should be a non-issue, but if this ever
   moves to Developer ID signing + notarization for distribution, an
@@ -374,13 +565,17 @@ there, but that itself is unverified since no macOS build exists.
   forever. No backoff, no giving up. (The respawn-on-crash *mechanism itself*
   is proven above — this flags the missing backoff on top of it, not the
   respawn.)
-- **Port 3099 is hardcoded, with no collision handling.** If something else
+- **The local port is 3099 by default, with no collision handling.** It is
+  overridable with `ARIGAMI_DESKTOP_PORT` (added for exactly this reason: no
+  test on this box may touch a live host on 3099), but a desktop app owns
+  its machine, so 3099 stays the default.
+- **Port 3099 collisions are still unhandled.** If something else
   on the Mac is already bound to it (e.g. a manual `bin/host start` from a
   git checkout, run at the same time), the sidecar's own `hostlock.ts` will
-  refuse to bind, the splash will poll for 45s, then show a generic "didn't
-  answer in time" dialog — there's no detection or message specific to that
-  case. Every live test in this session used a free test port and a server
-  that came up in well under a second, so `wait_for_ready()`'s 45s-timeout
-  branch and `show_fatal_and_quit()`'s dialog were never actually exercised
-  — only the happy path was. That branch is still exactly as unverified as
-  the rest of the dialog plugin (see above).
+  refuse to bind, `wait_local_ready()` will poll for 60s and the window then
+  parks on the shell's error page with a generic "didn't answer in time —
+  maybe something else is holding the port?" message. There is no detection
+  or message specific to that case. The *unreachable* branch itself is now
+  proven (a machine that isn't there lands on that page correctly), but the
+  60s local timeout specifically was never waited out — every local start in
+  testing came up in well under a second.

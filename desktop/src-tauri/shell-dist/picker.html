@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>מכונות</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; background: #1f1f1f; color: #e8e8e8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Hebrew", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { padding: 14px 18px 10px; font-size: 13px; opacity: .6; }
+  ul { list-style: none; margin: 0; padding: 0 12px; flex: 1; overflow: auto; }
+  li { display: flex; align-items: center; gap: 10px; padding: 10px 10px; border-radius: 10px; }
+  li + li { margin-top: 2px; }
+  li.current { background: #292929; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .who { flex: 1; min-width: 0; }
+  .name { font-size: 14px; font-weight: 600; }
+  .name .tag { font-size: 11px; font-weight: 400; opacity: .55; margin-inline-start: 6px; }
+  .origin { font-size: 11px; opacity: .45; direction: ltr; unicode-bidi: embed;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+    border: 1px solid #3a3a3a; background: #2b2b2b; color: #e8e8e8; white-space: nowrap; }
+  button:hover { background: #343434; }
+  button.primary { background: #F9D312; color: #1a1a1a; border-color: #F9D312; font-weight: 600; }
+  button.ghost { border-color: transparent; background: transparent; opacity: .5; }
+  button.ghost:hover { opacity: 1; background: #2b2b2b; }
+  form { display: flex; gap: 8px; padding: 12px 18px 8px; border-top: 1px solid #2c2c2c; }
+  input { font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid #3a3a3a; background: #262626; color: #e8e8e8; min-width: 0; }
+  input#addr { flex: 1; direction: ltr; text-align: left; }
+  input#nm { width: 110px; }
+  .err { color: #FCA5A5; font-size: 12px; padding: 0 18px 10px; min-height: 16px; }
+  footer { padding: 0 18px 14px; font-size: 11px; opacity: .4; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <header>המכונה שחלון Arigami מציג. מעבר = החלון עובר ל־origin אחר; כל מכונה שומרת התחברות משלה.</header>
+  <ul id="list"></ul>
+  <form id="add">
+    <input id="nm" placeholder="שם" />
+    <input id="addr" placeholder="vps.my-tailnet.example" />
+    <button class="primary" type="submit">הוסף</button>
+  </form>
+  <div class="err" id="err"></div>
+  <footer>בלי סכימה: שם מארח יקבל https, כתובת IP או localhost יקבלו http. השרת המקומי רץ רק כשחלון מציג את "המחשב הזה".</footer>
+<script>
+  var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  var list = document.getElementById('list');
+  var err = document.getElementById('err');
+  var sig = '';
+
+  function say(e) { err.textContent = typeof e === 'string' ? e : (e && e.message) || String(e); }
+
+  function draw(s) {
+    var next = JSON.stringify(s.machines);
+    if (next === sig) return;
+    sig = next;
+    list.innerHTML = '';
+    s.machines.forEach(function (m) {
+      var li = document.createElement('li');
+      if (m.current) li.className = 'current';
+      var dot = document.createElement('div');
+      dot.className = 'dot'; dot.style.background = m.color;
+      var who = document.createElement('div'); who.className = 'who';
+      var name = document.createElement('div'); name.className = 'name';
+      name.textContent = m.name;
+      var tag = document.createElement('span'); tag.className = 'tag';
+      tag.textContent = (m.current ? 'מוצג עכשיו' : '') +
+        (m.open_in.length > 1 ? ' · ' + m.open_in.length + ' חלונות' : '');
+      name.appendChild(tag);
+      var org = document.createElement('div'); org.className = 'origin'; org.textContent = m.origin;
+      who.appendChild(name); who.appendChild(org);
+      li.appendChild(dot); li.appendChild(who);
+
+      if (!m.current) {
+        var go = document.createElement('button');
+        go.className = 'primary'; go.textContent = 'עבור';
+        go.onclick = function () { err.textContent = ''; invoke('switch_machine', { id: m.id }).catch(say); };
+        li.appendChild(go);
+      }
+      var nw = document.createElement('button');
+      nw.textContent = 'חלון חדש';
+      nw.onclick = function () { err.textContent = ''; invoke('open_new_window', { id: m.id }).catch(say); };
+      li.appendChild(nw);
+      if (!m.local) {
+        var rm = document.createElement('button');
+        rm.className = 'ghost'; rm.textContent = '✕'; rm.title = 'הסר מהרשימה';
+        rm.onclick = function () { err.textContent = ''; invoke('forget_machine', { id: m.id }).then(function(){ sig=''; }).catch(say); };
+        li.appendChild(rm);
+      }
+      list.appendChild(li);
+    });
+  }
+
+  document.getElementById('add').onsubmit = function (e) {
+    e.preventDefault();
+    err.textContent = '';
+    var nm = document.getElementById('nm'), addr = document.getElementById('addr');
+    invoke('add_machine', { name: nm.value, address: addr.value }).then(function () {
+      nm.value = ''; addr.value = ''; sig = '';
+    }).catch(say);
+  };
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && invoke) invoke('close_window');
+  });
+
+  if (invoke) {
+    var tick = function () { invoke('shell_status').then(draw).catch(function () {}); };
+    tick();
+    setInterval(tick, 700);
+  } else {
+    say('אין גישה ל־Tauri מהחלון הזה');
+  }
+</script>
+</body>
+</html>

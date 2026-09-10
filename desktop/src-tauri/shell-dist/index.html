@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>Arigami</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    height: 100%; margin: 0; background: #1f1f1f; color: #e8e8e8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Hebrew", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .wrap { text-align: center; max-width: 460px; padding: 24px; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 18px;
+    border: 3px solid rgba(249,211,18,.25); border-top-color: #F9D312;
+    border-radius: 50%; animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-inline-end: 6px; vertical-align: middle; }
+  .origin { font-size: 12px; opacity: .5; direction: ltr; unicode-bidi: embed; margin: 0 0 14px; }
+  .msg { font-size: 13px; line-height: 1.6; opacity: .85; white-space: pre-wrap; margin: 0 0 18px; }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #3a3a3a; background: #2b2b2b; color: #e8e8e8;
+  }
+  button:hover { background: #343434; }
+  button.primary { background: #F9D312; color: #1a1a1a; border-color: #F9D312; font-weight: 600; }
+  .hint { margin-top: 18px; font-size: 12px; opacity: .45; }
+  .err h1 { color: #FCA5A5; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <!--
+    This page is the window's own local (app-scheme) page: the only place in a
+    machine window where window.__TAURI__ exists, per capabilities/default.json.
+    Once main.rs navigates the window to a machine origin it never comes back
+    here on its own — on_navigation() refuses any app-scheme navigation the
+    shell didn't initiate. Everything below is status rendering + the way out
+    of an unreachable machine; no white screen, ever.
+  -->
+  <div class="wrap" id="wrap">
+    <div class="spinner" id="spin"></div>
+    <h1 id="title">מפעיל את Arigami…</h1>
+    <p class="origin" id="origin"></p>
+    <p class="msg hidden" id="msg"></p>
+    <div class="row hidden" id="actions">
+      <button class="primary" id="retry">נסה שוב</button>
+      <button id="picker">מכונות…</button>
+    </div>
+    <div class="row hidden" id="chips"></div>
+    <p class="hint hidden" id="hint">לוקח זמן? אפשר לעבור למכונה אחרת (⌘/Ctrl+Shift+M)</p>
+  </div>
+<script>
+  var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  var el = function (id) { return document.getElementById(id); };
+  var started = Date.now();
+  var lastPhase = '';
+
+  function render(s) {
+    var m = s.machine || {};
+    var connecting = s.phase !== 'error';
+    el('wrap').className = 'wrap' + (connecting ? '' : ' err');
+    el('spin').className = connecting ? 'spinner' : 'spinner hidden';
+    el('title').innerHTML = '';
+    var dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = m.color || '#888';
+    el('title').appendChild(dot);
+    el('title').appendChild(document.createTextNode(
+      connecting
+        ? (m.local ? 'מפעיל את Arigami על ' : 'מתחבר אל ') + (m.name || '')
+        : 'אין חיבור אל ' + (m.name || '')
+    ));
+    el('origin').textContent = m.origin || '';
+    el('msg').textContent = s.message || '';
+    el('msg').className = s.message ? 'msg' : 'msg hidden';
+    el('actions').className = connecting ? 'row hidden' : 'row';
+    el('hint').className = (connecting && Date.now() - started > 6000) ? 'hint' : 'hint hidden';
+
+    // In the error state offer the other machines directly — the fastest way
+    // out of "the VPS is asleep" is one click onto another machine.
+    var chips = el('chips');
+    if (connecting) { chips.className = 'row hidden'; return; }
+    if (lastPhase !== 'error') {
+      chips.innerHTML = '';
+      (s.machines || []).forEach(function (x) {
+        if (x.current) return;
+        var b = document.createElement('button');
+        b.textContent = x.name;
+        b.onclick = function () { invoke && invoke('switch_machine', { id: x.id }); };
+        chips.appendChild(b);
+      });
+    }
+    chips.className = chips.children.length ? 'row' : 'row hidden';
+  }
+
+  function tick() {
+    if (!invoke) return;
+    invoke('shell_status').then(function (s) {
+      render(s);
+      lastPhase = s.phase;
+    }).catch(function () {});
+  }
+
+  if (invoke) {
+    el('retry').onclick = function () { started = Date.now(); invoke('retry_connect'); };
+    el('picker').onclick = function () { invoke('show_picker'); };
+    tick();
+    setInterval(tick, 400);
+  }
+</script>
+</body>
+</html>

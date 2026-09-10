@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Main window capability. Deliberately has NO `remote` block: the window only ever shows our own bundled splash page (frontendDist, this app's local origin) or, after main.rs's navigate() call, the arigami-host origin loaded as an ordinary external page — see decision #2 in docs/DESKTOP.md. A `remote.urls` entry here would hand window.__TAURI__ / invoke to that origin, and per Tauri's own advisory, on Windows every iframe that is same-origin with the top-level window ALSO gets that access — which is every extension tab, since they render as same-origin iframes inside the cockpit. Do not add one.",
-  "windows": ["main"],
+  "description": "Capability for the shell's own windows. Deliberately has NO `remote` block: a machine window shows either our own bundled page (frontendDist, this app's local origin) or, after main.rs navigates it, a machine origin loaded as an ordinary external page — see decision #2 in docs/DESKTOP.md. A `remote.urls` entry here would hand window.__TAURI__ / invoke to that origin, and per Tauri's own advisory, on Windows every iframe that is same-origin with the top-level window ALSO gets that access — which is every extension tab, since they render as same-origin iframes inside the cockpit. Do not add one. `machine-*` covers the extra windows 'open in a new window' creates; `picker` is the machines window. The windows list here is why main.rs's on_navigation() guard exists at all: it stops a machine origin from navigating itself back into the app scheme to reach this grant.",
+  "windows": ["main", "machine-*", "picker"],
   "permissions": ["core:default"]
 }
