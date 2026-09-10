@@ -21,6 +21,8 @@ merge to master
       ghcr.io/maor700/arigami:X.Y.Z, :X.Y, :latest, :sha-…
       ghcr.io/maor700/arigami-control-plane:…
       GitHub Release vX.Y.Z, body = that CHANGELOG.md section
+  → Desktop installers (.github/workflows/desktop.yml)   opt-in — see below
+      .deb/.rpm/.AppImage, .dmg ×2, .msi/.exe → onto that Release
   → installs find out (server/lib/self-update.ts, every 6 h)
 ```
 
@@ -35,6 +37,7 @@ hand:
 | `VERSION` | `release.ts` | the host + Docker builds (no JSON parsing) |
 | `web/package.json`, `control-plane/package.json` | `release.ts` | so every package agrees |
 | `desktop/src-tauri/tauri.conf.json` | `release.ts` | the desktop app's About dialog + installer names |
+| `desktop/src-tauri/Cargo.toml` + `Cargo.lock` | `release.ts` | the desktop crate itself — a stale lock dirties the next `cargo build` |
 | `deploy/helm/arigami-control-plane/Chart.yaml` `appVersion` | `release.ts` | which app version the chart deploys |
 | `CHANGELOG.md` | `release.ts` | the GitHub Release body |
 | tag `vX.Y.Z` | `release.ts` | what release.yml publishes from |
@@ -92,6 +95,38 @@ That dispatch passes `also_latest=true`, so the tag build also republishes
 `:latest`. Without it `:latest` would keep the VERSION of the commit *before*
 the bump, and a Docker install comparing itself against `:latest` would never
 see itself as current.
+
+## The desktop installers
+
+`.github/workflows/desktop.yml` packages the same version for a laptop instead
+of a server: `.deb`/`.rpm`/`.AppImage`, a `.dmg` for each Mac architecture, and
+`.msi`/`.exe`. It builds a four-runner Tauri matrix, then attaches the files to
+the Release release.yml wrote — waiting for that Release rather than racing to
+create a second, note-less one.
+
+Unlike the images, this does **not** run on every release, because it cannot
+afford to: on a private repo on the Free plan a macOS minute bills ×10 and a
+Windows minute ×2 against 2,000/month, and one full run is roughly 200-330
+billed minutes. So:
+
+| You want | What happens |
+| --- | --- |
+| installers for a release you cut by hand | `git push --follow-tags` → `on.push.tags`, automatic |
+| installers for one specific tag, now | Actions → Desktop installers → **Run workflow**, pick the tag |
+| installers on *every* automated release | set the `DESKTOP_INSTALLERS` repository variable to `true` |
+| to spend less | drop lines from the workflow's `include:` matrix — `macos-13` (Intel) is the priciest |
+| to stop paying multipliers at all | make the repo public: no multipliers, no quota |
+
+Without that variable an automated release publishes images and a Release, and
+no installers — which is also why the version bot's step for it is a separate,
+skippable one.
+
+Two things the workflow refuses to do. It will not build when the tag and
+`tauri.conf.json`'s version disagree (installers whose file names claim a
+version nobody released are worse than no installers). And it will not pretend
+to be signed: every artifact is unsigned, so macOS Gatekeeper and Windows
+SmartScreen warn on first launch until signing certificates exist as repository
+secrets.
 
 ## How an existing install finds out
 

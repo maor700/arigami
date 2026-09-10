@@ -60,6 +60,8 @@ export const MIRRORED = [
   'web/package.json',
   'control-plane/package.json',
   'desktop/src-tauri/tauri.conf.json', // the desktop app's user-visible version
+  'desktop/src-tauri/Cargo.toml', // the desktop crate itself
+  'desktop/src-tauri/Cargo.lock', // ...and its own entry in the lock, so a build does not dirty it
   'deploy/helm/arigami-control-plane/Chart.yaml', // appVersion only
 ];
 
@@ -183,6 +185,37 @@ export function setChartAppVersion(text: string, version: string): string {
   // [ \t] and not \s: \s includes \n, and a greedy \s*$ would swallow the
   // file's trailing newline when appVersion is the last line.
   return text.replace(/^(appVersion:[ \t]*"?)(\d+\.\d+\.\d+[^"\s]*)("?)[ \t]*$/m, `$1${version}$3`);
+}
+
+/**
+ * The desktop crate's own `version` in Cargo.toml. Line-anchored and first
+ * match only: `[package]` opens the file, and a dependency's version is never
+ * at the start of a line (it lives inside `name = { version = "..." }`), so
+ * this cannot reach one.
+ */
+export function setCargoVersion(text: string, version: string): string {
+  return text.replace(/^(version[ \t]*=[ \t]*")[^"]*(")/m, `$1${version}$2`);
+}
+
+/**
+ * The same crate's entry in Cargo.lock. Only that one entry — every other
+ * `version =` in the file belongs to a dependency. Without this, the first
+ * `cargo build` after a release rewrites the lock itself and leaves the
+ * checkout dirty (and `--locked` would simply fail).
+ */
+export function setCargoLockVersion(text: string, version: string, crate = 'arigami-desktop'): string {
+  return text.replace(
+    new RegExp(`(\\[\\[package\\]\\]\\nname = "${crate}"\\nversion = ")[^"]*(")`),
+    `$1${version}$2`,
+  );
+}
+
+/** Which rewriter a MIRRORED path needs — package.json shape unless it is something else. */
+function rewriterFor(sub: string): (text: string, version: string) => string {
+  if (sub.endsWith('Chart.yaml')) return setChartAppVersion;
+  if (sub.endsWith('Cargo.toml')) return setCargoVersion;
+  if (sub.endsWith('Cargo.lock')) return setCargoLockVersion;
+  return setPackageVersion;
 }
 
 export function repoUrlFromPackage(pkg: { repository?: { url?: string } | string }): string | null {
@@ -332,7 +365,7 @@ export function main(argv: string[], root = path.resolve(path.dirname(new URL(im
   for (const sub of MIRRORED.slice(1)) {
     const p = path.join(root, sub);
     if (!fs.existsSync(p)) continue;
-    const rewrite = sub.endsWith('Chart.yaml') ? setChartAppVersion : setPackageVersion;
+    const rewrite = rewriterFor(sub);
     fs.writeFileSync(p, rewrite(fs.readFileSync(p, 'utf8'), next));
   }
   fs.writeFileSync(path.join(root, 'VERSION'), `${next}\n`);

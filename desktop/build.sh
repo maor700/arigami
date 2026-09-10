@@ -7,8 +7,11 @@
 # (`bun run build:web` + `bun build --compile` + `bun scripts/bundle-resources.ts`)
 # aimed at desktop/src-tauri/resources-staged/ instead of a bare dist/ dir.
 #
-# macOS only, matching docs/DESKTOP.md — nobody builds the Windows/Linux
-# desktop target from this script today.
+# Platform-agnostic: .github/workflows/desktop.yml runs this same script on
+# the Linux, macOS and Windows runners (git-bash there) before `tauri build`,
+# so each installer gets a sidecar compiled for its own platform. `bun build
+# --compile` adds the .exe suffix on Windows by itself, which is the name
+# main.rs looks for there.
 set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 

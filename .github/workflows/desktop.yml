@@ -1,0 +1,170 @@
+# The desktop installers. release.yml packages the same version as container
+# images for a server; this packages it for someone's own machine — .deb/.rpm/
+# .AppImage, .dmg, .msi/.exe — and attaches the files to the GitHub Release.
+#
+# How a run starts:
+#   git push --follow-tags  → on.push.tags, the whole matrix, files land on the
+#                             Release for that tag.
+#   Run workflow            → any ref; without a tag the files are run
+#                             artifacts only and no Release is touched.
+#   version-bump.yml        → only when the DESKTOP_INSTALLERS repository
+#                             variable is 'true' (see below). Its tag push is a
+#                             GITHUB_TOKEN push and cannot fire on.push.tags by
+#                             itself, exactly as with release.yml.
+#
+# Why this is NOT wired to every merge the way the images are: this repository
+# is private on the Free plan, where a macOS minute bills ×10 and a Windows
+# minute ×2 against the 2,000/month allowance. A full four-target run is
+# roughly 200-330 billed minutes, so releasing on every green master merge
+# would spend the month inside a week. Hence: deliberate releases only, and the
+# automated path is opt-in. Two ways to spend less — make the repository public
+# (no multipliers, no quota; it is already Apache-2.0 with a green readiness
+# gate), or drop entries from the `include:` matrix. macos-13 is the Intel Mac
+# and the single most expensive line in it.
+#
+# Unsigned, on every platform. macOS Gatekeeper and the Windows SmartScreen
+# will both warn on first launch until signing certificates exist as secrets;
+# docs/DESKTOP.md covers what that would take.
+name: Desktop installers
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # attaching the installers to the Release
+
+defaults:
+  run:
+    shell: bash # git-bash on the Windows runner: one script for all three
+
+jobs:
+  # The installers carry a version of their own (tauri.conf.json's, which is
+  # what the About dialog and the file names show). scripts/release.ts mirrors
+  # it from package.json, so it can only disagree with the tag if someone
+  # hand-edited or hand-tagged — in which case a whole matrix would build and
+  # publish files claiming the wrong number. Cheapest possible check, first.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: the desktop version must be the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          desktop="$(jq -r .version desktop/src-tauri/tauri.conf.json)"
+          version="$(tr -d '[:space:]' < VERSION)"
+          echo "tag=$tag VERSION=$version tauri.conf.json=$desktop"
+          [ "$tag" = "$version" ] || { echo "::error::tag v$tag but VERSION says $version — mint tags with 'bun run release'"; exit 1; }
+          [ "$tag" = "$desktop" ] || { echo "::error::tag v$tag but desktop/src-tauri/tauri.conf.json says $desktop — mint tags with 'bun run release'"; exit 1; }
+
+  build:
+    needs: gate
+    # One platform failing must not cancel the others: three good installers
+    # are worth publishing while the fourth is looked at.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, name: linux-x64 }
+          - { os: windows-latest, name: windows-x64 }
+          - { os: macos-latest, name: macos-arm64 }
+          - { os: macos-13, name: macos-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: ${{ matrix.name }}
+
+      # 22.04 and not ubuntu-latest on purpose: a .deb/.AppImage links against
+      # the glibc it was built on, so building on the newest runner would
+      # produce packages that refuse to start on a perfectly current 22.04 box.
+      - name: linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev build-essential curl wget file patchelf
+
+      - run: bun install
+      - run: bun install
+        working-directory: web
+
+      # desktop/src-tauri/icons/ is gitignored (generated, not source) and
+      # `bundle.icon` lists the files, so a fresh clone does not build until
+      # this has run. Same command docs/DESKTOP.md gives for a workstation.
+      - name: generate the app icons
+        working-directory: desktop/src-tauri
+        run: bun x "@tauri-apps/cli@^2" icon ../../web/public/icon-512.png
+
+      # Stages the compiled sidecar + its resources where bundle.resources
+      # expects them. tauri-build fails outright without it.
+      - name: stage the sidecar (desktop/build.sh)
+        run: bash desktop/build.sh
+
+      - name: build the installers
+        working-directory: desktop/src-tauri
+        run: bun x "@tauri-apps/cli@^2" build
+
+      # Everything the bundler produced, flattened into one directory. `rw.*`
+      # is the scratch disk image the macOS dmg step leaves behind mid-build.
+      - name: collect
+        run: |
+          set -eu
+          mkdir -p dist-installers
+          find desktop/src-tauri/target/release/bundle -type f \
+            ! -name 'rw.*' \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) \
+            -exec cp {} dist-installers/ \;
+          ls -lh dist-installers/
+          test -n "$(ls -A dist-installers/)" || { echo "::error::the bundler produced nothing"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          path: dist-installers/*
+          if-no-files-found: error
+
+      # release.yml writes the Release for this tag from the CHANGELOG section,
+      # and runs in parallel with this — so wait for it rather than racing to
+      # create a second, note-less one. If it never appears (dispatched alone,
+      # or release.yml failed), create a minimal one so the build is not lost.
+      - name: attach to the Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          for _ in $(seq 1 40); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            echo "waiting for release $TAG (release.yml publishes it) …"
+            sleep 15
+          done
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::no release $TAG after 10m — creating one for the installers"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag \
+              --notes "Desktop installers for $TAG." || true
+          fi
+          gh release upload "$TAG" dist-installers/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.name }} (${{ matrix.os }})"
+            echo ''
+            if [ -d dist-installers ] && [ -n "$(ls -A dist-installers/ 2>/dev/null)" ]; then
+              ls -1sh dist-installers/ | sed 's/^/    /'
+            else
+              echo 'nothing produced'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

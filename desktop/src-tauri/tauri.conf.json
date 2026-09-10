@@ -4,13 +4,14 @@
   "version": "0.1.0",
   "identifier": "io.arigami.desktop",
   "build": {
-    "frontendDist": "splash-dist"
+    "frontendDist": "shell-dist"
   },
   "app": {
     "windows": [],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
