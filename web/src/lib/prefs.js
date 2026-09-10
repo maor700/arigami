@@ -38,7 +38,11 @@ const DEFAULTS = {
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
-  language: 'auto', // 'auto' (browser) | 'en' | 'he' — drives strings + text direction
+  // 'auto' (browser) | 'en' | 'he' — drives strings + text direction.
+  // English, not 'auto': the product is English-first, and 'auto' meant a
+  // Hebrew-locale machine opened a fresh install in Hebrew with no warning.
+  // 'auto' is still selectable in Settings for anyone who wants it.
+  language: 'en',
 };
 
 export const EMPTY_TICKET_FILTERS = {
@@ -165,7 +169,7 @@ function sanitize(raw) {
     // old localStorage. Once a picker ships, go back to
     // `isLogoId(p.logo) ? p.logo : DEFAULT_LOGO` to respect a real choice.
     logo: DEFAULT_LOGO,
-    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
+    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'en',
   };
 }
 

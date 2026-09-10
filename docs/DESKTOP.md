@@ -397,7 +397,9 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
   heavy on the wrong one. The window title (`Arigami — <name> (מקומי|מרוחק)`),
   a menu titled `מכונה: <name>`, the tray tooltip, and a coloured strip the
   shell paints across the top of the page — all live at once, all per machine
-  (local keeps the brand yellow).
+  (local keeps the brand yellow). The strip follows the same rule as the chip
+  below: **with one machine it is not drawn at all**. There is nothing to tell
+  apart, so a permanent coloured line across the window is just chrome.
 - **The switcher itself is the cockpit's, not the shell's.** It used to be a
   filled brand-coloured pill the shell injected at bottom-left, which is
   exactly where `web/src/components/Rail.jsx` keeps the rail footer's

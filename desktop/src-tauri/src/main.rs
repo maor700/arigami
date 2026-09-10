@@ -868,10 +868,18 @@ const BADGE_JS: &str = r#"
     if (old && old.parentNode) old.parentNode.removeChild(old);
     if (window.__arigamiBadgeTimer) { clearInterval(window.__arigamiBadgeTimer); }
 
+    // One machine means there is nothing to tell apart, so there is nothing
+    // for the strip to say — same rule as the chip. It appears with the
+    // second machine and disappears if you forget your way back to one.
+    var many = (DATA.machines || []).length > 1;
     var mk = function(){
       var root = document.documentElement;
       if (!root) return;
       var strip = document.getElementById(ID);
+      if (!many) {
+        if (strip && strip.parentNode) strip.parentNode.removeChild(strip);
+        return;
+      }
       if (!strip) {
         strip = document.createElement('div');
         strip.id = ID;
