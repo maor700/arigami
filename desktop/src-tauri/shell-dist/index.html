@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="he" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8" />
 <title>Arigami</title>
@@ -44,15 +44,15 @@
   -->
   <div class="wrap" id="wrap">
     <div class="spinner" id="spin"></div>
-    <h1 id="title">מפעיל את Arigami…</h1>
+    <h1 id="title">Starting Arigami…</h1>
     <p class="origin" id="origin"></p>
     <p class="msg hidden" id="msg"></p>
     <div class="row hidden" id="actions">
-      <button class="primary" id="retry">נסה שוב</button>
-      <button id="picker">מכונות…</button>
+      <button class="primary" id="retry">Try again</button>
+      <button id="picker">Machines…</button>
     </div>
     <div class="row hidden" id="chips"></div>
-    <p class="hint hidden" id="hint">לוקח זמן? אפשר לעבור למכונה אחרת (⌘/Ctrl+Shift+M)</p>
+    <p class="hint hidden" id="hint">Taking a while? You can switch to another machine (⌘/Ctrl+Shift+M)</p>
   </div>
 <script>
   var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
@@ -72,8 +72,8 @@
     el('title').appendChild(dot);
     el('title').appendChild(document.createTextNode(
       connecting
-        ? (m.local ? 'מפעיל את Arigami על ' : 'מתחבר אל ') + (m.name || '')
-        : 'אין חיבור אל ' + (m.name || '')
+        ? (m.local ? 'Starting Arigami on ' : 'Connecting to ') + (m.name || '')
+        : 'No connection to ' + (m.name || '')
     ));
     el('origin').textContent = m.origin || '';
     el('msg').textContent = s.message || '';

@@ -40,8 +40,10 @@ const DEFAULTS = {
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
   // 'auto' (browser) | 'en' | 'he' — drives strings + text direction.
   // English, not 'auto': the product is English-first, and 'auto' meant a
-  // Hebrew-locale machine opened a fresh install in Hebrew with no warning.
-  // 'auto' is still selectable in Settings for anyone who wants it.
+  // Hebrew-locale machine opened in Hebrew with no warning. 'auto' is still
+  // selectable in Settings for anyone who wants it. Note the sanitiser below
+  // falls back to 'en' as well, so this moves any stored profile that never
+  // wrote a `language` key — not only fresh installs.
   language: 'en',
 };
 

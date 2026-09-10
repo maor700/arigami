@@ -298,7 +298,16 @@ export function ensureUserPlugin(): string {
     if (cur !== want) fs.writeFileSync(manifest, want);
     const link = path.join(USER_PLUGIN_DIR, 'skills');
     let ok = false;
-    try { ok = fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === USER_SKILLS_DIR; } catch {}
+    // Resolve before comparing, like extensions.ts:227 does. linkDir() writes
+    // path.resolve(target) and creates a JUNCTION on Windows, whose target
+    // Node reads back normalised — a raw compare never matches, so this rm'd
+    // and recreated the link on every call, on a path Claude Code may be
+    // reading at that moment.
+    try {
+      ok =
+        fs.lstatSync(link).isSymbolicLink() &&
+        path.resolve(path.dirname(link), fs.readlinkSync(link)) === path.resolve(USER_SKILLS_DIR);
+    } catch {}
     if (!ok) {
       try { fs.rmSync(link, { recursive: true, force: true }); } catch {}
       linkDir(USER_SKILLS_DIR, link);
