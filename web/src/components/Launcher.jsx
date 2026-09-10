@@ -238,14 +238,14 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
       >
         <span className="max-w-[120px] truncate">{summary}</span>
         {selected.length > 1 && (
-          <span className="font-mono text-[9px] text-fgdim uppercase">{op}</span>
+          <span className="font-mono text-[11px] md:text-[9px] text-fgdim uppercase">{op}</span>
         )}
-        <span className="text-[8px] text-fgdim"><Icon icon={faCaretDown} /></span>
+        <span className="text-[10px] md:text-[8px] text-fgdim"><Icon icon={faCaretDown} /></span>
       </button>
       {open && !disabled && (
         <div className="absolute top-full left-0 z-30 mt-1 w-[220px] rounded-[9px] border-[1.5px] border-ink bg-panel p-2 shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
           <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.labels.match')}</span>
+            <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.labels.match')}</span>
             <span className="flex overflow-hidden rounded-[6px] border border-border">
               {[
                 ['or', t('launcher.labels.opAny')],
@@ -255,7 +255,7 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
                   key={v}
                   type="button"
                   onClick={() => onChange({ labels: selected, labelOp: v })}
-                  className={`cursor-pointer px-2 py-[2px] text-[10.5px] ${
+                  className={`cursor-pointer px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
                     op === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
                   }`}
                 >
@@ -267,7 +267,7 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
               <button
                 type="button"
                 onClick={() => onChange({ labels: [], labelOp: op })}
-                className="ml-auto cursor-pointer text-[10.5px] text-fgdim hover:text-danger"
+                className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-danger"
               >
                 {t('launcher.labels.clear')}
               </button>
@@ -393,7 +393,7 @@ function FilterBar({
             filters.hideOpen ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim hover:border-fgdim'
           }`}
         >
-          <span className="text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> {t('launcher.filter.hideOpen')}
+          <span className="text-[11.5px] md:text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> {t('launcher.filter.hideOpen')}
         </button>
       )}
     </div>
@@ -415,11 +415,11 @@ function PresetBar({ presets, defaultId, current, onApply }) {
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2.5">
-      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
+      <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
       {presets.map((p) => (
         <span
           key={p.id}
-          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10.5px] ${
+          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
             activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
           }`}
         >
@@ -457,13 +457,13 @@ function PresetBar({ presets, defaultId, current, onApply }) {
             else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
           }}
           placeholder={t('launcher.presets.namePlaceholder')}
-          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[10.5px] outline-none placeholder:text-fgdim"
+          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] outline-none placeholder:text-fgdim"
         />
       ) : (
         <button
           type="button"
           onClick={() => setNaming(true)}
-          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[10.5px] font-bold text-fg hover:border-ink"
+          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] font-bold text-fg hover:border-ink"
         >
           {t('launcher.presets.saveCurrent')}
         </button>
@@ -513,7 +513,7 @@ export function EngineToggle({ options, onChange, className = '' }) {
     onChange(coerceSessionOptions({ ...options, engine: value === 'claude' ? '' : value }, claudeModels));
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`}>
-      <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+      <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
         {t('launcher.options.engine')}
       </span>
       <span
@@ -613,11 +613,11 @@ function SessionPresetBar({ presets, defaultId, defaultByMode, mode, current, on
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2.5">
-      <span className="text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
+      <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
       {presets.map((p) => (
         <span
           key={p.id}
-          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10.5px] ${
+          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
             activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
           }`}
         >
@@ -661,13 +661,13 @@ function SessionPresetBar({ presets, defaultId, defaultByMode, mode, current, on
             else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
           }}
           placeholder={t('launcher.presets.namePlaceholder')}
-          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[10.5px] outline-none placeholder:text-fgdim"
+          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] outline-none placeholder:text-fgdim"
         />
       ) : (
         <button
           type="button"
           onClick={() => setNaming(true)}
-          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[10.5px] font-bold text-fg hover:border-ink"
+          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] font-bold text-fg hover:border-ink"
         >
           {t('launcher.presets.saveCurrent')}
         </button>
@@ -692,7 +692,7 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
         <span className="shrink-0 font-mono text-[11.5px] font-bold text-fgdim">{ticket.id}</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fgdim">{ticket.title}</span>
         <span
-          className="shrink-0 rounded-[5px] px-[7px] py-px text-[10px] font-bold"
+          className="shrink-0 rounded-[5px] px-[7px] py-px text-[11.5px] md:text-[10px] font-bold"
           style={{ background: tint(color, '2a'), color: '#2a2a2a' }}
         >
           {t('launcher.ticket.inSession')}
@@ -715,12 +715,12 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
         {ticket.title}
       </span>
       {ticket.status && (
-        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
+        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[11.5px] md:text-[10px] text-fgdim">
           {ticket.status}
         </span>
       )}
       {ticket.project && (
-        <span className="shrink-0 font-mono text-[10px] text-fgdim">{ticket.project}</span>
+        <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{ticket.project}</span>
       )}
     </div>
   );
@@ -789,8 +789,8 @@ function ConnectLinear({ onConnected }) {
       >
         {busy ? t('launcher.connect.waiting') : t('launcher.connect.button')}
       </button>
-      {err && <div className="mt-2 text-[10.5px] text-danger">{err}</div>}
-      <div className="mt-2 text-[10.5px] leading-snug text-fgdim">
+      {err && <div className="mt-2 text-[11.5px] md:text-[10.5px] text-danger">{err}</div>}
+      <div className="mt-2 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
         {t('launcher.connect.agentsNote')}{' '}
         <a href="#/settings/connections/mcp" className="underline hover:text-fg">{t('launcher.connect.agentsLink')}</a>
       </div>
@@ -870,7 +870,7 @@ function TicketPicker({ selected, onPick, sessions }) {
       <div className="flex items-center gap-2 px-[18px] pt-4 pb-2">
         <span className="flex-1"><PasteField onPick={onPick} autoFocus /></span>
         {connected && (
-          <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim" title={t('launcher.picker.liveTitle')}>
+          <span className="flex shrink-0 items-center gap-1 text-[11.5px] md:text-[10px] text-fgdim" title={t('launcher.picker.liveTitle')}>
             <span className="h-1.5 w-1.5 rounded-full bg-[#3C9A4E]" /> {t('launcher.picker.live')}
           </span>
         )}
@@ -998,7 +998,7 @@ function TicketDetailsModal({ id, onClose }) {
           <span className="font-mono text-[12.5px] font-bold text-fg">{id}</span>
           {data?.status && (
             <span
-              className="rounded-[5px] border px-[7px] py-px text-[10px]"
+              className="rounded-[5px] border px-[7px] py-px text-[11.5px] md:text-[10px]"
               style={{ borderColor: data.statusColor, color: data.statusColor }}
             >
               {data.status}
@@ -1042,7 +1042,7 @@ function TicketDetailsModal({ id, onClose }) {
                       {data.labels.map((l) => (
                         <span
                           key={l.name}
-                          className="rounded-[5px] border px-1.5 py-px text-[10px]"
+                          className="rounded-[5px] border px-1.5 py-px text-[11.5px] md:text-[10px]"
                           style={{ borderColor: l.color || '#cbd0d8', color: l.color || '#6b7280' }}
                         >
                           {l.name}
@@ -1063,7 +1063,7 @@ function TicketDetailsModal({ id, onClose }) {
 
               {data.links.length > 0 && (
                 <div className="mt-4 border-t border-hair pt-3">
-                  <div className="mb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.details.links')}</div>
+                  <div className="mb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.details.links')}</div>
                   <div className="flex flex-col gap-1">
                     {data.links.map((a) => (
                       <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-[#2C6BD6] hover:underline">
@@ -1076,13 +1076,13 @@ function TicketDetailsModal({ id, onClose }) {
 
               {data.comments.length > 0 && (
                 <div className="mt-4 border-t border-hair pt-3">
-                  <div className="mb-2 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+                  <div className="mb-2 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
                     {t('launcher.details.comments', { n: data.comments.length })}
                   </div>
                   <div className="flex flex-col gap-3">
                     {data.comments.map((c, i) => (
                       <div key={i} className="rounded-md border border-hair bg-bg px-3 py-2">
-                        <div className="mb-1 text-[10.5px] font-bold text-fg">{c.author || t('launcher.details.someone')}</div>
+                        <div className="mb-1 text-[11.5px] md:text-[10.5px] font-bold text-fg">{c.author || t('launcher.details.someone')}</div>
                         <div className="md-light text-[12px]"><Markdown>{c.body}</Markdown></div>
                       </div>
                     ))}
@@ -1102,7 +1102,7 @@ function ProvisionRow({ label, children }) {
     <div className="flex items-center gap-[9px] text-[11.5px]">
       <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
       <span className="text-fgdim">{label}</span>
-      <span className="ml-auto min-w-0 truncate text-right font-mono text-[10.5px] text-fg">
+      <span className="ml-auto min-w-0 truncate text-right font-mono text-[11.5px] md:text-[10.5px] text-fg">
         {children}
       </span>
     </div>
@@ -1115,7 +1115,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
   const color = nextPaletteColor(sessions, config);
   return (
     <div className="flex w-full shrink-0 flex-col bg-panel p-[16px_18px] md:w-[332px]">
-      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
         {t('launcher.plan.selectedTicket')}
       </div>
       {!ticket ? (
@@ -1127,7 +1127,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
           <div className="mb-[5px] flex items-center gap-2">
             <span className="font-mono text-[12.5px] font-bold">{ticket.id}</span>
             {ticket.status && (
-              <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
+              <span className="rounded-[5px] border border-border px-[7px] py-px text-[11.5px] md:text-[10px] text-fgdim">
                 {ticket.status}
               </span>
             )}
@@ -1182,7 +1182,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
                 <span className="text-fgdim">{t('launcher.plan.sessionColour')}</span>
                 <span className="ml-auto flex items-center gap-[5px]">
                   <Dot color={color} />
-                  <span className="font-mono text-[10px] text-fgdim">auto</span>
+                  <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">auto</span>
                 </span>
               </div>
             </div>
@@ -1204,7 +1204,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
               onApply={onOptions}
             />
             <div className="flex flex-col gap-1">
-              <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+              <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
                 {t('launcher.plan.extraInstructions')}
               </span>
               <textarea
@@ -1213,19 +1213,19 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
                 rows={4}
                 spellCheck={false}
                 placeholder={t('launcher.plan.extraInstructionsPlaceholder')}
-                className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[10.5px] leading-snug outline-none focus:border-ink"
+                className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] leading-snug outline-none focus:border-ink"
               />
             </div>
           </>
         )}
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+          <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
             {t('launcher.plan.permissions')}
           </span>
           <select
             value={mode}
             onChange={(e) => onMode(e.target.value)}
-            className="min-w-0 flex-1 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[10.5px] outline-none focus:border-ink"
+            className="min-w-0 flex-1 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[11.5px] md:text-[10.5px] outline-none focus:border-ink"
           >
             <option value="default">{t('launcher.plan.permDefault')}</option>
             <option value="acceptEdits">acceptEdits</option>
@@ -1356,7 +1356,7 @@ function EmptyForm({ config, sessions, onCreated }) {
           {advanced ? '▾' : '▸'} {t('launcher.empty.advanced')} <span className="font-normal">· {t('launcher.empty.advancedHint')}</span>
         </button>
         <div className={advanced ? '' : 'hidden'}>
-        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.empty.sessionName')}
         </div>
         <input
@@ -1368,16 +1368,16 @@ function EmptyForm({ config, sessions, onCreated }) {
         />
         <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-fgdim">
           <span>{t('launcher.empty.leaveBlank')}</span>
-          <span className="rounded-[5px] border border-border bg-panel px-1.5 py-px font-mono text-[10.5px] text-fgdim">
+          <span className="rounded-[5px] border border-border bg-panel px-1.5 py-px font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
             {scratchN}
           </span>
           <span>{t('launcher.empty.renamedBy')}</span>
-          <span className="rounded-[5px] border border-[#ecd9a0] bg-chip px-1.5 py-px font-mono text-[10px] text-fg">
+          <span className="rounded-[5px] border border-[#ecd9a0] bg-chip px-1.5 py-px font-mono text-[11.5px] md:text-[10px] text-fg">
             host.set_title()
           </span>
         </div>
 
-        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.empty.workingDir')}
         </div>
         <input
@@ -1388,7 +1388,7 @@ function EmptyForm({ config, sessions, onCreated }) {
           className="mb-4 w-full text-start rounded-[9px] border-[1.5px] border-border px-3 py-[9px] font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
         />
 
-        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.empty.permMode')}
         </div>
         <select
@@ -1402,7 +1402,7 @@ function EmptyForm({ config, sessions, onCreated }) {
           <option value="bypassPermissions">bypassPermissions</option>
         </select>
 
-        <div className="mb-1.5 font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
           {t('launcher.options.title')}
         </div>
         <SessionOptionsPicker options={options} onChange={setOptions} />
@@ -1507,7 +1507,7 @@ function TriggerLogModal({ triggerId, onClose }) {
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none"><Icon icon={faBolt} /></span>
           <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || t('launcher.trigger.defaultName')}</span>
-          <span className="font-mono text-[10.5px] text-fgdim">
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
             {detail?.enabled ? t('launcher.trigger.polling') : t('launcher.trigger.disabled')}
           </span>
           <button
@@ -1518,7 +1518,7 @@ function TriggerLogModal({ triggerId, onClose }) {
             <Icon icon={faXmark} />
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-hair px-4 py-2.5 font-mono text-[10px] text-fgdim">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-hair px-4 py-2.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
           <span>{t('launcher.trigger.metaFilter')} <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
           <span>{t('launcher.trigger.metaPoll')} <span className="text-fg">{t('launcher.trigger.every60s')}</span></span>
           <span>{t('launcher.trigger.metaLastPoll')} <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
@@ -1529,7 +1529,7 @@ function TriggerLogModal({ triggerId, onClose }) {
             <span className="col-span-2 text-danger">{t('launcher.trigger.metaLastError')} {detail.lastError}</span>
           )}
         </div>
-        <div className="border-b border-hair px-4 py-1.5 font-mono text-[9.5px] tracking-wide text-fgdim uppercase">
+        <div className="border-b border-hair px-4 py-1.5 font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">
           {t('launcher.trigger.activity')}
         </div>
         <pre
@@ -1687,7 +1687,7 @@ export function CronSubPanel() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="border-b border-hair px-[18px] pt-4 pb-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
           {t('launcher.cron.newJob')}
         </div>
         <input
@@ -1741,7 +1741,7 @@ export function CronSubPanel() {
           )}
         </div>
         <div className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border p-2">
-          <span className="font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('launcher.cron.deliver')}</span>
+          <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('launcher.cron.deliver')}</span>
           <label className="flex cursor-pointer items-center gap-2 text-[11.5px]">
             <input type="checkbox" checked={deliverPush} onChange={(e) => setDeliverPush(e.target.checked)} className="cursor-pointer" />
             {t('launcher.cron.deliverPush')}
@@ -1783,7 +1783,7 @@ export function CronSubPanel() {
         </div>
       </div>
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
           {t('launcher.cron.listHeading', { n: cronJobs.length })}
         </div>
         {cronJobs.length === 0 && <div className="py-4 text-xs text-fgdim">{t('launcher.cron.emptyList')}</div>}
@@ -1804,18 +1804,18 @@ export function CronSubPanel() {
                 )}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12.5px] font-bold">{cj.name}</span>
-                  <span className="block truncate text-[10.5px] text-fgdim">{scheduleSummary(cj.schedule, t)}</span>
+                  <span className="block truncate text-[11.5px] md:text-[10.5px] text-fgdim">{scheduleSummary(cj.schedule, t)}</span>
                 </span>
                 {lastRunState && (
                   <span
-                    className="shrink-0 rounded-full px-1.5 py-[1px] text-[9.5px] font-bold text-white"
+                    className="shrink-0 rounded-full px-1.5 py-[1px] text-[11px] md:text-[9.5px] font-bold text-white"
                     style={{ background: CRON_RUN_COLOR[lastRunState] || '#9aa0a6' }}
                   >
                     {lastRunState}
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-fgdim">
+              <div className="flex items-center gap-2 text-[11.5px] md:text-[10px] text-fgdim">
                 <span>{t('launcher.cron.metaLastRun')} {fmtAgo(cj.lastRun)}</span>
                 <span>·</span>
                 <span>{t('launcher.cron.metaNextRun')} {cj.nextRunAt ? fmtDateTime(cj.nextRunAt) : '—'}</span>
@@ -1825,7 +1825,7 @@ export function CronSubPanel() {
                   type="button"
                   onClick={() => api.post(`/triggers/${cj.id}/run`).catch(() => {})}
                   title={t('launcher.cron.runNowTitle')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
                 >
                   {t('launcher.cron.runNow')}
                 </button>
@@ -1833,7 +1833,7 @@ export function CronSubPanel() {
                   type="button"
                   onClick={() => setLogId(cj.id)}
                   title={t('launcher.trigger.openLog')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
                 >
                   <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
                 </button>
@@ -1841,7 +1841,7 @@ export function CronSubPanel() {
                   type="button"
                   onClick={() => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }).catch(() => {})}
                   title={cj.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
                 >
                   {cj.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
                 </button>
@@ -1975,7 +1975,7 @@ function TriggerTab() {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TriggerKindSwitch subMode={subMode} onChange={setSubMode} />
       <div className="border-b border-hair px-[18px] pt-4 pb-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
           {t('launcher.trigger.newTrigger')}
         </div>
         <input
@@ -2051,7 +2051,7 @@ function TriggerTab() {
         </div>
       </div>
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
           {t('launcher.trigger.listHeading', { n: triggers.length })}
         </div>
         {triggers.length === 0 && (
@@ -2079,19 +2079,19 @@ function TriggerTab() {
             )}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12.5px] font-bold">{trg.name}</span>
-              <span className="block truncate text-[10.5px] text-fgdim">
+              <span className="block truncate text-[11.5px] md:text-[10.5px] text-fgdim">
                 {filterSummary(trg.filters)}
                 {trg.lastError ? <> · <Icon icon={faTriangleExclamation} /> {trg.lastError}</> : ''}
               </span>
             </span>
-            <span className="shrink-0 font-mono text-[10px] text-fgdim" title={t('launcher.trigger.spawnedTitle')}>
-              {trg.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[8px]" />
+            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" title={t('launcher.trigger.spawnedTitle')}>
+              {trg.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[10px] md:text-[8px]" />
             </span>
             <button
               type="button"
               onClick={() => setLogId(trg.id)}
               title={t('launcher.trigger.openLog')}
-              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
             >
               <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
             </button>
@@ -2099,7 +2099,7 @@ function TriggerTab() {
               type="button"
               onClick={() => api.patch(`/triggers/${trg.id}`, { enabled: !trg.enabled }).catch(() => {})}
               title={trg.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
-              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[10.5px] text-fgdim hover:border-ink"
+              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
             >
               {trg.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
             </button>

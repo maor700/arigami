@@ -32,7 +32,7 @@ export function ProcessChip({ session, onClick }) {
       type="button"
       onClick={onClick}
       title={t('chat.bgChipTitle', { running, total: procs.length })}
-      className="flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-ink bg-bg px-2.5 py-[3px] font-mono text-[10.5px] text-fg hover:bg-chip"
+      className="flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-ink bg-bg px-2.5 py-[3px] font-mono text-[11.5px] md:text-[10.5px] text-fg hover:bg-chip"
     >
       <span className="text-[11px] leading-none">❯_</span>
       <span className="font-bold">{running}</span>
@@ -96,7 +96,7 @@ export function BgProcessesPanel({ session, onClose }) {
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none">❯_</span>
           <span className="font-mono text-[13px] font-bold text-fg">{t('chat.backgroundProcesses')}</span>
-          <span className="font-mono text-[10.5px] text-fgdim">
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
             {t('chat.bgRunningTotal', { running: bgRunningCount(session), total: procs.length })}
           </span>
           <button
@@ -124,14 +124,14 @@ export function BgProcessesPanel({ session, onClose }) {
                 >
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[st] || '#9a9a9a' }} />
-                    <span className="font-mono text-[10px] text-fgdim">{p.id}</span>
-                    <span className="ml-auto font-mono text-[9.5px] text-fgdim">{statusLabel(st)}</span>
+                    <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{p.id}</span>
+                    <span className="ml-auto font-mono text-[11px] md:text-[9.5px] text-fgdim">{statusLabel(st)}</span>
                   </div>
                   <Truncate
                     text={p.description || p.command}
                     className="font-mono text-[11px] text-fg"
                   />
-                  <span className="font-mono text-[9.5px] text-fgdim">{t('chat.startedAgo', { ago: fmtAgo(p.startedAt) })}</span>
+                  <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">{t('chat.startedAgo', { ago: fmtAgo(p.startedAt) })}</span>
                 </button>
               );
             })}
@@ -148,9 +148,9 @@ export function BgProcessesPanel({ session, onClose }) {
                     <button
                       type="button"
                       onClick={() => kill(sel.id)}
-                      className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                      className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10"
                     >
-                      <Icon icon={faStop} className="text-[9px]" /> {t('chat.killLower')}
+                      <Icon icon={faStop} className="text-[11px] md:text-[9px]" /> {t('chat.killLower')}
                     </button>
                   )}
                 </div>

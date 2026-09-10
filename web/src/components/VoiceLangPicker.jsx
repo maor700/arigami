@@ -23,7 +23,7 @@ export default function VoiceLangPicker({ compact = false }) {
       onChange={(e) => setPrefs({ voiceLang: e.target.value })}
       className={
         compact
-          ? 'max-w-[150px] cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-[3px] font-mono text-[10.5px] text-fg outline-none hover:border-ink focus:border-brand'
+          ? 'max-w-[150px] cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-[3px] font-mono text-[11.5px] md:text-[10.5px] text-fg outline-none hover:border-ink focus:border-brand'
           : 'max-w-[220px] cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] text-fg outline-none focus:border-brand'
       }
     >

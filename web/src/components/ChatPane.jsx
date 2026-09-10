@@ -110,7 +110,7 @@ function QuoteButton({ event, className = '' }) {
       onClick={onClick}
       title={t('chat.quote') || 'Quote'}
       aria-label={t('chat.quote') || 'Quote'}
-      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:opacity-100 ${className}`}
+      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:px-1.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:opacity-100 ${className}`}
     >
       <Icon icon={faReply} />
     </button>
@@ -138,7 +138,7 @@ function CopyButton({ text, className = '' }) {
       onClick={onCopy}
       title={copied ? t('chat.copied') : t('chat.copy')}
       aria-label={t('chat.copy')}
-      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:opacity-100 ${className}`}
+      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:px-1.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:opacity-100 ${className}`}
     >
       <Icon icon={copied ? faCheck : faCopy} />
     </button>
@@ -161,8 +161,8 @@ function UserMsg({ event }) {
         {event.ts && (
           <span className="font-normal tracking-normal normal-case opacity-70">· {agoTime(event.ts)}</span>
         )}
-        <CopyButton text={text} className="text-[10px]" />
-        <QuoteButton event={event} className="text-[10px]" />
+        <CopyButton text={text} className="text-[11.5px] md:text-[10px]" />
+        <QuoteButton event={event} className="text-[11.5px] md:text-[10px]" />
       </span>
       <div
         dir={d}
@@ -181,7 +181,7 @@ function UserMsg({ event }) {
                 <span
                   key={i}
                   title={a.archive?.dir || undefined}
-                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${problem ? 'border-danger text-danger' : 'border-[var(--term-userborder)]'} bg-black/10`}
+                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11.5px] md:text-[10px] ${problem ? 'border-danger text-danger' : 'border-[var(--term-userborder)]'} bg-black/10`}
                 >
                   <Icon icon={a.archive ? faBoxArchive : a.isImage ? faImage : faFile} /> {a.name}
                   {a.archive && !a.archive.error && !partial && ` (${a.archive.entryCount})`}
@@ -206,7 +206,7 @@ function AssistantMsg({ event, recap }) {
     <div className={`group md my-1.5${recap ? ' rounded-[6px] bg-brand/[0.03] px-2 py-1' : ''}`}>
       <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
       {event.ts && (
-        <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[9.5px] text-[var(--term-faint)]">
+        <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] md:text-[9.5px] text-[var(--term-faint)]">
           <span className="opacity-70">{agoTime(event.ts)}</span>
           <CopyButton text={text} />
           <QuoteButton event={event} />
@@ -224,7 +224,7 @@ function Thinking({ event }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="cursor-pointer font-mono text-[10.5px] text-[var(--term-faint)] italic hover:text-[var(--term-dim)]"
+        className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)] italic hover:text-[var(--term-dim)]"
       >
         <Icon icon={faWandMagicSparkles} /> {t('chat.thinking')}{open ? '' : '…'}
       </button>
@@ -244,7 +244,7 @@ function CodeBlock({ text, sign }) {
   return (
     <pre
       dir="ltr"
-      className="thin-scroll max-h-72 overflow-auto rounded-md px-2.5 py-1.5 text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-fg)]"
+      className="thin-scroll max-h-72 overflow-auto rounded-md px-2.5 py-1.5 text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-fg)]"
       style={{ background: bg }}
     >
       {String(text ?? '')}
@@ -311,7 +311,7 @@ function ToolUse({ event, sessionId }) {
             {stats.del != null && <span className="ml-1.5 text-diffdel">−{stats.del}</span>}
           </span>
         )}
-        <span className="ml-auto shrink-0 text-[9px] text-[var(--term-faint)]"><Icon icon={open ? faChevronUp : faChevronDown} /></span>
+        <span className="ml-auto shrink-0 text-[11px] md:text-[9px] text-[var(--term-faint)]"><Icon icon={open ? faChevronUp : faChevronDown} /></span>
       </button>
       {open && (
         <div className="mt-1 mb-1.5 rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] p-1.5">
@@ -349,7 +349,7 @@ function ToolResult({ event, sessionId }) {
   return (
     <div
       dir="ltr"
-      className={`my-0.5 pl-4 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap ${
+      className={`my-0.5 pl-4 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap ${
         isError ? 'text-diffdel' : 'text-[var(--term-dim)]'
       }`}
     >
@@ -381,7 +381,7 @@ function ResultLine({ event }) {
       event.costUsd ? `$${Number(event.costUsd).toFixed(3)}` : null,
     ].filter(Boolean).join(' · ');
     return (
-      <div className="my-2 font-mono text-[10.5px] text-[var(--term-dim)]">
+      <div className="my-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)]">
         <span className="text-diffadd"><Icon icon={faCheck} /></span> {t('chat.done')}{meta ? ` · ${meta}` : ''}
       </div>
     );
@@ -540,7 +540,7 @@ function AskUserQuestion({ sessionId, event, live }) {
         return (
           <div key={qi} className="mt-3 first:mt-2.5">
             {q.header && (
-              <div className="mb-0.5 font-mono text-[10px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
+              <div className="mb-0.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
                 {q.header}
               </div>
             )}
@@ -548,7 +548,7 @@ function AskUserQuestion({ sessionId, event, live }) {
               <div className="mb-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
             )}
             {wasSkipped ? (
-              <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
+              <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
             ) : (
               <>
             <div className="flex flex-col gap-1.5">
@@ -576,7 +576,7 @@ function AskUserQuestion({ sessionId, event, live }) {
                       className={`block text-[12px] font-bold ${isChosen ? 'text-[#1a1a1a]' : 'text-[var(--term-accent-strong)]'}`}
                     >
                       {oi < 9 && !settled && (
-                        <span className="mr-1.5 font-mono text-[10px] text-[var(--term-accent-dim)]">{oi + 1}</span>
+                        <span className="mr-1.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{oi + 1}</span>
                       )}
                       {label}
                       {isChosen && <Icon icon={faCheck} className="ml-1" />}
@@ -597,7 +597,7 @@ function AskUserQuestion({ sessionId, event, live }) {
                 type="button"
                 disabled={busy}
                 onClick={() => skip(qi)}
-                className="mt-1.5 cursor-pointer font-mono text-[10.5px] text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
+                className="mt-1.5 cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
               >
                 {t('chat.skipThisQuestion')}
               </button>
@@ -613,10 +613,10 @@ function AskUserQuestion({ sessionId, event, live }) {
         </div>
       )}
       {outcome === 'message' && (
-        <div data-question-note dir="auto" className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
+        <div data-question-note dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
       )}
       {closed && !outcome && !Object.keys(picked).length && (
-        <div data-question-closed dir="auto" className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
+        <div data-question-closed dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
       )}
     </div>
   );
@@ -670,18 +670,18 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
         <span className="text-[var(--term-accent-dim)]">{toolName}</span>
       </div>
       {event.input != null && (
-        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
+        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
           {prettyInput(event.input)}
         </pre>
       )}
       <div className="mt-2.5 flex items-center gap-2">
         {answered ? (
-          <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
             {answered === 'allow' ? <><Icon icon={faCheck} /> {t('chat.allowed')}</> : <><Icon icon={faXmark} /> {t('chat.denied')}</>}
             {event.answeredMessage ? ` (${event.answeredMessage})` : ''}
           </span>
         ) : expired ? (
-          <span className="font-mono text-[10.5px] text-[var(--term-accent-dim)]">
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
             <Icon icon={faXmark} /> {t('chat.requestExpired')}
           </span>
         ) : (
@@ -705,7 +705,7 @@ function PermissionRequest({ sessionId, event, live: isLive }) {
             >
               {t('chat.deny')}
             </button>
-            <span className="ml-1 font-mono text-[10px] text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
+            <span className="ml-1 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
           </>
         )}
       </div>
@@ -758,12 +758,12 @@ function ScreenRequestCard({ sessionId, event }) {
         <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
         <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest', { engine })}</span>
         {reasonLabel && (
-          <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
+          <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[11.5px] md:text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
             {reasonLabel}
           </span>
         )}
         {!answered && (
-          <span className="ms-auto text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>
+          <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>
         )}
       </div>
       {event.prompt && (
@@ -775,7 +775,7 @@ function ScreenRequestCard({ sessionId, event }) {
         </div>
       )}
       {answered ? (
-        <div className="mt-2.5 font-mono text-[10.5px] text-[var(--term-accent-dim)]">
+        <div className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
           <Icon icon={faCheck} /> {answeredLabel}
           {event.note && event.note !== SCREEN_CANCEL_NOTE ? ` — ${event.note}` : ''}
         </div>
@@ -820,9 +820,9 @@ function BehindScenes({ sessionId, group, streaming }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[10.5px] text-[var(--term-faint)] hover:bg-[var(--term-hover)] hover:text-[var(--term-dim)]"
+        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)] hover:bg-[var(--term-hover)] hover:text-[var(--term-dim)]"
       >
-        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[9px]" />
+        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[11px] md:text-[9px]" />
         <span>{label}</span>
         {streaming && <span className="host-spinner h-2.5 w-2.5" />}
       </button>
@@ -873,7 +873,7 @@ function ExtCard({ sessionId, event }) {
 
   return (
     <div data-ext-card={event.extension || true} className="my-1.5 rounded-[10px] border border-hair bg-panel px-3 py-2.5">
-      <div className="mb-1 font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase">
+      <div className="mb-1 font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">
         {event.extension ? `${t('ext.card.from')} · ${event.extension}` : t('ext.card.from')}
       </div>
       {title && <div className="text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
@@ -923,7 +923,7 @@ function ChatSkeleton({ label }) {
           />
         </div>
       ))}
-      <div className="pt-1 text-center font-mono text-[10.5px] text-[var(--term-faint)]">
+      <div className="pt-1 text-center font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)]">
         <span className="host-spinner inline-block h-2.5 w-2.5" /> {label}
       </div>
     </div>
@@ -1153,7 +1153,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               type="button"
               onClick={revealEarlier}
               disabled={loadingOlder}
-              className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] disabled:opacity-50"
+              className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] disabled:opacity-50"
             >
               {loadingOlder
                 ? <><span className="host-spinner inline-block h-3 w-3" /> {t('chat.loadingTranscript')}</>

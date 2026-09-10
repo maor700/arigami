@@ -109,12 +109,12 @@ function BackupOptions({ memory, setMemory, force, setForce, disabled }) {
   return (
     <Section id="backup-options" title={t('settings.host.backupOptions')}>
       <div className="flex flex-col gap-1.5 py-2">
-        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
           <input type="checkbox" checked={memory} onChange={(e) => setMemory(e.target.checked)} disabled={disabled} />
           {t('host.exportMemory')}
         </label>
-        {memory && <div className="max-w-[28rem] font-mono text-[10.5px] text-amber-500">{t('host.exportMemory.warn')}</div>}
-        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+        {memory && <div className="max-w-[28rem] font-mono text-[11.5px] md:text-[10.5px] text-amber-500">{t('host.exportMemory.warn')}</div>}
+        <label className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
           <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={disabled} />
           {t('host.importForce')}
         </label>
@@ -245,7 +245,7 @@ export default function Host({ section = '' }) {
   const upg = st?.upgrade;
   const upgRunning = !!upg && upg.finishedAt === null;
   const disabled = busy || noSup || phase === 'draining' || phase === 'exiting' || upgRunning;
-  const warn = 'font-mono text-[10.5px] text-[#CE8324]';
+  const warn = 'font-mono text-[11.5px] md:text-[10.5px] text-[#CE8324]';
   const hasLog = log.length > 0 || (upg?.log?.length || 0) > 0;
   const advIds = hasLog ? HOST_ADVANCED_IDS : HOST_ADVANCED_IDS.filter((x) => x !== 'upgrade-log');
   // VER1 — the version row's derived state.
@@ -273,7 +273,7 @@ export default function Host({ section = '' }) {
                 {ver.available?.release?.url && <> · <a href={ver.available.release.url} target="_blank" rel="noreferrer" className="underline">{t('host.ver.release')}</a></>}
               </span>
             )}
-            <span className="flex flex-wrap items-center justify-end gap-2 font-mono text-[10.5px] text-fgdim">
+            <span className="flex flex-wrap items-center justify-end gap-2 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
               {ver && !st?.docker && (
                 ver.ahead === null ? t('host.noUpstream')
                 : newer ? <span className="text-[#CE8324]">{t('host.ver.newer', { v: avail })}</span>
@@ -291,7 +291,7 @@ export default function Host({ section = '' }) {
             {dirtyList.length > 0 && (
               <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">
                 <div className="font-bold">{t('host.ver.dirty.title', { n: dirtyList.length })}</div>
-                <ul dir="ltr" className="my-1 max-h-[140px] overflow-auto font-mono text-[10.5px] leading-snug">
+                <ul dir="ltr" className="my-1 max-h-[140px] overflow-auto font-mono text-[11.5px] md:text-[10.5px] leading-snug">
                   {dirtyList.slice(0, 20).map((f) => <li key={f}>{f}</li>)}
                   {dirtyList.length > 20 && <li>… +{dirtyList.length - 20}</li>}
                 </ul>
@@ -315,7 +315,7 @@ export default function Host({ section = '' }) {
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button type="button" disabled={busy || phase === 'draining' || phase === 'exiting'} onClick={() => restartAfterUpdate('now')} className={BTN}>{t('host.ver.restartNow')}</button>
                   <button type="button" disabled={busy || phase !== 'idle'} onClick={() => restartAfterUpdate('idle')} className={BTN}>{t('host.ver.restartIdle')}</button>
-                  <button type="button" onClick={() => dismissReady(readyJob.id)} className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.ver.later')}</button>
+                  <button type="button" onClick={() => dismissReady(readyJob.id)} className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-fgdim underline">{t('host.ver.later')}</button>
                 </div>
                 {phase === 'pending-idle' && <div className={`mt-1 ${warn}`}>{t('host.pendingIdle', { n: st.busySessions })}</div>}
               </div>
@@ -325,7 +325,7 @@ export default function Host({ section = '' }) {
                 {t('host.ver.ready.title', { from: readyJob.from || '?', to: readyJob.to || '?' })} · <button type="button" onClick={() => { ss()?.removeItem('host.ver.dismissed'); setDismissedJob(null); }} className="cursor-pointer underline">{t('host.ver.restartNow')}</button>
               </span>
             )}
-            {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
+            {hasLog && <a href="#/settings/host/upgrade-log" className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-fgdim underline">{t('host.log')}</a>}
           </div>
         </Field>
         <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
@@ -333,7 +333,7 @@ export default function Host({ section = '' }) {
             <span className="font-mono text-[11.5px] text-fg" dir="ltr">{cli?.installed ? t('host.cli.installed', { v: cli.installed }) : '…'}</span>
             {cli?.updateAvailable
               ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cli.latest })}</span>
-              : cli?.latest && cli?.installed ? <span className="font-mono text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
+              : cli?.latest && cli?.installed ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
             {(cli?.updateAvailable || cli?.applying) && (
               <button type="button" disabled={cliBusy === 'update' || cli?.applying} onClick={cliUpdate} className={BTN}>{cliBusy === 'update' || cli?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
             )}
@@ -356,7 +356,7 @@ export default function Host({ section = '' }) {
           <Field label={t('host.upgrade')} hint={t('host.docker.upgradeHint')} wrap>
             <div className="flex flex-col items-end gap-1">
               <span className="text-[11px] text-fgdim">{t('host.docker.upgrade')}</span>
-              <code dir="ltr" className="rounded-[6px] border border-hair bg-bg px-2 py-1 font-mono text-[10.5px] select-all">docker compose pull && docker compose up -d</code>
+              <code dir="ltr" className="rounded-[6px] border border-hair bg-bg px-2 py-1 font-mono text-[11.5px] md:text-[10.5px] select-all">docker compose pull && docker compose up -d</code>
             </div>
           </Field>
         )}
@@ -369,19 +369,19 @@ export default function Host({ section = '' }) {
         <Section id="cli-details" title={t('settings.host.cliDetails')}>
           <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
             <div className="flex flex-col items-end gap-1.5">
-              <span className="flex items-center gap-2 font-mono text-[10.5px] text-fgdim">
+              <span className="flex items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
                 {cli?.checkError ? <span className="text-[#9c3b33]">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
                 <button type="button" disabled={cliBusy === 'check' || cli?.checking} onClick={cliCheck} className="cursor-pointer underline disabled:opacity-50">{cliBusy === 'check' || cli?.checking ? t('host.checking') : t('host.check')}</button>
               </span>
               {cli?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cli.deferred.availableMb, min: cli.deferred.minFreeMb })}</span>}
               {cli?.lastUpdate && (
-                <span className={`font-mono text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
+                <span className={`font-mono text-[11.5px] md:text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
                   {cli.lastUpdate.ok
                     ? t('host.cli.lastOk', { from: cli.lastUpdate.from || '?', to: cli.lastUpdate.to || '?', when: relTime(cli.lastUpdate.at) })
                     : t('host.cli.lastFailed', { when: relTime(cli.lastUpdate.at), error: cli.lastUpdate.error || '?' })}
                 </span>
               )}
-              <label className="flex cursor-pointer items-center gap-2 font-mono text-[10.5px] text-fgdim">
+              <label className="flex cursor-pointer items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
                 {t('host.cli.auto')}
                 <Toggle on={!!cli?.auto} disabled={!cli || cliBusy === 'auto'} onChange={cliAuto} />
               </label>
@@ -418,7 +418,7 @@ export default function Host({ section = '' }) {
 
         {hasLog && (
           <Section id="upgrade-log" title={t('settings.host.upgradeLog')}>
-            <pre dir="ltr" className="thin-scroll my-2 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
+            <pre dir="ltr" className="thin-scroll my-2 max-h-[220px] overflow-auto rounded-lg border border-hair bg-bg p-2 font-mono text-[11.5px] md:text-[10.5px] leading-snug text-fg">{(log.length ? log : upg.log).join('\n')}</pre>
           </Section>
         )}
 

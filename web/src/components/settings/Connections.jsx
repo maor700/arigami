@@ -60,7 +60,7 @@ function OwnerFilter({ owner, agents, onChange }) {
   if (!agents?.length) return null;
   return (
     <label className="mb-3 flex items-center gap-2 text-[11.5px]">
-      <span className="font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownerLabel')}</span>
+      <span className="font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownerLabel')}</span>
       <select data-connections-owner value={owner} onChange={(e) => onChange(e.target.value)} className="rounded-[7px] border-[1.5px] border-border bg-panel px-2 py-1 text-[11.5px] text-fg outline-none focus:border-ink">
         <option value="global">{t('agent.conn.ownerGlobal')}</option>
         {agents.map((a) => <option key={a.slug} value={`agent:${a.slug}`}>{a.emoji} {a.name}</option>)}
@@ -88,11 +88,11 @@ function ConnectedRow({ row, busy, onDisconnect }) {
           <span className="truncate text-[12px] font-bold text-fg">{row.title}</span>
           {row.pill || <StatusPill status="ok" label={t('setup.connections.on')} />}
         </span>
-        {row.detail && <span dir="ltr" className="block truncate font-mono text-[10px] text-fgdim">{row.detail}</span>}
+        {row.detail && <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{row.detail}</span>}
       </span>
       {row.copy && <CopyRow url={row.copy} compact />}
       {row.actions}
-      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>}
+      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>}
     </div>
   );
 }
@@ -266,12 +266,12 @@ export default function Connections({ initialAdd = false, section = '' }) {
                   <StatusPill status={c.ok ? 'ok' : 'todo'} label={c.ok ? t('setup.connections.on') : t('setup.connections.off')} />
                   <span className="min-w-0 flex-1 truncate">
                     <span className="font-bold">{capTitle(t, c.id)}</span>
-                    {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
+                    {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
                   </span>
                   {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
-                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
+                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
                   )}
-                  <button type="button" className={c.ok ? 'cursor-pointer text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => setDialog(c)}>
+                  <button type="button" className={c.ok ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => setDialog(c)}>
                     {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}
                   </button>
                 </div>
@@ -284,7 +284,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
           {audit.length === 0 ? (
             <div className="text-[11px] text-fgdim">{t('setup.connections.noAudit')}</div>
           ) : (
-            <div dir="ltr" className="max-h-[180px] overflow-auto rounded-lg border border-hair px-3 py-1 font-mono text-[10px] text-fgdim">
+            <div dir="ltr" className="max-h-[180px] overflow-auto rounded-lg border border-hair px-3 py-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">
               {audit.map((a, i) => (
                 <div key={i} className="flex flex-wrap gap-x-2 border-b border-hair py-1 last:border-b-0">
                   <span>{fmtWhen(a.at)}</span>

@@ -433,12 +433,12 @@ export default function TermControls({ session }) {
         onClick={() => setOpen((v) => !v)}
         title={t('rail.terminalControls')}
         aria-label={t('rail.terminalControls')}
-        className={`flex h-[22px] items-center gap-1.5 rounded-full border-[1.5px] px-2 text-fgdim hover:border-ink hover:text-fg ${
+        className={`flex h-[30px] items-center gap-1.5 rounded-full border-[1.5px] px-2 text-fgdim hover:border-ink hover:text-fg md:h-[22px] ${
           open ? 'border-ink text-fg' : 'border-border bg-bg'
         }`}
       >
         {ctx?.ctxPct != null && (
-          <span className="font-mono text-[9.5px] font-bold tabular-nums" style={{ color: contextColor(ctx.ctxPct) }}>
+          <span className="font-mono text-[11px] font-bold tabular-nums md:text-[9.5px]" style={{ color: contextColor(ctx.ctxPct) }}>
             {ctx.ctxPct}%
           </span>
         )}

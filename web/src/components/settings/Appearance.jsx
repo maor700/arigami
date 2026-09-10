@@ -109,7 +109,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
                 <button
                   type="button"
                   onClick={() => setPrefs({ accent: '' })}
-                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[0.65625rem] text-fgdim hover:border-ink hover:text-fg"
+                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[0.6875rem] md:text-[0.65625rem] text-fgdim hover:border-ink hover:text-fg"
                 >
                   {t('common.reset')}
                 </button>

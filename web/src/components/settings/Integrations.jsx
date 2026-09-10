@@ -22,7 +22,7 @@ import { Section, StatusPill, ErrorLine, BTN_PRIMARY, BTN_DANGER, BTN_SM, ROW, L
 // gone entirely — Composio's toolkit is WhatsApp *Business* (WABA templates,
 // per-conversation billing), while ours is the local personal bridge.
 export const FEATURED = ['gmail', 'googledrive', 'googlecalendar', 'googledocs', 'slack', 'facebook'];
-const CHIP = (on) => `shrink-0 cursor-pointer rounded-full border px-2.5 py-0.5 text-[10.5px] ${on ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim hover:border-ink hover:text-fg'}`;
+const CHIP = (on) => `shrink-0 cursor-pointer rounded-full border px-2.5 py-0.5 text-[11.5px] md:text-[10.5px] ${on ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim hover:border-ink hover:text-fg'}`;
 
 function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
   const t = useT();
@@ -39,7 +39,7 @@ function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
             <span className="truncate text-[12px] font-bold text-fg">{toolkit.name}</span>
             {toolkit.connected && <StatusPill status="ok" label={t('integrations.connected')} />}
           </div>
-          {toolkit.description && <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug text-fgdim">{toolkit.description}</p>}
+          {toolkit.description && <p className="mt-0.5 line-clamp-2 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">{toolkit.description}</p>}
         </div>
       </div>
       <div className="flex justify-end">
@@ -185,12 +185,12 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
               <StatusPill status={c.ok ? 'ok' : 'todo'} label={c.ok ? t('setup.connections.on') : t('setup.connections.off')} />
               <span className="min-w-0 flex-1 truncate">
                 <span className="font-bold">{capTitle(t, c.id)}</span>
-                {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
+                {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
               </span>
               {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
-                <button type="button" disabled={busy} onClick={() => onDisconnect(c)} className="cursor-pointer text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
+                <button type="button" disabled={busy} onClick={() => onDisconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
               )}
-              <button type="button" className={c.ok ? 'cursor-pointer text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onOpen(c)}>
+              <button type="button" className={c.ok ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onOpen(c)}>
                 {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}
               </button>
             </div>

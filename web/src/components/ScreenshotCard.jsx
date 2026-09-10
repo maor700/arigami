@@ -95,7 +95,7 @@ export default function ScreenshotCard({ shots }) {
       <span className="font-bold text-[var(--term-fg)]">
         {shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
       </span>
-      <span className="ms-auto text-[10px] text-[var(--term-faint)]">
+      <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
         {shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}
       </span>
     </div>
@@ -125,7 +125,7 @@ export default function ScreenshotCard({ shots }) {
           </div>
         ))}
         {last.caption && <span dir="auto" className="ms-1 min-w-0 truncate self-center text-[11.5px] text-[var(--term-dim)]">{last.caption}</span>}
-        <span className="ms-auto shrink-0 self-center text-[10px] text-[var(--term-faint)]">{t('chat.more')} ›</span>
+        <span className="ms-auto shrink-0 self-center text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.more')} ›</span>
       </button>
     );
   } else {
@@ -135,13 +135,13 @@ export default function ScreenshotCard({ shots }) {
           {shots.map((s, i) => (
             <div key={s.id || s.url} className="w-[102px]">
               <Thumb shot={s} onClick={() => setOpen(i)} className="h-[64px] w-full" />
-              <div dir="auto" className="mt-0.5 truncate font-mono text-[9.5px] text-[var(--term-faint)]" title={s.caption || ''}>
+              <div dir="auto" className="mt-0.5 truncate font-mono text-[11px] md:text-[9.5px] text-[var(--term-faint)]" title={s.caption || ''}>
                 {clock(s.ts)}{s.caption ? ` · ${s.caption}` : ''}
               </div>
             </div>
           ))}
         </div>
-        <button type="button" onClick={() => setExpanded(false)} className="mt-1 cursor-pointer font-mono text-[10px] text-[var(--term-faint)] hover:text-[var(--term-fg)]">
+        <button type="button" onClick={() => setExpanded(false)} className="mt-1 cursor-pointer font-mono text-[11.5px] md:text-[10px] text-[var(--term-faint)] hover:text-[var(--term-fg)]">
           ‹ {t('chat.less')}
         </button>
       </div>

@@ -7,7 +7,7 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faCheck, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons';
 
-const ACTION_BTN = 'cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-fg';
+const ACTION_BTN = 'cursor-pointer font-mono text-[11px] md:text-[9.5px] text-fgdim hover:text-fg';
 
 function Reply({ reply, onEdit, onDelete }) {
   const t = useT();
@@ -30,7 +30,7 @@ function Reply({ reply, onEdit, onDelete }) {
         <span className="font-mono text-[8.5px] font-bold tracking-wide text-fgdim uppercase">↳ {t('chat.reply')}</span>
         <div className="ml-auto flex items-center gap-2">
           {onEdit && <button type="button" onClick={() => setEditing(true)} className={ACTION_BTN}>{t('chat.edit')}</button>}
-          {onDelete && <button type="button" onClick={() => onDelete(reply.id)} className="cursor-pointer text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
+          {onDelete && <button type="button" onClick={() => onDelete(reply.id)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
         </div>
       </div>
       <div dir={reply.dir || 'auto'} className="whitespace-pre-wrap text-[11px] leading-snug text-fg">{reply.body}</div>
@@ -55,7 +55,7 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
   return (
     <div className={`rounded-md border px-2.5 py-1.5 ${border}`}>
       <div className="mb-0.5 flex items-center gap-1.5">
-        <span className={`font-mono text-[9px] font-bold tracking-wide uppercase ${suggested ? 'text-[#8a6d1f]' : 'text-fgdim'}`}>
+        <span className={`font-mono text-[11px] md:text-[9px] font-bold tracking-wide uppercase ${suggested ? 'text-[#8a6d1f]' : 'text-fgdim'}`}>
           {suggested ? <><Icon icon={faWandMagicSparkles} /> {t('chat.suggestion')}</> : t('chat.you')}
         </span>
         {resolved && (
@@ -70,17 +70,17 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
           {suggested ? (
             // a suggestion additionally offers accept (→ real comment) / reject (discard)
             <>
-              {onAccept && <button type="button" onClick={() => onAccept(comment.id)} title={t('chat.acceptTitle')} className="cursor-pointer font-mono text-[9.5px] font-bold text-[#3C9A4E] hover:underline">{t('chat.accept')}</button>}
-              {onReject && <button type="button" onClick={() => onReject(comment.id)} title={t('chat.rejectTitle')} className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-danger">{t('chat.reject')}</button>}
+              {onAccept && <button type="button" onClick={() => onAccept(comment.id)} title={t('chat.acceptTitle')} className="cursor-pointer font-mono text-[11px] md:text-[9.5px] font-bold text-[#3C9A4E] hover:underline">{t('chat.accept')}</button>}
+              {onReject && <button type="button" onClick={() => onReject(comment.id)} title={t('chat.rejectTitle')} className="cursor-pointer font-mono text-[11px] md:text-[9.5px] text-fgdim hover:text-danger">{t('chat.reject')}</button>}
             </>
           ) : (
             <>
               {onResolve && (
-                <button type="button" onClick={() => onResolve(comment.id, !resolved)} title={resolved ? t('chat.reopenTitle') : t('chat.resolveTitle')} className="cursor-pointer font-mono text-[9.5px] text-fgdim hover:text-[#3C9A4E]">
+                <button type="button" onClick={() => onResolve(comment.id, !resolved)} title={resolved ? t('chat.reopenTitle') : t('chat.resolveTitle')} className="cursor-pointer font-mono text-[11px] md:text-[9.5px] text-fgdim hover:text-[#3C9A4E]">
                   {resolved ? t('chat.reopen') : t('chat.resolve')}
                 </button>
               )}
-              {onDelete && <button type="button" onClick={() => onDelete(comment.id)} title={t('chat.deleteComment')} className="cursor-pointer text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
+              {onDelete && <button type="button" onClick={() => onDelete(comment.id)} title={t('chat.deleteComment')} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-danger"><Icon icon={faXmark} /></button>}
             </>
           )}
         </div>
@@ -157,7 +157,7 @@ export function CommentComposer({ onSubmit, onCancel, placeholder, autoFocus, in
           type="button"
           onClick={submit}
           disabled={!text.trim()}
-          className="cursor-pointer rounded-md border-[1.5px] border-ink bg-brand px-2.5 py-0.5 text-[10.5px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
+          className="cursor-pointer rounded-md border-[1.5px] border-ink bg-brand px-2.5 py-0.5 text-[11.5px] md:text-[10.5px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
         >
           {label}
         </button>
@@ -165,12 +165,15 @@ export function CommentComposer({ onSubmit, onCancel, placeholder, autoFocus, in
           <button
             type="button"
             onClick={onCancel}
-            className="cursor-pointer rounded-md border border-hair px-2 py-0.5 text-[10.5px] text-fgdim hover:text-fg"
+            className="cursor-pointer rounded-md border border-hair px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg"
           >
             {t('chat.cancel')}
           </button>
         )}
-        <span className="ml-auto font-mono text-[9px] text-fgdim">{t('chat.saveHint')}</span>
+        {/* ⌘↵ — nothing to press on a phone, and `ml-auto` was physical in RTL */}
+        <span className="ms-auto hidden font-mono text-[11px] md:text-[9px] text-fgdim [@media(pointer:fine)]:inline">
+          {t('chat.saveHint')}
+        </span>
       </div>
     </div>
   );

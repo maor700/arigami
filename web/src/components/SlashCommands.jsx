@@ -77,7 +77,7 @@ export function SlashPalette({ items, active, onPick, onHover }) {
   if (!items.length) return null;
   return (
     <div className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
-      <div className="px-3 pt-1 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+      <div className="px-3 pt-1 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
         {t('dialogs.slashCommandsHint')}
       </div>
       {items.map((it, i) => (
@@ -102,7 +102,7 @@ export function SlashPalette({ items, active, onPick, onHover }) {
               </span>
             )
           )}
-          {it.desc && <span className="truncate text-[10.5px] text-fgdim">{it.desc}</span>}
+          {it.desc && <span className="truncate text-[11.5px] md:text-[10.5px] text-fgdim">{it.desc}</span>}
         </button>
       ))}
     </div>
@@ -117,7 +117,7 @@ export function MentionPalette({ items, active, onPick, onHover }) {
   if (!items.length) return null;
   return (
     <div data-mention-palette className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
-      <div className="px-3 pt-1 pb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('dialogs.mentionHint')}</div>
+      <div className="px-3 pt-1 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('dialogs.mentionHint')}</div>
       {items.map((a, i) => (
         <button
           key={a.slug}
@@ -129,7 +129,7 @@ export function MentionPalette({ items, active, onPick, onHover }) {
         >
           <AgentAvatar agent={a} size={18} />
           <span className="font-mono text-[11.5px] font-bold text-fg">@{a.slug}</span>
-          <span className="truncate text-[10.5px] text-fgdim">{a.name}{a.skills?.length ? ` · ${a.skills.join(', ')}` : ''}</span>
+          <span className="truncate text-[11.5px] md:text-[10.5px] text-fgdim">{a.name}{a.skills?.length ? ` · ${a.skills.join(', ')}` : ''}</span>
         </button>
       ))}
     </div>
@@ -176,7 +176,7 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
       <div data-team-panel className="flex max-h-[80vh] w-[520px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
           <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.teamTitle')}</span>
-          <span className="font-mono text-[10px] text-fgdim">{rows.length}</span>
+          <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{rows.length}</span>
           <button type="button" onClick={onClose} className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg">
             <Icon icon={faXmark} />
           </button>
@@ -189,25 +189,25 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
                   <span className="truncate font-mono text-[11.5px] font-bold text-fg">{a.name}</span>
-                  <span className="font-mono text-[10px] text-fgdim">@{a.slug}</span>
+                  <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">@{a.slug}</span>
                   {working ? (
-                    <span className="flex items-center gap-1 font-mono text-[9px] tracking-wide text-[#ce8324]"><span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}</span>
+                    <span className="flex items-center gap-1 font-mono text-[11px] md:text-[9px] tracking-wide text-[#ce8324]"><span className="host-spinner h-[11px] w-[11px]" /> {t('rail.teamWorking')}</span>
                   ) : (
-                    <span className="flex items-center gap-1 font-mono text-[9px] text-fgdim">
+                    <span className="flex items-center gap-1 font-mono text-[11px] md:text-[9px] text-fgdim">
                       <span className="h-[7px] w-[7px] rounded-full" style={{ background: n ? a.color : '#c4c4c4' }} />
                       {n === 0 ? t('rail.teamIdle') : n === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n })}
                     </span>
                   )}
                 </span>
-                {a.skills?.length > 0 && <span className="block truncate text-[10px] text-fgdim">{a.skills.join(' · ')}</span>}
+                {a.skills?.length > 0 && <span className="block truncate text-[11.5px] md:text-[10px] text-fgdim">{a.skills.join(' · ')}</span>}
               </span>
-              <button type="button" title={t('dialogs.teamMention')} onClick={() => { onMention?.(a); onClose(); }} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:border-ink hover:text-fg">@</button>
-              <button type="button" onClick={() => openHome(a)} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[10px] text-fgdim hover:border-ink hover:text-fg">{t('rail.teamHomeChat')}</button>
-              <button type="button" onClick={() => openPage(a)} className="hidden cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[10px] text-fgdim hover:border-ink hover:text-fg sm:block">{t('rail.teamOpenPage')}</button>
+              <button type="button" title={t('dialogs.teamMention')} onClick={() => { onMention?.(a); onClose(); }} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-fgdim hover:border-ink hover:text-fg">@</button>
+              <button type="button" onClick={() => openHome(a)} className="cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[11.5px] md:text-[10px] text-fgdim hover:border-ink hover:text-fg">{t('rail.teamHomeChat')}</button>
+              <button type="button" onClick={() => openPage(a)} className="hidden cursor-pointer rounded-md border border-hair px-1.5 py-0.5 text-[11.5px] md:text-[10px] text-fgdim hover:border-ink hover:text-fg sm:block">{t('rail.teamOpenPage')}</button>
             </div>
           ))}
         </div>
-        <div className="border-t border-hair px-4 py-2 text-[10px] text-fgdim">{t('dialogs.teamFooter')}</div>
+        <div className="border-t border-hair px-4 py-2 text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.teamFooter')}</div>
       </div>
     </div>
   );
@@ -273,9 +273,9 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
           <div key={a.id} className="rounded-md border border-hair bg-bg px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11.5px] font-bold text-fg">{a.label}</span>
-              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[9px] font-bold text-panel">{t('dialogs.active')}</span>}
+              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[11px] md:text-[9px] font-bold text-panel">{t('dialogs.active')}</span>}
               {(a.email || a.plan) && (
-                <span className="text-[10px] text-fgdim">{[a.email, a.plan].filter(Boolean).join(' · ')}</span>
+                <span className="text-[11.5px] md:text-[10px] text-fgdim">{[a.email, a.plan].filter(Boolean).join(' · ')}</span>
               )}
             </div>
             {u?.available && (u.session || u.week) ? (
@@ -284,7 +284,7 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
                 <UsageBar label={t('dialogs.week')} win={u.week} sub />
               </div>
             ) : (
-              <div className="mt-1 font-mono text-[10px] text-fgdim">{t('dialogs.usageUnavailableShort')}</div>
+              <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.usageUnavailableShort')}</div>
             )}
           </div>
         );
@@ -308,7 +308,7 @@ function Pills({ names, onPick }) {
           key={n}
           type="button"
           onClick={onPick ? () => onPick(n) : undefined}
-          className={`rounded-md border border-hair bg-bg px-2 py-1 font-mono text-[10.5px] text-fg ${
+          className={`rounded-md border border-hair bg-bg px-2 py-1 font-mono text-[11.5px] md:text-[10.5px] text-fg ${
             onPick ? 'cursor-pointer hover:border-ink hover:bg-chip' : 'cursor-default'
           }`}
         >
@@ -328,7 +328,7 @@ function Grouped({ names, onPick }) {
     <div className="flex flex-col gap-3.5">
       {order.map((ns) => (
         <div key={ns}>
-          <div className="mb-1.5 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+          <div className="mb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
             {ns} · {groups[ns].length}
           </div>
           <Pills names={groups[ns]} onPick={onPick} />
@@ -349,7 +349,7 @@ function DescList({ items, onPick }) {
     <div className="flex flex-col gap-3.5">
       {order.map((ns) => (
         <div key={ns}>
-          <div className="mb-1 text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+          <div className="mb-1 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
             {ns} · {groups[ns].length}
           </div>
           <div className="flex flex-col">
@@ -369,7 +369,7 @@ function DescList({ items, onPick }) {
                   )}
                 </span>
                 {it.description && (
-                  <span className="text-[10.5px] leading-snug text-fgdim">{it.description}</span>
+                  <span className="text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">{it.description}</span>
                 )}
               </button>
             ))}
@@ -422,7 +422,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
           <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.claudeCodeCapabilities', { engine })}</span>
           {caps.model && (
-            <span className="rounded-full border border-hair px-2 py-0.5 font-mono text-[10px] text-fgdim">
+            <span className="rounded-full border border-hair px-2 py-0.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
               {caps.model}
             </span>
           )}
@@ -457,7 +457,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
                 }`}
               >
                 {label}
-                {count != null && <span className="ml-1 text-[9.5px] text-fgdim">{count}</span>}
+                {count != null && <span className="ml-1 text-[11px] md:text-[9.5px] text-fgdim">{count}</span>}
               </button>
             );
           })}
@@ -522,7 +522,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
           )}
         </div>
 
-        <div className="border-t border-hair px-4 py-2 text-[10px] text-fgdim">
+        <div className="border-t border-hair px-4 py-2 text-[11.5px] md:text-[10px] text-fgdim">
           {t('dialogs.slashFooterBefore')} <span className="font-mono text-fg">/</span> {t('dialogs.slashFooterAfter')}
         </div>
       </div>

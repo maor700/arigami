@@ -38,7 +38,7 @@ function Group({ title, items, onPick, busy, hint }) {
   if (!items.length && !hint) return null;
   return (
     <div className="mt-3 first:mt-0">
-      <div className="mb-1 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{title}</div>
+      <div className="mb-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{title}</div>
       <div className="overflow-hidden rounded-lg border border-hair">
         {items.map((it) => (
           <button
@@ -53,12 +53,12 @@ function Group({ title, items, onPick, busy, hint }) {
             <Logo item={it} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[12px] font-bold text-fg">{it.title}</span>
-              {(it.note || it.description) && <span className="block truncate text-[10.5px] text-fgdim">{it.note || it.description}</span>}
+              {(it.note || it.description) && <span className="block truncate text-[11.5px] md:text-[10.5px] text-fgdim">{it.note || it.description}</span>}
             </span>
-            {it.disabled ? <StatusPill status="off" label={t('mcp.auth.byo')} /> : <span className="text-[10.5px] text-fgdim">{t('setup.connections.connect')}</span>}
+            {it.disabled ? <StatusPill status="off" label={t('mcp.auth.byo')} /> : <span className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('setup.connections.connect')}</span>}
           </button>
         ))}
-        {hint && <div className="px-2.5 py-2 text-[10.5px] text-fgdim">{hint}</div>}
+        {hint && <div className="px-2.5 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">{hint}</div>}
       </div>
     </div>
   );

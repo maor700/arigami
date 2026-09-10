@@ -46,14 +46,14 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[13px] font-bold text-fg">{account.label}</span>
-            {account.active && <span className="rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold text-panel">{t('launcher.account.active')}</span>}
-            <span className="rounded-full border border-hair px-2 py-0.5 text-[10px] text-fgdim">{TYPE_LABEL[account.type] ? t(TYPE_LABEL[account.type]) : account.type}</span>
+            {account.active && <span className="rounded-full bg-ink px-2 py-0.5 text-[11.5px] md:text-[10px] font-bold text-panel">{t('launcher.account.active')}</span>}
+            <span className="rounded-full border border-hair px-2 py-0.5 text-[11.5px] md:text-[10px] text-fgdim">{TYPE_LABEL[account.type] ? t(TYPE_LABEL[account.type]) : account.type}</span>
             <StateBadge account={account} usage={usage} />
           </div>
           {account.email || account.org || account.plan ? (
             <div className="mt-0.5 text-[11px] text-fgdim">{[account.email, account.org, account.plan].filter(Boolean).join(' · ')}</div>
           ) : account.type === 'oauth-token' ? (
-            <div className="mt-0.5 text-[10.5px] text-fgdim">{t('launcher.account.browserToken')}</div>
+            <div className="mt-0.5 text-[11.5px] md:text-[10.5px] text-fgdim">{t('launcher.account.browserToken')}</div>
           ) : null}
         </div>
       </div>
@@ -64,7 +64,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
             <UsageBar label={t('launcher.account.usageWeek')} win={usage.week} sub />
           </>
         ) : (
-          <div className="font-mono text-[10.5px] text-fgdim">{usage && !usage.available && usage.reason === 'http-403' ? t('launcher.account.usageHidden') : t('launcher.account.checkingUsage')}</div>
+          <div className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{usage && !usage.available && usage.reason === 'http-403' ? t('launcher.account.usageHidden') : t('launcher.account.checkingUsage')}</div>
         )}
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-2 ps-12">
@@ -89,7 +89,7 @@ function AccountCard({ account, usage, busy, onSetActive, onSetPool, onRemove })
 export function ClaudeAccountsFooter() {
   const t = useT();
   return (
-    <p className="mt-2 px-1 text-[10.5px] leading-snug text-fgdim">
+    <p className="mt-2 px-1 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
       <b>{t('launcher.account.footerActive')}</b> {t('launcher.account.footer1')} <b>{t('launcher.account.footerPool')}</b> {t('launcher.account.footer2')}
     </p>
   );

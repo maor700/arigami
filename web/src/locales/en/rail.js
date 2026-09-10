@@ -273,6 +273,7 @@ export const strings = {
   'rail.autoPlayHoldActionHint': 'Auto-play is on and prompts are waiting, but the queue is held until you answer the card above',
   'rail.autoPlay': 'auto-play',
   'rail.queuedPromptsHint': 'Queued prompts — drag to reorder, ▶ to start now',
+  'rail.queuedPromptsHintTouch': 'Queued prompts — ▶ to start now',
   'rail.interruptSendNow': 'Interrupt the current work and send this prompt now',
   'rail.sendPromptNow': 'Send this prompt now',
   'rail.removeFromQueue': 'Remove from queue',

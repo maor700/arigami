@@ -32,7 +32,7 @@ export default function ToggleStep({ capability, enabled = false, detail = '', p
   return (
     <div className="flex flex-col gap-2">
       <p className="text-[12px] leading-relaxed text-fgdim">{t(bodyKey)}</p>
-      {detail && <div dir="ltr" className="font-mono text-[10.5px] text-fgdim">{detail}</div>}
+      {detail && <div dir="ltr" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{detail}</div>}
       {on && <OkLine>{t('setup.toggle.on')}</OkLine>}
       {!pinned && (
         <div className="flex flex-wrap gap-2">

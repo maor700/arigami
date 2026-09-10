@@ -31,11 +31,11 @@ export default function MicButton({ mode = 'command', className = BOX, title }) 
           : 'border-border bg-bg text-fgdim hover:border-ink hover:text-fg'
       }`}
     >
-      <Icon icon={rec ? faCircle : faMicrophone} className={rec ? 'text-[9px]' : undefined} />
+      <Icon icon={rec ? faCircle : faMicrophone} className={rec ? 'text-[11px] md:text-[9px]' : undefined} />
       <span
         data-mic-lang
         dir="ltr"
-        className="pointer-events-none absolute -end-1 -bottom-1 rounded-[4px] border border-border bg-panel px-[3px] font-mono text-[8px] leading-[11px] text-fgdim"
+        className="pointer-events-none absolute -end-1 -bottom-1 rounded-[4px] border border-border bg-panel px-[3px] font-mono text-[10px] md:text-[8px] leading-[11px] text-fgdim"
       >
         {lang}
       </span>

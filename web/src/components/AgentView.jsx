@@ -39,7 +39,7 @@ export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'act
 const ICONS = { home: faComments, persona: faIdBadge, memory: faBrain, connections: faLink, routine: faClock, activity: faListCheck, runs: faDiagramProject };
 
 const input = 'w-full rounded-[7px] border-[1.5px] border-border bg-panel px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink';
-const lbl = 'mb-1 block font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase';
+const lbl = 'mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase';
 const btn = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-chip disabled:opacity-40';
 const btnBrand = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-40 disabled:shadow-none';
 
@@ -81,7 +81,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.identity')}</div>
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.identity')}</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div><label className={lbl}>{t('agent.card.name')}</label><input dir="auto" value={form.name} onChange={set('name')} className={input} /></div>
           <div className="grid grid-cols-[64px_1fr] gap-2">
@@ -100,7 +100,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
         <label className={lbl}>{t('agent.card.persona')}</label>
         <textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className={`${input} resize-y font-mono text-[11.5px] leading-relaxed`} />
       </section>
-      <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
+      <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
         <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
       </button>
       {advanced && (
@@ -122,15 +122,15 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
                 <label key={id} className="flex cursor-pointer items-center gap-1 text-[11.5px] text-fg"><input type="checkbox" checked={form.tools.includes(id)} onChange={() => toggle('tools', id)} /> {t(`agent.tool.${id}`)}</label>
               ))}
               {form.tools.filter((x) => !TOOL_FAMILIES.includes(x)).map((x) => (
-                <label key={x} className="flex cursor-pointer items-center gap-1 font-mono text-[10.5px] text-fg"><input type="checkbox" checked onChange={() => toggle('tools', x)} /> {x}</label>
+                <label key={x} className="flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10.5px] text-fg"><input type="checkbox" checked onChange={() => toggle('tools', x)} /> {x}</label>
               ))}
             </div>
-            <div className="mt-1 text-[10.5px] text-fgdim">{t('agent.card.toolsHint')}</div>
+            <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.card.toolsHint')}</div>
           </div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.domains')}</label>
             <input dir="ltr" value={form.domains} onChange={set('domains')} placeholder="example.com, *.notion.so" className={`${input} font-mono`} />
-            <div className="mt-1 text-[10.5px] text-fgdim">{t('agent.card.domainsHint')}</div>
+            <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.card.domainsHint')}</div>
           </div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.autoApprove')}</label>
@@ -182,7 +182,7 @@ function MemoryTab({ agent }) {
     <div className="flex flex-col gap-3">
       <div className="text-[11.5px] text-fgdim">{t('agent.page.memoryHint')}</div>
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">
+        <div className="mb-2 flex items-center gap-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
           <button type="button" onClick={() => setSelected(memPath)} className={`cursor-pointer rounded px-1.5 py-0.5 ${selected === memPath ? 'bg-chip text-fg' : ''}`}>{t('agent.page.memoryDoc')}</button>
           <span>·</span>
           <span>{t('agent.page.journal')} · {journal.length}</span>
@@ -213,13 +213,13 @@ export function ActivityRow({ e, onOpenSession }) {
   if (e.kind === 'turn') what = e.model || '';
   return (
     <div data-activity-kind={e.kind} className="flex items-baseline gap-2 border-b border-hair py-1 text-[11px] last:border-b-0">
-      <span className="w-[76px] shrink-0 font-mono text-[10px] text-fgdim" dir="ltr">{day} {hhmm}</span>
-      <span className={`w-[72px] shrink-0 font-mono text-[10px] uppercase ${KIND_TONE[e.kind] || 'text-fg'}`}>{t(`agent.activity.kind.${e.kind}`)}</span>
+      <span className="w-[76px] shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{day} {hhmm}</span>
+      <span className={`w-[72px] shrink-0 font-mono text-[11.5px] md:text-[10px] uppercase ${KIND_TONE[e.kind] || 'text-fg'}`}>{t(`agent.activity.kind.${e.kind}`)}</span>
       <span dir="auto" className="min-w-0 flex-1 truncate text-fg">
-        {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-[10px] text-fgdim underline">{String(e.sessionId).slice(5, 11)}</button> : null}
+        {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-[11.5px] md:text-[10px] text-fgdim underline">{String(e.sessionId).slice(5, 11)}</button> : null}
         {e.sessionId && what ? ' · ' : ''}{what}
       </span>
-      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtUsd(e.costUsd)}</span>}
+      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtUsd(e.costUsd)}</span>}
     </div>
   );
 }
@@ -236,12 +236,12 @@ export function ActivityTotals({ totals, budget }) {
     <div data-activity-totals className="grid grid-cols-4 gap-2 sm:grid-cols-7">
       {cells.map(([k, v]) => (
         <div key={k} className="rounded-[8px] border border-hair px-2 py-1.5">
-          <div className="font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase">{t(`agent.activity.${k}`)}</div>
+          <div className="font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{t(`agent.activity.${k}`)}</div>
           <div className={`font-mono text-[13px] font-bold ${k === 'denied' && v ? 'text-danger' : 'text-fg'}`} dir="ltr">{v}</div>
         </div>
       ))}
       <div data-activity-budget className="col-span-4 rounded-[8px] border border-hair px-2 py-1.5 sm:col-span-7">
-        <span className="font-mono text-[9px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.budget')} · </span>
+        <span className="font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.budget')} · </span>
         {budget?.cap ? (
           <span className={`font-mono text-[11px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fg'}`} dir="ltr">
             {fmtTokens(budget.usedTokens)} / {fmtTokens(budget.cap)} ({Math.min(100, Math.round((budget.usedTokens / budget.cap) * 100))}%)
@@ -280,24 +280,24 @@ function ActivityTab({ agent, onOpenSession }) {
       </div>
       <ActivityTotals totals={data.totals} budget={data.budget} />
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.ledger')} · {entries.length}</div>
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.ledger')} · {entries.length}</div>
         {entries.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.activity.empty')}</div>}
         <div className="thin-scroll max-h-[420px] overflow-y-auto">
           {entries.map((e, i) => <ActivityRow key={`${e.ts}-${i}`} e={e} onOpenSession={onOpenSession} />)}
         </div>
       </div>
-      <button type="button" onClick={() => setShowEp((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
+      <button type="button" onClick={() => setShowEp((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
         <Icon icon={showEp ? faCaretDown : faCaretRight} /> {showEp ? t('agent.activity.hideEpisodes') : t('agent.activity.showEpisodes')} · {data.episodes.length}
       </button>
       {showEp && (
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.episodes')} · {data.episodes.length}</div>
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.episodes')} · {data.episodes.length}</div>
         {data.episodes.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.page.noEpisodes')}</div>}
         {data.episodes.length > 0 && (
           <div className="flex gap-3">
             <div className="thin-scroll flex max-h-[260px] w-[200px] shrink-0 flex-col gap-0.5 overflow-y-auto">
               {data.episodes.map((e) => (
-                <button key={e.path} type="button" onClick={() => setEp(e.path)} className={`truncate rounded-[6px] px-2 py-1 text-start font-mono text-[10.5px] ${ep === e.path ? 'bg-chip text-fg' : 'text-fgdim hover:bg-chip/60'}`}>
+                <button key={e.path} type="button" onClick={() => setEp(e.path)} className={`truncate rounded-[6px] px-2 py-1 text-start font-mono text-[11.5px] md:text-[10.5px] ${ep === e.path ? 'bg-chip text-fg' : 'text-fgdim hover:bg-chip/60'}`}>
                   {e.path.split('/').pop()}
                 </button>
               ))}
@@ -367,15 +367,15 @@ export function RunsList({ sessions, onOpenSession }) {
     <div data-agent-runs className="flex flex-col gap-3">
       <div className="text-[11.5px] text-fgdim">{t('agent.oneLiner')}</div>
       <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.runs.title')} · {runs.length}</div>
+        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.runs.title')} · {runs.length}</div>
         {runs.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.runs.empty', { oneLiner: t('agent.oneLiner') })}</div>}
         {runs.map((s) => (
           <button key={s.id} type="button" data-agent-run={s.id} onClick={() => onOpenSession(s.id)} className={`flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 text-start hover:bg-chip/60 ${s.archived ? 'opacity-60' : ''}`}>
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
             <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
-            {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
-            <span className="shrink-0 font-mono text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtUsd(s.costUsd)}</span>
-            <span className="shrink-0 font-mono text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
+            {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[11px] md:text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
+            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtUsd(s.costUsd)}</span>
+            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
           </button>
         ))}
       </div>
@@ -429,7 +429,7 @@ export function SurfaceStatus({ agent, sessions, triggers }) {
           ? t('rail.teamSession')
           : t('rail.teamSessions', { n: runs });
   return (
-    <span data-agent-status={working ? 'working' : nextCron ? 'next-run' : 'idle'} className="flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-fgdim">
+    <span data-agent-status={working ? 'working' : nextCron ? 'next-run' : 'idle'} className="flex shrink-0 items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
       {working
         ? <span className="host-spinner h-[11px] w-[11px]" />
         : <span className="h-[7px] w-[7px] rounded-full" style={{ background: agent.color || '#c4c4c4', opacity: nextCron || runs ? 1 : 0.45 }} />}
@@ -441,14 +441,14 @@ export function SurfaceStatus({ agent, sessions, triggers }) {
 /** UX1 — today's token spend against the agent's daily cap (A3), as a bar. */
 export function BudgetBar({ budget }) {
   const t = useT();
-  if (!budget?.cap) return <span data-agent-budget="none" className="font-mono text-[10.5px] text-fgdim">{t('agent.surface.budgetNone')}</span>;
+  if (!budget?.cap) return <span data-agent-budget="none" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.surface.budgetNone')}</span>;
   const pct = Math.min(100, Math.round((budget.usedTokens / budget.cap) * 100));
   return (
     <span data-agent-budget={budget.exceeded ? 'exceeded' : 'ok'} className="flex min-w-0 shrink items-center gap-2">
       <span className="h-[6px] w-[90px] shrink-0 overflow-hidden rounded-full bg-chip">
         <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: budget.exceeded ? 'var(--danger, #C0392B)' : '#1F9C82' }} />
       </span>
-      <span dir="ltr" className={`truncate font-mono text-[10.5px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fgdim'}`}>
+      <span dir="ltr" className={`truncate font-mono text-[11.5px] md:text-[10.5px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fgdim'}`}>
         {budget.exceeded
           ? t('agent.surface.budgetExceeded')
           : t('agent.surface.budget', { used: fmtTokens(budget.usedTokens), cap: fmtTokens(budget.cap) })}
@@ -476,7 +476,7 @@ function useDismiss(ref, open, onClose) {
 }
 
 const row = 'flex items-baseline gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0';
-const rowLbl = 'w-[88px] shrink-0 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase';
+const rowLbl = 'w-[88px] shrink-0 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase';
 
 /**
  * AGENT-PAGE: everything that used to sit in the tall header — handle, persona
@@ -503,7 +503,7 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span dir="auto" className="text-[15px] leading-tight font-bold text-fg">{agent.name}</span>
-            <span dir="ltr" className="font-mono text-[10.5px] text-fgdim">@{agent.slug}</span>
+            <span dir="ltr" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">@{agent.slug}</span>
           </div>
           {persona && <div dir="auto" className="mt-0.5 text-[11.5px] leading-snug text-fgdim">{persona}</div>}
         </div>
@@ -520,7 +520,7 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" data-agent-details-edit onClick={onEditPersona} className={btn}><Icon icon={faIdBadge} /> {t('agent.page.editPersona')}</button>
-        <span className="text-[10.5px] text-fgdim">{t('agent.oneLiner')}</span>
+        <span className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.oneLiner')}</span>
       </div>
     </div>
   );
@@ -572,7 +572,7 @@ export function DeleteAgentForm({ agent, onClose, onDeleted }) {
             autoComplete="off"
             className="mt-1.5 w-full rounded-lg border-[1.5px] border-danger/50 bg-bg px-2.5 py-2 text-[12.5px] outline-none placeholder:text-fgdim/60 focus:border-danger"
           />
-          {typed && !match && <div className="mt-1 text-[10.5px] text-danger">{t('agent.page.deleteNameMismatch')}</div>}
+          {typed && !match && <div className="mt-1 text-[11.5px] md:text-[10.5px] text-danger">{t('agent.page.deleteNameMismatch')}</div>}
         </div>
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
           <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
@@ -723,7 +723,7 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
         >
           {agent ? <AgentAvatar agent={agent} size={26} /> : null}
           <span dir="auto" className="min-w-0 truncate text-[14px] leading-tight font-bold text-fg">{title}</span>
-          {!isNew && agent && <span className="hidden shrink-0 text-[10px] text-fgdim sm:inline"><Icon icon={faCaretDown} /></span>}
+          {!isNew && agent && <span className="hidden shrink-0 text-[11.5px] md:text-[10px] text-fgdim sm:inline"><Icon icon={faCaretDown} /></span>}
         </button>
         {agent && !isNew && <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />}
         <div className="ms-auto flex min-w-0 shrink items-center gap-1">
@@ -740,7 +740,7 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
           >
             <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[effectiveTab]} /></span>
             {t(`agent.page.tab.${effectiveTab}`)}
-            <span className="text-[10px] text-fgdim"><Icon icon={faCaretDown} /></span>
+            <span className="text-[11.5px] md:text-[10px] text-fgdim"><Icon icon={faCaretDown} /></span>
           </button>
         </div>
         {agent && !isNew && (

@@ -21,21 +21,21 @@ export function MergePill({ session, compact }) {
   const md = session?.metadata || {};
   if (md.merged) {
     return (
-      <span title={`${md.merged.base || ''} · ${md.merged.at ? fmtDateTime(md.merged.at) : ''}`} className="flex shrink-0 items-center gap-1 rounded-full border border-[#8fcf9a] bg-[#e8f6ea] px-2 py-0.5 font-mono text-[9.5px] font-bold text-[#2a6b35]">
+      <span title={`${md.merged.base || ''} · ${md.merged.at ? fmtDateTime(md.merged.at) : ''}`} className="flex shrink-0 items-center gap-1 rounded-full border border-[#8fcf9a] bg-[#e8f6ea] px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-[#2a6b35]">
         <Icon icon={faCheck} /> {t('chat.mergeMerged', { sha: short(md.merged.sha) })}
       </span>
     );
   }
   if (md.mergeConflict && md.review?.state === 'approved') {
     return (
-      <span title={(md.mergeConflict.files || []).join(', ')} className="flex shrink-0 items-center gap-1 rounded-full border border-[#d98078] bg-danger/10 px-2 py-0.5 font-mono text-[9.5px] font-bold text-danger">
+      <span title={(md.mergeConflict.files || []).join(', ')} className="flex shrink-0 items-center gap-1 rounded-full border border-[#d98078] bg-danger/10 px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-danger">
         <Icon icon={faTriangleExclamation} /> {t('chat.mergeConflict')}
       </span>
     );
   }
   if (md.review?.state === 'approved' && md.branch) {
     return (
-      <span title={md.review.by ? t('chat.mergeApprovedBy', { by: md.review.by }) : ''} className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] font-bold text-fgdim">
+      <span title={md.review.by ? t('chat.mergeApprovedBy', { by: md.review.by }) : ''} className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-fgdim">
         <Icon icon={faCheck} /> {compact ? t('chat.mergeApproved').split(' ')[0] : t('chat.mergeApproved')}
       </span>
     );
@@ -106,8 +106,8 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
     ? 'rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] px-3 py-2.5'
     : 'rounded-[9px] border-[1.5px] border-[#e6d27a] bg-chip/40 px-3 py-2';
   const field = dark
-    ? 'rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-[var(--term-accent-strong)]'
-    : 'rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-0.5 font-mono text-[10px] text-fg';
+    ? 'rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-strong)]'
+    : 'rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-fg';
   return (
     <div data-merge-panel className={`my-2.5 flex flex-wrap items-center gap-2 ${dense ? '' : box}`}>
       {!dense && (
@@ -115,7 +115,7 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
           <Icon icon={faCheck} /> {t('chat.mergeInto', { branch: md.branch, base: st?.base || md.base || '…' })}
         </span>
       )}
-      {!dense && md.review?.by && <span className={`font-mono text-[10px] ${dim}`}>{t('chat.mergeApprovedBy', { by: md.review.by })}</span>}
+      {!dense && md.review?.by && <span className={`font-mono text-[11.5px] md:text-[10px] ${dim}`}>{t('chat.mergeApprovedBy', { by: md.review.by })}</span>}
       <span className="ms-auto flex flex-wrap items-center gap-2">
         <select
           value={strategy}
@@ -126,7 +126,7 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
           <option value="no-ff">{t('chat.mergeStrategyNoFf')}</option>
           <option value="squash">{t('chat.mergeStrategySquash')}</option>
         </select>
-        <label className={`flex cursor-pointer items-center gap-1 font-mono text-[10px] ${dim}`}>
+        <label className={`flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10px] ${dim}`}>
           <input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} disabled={busy} /> {t('chat.mergeDeleteBranch')}
         </label>
         <button
@@ -143,12 +143,12 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
         </button>
       </span>
       {!canMerge && reasonText && !busy && (
-        <span className="basis-full font-mono text-[10px] text-danger">{reasonText}</span>
+        <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{reasonText}</span>
       )}
       {result?.conflict && (
-        <span className="basis-full font-mono text-[10px] text-danger">{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>
+        <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>
       )}
-      {!dense && <span className={`basis-full font-mono text-[9.5px] ${dim}`}>{t('chat.mergeHint')}</span>}
+      {!dense && <span className={`basis-full font-mono text-[11px] md:text-[9.5px] ${dim}`}>{t('chat.mergeHint')}</span>}
     </div>
   );
 }

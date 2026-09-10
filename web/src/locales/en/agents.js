@@ -212,6 +212,8 @@ export const strings = {
   'agent.surface.homeOpening': 'Opening the home chat…',
   'agent.surface.homeFailed': 'Could not open the home chat: {err}',
   'agent.surface.homeHint': 'Want it to run a task? type /as, or drag it into a folder',
+  // touch: there is no dragging with a finger — only offer what a tap can do
+  'agent.surface.homeHintTouch': 'Want it to run a task? type /as',
   'agent.surface.homeHintAction': 'Turn the last message into a work session',
   'agent.surface.homeHintEmpty': 'Write something first — the work session starts from your last message.',
   'agent.surface.homeHintDone': 'Work session created',

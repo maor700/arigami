@@ -170,14 +170,14 @@ export default function McpAuth({ session, sessionServers, cwd }) {
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DOT[status] || DOT.unknown }} />
               <span className="min-w-0 flex-1 truncate">
                 <span className="font-mono text-[11.5px] text-fg">{s.name}</span>
-                <span className="ml-2 font-mono text-[9.5px] text-fgdim">{statusText}</span>
+                <span className="ml-2 font-mono text-[11px] md:text-[9.5px] text-fgdim">{statusText}</span>
               </span>
               {RECONNECTABLE.has(status) && session && (
                 <button
                   type="button"
                   disabled={busy || restarting}
                   onClick={() => restartSession(session)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
+                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
                 >
                   <Icon icon={faRotateRight} /> {t('launcher.mcp.reconnect')}
                 </button>
@@ -187,7 +187,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   type="button"
                   disabled={busy}
                   onClick={() => login(s.name)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
+                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
                 >
                   {t('launcher.mcp.authenticate')}
                 </button>
@@ -197,14 +197,14 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   type="button"
                   disabled={busy}
                   onClick={() => logout(s.name)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-[#B23B30] hover:text-[#B23B30] disabled:opacity-40"
+                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-[#B23B30] hover:text-[#B23B30] disabled:opacity-40"
                 >
                   {t('launcher.mcp.signout')}
                 </button>
               )}
             </div>
             {active && (flow.state === 'starting' || flow.state === 'awaiting') && (
-              <div className="mt-2 pl-5 text-[10.5px] text-fgdim">
+              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">
                 {t('launcher.mcp.opening')}
                 {flow.url && (
                   <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-[#2C6BD6] underline">
@@ -214,10 +214,10 @@ export default function McpAuth({ session, sessionServers, cwd }) {
               </div>
             )}
             {active && flow.state === 'error' && (
-              <div className="mt-2 pl-5 text-[10.5px] text-[#B23B30]">{flow.error || t('launcher.mcp.loginFailed')}</div>
+              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-[#B23B30]">{flow.error || t('launcher.mcp.loginFailed')}</div>
             )}
             {active && flow.state === 'done' && (
-              <div className="mt-2 pl-5 text-[10.5px] text-[#3C9A4E]">{t('launcher.mcp.authorized')}</div>
+              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-[#3C9A4E]">{t('launcher.mcp.authorized')}</div>
             )}
           </div>
         );
@@ -227,11 +227,11 @@ export default function McpAuth({ session, sessionServers, cwd }) {
           type="button"
           disabled={checking}
           onClick={() => { load(true); check(true); }}
-          className="rounded-md border border-border px-2.5 py-1 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
+          className="rounded-md border border-border px-2.5 py-1 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
         >
           <Icon icon={faRotateRight} /> {checking ? t('launcher.mcp.checking') : t('launcher.mcp.checkNow')}
         </button>
-        <span className="text-[10px] text-fgdim">
+        <span className="text-[11.5px] md:text-[10px] text-fgdim">
           {t('launcher.mcp.statusHint')}
         </span>
       </div>

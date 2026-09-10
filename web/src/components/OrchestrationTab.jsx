@@ -35,7 +35,7 @@ function StatePill({ state }) {
   const label = st.key ? t(st.key) : (state || '—');
   return (
     <span
-      className="flex h-[18px] shrink-0 items-center rounded-[4px] border px-1.5 font-mono text-[10px] font-bold"
+      className="flex h-[18px] shrink-0 items-center rounded-[4px] border px-1.5 font-mono text-[11.5px] md:text-[10px] font-bold"
       style={{ color: st.color, borderColor: st.color }}
     >
       {label.toLowerCase()}
@@ -46,7 +46,7 @@ function StatePill({ state }) {
 function Chip({ children, color }) {
   return (
     <span
-      className="inline-flex items-center rounded-[4px] border px-1.5 py-px font-mono text-[10px]"
+      className="inline-flex items-center rounded-[4px] border px-1.5 py-px font-mono text-[11.5px] md:text-[10px]"
       style={{ color: color || '#8a8a8a', borderColor: color || '#d8d4cc' }}
     >
       {children}
@@ -92,7 +92,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
 
       {!!(node.deps && node.deps.length) && (
         <div className="mt-2 flex flex-wrap items-center gap-1">
-          <span className="font-mono text-[9.5px] tracking-wide text-fgdim uppercase">{t('chat.deps')}</span>
+          <span className="font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">{t('chat.deps')}</span>
           {node.deps.map((d) => (
             <Chip key={d} color={nodeStateById[d] === 'done' ? '#3C9A4E' : '#B23B30'}>
               {nodeStateById[d] === 'done' ? <><Icon icon={faCheck} />{' '}</> : ''}
@@ -109,7 +109,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
             type="button"
             onClick={() => jump(worker.id)}
             title={t('chat.jumpToWorker')}
-            className="cursor-pointer font-mono text-[10.5px] text-[#2C6BD6] hover:underline"
+            className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[#2C6BD6] hover:underline"
           >
             → {worker.id}
           </button>
@@ -119,7 +119,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
             <button
               type="button"
               onClick={() => onKill(worker)}
-              className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[10.5px] text-danger hover:border-danger"
+              className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-danger hover:border-danger"
             >
               {t('chat.kill')}
             </button>
@@ -129,7 +129,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
             onClick={() => onRetry(node)}
             disabled={!masterId}
             title={masterId ? t('chat.retryNode') : t('chat.noMaster')}
-            className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
+            className="cursor-pointer rounded-[5px] border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
           >
             {t('chat.retry')}
           </button>
@@ -255,7 +255,7 @@ export default function OrchestrationTab({ session, active }) {
             text={plan?.task || session.title || t('chat.orchestration')}
             className="text-[12.5px] font-bold text-fg"
           />
-          <div className="flex items-center gap-1.5 font-mono text-[10px] text-fgdim">
+          <div className="flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
             {plan?.base && <span>{t('chat.base')} {plan.base}</span>}
             <span>· {t((data.children || []).length === 1 ? 'chat.workerCountOne' : 'chat.workerCountMany', { n: (data.children || []).length })}</span>
             {plan && <span>· {t(nodes.length === 1 ? 'chat.nodeCountOne' : 'chat.nodeCountMany', { n: nodes.length })}</span>}
@@ -281,12 +281,12 @@ export default function OrchestrationTab({ session, active }) {
           <div key={g}>
             <div className="mb-1.5 flex items-center gap-[7px]">
               <span
-                className="font-mono text-[9.5px] font-bold tracking-[0.06em] uppercase"
+                className="font-mono text-[11px] md:text-[9.5px] font-bold tracking-[0.06em] uppercase"
                 style={{ color: STATE_STYLE[g].color }}
               >
                 {t(STATE_STYLE[g].key)}
               </span>
-              <span className="font-mono text-[9.5px] text-fgdim">{byGroup.get(g).length}</span>
+              <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">{byGroup.get(g).length}</span>
               <span className="h-px flex-1 bg-hair" />
             </div>
             <div className="space-y-2">
@@ -308,10 +308,10 @@ export default function OrchestrationTab({ session, active }) {
         {orphans.length > 0 && (
           <div>
             <div className="mb-1.5 flex items-center gap-[7px]">
-              <span className="font-mono text-[9.5px] font-bold tracking-[0.06em] text-fgdim uppercase">
+              <span className="font-mono text-[11px] md:text-[9.5px] font-bold tracking-[0.06em] text-fgdim uppercase">
                 {plan ? t('chat.otherWorkers') : t('chat.workers')}
               </span>
-              <span className="font-mono text-[9.5px] text-fgdim">{orphans.length}</span>
+              <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">{orphans.length}</span>
               <span className="h-px flex-1 bg-hair" />
             </div>
             <div className="space-y-2">

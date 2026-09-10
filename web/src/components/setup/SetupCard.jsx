@@ -67,7 +67,7 @@ function ModeSwitch({ mode, onChange, autoAllowed, identity }) {
         {seg('manual', faHand, t('setup.mode.manual'))}
       </div>
       {!autoAllowed && (
-        <div className="mt-1 text-[10.5px] text-[var(--term-accent-dim)]">
+        <div className="mt-1 text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
           {identity ? t('setup.mode.autoUnavailable') : t('setup.mode.needsIdentity')}
         </div>
       )}
@@ -166,7 +166,7 @@ export default function SetupCard({ sessionId, event }) {
           {event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}
         </span>
         {ownerSlug && (
-          <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[10px] text-[var(--term-accent-fg)]">
+          <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
             {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
           </span>
         )}
@@ -187,7 +187,7 @@ export default function SetupCard({ sessionId, event }) {
       )}
 
       {terminal && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-[var(--term-accent-dim)]">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
           <span className={phase === 'done' ? 'text-[#2f7d4f]' : phase === 'failed' ? 'text-[#9c3b33]' : ''}>
             <Icon icon={phase === 'done' ? faCheck : faXmark} /> {termLabel}
           </span>

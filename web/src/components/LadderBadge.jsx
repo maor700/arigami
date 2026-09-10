@@ -69,7 +69,7 @@ export default function LadderBadge({ session, compact = false, className = '' }
     <span
       data-ladder-badge={ladder.running}
       title={title}
-      className={`inline-flex h-[15px] shrink-0 items-center gap-1 rounded-full border border-[#b8860b]/50 bg-[#b8860b]/15 px-1.5 font-mono text-[9px] leading-none text-[#d9a521] ${className}`}
+      className={`inline-flex h-[15px] shrink-0 items-center gap-1 rounded-full border border-[#b8860b]/50 bg-[#b8860b]/15 px-1.5 font-mono text-[11px] md:text-[9px] leading-none text-[#d9a521] ${className}`}
     >
       <Icon icon={faStairs} />
       <span className="whitespace-nowrap">{compact ? runningName(ladder.running, lang) : txt.full}</span>

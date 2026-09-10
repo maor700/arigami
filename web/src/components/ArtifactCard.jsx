@@ -111,19 +111,19 @@ export default function ArtifactCard({ sessionId, event }) {
     } catch {}
   };
 
-  const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-[var(--term-border)] px-2 py-0.5 font-mono text-[10.5px] text-[var(--term-fg)] hover:bg-[var(--term-hover,rgba(127,127,127,0.15))] disabled:opacity-50';
+  const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-[var(--term-border)] px-2 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-fg)] hover:bg-[var(--term-hover,rgba(127,127,127,0.15))] disabled:opacity-50';
 
   return (
     <div className="my-2 rounded-[10px] border border-[var(--term-border)] bg-[var(--term-codebg)] p-2.5">
       <div className="flex items-center gap-2 font-mono text-[11px]">
         <span className="text-[var(--term-dim)]"><Icon icon={faCube} /></span>
         <span dir="auto" className="min-w-0 truncate font-bold text-[var(--term-fg)]">{event.title || t('chat.artifact')}</span>
-        <span className="shrink-0 text-[10px] text-[var(--term-faint)]">
+        <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
           v{event.version} · {fmtBytes(event.bytes)} · {t('chat.artifactFiles', { n: event.files })}
         </span>
-        <span className="ms-auto shrink-0 text-[10px] text-[var(--term-faint)]">{clock(event.ts)}</span>
+        <span className="ms-auto shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{clock(event.ts)}</span>
       </div>
-      <div dir="ltr" className="mt-1 truncate font-mono text-[10px] text-[var(--term-dim)]" title={abs}>{path}</div>
+      <div dir="ltr" className="mt-1 truncate font-mono text-[11.5px] md:text-[10px] text-[var(--term-dim)]" title={abs}>{path}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <button type="button" className={btn} onClick={openTab} disabled={opening} title={t('chat.artifactOpenTabHint')}>
           <Icon icon={faArrowUpRightFromSquare} /> {t('chat.artifactOpenTab')}
@@ -144,7 +144,7 @@ export default function ArtifactCard({ sessionId, event }) {
             <select
               value={shareDays}
               onChange={(e) => setShareDays(Number(e.target.value))}
-              className="rounded-[6px] border border-[var(--term-border)] bg-transparent px-1 py-0.5 font-mono text-[10.5px] text-[var(--term-fg)]"
+              className="rounded-[6px] border border-[var(--term-border)] bg-transparent px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-fg)]"
               aria-label={t('chat.artifactShareDays', { n: shareDays })}
             >
               {[1, 7, 30].map((n) => (
@@ -157,11 +157,11 @@ export default function ArtifactCard({ sessionId, event }) {
       {share && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-[6px] border border-dashed border-[var(--term-border)] px-2 py-1">
           <span className="text-[var(--term-dim)]"><Icon icon={faShareNodes} /></span>
-          <span dir="ltr" className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--term-dim)]" title={absolutize(share.url)}>
+          <span dir="ltr" className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-[var(--term-dim)]" title={absolutize(share.url)}>
             {absolutize(share.url)}
           </span>
           {share.exp && (
-            <span className="shrink-0 text-[10px] text-[var(--term-faint)]">{t('chat.artifactShareExpires', { when: fmtExpiry(share.exp) })}</span>
+            <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.artifactShareExpires', { when: fmtExpiry(share.exp) })}</span>
           )}
           <button type="button" className={btn} onClick={copyShare} title={t('chat.artifactShareCopy')}>
             <Icon icon={shareCopied ? faCheck : faLink} /> {shareCopied ? t('chat.copied') : t('chat.artifactShareCopy')}
@@ -171,9 +171,9 @@ export default function ArtifactCard({ sessionId, event }) {
           </button>
         </div>
       )}
-      {shareErr && <div dir="auto" className="mt-1 text-[10.5px] text-red-500">{shareErr}</div>}
+      {shareErr && <div dir="auto" className="mt-1 text-[11.5px] md:text-[10.5px] text-red-500">{shareErr}</div>}
       {warnings.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5 text-[10.5px] text-[var(--term-dim)]">
+        <ul className="mt-1.5 space-y-0.5 text-[11.5px] md:text-[10.5px] text-[var(--term-dim)]">
           {warnings.map((w, i) => (
             <li key={i} dir="auto" className="flex gap-1">
               <span className="shrink-0 text-amber-500"><Icon icon={faTriangleExclamation} /></span>

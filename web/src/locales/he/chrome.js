@@ -65,6 +65,8 @@ export const strings = {
   'chrome.voice.hotkey': 'מקש קיצור להקלטה',
   'chrome.voice.hotkey.hint': 'עובד בכל מקום. כשהסמן בתיבת ההודעה של הצ׳אט — מכתיב לתוך ההודעה; בכל מקום אחר — פותח את חלון הפקודות הקוליות. לחיצה נוספת בזמן האזנה עוצרת; לחיצה כשהחלון פתוח מאזינה שוב. לחץ על הקלטה, ואז הקש על המקשים.',
   'chrome.voice.hotkey.pressKeys': 'הקש מקשים…',
+  'chrome.voice.hotkey.touch': 'הקישו על כפתור המיקרופון כדי להתחיל ולעצור.',
+  'chrome.voice.hotkey.touchHint': 'מקש-קיצור להקלטה דורש מקלדת — בטלפון כפתור המיקרופון בתיבת ההודעה ובמגירת הסשנים עושה בדיוק את זה.',
   'chrome.voice.hotkey.record': 'הקלטה',
   'chrome.voice.hotkey.listening': 'מאזין…',
   'chrome.voice.autoSend': 'שליחה אוטומטית של פרומפטים',

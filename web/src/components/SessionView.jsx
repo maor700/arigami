@@ -93,7 +93,7 @@ function StatusChip({ session }) {
         />
       )}
       <span
-        className={`font-mono text-[10.5px] font-bold ${awaiting ? 'text-fg' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
+        className={`font-mono text-[11.5px] md:text-[10.5px] font-bold ${awaiting ? 'text-fg' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
       >
         {String(status).toLowerCase()}
       </span>
@@ -114,7 +114,7 @@ function AccountChip({ session }) {
   const name = acc.email || acc.label || t('rail.accountFallback');
   return (
     <span
-      className="hidden items-center gap-1 font-mono text-[10px] text-fgdim sm:flex"
+      className="hidden items-center gap-1 font-mono text-[11.5px] md:text-[10px] text-fgdim sm:flex"
       title={t('rail.runsOn', { name }) + (acc.active ? t('rail.activeAccountSuffix') : '')}
       onClick={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}
       style={{ cursor: 'pointer' }}
@@ -140,7 +140,7 @@ function ListenersChipCompact({ session }) {
         type="button"
         onClick={() => setOpen(true)}
         title={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] sm:hidden ${
+        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11.5px] md:text-[10px] sm:hidden ${
           errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-white text-[#555]'
         }`}
       >
@@ -164,7 +164,7 @@ function LangToggle({ value, onChange, disabled }) {
           type="button"
           onClick={() => value !== key && onChange(key)}
           disabled={disabled}
-          className={`cursor-pointer px-1.5 py-[1px] text-[10.5px] leading-none disabled:opacity-50 ${i ? 'border-l border-border' : ''} ${
+          className={`cursor-pointer px-1.5 py-[1px] text-[11.5px] md:text-[10.5px] leading-none disabled:opacity-50 ${i ? 'border-l border-border' : ''} ${
             value === key ? 'bg-ink text-white' : 'bg-panel text-fgdim hover:text-fg'
           }`}
         >
@@ -213,7 +213,7 @@ function SummaryChip({ session }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={t('rail.statusSummary')}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] ${
+        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-1.5 text-[11.5px] md:px-1.5 md:py-0.5 md:text-[10px] ${
           on ? 'border-ink bg-chip text-fg' : 'border-hair bg-white text-[#555]'
         }`}
       >
@@ -259,7 +259,7 @@ function SummaryChip({ session }) {
             )}
           </div>
           {on && (
-            <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[10.5px] text-fgdim">
+            <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">
               <label className="flex cursor-pointer items-center gap-1.5">
                 <input type="checkbox" className="accent-brand" checked={!!summary.autoUpdate} onChange={toggleAuto} />
                 {t('rail.autoUpdateEachTurn')}
@@ -272,7 +272,7 @@ function SummaryChip({ session }) {
           )}
           {on && (
             <div className="border-t border-hair px-3 py-1.5 text-end">
-              <button type="button" onClick={turnOff} className="cursor-pointer text-[10.5px] text-danger hover:underline">{t('rail.turnOff')}</button>
+              <button type="button" onClick={turnOff} className="cursor-pointer text-[11.5px] md:text-[10.5px] text-danger hover:underline">{t('rail.turnOff')}</button>
             </div>
           )}
         </div>
@@ -296,7 +296,7 @@ function MachineChip({ session }) {
       title={open ? t('screen.hidePanel') : t('screen.showPanel')}
       aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
       aria-pressed={open}
-      className={`hidden h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 font-mono text-[10.5px] md:flex ${
+      className={`hidden h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 font-mono text-[11.5px] md:text-[10.5px] md:flex ${
         pending
           ? 'pulse-yellow border-ink bg-brand font-bold text-[#1a1a1a]'
           : open
@@ -329,7 +329,7 @@ export function BornFromChip({ session, className = '' }) {
       data-born-from={slug}
       title={tt('session.bornFromTitle', { name })}
       onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
-      className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[9.5px] leading-none whitespace-nowrap hover:opacity-80 ${className}`}
+      className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[11px] md:text-[9.5px] leading-none whitespace-nowrap hover:opacity-80 ${className}`}
       style={{ borderColor: `${agent.color || '#c4c4c4'}66`, background: `${agent.color || '#c4c4c4'}14` }}
     >
       <AgentAvatar agent={agent} size={12} />
@@ -359,7 +359,7 @@ export function ChatModeToggle({ session }) {
         data-chat-mode-btn={value}
         aria-pressed={active}
         onClick={() => { if (!active) setChatMode(session, value); }}
-        className={`h-full cursor-pointer px-2 text-[10.5px] leading-none ${active ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:text-fg'}`}
+        className={`h-full cursor-pointer px-2 text-[11.5px] md:text-[10.5px] leading-none ${active ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:text-fg'}`}
       >
         {label}
       </button>
@@ -371,7 +371,7 @@ export function ChatModeToggle({ session }) {
       aria-label={t('rail.chatMode')}
       title={t('rail.chatModeHint')}
       data-chat-mode-toggle={mode}
-      className="flex h-[22px] shrink-0 overflow-hidden rounded-full border-[1.5px] border-border bg-bg font-mono"
+      className="flex h-[30px] shrink-0 overflow-hidden rounded-full border-[1.5px] border-border bg-bg font-mono md:h-[22px]"
     >
       {seg('simple', t('rail.chatModeSimple'))}
       {seg('full', t('rail.chatModeTerminal'))}
@@ -395,11 +395,11 @@ function TerminalHeader({ session }) {
       {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
       <LadderBadge session={session} />
       {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
-      {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[10.5px] text-fgdim sm:block" />}
+      {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[11.5px] md:text-[10.5px] text-fgdim sm:block" />}
       {session.metadata?.fromTriggerName && (
         <TriggerTag
           name={session.metadata.fromTriggerName}
-          className="max-w-[160px] text-[10.5px]"
+          className="max-w-[160px] text-[11.5px] md:text-[10.5px]"
         />
       )}
       <div className="ms-auto flex shrink-0 items-center gap-2">
@@ -434,13 +434,13 @@ export function ProgressStrip({ progress }) {
             } ${st === 'active' ? 'bg-[#FEFBE8]' : ''}`}
           >
             {st === 'done' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
+              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
                 <Icon icon={faCheck} />
               </span>
             ) : st === 'active' ? (
               <span className="host-spinner h-[14px] w-[14px] shrink-0 sm:h-[18px] sm:w-[18px]" />
             ) : st === 'error' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-danger text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
+              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-danger text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
                 <Icon icon={faXmark} />
               </span>
             ) : (
@@ -509,7 +509,7 @@ export function ListenerChips({ session }) {
   return (
     // Desktop-only: on phones this whole row folds into the header's 👀 chip.
     <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
-      <span className="font-mono text-[10px] tracking-wide text-[#999] uppercase">{t('rail.watching')}</span>
+      <span className="font-mono text-[11.5px] md:text-[10px] tracking-wide text-[#999] uppercase">{t('rail.watching')}</span>
       {listeners.map((l) => {
         const errored = l.status === 'errored';
         return (
@@ -607,7 +607,7 @@ function ListenersPanel({ session, initialId, onClose }) {
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
           <span className="text-[13px] leading-none"><Icon icon={faEye} /></span>
           <span className="font-mono text-[13px] font-bold text-fg">{t('rail.listeners')}</span>
-          <span className="font-mono text-[10.5px] text-fgdim">{t('rail.nWatching', { n: list.length })}</span>
+          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('rail.nWatching', { n: list.length })}</span>
           <button
             type="button"
             onClick={onClose}
@@ -632,9 +632,9 @@ function ListenersPanel({ session, initialId, onClose }) {
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor(l) }} />
                   <span className="font-mono text-[11px] font-bold text-fg">{l.label}</span>
-                  <span className="ms-auto font-mono text-[9.5px] text-fgdim">{l.status}</span>
+                  <span className="ms-auto font-mono text-[11px] md:text-[9.5px] text-fgdim">{l.status}</span>
                 </div>
-                <span className="font-mono text-[9.5px] text-fgdim">
+                <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">
                   {l.type} · {t('rail.nFired', { n: l.firedCount || 0 })}
                 </span>
               </button>
@@ -652,18 +652,18 @@ function ListenersPanel({ session, initialId, onClose }) {
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: dotColor(sel) }} />
                     <span className="font-mono text-[12px] font-bold text-[#e4e4e4]">{sel.label}</span>
-                    <span className="font-mono text-[10px] text-[#8a8a8a]">{sel.status}</span>
+                    <span className="font-mono text-[11.5px] md:text-[10px] text-[#8a8a8a]">{sel.status}</span>
                     {sel.status !== 'stopped' && (
                       <button
                         type="button"
                         onClick={() => cancel(sel.id)}
-                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10"
                       >
-                        <Icon icon={faStop} className="text-[9px]" /> {t('rail.cancelLower')}
+                        <Icon icon={faStop} className="text-[11px] md:text-[9px]" /> {t('rail.cancelLower')}
                       </button>
                     )}
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-[#9aa0a6]">
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11.5px] md:text-[10px] text-[#9aa0a6]">
                     <span>{t('rail.firesOn')} <span className="text-[#cfcfcf]">{(sel.fireOn || []).join(', ') || '—'}</span></span>
                     <span>{t('rail.every')} <span className="text-[#cfcfcf]">{sel.intervalSec}s</span></span>
                     <span>{t('rail.lastPoll')} <span className="text-[#cfcfcf]">{fmtAgo(detail?.lastPolledAt ?? sel.lastPolledAt)}</span></span>
@@ -684,7 +684,7 @@ function ListenersPanel({ session, initialId, onClose }) {
                     )}
                   </div>
                 </div>
-                <div className="border-b border-white/10 px-3.5 py-1.5 font-mono text-[9.5px] tracking-wide text-[#6a6a6a] uppercase">
+                <div className="border-b border-white/10 px-3.5 py-1.5 font-mono text-[11px] md:text-[9.5px] tracking-wide text-[#6a6a6a] uppercase">
                   {t('rail.activity')}
                 </div>
                 <pre
@@ -756,6 +756,7 @@ function ArchivedFooter({ session }) {
 
 function PendingPromptsPanel({ session }) {
   const t = useT();
+  const isDesktop = useIsDesktop();
   const prompts = session.pendingPrompts || [];
   const autoPlay = !!session.promptAutoPlay;
   const [open, setOpen] = useState(false);
@@ -815,10 +816,10 @@ function PendingPromptsPanel({ session }) {
           <span><Icon icon={faHourglassHalf} /></span>
           <span className="font-mono font-bold">{prompts.length}</span>
           <span className="text-fgdim">{t('rail.queued')}</span>
-          <span className="text-[9px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretUp} /></span>
+          <span className="text-[11px] md:text-[9px] text-fgdim"><Icon icon={open ? faCaretDown : faCaretUp} /></span>
         </button>
         <label
-          className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-fgdim"
+          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] md:text-[10.5px] text-fgdim"
           title={t('rail.autoPlayPromptHint', { engine: engineLabel(session.engine) })}
         >
           <span
@@ -837,7 +838,7 @@ function PendingPromptsPanel({ session }) {
             back until the human answers the action bar above — say so, instead
             of leaving a queue that looks stuck on an idle session. */}
         {autoPlay && session.autoPlayHold === 'action' && (
-          <span className="text-[10.5px] text-fgdim" title={t('rail.autoPlayHoldActionHint')}>
+          <span className="text-[11.5px] md:text-[10.5px] text-fgdim" title={t('rail.autoPlayHoldActionHint')}>
             {t('rail.autoPlayHoldAction')}
           </span>
         )}
@@ -845,8 +846,8 @@ function PendingPromptsPanel({ session }) {
       {/* floating list */}
       {open && (
         <div className="absolute bottom-full start-0 z-30 mb-1 w-full max-w-[560px] rounded-[10px] border-[1.5px] border-ink bg-panel p-2 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-          <div className="mb-1.5 px-1 font-mono text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
-            {t('rail.queuedPromptsHint')}
+          <div className="mb-1.5 px-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
+            {t(isDesktop ? 'rail.queuedPromptsHint' : 'rail.queuedPromptsHintTouch')}
           </div>
           <div className="thin-scroll flex max-h-[38vh] flex-col gap-1 overflow-y-auto">
             {rows.map((p) => (
@@ -875,7 +876,7 @@ function PendingPromptsPanel({ session }) {
                       ? t('rail.interruptSendNow')
                       : t('rail.sendPromptNow')
                   }
-                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fg hover:border-ink"
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[11.5px] md:text-[10px] text-fg hover:border-ink"
                 >
                   <Icon icon={faPlay} />
                 </button>
@@ -883,7 +884,7 @@ function PendingPromptsPanel({ session }) {
                   type="button"
                   onClick={() => del(p.id)}
                   title={t('rail.removeFromQueue')}
-                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[10px] text-fgdim hover:border-danger hover:text-danger"
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-panel text-[11.5px] md:text-[10px] text-fgdim hover:border-danger hover:text-danger"
                 >
                   <Icon icon={faXmark} />
                 </button>
@@ -1315,15 +1316,15 @@ function ChatFooter({ session }) {
                   </span>
                 )}
                 <span className="flex min-w-0 flex-col leading-tight">
-                  <span className="max-w-[160px] truncate font-mono text-[10.5px] text-fg">{a.name}</span>
+                  <span className="max-w-[160px] truncate font-mono text-[11.5px] md:text-[10.5px] text-fg">{a.name}</span>
                   {a.uploading && (
-                    <span className="font-mono text-[9px] text-fgdim">{t('rail.attachUploading', { pct: Math.round((a.progress || 0) * 100) })}</span>
+                    <span className="font-mono text-[11px] md:text-[9px] text-fgdim">{t('rail.attachUploading', { pct: Math.round((a.progress || 0) * 100) })}</span>
                   )}
                   {a.failed && (
-                    <span className="max-w-[160px] truncate font-mono text-[9px] text-danger">{t('rail.attachUploadFailed', { msg: a.error || '' })}</span>
+                    <span className="max-w-[160px] truncate font-mono text-[11px] md:text-[9px] text-danger">{t('rail.attachUploadFailed', { msg: a.error || '' })}</span>
                   )}
                   {!a.uploading && !a.failed && a.archive && (
-                    <span className={`font-mono text-[9px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
+                    <span className={`font-mono text-[11px] md:text-[9px] ${archiveProblem ? 'text-danger' : 'text-fgdim'}`}>
                       {a.archive.error
                         ? t('rail.archiveExtractFailed')
                         : archivePartial
@@ -1339,7 +1340,7 @@ function ChatFooter({ session }) {
                   type="button"
                   onClick={() => removeAttachment(i)}
                   title={t('rail.remove')}
-                  className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[10px] text-fgdim hover:bg-hair hover:text-danger"
+                  className="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-[11.5px] md:text-[10px] text-fgdim hover:bg-hair hover:text-danger"
                 >
                   <Icon icon={faXmark} />
                 </button>
@@ -1378,14 +1379,14 @@ function ChatFooter({ session }) {
         <div className="flex min-w-0 flex-1 flex-col rounded-[10px] border-[1.5px] border-border focus-within:border-[#9a9a9a]">
           {quoted && (
             <div className="flex items-start gap-2 border-b border-border bg-[var(--term-hover,#f5f5f5)] px-3 py-1.5">
-              <Icon icon={faReply} className="mt-0.5 text-[10px] text-brand opacity-70" />
-              <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fgdim">
+              <Icon icon={faReply} className="mt-0.5 text-[11.5px] md:text-[10px] text-brand opacity-70" />
+              <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
                 {quoted.text.length > 120 ? quoted.text.slice(0, 120) + '…' : quoted.text}
               </span>
               <button
                 type="button"
                 onClick={() => setQuoted(null)}
-                className="shrink-0 cursor-pointer text-[10px] text-fgdim hover:text-fg"
+                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg"
               >
                 <Icon icon={faXmark} />
               </button>
@@ -1560,7 +1561,7 @@ function UrlTab({ tab, active, session }) {
         >
           <Icon icon={faRotateRight} />
         </button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-fgdim">{tab.url}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{tab.url}</span>
         <a
           /* proxied so it opens from any device — the raw tab.url may point at
              the HOST's localhost, which a phone over VPN can't reach */
@@ -1680,16 +1681,16 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
         action={session.action}
         mode={chatModeOf(session, isDesktop)}
       />
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[10.5px] text-fgdim">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[11.5px] md:text-[10.5px] text-fgdim">
         <button
           type="button"
           data-home-to-work
           disabled={busy}
           title={tt('agent.surface.homeHintAction')}
           onClick={toWork}
-          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2 py-0.5 font-mono text-[10px] hover:border-ink hover:text-fg disabled:opacity-50"
+          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2 py-0.5 font-mono text-[11.5px] md:text-[10px] hover:border-ink hover:text-fg disabled:opacity-50"
         >
-          <Icon icon={faListCheck} /> {tt('agent.surface.homeHint')}
+          <Icon icon={faListCheck} /> {tt(isDesktop ? 'agent.surface.homeHint' : 'agent.surface.homeHintTouch')}
         </button>
       </div>
       {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}

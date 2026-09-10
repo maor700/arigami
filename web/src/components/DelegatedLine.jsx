@@ -58,7 +58,7 @@ export function DelegatedLine({ event }) {
     ? t('chat.delegatedHome', { name })
     : t(how === 'child' ? 'chat.delegatedWorkChild' : 'chat.delegatedWork', { title, name });
   return (
-    <div data-delegated-line={a.slug} data-delegated-how={how} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+    <div data-delegated-line={a.slug} data-delegated-how={how} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
       <AgentAvatar agent={a} size={14} />
       <span className="font-bold">{label}</span>
       {event.delivered === 'queued' && <span className="text-[var(--term-accent-dim)]">· {t('chat.delegatedQueued')}</span>}
@@ -88,7 +88,7 @@ export function AgentAdoptLine({ event, sessionId }) {
   const a = event.agent || {};
   const revert = () => api.post(`/sessions/${sessionId}/adopt-agent/revert`).catch((e) => toastError(e?.message || String(e)));
   return (
-    <div data-agent-adopt={a.slug || ''} data-agent-adopt-reverted={reverted || undefined} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[10.5px] text-[var(--term-accent-fg)]">
+    <div data-agent-adopt={a.slug || ''} data-agent-adopt-reverted={reverted || undefined} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
       {a.slug && <AgentAvatar agent={a} size={14} />}
       <span className="font-bold">{reverted ? t('chat.agentAdoptReverted') : t('chat.agentAdopted', { name: a.name || a.slug })}</span>
       {!reverted && <span className="text-[var(--term-accent-dim)]">{t('chat.agentAdoptedHint')}</span>}

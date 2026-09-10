@@ -79,7 +79,7 @@ function CappedDoc({ target, path, onChanged }) {
     <div className="rounded-[10px] border border-hair p-3">
       <div className="mb-2 flex items-center gap-2">
         <span className="font-mono text-[11.5px] font-bold text-fg">{path}</span>
-        <span className="text-[10px] text-fgdim">{t('brain.lineCount', { n: items.length })}</span>
+        <span className="text-[11.5px] md:text-[10px] text-fgdim">{t('brain.lineCount', { n: items.length })}</span>
       </div>
       <div className="flex flex-col gap-1">
         {items.map((line, i) =>
@@ -118,7 +118,7 @@ function CappedDoc({ target, path, onChanged }) {
                   setEditText(line);
                 }}
                 title={t('dialogs.edit')}
-                className="shrink-0 cursor-pointer text-[10px] text-fgdim hover:text-fg"
+                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg"
               >
                 <Icon icon={faPen} />
               </button>
@@ -127,7 +127,7 @@ function CappedDoc({ target, path, onChanged }) {
                 disabled={busy}
                 onClick={() => write({ action: 'remove', old_text: line })}
                 title={t('dialogs.delete')}
-                className="shrink-0 cursor-pointer text-[10px] text-fgdim hover:text-danger disabled:opacity-40"
+                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-danger disabled:opacity-40"
               >
                 <Icon icon={faTrashCan} />
               </button>
@@ -150,7 +150,7 @@ function CappedDoc({ target, path, onChanged }) {
           type="button"
           disabled={busy || !draft.trim()}
           onClick={() => write({ action: 'add', content: draft.trim() }).then(() => setDraft(''))}
-          className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
+          className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[11.5px] md:text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
         >
           <Icon icon={faPlus} />
         </button>
@@ -204,9 +204,9 @@ function SearchPane() {
           {hits.map((h, i) => (
             <div key={i} className="rounded-[8px] border border-hair p-2">
               <div className="mb-0.5 flex items-center gap-2">
-                <span className="font-mono text-[10.5px] font-bold text-fg">{h.path}</span>
-                <span className="text-[9.5px] text-fgdim">{h.scope}</span>
-                <span className="ml-auto text-[9.5px] text-fgdim">{fmtDate(h.updatedAt)}</span>
+                <span className="font-mono text-[11.5px] md:text-[10.5px] font-bold text-fg">{h.path}</span>
+                <span className="text-[11px] md:text-[9.5px] text-fgdim">{h.scope}</span>
+                <span className="ml-auto text-[11px] md:text-[9.5px] text-fgdim">{fmtDate(h.updatedAt)}</span>
               </div>
               <div className="text-[11px] leading-snug text-fgdim">{h.snippet}</div>
             </div>
@@ -267,7 +267,7 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
 
   return (
     <div className="rounded-[10px] border border-hair p-3">
-      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{title} · {files.length}</div>
+      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{title} · {files.length}</div>
       {addable && (
         <div className="mb-2 flex items-center gap-1.5">
           <input
@@ -281,7 +281,7 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
             type="button"
             disabled={busy || !draft.trim()}
             onClick={submitAdd}
-            className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
+            className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[11.5px] md:text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
           >
             <Icon icon={faPlus} />
           </button>
@@ -297,7 +297,7 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
                 key={f.path}
                 type="button"
                 onClick={() => setSelected(f.path)}
-                className={`truncate rounded-[6px] px-2 py-1 text-left font-mono text-[10.5px] ${
+                className={`truncate rounded-[6px] px-2 py-1 text-left font-mono text-[11.5px] md:text-[10.5px] ${
                   selected === f.path ? 'bg-chip text-fg' : 'text-fgdim hover:bg-chip/60'
                 }`}
               >
@@ -342,23 +342,23 @@ function LogPane({ onChanged }) {
 
   return (
     <div className="rounded-[10px] border border-hair p-3">
-      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('brain.changeLog')}</div>
+      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('brain.changeLog')}</div>
       {log.length === 0 && <div className="text-[11px] text-fgdim">{t('brain.logEmpty')}</div>}
       <div className="flex flex-col gap-1">
         {log.map((e) => (
           <div key={e.seq} className="flex items-center gap-2 rounded-[7px] border border-hair px-2 py-1.5">
-            <span className="shrink-0 font-mono text-[9.5px] text-fgdim">#{e.seq}</span>
-            <span className="shrink-0 rounded-full border border-hair px-1.5 text-[9px] font-bold text-fgdim uppercase">{e.action}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fg">{e.path}</span>
-            <span className="shrink-0 text-[9.5px] text-fgdim">{e.source}</span>
-            <span className="shrink-0 text-[9.5px] text-fgdim">{fmtDate(e.ts)}</span>
+            <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] text-fgdim">#{e.seq}</span>
+            <span className="shrink-0 rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] font-bold text-fgdim uppercase">{e.action}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10.5px] text-fg">{e.path}</span>
+            <span className="shrink-0 text-[11px] md:text-[9.5px] text-fgdim">{e.source}</span>
+            <span className="shrink-0 text-[11px] md:text-[9.5px] text-fgdim">{fmtDate(e.ts)}</span>
             {e.action !== 'undo' && (
               <button
                 type="button"
                 disabled={busy === e.seq}
                 onClick={() => undo(e.seq)}
                 title={t('brain.undo')}
-                className="shrink-0 cursor-pointer text-[10.5px] text-fgdim hover:text-fg disabled:opacity-40"
+                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg disabled:opacity-40"
               >
                 <Icon icon={faRotateLeft} />
               </button>
