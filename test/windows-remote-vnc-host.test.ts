@@ -19,6 +19,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { WebSocket as WsClient } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -52,6 +54,34 @@ async function waitTcp(port: number, ms = 12000): Promise<boolean> {
     await sleep(150);
   }
   return false;
+}
+
+
+// The rest of the suite clobbers `globalThis.fetch` and `globalThis.WebSocket`
+// with inert stubs (a dozen *-web.test.js files do it in beforeAll and never
+// restore them), and bun runs every file in ONE process. A host test needs the
+// REAL implementations, so it must not touch the globals at all: HTTP goes
+// through node:http, and sockets through the `ws` package's own client. Found
+// the hard way — these tests passed alone and hung in a full run.
+function httpJson(url: string, opts: { method?: string; body?: unknown } = {}): Promise<{ status: number; json: any }> {
+  const u = new URL(url);
+  const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: opts.method || 'GET', headers: payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {} },
+      (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode || 0, json: JSON.parse(body) }); }
+          catch { resolve({ status: res.statusCode || 0, json: { raw: body } }); }
+        });
+      }
+    );
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
 }
 
 const procs: ChildProcess[] = [];
@@ -96,7 +126,7 @@ async function startHost(env: Record<string, string>): Promise<string> {
   const base = `http://127.0.0.1:${port}`;
   const t0 = Date.now();
   while (Date.now() - t0 < 30000) {
-    try { if ((await fetch(base + '/__api/config')).ok) return base; } catch {}
+    try { if ((await httpJson(base + '/__api/config')).status === 200) return base; } catch {}
     await sleep(100);
   }
   throw new Error(`host did not come up: ${log.slice(-1200)}`);
@@ -111,17 +141,15 @@ async function startHost(env: Record<string, string>): Promise<string> {
 function rfbBanner(base: string, query = ''): Promise<string> {
   const url = base.replace('http://', 'ws://') + '/__vnc' + query;
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, ['binary']);
-    ws.binaryType = 'arraybuffer';
+    const ws = new WsClient(url, ['binary']);
     const t = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('no bytes from the bridge in time')); }, 12000);
-    ws.onmessage = (e) => {
+    ws.on('message', (data: Buffer) => {
       clearTimeout(t);
-      const text = typeof e.data === 'string' ? e.data : new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer));
       try { ws.close(); } catch {}
-      resolve(text);
-    };
-    ws.onclose = (e) => { clearTimeout(t); reject(new Error(`closed before any data (code ${e.code})`)); };
-    ws.onerror = () => { clearTimeout(t); reject(new Error('socket error')); };
+      resolve(data.toString('latin1'));
+    });
+    ws.on('close', (code: number) => { clearTimeout(t); reject(new Error(`closed before any data (code ${code})`)); });
+    ws.on('error', (e: Error) => { clearTimeout(t); reject(new Error('socket error: ' + e.message)); });
   });
 }
 
@@ -148,7 +176,7 @@ test.skipIf(!HAVE_VNC)('winvnc host: declares an rfb transport AND its /__vnc br
     ARIGAMI_VNC_HOST: '127.0.0.1',
     ARIGAMI_VNC_PORT: String(vncPort),
   });
-  const st = await (await fetch(base + '/__api/screen/status')).json();
+  const st = (await httpJson(base + '/__api/screen/status')).json;
   expect(st.driver).toBe('winvnc');
   expect(st.viewer).toMatchObject({ transport: 'rfb', interactive: true, scope: 'desktop' });
   expect(st.available).toBe(true);
@@ -181,7 +209,7 @@ test.skipIf(!HAVE_VNC)('x11 host: the historical path still bridges after /__vnc
     ARIGAMI_VNC_HOST: '127.0.0.1',
     ARIGAMI_VNC_PORT: String(vncPort),
   });
-  const st = await (await fetch(base + '/__api/screen/status')).json();
+  const st = (await httpJson(base + '/__api/screen/status')).json;
   expect(st.driver).toBe('x11');
   expect(st.viewer.transport).toBe('rfb');
   const banner = await rfbBanner(base);
