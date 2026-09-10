@@ -119,10 +119,16 @@ host declares rather than something the client assumes.**
 
 ### Proven live (this Linux box, real Chrome, real CDP)
 
-Run with `ARIGAMI_SCREEN_DRIVER=native-window` — the documented way to
-exercise the non-Linux host shape without one. Real headless Chrome, a real
-WebSocket pair into `bridgeToScreencast`, against a page that records what
-reaches it:
+Both harnesses are committed — `scripts/check-screencast-input.mjs` (the
+server half) and `scripts/check-screencast-client.mjs` (the client half in a
+real browser) — precisely so the first person with a Windows machine can run
+them **there**. Every assertion in them is platform-independent and Chrome is
+located through the host's own `findChromeBin()`, so a pass on Windows closes
+most of §4's first block on the spot. Each prints `ALL … CHECKS PASSED` and
+exits 0, or a `FAIL` line and exits 1.
+
+Real headless Chrome, a real WebSocket pair into `bridgeToScreencast`, against
+a page that records what reaches it:
 
 - screencast frames arrive (1280x713);
 - a **click** at scaled coordinates fires the page's `onclick`;
