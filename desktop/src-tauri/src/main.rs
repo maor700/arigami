@@ -48,6 +48,15 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 // restart/upgrade button gets a 409 (NoSupervisorError).
 const SUPERVISOR_ENV_VALUE: &str = "self";
 
+// The machine chip's click channel. Decision #2 forbids IPC to a machine
+// origin, so the chip cannot `invoke()` — instead it navigates the window to
+// this same-origin path, `on_navigation` recognises it, cancels the
+// navigation and opens the machines window. Nothing is ever fetched. The
+// path is under a `__arigami-shell/` prefix the server does not route, so if
+// a cancel were ever missed the worst case is a 404 — and `on_page_load`
+// catches that too and puts the window back.
+const MACHINES_SENTINEL_PATH: &str = "/__arigami-shell/machines";
+
 const MAIN_WINDOW: &str = "main";
 const PICKER_WINDOW: &str = "picker";
 const LOCAL_ID: &str = "local";
@@ -787,11 +796,25 @@ const BADGE_JS: &str = r#"
         pill.setAttribute('dir','rtl');
         root.appendChild(pill);
       }
-      pill.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:2147483647;'
-        + 'pointer-events:none;font:600 11px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-        + 'padding:3px 10px;border-radius:999px;background:' + COLOR + ';color:#111;'
-        + 'box-shadow:0 1px 5px rgba(0,0,0,.4);opacity:.94;white-space:nowrap';
-      pill.textContent = NAME + IPC;
+      // Top edge, centred, hanging off the colour strip. It used to sit at
+      // bottom-left, which is exactly where the cockpit's rail footer keeps
+      // its buttons (web/src/components/Rail.jsx) — pointer-events:none meant
+      // clicks still landed, but the buttons were hidden behind it.
+      pill.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);'
+        + 'z-index:2147483647;cursor:pointer;user-select:none;'
+        + 'font:600 11px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+        + 'padding:2px 12px 3px;border-radius:0 0 9px 9px;background:' + COLOR + ';color:#111;'
+        + 'box-shadow:0 1px 5px rgba(0,0,0,.35);opacity:.92;white-space:nowrap';
+      pill.title = 'החלף מכונה (Cmd/Ctrl+Shift+M)';
+      pill.textContent = NAME + IPC + '  ⌄';
+      if (!pill.__arigamiWired) {
+        pill.__arigamiWired = true;
+        pill.addEventListener('mouseenter', function(){ pill.style.opacity = '1'; });
+        pill.addEventListener('mouseleave', function(){ pill.style.opacity = '.92'; });
+        pill.addEventListener('click', function(){
+          location.href = location.origin + __SENTINEL__;
+        });
+      }
       var strip = document.getElementById(ID + '_strip');
       if (!strip) {
         strip = document.createElement('div');
@@ -823,6 +846,10 @@ const BADGE_JS: &str = r#"
 
 fn badge_js(name: &str, color: &str) -> String {
     BADGE_JS
+        .replace(
+            "__SENTINEL__",
+            &serde_json::to_string(MACHINES_SENTINEL_PATH).unwrap_or_else(|_| "\"\"".into()),
+        )
         .replace("__NAME__", &serde_json::to_string(name).unwrap_or_else(|_| "\"?\"".into()))
         .replace("__COLOR__", &serde_json::to_string(color).unwrap_or_else(|_| "\"#fff\"".into()))
 }
@@ -966,7 +993,10 @@ fn create_machine_window(
     let local_page = Arc::new(AtomicBool::new(true));
 
     let guard = local_page.clone();
+    let app_nav = app.clone();
     let shell_pl = shell.clone();
+    let shell_sn = shell.clone();
+    let label_sn = label.clone();
     let label_pl = label.clone();
     let shell_ev = shell.clone();
     let app_ev = app.clone();
@@ -982,6 +1012,13 @@ fn create_machine_window(
         // scheme (history.back(), location.href, a link) — that origin is
         // where IPC lives. Only our own navigations set the flag.
         .on_navigation(move |u| {
+            // The machine chip asking for the machines window. Cancelled, so
+            // the cockpit stays exactly where it is; all this navigation ever
+            // does is carry the click across the origin boundary.
+            if u.path() == MACHINES_SENTINEL_PATH {
+                open_picker(&app_nav);
+                return false;
+            }
             if is_app_url(u) {
                 guard.load(Ordering::SeqCst)
             } else {
@@ -989,6 +1026,19 @@ fn create_machine_window(
             }
         })
         .on_page_load(move |webview, payload| {
+            // Belt and braces: if the sentinel ever gets past on_navigation,
+            // the window is sitting on a 404 instead of the cockpit. Put it
+            // back and honour the click anyway, rather than leaving a dead
+            // page behind.
+            if payload.url().path() == MACHINES_SENTINEL_PATH {
+                if let Some(m) = shell_sn.machine_of(&label_sn) {
+                    if let Ok(u) = url::Url::parse(&host_url(&m.origin)) {
+                        let _ = webview.navigate(u);
+                    }
+                }
+                open_picker(&webview.app_handle().clone());
+                return;
+            }
             if !matches!(payload.event(), PageLoadEvent::Finished) || is_app_url(payload.url()) {
                 return;
             }
