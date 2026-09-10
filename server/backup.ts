@@ -140,6 +140,8 @@ export interface ImportResult {
   restartRequired: true;
   /** the archive had a whatsapp/auth_info but it was left out of the restore (opts.whatsapp wasn't set) */
   whatsappSkipped: boolean;
+  /** sessions whose folder does not exist on this machine and was cleared (cross-platform restore) */
+  clearedCwds: number;
 }
 
 export class ImportError extends Error {
@@ -239,6 +241,46 @@ export function resolveConfigPathsForImport(raw: Record<string, unknown> | null,
     }
   }
   return changed ? out : raw;
+}
+
+/**
+ * Cross-platform restore, part two: a session's `cwd`.
+ *
+ * resolveConfigPathsForImport() drops the source's reposDir/defaultCwd so this
+ * host falls back to its own — but every RESTORED SESSION still carries the
+ * absolute folder it was created in. Import a Linux VPS onto a Mac and all of
+ * them read /home/arigami/repos, which is nowhere. Starting one then spawns
+ * claude with a cwd that does not exist, and posix_spawn reports ENOENT naming
+ * the BINARY: "claude failed to start: ENOENT … posix_spawn '/…/claude'",
+ * while claude is right there. Reported live, and it cost a while to see.
+ *
+ * A folder that isn't on this machine is cleared, not guessed at: claude.js
+ * falls back to HOME for an empty cwd, and the human retargets the session
+ * from the cockpit. Remapping onto this host's reposDir would only move the
+ * failure — the repo it names isn't cloned here either.
+ *
+ * Only when the platform differs, mirroring resolveConfigPathsForImport: a
+ * same-platform restore onto the same layout must stay byte-identical.
+ */
+export function resolveSessionCwdsForImport(stagingDir: string, manifestPlatform: string | undefined | null): number {
+  if (!manifestPlatform || manifestPlatform === process.platform) return 0;
+  const file = path.join(stagingDir, 'state.json');
+  const doc = readJson<{ sessions?: Record<string, unknown>[] }>(file);
+  if (!doc || !Array.isArray(doc.sessions)) return 0;
+  let cleared = 0;
+  for (const s of doc.sessions) {
+    const meta = (s.metadata && typeof s.metadata === 'object' ? s.metadata : null) as Record<string, unknown> | null;
+    for (const [obj, key] of [[s, 'cwd'], [meta, 'worktree']] as [Record<string, unknown> | null, string][]) {
+      if (!obj) continue;
+      const v = obj[key];
+      if (typeof v !== 'string' || !v || v.startsWith('~')) continue;
+      if (!isAbsoluteAnyPlatform(v) || fs.existsSync(v)) continue;
+      delete obj[key];
+      cleared++;
+    }
+  }
+  if (cleared) fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n');
+  return cleared;
 }
 
 function safeName(s: string): boolean {
@@ -608,6 +650,8 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     if (resolved !== rawConfig) fs.writeFileSync(stagedConfig, JSON.stringify(resolved, null, 2) + '\n');
   }
 
+  const clearedCwds = resolveSessionCwdsForImport(staging, manifest.host?.platform);
+
   let backupDir: string | null = null;
   if (!fs.existsSync(dir)) {
     fs.renameSync(staging, dir);
@@ -626,7 +670,7 @@ export async function importFull(file: string, opts: ImportOptions = {}): Promis
     }
   }
   fs.rmSync(staging, { recursive: true, force: true });
-  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp };
+  return { manifest, restoredTo: dir, backupDir, entries: entries.length, restartRequired: true, whatsappSkipped: hasWhatsAppAuth && !opts.whatsapp, clearedCwds };
 }
 
 function moveIfExists(from: string, to: string): void {

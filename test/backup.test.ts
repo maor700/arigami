@@ -817,3 +817,48 @@ test('bun server/backup.ts export/inspect/import CLI', () => {
   r = run([]);
   expect(r.status).toBe(2);
 }, 60_000);
+
+// A restored session carries the absolute folder it was created in. Import a
+// Linux VPS onto a Mac and every one of them reads /home/arigami/repos, which
+// is nowhere here — and spawning claude with a cwd that does not exist fails
+// with ENOENT naming the BINARY, not the folder ("claude failed to start:
+// ENOENT … posix_spawn '/…/claude'"). Reported live.
+test('resolveSessionCwdsForImport: clears folders that do not exist here, keeps the ones that do, and leaves a same-platform restore alone', () => {
+  const other = process.platform === 'linux' ? 'darwin' : 'linux';
+  const here = tmp('arigami-cwd-'); // a folder that really is on this machine
+
+  const write = () => {
+    const dir = tmp('arigami-staging-');
+    fs.writeFileSync(
+      path.join(dir, 'state.json'),
+      JSON.stringify({
+        sessions: [
+          { id: 'a', cwd: '/home/arigami/repos' },
+          { id: 'b', cwd: here },
+          { id: 'c', cwd: '~/repos' },
+          { id: 'd', cwd: '/home/arigami/repos', metadata: { worktree: '/home/arigami/repos/.dispatch-worktrees/x', agent: 'chief' } },
+          { id: 'e' },
+        ],
+      }, null, 2),
+    );
+    return dir;
+  };
+
+  const dir = write();
+  expect(bk.resolveSessionCwdsForImport(dir, other)).toBe(3); // a.cwd, d.cwd, d.metadata.worktree
+  const out = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).sessions;
+  expect(out[0].cwd).toBeUndefined();
+  expect(out[1].cwd).toBe(here); // exists → kept
+  expect(out[2].cwd).toBe('~/repos'); // tilde is this host's home already
+  expect(out[3].cwd).toBeUndefined();
+  expect(out[3].metadata.worktree).toBeUndefined();
+  expect(out[3].metadata.agent).toBe('chief'); // only the path keys are touched
+  expect(out[4].cwd).toBeUndefined();
+
+  // same platform, and an archive with no host.platform: byte-identical
+  const same = write();
+  const before = fs.readFileSync(path.join(same, 'state.json'), 'utf8');
+  expect(bk.resolveSessionCwdsForImport(same, process.platform)).toBe(0);
+  expect(bk.resolveSessionCwdsForImport(same, null)).toBe(0);
+  expect(fs.readFileSync(path.join(same, 'state.json'), 'utf8')).toBe(before);
+});

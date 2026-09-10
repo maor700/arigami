@@ -642,6 +642,21 @@ function spawnProc(s, resume) {
       : null;
   engine.prepare(s, { resume });
   const built = engine.buildSpawn(s, { resume, sessionId });
+  // A cwd that isn't there makes posix_spawn fail with ENOENT naming the
+  // BINARY, not the directory — "claude failed to start: ENOENT … no such
+  // file or directory, posix_spawn '/…/claude'" while claude sits right
+  // there, executable. That is what a cross-machine import looks like from
+  // the cockpit: every restored session carries the source host's cwd
+  // (/home/arigami/repos on a Linux VPS) and none of them exist here. Say
+  // which directory is missing instead of sending the human after the CLI.
+  if (built.cwd && !fs.existsSync(built.cwd)) {
+    appendChat(s.id, {
+      kind: 'error',
+      text: `${engine.id} can't start: the session's folder does not exist on this machine — ${built.cwd}\nChange the session's folder (or clone the repo there) and try again.`,
+    });
+    setClaude(s.id, { state: 'dead' });
+    return;
+  }
   const child = spawn(built.bin, built.args, { cwd: built.cwd, env: built.env, stdio: ['pipe', 'pipe', 'pipe'] });
   // A session's claude spawns its own tree (MCP servers, tool shells). Put it
   // under supervision so that tree dies with the host instead of outliving it
