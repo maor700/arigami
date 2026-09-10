@@ -158,8 +158,9 @@ export function inputToCdp(msg: any): { method: string; params: Record<string, u
     // single-character `key` is printable text (per the DOM spec everything
     // longer is a named key: 'Enter', 'ArrowLeft', 'F5'…), and only when no
     // Ctrl/Meta is held — Ctrl+C must stay a shortcut, not the letter "c".
-    // Enter is the one named key with a text form Chrome expects ('\r'),
-    // matching what chrome-cdp.ts's typeIntoDesktop already sends.
+    // Enter and Tab are the two named keys with a text form Chrome expects
+    // ('\r', '\t') — Enter matching what chrome-cdp.ts's typeIntoDesktop
+    // already sends. Every other named key carries no text at all.
     if (type === 'keyDown' && !msg.modifiers?.ctrl && !msg.modifiers?.meta) {
       if ([...key].length === 1) params.text = key;
       else if (key === 'Enter') params.text = '\r';
