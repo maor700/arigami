@@ -3,8 +3,10 @@
 //
 // The one place a version is minted. Source of truth: package.json `version`,
 // mirrored to VERSION (a plain file the host / Docker builds read without
-// parsing JSON) and to web/package.json + control-plane/package.json so every
-// package in the repo says the same number. CHANGELOG.md gets a section
+// parsing JSON) and to every other file that carries the number — see
+// MIRRORED: the web + control-plane packages, the desktop app's
+// tauri.conf.json (what the About dialog and the installers say) and the
+// control-plane chart's appVersion. CHANGELOG.md gets a section
 // rendered from the conventional commits since the last `v*` tag
 // (feat/fix/refactor/docs/test/chore/perf/ci/build…, subjects verbatim — the
 // Hebrew titles in this repo stay as they are). Then one commit
@@ -44,6 +46,21 @@ export const SECTIONS: { key: string; title: string; types: string[] }[] = [
   { key: 'test', title: 'Tests', types: ['test'] },
   { key: 'chore', title: 'Chores', types: ['chore', 'build', 'ci', 'deps'] },
   { key: 'other', title: 'Other', types: [] },
+];
+
+/**
+ * Every file that carries the version, package.json first (the source of
+ * truth). A `Chart.yaml` gets its `appVersion` rewritten, everything else its
+ * `"version"` field. Missing files are skipped, so this list is safe to keep
+ * ahead of the repo. `deploy/helm/arigami-tenant` is deliberately absent: its
+ * appVersion is "latest" on purpose.
+ */
+export const MIRRORED = [
+  'package.json',
+  'web/package.json',
+  'control-plane/package.json',
+  'desktop/src-tauri/tauri.conf.json', // the desktop app's user-visible version
+  'deploy/helm/arigami-control-plane/Chart.yaml', // appVersion only
 ];
 
 export function isSemver(s: string): boolean { return /^\d+\.\d+\.\d+$/.test(s); }
@@ -151,6 +168,21 @@ export function extractSection(changelog: string, version: string): string | nul
 /** Replace the first `"version": "…"` in a package.json text, keeping its formatting. */
 export function setPackageVersion(text: string, version: string): string {
   return text.replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`);
+}
+
+/**
+ * Helm's `appVersion` is "the version of the app this chart deploys", so it
+ * should follow the release — but ONLY when it is a version. The tenant chart
+ * deliberately says `appVersion: "latest"` (it tracks the rolling image, not a
+ * number) and pinning that to a release would quietly change what the chart
+ * deploys. So: rewrite a semver, leave anything else exactly as it is.
+ * The chart's own `version:` is untouched — that is the chart's revision, a
+ * different thing that the chart's maintainer bumps.
+ */
+export function setChartAppVersion(text: string, version: string): string {
+  // [ \t] and not \s: \s includes \n, and a greedy \s*$ would swallow the
+  // file's trailing newline when appVersion is the last line.
+  return text.replace(/^(appVersion:[ \t]*"?)(\d+\.\d+\.\d+[^"\s]*)("?)[ \t]*$/m, `$1${version}$3`);
 }
 
 export function repoUrlFromPackage(pkg: { repository?: { url?: string } | string }): string | null {
@@ -281,7 +313,7 @@ export function main(argv: string[], root = path.resolve(path.dirname(new URL(im
   // A compare link needs a tag on both ends; a raw-SHA boundary gets no link.
   const section = renderSection(commits, { version: next, date: localDate(), previousTag: since || !boundary.fromTag ? null : prev, repoUrl: repoUrlFromPackage(pkg) });
 
-  const files = ['package.json', 'VERSION', 'CHANGELOG.md', 'web/package.json', 'control-plane/package.json'].filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || fs.existsSync(path.join(root, f)));
+  const files = [...MIRRORED, 'VERSION', 'CHANGELOG.md'].filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || fs.existsSync(path.join(root, f)));
   console.log(`release: ${current} → ${next} (${tag})`);
   console.log(`changelog: ${commits.filter((c) => !isNoise(c)).length} commits since ${prev ?? 'the first commit'}`);
   console.log(`files: ${files.join(', ')}`);
@@ -297,9 +329,11 @@ export function main(argv: string[], root = path.resolve(path.dirname(new URL(im
   }
 
   fs.writeFileSync(pkgPath, setPackageVersion(pkgText, next));
-  for (const sub of ['web/package.json', 'control-plane/package.json']) {
+  for (const sub of MIRRORED.slice(1)) {
     const p = path.join(root, sub);
-    if (fs.existsSync(p)) fs.writeFileSync(p, setPackageVersion(fs.readFileSync(p, 'utf8'), next));
+    if (!fs.existsSync(p)) continue;
+    const rewrite = sub.endsWith('Chart.yaml') ? setChartAppVersion : setPackageVersion;
+    fs.writeFileSync(p, rewrite(fs.readFileSync(p, 'utf8'), next));
   }
   fs.writeFileSync(path.join(root, 'VERSION'), `${next}\n`);
   fs.writeFileSync(changelogPath, insertSection(changelog, section));

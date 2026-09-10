@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import {
   bumpVersion, parseConventional, groupCommits, renderSection, insertSection, extractSection,
   setPackageVersion, repoUrlFromPackage, isNoise, lastTag, commitsSince, main, CHANGELOG_HEADER,
-  autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit,
+  autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit, setChartAppVersion, MIRRORED,
 } from '../scripts/release.ts';
 
 test('bumpVersion: patch/minor/major and an explicit X.Y.Z', () => {
@@ -295,4 +295,49 @@ test('main auto --dry-run touches nothing but still reports the bump it would ta
   expect(fs.existsSync(path.join(repo, 'VERSION'))).toBe(false);
   expect(g('status', '--porcelain')).toBe('');
   expect(g('tag', '-l')).toBe('');
+});
+
+test('setChartAppVersion: rewrites a semver appVersion, leaves "latest" (and the chart version) alone', () => {
+  const chart = 'apiVersion: v2\nname: arigami-control-plane\nversion: 0.1.0\nappVersion: "0.1.0"\n';
+  const out = setChartAppVersion(chart, '0.2.0');
+  expect(out).toContain('appVersion: "0.2.0"');
+  expect(out).toContain('version: 0.1.0'); // the chart's own revision is not ours to bump
+  // the tenant chart tracks the rolling tag on purpose — pinning it would change what it deploys
+  const rolling = 'name: arigami-tenant\nversion: 0.2.0\nappVersion: "latest"\n';
+  expect(setChartAppVersion(rolling, '0.3.0')).toBe(rolling);
+  // unquoted semver is still valid yaml
+  expect(setChartAppVersion('appVersion: 1.2.3\n', '1.2.4')).toBe('appVersion: 1.2.4\n');
+});
+
+test('a release mirrors the number into every MIRRORED file that exists, skipping the rest', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-mirror-'));
+  const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+  const write = (rel: string, body: string) => { fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true }); fs.writeFileSync(path.join(repo, rel), body); };
+  g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
+
+  write('package.json', '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
+  write('web/package.json', '{ "version": "0.1.0" }\n');
+  write('desktop/src-tauri/tauri.conf.json', '{\n  "$schema": "https://schema.tauri.app/config/2",\n  "productName": "Arigami",\n  "version": "0.1.0",\n  "identifier": "io.arigami.desktop"\n}\n');
+  write('deploy/helm/arigami-control-plane/Chart.yaml', 'apiVersion: v2\nname: arigami-control-plane\nversion: 0.1.0\nappVersion: "0.1.0"\n');
+  write('deploy/helm/arigami-tenant/Chart.yaml', 'apiVersion: v2\nname: arigami-tenant\nversion: 0.2.0\nappVersion: "latest"\n');
+  // control-plane/package.json deliberately absent — a missing mirror is skipped, not an error
+  g('add', '.'); g('commit', '-q', '-m', 'chore: init');
+  g('tag', '-a', 'v0.1.0', '-m', 'v0.1.0');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a'); g('add', '.'); g('commit', '-q', '-m', 'feat(a): something');
+
+  const origLog = console.log; console.log = () => {};
+  try { expect(main(['auto'], repo)).toBe(0); } finally { console.log = origLog; }
+
+  const read = (rel: string) => fs.readFileSync(path.join(repo, rel), 'utf8');
+  expect(JSON.parse(read('package.json')).version).toBe('0.2.0');
+  expect(JSON.parse(read('web/package.json')).version).toBe('0.2.0');
+  expect(JSON.parse(read('desktop/src-tauri/tauri.conf.json')).version).toBe('0.2.0');
+  expect(JSON.parse(read('desktop/src-tauri/tauri.conf.json')).productName).toBe('Arigami'); // nothing else touched
+  expect(read('deploy/helm/arigami-control-plane/Chart.yaml')).toContain('appVersion: "0.2.0"');
+  expect(read('deploy/helm/arigami-control-plane/Chart.yaml')).toContain('version: 0.1.0');
+  expect(read('deploy/helm/arigami-tenant/Chart.yaml')).toContain('appVersion: "latest"'); // untouched
+  expect(read('VERSION')).toBe('0.2.0\n');
+  // and they are all in the release commit, not left dirty
+  expect(g('status', '--porcelain')).toBe('');
+  expect(g('show', '--stat', '--format=%s', 'HEAD')).toContain('tauri.conf.json');
 });
