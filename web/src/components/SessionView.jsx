@@ -1670,6 +1670,9 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
   };
   return (
     <div data-agent-home={agent.slug} className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center justify-end gap-1.5 border-b border-hair px-3.5 py-1">
+        <TermControls session={session} />
+      </div>
       <ProgressStrip progress={session.progress} />
       <ListenerChips session={session} />
       <ChatPane
