@@ -23,9 +23,23 @@ import { fileURLToPath } from 'node:url';
 // so it alone can't distinguish them — the $bunfs marker is the actual signal.
 /** Exported so other lib/ helpers (bun-exec.ts) can branch on the same signal without re-deriving it. */
 export function isCompiledBinary(): boolean {
+  if (typeof (process as any).isBun === 'undefined') return false;
+  // The virtual-filesystem marker is PLATFORM-SPECIFIC. Both forms verified
+  // empirically by compiling a probe that prints import.meta.url (Bun 1.3.6):
+  //   Linux/macOS  file:///$bunfs/root/<binary>
+  //   Windows      file:///B:/%7EBUN/root/<binary>   (import.meta.path uses the literal ~BUN form)
+  // Checking only '/$bunfs/' silently returned false on Windows, so the
+  // compiled desktop sidecar took the repo-checkout fallback branch below,
+  // resolved its root to a path inside the virtual filesystem, and served the
+  // "UI not built yet" placeholder with version 0.0.0 instead of the bundled
+  // cockpit — found live, not by inspection. Both spellings of the Windows
+  // marker are matched because the URL form is percent-encoded ('%7EBUN')
+  // while the path form is literal ('~BUN').
+  const url = import.meta.url;
   return (
-    typeof (process as any).isBun !== 'undefined' &&
-    import.meta.url.includes('/$bunfs/')
+    url.includes('/$bunfs/') ||
+    url.toLowerCase().includes('/%7ebun/') ||
+    url.includes('/~BUN/')
   );
 }
 

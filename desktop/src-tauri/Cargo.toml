@@ -28,6 +28,15 @@ serde_json = "1"
 # the sidecar because SIGTERM fell through to the default disposition. The
 # `termination` feature is what actually adds SIGTERM (and SIGHUP) to the set.
 ctrlc = { version = "3", features = ["termination"] }
+# Handoff sign-in (decision #6): the app mints the token server/handoff.ts
+# verifies — base64url(JSON) + "." + base64url(HMAC-SHA256(secret, payloadB64)).
+# sha2/base64/getrandom are already in the tree via tauri (checked in
+# Cargo.lock: 0.10.9 / 0.21.7 / 0.2.17), and versions are pinned to those so
+# this adds exactly ONE new crate — `hmac`, which is pure Rust.
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.21"
+getrandom = "0.2"
 
 # SIGTERM (decision #3: the shell IS the supervisor, and server/index.ts's
 # shutdown() only runs on SIGTERM/SIGINT/SIGBREAK/SIGHUP — never on SIGKILL).

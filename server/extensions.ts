@@ -28,6 +28,7 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
 import { EXTENSIONS_SCHEMA } from './lib/state-schemas.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { linkDir } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
@@ -179,7 +180,7 @@ function migrateSkills(): string[] {
 
   if (!exists(LEGACY_SKILLS_DIR)) {
     fs.mkdirSync(USER_SKILLS_TARGET, { recursive: true });
-    fs.symlinkSync(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR, 'dir');
+    linkDir(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR);
     steps.push('skills: created user/skills and linked $ARIGAMI_DIR/skills → user/skills');
     return steps;
   }
@@ -191,7 +192,7 @@ function migrateSkills(): string[] {
 
   if (!exists(USER_SKILLS_TARGET)) {
     fs.renameSync(LEGACY_SKILLS_DIR, USER_SKILLS_TARGET);
-    fs.symlinkSync(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR, 'dir');
+    linkDir(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR);
     steps.push('skills: moved $ARIGAMI_DIR/skills → user/skills and linked it back');
     return steps;
   }
@@ -207,7 +208,7 @@ function migrateSkills(): string[] {
   }
   const parked = `${LEGACY_SKILLS_DIR}.replaced-${Date.now()}`;
   fs.renameSync(LEGACY_SKILLS_DIR, parked);
-  fs.symlinkSync(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR, 'dir');
+  linkDir(USER_SKILLS_TARGET, LEGACY_SKILLS_DIR);
   steps.push(
     `skills: merged ${copied.length} missing skill(s) into user/skills${copied.length ? ` (${copied.join(', ')})` : ''}; ` +
       `kept the old directory as ${path.basename(parked)}; linked $ARIGAMI_DIR/skills → user/skills`
@@ -226,7 +227,7 @@ function ensureSdkLink(): string[] {
     try { ok = isSymlink(link) && path.resolve(path.dirname(link), fs.readlinkSync(link)) === target; } catch {}
     if (ok) return [];
     if (exists(link)) fs.rmSync(link, { recursive: true, force: true });
-    fs.symlinkSync(target, link, 'dir');
+    linkDir(target, link);
     return ['linked user/node_modules/@arigami/sdk → <repo>/sdk'];
   } catch (e) {
     return [`@arigami/sdk link failed: ${(e as Error).message}`];

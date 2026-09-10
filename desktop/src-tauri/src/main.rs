@@ -1,3 +1,9 @@
+// Arigami desktop shell. Built and run for real on Linux, on Windows 11 and
+// on macOS (Apple Silicon) — see docs/DESKTOP.md. The Tauri v2 API calls
+// below are compiler-checked and were exercised live, so they are no longer
+// the first suspects when something misbehaves. Still unexercised on macOS
+// specifically: the tray (NSStatusItem), the app menu and multi-window
+// switching — the macOS run proved boot, handoff sign-in and shutdown only.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Arigami desktop shell — one app that is EITHER this computer's own Arigami
 //! or a mirror of a remote one (the VPS over Tailscale).
@@ -20,9 +26,15 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use base64::Engine as _;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -47,15 +59,79 @@ const LOCAL_NAME: &str = "המחשב הזה";
 const LOCAL_COLOR: &str = "#F9D312";
 const REMOTE_COLORS: [&str; 4] = ["#7DD3FC", "#C4B5FD", "#86EFAC", "#FCA5A5"];
 
-/// Decision #5: the local sidecar's port. Still fixed (3099) by default — a
-/// desktop app owns its own machine — but overridable so this shell can be
-/// built and test-run without ever touching a live host on 3099.
-fn local_port() -> u16 {
-    std::env::var("ARIGAMI_DESKTOP_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3099)
+// Decision #5 (REVISED): the desktop app is its own INSTANCE, not a second
+// copy of the `~/.arigami` one.
+//
+// It used to hardcode :3099 and share `~/.arigami` with whatever `bin/host`
+// the user runs. That is the same identity twice, and hostlock.ts correctly
+// refuses it — which in practice meant the app simply could not start on a
+// machine where the host was already running. Giving it only a different
+// PORT does not fix that: judgeHostInfo() lets a differing port through, but
+// then warns "two hosts sharing one dir share state.json/chat and is
+// unsupported". Sharing state is the actual hazard, not the port.
+//
+// So the app gets its own dir AND its own port, which is exactly the
+// convention the rest of the system already uses: server/lib/config.ts says a
+// non-default ARIGAMI_DIR "also shifts every default port range (+1000) so a
+// second instance started with no config at all doesn't fight the first one
+// for ports", and bin/host encodes the same rule (`[ "$DIR" != "$HOME/.arigami" ]
+// && PORT=4099`). We follow it rather than inventing a number.
+//
+// Deliberately NOT auto-probing for a free port: launching the app twice
+// would then start a SECOND host sharing ~/.arigami-desktop on some other
+// port — precisely the unsupported shared-state case above. A fixed port tied
+// to a fixed dir means the second launch is refused, which is correct.
+//
+// Both are overridable by env for anyone who wants a different layout.
+const DEFAULT_PORT: u16 = 4099;
+const DESKTOP_DIR_NAME: &str = ".arigami-desktop";
+
+/// The port this app's sidecar binds and this window points at. `ARIGAMI_PORT`
+/// wins; otherwise DEFAULT_PORT. Resolved once — env can't change under us.
+fn arigami_port() -> u16 {
+    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    *PORT.get_or_init(|| {
+        std::env::var("ARIGAMI_PORT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+            .filter(|p| *p != 0)
+            .unwrap_or(DEFAULT_PORT)
+    })
 }
+
+/// This instance's ARIGAMI_DIR. `ARIGAMI_DIR` env wins; otherwise
+/// `<home>/.arigami-desktop` — deliberately NOT `~/.arigami`, so the app never
+/// shares state with a `bin/host` checkout.
+fn arigami_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(d) = std::env::var("ARIGAMI_DIR") {
+        let d = d.trim().to_string();
+        if !d.is_empty() {
+            return PathBuf::from(d);
+        }
+    }
+    app.path()
+        .home_dir()
+        .map(|h| h.join(DESKTOP_DIR_NAME))
+        .unwrap_or_else(|_| PathBuf::from(DESKTOP_DIR_NAME))
+}
+
+// CREATE_NO_WINDOW. `arigami-server` is a console-subsystem binary (that is
+// what `bun build --compile` emits), and Rust's Command on Windows gives a
+// console child its own console WINDOW. One flash at startup would be ugly
+// enough; combined with the respawn loop below it was a genuine bug report:
+// launching the app while a `bin/host` already owned :3099 popped a fresh
+// console window twice a second, without end. Linux never showed this —
+// there is no console to pop — so it only surfaced once a human ran the
+// Windows build.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+// Crash-loop guard. A sidecar that stays up at least this long counts as a
+// real boot, so an ordinary restart/upgrade cycle resets the counter; exiting
+// faster than this, this many times in a row, means it is never coming up and
+// respawning again just burns CPU.
+const HEALTHY_RUN: Duration = Duration::from_secs(10);
+const MAX_FAST_EXITS: u32 = 5;
 
 // ---------------------------------------------------------------- machines
 
@@ -74,7 +150,7 @@ fn local_machine() -> Machine {
     Machine {
         id: LOCAL_ID.into(),
         name: LOCAL_NAME.into(),
-        origin: format!("http://127.0.0.1:{}", local_port()),
+        origin: format!("http://127.0.0.1:{}", arigami_port()),
         local: true,
     }
 }
@@ -254,18 +330,206 @@ fn spawn_server(app: &AppHandle) -> std::io::Result<Child> {
     let bin = resolve_server_binary(app).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "could not resolve resource_dir()")
     })?;
-    Command::new(&bin)
-        .env("ARIGAMI_SUPERVISOR", SUPERVISOR_ENV_VALUE)
-        .env("ARIGAMI_PORT", local_port().to_string())
+    let mut cmd = Command::new(&bin);
+    // Decision #3: commit to relaunching after exit(0) (restart/upgrade).
+    let dir = arigami_dir(app);
+    // The sidecar creates this itself on boot, but doing it here means a
+    // failure to create it surfaces as a spawn error rather than a silent
+    // fallback to some other directory.
+    let _ = std::fs::create_dir_all(&dir);
+    cmd.env("ARIGAMI_SUPERVISOR", SUPERVISOR_ENV_VALUE)
+        .env("ARIGAMI_PORT", arigami_port().to_string())
+        .env("ARIGAMI_DIR", &dir)
         .stdin(Stdio::null())
         .stdout(open_log_file(app))
-        .stderr(open_log_file(app))
-        .spawn()
+        .stderr(open_log_file(app));
+
+    // No pairing code on this machine — WITHOUT disarming auth for everyone.
+    //
+    // Pairing exists to stop a stranger on the network reaching the host, and
+    // docs/AUTH.md states the premise: "possession of the code == possession
+    // of the host's filesystem". Whoever double-clicked this app already has
+    // the filesystem, so the code proves nothing HERE. It is also physically
+    // unreachable: it is printed next to the listen line and written to
+    // run/pairing-code, and an installed .exe/.msi gives the user no terminal
+    // — pairing became a dead end at the first screen.
+    //
+    // The obvious fix, ARIGAMI_AUTH=off, is the wrong trade: the gate has no
+    // notion of a request's origin (auth.ts's principal() returns {kind:'off'}
+    // for EVERY request), so it also admits any second device that can reach
+    // the port. Loopback bind is not the protection it looks like — the
+    // supported way to reach a host remotely is `tailscale serve`, which
+    // forwards TO loopback, so validateAuthBind() still passes while the
+    // tailnet gets in unauthenticated. index.ts:382 warns exactly this.
+    //
+    // So auth stays at its default (`pairing`) and only THIS window is let in,
+    // via server/handoff.ts — a mechanism already in the codebase for the same
+    // problem in a different shape ("the code it would ask for lives inside a
+    // pod the user cannot open a shell on"). It is threat-modelled there:
+    // single-use via jti, a 10-minute ceiling enforced by the verifier, and
+    // entirely inert unless ARIGAMI_HANDOFF_SECRET is set.
+    //
+    // The secret is random per app run and never touches disk — the only two
+    // parties that need it are this process and the child it just spawned. If
+    // the OS gives us no randomness we simply don't set it, and the user gets
+    // the ordinary pairing screen rather than a weak key.
+    if let Some(secret) = handoff_secret() {
+        cmd.env("ARIGAMI_HANDOFF_SECRET", secret);
+    }
+    // Keep the console-subsystem sidecar from opening a window of its own.
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.spawn()
 }
 
-/// server/index.ts's shutdown() (which calls killAll() on every active
-/// session) only runs on SIGTERM/SIGINT/SIGBREAK/SIGHUP — never on SIGKILL,
-/// which is what std::process::Child::kill() sends on Unix.
+const B64: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+/// This run's handoff secret, or None when the OS gave us no randomness (in
+/// which case handoff stays off and pairing behaves normally). 32 random bytes
+/// base64url'd is 43 chars — well past handoff.ts's 16-char minimum.
+fn handoff_secret() -> Option<&'static str> {
+    static SECRET: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SECRET
+        .get_or_init(|| {
+            let mut buf = [0u8; 32];
+            getrandom::getrandom(&mut buf).ok().map(|_| B64.encode(buf))
+        })
+        .as_deref()
+}
+
+/// The identity the local window signs in as. handoff.ts requires something
+/// email-shaped (`/^[^@\s]+@[^@\s]+$/`), so the OS username is stripped to
+/// characters that cannot break either that regex or the JSON below.
+fn local_email() -> String {
+    let raw = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    let user: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+        .collect();
+    let user = if user.is_empty() { "desktop".to_string() } else { user.to_lowercase() };
+    format!("{user}@desktop.local")
+}
+
+/// Mint a token in server/handoff.ts's exact wire format:
+///   base64url(JSON payload) + "." + base64url(HMAC-SHA256(secret, payloadB64))
+/// Note base64url here is NO-PAD, matching Node's 'base64url' encoding — a
+/// padded encoder would fail the signature comparison.
+fn mint_handoff(secret: &str) -> Option<String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    // 2 minutes: this is minted immediately before we navigate to it. The
+    // verifier caps anything over 10 regardless of what we ask for.
+    let exp = now_ms + 2 * 60_000;
+    let mut jti_raw = [0u8; 12];
+    getrandom::getrandom(&mut jti_raw).ok()?;
+    let jti = B64.encode(jti_raw);
+    // Hand-built rather than pulling in serde: every value here is either a
+    // number or already restricted to characters that need no JSON escaping.
+    let payload = format!(
+        "{{\"kind\":\"handoff\",\"email\":\"{}\",\"exp\":{},\"jti\":\"{}\"}}",
+        local_email(),
+        exp,
+        jti
+    );
+    let p = B64.encode(payload);
+    let mut mac = <Hmac<Sha256>>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(p.as_bytes());
+    let sig = B64.encode(mac.finalize().into_bytes());
+    Some(format!("{p}.{sig}"))
+}
+
+/// Where the window should land on first boot: the handoff URL when we can
+/// mint one (endpoint sets the cookie, then 302s to /__host/), else the plain
+/// cockpit — which shows the pairing screen, the honest fallback.
+fn first_boot_url() -> String {
+    handoff_secret()
+        .and_then(mint_handoff)
+        .map(|t| format!("http://127.0.0.1:{}/__api/auth/handoff?t={}", arigami_port(), t))
+        .unwrap_or_else(|| host_url(&local_machine().origin))
+}
+
+/// Someone else is already serving our port. Split out from
+/// crash_loop_message() because this one is detected BEFORE we spawn anything,
+/// so it can say plainly what to do instead of talking about exits.
+fn port_taken_message() -> String {
+    format!(
+        "Arigami is already running on port {port}.{nl}{nl}This is usually a second copy of this app, or a `bin/host` started from a checkout with the same ARIGAMI_DIR. Close that one first, then reopen Arigami.",
+        port = arigami_port(),
+        nl = "\n"
+    )
+}
+
+/// Why the sidecar will not stay up, in words a user can act on. The port
+/// answering while OUR child keeps dying is the tell for the common case: a
+/// `bin/host` checkout, a Docker container, or a second copy of this app
+/// already owns it, and hostlock.ts is correctly refusing to run twice.
+fn crash_loop_message(app: &AppHandle) -> String {
+    let log_hint = app
+        .path()
+        .app_log_dir()
+        .map(|d| d.join("arigami-server.log").display().to_string())
+        .unwrap_or_else(|_| "arigami-server.log (log dir unknown)".into());
+    if config_endpoint_ready() {
+        format!(
+            "Port {port} is already served by another Arigami host — most likely a second copy of this app, since this one uses its own directory.{nl}{nl}Close that one first, then reopen Arigami.{nl}{nl}Details: {log_hint}",
+            port = arigami_port(),
+            nl = "\n"
+        )
+    } else {
+        format!(
+            "The Arigami server kept exiting right after start.{0}{0}Check the log:{0}{log_hint}",
+            "\n"
+        )
+    }
+}
+
+/// Decision #4: hand-rolled HTTP/1.1 GET over a raw TcpStream instead of
+/// pulling in an HTTP client crate — this app makes exactly one request ever,
+/// so a dependency for it isn't worth the extra unverified surface. A 2xx-ish
+/// "HTTP/1.1 200" status line is treated as ready; anything else (connection
+/// refused, timeout, non-200) is not.
+fn config_endpoint_ready() -> bool {
+    let addr = match format!("127.0.0.1:{}", arigami_port())
+        .parse::<std::net::SocketAddr>()
+    {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
+    let req = format!(
+        "GET /__api/config HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        arigami_port()
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    if stream.read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200")
+}
+
+
+/// Decision #3, the graceful half: server/index.ts's shutdown() (which calls
+/// killAll() on every active session) only runs on SIGTERM/SIGINT/SIGBREAK/
+/// SIGHUP — never on SIGKILL. std::process::Child::kill() sends SIGKILL on
+/// Unix, so it would skip that handler entirely; libc::kill(pid, SIGTERM) is
+/// used instead. Windows has no SIGTERM/SIGBREAK equivalent reachable without
+/// FFI I can't verify here (see docs/DESKTOP.md) — taskkill /F is a
+/// deliberately honest fallback: it guarantees no orphaned process (unlike
+/// leaving it undone), but it does NOT run killAll(), same as any other
+/// `taskkill /F` today per the comment in server/index.ts.
 fn terminate(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -381,9 +645,36 @@ fn busy_sessions(origin: &str) -> u32 {
 /// sidecar when some window is on "this computer", stop it when the last one
 /// leaves, respawn it when it exits on its own (restart/upgrade/crash).
 /// try_wait() rather than wait() so a stop request is never blocked behind a
-/// still-running child. Still no crash-loop backoff — see docs/DESKTOP.md.
+/// still-running child.
+///
+/// Two guards, both merged in from the Windows branch, both reported by a
+/// real user rather than imagined:
+///
+///  1. PRE-FLIGHT. Before every spawn — and we only ever spawn while holding
+///     no child — ask whether the port already answers. If it does, it is not
+///     ours: a second copy of this app, or a `bin/host` on the same
+///     ARIGAMI_DIR. hostlock.ts would refuse our sidecar, the port would keep
+///     answering anyway, and we would then hand THEIR host a handoff token
+///     minted with OUR per-run secret → "Sign-in failed". Once a child of
+///     ours is up, "the port answers" can no longer tell us whose it is,
+///     which is exactly why the question is asked here and not later.
+///  2. CRASH-LOOP. A sidecar that exits faster than HEALTHY_RUN, MAX_FAST_EXITS
+///     times running, is never coming up; respawning it every 250ms just
+///     burns CPU (on Windows it also popped a console window each time).
+///
+/// Both surface through `local_error` rather than the branch's
+/// show_fatal_and_quit(): under the machine-switcher a window may be sitting
+/// on a REMOTE machine that is working fine, so killing the whole app over a
+/// broken local sidecar would be wrong. wait_local_ready() already watches
+/// local_error, so the message lands on the shell page with a retry button.
+/// Pointing the last window away from "this computer" clears the block.
 fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
     let mut child: Option<Child> = None;
+    let mut started: Option<Instant> = None;
+    let mut fast_exits: u32 = 0;
+    // Set once the crash-loop guard trips; cleared when local stops being
+    // wanted, so switching away and back is the user-reachable retry.
+    let mut blocked = false;
     loop {
         if shell.quitting.load(Ordering::SeqCst) {
             if let Some(mut c) = child.take() {
@@ -398,18 +689,37 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                 let mut c = child.take().unwrap();
                 stop_child(&mut c);
                 *shell.local_pid.lock().unwrap() = None;
+                started = None;
             }
             (true, true) => {
                 let exited = matches!(child.as_mut().unwrap().try_wait(), Ok(Some(_)));
                 if exited {
                     child = None;
                     *shell.local_pid.lock().unwrap() = None;
+                    // Ran long enough to count as a real boot? Then this was
+                    // an ordinary restart/upgrade and the counter resets.
+                    if started.map(|t| t.elapsed() < HEALTHY_RUN).unwrap_or(false) {
+                        fast_exits += 1;
+                        if fast_exits >= MAX_FAST_EXITS {
+                            blocked = true;
+                            *shell.local_error.lock().unwrap() = Some(crash_loop_message(&app));
+                        }
+                    } else {
+                        fast_exits = 0;
+                    }
+                    started = None;
                 }
+            }
+            (false, true) if blocked => {}
+            (false, true) if config_endpoint_ready() => {
+                blocked = true;
+                *shell.local_error.lock().unwrap() = Some(port_taken_message());
             }
             (false, true) => match spawn_server(&app) {
                 Ok(c) => {
                     *shell.local_pid.lock().unwrap() = Some(c.id());
                     *shell.local_error.lock().unwrap() = None;
+                    started = Some(Instant::now());
                     child = Some(c);
                 }
                 Err(e) => {
@@ -420,7 +730,12 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                     std::thread::sleep(Duration::from_secs(2));
                 }
             },
-            (false, false) => {}
+            (false, false) => {
+                // Nobody wants the local machine — drop the block so pointing
+                // a window back at "this computer" tries again from scratch.
+                blocked = false;
+                fast_exits = 0;
+            }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -552,8 +867,7 @@ fn go_to_machine(app: &AppHandle, shell: &Arc<Shell>, label: &str, machine: Mach
     };
     {
         let mut cfg = shell.cfg.lock().unwrap();
-        cfg.last = Some(machine.id.clone());
-    }
+        cfg.last = Some(machine.id.clone());    }
     shell.save();
     recompute_local_wanted(shell);
     if machine.local {
@@ -617,7 +931,18 @@ fn go_to_machine(app: &AppHandle, shell: &Arc<Shell>, label: &str, machine: Mach
                         w.phase = "ready".into();
                     }
                 }
-                nav(&app2, &label2, host_url(&machine.origin), false);
+                // The local machine signs itself in: first_boot_url() mints a
+                // single-use handoff token (server/handoff.ts) against the
+                // secret we handed this sidecar, so the window lands in the
+                // cockpit instead of on a pairing screen whose code the user
+                // has no terminal to read. A remote machine keeps its own
+                // cookie in the app's jar and just navigates.
+                let target = if machine.local {
+                    first_boot_url()
+                } else {
+                    host_url(&machine.origin)
+                };
+                nav(&app2, &label2, target, false);
             }
             Err(msg) => {
                 let mut ws = shell2.windows.lock().unwrap();
