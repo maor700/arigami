@@ -86,7 +86,13 @@ wss.on('connection', (ws: WebSocket, req: any) => {
       return;
     }
     await driver.attachViewer(ws, sessionId);
-  })();
+  })().catch((e) => {
+    // An unhandled rejection on the 'connection' path would be an uncaught
+    // exception in the host process, which takes every running session with
+    // it — the same reason server/index.ts guards its 'upgrade' handler.
+    console.error('[vnc] viewer attach failed:', (e as Error)?.message || e);
+    try { ws.close(); } catch {}
+  });
 });
 
 export function handleUpgrade(req: any, socket: any, head: Buffer): void {
