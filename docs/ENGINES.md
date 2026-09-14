@@ -16,8 +16,8 @@ of the others: the model list and the effort levels are per-engine, not a shared
 
 - **claude** — the model list is pulled from the CLI (`server/models.js`), and the effort scale
   is uniform across every model (`--effort`, low…max).
-- **codex** — the list is static in `web/src/lib/engines.js` (copied from
-  `$CODEX_HOME/models_cache.json`, codex-cli 0.153.4). Effort isn't a flag but a config
+- **codex** — the list comes from the engine at runtime (`codex app-server` `model/list` under the active
+  login, 5-min cache; its `models_cache.json` only while that call is in flight; no hardcoded rows). Effort isn't a flag but a config
   key, `model_reasoning_effort`, and the scale is a property of the **model**:
   gpt-5.6-terra adds `ultra` above `max`, and gpt-5.5 stops at `xhigh`.
 
@@ -86,7 +86,9 @@ A remote server you want in a codex session will need its own, separate OAuth.
 ### 5. The model ladder doesn't run; compaction **was actually tested and found not viable** from `exec`
 
 RES1 (dropping to a weaker model when the quota runs out, and climbing back) is claude-shaped and
-**does not run** on a codex session — unchanged.
+**does not run** on a codex session — unchanged. The supervisor skips the ladder, the account switch and
+the Claude auth refresh there; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
+The context modal hides auto-compact and "compact now", and `POST /autocompact` returns 400.
 
 LADDER1 (compacting the context before replay) **was tested, not just assumed not to run.** The
 binary has two real config keys — `model_auto_compact_token_limit` (a token threshold)
@@ -176,6 +178,11 @@ nothing.
   picker offers (`CODEX_MODELS[].efforts` in `web/src/lib/engines.js`). A level
   that reaches the server and isn't in the set gets dropped, and the turn runs at the model's default while
   the UI keeps showing the level the human chose.
+- **Context window + model come from codex itself.** The rollout's last `turn_context` (model) and
+  `token_count` (last request usage, `model_context_window`) under `$CODEX_HOME/sessions`, else the
+  catalog row (`context_window × effective_context_window_percent`).
+- **Effort is validated per model** (`effortLevels()` on the driver); `minimal` is accepted when the model has no catalog row.
+- **Cost is `null`, not 0.** Codex reports none; the ledger and agent page show "tokens only".
 - **The `/usage` tab doesn't exist in a codex session.** It measures a Claude subscription and **account**;
   a codex session has neither.
 - **The permission-mode picker isn't shown in a codex session.** In its place sits a line stating

@@ -62,7 +62,8 @@ export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-
 // instance dir. The ownership records (agents/<slug>/connections.json,
 // mcp-connections.json) DO travel — they are names and URLs, no secrets, and the
 // capability check re-reports "needs authentication" on the new machine.
-export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json'];
+// codex/<sid>/config.toml carries the session's ARIGAMI_TOKEN (regenerated at spawn); the thread history beside it stays.
+export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json', './codex/*/config.toml'];
 // EXT: the user repo ($ARIGAMI_DIR/user) IS backed up — it holds the
 // extensions, the skills and the mcp catalog — but never its installed
 // dependencies, which `bun install` rebuilds (nor its @arigami/sdk symlink,

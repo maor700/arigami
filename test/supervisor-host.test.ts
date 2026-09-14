@@ -144,6 +144,27 @@ setInterval(()=>{},1e6);
     { mode: 0o755 }
   );
 
+  // A `codex exec --json` stub: one turn per process, prompt on stdin; AUTHFAIL → 401, LIMIT → 429.
+  const codexStub = path.join(dir, 'codex-stub.js');
+  fs.writeFileSync(
+    codexStub,
+    `#!/usr/bin/env bun
+let buf='';const out=(o)=>process.stdout.write(JSON.stringify(o)+'\\n');
+process.stdin.on('data',(d)=>{buf+=d;});
+process.stdin.on('end',()=>{
+  out({type:'thread.started',thread_id:'th-stub'});out({type:'turn.started'});
+  if(buf.includes('AUTHFAIL'))out({type:'turn.failed',error:{message:'unexpected status 401 Unauthorized: token revoked'}});
+  else if(buf.includes('LIMIT'))out({type:'turn.failed',error:{message:'unexpected status 429 Too Many Requests: usage limit reached'}});
+  else{out({type:'item.completed',item:{id:'m1',type:'agent_message',text:'ok codex'}});out({type:'turn.completed',usage:{input_tokens:10,cached_input_tokens:0,output_tokens:5}});}
+  process.exit(0);
+});
+`,
+    { mode: 0o755 }
+  );
+  const codexHome = path.join(dir, 'codex-home');
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'auth.json'), '{"auth_mode":"chatgpt"}');
+
   host = spawn('bun', ['server/index.ts'], {
     cwd: ROOT,
     env: {
@@ -154,6 +175,8 @@ setInterval(()=>{},1e6);
       ARIGAMI_AUTH: 'off',
       ARIGAMI_SCREEN_ENABLED: '0',
       ARIGAMI_CLAUDE_BIN: stub,
+      ARIGAMI_CODEX_BIN: codexStub,
+      ARIGAMI_CODEX_HOME: codexHome,
       ARIGAMI_WA_DATA_DIR: path.join(dir, 'wa'),
       ARIGAMI_TELEMETRY: '0',
       ARIGAMI_DEFAULT_CWD: ws,
@@ -482,6 +505,27 @@ test('a master waiting on a child that never got the ask has it re-delivered', a
   });
   await until(async () => /never reached you/.test(await chatText(child)), 25000);
   expect(incidents().some((i) => i.sessionId === master && i.action === 'redeliver-ask')).toBe(true);
+}, 60000);
+
+test('codex: a 401 points at Settings › Accounts (no Claude card), a 429 never touches the claude ladder', async () => {
+  const sid = (await api('POST', '/__api/sessions', { title: 'codex-auth', cwd: ws, engine: 'codex' })).json.id;
+  expect((await session(sid)).engine).toBe('codex');
+  await api('POST', `/__api/sessions/${sid}/message`, { text: 'please AUTHFAIL' });
+  await until(async () => /Accounts \(Codex\)/.test(await chatText(sid)), 20000);
+  const s = await session(sid);
+  expect(s.claude?.setupRequest || null).toBeNull();
+  expect(incidents().some((i) => i.sessionId === sid && i.action === 'refresh-auth' && i.outcome === 'skipped')).toBe(true);
+  expect((await api('POST', `/__api/sessions/${sid}/autocompact`, { pct: 80 })).status).toBe(400);
+
+  const lim = (await api('POST', '/__api/sessions', { title: 'codex-limit', cwd: ws, engine: 'codex', model: 'gpt-5.6-terra' })).json.id;
+  await api('POST', `/__api/sessions/${lim}/message`, { text: 'LIMIT' });
+  await until(async () => /429/.test(await chatText(lim)), 20000);
+  await sleep(3500);
+  const l = await session(lim);
+  expect(l.claude?.modelRung || 0).toBe(0);
+  expect(l.claude?.ladder || null).toBeNull();
+  expect(await chatText(lim)).not.toMatch(/switched to/);
+  expect(incidents().filter((i) => i.sessionId === lim && ['model-down', 'account-switch'].includes(i.action))).toEqual([]);
 }, 60000);
 
 test('incidents are readable over the API, newest first', async () => {

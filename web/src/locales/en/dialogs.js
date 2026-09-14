@@ -71,6 +71,7 @@ export const strings = {
   'dialogs.ctxWindowAssumed': 'assumed',
   'dialogs.autoCompactWhenReaches': 'Auto-compact when context reaches',
   'dialogs.ctxAutoCompactRestartNote': 'Applied as a claude CLI flag — changing this restarts the session.',
+  'dialogs.ctxNoCompactionCodex': 'Codex sessions cannot compact their context — start a new session when it fills up.',
   'dialogs.compactNow': 'Compact now',
   'dialogs.compacting': 'Compacting…',
 

@@ -4,6 +4,7 @@ import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
+import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import { t, useT } from '../lib/i18n.js';
@@ -302,8 +303,8 @@ function EffortModal({ session, onClose }) {
     setBusy(true);
     try {
       await api.post(`/sessions/${session.id}/effort`, { effort });
-    } catch {
-      /* swallow — state reconciles via WS */
+    } catch (e) {
+      toastError(e?.body?.error || e?.message || String(e));
     }
     onClose();
   };

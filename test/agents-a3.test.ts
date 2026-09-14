@@ -73,6 +73,23 @@ test('policy: domains — suffix match, *.wildcard, loopback/relative always all
   expect(fs.existsSync(path.join(dir, 'agents/bot/activity.jsonl'))).toBe(true);
 });
 
+test('ledger: a codex turn (cost null) totals as tokens only, a mixed range sums the known cost', () => {
+  const o = run(
+    tmp(),
+    "const a=await import('./server/agents.ts');const l=await import('./server/agent-ledger.ts');" +
+      "a.createAgent({name:'Bot',slug:'bot'});" +
+      "l.appendActivity('bot',{kind:'turn',sessionId:'cx',tokens:3000,costUsd:null});" +
+      "const codexOnly=l.totalsOf(l.readActivity('bot'));" +
+      "l.appendActivity('bot',{kind:'turn',sessionId:'cl',tokens:1000,costUsd:0.02});" +
+      "emit({codexOnly,mixed:l.totalsOf(l.readActivity('bot')),per:l.perSession(l.readActivity('bot')),empty:l.totalsOf([])});"
+  );
+  expect(o.codexOnly).toMatchObject({ tokens: 3000, turns: 1, costUsd: null });
+  expect(o.mixed.costUsd).toBeCloseTo(0.02, 6);
+  expect(o.per.cx).toEqual({ tokens: 3000, costUsd: null, turns: 1 });
+  expect(o.per.cl.costUsd).toBeCloseTo(0.02, 6);
+  expect(o.empty.costUsd).toBe(0);
+});
+
 test('ledger: append/read/totals per range; budget = today\'s turns vs cap, local day, resets at next midnight', () => {
   const o = run(
     tmp(),

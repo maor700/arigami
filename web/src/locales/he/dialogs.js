@@ -71,6 +71,7 @@ export const strings = {
   'dialogs.ctxWindowAssumed': 'משוער',
   'dialogs.autoCompactWhenReaches': 'דחיסה אוטומטית כשההקשר מגיע ל-',
   'dialogs.ctxAutoCompactRestartNote': 'מיושם כדגל של claude CLI — שינוי הערך יפעיל מחדש את הסשן.',
+  'dialogs.ctxNoCompactionCodex': 'בסשן Codex אי אפשר לדחוס את הקונטקסט — כשהוא מתמלא, פתחו סשן חדש.',
   'dialogs.compactNow': 'דחוס עכשיו',
   'dialogs.compacting': 'דוחס…',
 

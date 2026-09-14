@@ -85,6 +85,11 @@ export function hasPermissionModes(engine) {
   return normalizeEngine(engine) === 'claude';
 }
 
+/** Can this engine compact its context (auto-compact flag, /compact)? `codex exec` cannot (docs/ENGINES.md limit 5). */
+export function supportsCompaction(engine) {
+  return normalizeEngine(engine) === 'claude';
+}
+
 /** Lowercase CLI-ish name for the terminal header. */
 export function engineTermName(engine) {
   return ENGINE_NAMES[normalizeEngine(engine)].term;
@@ -166,6 +171,7 @@ export function codexCommonEfforts() {
 }
 
 const EFFORT_KEY = {
+  minimal: 'rail.effortMinimal',
   low: 'rail.effortLow',
   medium: 'rail.effortMedium',
   high: 'rail.effortHigh',

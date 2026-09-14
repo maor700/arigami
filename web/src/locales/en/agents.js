@@ -222,6 +222,7 @@ export const strings = {
   'agent.runs.empty': 'No work sessions yet. {oneLiner}',
   'agent.runs.turns': '{n} turns',
   'agent.runs.archived': 'archived',
+  'agent.tokensOnly': 'tokens only',
   'chat.delegatedHome': 'Opened in {name}’s home',
   'chat.delegatedWork': 'Work session «{title}» created with {name}',
   'chat.delegatedWorkChild': 'Work session «{title}» created with {name}, in this project',

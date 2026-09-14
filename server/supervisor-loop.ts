@@ -178,6 +178,7 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
   const waitingOn = (md.waitingOn as SessionView['waitingOn']) || null;
   const know = waitingOn ? childKnows(waitingOn) : null;
   const budget = slug ? budgetState(slug) : null;
+  const codex = s.engine === 'codex';
   return {
     id: s.id,
     title: s.title,
@@ -196,7 +197,7 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
     budgetExceeded: !!budget?.exceeded,
     lastErrorClass: errClass,
     // A limit we could not route around: the account pool is dry.
-    accountsExhausted: errClass === 'limit' && accountsAllLimited(),
+    accountsExhausted: !codex && errClass === 'limit' && accountsAllLimited(),
     accountsAvailable: !accountsAllLimited(),
     modelRungsLeft: ladder.rungsLeft,
     mcpDown: down,
@@ -337,11 +338,17 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'refresh-auth': {
+      if (s.engine === 'codex') {
+        receipt(id, '⤷ Codex is not signed in (or its login expired) — reconnect it in Settings › Connections › Accounts (Codex)');
+        incident(id, d, 'skipped', { engine: 'codex' });
+        return;
+      }
       const ok = await claude.recoverAuth(id);
       incident(id, d, ok ? 'ok' : 'failed');
       return;
     }
     case 'model-down': {
+      if (s.engine === 'codex') return incident(id, d, 'skipped', { engine: 'codex' });
       // Climb back when the earliest quarantined account frees up, if we know.
       const soonest = (listAccounts().accounts as any[])
         .filter((a) => a.pool && a.quarantineUntil)
@@ -353,6 +360,7 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'model-restore': {
+      if (s.engine === 'codex') return incident(id, d, 'skipped', { engine: 'codex' });
       const to = claude.restoreModel(id);
       incident(id, d, to ? 'ok' : 'failed', { to });
       return;

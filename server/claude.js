@@ -893,7 +893,9 @@ export async function checkMcp(id, force = false) {
 // context). We surface it as claude.usage so the UI can show a live context %.
 // Exported for the codex driver, which maps codex's usage field names onto
 // claude's before calling this (server/codex.ts).
-export function updateUsage(id, u) {
+// `catalog`: codex's model rows, so its window comes from models_cache.json (lib/ctx-window.ts).
+/** @param {string} id @param {any} u @param {import('./lib/ctx-window.js').CatalogWindow[] | null} [catalog] */
+export function updateUsage(id, u, catalog = null) {
   if (!u) return;
   const cacheRead = u.cache_read_input_tokens || 0;
   const cacheCreation = u.cache_creation_input_tokens || 0;
@@ -901,7 +903,7 @@ export function updateUsage(id, u) {
   const output = u.output_tokens || 0;
   const ctxTokens = cacheRead + cacheCreation + input;
   if (ctxTokens <= 0) return; // skip empty/partial usage blocks
-  const resolved = resolveCtxWindow(getSession(id)?.claude?.model);
+  const resolved = resolveCtxWindow(getSession(id)?.claude?.model, catalog);
   let ctxWindow = resolved.window;
   let ctxAssumed = resolved.assumed;
   // A prompt can never exceed its real window — if the measured tokens beat our
@@ -934,12 +936,14 @@ export function recordTurn(id, j) {
   if (!p?.agent) return;
   const b = p.turn;
   const tokens = b.input + b.output + b.cacheCreation + b.cacheRead;
+  // total_cost_usd null = the engine reports no cost (codex): recorded as null, not $0.
+  const uncosted = j.total_cost_usd === null;
   const total = Number(j.total_cost_usd) || 0;
   const costUsd = total >= p.lastCostUsd ? total - p.lastCostUsd : total;
   p.lastCostUsd = total;
   p.turn = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
   if (tokens > 0 || costUsd > 0)
-    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
+    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: uncosted ? null : Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
   try {
     const st = budgetState(p.agent);
     const day = localDay();
@@ -1055,8 +1059,12 @@ export function chainFor(id) {
 }
 
 /** Where the session sits in its chain right now + how far it can still fall. */
+// The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
+export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+
 export function ladderState(id) {
   const s = getSession(id);
+  if (s?.engine === 'codex') return { chain: [], rung: 0, model: s.claude?.modelChoice || null, rungsLeft: 0, restoreAt: null };
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1073,6 +1081,7 @@ const ladderCooldown = new Set(); // guards against a downgrade cascade per sess
  */
 /** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
 export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
+  if (isCodexSession(id)) return { ok: false, reason: 'engine' };
   const { chain, rung } = ladderState(id);
   const nxt = nextRung(chain, rung);
   if (!nxt) return { ok: false, reason: 'bottom' };
@@ -1383,8 +1392,8 @@ export function lastTurnError(id) {
       if (AUTH_RE.test(t)) return 'auth';
       // A model that cannot run right now is remedied exactly like an exhausted
       // account pool — one rung down the chain.
-      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
-      if (/claude (?:exited|failed to start)/i.test(t)) return 'proc-dead';
+      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return getSession(id)?.engine === 'codex' ? 'other' : 'limit';
+      if (/(?:claude|codex) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';
     }
   }
@@ -1392,7 +1401,7 @@ export function lastTurnError(id) {
 }
 
 function tryAutoSwitch(id, text) {
-  if (switchingSessions.has(id)) return;
+  if (switchingSessions.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const curId = s?.claude?.accountId || getActiveId();
   const resetAt = parseResetAt(text);
@@ -1468,13 +1477,14 @@ async function openClaudeSetupCard(id, why) {
  * respawn actually happened.
  */
 export async function recoverAuth(id) {
+  if (isCodexSession(id)) return false;
   const before = getSession(id)?.claude?.state;
   await tryAuthRecover(id, 'unauthorized');
   return getSession(id)?.claude?.state !== before || isRunning(id);
 }
 
 async function tryAuthRecover(id, text) {
-  if (authRecovering.has(id)) return;
+  if (authRecovering.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
   // F8: the session was spawned before a Claude account existed (fresh
@@ -2516,7 +2526,10 @@ const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // back to the CLI's own default (no --effort flag).
 export function setEffort(id, effort) {
   const level = !effort || effort === 'default' ? null : String(effort);
-  if (level && !EFFORT_LEVELS.includes(level)) throw new Error(`invalid effort level: ${level}`);
+  const s = getSession(id);
+  const allowed = s ? pickEngine(s).effortLevels(s) : EFFORT_LEVELS;
+  if (level && !allowed.includes(level))
+    throw new Error(`invalid effort level for ${s?.claude?.modelChoice || s?.engine || 'claude'}: ${level} (allowed: ${allowed.join(', ')})`);
   return restartWith(id, { effort: level });
 }
 
@@ -2525,6 +2538,7 @@ export function setEffort(id, effort) {
 // injected into the conversation, which the CLI may or may not treat as a real
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
+  if (isCodexSession(id)) throw new Error('auto-compact is not available on codex sessions');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
   if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);
@@ -2640,5 +2654,6 @@ const claudeDriver = {
   permissions: claudePermissions,
   injectMcp: claudeInjectMcp,
   modelArgs: claudeModelArgs,
+  effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);

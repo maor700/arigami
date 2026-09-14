@@ -66,6 +66,8 @@ function fakeInstance(dir: string) {
   w('agents/sales/connections.json', JSON.stringify([{ cap: 'mcp:notion', slug: 'notion', name: 'notion--sales', url: 'https://mcp.notion.com/mcp', auth: 'oauth', at: '2026-08-30T00:00:00.000Z' }]));
   w('.credentials.json', JSON.stringify({ mcpOAuth: { 'linear|abc': { accessToken: 'mcp-token-FAKE-NOT-REAL' } } }));
   w('claude-config/.credentials.json', JSON.stringify({ mcpOAuth: { 'linear|abc': { accessToken: 'mcp-token-FAKE-NOT-REAL' } } }));
+  w('codex/sess_x/config.toml', '[mcp_servers.arigami.env]\nARIGAMI_TOKEN = "tok-FAKE-NOT-REAL"\n');
+  w('codex/sess_x/sessions/2026/09/14/rollout-x.jsonl', '{}');
   return dir;
 }
 
@@ -149,6 +151,8 @@ test('full export: manifest at the root, secrets kept as-is, run/chrome/logs/.ba
   // they sit. The ownership records ride along; they hold no secret and the
   // capability check simply reports "needs authentication" on the new machine.
   expect(entries.filter((e) => e.endsWith('.credentials.json'))).toEqual([]);
+  expect(entries).not.toContain('codex/sess_x/config.toml');
+  expect(entries).toContain('codex/sess_x/sessions/2026/09/14/rollout-x.jsonl');
   expect(entries).toContain('mcp-connections.json');
   expect(entries).toContain('agents/sales/connections.json');
   for (const bad of entries) {

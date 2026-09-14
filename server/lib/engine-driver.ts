@@ -63,6 +63,8 @@ export interface EngineDriver {
   injectMcp(session: Session): string[];
   /** --model/--effort or the engine's equivalent. */
   modelArgs(opts: { model?: string | null; effort?: string | null }): string[];
+  /** The effort levels this session's model accepts (validated by setEffort). */
+  effortLevels(session: Session): string[];
 }
 
 // Codex-shape notes for a future implementer (not applicable to claude, no interface change needed):
