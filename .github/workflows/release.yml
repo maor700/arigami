@@ -23,7 +23,9 @@ name: Release image
 on:
   push:
     branches: [master]
-    tags: ['v*']
+    # v0.0.0-ci* is desktop.yml's CI-test tag (a branch build of the
+    # installers); it is not a version and must publish no images.
+    tags: ['v*', '!v0.0.0-ci*']
   workflow_dispatch:
     inputs:
       # version-bump.yml dispatches this workflow on the tag it just minted, and
