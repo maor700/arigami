@@ -606,11 +606,8 @@ export function autoStartBridge(wake: WakeFn = () => {}): Promise<{ started: boo
 
 // ---- legacy per-session registration (~/.claude.json) ----------------------
 
-/** Path of Claude Code's user config (`$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json`). */
-export function claudeJsonPath(): string {
-  const dir = process.env.CLAUDE_CONFIG_DIR;
-  return dir ? path.join(dir, '.claude.json') : path.join(os.homedir(), '.claude.json');
-}
+export { claudeJsonPath } from './lib/mcp-servers.js';
+import { claudeJsonPath } from './lib/mcp-servers.js';
 
 /** Is this `mcpServers.<name>` entry the whatsapp-mcp checkout run per session (the thing B20 retires)? */
 export function isLegacyWhatsappServer(entry: unknown): boolean {

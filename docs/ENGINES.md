@@ -83,6 +83,12 @@ Codex has its own credential store (OAuth) under `$CODEX_HOME`. A grant Arigami 
 claude simply isn't usable there, so `url`-type MCP servers **are skipped** when building the config.
 A remote server you want in a codex session will need its own, separate OAuth.
 
+### 4b. External MCP servers: composio-mcp yes, claude.ai connectors no
+
+Host-managed stdio servers (`composio-mcp`) live in `$ARIGAMI_DIR/mcp-servers.json` (`server/lib/mcp-servers.ts`), seeded once from `~/.claude.json`; codex gets them as `[mcp_servers.<name>]`, claude keeps reading `~/.claude.json`, and a Composio key change updates both.
+Codex's `enabled_tools` takes exact names, so A3 drops an untouched server whole and the policy hook gates partial families (`gmail` → `GMAIL_*`).
+claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no codex equivalent — a codex session never has them.
+
 ### 5. The model ladder doesn't run; compaction **was actually tested and found not viable** from `exec`
 
 RES1 (dropping to a weaker model when the quota runs out, and climbing back) is claude-shaped and

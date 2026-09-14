@@ -11,6 +11,7 @@ import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
 import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
+import { syncComposioKey } from './lib/mcp-servers.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
@@ -3418,6 +3419,7 @@ export async function handle(
           configData.composioApiKey = pollData.api_key;
           fs.writeFileSync(configPath, JSON.stringify(configData, null, 2) + '\n');
           (cfg as any).composioApiKey = pollData.api_key;
+          syncComposioKey(pollData.api_key);
           return json(res, { authenticated: true });
         }
         return json(res, { authenticated: false });

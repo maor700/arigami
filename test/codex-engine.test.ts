@@ -42,6 +42,7 @@ const env = (extra: Record<string, string> = {}) => ({
   ARIGAMI_PORT: '',
   ARIGAMI_FUNNEL_QUIET: '1',
   ARIGAMI_CODEX_HOME: codexHome,
+  CLAUDE_CONFIG_DIR: path.join(dir, 'no-claude-config'),
   ...extra,
 });
 
@@ -637,6 +638,53 @@ test('a session with no agent policy gets no hooks.json and no hook-trust flag',
   if (!r.ok) throw new Error(r.error);
   expect(r.out[0].hasHooks).toBe(false);
   expect(r.out[0].args).not.toContain('--dangerously-bypass-hook-trust');
+});
+
+test('P1-7: composio-mcp from the host reaches config.toml with its own env; absent when not configured or not allowed', () => {
+  const run = (claudeJson: unknown, tools: string[] | null) => {
+    const adir = fs.mkdtempSync(path.join(dir, 'composio-'));
+    const cdir = path.join(adir, 'claude');
+    fs.mkdirSync(cdir);
+    if (claudeJson) fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify(claudeJson));
+    const r = runInChild(
+      "const st=await import('./server/state.ts');" +
+        "const a=await import('./server/agents.ts');" +
+        "const cx=await import('./server/codex.ts');" +
+        "const ms=await import('./server/lib/mcp-servers.ts');" +
+        "const fs=await import('node:fs');" +
+        "const path=await import('node:path');" +
+        (tools ? `a.createAgent({name:'Bot',slug:'bot',engine:'codex',tools:${JSON.stringify(tools)}});` : '') +
+        `const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'${tools ? ",metadata:{agent:'bot'}" : ''}});` +
+        'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+        'const toml=fs.readFileSync(path.join(cx.codexHomeFor(s.id),"config.toml"),"utf8");' +
+        "const synced=ms.syncComposioKey('new-key');" +
+        'emit({toml,own:fs.existsSync(ms.mcpServersFile())?JSON.parse(fs.readFileSync(ms.mcpServersFile(),"utf8")):null,synced,' +
+        '  claude:fs.existsSync(ms.claudeJsonPath())?JSON.parse(fs.readFileSync(ms.claudeJsonPath(),"utf8")):null});',
+      env({ ARIGAMI_DIR: adir, CLAUDE_CONFIG_DIR: cdir })
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  const composio = { command: 'node', args: ['/x/composio-mcp-connected'], env: { COMPOSIO_API_KEY: 'old-key' } };
+  const on = run({ mcpServers: { 'composio-mcp': composio, linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } } }, null);
+  expect(on.toml).toContain('[mcp_servers.composio-mcp]');
+  expect(on.toml).toContain('command = "node"');
+  const block = on.toml.split('[mcp_servers.composio-mcp.env]')[1].split('\n\n')[0];
+  expect(block).toContain('COMPOSIO_API_KEY = "old-key"');
+  expect(block).not.toContain('ARIGAMI_TOKEN');
+  expect(on.toml).not.toContain('linear');
+  expect(Object.keys(on.own.mcpServers)).toEqual(['composio-mcp']);
+  expect(on.synced).toBe(true);
+  expect(on.own.mcpServers['composio-mcp'].env.COMPOSIO_API_KEY).toBe('new-key');
+  expect(on.claude.mcpServers['composio-mcp'].env.COMPOSIO_API_KEY).toBe('new-key');
+  expect(on.claude.mcpServers.linear.url).toBe('https://mcp.linear.app/mcp');
+
+  const off = run(null, null);
+  expect(off.toml).not.toContain('mcp_servers.composio-mcp');
+  expect(off.synced).toBe(false);
+
+  expect(run({ mcpServers: { 'composio-mcp': composio } }, ['open_tab']).toml).not.toContain('composio-mcp');
+  expect(run({ mcpServers: { 'composio-mcp': composio } }, ['gmail']).toml).toContain('[mcp_servers.composio-mcp]');
 });
 
 // ---- writeMessage ----------------------------------------------------------

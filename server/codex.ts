@@ -71,6 +71,7 @@ import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { injectedServersFor } from './mcp-connections.js';
+import { hostMcpServers } from './lib/mcp-servers.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
@@ -253,8 +254,8 @@ function linkSkills(codexHome: string): void {
 }
 
 /**
- * The MCP dict, as TOML. Same three sources mcpConfigFor() feeds claude — the
- * host server, the enabled extensions' servers, and (see below) the agent's own
+ * The MCP dict, as TOML. The host server, the enabled extensions' servers, the
+ * host-managed external servers (lib/mcp-servers.ts), and (see below) the agent's own
  * remote grants — only written to $CODEX_HOME/config.toml instead of passed as
  * inline JSON on argv, because codex has no `--mcp-config`.
  *
@@ -270,7 +271,18 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   } catch {
     /* a broken extension must never stop a session from starting */
   }
-  // A3: an extension server the allowlist never touches is not loaded at all (claude's `--disallowedTools mcp__<server>`).
+  // Host-managed external servers (composio-mcp) — claude gets them from ~/.claude.json.
+  const external = new Set<string>();
+  try {
+    for (const [name, sv] of Object.entries(hostMcpServers())) {
+      if (servers[name]) continue;
+      servers[name] = sv;
+      external.add(name);
+    }
+  } catch {
+    /* unreadable mcp-servers.json — the session still starts */
+  }
+  // A3: a server the allowlist never touches is not loaded at all (claude's `--disallowedTools mcp__<server>`).
   const policy = policyFor(slug);
   if (isRestrictive(policy) && policy.tools !== null) {
     for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
@@ -325,7 +337,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     );
     // The host server carries this session's identity; an extension server gets
     // whatever env it declared, plus the same identity so it can call back.
-    const svEnv = { ...env, ...((sv as any).env && typeof (sv as any).env === 'object' ? (sv as any).env : {}) };
+    const svEnv = { ...(external.has(name) ? {} : env), ...((sv as any).env && typeof (sv as any).env === 'object' ? (sv as any).env : {}) };
     out.push(`[mcp_servers.${tkey(name)}.env]`);
     for (const [k, v] of Object.entries(svEnv)) out.push(`${tkey(k)} = ${tstr(v)}`);
     out.push('');
