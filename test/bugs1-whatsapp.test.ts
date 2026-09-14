@@ -73,6 +73,16 @@ if (IN_CHILD) {
   };
   const spawns = () => (fs.existsSync(SPAWN_LOG) ? fs.readFileSync(SPAWN_LOG, 'utf8').trim().split('\n').filter(Boolean).length : 0);
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // stopBridge() writes {status:"disconnected"} at once, but the fake main.ts also
+  // writes its own "disconnected" line from its SIGTERM handler — a moment later,
+  // and later still on a loaded box. Wait for the process to be GONE before the
+  // next test writes a status file of its own, or that late write clobbers it.
+  const stopAndWait = async () => {
+    const pid = wb.ownedPid();
+    wb.stopBridge();
+    if (pid) await until(() => !alive(pid));
+    await until(() => wb.getBridgeStatus().status === 'disconnected');
+  };
   const wakes: string[] = [];
   const wake = (_sid: string, text: string) => { wakes.push(text); };
   // WA1: the bridge's console.error IS the host log (pm2 error log) — capture it.
@@ -151,8 +161,7 @@ if (IN_CHILD) {
     await wb.startBridge('sess_test', wake);
     await until(() => wb.getBridgeStatus().status === 'connected');
     expect(wb.getBridgeStatus().reason).toBeUndefined();
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
   });
 
   test('B20: a live foreign owner is respected; an orphan is reclaimed', async () => {
@@ -188,8 +197,7 @@ if (IN_CHILD) {
     await until(() => wb.getBridgeStatus().status === 'connected' && wb.ownedPid() !== null);
     expect(alive(orphan)).toBe(false);
     expect(spawns()).toBe(before + 1);
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
   });
 
   test('B20: autoStartBridge only with a checkout + pairing; ARIGAMI_WA_AUTOSTART=0 opts out', async () => {
@@ -202,8 +210,7 @@ if (IN_CHILD) {
     const r = await wb.autoStartBridge();
     expect(r.started).toBe(true);
     await until(() => wb.getBridgeStatus().status === 'connected');
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
   });
 
   test('B20: ~/.claude.json legacy per-session registration is retired once, backed up, others untouched', () => {
@@ -322,8 +329,7 @@ if (IN_CHILD) {
     expect(((await wp.callWhatsapp('list_chats', { limit: 1 })) as any).ok).toBe(true);
     expect(spawns() - before).toBe(3); // still the one process
 
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
     fs.rmSync(path.join(DATA_DIR, 'fake-scanned'), { force: true });
     for (const b of backups) fs.rmSync(path.join(MCP_DIR, b), { recursive: true, force: true });
   });
@@ -383,8 +389,7 @@ if (IN_CHILD) {
     await until(() => wb.getBridgeStatus().status === 'connected');
     expect(wb.isPaired()).toBe(true);
     expect(wb.credsCorrupt()).toBe(false);
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
     fs.rmSync(path.join(DATA_DIR, 'fake-scanned'), { force: true });
     for (const b of backups) fs.rmSync(path.join(MCP_DIR, b), { recursive: true, force: true });
   });
@@ -403,8 +408,7 @@ if (IN_CHILD) {
     await until(() => wb.getBridgeStatus().status === 'connected', 20000);
     await until(() => fs.existsSync(snap), 10000); // taken by the status poll on 'connected'
     expect(JSON.parse(fs.readFileSync(snap, 'utf8')).noiseKey).toBe('k1');
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
     // the crash footprint
     fs.writeFileSync(creds, '');
     expect(wb.credsCorrupt()).toBe(true);
@@ -422,8 +426,7 @@ if (IN_CHILD) {
       releaseLog();
     }
     // no snapshot → the damaged path from the previous test still applies
-    wb.stopBridge();
-    await until(() => wb.getBridgeStatus().status === 'disconnected');
+    await stopAndWait();
     fs.rmSync(snap, { force: true });
     fs.writeFileSync(creds, '');
     expect((await wb.autoStartBridge()).reason).toMatch(/^creds-corrupt/);
