@@ -201,7 +201,8 @@ test('a ~600k conversation is COMPACTED (not resumed raw) when the ladder drops 
   expect(down.claude.ladderReplay.digest).toBe('llm');
   // A FRESH conversation, not a --resume of the too-big one.
   expect(down.claude.sessionId).not.toBe(original);
-  const haikuSpawn = spawns(sid).find((a) => flag(a, '--model') === 'haiku');
+  // The state flips to 'compact' before the stub has written its argv line — poll, as the second test does.
+  const haikuSpawn = await until(async () => spawns(sid).find((a) => flag(a, '--model') === 'haiku') || null);
   expect(haikuSpawn).toBeTruthy();
   expect(haikuSpawn).not.toContain('--resume');
   expect(flag(haikuSpawn!, '--session-id')).toBe(down.claude.sessionId);
