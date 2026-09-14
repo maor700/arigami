@@ -369,7 +369,7 @@ would compile the CLI from source on every runner.
 
 It is deliberately not part of every release: on a private repo on the Free
 plan macOS minutes bill ×10 and Windows ×2, so a full matrix is roughly
-200-330 billed minutes. A tag you push by hand builds them; an automated
+135 billed minutes (measured). A tag you push by hand builds them; an automated
 release only does when the `DESKTOP_INSTALLERS` repository variable is `true`.
 **Run workflow** takes a `targets` input (`all`, or a comma list of
 `linux-x64`, `windows-x64`, `macos-arm64`, `macos-x64`) so one platform can be

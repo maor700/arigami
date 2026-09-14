@@ -22,7 +22,7 @@
 # Why this is NOT wired to every merge the way the images are: this repository
 # is private on the Free plan, where a macOS minute bills ×10 and a Windows
 # minute ×2 against the 2,000/month allowance. A full four-target run is
-# roughly 200-330 billed minutes, so releasing on every green master merge
+# roughly 135 billed minutes (measured 2026-09-14: Linux 14 + Windows 15×2 + macOS 2×10 + Intel Mac 7×10), so releasing on every green merge
 # would spend the month inside a week. Hence: deliberate releases only, and the
 # automated path is opt-in. Two ways to spend less — make the repository public
 # (no multipliers, no quota; it is already Apache-2.0 with a green readiness

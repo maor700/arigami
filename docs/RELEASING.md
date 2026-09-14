@@ -106,7 +106,7 @@ create a second, note-less one.
 
 Unlike the images, this does **not** run on every release, because it cannot
 afford to: on a private repo on the Free plan a macOS minute bills ×10 and a
-Windows minute ×2 against 2,000/month, and one full run is roughly 200-330
+Windows minute ×2 against 2,000/month, and one full run is roughly 135
 billed minutes. So:
 
 | You want | What happens |
