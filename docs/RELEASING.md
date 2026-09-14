@@ -114,8 +114,9 @@ billed minutes. So:
 | installers for a release you cut by hand | `git push --follow-tags` → `on.push.tags`, automatic |
 | installers for one specific tag, now | Actions → Desktop installers → **Run workflow**, pick the tag |
 | installers on *every* automated release | set the `DESKTOP_INSTALLERS` repository variable to `true` |
-| to spend less | drop lines from the workflow's `include:` matrix — `macos-13` (Intel) is the priciest |
+| to spend less | **Run workflow** with `targets` = the lines you need (`linux-x64`, `windows-x64`, `macos-arm64`, `macos-x64`) — `macos-x64` (Intel) is the priciest |
 | to stop paying multipliers at all | make the repo public: no multipliers, no quota |
+| to test the workflow from a branch | push a `v0.0.0-ci-test` tag (or `v0.0.0-ci-linux-x64`, `…-ci-linux-x64+windows-x64` for a subset): no version gate, no images, files on a "delete me" pre-release. Delete it after: `gh release delete v0.0.0-ci-test --cleanup-tag --yes` |
 
 Without that variable an automated release publishes images and a Release, and
 no installers — which is also why the version bot's step for it is a separate,
@@ -125,8 +126,10 @@ Two things the workflow refuses to do. It will not build when the tag and
 `tauri.conf.json`'s version disagree (installers whose file names claim a
 version nobody released are worse than no installers). And it will not pretend
 to be signed: every artifact is unsigned, so macOS Gatekeeper and Windows
-SmartScreen warn on first launch until signing certificates exist as repository
-secrets.
+SmartScreen warn on first launch — until the signing secrets exist, at which
+point the same workflow signs (and notarizes, on macOS) by itself.
+docs/DESKTOP.md lists the secrets (`APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`,
+`APPLE_ID`…, `WINDOWS_CERTIFICATE`…).
 
 ## How an existing install finds out
 

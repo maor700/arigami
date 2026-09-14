@@ -78,7 +78,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       ci_test: ${{ steps.plan.outputs.ci_test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: plan (ci-test tag? which targets?)
         id: plan
         env:
@@ -142,7 +142,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -289,7 +289,7 @@ jobs:
           ls -lh dist-installers/
           test -n "$(ls -A dist-installers/)" || { echo "::error::the bundler produced nothing"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: installers-${{ matrix.name }}
           path: dist-installers/*
