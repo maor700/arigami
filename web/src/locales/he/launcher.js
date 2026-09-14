@@ -333,9 +333,12 @@ export const strings = {
   'launcher.account.codexAddBody':
     'היכנסו עם ChatGPT דרך הדפדפן — Codex יוצר את הכניסה ושומר אותה לחשבון הזה. ודאו שהדפדפן מחובר לחשבון ChatGPT שאתם רוצים להוסיף.',
   'launcher.account.codexStep1': 'פתחו את דף הכניסה',
-  'launcher.account.codexStep2': 'היכנסו בתור החשבון שאתם רוצים להוסיף, ואז הזינו שם את הקוד החד-פעמי הזה:',
-  'launcher.account.codexCodeHint': 'הקוד פג תוך 15 דקות ותקף רק לכניסה שהתחלתם כאן.',
-  'launcher.account.codexWaiting': 'ממתין לאישור בדפדפן…',
+  'launcher.account.codexStep1b': ' והיכנסו בתור חשבון ה-ChatGPT שאתם רוצים להוסיף.',
+  'launcher.account.codexStep2':
+    'אחרי הכניסה הדפדפן ינחת על דף שלא נטען (הכתובת שלו מתחילה ב-http://localhost:1455/…). העתיקו את הכתובת הזו והדביקו כאן:',
+  'launcher.account.codexCallbackPlaceholder': 'http://localhost:1455/auth/callback?code=…&state=…',
+  'launcher.account.codexCallbackHint':
+    'אם הדפדפן על אותה מכונה כמו ה-host, הכניסה מסתיימת לבד — אין מה להדביק. הקישור תקף כ-15 דקות.',
   'launcher.account.codexVerifying': 'מחובר — קורא את פרטי החשבון…',
   'launcher.account.codexStarting': 'מפעיל codex login…',
   'launcher.account.codexDone': 'חשבון Codex נוסף',
@@ -346,8 +349,6 @@ export const strings = {
   'launcher.account.limitReached': 'הגיע למגבלה',
   'launcher.account.windowHours': 'חלון של {n} שעות',
   'launcher.account.windowDays': 'חלון של {n} ימים',
-  'launcher.account.copyCode': 'העתקה',
-  'launcher.account.copied': 'הועתק',
   'launcher.account.coolingDown': 'בהתקררות · מתאפס בעוד {time}',
   'launcher.account.atSessionLimit': 'הגיע למגבלת הסשן',
   'launcher.account.tokenInvalid': 'טוקן לא תקין — הוסיפו מחדש',

@@ -202,9 +202,17 @@ Codex account types, next to claude's `keychain` / `oauth-token`:
 - **`codex-home`** — the machine's own `codex login` (`~/.codex/auth.json`, or `ARIGAMI_CODEX_HOME`),
   seeded on first run exactly like the keychain account: a live pointer, never copied, not removable
   from the cockpit, marked `codex-home-stale` in a backup because it cannot travel.
-- **`chatgpt`** — minted by `codex login --device-auth` (`server/codex-account.ts`): codex prints a URL
-  and a one-time code, the human types the code in the browser, codex writes `auth.json` and exits.
-  No TTY, no loopback port. The cockpit polls `GET /__api/accounts/login/status` until it's done.
+- **`chatgpt`** — minted by the standard `codex login` (`server/codex-account.ts`), run under the pty
+  bridge because codex block-buffers its output on a pipe: codex prints the authorize URL and serves
+  the OAuth callback on `127.0.0.1:1455` (a loopback on the HOST). If the human's browser is on the
+  host machine the redirect lands by itself; otherwise the browser is sent to
+  `http://localhost:1455/auth/callback?code=…&state=…`, which cannot load there — the cockpit asks for
+  that address and the host forwards it to the loopback (`POST /__api/accounts/login/code`), so codex
+  still owns the exchange and the file format. Then codex writes `auth.json` and exits; the cockpit
+  polls `GET /__api/accounts/login/status` until it's done. One login at a time (the port is fixed).
+  `codex login --device-auth` (URL + one-time code, no paste-back) exists but ChatGPT workspaces can
+  have it disabled ("contact your workspace admin to enable device code authentication") — it did
+  on the first real try, so it is not used.
 - **`api-key`** — an OpenAI API key. `codex login --with-api-key` accepts anything (a bogus key is
   "Successfully logged in" — measured), so the host validates it against `GET /v1/models` first.
   Billed per request, no plan windows.

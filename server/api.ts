@@ -4054,15 +4054,16 @@ export async function handle(
       }
     }
     // The browser path, per provider: claude = PKCE (server/oauth-login.js),
-    // codex = `codex login --device-auth` (server/codex-account.ts). One flow
-    // id namespace: `oauth_…` / `cdx_…` / `auth_…` say which module owns it.
+    // codex = `codex login` + its loopback callback (server/codex-account.ts).
+    // One flow id namespace: `oauth_…` / `cdx_…` / `auth_…` say which module
+    // owns it; `login/code` takes the pasted code (claude) or callback URL (codex).
     if (p === '/__api/accounts/login/start' && m === 'POST') {
       const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       const provider = pr.normalizeProvider(body?.provider);
       if (provider === 'codex') {
         const cx = await import('./codex-account.js');
-        return json(res, cx.startDeviceLogin({ label: body?.label }));
+        return json(res, cx.startBrowserLogin({ label: body?.label }));
       }
       const o = await import('./oauth-login.js');
       return json(res, { provider: 'claude', ...(o as any).startLogin({ label: body?.label, sessionId: body?.sessionId || (req.headers['x-arigami-session'] as string) || null }) });
@@ -4076,7 +4077,7 @@ export async function handle(
     if (p === '/__api/accounts/login/code' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const id = String(body?.id || '');
-      if (id.startsWith('cdx_')) return badRequest(res, 'a Codex login takes the code in the browser, not here');
+      if (id.startsWith('cdx_')) return json(res, await (await import('./codex-account.js')).submitCallback(id, body?.code));
       if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).submitCode(id, body?.code));
       return json(res, await ((await import('./oauth-login.js')) as any).submitCode(id, body?.code));
     }

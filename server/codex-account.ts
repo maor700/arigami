@@ -6,10 +6,10 @@
 //
 // Minting. Two ways in, both driven by the codex CLI itself so the auth.json
 // format stays whatever the installed codex expects:
-//   - browser : `codex login --device-auth` prints a URL + a one-time code and
-//               polls until the human approves in the browser (no TTY needed,
-//               no loopback port — verified on 0.153.4). The process exits 0
-//               and auth.json appears in $CODEX_HOME.
+//   - browser : `codex login` prints an authorize URL and serves the OAuth
+//               callback on 127.0.0.1:1455; the human signs in, the callback
+//               lands (or is pasted back and forwarded — see LOOPBACK below),
+//               the process exits 0 and auth.json appears in $CODEX_HOME.
 //   - paste   : `codex login --with-api-key` reads the key from stdin and
 //               writes auth.json. It does NOT validate the key (a bogus key is
 //               "Successfully logged in" — measured), so validateApiKey() asks
@@ -41,8 +41,8 @@ const BRIDGE = path.join(resourceRoot(), 'server', 'lib', 'pty-bridge.py');
 // The pty makes codex colour its output — strip CSI/OSC before matching.
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?<>=]*[ -/]*[@-~]/g, '');
-/** Hard ceiling on a device-auth flow — the one-time code itself expires in 15 minutes. */
-const DEVICE_TIMEOUT_MS = 15 * 60_000;
+/** Hard ceiling on a browser login flow (the authorize URL's own state expires around then too). */
+const LOGIN_TIMEOUT_MS = 15 * 60_000;
 const APP_SERVER_TIMEOUT_MS = Number(process.env.ARIGAMI_CODEX_PROBE_TIMEOUT_MS) || 20_000;
 
 // ---- app-server client ------------------------------------------------------
@@ -233,15 +233,47 @@ export async function validateApiKey(key: string): Promise<'valid' | 'invalid' |
 
 // ---- minting ---------------------------------------------------------------
 
-/** Pure: the URL and one-time code out of `codex login --device-auth`'s output (pty-coloured or plain). */
-export function parseDeviceLogin(raw: string): { url: string | null; code: string | null } {
+// The standard `codex login` (browser) flow: codex prints an authorize URL
+// (PKCE, its own client id) and serves the OAuth callback on 127.0.0.1:1455 —
+// a loopback on the HOST. Two ways the callback reaches it:
+//   - the human signs in from a browser ON this machine (the session desktop,
+//     a local install): the redirect lands by itself, codex writes auth.json;
+//   - the human signs in from their own laptop/phone: the browser is sent to
+//     http://localhost:1455/auth/callback?code=…&state=… — which cannot load
+//     THERE. The cockpit asks for that page's address (or just the code), and
+//     the host forwards it to the loopback itself (submitCallback). Verified:
+//     the loopback answers "State mismatch" for a wrong state and completes
+//     for the right one, so codex still owns the exchange and the file format.
+// `codex login --device-auth` would avoid the paste-back, but ChatGPT
+// workspaces can have device-code auth disabled ("contact your workspace
+// admin") — the owner's did, so it is not the default path.
+const LOOPBACK = 'http://127.0.0.1:1455/auth/callback';
+
+/** Pure: the authorize URL (and its `state`) out of `codex login`'s output (pty-coloured or plain). */
+export function parseBrowserLogin(raw: string): { url: string | null; state: string | null } {
   const text = stripAnsi(raw).replace(/\r/g, '');
-  const url = text.match(/https:\/\/[^\s'"]+\/codex\/device[^\s'"]*/)?.[0] || null;
-  // "CHJR-Q57FG": two upper-case alphanumeric groups. Anchored on the sentence
-  // that introduces it so a code-shaped word elsewhere is not mistaken for it.
-  const after = text.split(/one-time code[^\n]*\n/i)[1] || '';
-  const code = after.match(/\b([A-Z0-9]{4,8}-[A-Z0-9]{4,8})\b/)?.[1] || null;
-  return { url, code };
+  const url = text.match(/https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s'"]+/)?.[0] || null;
+  let state: string | null = null;
+  if (url) {
+    try { state = new URL(url).searchParams.get('state'); } catch { /* unparsable — no state */ }
+  }
+  return { url, state };
+}
+
+/**
+ * Pure: what the human pasted back → {code, state}. Accepts the full callback
+ * address (`http://localhost:1455/auth/callback?code=…&state=…`), a bare
+ * `code=…&state=…` query, or just the code (state then comes from the flow).
+ */
+export function parseCallback(input: string): { code: string | null; state: string | null } {
+  const s = String(input || '').trim();
+  if (!s) return { code: null, state: null };
+  const q = s.includes('?') ? s.slice(s.indexOf('?') + 1) : s;
+  if (/(^|&)code=/.test(q)) {
+    const p = new URLSearchParams(q.replace(/#.*$/, ''));
+    return { code: p.get('code'), state: p.get('state') };
+  }
+  return { code: /^[A-Za-z0-9._~-]{8,}$/.test(s) ? s : null, state: null };
 }
 
 interface Flow {
@@ -251,7 +283,7 @@ interface Flow {
   label: string;
   dir: string;
   url: string | null;
-  code: string | null;
+  oauthState: string | null;
   error: string | null;
   account: any;
   child?: ReturnType<typeof spawn>;
@@ -266,8 +298,9 @@ const publicView = (f: Flow) => ({
   provider: f.provider,
   state: f.state,
   url: f.url,
-  code: f.code,
-  needsCode: false, // the code goes INTO the browser, never back to us
+  // The human pastes the callback address back when their browser is not on
+  // this machine; when it is, the flow completes on its own and this is moot.
+  needsCode: f.state === 'awaiting',
   error: f.error,
   account: f.account,
 });
@@ -340,20 +373,25 @@ async function adopt(f: Flow, type: 'chatgpt' | 'api-key'): Promise<void> {
 }
 
 /**
- * Start `codex login --device-auth` in a fresh pending home. Returns the flow
- * view; the URL + code arrive on the next broadcast (or via loginStatus()).
- * The human opens the URL, signs in as the account to add, types the code —
- * codex notices, writes auth.json and exits; adopt() does the rest.
+ * Start `codex login` in a fresh pending home. Returns the flow view; the
+ * authorize URL arrives on the next broadcast (or via loginStatus()). The
+ * human opens it and signs in as the account to add; the callback lands on
+ * the loopback (by itself, or forwarded by submitCallback), codex writes
+ * auth.json and exits; adopt() does the rest. One login at a time: the
+ * loopback port is fixed, so a still-pending flow is cancelled first.
  */
-export function startDeviceLogin({ label }: { label?: string } = {}) {
+export function startBrowserLogin({ label }: { label?: string } = {}) {
+  for (const other of flows.values()) {
+    if (other.state === 'starting' || other.state === 'awaiting') cancelLogin(other.id);
+  }
   const id = 'cdx_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
-  const f: Flow = { id, provider: 'codex', state: 'starting', label: (label || '').trim(), dir: '', url: null, code: null, error: null, account: null, buf: '' };
+  const f: Flow = { id, provider: 'codex', state: 'starting', label: (label || '').trim(), dir: '', url: null, oauthState: null, error: null, account: null, buf: '' };
   flows.set(id, f);
   try {
     f.dir = pendingDir(id);
-    const [bin, ...args] = ptyArgs(BRIDGE, [codexBin(), 'login', '--device-auth']);
+    const [bin, ...args] = ptyArgs(BRIDGE, [codexBin(), 'login']);
     const child = spawn(bin, args, {
-      env: { ...process.env, CODEX_HOME: f.dir, NO_COLOR: '1' },
+      env: { ...process.env, CODEX_HOME: f.dir, NO_COLOR: '1', BROWSER: 'true' }, // BROWSER=true: never try to open a browser on the host
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     supervise(child, 'codex-login');
@@ -361,10 +399,10 @@ export function startDeviceLogin({ label }: { label?: string } = {}) {
     const onText = (chunk: Buffer) => {
       f.buf = (f.buf + chunk.toString()).slice(-8000);
       if (f.state !== 'starting') return;
-      const { url, code } = parseDeviceLogin(f.buf);
-      if (url && code) {
+      const { url, state } = parseBrowserLogin(f.buf);
+      if (url) {
         f.url = url;
-        f.code = code;
+        f.oauthState = state;
         f.state = 'awaiting';
         emit(f);
       }
@@ -378,7 +416,7 @@ export function startDeviceLogin({ label }: { label?: string } = {}) {
       const tail = stripAnsi(f.buf).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-3).join(' · ');
       fail(f, tail ? `codex login exited (${code}): ${tail}` : `codex login exited (${code}) without signing in`);
     });
-    f.timer = setTimeout(() => fail(f, 'timed out waiting for the browser approval (the code expired)'), DEVICE_TIMEOUT_MS);
+    f.timer = setTimeout(() => fail(f, 'timed out waiting for the browser sign-in'), LOGIN_TIMEOUT_MS);
     if (f.timer.unref) f.timer.unref();
   } catch (e) {
     fail(f, `could not start codex login: ${(e as Error).message}`);
@@ -386,9 +424,35 @@ export function startDeviceLogin({ label }: { label?: string } = {}) {
   return publicView(f);
 }
 
+/**
+ * The paste-back half: forward the callback the human's browser could not
+ * deliver to codex's loopback. Codex checks the state, exchanges the code,
+ * writes auth.json and exits — the close handler adopts the account.
+ */
+export async function submitCallback(id: string, input: string): Promise<{ ok: boolean; error?: string }> {
+  const f = flows.get(id);
+  if (!f) return { ok: false, error: 'unknown login flow' };
+  if (f.state === 'done') return { ok: true };
+  if (f.state !== 'awaiting') return { ok: false, error: `login is ${f.state}` };
+  const { code, state } = parseCallback(input);
+  if (!code) return { ok: false, error: 'paste the address of the page you landed on after signing in (it starts with http://localhost:1455/…), or the code from it' };
+  const st = state || f.oauthState;
+  if (!st) return { ok: false, error: 'the callback has no state — paste the whole address, not just the code' };
+  try {
+    const res = await fetch(`${LOOPBACK}?${new URLSearchParams({ code, state: st })}`, { signal: AbortSignal.timeout(30_000), redirect: 'manual' });
+    if (res.status >= 400) {
+      const body = (await res.text().catch(() => '')).trim();
+      return { ok: false, error: body ? `codex refused the callback: ${body}` : `codex refused the callback (HTTP ${res.status})` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `could not reach codex's login server: ${(e as Error).message}` };
+  }
+}
+
 export function loginStatus(id: string) {
   const f = flows.get(id);
-  return f ? publicView(f) : { id, provider: 'codex', state: 'error', url: null, code: null, needsCode: false, error: 'unknown login flow', account: null };
+  return f ? publicView(f) : { id, provider: 'codex', state: 'error', url: null, needsCode: false, error: 'unknown login flow', account: null };
 }
 
 export function cancelLogin(id: string) {

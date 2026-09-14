@@ -137,29 +137,20 @@ test('sanitizeAccountsForExport marks codex-home stale like keychain, in both co
   }
 });
 
-test('codex-account: device-login output parsing and rate-limit normalization are pure', async () => {
+test('codex-account: browser-login output parsing, callback parsing and rate-limit normalization are pure', async () => {
   const cx = await import('../server/codex-account.ts');
-  const out = `
-Welcome to Codex [v0.153.4]
-OpenAI's command-line coding agent
-
-Follow these steps to sign in with ChatGPT using device code authorization:
-
-1. Open this link in your browser and sign in to your account
-   https://auth.openai.com/codex/device
-
-2. Enter this one-time code (expires in 15 minutes)
-   CHJR-Q57FG
-
-Continue only if you started this login in Codex.
-`;
-  expect(cx.parseDeviceLogin(out)).toEqual({ url: 'https://auth.openai.com/codex/device', code: 'CHJR-Q57FG' });
-  expect(cx.parseDeviceLogin('nothing yet')).toEqual({ url: null, code: null });
-  // the pty-coloured form (what the host actually sees — CRLF + CSI colours)
+  // what `codex login` prints under the pty (CRLF + CSI colours) — verified on 0.153.4
+  const url =
+    'https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid%20profile&code_challenge=SBUB&code_challenge_method=S256&state=FhE7bNTmJMKPRq3YUrceK3xwXMj3FMt7awVEKf1QTeg&originator=codex_cli_rs';
   const pty =
-    'Welcome to Codex [v\x1b[90m0.153.4\x1b[0m]\r\n\r\n1. Open this link in your browser and sign in to your account\r\n   \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\r\n\r\n' +
-    '2. Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m\r\n   \x1b[94mCI8U-WT02O\x1b[0m\r\n\r\n\x1b[90mContinue only if you started this login in Codex.\x1b[0m\r\n';
-  expect(cx.parseDeviceLogin(pty)).toEqual({ url: 'https://auth.openai.com/codex/device', code: 'CI8U-WT02O' });
+    'Starting local login server on \x1b[94mhttp://localhost:1455\x1b[0m.\r\nIf your browser did not open, navigate to this URL to authenticate:\r\n\r\n\x1b[94m' + url + '\x1b[0m\r\n\r\nOn a remote or headless machine? Use `codex login --device-auth` instead.\r\n';
+  expect(cx.parseBrowserLogin(pty)).toEqual({ url, state: 'FhE7bNTmJMKPRq3YUrceK3xwXMj3FMt7awVEKf1QTeg' });
+  expect(cx.parseBrowserLogin('Starting local login server on http://localhost:1455.')).toEqual({ url: null, state: null });
+  // the paste-back: full callback address, bare query, bare code
+  expect(cx.parseCallback('http://localhost:1455/auth/callback?code=ac_123.xyz&state=FhE7')).toEqual({ code: 'ac_123.xyz', state: 'FhE7' });
+  expect(cx.parseCallback('  code=abc-def&state=s1#frag ')).toEqual({ code: 'abc-def', state: 's1' });
+  expect(cx.parseCallback('abcdefgh1234')).toEqual({ code: 'abcdefgh1234', state: null });
+  expect(cx.parseCallback('nope')).toEqual({ code: null, state: null });
 
   const usage = cx.normalizeCodexRateLimits({
     rateLimits: {

@@ -3,8 +3,9 @@
 // …). Set active (per provider), pool membership, live usage, add and remove.
 // Adding asks for the provider first, then the method that provider offers:
 //   Claude — PKCE in the browser (paste the code back) / paste a setup-token
-//   Codex  — `codex login --device-auth` (a URL + a one-time code the human
-//            types in the browser; the host polls until codex says done) /
+//   Codex  — `codex login` in the browser (sign in; if the browser is not on
+//            the host machine, paste the callback address back and the host
+//            forwards it to codex's loopback; the poller sees it finish) /
 //            paste an OpenAI API key
 // Backend: server/accounts.js + /__api/accounts (generic routes:
 // /accounts/providers, POST /accounts {provider}, /accounts/login/*). Usage
@@ -178,7 +179,6 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
   const [token, setToken] = useState('');
   const [auth, setAuth] = useState(null); // { id, provider, url, code?, state, error }
   const [code, setCode] = useState('');
-  const [copied, setCopied] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => { loadAccounts(); }, []);
@@ -218,12 +218,15 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
   const startAuth = () => run(async () => {
     const r = await api.post('/accounts/login/start', { provider, label: label.trim() || undefined });
     if (r?.state === 'error') throw new Error(r.error || t('launcher.account.startAuthError'));
-    setAuth({ provider, ...r }); setCode(''); setCopied(false); setAddMode('auth');
+    setAuth({ provider, ...r }); setCode(''); setAddMode('auth');
     if (r?.url) { try { window.open(r.url, '_blank', 'noopener'); } catch { /* user clicks the link */ } }
   });
   const submitCode = () => run(async () => {
     const r = await api.post('/accounts/login/code', { id: auth?.id, code: code.trim() });
     if (!r?.ok) { setAuth((a) => ({ ...(a || {}), state: 'error', error: r?.error || t('launcher.account.exchangeFailed') })); return; }
+    // Codex: the host forwarded the callback; codex now exchanges the code and
+    // exits — the poller below sees 'verifying' → 'done'. Claude: done here.
+    if (auth?.provider === 'codex') { setAuth((a) => ({ ...(a || {}), state: 'verifying' })); setCode(''); return; }
     resetAdd();
   });
   const cancelAuth = () => {
@@ -250,10 +253,6 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollable, auth?.id]);
-
-  const copyCode = async () => {
-    try { await navigator.clipboard.writeText(auth?.code || ''); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked — the code is visible */ }
-  };
 
   const P = catalog[provider] || PROVIDERS[DEFAULT_PROVIDER];
   const usageOf = (a) => accountUsage?.[a.id] || snapshotUsage(a);
@@ -326,25 +325,34 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
             {t('launcher.account.addAccountTitle')}{label ? ` · ${label}` : ''}
           </div>
           {auth.state === 'starting' && <p className="mt-1.5 text-[11.5px] text-fgdim">{t('launcher.account.codexStarting')}</p>}
-          {(auth.state === 'awaiting' || auth.state === 'verifying') && (
+          {auth.state === 'verifying' && <p className="mt-1.5 text-[11.5px] text-fgdim">{t('launcher.account.codexVerifying')}</p>}
+          {auth.state === 'awaiting' && (
             <>
               <ol className="mt-1.5 ms-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
                 <li>
                   {t('launcher.account.codexStep1')}
                   {auth.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-[#2C6BD6] underline">{t('launcher.account.openSignIn')}</a></>}
+                  {t('launcher.account.codexStep1b')}
                 </li>
                 <li>{t('launcher.account.codexStep2')}</li>
               </ol>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <code data-device-code className="rounded-[8px] border border-ink bg-bg px-3 py-1.5 font-mono text-[18px] font-bold tracking-widest text-fg" dir="ltr">{auth.code || '…'}</code>
-                <button type="button" onClick={copyCode} className={GHOST}>{copied ? t('launcher.account.copied') : t('launcher.account.copyCode')}</button>
-              </div>
-              <p className="mt-1.5 text-[11px] text-fgdim">{t('launcher.account.codexCodeHint')}</p>
-              <p className="mt-1.5 text-[11.5px] text-fgdim">{auth.state === 'verifying' ? t('launcher.account.codexVerifying') : t('launcher.account.codexWaiting')}</p>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && code.trim() && !busy) submitCode(); }}
+                placeholder={t('launcher.account.codexCallbackPlaceholder')}
+                spellCheck={false}
+                autoFocus
+                dir="ltr"
+                data-codex-callback
+                className={`${INPUT} font-mono text-[11.5px]`}
+              />
+              <p className="mt-1.5 text-[11px] text-fgdim">{t('launcher.account.codexCallbackHint')}</p>
             </>
           )}
           {auth.state === 'error' && <p className="mt-1.5 text-[11.5px] text-[#B23B30]">{auth.error || t('launcher.account.startAuthError')}</p>}
           <div className="mt-2.5 flex items-center gap-2">
+            {auth.state === 'awaiting' && <button type="button" disabled={busy || !code.trim()} onClick={submitCode} className={PRIMARY}>{busy ? t('launcher.account.finishing') : t('launcher.account.finish')}</button>}
             {auth.state === 'error' && <button type="button" disabled={busy} onClick={startAuth} className={PRIMARY}>{t('launcher.account.codexBrowser')}</button>}
             <button type="button" onClick={cancelAuth} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
           </div>

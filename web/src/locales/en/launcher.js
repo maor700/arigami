@@ -333,9 +333,12 @@ export const strings = {
   'launcher.account.codexAddBody':
     'Sign in with ChatGPT through your browser — Codex mints the login and stores it for this account. Make sure the browser is signed in to the ChatGPT account you want to add.',
   'launcher.account.codexStep1': 'Open the sign-in page',
-  'launcher.account.codexStep2': 'Sign in as the account you want to add, then enter this one-time code there:',
-  'launcher.account.codexCodeHint': 'The code expires in 15 minutes and only works for a login you started here.',
-  'launcher.account.codexWaiting': 'Waiting for the approval in the browser…',
+  'launcher.account.codexStep1b': ' and sign in as the ChatGPT account you want to add.',
+  'launcher.account.codexStep2':
+    'After signing in, the browser lands on a page that cannot load (its address starts with http://localhost:1455/…). Copy that address and paste it here:',
+  'launcher.account.codexCallbackPlaceholder': 'http://localhost:1455/auth/callback?code=…&state=…',
+  'launcher.account.codexCallbackHint':
+    'If the browser is on this same machine, the sign-in completes by itself — nothing to paste. The link is valid for about 15 minutes.',
   'launcher.account.codexVerifying': 'Signed in — reading the account…',
   'launcher.account.codexStarting': 'Starting codex login…',
   'launcher.account.codexDone': 'Codex account added',
@@ -346,8 +349,6 @@ export const strings = {
   'launcher.account.limitReached': 'limit reached',
   'launcher.account.windowHours': '{n}-hour window',
   'launcher.account.windowDays': '{n}-day window',
-  'launcher.account.copyCode': 'Copy',
-  'launcher.account.copied': 'Copied',
   'launcher.account.coolingDown': 'cooling down · resets in {time}',
   'launcher.account.atSessionLimit': 'at session limit',
   'launcher.account.tokenInvalid': 'token invalid — re-add',
