@@ -554,10 +554,11 @@ function readBody(
   });
 }
 
-interface PermissionResult {
+export interface PermissionResult {
   behavior: string;
   message?: string;
   updatedInput?: unknown;
+  timedOut?: boolean;
 }
 
 async function handlePermissionRequest(
@@ -567,7 +568,6 @@ async function handlePermissionRequest(
   const sessionId = body.session_id as string | undefined;
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
-  const requestId = 'perm_' + nano();
   const toolName = (body.tool_name || body.toolName || 'unknown') as string;
   const input = body.input ?? {};
   // NOTE on AskUserQuestion: we deliberately keep it on the normal (blocking)
@@ -579,9 +579,21 @@ async function handlePermissionRequest(
   // blocked turn). We only hide the redundant permission *bubble* in the UI — see
   // ChatPane's permission-request case.
   const toolUseId = typeof body.tool_use_id === 'string' && body.tool_use_id ? body.tool_use_id : undefined;
+  const promise = openPermission(sessionId, { toolName, input, toolUseId }).then(({ timedOut: _t, ...r }) => r);
+  // CHAT1: long-poll legs (see respondBlocking) — the MCP process re-attaches
+  // instead of dying at its fetch timeout while the human is still deciding.
+  await respondBlocking(res, body, sessionId, promise);
+}
+
+/** A permission (or AskUserQuestion) card; resolves with the human's answer, or deny on timeout. Also used by codex app-server approvals. */
+export function openPermission(
+  sessionId: string,
+  { toolName, input, toolUseId, timeoutMs }: { toolName: string; input: unknown; toolUseId?: string; timeoutMs?: number }
+): Promise<PermissionResult> {
+  const requestId = 'perm_' + nano();
   const isQuestion = toolName === 'AskUserQuestion';
-  const timeoutMs = isQuestion ? QUESTION_TIMEOUT_MS : PERMISSION_TIMEOUT_MS;
-  const promise = new Promise<PermissionResult>((resolve) => {
+  const ms = timeoutMs || (isQuestion ? QUESTION_TIMEOUT_MS : PERMISSION_TIMEOUT_MS);
+  return new Promise<PermissionResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingPermissions.delete(requestId);
       state.setClaude(sessionId, { state: 'working' });
@@ -594,38 +606,28 @@ async function handlePermissionRequest(
       });
       resolve({
         behavior: 'deny',
+        timedOut: true,
         message: isQuestion
-          ? `The human did not answer the question card within ${Math.max(1, Math.round(timeoutMs / 60000))} minutes. Do not re-ask the same question right away — continue with a sensible default and say which one you picked.`
-          : `Permission request timed out after ${Math.max(1, Math.round(timeoutMs / 60000))} minutes`,
+          ? `The human did not answer the question card within ${Math.max(1, Math.round(ms / 60000))} minutes. Do not re-ask the same question right away — continue with a sensible default and say which one you picked.`
+          : `Permission request timed out after ${Math.max(1, Math.round(ms / 60000))} minutes`,
       });
-    }, timeoutMs);
-    pendingPermissions.set(requestId, {
-      resolve,
-      timer,
-      sessionId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
+    }, ms);
+    pendingPermissions.set(requestId, { resolve, timer, sessionId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
     state.setClaude(sessionId, { state: 'awaiting-input' });
-    claude.appendChat(sessionId, {
-      kind: 'permission-request',
-      requestId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
-    broadcast({
-      type: `permission-request:${sessionId}`,
-      requestId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
+    claude.appendChat(sessionId, { kind: 'permission-request', requestId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
+    broadcast({ type: `permission-request:${sessionId}`, requestId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
   });
-  // CHAT1: long-poll legs (see respondBlocking) — the MCP process re-attaches
-  // instead of dying at its fetch timeout while the human is still deciding.
-  await respondBlocking(res, body, sessionId, promise);
+}
+
+/** Close a codex card the engine resolved itself (serverRequest/resolved) — no answer is sent. */
+export function dismissPermission(sessionId: string, toolUseId: string, message = 'resolved by the engine'): void {
+  for (const [requestId, entry] of pendingPermissions) {
+    if (entry.sessionId !== sessionId || entry.toolUseId !== toolUseId) continue;
+    clearTimeout(entry.timer);
+    pendingPermissions.delete(requestId);
+    claude.appendChat(sessionId, { kind: 'permission-answer', requestId, toolUseId, behavior: 'deny', message });
+    entry.resolve({ behavior: 'deny', message });
+  }
 }
 
 // Force-deny any permission request left pending for a session — e.g. its

@@ -105,6 +105,11 @@ interface ClaudeState {
   screenRequest?: { requestId: string; reason?: string } | null;
   // S1: an open request_setup card this session is blocked on (manual/ask mode).
   setupRequest?: { id: string; capability: string } | null;
+  // Auto-compact threshold (% of the window, and the token count it resolved to).
+  autoCompactPct?: number | null;
+  autoCompactTokens?: number | null;
+  // P3-3: codex app-server's last turn/diff/updated (the Changes tab reloads on `at`).
+  turnDiff?: { at: number; additions: number; deletions: number } | null;
 }
 
 interface ReviewTarget {
