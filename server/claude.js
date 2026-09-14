@@ -25,6 +25,7 @@ import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
+import { codexChain, codexLadder, codexCatalogIds, CODEX_LIMIT_RE } from './lib/codex-quota.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { pickEngine, registerEngine } from './lib/engine-driver.js';
@@ -1062,9 +1063,24 @@ export function chainFor(id) {
 // The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
 export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
 
+/** P2-6: a codex session's chain — codex model ids from cfg.codexModelChain, filtered to the active account's catalog. */
+export function codexChainFor(id) {
+  const s = getSession(id);
+  const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const agent = slug ? getAgent(slug) : null;
+  const own = agent?.engine === 'codex' ? agent : null;
+  return codexChain({
+    sessionChain: s?.claude?.modelChain,
+    agentChain: own?.modelChain,
+    configChain: cfg.codexModelChain,
+    catalog: codexCatalogIds(),
+    modelChoice: s?.claude?.modelDowngradedFrom || s?.claude?.modelChoice || own?.model || null,
+  });
+}
+
 export function ladderState(id) {
   const s = getSession(id);
-  if (s?.engine === 'codex') return { chain: [], rung: 0, model: s.claude?.modelChoice || null, rungsLeft: 0, restoreAt: null };
+  if (s?.engine === 'codex') return codexLadder(codexChainFor(id), s.claude);
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1315,6 +1331,7 @@ async function compactAndRespawn(id, { from, to, plan, patch, lastMsg }) {
  * replay, exactly like downgradeModel/tryAutoSwitch.
  */
 export function restoreModel(id) {
+  if (isCodexSession(id)) return restoreCodexModel(id);
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
@@ -1359,6 +1376,53 @@ export function restoreModel(id) {
   return top;
 }
 
+// ---- P2-6: the codex model ladder (no compaction: codex exec cannot, see ENGINES.md limit 5) ----
+const codexLadderCooldown = new Set();
+
+/** Drop a codex session one rung and replay `lastMsg`; same result shape as downgradeModel. */
+/** @param {string} id @param {{resetAt?: string|null, why?: string, lastMsg?: string|null}} [opts] */
+export function downgradeCodexModel(id, { resetAt = null, why = 'all Codex accounts limited', lastMsg = null } = {}) {
+  if (!isCodexSession(id)) return { ok: false, reason: 'engine' };
+  const { chain, rung } = ladderState(id);
+  const nxt = nextRung(chain, rung);
+  if (!nxt) return { ok: false, reason: 'bottom' };
+  if (codexLadderCooldown.has(id)) return { ok: false, reason: 'cooling' };
+  codexLadderCooldown.add(id);
+  const cd = setTimeout(() => codexLadderCooldown.delete(id), 30_000);
+  if (cd.unref) cd.unref();
+  const from = chain[rung] || getSession(id)?.claude?.modelChoice || 'default';
+  const msg = lastMsg ?? lastUserMessage(id);
+  const restoreAt = resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
+  appendChat(id, { kind: 'system', text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing · quota resets ${localTime(restoreAt)}` });
+  try {
+    restartWith(id, { modelChoice: nxt.model, modelRung: nxt.rung, modelRestoreAt: restoreAt, modelDowngradedFrom: chain[0] || from });
+  } catch {
+    codexLadderCooldown.delete(id);
+    return { ok: false, reason: 'failed' };
+  }
+  const t = setTimeout(() => { try { if (msg) sendMessage(id, msg); } catch {} }, 900);
+  if (t.unref) t.unref();
+  return { ok: true, model: nxt.model, from };
+}
+
+/** Climb a codex session back to its top rung; no replay unless a turn was in flight. */
+export function restoreCodexModel(id) {
+  const { chain, rung } = ladderState(id);
+  if (rung <= 0) return null;
+  const top = chain[0];
+  const lastMsg = getSession(id)?.claude?.state === 'working' ? lastUserMessage(id) : null;
+  appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
+  restartWith(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null });
+  if (lastMsg) {
+    const t = setTimeout(() => { try { sendMessage(id, lastMsg); } catch {} }, 900);
+    if (t.unref) t.unref();
+  }
+  return top;
+}
+
+/** P2-6 incidents from codex-recovery.ts, same neck as the claude ones. */
+export const recordCodexIncident = (id, action, detail, outcome = 'ok', reason = 'quota') => recordIncident(id, action, detail, outcome, reason);
+
 /**
  * RES1 — the error family of the session's LAST turn, for the supervisor's
  * health model. Reads the transcript tail backwards and stops at the first
@@ -1392,7 +1456,8 @@ export function lastTurnError(id) {
       if (AUTH_RE.test(t)) return 'auth';
       // A model that cannot run right now is remedied exactly like an exhausted
       // account pool — one rung down the chain.
-      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return getSession(id)?.engine === 'codex' ? 'other' : 'limit';
+      if (getSession(id)?.engine === 'codex') { if (CODEX_LIMIT_RE.test(t)) return 'limit'; }
+      else if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
       if (/(?:claude|codex) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';
     }

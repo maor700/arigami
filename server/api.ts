@@ -937,6 +937,12 @@ function ownerOfRequest(explicit: unknown, me: import('./auth.js').Principal | n
   return me?.kind === 'session' ? ownerOfSession(me.sessionId, capability) : caps.GLOBAL_OWNER;
 }
 
+/** P2-4: capability probes that answer for a session's engine (mcp:* grants are per engine). */
+function sessionProbes(sessionId: string | null | undefined): Partial<caps.CapabilityProbes> {
+  const s = sessionId ? state.getSession(sessionId) : null;
+  return s ? { engine: () => (s.engine === 'codex' ? 'codex' : 'claude') } : {};
+}
+
 // Every transition: one `setup-update` chat event (same id as the `setup`
 // card — the web merges by id) + a bus `setup` broadcast for non-chat views
 // (Settings → Connections re-fetches capabilities on it).
@@ -1419,7 +1425,7 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   const capability = String(body.capability || '').trim();
   // A2: a session born from an agent asks for the AGENT's connection (agent first, then the shared one).
   const owner = ownerOfSession(sessionId, capability);
-  const cap = caps.getCapability(capability, {}, owner);
+  const cap = caps.getCapability(capability, sessionProbes(sessionId), owner);
   if (!cap) return badRequest(res, `unknown capability: ${capability} — use a registry id (GET /__api/setup/capabilities)`);
   // F6: never an empty why — the card and the audit fall back to the capability title.
   const why = (String(body.why || '').trim() || cap.title).slice(0, 300);
@@ -1603,8 +1609,10 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     const name = rec?.name || mcpCat.grantName(slug, owner);
     const { scope, cwd } = mcpScope(owner);
     if ((rec?.auth || spec?.auth) !== 'bearer') await mcpAuth.logout(name, cwd);
+    if (mcpConn.readCodexMcpGrants().has(name)) await mcpAuth.codexLogout(name, rec?.url || spec?.url);
     await mcpAuth.removeServer(name, { scope, cwd });
     mcpAuth.cancelLogin(name);
+    mcpAuth.cancelLogin(name, 'codex');
     return { ok: true, removed: mcpConn.removeConnection(owner, capability), name, owner };
   }
   if (capability === 'remote') {
@@ -1724,23 +1732,58 @@ function recordMcpConnection(owner: caps.Owner, spec: mcpCat.McpServerSpec, name
 type McpLoginStatus = { state: string; url: string | null; error: string | null };
 
 /** `claude mcp login` prints the authorize URL a beat after it starts; wait for it. */
-async function waitForAuthUrl(name: string, timeoutMs = 20_000): Promise<McpLoginStatus> {
+async function waitForAuthUrl(name: string, timeoutMs = 20_000, engine?: mcpConn.McpEngine): Promise<McpLoginStatus> {
   const t0 = Date.now();
   for (;;) {
-    const st = mcpAuth.loginStatus(name) as McpLoginStatus;
+    const st = mcpAuth.loginStatus(name, engine) as McpLoginStatus;
     if (st.url || st.state === 'error' || st.state === 'done' || Date.now() - t0 > timeoutMs) return st;
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
+/** P2-4: a codex grant — `codex mcp login` under the codex MCP home; no `claude mcp add`, the session config.toml writes the url. */
+async function applyCodexMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: caps.Owner, name: string, url: string): Promise<Record<string, unknown>> {
+  if (spec.auth === 'bearer') throw new Error(`${spec.title} is token-based — not wired for Codex sessions yet`);
+  const action = String(body?.action || '');
+  const engine = 'codex' as const;
+  if (action === 'cancel') return { ok: true, engine, ...mcpAuth.cancelLogin(name, engine) };
+  if (action === 'poll' || action === 'status') {
+    const st = mcpAuth.loginStatus(name, engine) as McpLoginStatus;
+    if (mcpConn.readCodexMcpGrants().get(name)) {
+      const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
+      mcpAuth.cancelLogin(name, engine);
+      return { ok: true, state: 'done', name, owner, engine, connection, ...(toolsAdded ? { toolsAdded } : {}) };
+    }
+    return { ...st, ok: false, name, owner, engine };
+  }
+  if (action === 'code' || action === 'paste' || body?.code || body?.url) {
+    const r = await mcpAuth.submitCodexRedirect(name, String(body?.code || body?.url || ''));
+    if (!r.ok) throw new Error(r.error || 'could not hand the redirect URL to the codex login');
+    return { ...r, ok: false, name, owner, engine };
+  }
+  mcpAuth.startLogin(name, undefined, { engine, url });
+  const st = await waitForAuthUrl(name, 20_000, engine);
+  if (st.state === 'error') throw new Error(st.error || 'could not start the codex MCP login');
+  if (!st.url) throw new Error(`${spec.title}: \`codex mcp login\` did not print an authorize URL`);
+  return { ...st, ok: false, id: name, name, url: st.url, owner, engine, domains: spec.domains, docs: spec.docs };
+}
+
+/** Which engine a setup request is for: explicit body.engine, else the calling session's. */
+function setupEngine(body: any, req: IncomingMessage): mcpConn.McpEngine {
+  if (body?.engine === 'codex' || body?.engine === 'claude') return body.engine;
+  const sid = String(body?.sessionId || req.headers['x-arigami-session'] || req.headers['x-session-id'] || '');
+  return sid && state.getSession(sid)?.engine === 'codex' ? 'codex' : 'claude';
+}
+
 /** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
-async function applyMcpSetup(slug: string, body: any, owner: caps.Owner): Promise<Record<string, unknown>> {
+async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine: mcpConn.McpEngine = 'claude'): Promise<Record<string, unknown>> {
   const spec = mcpCat.mcpSpec(slug);
   if (!spec) throw new Error(`${slug} is not in the native MCP catalog`);
   if (spec.auth === 'oauth-byo-client') throw new Error(`${spec.title} needs an OAuth client of your own (no dynamic registration) — not connectable from here yet`);
   const action = String(body?.action || '');
   const name = mcpCat.grantName(spec.slug, owner);
   const url = body?.readonly && spec.readonlyUrl ? spec.readonlyUrl : spec.url;
+  if (engine === 'codex') return applyCodexMcpSetup(spec, body, owner, name, url);
   const { scope, cwd } = mcpScope(owner);
 
   // --- bearer (GitHub PAT): no browser at all -------------------------------
@@ -1864,7 +1907,7 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id, owner };
     }
   } else if (capability.startsWith('mcp:')) {
-    return await applyMcpSetup(capability.slice(4), body, owner);
+    return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req));
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
@@ -3049,7 +3092,10 @@ export async function handle(
       if (rest.startsWith('capabilities/') && m === 'GET') {
         const id = decodeURIComponent(rest.slice('capabilities/'.length));
         const owner = caps.isOwnable(id) ? qOwner : caps.GLOBAL_OWNER;
-        const cap = caps.getCapability(id, {}, owner);
+        const qEngine = u.searchParams.get('engine');
+        const probes: Partial<caps.CapabilityProbes> =
+          qEngine === 'codex' || qEngine === 'claude' ? { engine: () => qEngine } : me?.kind === 'session' ? sessionProbes(me.sessionId) : {};
+        const cap = caps.getCapability(id, probes, owner);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
         const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
         // CONN1: a session under an agent allowlist that excludes this capability's
@@ -3066,8 +3112,8 @@ export async function handle(
               hint: 'do not call request_setup (it cannot change an allowlist); ask the human (request_action) to tick the tool family for this agent, or hand the task to an agent that has it',
             });
         }
-        const r = await caps.ensure(id, why, {}, owner);
-        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, {}, owner) } : r);
+        const r = await caps.ensure(id, why, probes, owner);
+        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, probes, owner) } : r);
       }
       if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity(qOwner), owner: qOwner });
       // DELETE /__api/setup/:capability — disconnect (identity or a provider) + audit.
@@ -3142,11 +3188,12 @@ export async function handle(
         // the session principal / body.sessionId); Settings passes owner explicitly.
         const owner = ownerOfRequest(body?.owner ?? u.searchParams.get('owner'), me?.kind === 'session' ? me : body?.sessionId && state.getSession(String(body.sessionId)) ? ({ kind: 'session', sessionId: String(body.sessionId), user: null } as any) : me, capability);
         if (!owner) return badRequest(res, `invalid owner: ${body?.owner} — "global" or "agent:<slug>"`);
-        const cap = caps.getCapability(capability, {}, owner);
+        const sProbes: Partial<caps.CapabilityProbes> = capability.startsWith('mcp:') ? { engine: () => setupEngine(body, req) } : {};
+        const cap = caps.getCapability(capability, sProbes, owner);
         if (!cap) return badRequest(res, `unknown capability: ${capability}`);
         try {
           const out = await applyManualSetup(capability, body, req, owner);
-          const status = await caps.statusOf(cap, {}, owner);
+          const status = await caps.statusOf(cap, sProbes, owner);
           let closed = 0;
           if (status.ok) {
             closed = resolveSetupsFor(capability, status.detail, true, owner);
@@ -4007,9 +4054,12 @@ export async function handle(
       const accountsMod = await import('./accounts.js');
       const snap = await sup.healthSnapshot();
       const { accounts } = accountsMod.listAccounts() as any;
+      const { cachedUsage } = await import('./usage.js');
+      const win = (w: any) => (w && typeof w.pct === 'number' ? { pct: w.pct, resetsAt: w.resetsAt || null, windowMins: w.windowMins || null } : null);
       return json(res, {
         ...snap,
         accounts: accounts.map((a: any) => ({
+          ...(() => { const u: any = cachedUsage(a.id); return u?.available ? { usage: { session: win(u.session), week: win(u.week) } } : {}; })(),
           id: a.id,
           label: a.label,
           provider: a.provider,
@@ -4020,6 +4070,7 @@ export async function handle(
           plan: a.plan,
         })),
         modelChain: cfg.modelChain,
+        codexModelChain: cfg.codexModelChain,
         supervisor: cfg.supervisor,
       });
     }

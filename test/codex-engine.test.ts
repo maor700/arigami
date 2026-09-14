@@ -203,25 +203,24 @@ test('the 401 run: log noise is dropped, reconnect spam is dropped, the real fai
 });
 
 test('a turn.failed shaped like a 429 gets a plain-language quota note, not just the raw error', () => {
-  // No fixture backs this — no live run here ever hit a real quota wall (see
-  // the NOT VERIFIED comment on rateLimitNote() in server/codex.ts). This only
-  // tests OUR heuristic against the one wrapper shape that IS verified live
-  // (codex-cli wraps every HTTP failure as "unexpected status <code> ..." —
-  // see error-noauth), not that codex actually reports quota this way.
+  // No real quota wall backs this; with no codex account to read rateLimits from, the note says unverified.
   const r = runInChild(
     "const st=await import('./server/state.ts');" +
       "const cl=await import('./server/claude.js');" +
       "const cx=await import('./server/codex.ts');" +
+      "const rec=await import('./server/codex-recovery.ts');" +
       "const s=st.createSession({title:'codex',engine:'codex'});" +
       "cx.codexHandleEvent(s.id,{type:'turn.failed',error:{message:'unexpected status 429 Too Many Requests: resets in 2 hours'}});" +
+      'await new Promise((r)=>setTimeout(r,50));await rec.settled(s.id);' +
       'emit({events:cl.getChat(s.id,0)});',
-    env()
+    env({ ARIGAMI_CODEX_BIN: '/bin/false' })
   );
   expect(r.ok).toBe(true);
   const { events } = r.out[0];
-  expect(kinds(events)).toEqual(['error', 'system']);
+  expect(kinds(events).slice(0, 2)).toEqual(['error', 'system']);
   expect(events[1].text).toContain('quota');
   expect(events[1].text).toContain('resets in 2 hours');
+  expect(events[1].text).toContain('unverified');
 });
 
 test('an ordinary turn.failed does not get a quota note', () => {

@@ -34,9 +34,8 @@
 //     did for claude's bypassPermissions.
 //   - A3 allowlists: enforced by the same PreToolUse hook as claude, via $CODEX_HOME/hooks.json
 //     + --dangerously-bypass-hook-trust (without the flag codex skips hooks silently — measured).
-//   - Remote (url) MCP grants are skipped — codex keeps its own OAuth store per
-//     $CODEX_HOME, so an arigami grant minted for claude is not usable.
-//   - RES1's model ladder is claude-shaped and does not run for codex sessions.
+//   - Remote (url) MCP servers load only with a Codex-side grant (`codex mcp login`, P2-4); Claude's grants are not usable here.
+//   - Quota recovery (P2-6) is codex-recovery.ts: rateLimits-confirmed account rotation, then cfg.codexModelChain.
 //     LADDER1's compaction was actually TRIED (not just assumed absent): five
 //     live turns with model_auto_compact_token_limit=3000 (both scope values)
 //     and --enable context_management grew one thread to 41,474 tokens with
@@ -50,13 +49,7 @@
 //     reasoning-test-*.jsonl) — usage.reasoning_output_tokens was >0 on that
 //     run, so the model reasoned, it just never left the stream. Handled
 //     defensively, still not verified. See ENGINES.md limit 6.
-//   - Rate-limit detection (rateLimitNote()) is a GUESS marked as one: codex's
-//     documented RateLimitReachedType enum lives on the app-server's
-//     account/rateLimits notifications, not on exec's stream, and no run here
-//     ever hit a real quota wall (reproducing one means burning a live
-//     account's usage limit). It pattern-matches the one wrapper shape that IS
-//     verified live (error-noauth's "unexpected status <code> ..."), nothing
-//     more. See ENGINES.md limit 6b.
+//   - The turn's limit text is a regex guess (lib/codex-quota.ts); the rateLimits read is what confirms it. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -71,8 +64,9 @@ import type { EngineDriver } from './lib/engine-driver.js';
 import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
-import { injectedServersFor } from './mcp-connections.js';
 import { hostMcpServers } from './lib/mcp-servers.js';
+import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
+import { looksLikeCodexLimit, setCodexCatalogSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
@@ -299,28 +293,24 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   if (isRestrictive(policy) && policy.tools !== null) {
     for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
   }
-  // M1 grants are `{type:'http', url}` entries whose credentials live in
-  // CLAUDE's own per-agent MCP store. Codex authenticates remote servers
-  // through its own `codex mcp login` under $CODEX_HOME and would just start an
-  // unauthenticated connection (and burn STARTUP_TIMEOUT_SEC doing it), so they
-  // are left out — and the session is told once, because its persona may have
-  // promised those tools.
-  if (slug) {
-    let skipped: string[] = [];
-    try {
-      skipped = Object.keys(injectedServersFor(`agent:${slug}`));
-    } catch {
-      /* no connections.json */
-    }
-    if (skipped.length && !st.warnedRemote) {
-      st.warnedRemote = true;
-      appendChat(s.id, {
-        kind: 'system',
-        text:
-          `⤷ The engine here is Codex, so the agent's remote MCP servers (${skipped.join(', ')}) aren't available in this session — ` +
-          `their credentials belong to Claude. Don't rely on their tools; Arigami's own host tools still work.`,
-      });
-    }
+  // P2-4: remote grants load only when Codex holds its own (`codex mcp login`, mcp-connections codexServersFor); Claude-only ones get a one-time note.
+  let remote: { granted: Record<string, { url: string }>; claudeOnly: string[] } = { granted: {}, claudeOnly: [] };
+  try {
+    remote = codexServersFor(slug ? `agent:${slug}` : GLOBAL);
+  } catch {
+    /* no connections.json */
+  }
+  for (const [name, sv] of Object.entries(remote.granted)) {
+    if (!servers[name] && (!isRestrictive(policy) || policy.tools === null || serverTouched(policy, name))) servers[name] = sv;
+  }
+  if (remote.claudeOnly.length && !st.warnedRemote) {
+    st.warnedRemote = true;
+    appendChat(s.id, {
+      kind: 'system',
+      text:
+        `⤷ These remote MCP servers are granted for Claude only, so this Codex session doesn't have them: ${remote.claudeOnly.join(', ')}. ` +
+        'Run the connect-mcp skill from this session to authorize them for Codex.',
+    });
   }
 
   const env: Record<string, string> = {
@@ -371,6 +361,28 @@ function restrictedAgentOf(s: Session): boolean {
   return !!slug && isRestrictive(policyFor(slug));
 }
 
+/** P2-4: `.credentials.json` → the host-wide codex MCP grant file; a real file codex left behind (a token refresh) is copied back first if newer. */
+function linkMcpCredentials(codexHome: string): void {
+  const link = path.join(codexHome, '.credentials.json');
+  const shared = codexCredentialsFile();
+  try {
+    const st = fs.lstatSync(link);
+    if (!st.isSymbolicLink() && st.isFile()) {
+      let sharedMtime = 0;
+      try { sharedMtime = fs.statSync(shared).mtimeMs; } catch { /* none yet */ }
+      if (st.mtimeMs > sharedMtime) {
+        fs.mkdirSync(codexMcpHome(), { recursive: true, mode: 0o700 });
+        fs.copyFileSync(link, shared);
+        fs.chmodSync(shared, 0o600);
+      }
+    }
+  } catch {
+    /* nothing there yet */
+  }
+  if (fs.existsSync(shared)) linkDir(link, shared);
+  else fs.rmSync(link, { force: true });
+}
+
 /** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
 export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
 
@@ -393,12 +405,16 @@ function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   linkDir(path.join(codexHome, 'auth.json'), authSrc);
 
   linkSkills(codexHome);
+  linkMcpCredentials(codexHome);
 
   const st = stateOf(s.id);
   const cwd = untildify(s.cwd) || HOME;
   const lines = [
     '# generated by server/codex.ts — rewritten before every spawn, do not edit by hand',
     `# session ${s.id}`,
+    '',
+    // P2-4: MCP OAuth tokens live in the file linkMcpCredentials() points at, never the keyring.
+    'mcp_oauth_credentials_store = "file"',
     '',
     // Without this codex asks whether the directory is trusted; the session's
     // worktree IS the sandbox boundary arigami already chose for it.
@@ -636,32 +652,10 @@ function reapGivenUpHostTool(id: string, tool: string | null): void {
   else if (tool === 'permission_prompt') expirePendingPermissions(id, 'codex gave up on the tool call (tool_timeout_sec)');
 }
 
-// `RateLimitReachedType` (rate_limit_reached, workspace_owner_credits_depleted,
-// workspace_member_credits_depleted, workspace_owner_usage_limit_reached,
-// workspace_member_usage_limit_reached) is a real enum — but it lives in the
-// app-server JSON-RPC protocol's account/rateLimits notifications, which this
-// driver does not speak (see ENGINES.md limit 2). NOT VERIFIED against a real
-// quota wall: reproducing one means actually exhausting a live account's
-// ChatGPT usage limit, which nobody did here. What IS verified (the 401 in
-// test/fixtures/codex-stream/error-noauth-*.jsonl) is that codex-cli wraps
-// every HTTP failure in the same `unexpected status <code> <reason>: <body>`
-// text on the plain error/turn.failed message — no structured `type` field.
-// This matches that wrapper for 429, plus the enum strings themselves in case
-// the ChatGPT-backend error body embeds them verbatim, plus generic wording as
-// a last resort. Until a real quota-exhausted run confirms or corrects it,
-// treat this as a guess about phrasing, exactly like the `reasoning` item.
-const RATE_LIMIT_RE =
-  /unexpected status 429\b|rate_limit_reached|workspace_(?:owner|member)_(?:credits_depleted|usage_limit_reached)|\brate[ -]?limit(?:ed|s)?\b|\busage limit\b|\bquota\b|\bcredits? (?:depleted|exhausted)\b/i;
-
-/** A human-readable note appended alongside the raw error, or null if this doesn't look like a quota wall. */
-function rateLimitNote(message: string): string | null {
-  if (!RATE_LIMIT_RE.test(message)) return null;
-  const resetHint = message.match(/reset[s]?\s*(?:at|in|on)\s*[^,."')]+/i);
-  let note =
-    "⤷ This looks like Codex's quota (rate limit / credits / usage limit) ran out, not a code error — " +
-    'this check has not been verified against a real quota exhaustion (see the note in server/codex.ts), so the detection could be wrong.';
-  if (resetHint) note += ` Codex said: "${resetHint[0]}".`;
-  return note;
+/** P2-6: a limit-looking error goes to codex-recovery.ts, which confirms it via account/rateLimits/read before noting or acting. */
+function onLimitText(id: string, text: string): void {
+  if (!looksLikeCodexLimit(text)) return;
+  import('./codex-recovery.js').then((m) => m.onCodexLimit(id, text)).catch(() => {});
 }
 
 function emitToolUse(id: string, item: any, st: CodexSessionState): ItemState {
@@ -779,8 +773,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
       if (!st.errs.has(text)) {
         st.errs.add(text);
         appendChat(id, { kind: 'error', text, isError: true });
-        const quota = rateLimitNote(text);
-        if (quota) appendChat(id, { kind: 'system', text: quota });
+        onLimitText(id, text);
       }
       // NOTE: the process still exits 0 on a failed turn (measured on a 401
       // run) — the exit code says nothing, only this event does.
@@ -802,8 +795,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
       if (!msg || st.errs.has(msg)) break;
       st.errs.add(msg);
       appendChat(id, { kind: 'error', text: msg, isError: true });
-      const quota = rateLimitNote(msg);
-      if (quota) appendChat(id, { kind: 'system', text: quota });
+      onLimitText(id, msg);
       break;
     }
     default:
@@ -940,6 +932,7 @@ const codexDriver: EngineDriver = {
 };
 
 registerEngine(codexDriver);
+setCodexCatalogSource(() => codexModels().map((m) => m.id));
 
 // Exported for the tests, which drive the pure pieces against the recorded
 // fixtures in test/fixtures/codex-stream/ without spawning anything.
