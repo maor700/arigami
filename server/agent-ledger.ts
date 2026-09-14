@@ -31,7 +31,7 @@ export interface ActivityEntry {
   sessionId?: string;
   tokens?: number;
   breakdown?: { input: number; output: number; cacheCreation: number; cacheRead: number };
-  costUsd?: number;
+  costUsd?: number | null; // null = the engine reports no cost (codex)
   model?: string | null;
   detail?: string;
   [k: string]: unknown;
@@ -107,7 +107,7 @@ export function readActivity(slug: string, opts: { since?: Date | string | numbe
 
 export interface Totals {
   tokens: number;
-  costUsd: number;
+  costUsd: number | null; // null when no turn in range carried a cost
   turns: number;
   sessions: number;
   actions: number;
@@ -116,19 +116,20 @@ export interface Totals {
 }
 
 export function totalsOf(entries: ActivityEntry[]): Totals {
-  const t: Totals = { tokens: 0, costUsd: 0, turns: 0, sessions: 0, actions: 0, artifacts: 0, denied: 0 };
+  const t = { tokens: 0, costUsd: 0, turns: 0, sessions: 0, actions: 0, artifacts: 0, denied: 0 };
+  let costed = 0;
   for (const e of entries) {
     if (e.kind === 'turn') {
       t.turns++;
       t.tokens += Number(e.tokens) || 0;
+      if (e.costUsd != null) costed++;
       t.costUsd += Number(e.costUsd) || 0;
     } else if (e.kind === 'session') t.sessions++;
     else if (e.kind === 'action') t.actions++;
     else if (e.kind === 'artifact') t.artifacts++;
     else if (e.kind === 'policy') t.denied++;
   }
-  t.costUsd = Math.round(t.costUsd * 1e6) / 1e6;
-  return t;
+  return { ...t, costUsd: t.turns && !costed ? null : Math.round(t.costUsd * 1e6) / 1e6 };
 }
 
 /**
@@ -136,16 +137,14 @@ export function totalsOf(entries: ActivityEntry[]): Totals {
  * agent's sessions cost what. Keyed by sessionId; entries with no session (a
  * budget warning, a policy denial outside a session) are ignored.
  */
-export function perSession(entries: ActivityEntry[]): Record<string, { tokens: number; costUsd: number; turns: number }> {
-  const out: Record<string, { tokens: number; costUsd: number; turns: number }> = {};
-  for (const e of entries) {
-    if (e.kind !== 'turn' || !e.sessionId) continue;
-    const row = (out[e.sessionId] ||= { tokens: 0, costUsd: 0, turns: 0 });
-    row.turns++;
-    row.tokens += Number(e.tokens) || 0;
-    row.costUsd += Number(e.costUsd) || 0;
+export function perSession(entries: ActivityEntry[]): Record<string, { tokens: number; costUsd: number | null; turns: number }> {
+  const bySession = new Map<string, ActivityEntry[]>();
+  for (const e of entries) if (e.kind === 'turn' && e.sessionId) bySession.set(e.sessionId, [...(bySession.get(e.sessionId) || []), e]);
+  const out: Record<string, { tokens: number; costUsd: number | null; turns: number }> = {};
+  for (const [sid, rows] of bySession) {
+    const t = totalsOf(rows);
+    out[sid] = { tokens: t.tokens, costUsd: t.costUsd, turns: t.turns };
   }
-  for (const row of Object.values(out)) row.costUsd = Math.round(row.costUsd * 1e6) / 1e6;
   return out;
 }
 
@@ -163,7 +162,7 @@ export function rangeStart(range: string, now: Date = new Date()): Date {
 }
 
 /** Today's 'turn' lines only (local day). */
-export function usedToday(slug: string, now: Date = new Date()): { tokens: number; costUsd: number; turns: number } {
+export function usedToday(slug: string, now: Date = new Date()): { tokens: number; costUsd: number | null; turns: number } {
   const day = localDay(now);
   const t = totalsOf(readActivity(slug, { since: rangeStart('today', now), kinds: ['turn'] }).filter((e) => localDay(e.ts) === day));
   return { tokens: t.tokens, costUsd: t.costUsd, turns: t.turns };
@@ -173,7 +172,7 @@ export interface BudgetState {
   slug: string;
   cap: number | null; // tokens/day, null = no cap
   usedTokens: number;
-  usedCostUsd: number;
+  usedCostUsd: number | null;
   exceeded: boolean;
   resetsAt: string; // ISO — next local midnight
 }

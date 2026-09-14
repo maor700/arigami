@@ -28,7 +28,7 @@ import { toastError, toastSuccess } from '../lib/toast.js';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
 import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
 import { engineLabel } from '../lib/engines.js';
-import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
+import { fmtTokens, fmtCost } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
 import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
 import SessionView from './SessionView.jsx';
@@ -228,7 +228,7 @@ export function ActivityRow({ e, onOpenSession }) {
         {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-[11.5px] md:text-[10px] text-fgdim underline">{String(e.sessionId).slice(5, 11)}</button> : null}
         {e.sessionId && what ? ' · ' : ''}{what}
       </span>
-      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtUsd(e.costUsd)}</span>}
+      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtCost(e.costUsd, t)}</span>}
     </div>
   );
 }
@@ -238,7 +238,7 @@ export function ActivityTotals({ totals, budget }) {
   const at = budget?.resetsAt ? new Date(budget.resetsAt) : null;
   const hhmm = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : '';
   const cells = [
-    ['tokens', fmtTokens(totals?.tokens)], ['cost', fmtUsd(totals?.costUsd)], ['turns', totals?.turns ?? 0], ['runs', totals?.sessions ?? 0],
+    ['tokens', fmtTokens(totals?.tokens)], ['cost', fmtCost(totals?.costUsd, t)], ['turns', totals?.turns ?? 0], ['runs', totals?.sessions ?? 0],
     ['actions', totals?.actions ?? 0], ['artifacts', totals?.artifacts ?? 0], ['denied', totals?.denied ?? 0],
   ];
   return (
@@ -383,7 +383,7 @@ export function RunsList({ sessions, onOpenSession }) {
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
             <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
             {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[11px] md:text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
-            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtUsd(s.costUsd)}</span>
+            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtCost(s.costUsd, t)}</span>
             <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
           </button>
         ))}

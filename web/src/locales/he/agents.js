@@ -222,6 +222,7 @@ export const strings = {
   'agent.runs.empty': 'עוד אין סשני עבודה. {oneLiner}',
   'agent.runs.turns': '{n} תורות',
   'agent.runs.archived': 'בארכיון',
+  'agent.tokensOnly': 'טוקנים בלבד',
   'chat.delegatedHome': 'נפתח בבית של {name}',
   'chat.delegatedWork': 'נוצר סשן עבודה «{title}» עם {name}',
   'chat.delegatedWorkChild': 'נוצר סשן עבודה «{title}» עם {name}, בפרויקט הזה',

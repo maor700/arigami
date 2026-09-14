@@ -740,8 +740,8 @@ function codexHandleEvent(id: string, raw: unknown): void {
       // The turn's own text already landed as assistant-text; this event is the
       // footer (duration, tokens), so it carries no text of its own.
       appendChat(id, { kind: 'result', text: '', isError: false, durationMs });
-      // costUsd is not reported by codex at all — the ledger records tokens only.
-      recordTurn(id, { duration_ms: durationMs, total_cost_usd: 0 });
+      // codex reports no cost — null makes the ledger record tokens only.
+      recordTurn(id, { duration_ms: durationMs, total_cost_usd: null });
       onTurnEnd(id);
       break;
     }

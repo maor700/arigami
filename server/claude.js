@@ -936,12 +936,14 @@ export function recordTurn(id, j) {
   if (!p?.agent) return;
   const b = p.turn;
   const tokens = b.input + b.output + b.cacheCreation + b.cacheRead;
+  // total_cost_usd null = the engine reports no cost (codex): recorded as null, not $0.
+  const uncosted = j.total_cost_usd === null;
   const total = Number(j.total_cost_usd) || 0;
   const costUsd = total >= p.lastCostUsd ? total - p.lastCostUsd : total;
   p.lastCostUsd = total;
   p.turn = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
   if (tokens > 0 || costUsd > 0)
-    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
+    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: uncosted ? null : Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
   try {
     const st = budgetState(p.agent);
     const day = localDay();
