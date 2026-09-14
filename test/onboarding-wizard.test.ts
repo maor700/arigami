@@ -15,6 +15,8 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
   // 'minimal' (pair+claude only — see test/setup-capabilities.test.ts).
   ARIGAMI_ONBOARDING_MODE: 'full',
   HOME: path.join(dir, 'home'),
+  CODEX_HOME: '', // a Codex session's own login must not make healthEngine() pick codex
+  ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex'),
   ...extra,
 });
 
@@ -142,9 +144,9 @@ test('health: injected deps → result persisted; claude failure fails the step'
   const dir = fresh();
   const r = runInChild(
     `const ob=await import('./server/onboarding.js');${NONE}probes.hasAdmin=()=>true;probes.claudeAuth=()=>true;` +
-      "const good=await ob.runHealth({claudePing:async()=>'pong',desktopDisplay:()=>null,chromeVersion:()=>null,whatsapp:()=>'disconnected',screenEnabled:()=>false});" +
+      "const good=await ob.runHealth({engine:()=>'claude',claudePing:async()=>'pong',desktopDisplay:()=>null,chromeVersion:()=>null,whatsapp:()=>'disconnected',screenEnabled:()=>false});" +
       "const v=ob.wizard({...probes,health:()=>ob.readOnboardingFile().health});" +
-      "const bad=await ob.runHealth({claudePing:async()=>{throw new Error('Not logged in')},desktopDisplay:()=>':99',chromeVersion:()=>'Chrome 1',whatsapp:()=>'connected',screenEnabled:()=>true});" +
+      "const bad=await ob.runHealth({engine:()=>'claude',claudePing:async()=>{throw new Error('Not logged in')},desktopDisplay:()=>':99',chromeVersion:()=>'Chrome 1',whatsapp:()=>'connected',screenEnabled:()=>true});" +
       "emit({good,v:v.steps.find(s=>s.id==='health'),bad});",
     env(dir)
   );

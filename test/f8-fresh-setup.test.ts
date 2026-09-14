@@ -201,7 +201,7 @@ test('AUTH_RE catches the CLI "Not logged in · Please run /login" text', () => 
 });
 
 // ---- Codex-only host: one connected engine opens the gate --------------------
-test('codex authed, claude absent → codex capability ok, claude rows optional, workspaceReady true', () => {
+test('codex authed, claude absent → codex capability ok, claude rows optional; workspaceReady still needs git + a ready repo', () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-F8-codex-'));
   const bin = path.join(d, 'bin');
   const cxHome = path.join(d, 'codex-home');
@@ -212,10 +212,13 @@ test('codex authed, claude absent → codex capability ok, claude rows optional,
   fs.mkdirSync(path.join(d, 'repos', 'app', '.git'), { recursive: true });
   fs.writeFileSync(path.join(d, 'repos.json'), JSON.stringify([{ name: 'app', source: 'https://example.invalid/app.git' }]));
   const r = runInChild(
-    "const ob=await import('./server/onboarding.js');const c=await import('./server/capabilities.js');" +
+    "const fs=await import('node:fs');const ob=await import('./server/onboarding.js');const c=await import('./server/capabilities.js');" +
       "const st=ob.status().steps.filter(s=>s.scope==='global').map(s=>[s.id,s.status,s.required]);" +
       "const caps=(await c.capabilitiesStatus()).capabilities.filter(x=>x.id==='claude'||x.id==='codex').map(x=>[x.id,x.ok]);" +
-      "const w=ob.wizard();emit({st,caps,ready:ob.workspaceReady(),done:w.done,claude:w.steps.find(s=>s.id==='claude').status});",
+      "const w=ob.wizard();const ready=ob.workspaceReady();" +
+      "delete process.env.GH_TOKEN;const noGit=ob.workspaceReady();process.env.GH_TOKEN='ghp_test';" +
+      "fs.writeFileSync(process.env.ARIGAMI_DIR+'/repos.json','[]');const noRepo=ob.workspaceReady();" +
+      "emit({st,caps,ready,noGit,noRepo,done:w.done,claude:w.steps.find(s=>s.id==='claude').status});",
     {
       ARIGAMI_DIR: d, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_ONBOARDING_MODE: 'minimal',
       ARIGAMI_REPOS_DIR: path.join(d, 'repos'), ARIGAMI_CODEX_HOME: cxHome, ARIGAMI_CODEX_BIN: '', ARIGAMI_CLAUDE_BIN: '',
@@ -233,7 +236,9 @@ test('codex authed, claude absent → codex capability ok, claude rows optional,
     ['git-auth', 'ok', null],
   ]);
   expect(o.caps).toEqual([['claude', false], ['codex', true]]);
-  expect(o.ready).toBe(true);
+  expect(o.ready).toBe(true); // one engine opens the engine half only
+  expect(o.noGit).toBe(false);
+  expect(o.noRepo).toBe(false);
   expect(o.claude).toBe('skipped');
   // The wizard still needs pairing; the engine half of the gate is open.
   expect(o.done).toBe(false);

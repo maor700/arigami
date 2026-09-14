@@ -289,8 +289,8 @@ step `ok` or `skipped`; `current` = the first step that is neither.
 
 ### Codex-only
 
-One engine is enough: with a codex login and no Claude CLI, `claude` reads `skipped`, the wizard is `done`
-after pairing, `workspaceReady()` ignores the claude rows and the health ping runs `codex exec`.
+One engine is enough for the minimal Start gate and the engine step: with a codex login and no Claude CLI, `claude` reads `skipped`,
+the wizard is `done` after pairing and the health ping runs `codex exec`. `workspaceReady()` ignores the claude rows but still needs git auth + a ready repo.
 
 ### REST
 
