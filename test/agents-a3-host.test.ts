@@ -14,6 +14,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -124,7 +125,7 @@ setInterval(()=>{},1e6);
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   // bot: restricted (gmail + desktop + publish, example.com only, 2500 tokens/day = 2 turns of
   // the stub; A5: `publish` is a family now, so publishing has to be asked for); free: unrestricted

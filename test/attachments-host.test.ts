@@ -8,6 +8,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -132,7 +133,7 @@ setInterval(()=>{},1e6);
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
 }, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
@@ -342,7 +343,7 @@ describe('ZIP3: end-to-end on a dedicated isolated host (real attachment size ca
         }
       }, 30000);
     } catch {
-      throw new Error(`second host did not come up: ${log2.slice(-1500)}`);
+      throw new Error(`second host did not come up: ${log2.slice(-1500)}${hostDiag(host2)}`);
     }
     const r = await fetch(base2 + '/__api/sessions', {
       method: 'POST',
