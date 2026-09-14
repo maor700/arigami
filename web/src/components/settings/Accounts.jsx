@@ -25,7 +25,11 @@ import { PROVIDERS, DEFAULT_PROVIDER, providerOf, mergeCatalog, TYPE_LABEL_KEYS,
 import { Section, StatusPill, ErrorLine, BTN_SM } from './shared.jsx';
 
 const INPUT = 'mt-2 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink';
-const PRIMARY = 'rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-bold text-panel hover:opacity-90 disabled:opacity-40';
+// The filled action button: brand fill + foreground text, like every other
+// primary button in Settings (shared.jsx BTN_PRIMARY). `bg-ink text-panel` was
+// dark-on-dark in dark mode — --color-ink is #2a2a2a in both themes while the
+// panel goes near-black — so the "Sign in" label became unreadable.
+const PRIMARY = 'cursor-pointer rounded-[6px] border border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] hover:opacity-90 disabled:opacity-40';
 const GHOST = 'rounded-[6px] border border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:border-ink hover:text-fg';
 
 /** The provider badge on a card: a coloured dot + the product name. Text, never colour alone. */
@@ -74,7 +78,7 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[13px] font-bold text-fg">{account.label}</span>
             <ProviderBadge provider={provider} catalog={catalog} />
-            {account.active && <span className="rounded-full bg-ink px-2 py-0.5 text-[11.5px] md:text-[10px] font-bold text-panel">{t('launcher.account.active')}</span>}
+            {account.active && <span className="rounded-full bg-fg px-2 py-0.5 text-[11.5px] md:text-[10px] font-bold text-bg">{t('launcher.account.active')}</span>}
             <span className="rounded-full border border-hair px-2 py-0.5 text-[11.5px] md:text-[10px] text-fgdim">{typeKey ? t(typeKey) : account.type}</span>
             <StateBadge account={account} usage={usage} />
           </div>

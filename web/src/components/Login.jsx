@@ -85,7 +85,7 @@ export default function Login({ info }) {
           type="button"
           onClick={submit}
           disabled={busy || !code.trim()}
-          className="cursor-pointer rounded-[10px] bg-ink px-4 py-2.5 text-sm font-bold text-bg disabled:cursor-default disabled:opacity-40"
+          className="cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-brand px-4 py-2.5 text-sm font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
         >
           {busy ? t('auth.login.busy') : t('auth.login.pair')}
         </button>

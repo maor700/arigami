@@ -276,7 +276,7 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
           <div key={a.id} className="rounded-md border border-hair bg-bg px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11.5px] font-bold text-fg">{a.label}</span>
-              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[11px] md:text-[9px] font-bold text-panel">{t('dialogs.active')}</span>}
+              {a.active && <span className="rounded-full bg-fg px-1.5 py-0.5 text-[11px] md:text-[9px] font-bold text-bg">{t('dialogs.active')}</span>}
               {(a.email || a.plan) && (
                 <span className="text-[11.5px] md:text-[10px] text-fgdim">{[a.email, a.plan].filter(Boolean).join(' · ')}</span>
               )}
