@@ -32,9 +32,8 @@
 //     bubblewrap sandbox cannot start on this box — `bwrap: loopback: Failed
 //     RTM_NEWADDR`). Isolation comes from the session's worktree, as it already
 //     did for claude's bypassPermissions.
-//   - A3 allowlists are NOT enforceable here (no PreToolUse hook, no
-//     --disallowedTools). prepare() refuses to spawn such a session rather than
-//     running it with a policy that silently does nothing.
+//   - A3 allowlists: enforced by the same PreToolUse hook as claude, via $CODEX_HOME/hooks.json
+//     + --dangerously-bypass-hook-trust (without the flag codex skips hooks silently — measured).
 //   - Remote (url) MCP grants are skipped — codex keeps its own OAuth store per
 //     $CODEX_HOME, so an arigami grant minted for claude is not usable.
 //   - RES1's model ladder is claude-shaped and does not run for codex sessions.
@@ -73,7 +72,8 @@ import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
-import { policyFor, isRestrictive } from './agent-policy.js';
+import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
+import { bunExecShell } from './lib/bun-exec.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
   appendChat,
@@ -262,6 +262,11 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   } catch {
     /* a broken extension must never stop a session from starting */
   }
+  // A3: an extension server the allowlist never touches is not loaded at all (claude's `--disallowedTools mcp__<server>`).
+  const policy = policyFor(slug);
+  if (isRestrictive(policy) && policy.tools !== null) {
+    for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
+  }
   // M1 grants are `{type:'http', url}` entries whose credentials live in
   // CLAUDE's own per-agent MCP store. Codex authenticates remote servers
   // through its own `codex mcp login` under $CODEX_HOME and would just start an
@@ -327,22 +332,22 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
  * idempotent, and that is what makes a mid-session change to the extensions or
  * the user's skills take effect on the next turn instead of the next restart.
  */
-function codexPrepare(s: Session, _opts: { resume: boolean }): void {
-  // A3 has no equivalent here: codex has no PreToolUse hook and no
-  // --disallowedTools, so an allowlist would be advisory at best while the
-  // agent's persona promises it is enforced. Refusing to spawn is the honest
-  // failure — loud, at spawn, exactly like pickEngine() refusing an
-  // unimplemented engine.
+/** A3: does the session's agent carry an allowlist? */
+function restrictedAgentOf(s: Session): boolean {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  if (slug && isRestrictive(policyFor(slug))) {
-    throw new Error(
-      `agent "${slug}" has a tool/domain allowlist, and the codex engine cannot enforce it ` +
-        `(no PreToolUse hook, no --disallowedTools) — run this agent on the claude engine`
-    );
-  }
+  return !!slug && isRestrictive(policyFor(slug));
+}
 
+/** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
+export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
+
+function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   const codexHome = codexHomeFor(s.id);
   fs.mkdirSync(codexHome, { recursive: true });
+
+  // A3: the policy hook (mcp/policy-hook.js), rewritten per spawn; codexBuildSpawn adds the trust flag for the same sessions.
+  if (restrictedAgentOf(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy')) + '\n');
+  else fs.rmSync(codexHooksFile(codexHome), { force: true });
 
   // One login, many sessions: auth.json stays where the ACCOUNT keeps it and
   // every per-session home symlinks to it. A copy would go stale the moment
@@ -402,6 +407,8 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     // RTM_NEWADDR), and arigami already isolates a session in its worktree and
     // grants claude bypassPermissions — same posture, different flag name.
     '--dangerously-bypass-approvals-and-sandbox',
+    // A3: without this flag codex silently skips the hooks.json prepare() wrote (measured).
+    ...(restrictedAgentOf(s) ? ['--dangerously-bypass-hook-trust'] : []),
     // A session cwd is often a plain directory (~/repos, an artifact dir), not a repo.
     '--skip-git-repo-check',
     ...codexModelArgs({ model: s.claude?.modelChoice, effort: s.claude?.effort }),
@@ -749,6 +756,11 @@ function codexHandleEvent(id: string, raw: unknown): void {
       // retry noise, surface anything else once per turn.
       const msg = String(j.message || '');
       if (/^Reconnecting\.\.\./.test(msg)) {
+        console.warn(`[codex] ${id}: ${msg}`);
+        break;
+      }
+      // Codex reports our own hook-trust flag as an `error` twice per turn — expected, not a failure.
+      if (/--dangerously-bypass-hook-trust/.test(msg)) {
         console.warn(`[codex] ${id}: ${msg}`);
         break;
       }

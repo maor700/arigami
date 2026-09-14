@@ -26,6 +26,8 @@ import { relTime } from '../lib/time.js';
 import { errText } from '../lib/errors.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
+import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
+import { engineLabel } from '../lib/engines.js';
 import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
 import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
@@ -48,13 +50,13 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const { models } = useModels();
   const [skillNames, setSkillNames] = useState([]);
   const [form, setForm] = useState({
-    name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, model: agent.model || '', persona: agent.persona || '',
+    name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, engine: agent.engine || '', model: agent.model || '', persona: agent.persona || '',
     skills: agent.skills || [], tools: agent.tools || [], budget: agent.budget?.tokensPerDay ? String(agent.budget.tokensPerDay) : '',
     domains: (agent.domains || []).join(', '), autoApprove: agent.autoApprove || [],
   });
   const [busy, setBusy] = useState(false);
   // Advanced (model/budget/tools/skills) opens only when something is already set there.
-  const [advanced, setAdvanced] = useState(!!(agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length));
+  const [advanced, setAdvanced] = useState(!!(agent.engine || agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length));
   useEffect(() => { api.get('/skills').then((r) => setSkillNames((r?.skills || []).map((s) => s.name))).catch(() => {}); }, []);
   const set = (k) => (e) => setForm((c) => ({ ...c, [k]: e.target.value }));
   const toggle = (k, v) => setForm((c) => ({ ...c, [k]: c[k].includes(v) ? c[k].filter((x) => x !== v) : [...c[k], v] }));
@@ -62,7 +64,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
     setBusy(true);
     try {
       const body = {
-        name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, model: form.model || null, persona: form.persona,
+        name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, engine: form.engine || null, model: form.model || null, persona: form.persona,
         skills: form.skills, tools: form.tools, budget: Number(form.budget) > 0 ? { tokensPerDay: Number(form.budget) } : null,
         domains: form.domains.split(',').map((d) => d.trim()).filter(Boolean), autoApprove: form.autoApprove,
       };
@@ -106,12 +108,19 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       {advanced && (
       <section className="rounded-[10px] border border-hair p-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* the model list below is this engine's catalog; switching engines drops a model the new one lacks */}
+          <EngineToggle
+            data-agent-field="engine"
+            className="sm:col-span-2"
+            label={t('agent.card.engine')}
+            options={{ engine: form.engine, model: form.model }}
+            onChange={(o) => setForm((c) => ({ ...c, engine: o.engine || '', model: o.model || '' }))}
+          />
           <div>
             <label className={lbl}>{t('agent.card.model')}</label>
-            <select value={form.model} onChange={set('model')} className={input}>
+            <select data-agent-field="model" value={form.model} onChange={set('model')} className={input}>
               <option value="">{t('agent.card.modelDefault')}</option>
-              {(models || []).filter((m) => m.value && m.value !== 'default').map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              {form.model && !(models || []).some((m) => m.value === form.model) && <option value={form.model}>{form.model}</option>}
+              {agentModelOptions(form.engine, models, form.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
           <div><label className={lbl}>{t('agent.card.budget')}</label><input type="number" min="0" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={input} /></div>
@@ -511,6 +520,7 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
       </div>
       <div className="mt-3">
         <div className={row}><span className={rowLbl}>{t('agent.card.budget')}</span><span className="min-w-0 flex-1"><BudgetBar budget={budget} /></span></div>
+        {line(t('agent.card.engine'), agent.engine ? engineLabel(agent.engine) : null, 'engine')}
         {line(t('agent.card.model'), agent.model || t('agent.card.modelDefault'), 'model')}
         {line(t('agent.card.tools'), tools.length ? tools.map((id) => (TOOL_FAMILIES.includes(id) ? t(`agent.tool.${id}`) : id)).join(' · ') : null, 'tools')}
         {line(t('agent.card.domains'), (agent.domains || []).join(', '), 'domains')}

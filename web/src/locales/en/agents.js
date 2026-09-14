@@ -25,6 +25,7 @@ export const strings = {
   'agent.card.slug': 'Slug',
   'agent.card.emoji': 'Emoji',
   'agent.card.color': 'Color',
+  'agent.card.engine': 'Engine',
   'agent.card.model': 'Model',
   'agent.card.modelDefault': 'Default',
   'agent.card.budget': 'Budget (tokens / day)',

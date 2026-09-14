@@ -14,6 +14,8 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { useModels } from '../lib/models.js';
 import { toastError } from '../lib/toast.js';
+import { engineLabel } from '../lib/engines.js';
+import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
 import { faCheck, faXmark, faUserAstronaut, faCircleNotch, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
@@ -70,6 +72,7 @@ export default function AgentCard({ sessionId, event }) {
     slug: d0.slug || '',
     emoji: d0.emoji || '🤖',
     color: d0.color || '',
+    engine: d0.engine || '',
     model: d0.model || '',
     persona: d0.persona || '',
     skills: Array.isArray(d0.skills) ? d0.skills : [],
@@ -95,6 +98,7 @@ export default function AgentCard({ sessionId, event }) {
         slug: draft.slug.trim() || undefined,
         emoji: draft.emoji.trim() || '🤖',
         ...(draft.color ? { color: draft.color } : {}),
+        engine: draft.engine || null,
         model: draft.model || null,
         persona: draft.persona,
         skills: draft.skills,
@@ -158,12 +162,18 @@ export default function AgentCard({ sessionId, event }) {
                 <label className={label}>{t('agent.card.slug')}</label>
                 <input data-agent-field="slug" value={draft.slug} onChange={set('slug')} placeholder="marketing-lead" className={field} />
               </div>
+              <EngineToggle
+                data-agent-field="engine"
+                className="sm:col-span-2"
+                label={t('agent.card.engine')}
+                options={{ engine: draft.engine, model: draft.model }}
+                onChange={(o) => setDraft((cur) => ({ ...cur, engine: o.engine || '', model: o.model || '' }))}
+              />
               <div>
                 <label className={label}>{t('agent.card.model')}</label>
                 <select data-agent-field="model" value={draft.model} onChange={set('model')} className={field}>
                   <option value="">{t('agent.card.modelDefault')}</option>
-                  {(models || []).filter((m) => m.value && m.value !== 'default').map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  {draft.model && !(models || []).some((m) => m.value === draft.model) && <option value={draft.model}>{draft.model}</option>}
+                  {agentModelOptions(draft.engine, models, draft.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
               <div>
@@ -220,6 +230,7 @@ export default function AgentCard({ sessionId, event }) {
             <>
               <button type="button" onClick={() => openPage(agent.slug)} className="cursor-pointer underline hover:text-[var(--term-accent-strong)]">{t('agent.card.openPage')}</button>
               {agent.skills?.length ? <span dir="auto">· {agent.skills.join(', ')}</span> : null}
+              {agent.engine === 'codex' ? <span>· {engineLabel(agent.engine)}</span> : null}
               {agent.model ? <span>· {agent.model}</span> : null}
             </>
           )}

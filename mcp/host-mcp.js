@@ -78,7 +78,7 @@ const TOOLS = [
       cwd: { type: 'string' },
       prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
       skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
-      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session (default "claude"). NOT inherited from you: a child runs on the engine named here, so an engine choice never spreads through a tree unseen. An engine with no registered driver fails loudly at spawn rather than quietly falling back.' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session. Default: the `agent`\'s engine when given, else "claude". Not inherited from you.' },
       model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
       effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], description: 'Reasoning effort. claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
       permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
@@ -90,7 +90,7 @@ const TOOLS = [
       branch_prefix: { type: 'string', description: 'full+worktree only: branch prefix (default "child")' },
       needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
       needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
-      agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s default model (unless `model` is given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
+      agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s engine and default model (unless `engine` / `model` are given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
     }),
     run: async (a) => {
       const body = {
@@ -944,7 +944,8 @@ const TOOLS = [
       slug: { type: 'string', description: 'lowercase letters/digits/hyphens; derived from name when omitted (pass one for Hebrew names)' },
       emoji: { type: 'string' },
       color: { type: 'string', description: '#rrggbb (host picks a free palette color when omitted)' },
-      model: { type: 'string', description: '`claude --model` value; omit for the CLI default' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'CLI the agent\'s sessions run on; omit for the host default (claude)' },
+      model: { type: 'string', description: 'Model for the agent\'s engine (claude alias/id, or a codex catalog slug); omit for the engine default' },
       persona: { type: 'string' },
       skills: { type: 'array', items: { type: 'string' }, description: 'Names of shared skills the agent should use' },
       tools: { type: 'array', items: { type: 'string' }, description: 'Tool allowlist (advisory in A1)' },
@@ -960,21 +961,22 @@ const TOOLS = [
   },
   {
     name: 'list_agents',
-    description: 'List the agents (the Team section) on this host: slug, name, emoji, color, model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
+    description: 'List the agents (the Team section) on this host: slug, name, emoji, color, engine (claude|codex; absent = claude), model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
     inputSchema: obj({}),
     run: async () => (await api('GET', '/__api/agents')).agents,
   },
   {
     name: 'update_agent',
     description:
-      'Update an agent: any of name/emoji/color/model/persona/skills/tools/domains/budget (only the fields you pass change; skills/tools/domains replace the list). ' +
+      'Update an agent: any of name/emoji/color/engine/model/persona/skills/tools/domains/budget (only the fields you pass change; skills/tools/domains replace the list). ' +
       'Applied immediately (the human sees an "updated" Agent card in this chat). Existing sessions of the agent keep their spawn-time persona until restarted.',
     inputSchema: obj({
       slug: { type: 'string' },
       name: { type: 'string' },
       emoji: { type: 'string' },
       color: { type: 'string' },
-      model: { type: ['string', 'null'] },
+      engine: { type: ['string', 'null'], enum: ['claude', 'codex', null], description: 'CLI the agent\'s sessions run on; null = host default (claude)' },
+      model: { type: ['string', 'null'], description: 'Model for the agent\'s engine; null = engine default' },
       persona: { type: 'string' },
       skills: { type: 'array', items: { type: 'string' } },
       tools: { type: 'array', items: { type: 'string' } },
