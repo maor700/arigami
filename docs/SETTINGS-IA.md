@@ -129,6 +129,7 @@ only (their routes remained).
 | **Connections** (`Connections.jsx`) | `connections` | Google identity · Claude accounts · one **Connected** list (direct MCP + Composio + WhatsApp bridge + Tailscale, the route shown on hover) · **Add connection** (`AddConnection.jsx` — a picker with search: MCP catalog + Composio `FEATURED`, typing searches the whole catalog) · push notifications | "Belongs to" (A2) · active/pool explanation · webhooks (admin) · HTTPS serve · git/desktop/repo status · connections log |
 | **Host** (`Host.jsx`) | `host` | version+update · Claude CLI (installed/update) · restart · upgrade · export/import (3 buttons) · signed in as · device pairing | CLI details (checked/last update/auto) · process manager · upgrade log · export/import options · budgets · Health (`notify-human` events, filtered by default, last 20) · users and tokens · VNC password · reset preferences |
 
+- **Engines** (codex-parity, 2026-09): Connections › Accounts is per provider (Claude, Codex); Host adds a default-engine toggle and a Codex CLI row (with the Codex sandbox probe line) next to the Claude CLI row.
 - **Sign-out** moved to the profile menu in the rail (`Rail.jsx › ProfileMenu`) — the only place left to log out.
 - `#/settings/connections/mcp` and `/integrations` (from the launcher, bookmarks) open the "Add connection" picker.
 - A deep link to a section inside the drawer (`#/settings/host/health`, `#/settings/automation/heartbeat`) opens it.

@@ -387,6 +387,11 @@ export default function Host({ section = '' }) {
             )}
             {cx?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cx.deferred.availableMb, min: cx.deferred.minFreeMb })}</span>}
           </span>
+          {cx?.installed && typeof cx?.sandbox?.available === 'boolean' && (
+            <span className="block text-end font-mono text-[11.5px] md:text-[10.5px] text-fgdim" dir="ltr">
+              {cx.sandbox.available ? t('host.codexSandbox.available') : t('host.codexSandbox.unavailable', { detail: cx.sandbox.detail })}
+            </span>
+          )}
         </Field>
         <DefaultEngineField />
         <Field label={t('host.restart')} hint={t('host.restart.hint')} wrap>

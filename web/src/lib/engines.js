@@ -10,14 +10,12 @@
 // Where each engine's model list comes from:
 //   claude — fetched. server/models.js runs a `claude` CLI handshake and the
 //            cockpit reads it through lib/models.js (revalidating cache).
-//   codex  — fetched too, from the same GET /models: the Codex CLI keeps its
-//            catalog in $CODEX_HOME/models_cache.json (server-pushed, refreshed
-//            on its own schedule) and server/codex.ts codexModels() reads the
-//            ACTIVE codex account's copy — the catalog is per login, a business
-//            workspace lists models a personal plan doesn't. lib/models.js
-//            hands the rows to setCodexCatalog(); CODEX_MODELS below is only
-//            the fallback shown until that first fetch lands (codex-cli
-//            0.153.4, read 2026-09-09).
+//   codex  — fetched too, from the same GET /models: server/codex.ts
+//            codexModels() asks `codex app-server` model/list under the ACTIVE
+//            codex account (models_cache.json only while that call is in flight)
+//            — the catalog is per login. lib/models.js hands the rows to
+//            setCodexCatalog(); CODEX_MODELS below is only the fallback shown
+//            until that first fetch lands.
 //
 // Why the effort scales are NOT shared (the thing not to "simplify"):
 // `claude --effort` is a flag with one fixed ladder for every model. Codex has
@@ -183,8 +181,7 @@ const EFFORT_KEY = {
 /**
  * The model `<select>`'s options for this engine. `claudeModels` is the live
  * list from useModels() — passed in rather than imported so this module stays
- * pure and testable (and so a Codex-only render never triggers the claude
- * handshake fetch).
+ * pure and testable (the one GET /models carries both engines' catalogs).
  */
 export function modelOptionsFor(engine, claudeModels) {
   if (normalizeEngine(engine) !== 'codex') return claudeModels || [];

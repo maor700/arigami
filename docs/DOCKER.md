@@ -82,6 +82,14 @@ first — all end up on the `/data` volume:
 Or skip subscriptions entirely with `ANTHROPIC_API_KEY` (usage-billed). If it
 is set it *overrides* the subscription token, so leave it commented otherwise.
 
+## Codex inside the container
+
+Not yet: the image ships no `codex` binary, so the Codex engine and *Connect Codex* do not work in
+Docker today. Also not wired: an `OPENAI_API_KEY` in `.env` (the host never reads it; API keys go
+through Settings › Connections › Accounts) and a mounted `$CODEX_HOME` (seeded as the `codex-home`
+account, but useless without the binary). Untested workaround: a codex release binary on `/data`
+plus `ARIGAMI_CODEX_BIN` in `.env`.
+
 ## What's in the image
 
 | Layer | Why |

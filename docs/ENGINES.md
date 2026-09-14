@@ -52,12 +52,22 @@ Two structural differences worth knowing before debugging:
 
 This list is the reason this document exists. Do not soften it.
 
+Closed on master (2026-09): A3 policy hooks (§3), per-provider accounts and real quota (Accounts section),
+quota recovery + model ladder (§5, §6b), remote MCP grants per engine (§4), Composio (§4b).
+Still open: no sandbox on this VPS (§1), no approval cards (§2), no compaction (§5) and no thinking
+stream (§6) without `app-server`, claude.ai connectors claude-only (§4b), no codex in the Docker image
+(docs/DOCKER.md).
+
 ### 1. No local sandbox
 
 Codex's built-in bubblewrap **does not come up on this machine** —
 `bwrap: loopback: Failed RTM_NEWADDR`. So the process always runs with
 `--dangerously-bypass-approvals-and-sandbox`, not as an option but forced in code.
 The only isolation that remains is the session's worktree.
+
+Boot probe (`server/lib/codex-sandbox.ts`): `codex sandbox -- /bin/true`, cached in `$ARIGAMI_DIR/codex-sandbox.json`,
+shown under Settings › Host › Codex CLI ("available" / "unavailable on this machine (bwrap: …)"). The spawn flags do not
+follow it yet — a pass only logs that a sandboxed mode is possible (P2-3/P3-1).
 
 Claude has separation that doesn't exist here: permission modes, the PreToolUse hook, `--disallowedTools`.
 A codex session is, permission-wise, the equivalent of `bypassPermissions` — always.
@@ -91,7 +101,7 @@ claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no
 
 ### 5. The model ladder runs (P2-6); compaction **was actually tested and found not viable** from `exec`
 
-Quota recovery does run on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
+The RES1 supervisor ticks codex sessions too, with claude-only actions gated per engine (P0-1). Quota recovery runs on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
 The Claude auth refresh is still skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
 The context modal hides auto-compact and "compact now", and `POST /autocompact` returns 400.
 
@@ -114,7 +124,7 @@ turn**; there is no live process between turns that could "watch" anything, so e
 in the core, the run pattern Arigami uses can't trigger it.
 
 **Conclusion: compaction is not achievable via `exec` without implementing app-server. A codex session
-that gets stuck on the context quota stays stuck — no safety net, exactly as written here before.**
+whose context window fills stays full — account rotation and the model ladder replay it, they do not shrink it.**
 Anyone who wants to try again: don't settle for adding the key to config.toml and thinking you're done —
 that's exactly what was tried here.
 

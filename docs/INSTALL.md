@@ -110,9 +110,11 @@ and the Linear tab only appears once Linear is connected.
 
 ### Codex-only
 
-The installer sets up `claude`; for Codex instead run `npm i -g @openai/codex` as the service user, then
-*Connect Codex* on the first screen (or `codex login` on the host). Claude stays optional; `bin/host doctor`
-prints a `codex:` row.
+The installer sets up `claude` only. For Codex, as the service user: `npm i -g @openai/codex` (or a
+release binary from github.com/openai/codex/releases, pointed at with `ARIGAMI_CODEX_BIN`), then
+*Connect Codex* on the first screen (ChatGPT sign-in or an OpenAI API key), or `codex login` on the host
+(picked up as the `codex-home` account). Claude stays optional; `bin/host doctor` prints a `codex:` row.
+Engine differences: [ENGINES.md](ENGINES.md).
 
 ### Update
 

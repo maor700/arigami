@@ -42,6 +42,8 @@ export const strings = {
   'host.codexCli': 'Codex CLI',
   'host.codexCli.hint': 'The codex binary Codex sessions are spawned with. "Update now" runs `codex update`; never updated automatically.',
   'host.codexCli.missing': 'not installed',
+  'host.codexSandbox.available': 'Codex sandbox: available',
+  'host.codexSandbox.unavailable': 'Codex sandbox: unavailable on this machine ({detail})',
   'host.codexCli.updatedToast': 'Codex CLI updated {from} → {to} — new sessions use it',
   'host.codexCli.failedToast': 'Codex CLI update failed: {error}',
   'host.defaultEngine': 'Default engine',

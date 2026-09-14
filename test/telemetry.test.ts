@@ -21,7 +21,7 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
 });
 
 // Facts a real host would derive from version.ts / state.ts, minus the imports.
-const FACTS = "tm.setFactsProvider(async()=>({version:'1.2.3',commit:'abc1234',sessions:3}));";
+const FACTS = "tm.setFactsProvider(async()=>({version:'1.2.3',commit:'abc1234',sessions:3,engines:{claude:2,codex:1}}));";
 // A sender that records every call and never opens a socket.
 const SENDER = "const sent=[];tm.setSender(async(url,body)=>{sent.push({url,body:JSON.parse(body)});return {ok:true,status:204};});";
 const PRELUDE = `const tm=await import('./server/telemetry.js');const f=await import('./server/funnel.js');${FACTS}${SENDER}`;
@@ -75,6 +75,7 @@ test('payload shape: allow-listed events only, no forbidden strings, R4 mileston
       // The whole R4 funnel + onboarding + a junk event carrying PII-looking props.
       "for(const n of ['install','session.first','pm.first_tree','screen.first_request','skill.first_applied','artifact.first_publish','share.first_link','cron.first'])f.firstTime(n,{path:'/home/someone/repo',email:'x@y.z'});" +
       "f.emit('onboarding.step',{step:'pair',status:'ok',detail:'paired as x@y.z'});" +
+      "f.emit('onboarding.step',{step:'codex',status:'ok'});" +
       "f.emit('onboarding.done',{});" +
       "f.emit('secret.thing',{prompt:'hello world'});" +
       "const p=await tm.preview();const st=await tm.status();emit({p,st});",
@@ -82,16 +83,18 @@ test('payload shape: allow-listed events only, no forbidden strings, R4 mileston
   );
   expect(r.ok).toBe(true);
   const { p, st } = r.out[0];
-  expect(Object.keys(p).sort()).toEqual(['arch', 'commit', 'docker', 'events', 'id', 'os', 'sentAt', 'sessions', 'v', 'version']);
+  expect(Object.keys(p).sort()).toEqual(['arch', 'commit', 'docker', 'engines', 'events', 'id', 'os', 'sentAt', 'sessions', 'v', 'version']);
   expect(p.v).toBe(1);
   expect(p.version).toBe('1.2.3');
   expect(p.commit).toBe('abc1234');
   expect(p.sessions).toBe('2-5');
+  expect(p.engines).toEqual({ claude: '2-5', codex: '1' });
   expect(typeof p.docker).toBe('boolean');
   expect(p.events.map((e: any) => e.name)).toEqual([
     'install', 'first_session', 'first_pm_tree', 'first_request_screen', 'first_proposal_applied',
-    'first_artifact_published', 'first_share_link', 'first_cron', 'onboarding_step', 'onboarding_done',
+    'first_artifact_published', 'first_share_link', 'first_cron', 'onboarding_step', 'onboarding_step', 'onboarding_done',
   ]);
+  expect(p.events.filter((e: any) => e.name === 'onboarding_step').map((e: any) => e.step)).toEqual(['pair', 'codex']);
   const step = p.events.find((e: any) => e.name === 'onboarding_step');
   expect(step).toEqual({ name: 'onboarding_step', at: step.at, step: 'pair', status: 'ok' });
   for (const e of p.events) expect(Object.keys(e).every((k) => ['name', 'at', 'step', 'status'].includes(k))).toBe(true);
@@ -103,7 +106,7 @@ test('payload shape: allow-listed events only, no forbidden strings, R4 mileston
   expect(raw).not.toMatch(os.hostname().split('.')[0]);
   // status() exposes the same preview + counts, and is itself clean.
   expect(st.enabled).toBe(true);
-  expect(st.pending).toBe(10);
+  expect(st.pending).toBe(11);
   expect(st.id).toBe(p.id);
   expect(JSON.stringify(st.preview)).not.toMatch(/[\/@]/);
 });
@@ -114,12 +117,13 @@ test('assertClean rejects a payload smuggling a path / email / hostname / extra 
     PRELUDE +
       "const {payload:base}=await tm.buildPayload();const tries=[" +
       "{...base,version:'/usr/local'},{...base,version:'me@x'},{...base,arch:'host.example.com'},{...base,extra:1}," +
-      "{...base,events:[{name:'first_session',at:base.sentAt,prompt:'hi'}]},{...base,events:[{name:'not_a_thing',at:base.sentAt}]}];" +
+      "{...base,events:[{name:'first_session',at:base.sentAt,prompt:'hi'}]},{...base,events:[{name:'not_a_thing',at:base.sentAt}]}," +
+      "{...base,engines:{claude:'3',codex:'1'}},{...base,engines:{claude:'1',codex:'1',gemini:'1'}},base];" +
       "emit(tries.map(t=>{try{tm.assertClean(t);return 'ok';}catch(e){return 'rejected';}}));",
     env(dir)
   );
   expect(r.ok).toBe(true);
-  expect(r.out[0]).toEqual(['rejected', 'rejected', 'rejected', 'rejected', 'rejected', 'rejected']);
+  expect(r.out[0]).toEqual(['rejected', 'rejected', 'rejected', 'rejected', 'rejected', 'rejected', 'rejected', 'rejected', 'ok']);
 });
 
 test('batching: one send carries every unsent event, the cursor advances, nothing is re-sent; the daily ping sends an empty batch', () => {

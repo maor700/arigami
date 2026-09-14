@@ -1,7 +1,7 @@
-// Available Claude models for the model picker, sourced from the server's
-// `/models` cache (itself sourced from the `claude` CLI's own model list — see
-// server/models.js). Same caching idiom as linearMeta.js: a module-level cache
-// shared across every open ModelModal, refetched lazily and on manual refresh.
+// Models for the picker, from the server's `/models` cache (claude rows from the
+// `claude` CLI — server/models.js; codex rows from `codex app-server`). Same
+// caching idiom as linearMeta.js: a module-level cache shared across every open
+// ModelModal, refetched lazily and on manual refresh.
 //
 // Revalidated, not fetched-once: a cockpit tab stays open for days, and the
 // server only learns about a CLI update (= new models) when it is asked. So
