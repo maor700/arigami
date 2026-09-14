@@ -155,7 +155,7 @@ jobs:
           echo "::notice::dispatched release.yml for $TAG"
 
       # The desktop installers are opt-in per automated release: a four-target
-      # Tauri matrix bills roughly 200-330 minutes on a private Free-plan repo
+      # Tauri matrix bills roughly 135 minutes on a private Free-plan repo
       # (macOS ×10, Windows ×2), which every green merge cannot afford. Set the
       # DESKTOP_INSTALLERS repository variable to 'true' to turn it on; a
       # hand-pushed tag builds them either way, through desktop.yml's

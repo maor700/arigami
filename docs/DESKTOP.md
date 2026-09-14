@@ -360,22 +360,55 @@ cd desktop/src-tauri && cargo tauri build
 ### The same thing, in CI
 
 `.github/workflows/desktop.yml` runs exactly the sequence above — icons,
-`desktop/build.sh`, `tauri build` — on four runners (Linux x64, Windows x64,
-macOS arm64, macOS Intel) and attaches the resulting installers to the GitHub
-Release for the tag. It uses the npm `@tauri-apps/cli` (via `bun x`) rather than
-`cargo install tauri-cli`, which would compile the CLI from source on every
-runner.
+`desktop/build.sh`, `tauri build` — on four runners (`ubuntu-22.04` for Linux
+x64, `windows-latest`, `macos-latest` for arm64, `macos-15-intel` for Intel —
+`macos-13`, the old Intel label, is retired) and attaches the resulting
+installers to the GitHub Release for the tag. It uses the npm
+`@tauri-apps/cli` (via `bun x`) rather than `cargo install tauri-cli`, which
+would compile the CLI from source on every runner.
 
 It is deliberately not part of every release: on a private repo on the Free
 plan macOS minutes bill ×10 and Windows ×2, so a full matrix is roughly
-200-330 billed minutes. A tag you push by hand builds them; an automated
+135 billed minutes (measured). A tag you push by hand builds them; an automated
 release only does when the `DESKTOP_INSTALLERS` repository variable is `true`.
-docs/RELEASING.md has the full table.
+**Run workflow** takes a `targets` input (`all`, or a comma list of
+`linux-x64`, `windows-x64`, `macos-arm64`, `macos-x64`) so one platform can be
+built alone. docs/RELEASING.md has the full table.
 
-Nothing is signed. Adding that means a Developer ID certificate + an
-app-specific password for notarisation on macOS, and a code-signing
-certificate on Windows, as repository secrets — until then both platforms warn
-on first launch.
+To exercise the workflow from a branch (GitHub only offers **Run workflow**
+for files on the default branch), push a CI-test tag: `v0.0.0-ci-test` builds
+everything, `v0.0.0-ci-linux-x64` one line, `v0.0.0-ci-linux-x64+windows-x64`
+two. Such a tag skips the version gate, is ignored by release.yml (no images),
+and lands its files on a pre-release titled "delete me". Delete the tag and
+the pre-release when done (`gh release delete <tag> --cleanup-tag --yes`).
+
+#### Signing — wired, off until the secrets exist
+
+Every platform builds unsigned until these repository secrets exist; the
+workflow turns signing on by itself when they do (no edit needed):
+
+| Secret | What |
+| --- | --- |
+| `APPLE_CERTIFICATE` | the Developer ID Application certificate, `.p12` exported from Keychain, base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+| `APPLE_SIGNING_IDENTITY` | its name, `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Apple ID + an **app-specific** password + team id — adds notarization (all three, or none) |
+| `WINDOWS_CERTIFICATE` | the code-signing `.pfx`, base64 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | its password |
+
+What the workflow does with them: on macOS the certificate goes into a
+throwaway keychain, the sidecar (`resources-staged/arigami-server`, a Bun
+compiled binary the bundler would otherwise leave unsigned inside
+`Resources/`) is signed with hardened-runtime + the JIT entitlements Bun
+documents, then the Tauri bundler signs the `.app`/`.dmg` with
+`APPLE_SIGNING_IDENTITY` and notarizes when the `APPLE_ID` trio is there. On
+Windows the `.pfx` is imported into the runner's user store, the sidecar
+`.exe` is signed with `signtool`, and the bundler signs the app + `.msi`/`.exe`
+via `bundle.windows.certificateThumbprint` (passed as `--config`, timestamped
+at DigiCert). Both paths are untested — nobody has the certificates yet — so
+expect the first signed run to need a look. Without the secrets both
+platforms warn on first launch (Gatekeeper: right-click → Open; SmartScreen:
+More info → Run anyway).
 
 First run: the pairing code (needed once, in the cockpit's login screen) is
 **not** printed to a visible terminal — the sidecar's stdout/stderr are
@@ -569,11 +602,13 @@ Arigami server on another port plus small Python stand-ins.
   (there is a window manager on `:99` after all, and `wmctrl`/`xdotool` are
   installed): the main window hides, an extra `machine-N` window closes for
   real, and closing the last window on "this computer" stops the sidecar.
-- **macOS code signing of the nested sidecar binary is unresearched.** For a
-  local/dev `cargo tauri build` this should be a non-issue, but if this ever
-  moves to Developer ID signing + notarization for distribution, an
-  unsigned Mach-O binary sitting inside `Resources/` may need its own
-  `codesign` pass (or `--deep`) — not looked into here.
+- **macOS code signing of the nested sidecar binary is wired, not proven.**
+  For a local/dev `cargo tauri build` it is a non-issue. For Developer ID
+  signing + notarization, an unsigned Mach-O inside `Resources/` fails
+  notarization, so `.github/workflows/desktop.yml`'s "sign the sidecar" step
+  codesigns it (hardened runtime + Bun's JIT entitlements) before the bundler
+  signs the `.app` — see "Signing" above. That step has never run for real:
+  no certificate exists yet.
 - **Windows quit is a known, deliberate gap, not an oversight.** `terminate()`
   falls back to `taskkill /PID <pid> /T /F` on Windows — a hard kill, not a
   graceful signal `server/index.ts` has a handler for. Nobody is building or

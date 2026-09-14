@@ -5,34 +5,60 @@
 # How a run starts:
 #   git push --follow-tags  → on.push.tags, the whole matrix, files land on the
 #                             Release for that tag.
-#   Run workflow            → any ref; without a tag the files are run
-#                             artifacts only and no Release is touched.
+#   Run workflow            → any ref; `targets` picks the matrix lines (default
+#                             all). Without a tag the files are run artifacts
+#                             only and no Release is touched.
 #   version-bump.yml        → only when the DESKTOP_INSTALLERS repository
 #                             variable is 'true' (see below). Its tag push is a
 #                             GITHUB_TOKEN push and cannot fire on.push.tags by
 #                             itself, exactly as with release.yml.
+#   a v0.0.0-ci* tag        → a CI TEST: the version gate is skipped, the files
+#                             land on a pre-release of that name, and
+#                             release.yml ignores the tag (no images). This is
+#                             how the workflow itself is exercised from a branch
+#                             — workflow_dispatch only sees files on the default
+#                             branch. Delete the tag + pre-release afterwards.
 #
 # Why this is NOT wired to every merge the way the images are: this repository
 # is private on the Free plan, where a macOS minute bills ×10 and a Windows
 # minute ×2 against the 2,000/month allowance. A full four-target run is
-# roughly 200-330 billed minutes, so releasing on every green master merge
+# roughly 135 billed minutes (measured 2026-09-14: Linux 14 + Windows 15×2 + macOS 2×10 + Intel Mac 7×10), so releasing on every green merge
 # would spend the month inside a week. Hence: deliberate releases only, and the
 # automated path is opt-in. Two ways to spend less — make the repository public
 # (no multipliers, no quota; it is already Apache-2.0 with a green readiness
-# gate), or drop entries from the `include:` matrix. macos-13 is the Intel Mac
-# and the single most expensive line in it.
+# gate), or dispatch with `targets` set to the lines you need. macos-15-intel
+# is the Intel Mac and the single most expensive line in it.
 #
-# Unsigned, on every platform. macOS Gatekeeper and the Windows SmartScreen
-# will both warn on first launch until signing certificates exist as secrets;
-# docs/DESKTOP.md covers what that would take.
+# Signing: every platform builds unsigned unless the secrets below exist, in
+# which case the matching step turns signing on by itself — no workflow edit.
+#   macOS   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#           APPLE_SIGNING_IDENTITY ("Developer ID Application: …")   → signed
+#           + APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID  → notarized
+#   Windows WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+# Until then macOS Gatekeeper and Windows SmartScreen warn on first launch.
+# The signing paths are wired but have never run — nobody has the certificates
+# yet — so treat their first real run as a test. docs/DESKTOP.md has the table.
 name: Desktop installers
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      targets:
+        description: >-
+          Which installers to build — `all`, or a comma list of
+          linux-x64, windows-x64, macos-arm64, macos-x64
+        type: string
+        default: all
 
 permissions:
   contents: write # attaching the installers to the Release
+
+# One build per ref. A re-push of the same tag queues behind the first run
+# rather than uploading over it mid-flight.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -44,12 +70,59 @@ jobs:
   # it from package.json, so it can only disagree with the tag if someone
   # hand-edited or hand-tagged — in which case a whole matrix would build and
   # publish files claiming the wrong number. Cheapest possible check, first.
+  # The same job turns the `targets` input into the matrix, so a dispatch can
+  # build one line instead of four.
   gate:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      ci_test: ${{ steps.plan.outputs.ci_test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: plan (ci-test tag? which targets?)
+        id: plan
+        env:
+          TARGETS: ${{ inputs.targets || 'all' }}
+        run: |
+          set -eu
+          ci_test=false
+          case "$GITHUB_REF" in
+            refs/tags/v0.0.0-ci*)
+              ci_test=true
+              # A tag carries no inputs, so the CI-test tag's suffix picks the
+              # targets instead: v0.0.0-ci-test (or -all) builds everything,
+              # v0.0.0-ci-linux-x64 one line, v0.0.0-ci-linux-x64+windows-x64
+              # two. Cheap iteration on a private repo where a Mac minute
+              # bills ×10.
+              suffix="${GITHUB_REF_NAME#v0.0.0-ci}"; suffix="${suffix#-}"
+              case "$suffix" in ''|test|all) TARGETS=all ;; *) TARGETS="$(printf '%s' "$suffix" | tr '+' ',')" ;; esac ;;
+          esac
+          echo "ci_test=$ci_test" >> "$GITHUB_OUTPUT"
+
+          # 22.04 and not ubuntu-latest on purpose: a .deb/.AppImage links
+          # against the glibc it was built on, so building on the newest runner
+          # would produce packages that refuse to start on a perfectly current
+          # 22.04 box. macos-latest is arm64; macos-15-intel is the x64 Mac
+          # (macos-13, the previous Intel label, was retired).
+          all='[
+            {"os":"ubuntu-22.04",   "name":"linux-x64"},
+            {"os":"windows-latest", "name":"windows-x64"},
+            {"os":"macos-latest",   "name":"macos-arm64"},
+            {"os":"macos-15-intel", "name":"macos-x64"}
+          ]'
+          want="$(printf '%s' "$TARGETS" | tr -d '[:space:]')"
+          if [ -z "$want" ] || [ "$want" = all ]; then
+            sel="$(jq -c . <<<"$all")"
+          else
+            sel="$(jq -c --arg want "$want" '[ .[] | select(.name as $n | ($want | split(",")) | index($n)) ]' <<<"$all")"
+          fi
+          n="$(jq length <<<"$sel")"
+          [ "$n" -gt 0 ] || { echo "::error::targets='$TARGETS' matches nothing — use all, or a comma list of linux-x64, windows-x64, macos-arm64, macos-x64"; exit 1; }
+          echo "building: $(jq -r 'map(.name) | join(", ")' <<<"$sel")"
+          echo "matrix={\"include\":$sel}" >> "$GITHUB_OUTPUT"
+
       - name: the desktop version must be the tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.plan.outputs.ci_test != 'true'
         run: |
           set -eu
           tag="${GITHUB_REF_NAME#v}"
@@ -65,16 +138,11 @@ jobs:
     # are worth publishing while the fourth is looked at.
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-22.04, name: linux-x64 }
-          - { os: windows-latest, name: windows-x64 }
-          - { os: macos-latest, name: macos-arm64 }
-          - { os: macos-13, name: macos-x64 }
+      matrix: ${{ fromJSON(needs.gate.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -82,9 +150,6 @@ jobs:
           workspaces: desktop/src-tauri -> target
           key: ${{ matrix.name }}
 
-      # 22.04 and not ubuntu-latest on purpose: a .deb/.AppImage links against
-      # the glibc it was built on, so building on the newest runner would
-      # produce packages that refuse to start on a perfectly current 22.04 box.
       - name: linux build deps
         if: runner.os == 'Linux'
         run: |
@@ -92,6 +157,68 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             libxdo-dev libssl-dev build-essential curl wget file patchelf
+
+      # ---- signing, macOS: only when the secrets exist. Imports the
+      # Developer ID certificate into a throwaway keychain so that both the
+      # sidecar step below and the Tauri bundler (APPLE_SIGNING_IDENTITY) can
+      # sign with it; APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID make the bundler
+      # notarize the .app/.dmg too. Without APPLE_CERTIFICATE this is a no-op.
+      - name: macOS signing (when APPLE_CERTIFICATE exists)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::notice::macOS: unsigned build (no APPLE_CERTIFICATE secret)"; exit 0
+          fi
+          [ -n "$APPLE_CERTIFICATE_PASSWORD" ] || { echo "::error::APPLE_CERTIFICATE_PASSWORD is missing"; exit 1; }
+          [ -n "$APPLE_SIGNING_IDENTITY" ] || { echo "::error::APPLE_SIGNING_IDENTITY is missing (e.g. 'Developer ID Application: Name (TEAMID)')"; exit 1; }
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpass="$(openssl rand -hex 16)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            { echo "APPLE_ID=$APPLE_ID"; echo "APPLE_PASSWORD=$APPLE_PASSWORD"; echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"; } >> "$GITHUB_ENV"
+            echo "::notice::macOS: signing as '$APPLE_SIGNING_IDENTITY' and notarizing"
+          else
+            echo "::notice::macOS: signing as '$APPLE_SIGNING_IDENTITY' (no APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID — not notarized)"
+          fi
+
+      # ---- signing, Windows: only when the secrets exist. The .pfx goes into
+      # the runner's user store; its thumbprint is what the Tauri bundler signs
+      # with (bundle.windows.certificateThumbprint, passed as --config below).
+      - name: Windows signing (when WINDOWS_CERTIFICATE exists)
+        if: runner.os == 'Windows'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "$WINDOWS_CERTIFICATE" ]; then
+            echo "::notice::Windows: unsigned build (no WINDOWS_CERTIFICATE secret)"; exit 0
+          fi
+          pfx="$RUNNER_TEMP/cert.pfx"
+          printf '%s' "$WINDOWS_CERTIFICATE" | base64 --decode > "$pfx"
+          thumb="$(powershell -NoProfile -Command \
+            "(Import-PfxCertificate -FilePath '$(cygpath -w "$pfx")' -CertStoreLocation Cert:\\CurrentUser\\My -Password (ConvertTo-SecureString -String \$env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force)).Thumbprint" | tr -d '[:space:]')"
+          rm -f "$pfx"
+          [ -n "$thumb" ] || { echo "::error::could not import the Windows certificate"; exit 1; }
+          echo "WINDOWS_CERT_THUMBPRINT=$thumb" >> "$GITHUB_ENV"
+          echo "TAURI_CONFIG_OVERRIDE={\"bundle\":{\"windows\":{\"certificateThumbprint\":\"$thumb\",\"digestAlgorithm\":\"sha256\",\"timestampUrl\":\"http://timestamp.digicert.com\"}}}" >> "$GITHUB_ENV"
+          echo "::notice::Windows: signing with certificate $thumb"
 
       - run: bun install
       - run: bun install
@@ -109,9 +236,44 @@ jobs:
       - name: stage the sidecar (desktop/build.sh)
         run: bash desktop/build.sh
 
+      # The sidecar is a resource, not a Tauri externalBin, so the bundler does
+      # not sign it — and notarization rejects an unsigned Mach-O inside
+      # Resources/, SmartScreen flags an unsigned .exe. Sign it ourselves when
+      # a certificate is around. The macOS entitlements are the ones Bun
+      # documents for its compiled executables (JIT).
+      - name: sign the sidecar (when a certificate exists)
+        if: env.APPLE_SIGNING_IDENTITY != '' || env.WINDOWS_CERT_THUMBPRINT != ''
+        run: |
+          set -eu
+          if [ "$RUNNER_OS" = macOS ]; then
+            cat > "$RUNNER_TEMP/sidecar.entitlements" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.security.cs.allow-jit</key><true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+            <key>com.apple.security.cs.disable-executable-page-protection</key><true/>
+          </dict></plist>
+          PLIST
+            codesign --force --options runtime --timestamp \
+              --entitlements "$RUNNER_TEMP/sidecar.entitlements" \
+              --sign "$APPLE_SIGNING_IDENTITY" desktop/src-tauri/resources-staged/arigami-server
+            codesign --verify --verbose desktop/src-tauri/resources-staged/arigami-server
+          else
+            signtool="$(ls "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe | sort -V | tail -1)"
+            "$signtool" sign /sha1 "$WINDOWS_CERT_THUMBPRINT" /fd sha256 /tr http://timestamp.digicert.com /td sha256 \
+              desktop/src-tauri/resources-staged/arigami-server.exe
+          fi
+
       - name: build the installers
         working-directory: desktop/src-tauri
-        run: bun x "@tauri-apps/cli@^2" build
+        run: |
+          set -eu
+          if [ -n "${TAURI_CONFIG_OVERRIDE:-}" ]; then
+            bun x "@tauri-apps/cli@^2" build --config "$TAURI_CONFIG_OVERRIDE"
+          else
+            bun x "@tauri-apps/cli@^2" build
+          fi
 
       # Everything the bundler produced, flattened into one directory. `rw.*`
       # is the scratch disk image the macOS dmg step leaves behind mid-build.
@@ -127,7 +289,7 @@ jobs:
           ls -lh dist-installers/
           test -n "$(ls -A dist-installers/)" || { echo "::error::the bundler produced nothing"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: installers-${{ matrix.name }}
           path: dist-installers/*
@@ -137,22 +299,33 @@ jobs:
       # and runs in parallel with this — so wait for it rather than racing to
       # create a second, note-less one. If it never appears (dispatched alone,
       # or release.yml failed), create a minimal one so the build is not lost.
+      # A CI-test tag has no release.yml run to wait for: it gets a pre-release
+      # straight away, and the four jobs racing to create it is harmless (the
+      # losers fall through to the upload).
       - name: attach to the Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          CI_TEST: ${{ needs.gate.outputs.ci_test }}
         run: |
           set -eu
-          for _ in $(seq 1 40); do
-            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
-            echo "waiting for release $TAG (release.yml publishes it) …"
-            sleep 15
-          done
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::notice::no release $TAG after 10m — creating one for the installers"
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag \
-              --notes "Desktop installers for $TAG." || true
+          if [ "$CI_TEST" = true ]; then
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+                --title "$TAG — CI test build, delete me" \
+                --notes "Test build of the desktop installers from $GITHUB_SHA. Not a release: delete this pre-release and its tag once checked." || true
+          else
+            for _ in $(seq 1 40); do
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+              echo "waiting for release $TAG (release.yml publishes it) …"
+              sleep 15
+            done
+            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::notice::no release $TAG after 10m — creating one for the installers"
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag \
+                --notes "Desktop installers for $TAG." || true
+            fi
           fi
           gh release upload "$TAG" dist-installers/* --repo "$GITHUB_REPOSITORY" --clobber
 
