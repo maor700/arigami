@@ -423,52 +423,70 @@ test('parseCodexModelsCache: slug-keyed rows, priority order, hidden rows droppe
   expect(empty2).toEqual([]);
 });
 
-test('codexModels(): the ACTIVE codex account\'s models_cache.json wins over the machine home, which wins over the static fallback', () => {
+/** A `codex app-server` stand-in that answers initialize and model/list with `rows`. */
+function fakeAppServer(adir: string, rows: unknown[]): string {
+  const bin = path.join(adir, 'fake-codex.js');
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env bun
+let buf='';process.stdin.on('data',(d)=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){const l=buf.slice(0,i);buf=buf.slice(i+1);let j;try{j=JSON.parse(l);}catch{continue;}
+if(j.id===0)process.stdout.write(JSON.stringify({id:0,result:{}})+'\\n');
+else if(j.method==='model/list')process.stdout.write(JSON.stringify({id:j.id,result:{data:${JSON.stringify(rows)}}})+'\\n');}});
+`,
+    { mode: 0o755 }
+  );
+  return bin;
+}
+
+test('codexModels(): the engine\'s model/list for the ACTIVE login, its models_cache.json only until that lands, never a hardcoded list', () => {
   const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexmodels-'));
   try {
-    // machine home (~/.codex stand-in): the personal login's catalog
     const home = path.join(adir, 'machine-home');
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(path.join(home, 'auth.json'), '{"auth_mode":"chatgpt"}');
     fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-5.6-terra', 7, ['low', 'medium'])] }));
-    // a chatgpt account with its own home under codex-accounts/<id>/: a business catalog
     const accHome = path.join(adir, 'codex-accounts', 'acc_biz');
     fs.mkdirSync(accHome, { recursive: true });
     fs.writeFileSync(path.join(accHome, 'auth.json'), '{"auth_mode":"chatgpt"}');
-    fs.writeFileSync(path.join(accHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'ultra']), CACHE_ROW('gpt-5.6-terra', 7, ['low'])] }));
-    // With a codex account present the store makes it active on load (seed),
-    // so "no active codex account" means no chatgpt/api-key account at all.
+    fs.writeFileSync(path.join(accHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'ultra'], { context_window: 272000, effective_context_window_percent: 95 })] }));
     const accounts = (activeCodex: string | null) => ({
       activeId: null,
       activeIds: { claude: null, codex: activeCodex },
       accounts: activeCodex ? [{ id: activeCodex, provider: 'codex', type: 'chatgpt', label: 'biz', email: null, plan: null, createdAt: 1 }] : [],
     });
-    const run = (active: string | null) => {
+    const live = [
+      { id: 'gpt-6-astra', displayName: 'GPT-6-Astra', description: 'd', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'ultra' }], defaultReasoningEffort: 'low', isDefault: true },
+      { id: 'gpt-6-nova', displayName: 'GPT-6-Nova', description: '', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'minimal' }], defaultReasoningEffort: 'minimal' },
+      { id: 'codex-auto-review', displayName: 'x', hidden: true, supportedReasoningEfforts: [] },
+    ];
+    const run = (active: string | null, bin: string) => {
       fs.writeFileSync(path.join(adir, 'accounts.json'), JSON.stringify(accounts(active)));
       return runInChild(
         "const ac=await import('./server/accounts.js');ac.initAccounts();" +
           "const cx=await import('./server/codex.ts');" +
-          "emit({active:ac.getActiveId('codex'),ids:cx.codexModels().map(m=>m.id)});",
-        { ARIGAMI_DIR: adir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_CODEX_HOME: home }
+          'const before=cx.codexModels().map(m=>m.id);const rows=await cx.refreshCodexModels();' +
+          "emit({active:ac.getActiveId('codex'),before,rows,after:cx.codexModels().map(m=>m.id)});",
+        { ARIGAMI_DIR: adir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_CODEX_HOME: home, ARIGAMI_CODEX_BIN: bin, ARIGAMI_CODEX_PROBE_TIMEOUT_MS: '5000' }
       );
     };
-    const biz = run('acc_biz');
+    const biz = run('acc_biz', fakeAppServer(adir, live));
     expect(biz.ok).toBe(true);
     expect(biz.out[0].active).toBe('acc_biz');
-    expect(biz.out[0].ids).toEqual(['gpt-6-astra', 'gpt-5.6-terra']);
+    expect(biz.out[0].before).toEqual(['gpt-6-astra']); // the engine's cache while model/list is in flight
+    expect(biz.out[0].rows).toEqual([
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra', desc: 'd', efforts: ['low', 'ultra'], defaultEffort: 'low', contextWindow: 258_400 },
+      { id: 'gpt-6-nova', name: 'GPT-6-Nova', desc: '', efforts: ['minimal'], defaultEffort: 'minimal', contextWindow: null },
+    ]);
+    expect(biz.out[0].after).toEqual(['gpt-6-astra', 'gpt-6-nova']);
 
-    // no chatgpt/api-key account → the machine's own login (seeded as the
-    // codex-home account) → its catalog
-    const none = run(null);
-    expect(none.ok).toBe(true);
-    expect(none.out[0].ids).toEqual(['gpt-5.6-terra']);
-
-    // no cache anywhere → the static fallback, never an empty picker
-    fs.rmSync(path.join(home, 'models_cache.json'));
+    // engine unreachable → its cache (active login first, then the machine's), then nothing at all
+    const down = run('acc_biz', '/bin/false');
+    expect(down.ok).toBe(true);
+    expect(down.out[0].after).toEqual(['gpt-6-astra']);
     fs.rmSync(path.join(accHome, 'models_cache.json'));
-    const fallback = run('acc_biz');
-    expect(fallback.ok).toBe(true);
-    expect(fallback.out[0].ids).toEqual(['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
+    expect(run('acc_biz', '/bin/false').out[0].after).toEqual(['gpt-5.6-terra']);
+    fs.rmSync(path.join(home, 'models_cache.json'));
+    expect(run(null, '/bin/false').out[0].after).toEqual([]);
   } finally {
     fs.rmSync(adir, { recursive: true, force: true });
   }
@@ -720,6 +738,7 @@ test('codexEffortLevels: the model row ladder, else every level codex knows (inc
 });
 
 test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on claude', () => {
+  fs.writeFileSync(path.join(codexHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-5.6-terra', 1, ['low', 'max', 'ultra']), CACHE_ROW('gpt-5.5', 2, ['low', 'xhigh'])] }));
   const r = runInChild(
     "const st=await import('./server/state.ts');const cl=await import('./server/claude.js');await import('./server/codex.ts');" +
       "const tryEffort=(s,e)=>{try{cl.setEffort(s.id,e);return st.getSession(s.id).claude.effort;}catch(x){return 'ERR:'+x.message;}};" +
@@ -727,7 +746,7 @@ test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on c
       "const old=st.createSession({title:'o',engine:'codex'});st.setClaude(old.id,{modelChoice:'gpt-5.5'});" +
       "const c=st.createSession({title:'c'});" +
       "emit([tryEffort(terra,'ultra'),tryEffort(old,'ultra'),tryEffort(c,'ultra'),tryEffort(c,'max'),tryEffort(old,'default')]);",
-    env()
+    env({ ARIGAMI_CODEX_BIN: '/bin/false' })
   );
   expect(r.ok).toBe(true);
   const [terra, old, claude, claudeMax, cleared] = r.out[0];

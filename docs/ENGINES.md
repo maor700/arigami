@@ -16,8 +16,8 @@ of the others: the model list and the effort levels are per-engine, not a shared
 
 - **claude** — the model list is pulled from the CLI (`server/models.js`), and the effort scale
   is uniform across every model (`--effort`, low…max).
-- **codex** — the list is static in `web/src/lib/engines.js` (copied from
-  `$CODEX_HOME/models_cache.json`, codex-cli 0.153.4). Effort isn't a flag but a config
+- **codex** — the list comes from the engine at runtime (`codex app-server` `model/list` under the active
+  login, 5-min cache; its `models_cache.json` only while that call is in flight; no hardcoded rows). Effort isn't a flag but a config
   key, `model_reasoning_effort`, and the scale is a property of the **model**:
   gpt-5.6-terra adds `ultra` above `max`, and gpt-5.5 stops at `xhigh`.
 

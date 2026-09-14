@@ -949,32 +949,83 @@ export function parseCodexModelsCache(raw: unknown): CodexModelRow[] {
     }));
 }
 
+/** Pure: rows out of the engine's `model/list` (app-server) answer; hidden models dropped. */
+export function parseCodexModelList(result: unknown): CodexModelRow[] {
+  const rows: any[] = Array.isArray((result as any)?.data) ? (result as any).data : [];
+  return rows
+    .filter((m) => m && typeof (m.id || m.model) === 'string' && !m.hidden)
+    .map((m) => ({
+      id: String(m.id || m.model),
+      name: String(m.displayName || m.id || m.model),
+      desc: typeof m.description === 'string' ? m.description : '',
+      efforts: Array.isArray(m.supportedReasoningEfforts)
+        ? m.supportedReasoningEfforts.map((e: any) => (typeof e === 'string' ? e : e?.reasoningEffort)).filter((e: any) => typeof e === 'string')
+        : [],
+      defaultEffort: typeof m.defaultReasoningEffort === 'string' ? m.defaultReasoningEffort : null,
+      contextWindow: null,
+    }));
+}
+
+const MODEL_LIST_TTL_MS = 5 * 60_000;
+let liveModels: { home: string; rows: CodexModelRow[]; at: number } | null = null;
+let modelsInflight: Promise<CodexModelRow[]> | null = null;
+let lastModelsAttempt: { home: string; at: number } | null = null;
+
+/** The codex home whose login decides the catalog: the active codex account, else the machine's ~/.codex. */
+function catalogHome(): string {
+  return codexHomeOfAccount(getActiveId('codex')) || realCodexHome();
+}
+
+/** The engine's own models_cache.json rows under `home` ([] when absent). */
+function cachedCatalog(home: string): CodexModelRow[] {
+  try {
+    return parseCodexModelsCache(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8')));
+  } catch {
+    return [];
+  }
+}
+
+/** What is known without asking the engine: the last live answer for `home`, else its cache, else the machine's. */
+function knownCatalog(home: string): CodexModelRow[] {
+  if (liveModels?.home === home) return liveModels.rows;
+  const cached = cachedCatalog(home);
+  if (cached.length || home === realCodexHome()) return cached;
+  return cachedCatalog(realCodexHome());
+}
+
+/** Ask the engine for its model list now (`codex app-server` model/list); context windows merged from its cache. */
+export function refreshCodexModels({ force = false }: { force?: boolean } = {}): Promise<CodexModelRow[]> {
+  const home = catalogHome();
+  if (!force && liveModels?.home === home && Date.now() - liveModels.at < MODEL_LIST_TTL_MS) return Promise.resolve(liveModels.rows);
+  if (modelsInflight) return modelsInflight;
+  // A failed ask is not retried for the TTL either — codexModels() is on every turn's path.
+  if (!force && lastModelsAttempt?.home === home && Date.now() - lastModelsAttempt.at < MODEL_LIST_TTL_MS) return Promise.resolve(knownCatalog(home));
+  lastModelsAttempt = { home, at: Date.now() };
+  modelsInflight = import('./codex-account.js')
+    .then((ca) => ca.appServerCall(home, [{ method: 'model/list', params: {} }]))
+    .then((r) => {
+      const rows = parseCodexModelList(r['model/list']?.result);
+      if (!rows.length) return knownCatalog(home);
+      const windows = new Map(cachedCatalog(home).map((m) => [m.id, m.contextWindow]));
+      liveModels = { home, rows: rows.map((m) => ({ ...m, contextWindow: windows.get(m.id) ?? null })), at: Date.now() };
+      return liveModels.rows;
+    })
+    .catch(() => knownCatalog(home))
+    .finally(() => {
+      modelsInflight = null;
+    });
+  return modelsInflight;
+}
+
 /**
- * The models codex actually offers. There is no live handshake for this the way
- * claude has one — `models_cache.json` is a background-refreshed local cache
- * under a $CODEX_HOME. The catalog is per LOGIN (a business workspace lists
- * models a personal plan doesn't), so the ACTIVE codex account's home is read
- * first, then the machine's own ~/.codex, then a static fallback of what
- * 0.153.4 listed — so the picker never renders empty.
+ * The models codex offers, synchronously: the engine's last `model/list` answer
+ * for the active login, else its models_cache.json while that call is in flight.
+ * Never a hardcoded list — an unreachable engine yields [].
  */
 export function codexModels(): CodexModelRow[] {
-  const homes = new Set<string>();
-  const active = codexHomeOfAccount(getActiveId('codex'));
-  if (active) homes.add(active);
-  homes.add(realCodexHome());
-  for (const home of homes) {
-    try {
-      const out = parseCodexModelsCache(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8')));
-      if (out.length) return out;
-    } catch {
-      /* no cache there — try the next home */
-    }
-  }
-  return [
-    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', desc: 'Balanced agentic coding model for everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium', contextWindow: 258_400 },
-    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', desc: 'Fast and affordable agentic coding model.', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium', contextWindow: 258_400 },
-    { id: 'gpt-5.5', name: 'GPT-5.5', desc: 'Proven previous-generation model for coding and general work.', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium', contextWindow: 258_400 },
-  ];
+  const home = catalogHome();
+  void refreshCodexModels();
+  return knownCatalog(home);
 }
 
 // Deliberately NOT used: `codex queue --thread <id> --message <t>` exists and
