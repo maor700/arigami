@@ -16,6 +16,23 @@ export function hostDiag(host: ChildProcess | null | undefined): string {
     const pick = (k: string) => (st.match(new RegExp(`^${k}:\\s*(.*)$`, 'm')) || [])[1]?.trim();
     out += ` state=${pick('State')} rss=${pick('VmRSS')} threads=${pick('Threads')}`;
     out += ` wchan=${fs.readFileSync(`/proc/${pid}/wchan`, 'utf8').trim()}`;
+    // CPU actually burned (clock ticks, usually 100/s) — distinguishes a spin from a stall.
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const f = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    out += ` utime=${f[11]} stime=${f[12]} (ticks)`;
+    // Per thread: name, state, ticks — Bun names its threads, so a hot one says where.
+    const rows: string[] = [];
+    for (const tid of fs.readdirSync(`/proc/${pid}/task`)) {
+      try {
+        const ts = fs.readFileSync(`/proc/${pid}/task/${tid}/stat`, 'utf8');
+        const name = ts.slice(ts.indexOf('(') + 1, ts.lastIndexOf(')'));
+        const tf = ts.slice(ts.lastIndexOf(')') + 2).split(' ');
+        rows.push(`${tid} ${name} ${tf[0]} u=${tf[11]} s=${tf[12]} wchan=${fs.readFileSync(`/proc/${pid}/task/${tid}/wchan`, 'utf8').trim()}`);
+      } catch {}
+    }
+    out += `\n[diag] threads:\n${rows.join('\n')}`;
+    const fds = fs.readdirSync(`/proc/${pid}/fd`).map((d) => { try { return `${d}→${fs.readlinkSync(`/proc/${pid}/fd/${d}`)}`; } catch { return d; } });
+    out += `\n[diag] fds(${fds.length}): ${fds.slice(0, 24).join(' ')}`;
   } catch {}
   try {
     const ps = spawnSync('ps', ['-o', 'pid=,stat=,etimes=,args=', '--ppid', String(pid)], { encoding: 'utf8', timeout: 3000 });
