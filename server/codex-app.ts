@@ -28,7 +28,7 @@ import {
   onLimitText,
   onTurnEnd,
 } from './codex.js';
-import { appendChat, describeAttachment, noteMcpResult, updateUsage, noteTurnUsage, recordTurn, ensureRunning, isRunning } from './claude.js';
+import { appendChat, describeAttachment, noteMcpResult, updateUsage, noteTurnUsage, recordTurn, ensureRunning } from './claude.js';
 
 /** Approval cards wait as long as a screen request (api.ts SCREEN_REQUEST_TIMEOUT_MS), then answer `cancel`. */
 export const APPROVAL_TIMEOUT_MS = Number(process.env.ARIGAMI_CODEX_APPROVAL_TIMEOUT_MS) || 30 * 60 * 1000;
@@ -315,7 +315,7 @@ function appInterrupt(proc: any): void {
 export function requestCompaction(id: string, reason: string, then?: () => void): void {
   const st = stateOf(id);
   if (then) st.compactThen.push(then);
-  if (!isRunning(id)) {
+  if (!st.proc) {
     st.compactDue = reason;
     ensureRunning(id);
     return;
