@@ -118,7 +118,7 @@ setInterval(()=>{},1e6);
   try {
     await until(async () => {
       try {
-        return (await fetch(base + '/__api/config')).ok;
+        return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
       } catch {
         return false;
       }
