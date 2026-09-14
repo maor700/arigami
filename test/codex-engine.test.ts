@@ -342,6 +342,98 @@ test('model and effort: a codex model and effort ride argv, a claude alias does 
   expect(alias.args).not.toContain('-c');
 });
 
+// ---- codexModels(): the catalog is per login --------------------------------
+
+const CACHE_ROW = (slug: string, priority: number, efforts: string[], extra: Record<string, unknown> = {}) => ({
+  slug,
+  display_name: slug.toUpperCase(),
+  description: `${slug} desc`,
+  visibility: 'list',
+  priority,
+  default_reasoning_level: 'medium',
+  supported_reasoning_levels: efforts.map((effort) => ({ effort, description: effort })),
+  ...extra,
+});
+
+test('parseCodexModelsCache: slug-keyed rows, priority order, hidden rows dropped, ladder from the row', () => {
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" +
+      'emit(cx.parseCodexModelsCache(' +
+      JSON.stringify({
+        fetched_at: 'x',
+        models: [
+          CACHE_ROW('gpt-5.5', 12, ['low', 'medium', 'high', 'xhigh'], { default_reasoning_level: 'xhigh' }),
+          CACHE_ROW('gpt-reserve', 3, ['low'], { visibility: 'hide' }),
+          CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+          { id: 'legacy-id-row', name: 'Legacy', visibility: 'list', priority: 5 },
+          { junk: true },
+        ],
+      }) +
+      '));' +
+      'emit(cx.parseCodexModelsCache({}));emit(cx.parseCodexModelsCache(null));',
+    env()
+  );
+  expect(r.ok).toBe(true);
+  const [rows, empty1, empty2] = r.out;
+  expect(rows.map((m: any) => m.id)).toEqual(['gpt-6-astra', 'legacy-id-row', 'gpt-5.5']);
+  expect(rows[0]).toEqual({ id: 'gpt-6-astra', name: 'GPT-6-ASTRA', desc: 'gpt-6-astra desc', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' });
+  expect(rows[2].defaultEffort).toBe('xhigh');
+  expect(rows[1]).toEqual({ id: 'legacy-id-row', name: 'Legacy', desc: '', efforts: [], defaultEffort: null });
+  expect(empty1).toEqual([]);
+  expect(empty2).toEqual([]);
+});
+
+test('codexModels(): the ACTIVE codex account\'s models_cache.json wins over the machine home, which wins over the static fallback', () => {
+  const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexmodels-'));
+  try {
+    // machine home (~/.codex stand-in): the personal login's catalog
+    const home = path.join(adir, 'machine-home');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'auth.json'), '{"auth_mode":"chatgpt"}');
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-5.6-terra', 7, ['low', 'medium'])] }));
+    // a chatgpt account with its own home under codex-accounts/<id>/: a business catalog
+    const accHome = path.join(adir, 'codex-accounts', 'acc_biz');
+    fs.mkdirSync(accHome, { recursive: true });
+    fs.writeFileSync(path.join(accHome, 'auth.json'), '{"auth_mode":"chatgpt"}');
+    fs.writeFileSync(path.join(accHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'ultra']), CACHE_ROW('gpt-5.6-terra', 7, ['low'])] }));
+    // With a codex account present the store makes it active on load (seed),
+    // so "no active codex account" means no chatgpt/api-key account at all.
+    const accounts = (activeCodex: string | null) => ({
+      activeId: null,
+      activeIds: { claude: null, codex: activeCodex },
+      accounts: activeCodex ? [{ id: activeCodex, provider: 'codex', type: 'chatgpt', label: 'biz', email: null, plan: null, createdAt: 1 }] : [],
+    });
+    const run = (active: string | null) => {
+      fs.writeFileSync(path.join(adir, 'accounts.json'), JSON.stringify(accounts(active)));
+      return runInChild(
+        "const ac=await import('./server/accounts.js');ac.initAccounts();" +
+          "const cx=await import('./server/codex.ts');" +
+          "emit({active:ac.getActiveId('codex'),ids:cx.codexModels().map(m=>m.id)});",
+        { ARIGAMI_DIR: adir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_CODEX_HOME: home }
+      );
+    };
+    const biz = run('acc_biz');
+    expect(biz.ok).toBe(true);
+    expect(biz.out[0].active).toBe('acc_biz');
+    expect(biz.out[0].ids).toEqual(['gpt-6-astra', 'gpt-5.6-terra']);
+
+    // no chatgpt/api-key account → the machine's own login (seeded as the
+    // codex-home account) → its catalog
+    const none = run(null);
+    expect(none.ok).toBe(true);
+    expect(none.out[0].ids).toEqual(['gpt-5.6-terra']);
+
+    // no cache anywhere → the static fallback, never an empty picker
+    fs.rmSync(path.join(home, 'models_cache.json'));
+    fs.rmSync(path.join(accHome, 'models_cache.json'));
+    const fallback = run('acc_biz');
+    expect(fallback.ok).toBe(true);
+    expect(fallback.out[0].ids).toEqual(['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
+  } finally {
+    fs.rmSync(adir, { recursive: true, force: true });
+  }
+});
+
 // ---- prepare(): the generated $CODEX_HOME ----------------------------------
 
 function prepared(create = "{title:'codex',engine:'codex',cwd:'/tmp'}", pre = '') {

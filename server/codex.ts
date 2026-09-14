@@ -72,7 +72,7 @@ import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { injectedServersFor } from './mcp-connections.js';
-import { codexRealHome, codexAuthPathFor } from './accounts.js';
+import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive } from './agent-policy.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
@@ -813,28 +813,58 @@ registerEngine(codexDriver);
 // fixtures in test/fixtures/codex-stream/ without spawning anything.
 export { codexDriver, codexPrepare, codexBuildSpawn, codexHandleEvent, codexModelArgs, flatToolName, mcpTables, TOOL_TIMEOUT_SEC };
 
+/** One picker row for a Codex model — the catalog fields the cockpit needs. */
+export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null };
+
+/**
+ * Pure: the picker rows out of one `models_cache.json` — the server-pushed
+ * catalog codex refreshes on its own schedule. Rows are keyed `slug`, ranked
+ * by `priority` (lower first), and `visibility: "hide"` rows (gpt-reserve,
+ * codex-auto-review) are internal and deliberately not offered. `efforts` is
+ * the model's own `supported_reasoning_levels` in catalog order, which is why
+ * the cockpit's effort ladder is per model (web/src/lib/engines.js).
+ */
+export function parseCodexModelsCache(raw: unknown): CodexModelRow[] {
+  const rows: any[] = Array.isArray(raw) ? raw : Array.isArray((raw as any)?.models) ? (raw as any).models : [];
+  return rows
+    .filter((m) => m && typeof (m.slug || m.id) === 'string' && m.visibility !== 'hide')
+    .sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0))
+    .map((m) => ({
+      id: String(m.slug || m.id),
+      name: String(m.display_name || m.name || m.slug || m.id),
+      desc: typeof m.description === 'string' ? m.description : '',
+      efforts: Array.isArray(m.supported_reasoning_levels)
+        ? m.supported_reasoning_levels.map((l: any) => (typeof l === 'string' ? l : l?.effort)).filter((e: any) => typeof e === 'string')
+        : [],
+      defaultEffort: typeof m.default_reasoning_level === 'string' ? m.default_reasoning_level : null,
+    }));
+}
+
 /**
  * The models codex actually offers. There is no live handshake for this the way
- * claude has one — `~/.codex/models_cache.json` is a background-refreshed local
- * cache, so read it when it's there and fall back to what was seen on
- * 0.153.4 when it isn't. `visibility: "hide"` rows (gpt-reserve,
- * codex-auto-review) are internal and deliberately not offered.
+ * claude has one — `models_cache.json` is a background-refreshed local cache
+ * under a $CODEX_HOME. The catalog is per LOGIN (a business workspace lists
+ * models a personal plan doesn't), so the ACTIVE codex account's home is read
+ * first, then the machine's own ~/.codex, then a static fallback of what
+ * 0.153.4 listed — so the picker never renders empty.
  */
-export function codexModels(): { id: string; name: string }[] {
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(realCodexHome(), 'models_cache.json'), 'utf8'));
-    const rows: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.models) ? raw.models : [];
-    const out = rows
-      .filter((m) => m && typeof m.id === 'string' && m.visibility !== 'hide')
-      .map((m) => ({ id: String(m.id), name: String(m.display_name || m.name || m.id) }));
-    if (out.length) return out;
-  } catch {
-    /* no cache yet — fall through */
+export function codexModels(): CodexModelRow[] {
+  const homes = new Set<string>();
+  const active = codexHomeOfAccount(getActiveId('codex'));
+  if (active) homes.add(active);
+  homes.add(realCodexHome());
+  for (const home of homes) {
+    try {
+      const out = parseCodexModelsCache(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8')));
+      if (out.length) return out;
+    } catch {
+      /* no cache there — try the next home */
+    }
   }
   return [
-    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
-    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
-    { id: 'gpt-5.5', name: 'GPT-5.5' },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', desc: 'Balanced agentic coding model for everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', desc: 'Fast and affordable agentic coding model.', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', desc: 'Proven previous-generation model for coding and general work.', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
   ];
 }
 

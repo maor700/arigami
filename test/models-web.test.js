@@ -13,16 +13,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
 let models;
+let engines;
 let LIST = [];
+let CODEX = undefined;
 let calls = [];
 
 beforeAll(async () => {
   globalThis.fetch = async (url, init) => {
     calls.push(`${init?.method || 'GET'} ${url}`);
-    const body = { models: LIST, fetchedAt: 1000 };
+    const body = { models: LIST, fetchedAt: 1000, ...(CODEX === undefined ? {} : { codex: CODEX }) };
     return { ok: true, status: 200, url: String(url), json: async () => body, text: async () => JSON.stringify(body) };
   };
   models = await import(web('lib/models.js'));
+  engines = await import(web('lib/engines.js'));
 });
 
 const values = () => models.modelsSnapshot().models.map((o) => o.value);
@@ -65,5 +68,24 @@ test('a failed revalidate keeps the last good list and does not retry in a loop'
     expect(models.ensureModels()).toBeNull();
   } finally {
     globalThis.fetch = fetchOk;
+  }
+});
+
+// The same response carries the Codex catalog of the ACTIVE codex account
+// (server/codex.ts codexModels()); it must reach lib/engines.js so the Codex
+// picker lists that login's models — and a response without it (older server,
+// or a refresh that failed to read the cache) keeps the last catalog.
+test('the Codex catalog rides GET /models into engines.setCodexCatalog(), and is kept when a later response omits it', async () => {
+  CODEX = [{ id: 'gpt-6-astra', name: 'GPT-6-Astra', desc: '', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' }];
+  try {
+    await models.refreshModels();
+    expect(models.modelsSnapshot().codex).toEqual(CODEX);
+    expect(engines.codexCatalog().map((m) => m.value)).toEqual(['gpt-6-astra']);
+    CODEX = undefined;
+    await models.refreshModels();
+    expect(engines.codexCatalog().map((m) => m.value)).toEqual(['gpt-6-astra']);
+  } finally {
+    CODEX = undefined;
+    engines.setCodexCatalog(null);
   }
 });

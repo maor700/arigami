@@ -4217,6 +4217,10 @@ export async function handle(
     if (p === '/__api/models' && m === 'GET') {
       const { getModels } = await import('./models.js');
       const list = await (getModels as any)();
+      // Codex has no handshake: its catalog is the active codex account's
+      // models_cache.json, read fresh on every ask (cheap, and it changes when
+      // the human switches account).
+      const { codexModels } = await import('./codex.js');
       // UPD1: the picker is where new models are discovered — tell it when a
       // newer CLI (= newer list) is one click away. Cheap: the cached status.
       let cliUpdate = null;
@@ -4224,11 +4228,12 @@ export async function handle(
         const s = (await (await import('./lib/claude-update.js')).claudeUpdater()).status();
         cliUpdate = { installed: s.installed, latest: s.latest, updateAvailable: s.updateAvailable, checkedAt: s.checkedAt };
       } catch {}
-      return json(res, { ...list, cliUpdate });
+      return json(res, { ...list, codex: codexModels(), cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels } = await import('./models.js');
-      return json(res, await (getModels as any)(true));
+      const { codexModels } = await import('./codex.js');
+      return json(res, { ...(await (getModels as any)(true)), codex: codexModels() });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).

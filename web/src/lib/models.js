@@ -10,6 +10,7 @@
 import { useEffect } from 'react';
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
+import { setCodexCatalog } from './engines.js';
 
 // Shown before the first successful fetch resolves (e.g. cockpit just started,
 // server hasn't reached the CLI yet) so the picker never renders empty.
@@ -25,7 +26,11 @@ export const REVALIDATE_MS = 5 * 60 * 1000;
 // `cliUpdate` (UPD1): {installed, latest, updateAvailable} of the `claude` CLI
 // behind the list — the picker shows a badge when a newer CLI (= newer models)
 // is waiting in Settings › Host.
-let cache = { models: FALLBACK, fetchedAt: 0, checkedAt: 0, loading: false, error: null, cliUpdate: null };
+// `codex` — the Codex catalog rows the same response carries (server/codex.ts
+// codexModels(): the active codex account's models_cache.json). Handed to
+// lib/engines.js setCodexCatalog() so the Codex picker lists what THAT login
+// can run, not a transcribed default; null until the first fetch.
+let cache = { models: FALLBACK, fetchedAt: 0, checkedAt: 0, loading: false, error: null, cliUpdate: null, codex: null };
 let inflight = null;
 const listeners = new Set();
 const emit = () => {
@@ -45,7 +50,9 @@ function run(promise, { quiet = false } = {}) {
   }
   inflight = promise
     .then((d) => {
-      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), checkedAt: Date.now(), loading: false, error: d.error || null, cliUpdate: d.cliUpdate === undefined ? cache.cliUpdate : d.cliUpdate };
+      const codex = Array.isArray(d.codex) && d.codex.length ? d.codex : cache.codex;
+      cache = { models: d.models?.length ? toOptions(d.models) : cache.models, fetchedAt: d.fetchedAt || Date.now(), checkedAt: Date.now(), loading: false, error: d.error || null, cliUpdate: d.cliUpdate === undefined ? cache.cliUpdate : d.cliUpdate, codex };
+      setCodexCatalog(codex);
     })
     .catch((e) => {
       cache = { ...cache, checkedAt: Date.now(), loading: false, error: e.message };
