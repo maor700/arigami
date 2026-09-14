@@ -1062,6 +1062,10 @@ export function chainFor(id) {
 /** Where the session sits in its chain right now + how far it can still fall. */
 // The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
 export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+/** P3-1: a codex session on the app-server driver (approvals, compaction, live turns). */
+export const isCodexAppSession = (id) => {
+  try { return isCodexSession(id) && pickEngine(getSession(id)).permissions.kind === 'rpc-request'; } catch { return false; }
+};
 
 /** P2-6: a codex session's chain — codex model ids from cfg.codexModelChain, filtered to the active account's catalog. */
 export function codexChainFor(id) {
@@ -2574,6 +2578,8 @@ function restartWith(id, patch) {
 }
 
 export function setPermissionMode(id, mode) {
+  // Codex app-server sends approvalPolicy per turn — no respawn.
+  if (isCodexAppSession(id)) { setClaude(id, { permissionMode: mode }); mergeCaps(id, { permissionMode: mode }); return getSession(id)?.claude; }
   return restartWith(id, { permissionMode: mode });
 }
 

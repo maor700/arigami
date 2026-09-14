@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, codexModel } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, permissionModesFor, codexModel } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
@@ -135,9 +135,14 @@ function PermissionModal({ session, onClose }) {
     onClose();
   };
 
+  const codex = normalizeEngine(session.engine) === 'codex';
+  // Codex app-server applies the mode on its next turn — nothing to stop.
+  const options = PERMISSION_OPTIONS.filter((o) => permissionModesFor(session.engine).includes(o.value)).map((o) =>
+    codex ? { ...o, desc: t(o.value === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc') } : o
+  );
   const pick = (mode) => {
     if (mode === current) return onClose(); // already this mode → do nothing
-    if (working) return setPending(mode); // mid-run → must confirm the interruption
+    if (working && !codex) return setPending(mode); // mid-run → must confirm the interruption
     apply(mode); // idle → switch in place immediately
   };
 
@@ -172,7 +177,7 @@ function PermissionModal({ session, onClose }) {
     <OptionsModal
       title={t('rail.permissionMode')}
       subtitle={working ? t('rail.claudeWorkingSwitch', { engine }) : t('rail.appliesToTerminal')}
-      options={PERMISSION_OPTIONS}
+      options={options}
       value={current}
       onSelect={pick}
       onClose={onClose}
