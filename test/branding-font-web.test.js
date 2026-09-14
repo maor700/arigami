@@ -9,6 +9,8 @@ import { test, expect, beforeAll } from 'bun:test';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
@@ -18,6 +20,13 @@ const h = (...a) => React.createElement(...a);
 
 beforeAll(async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  // prefs.js decides HAS_DOM once, at first import, and bun test shares the
+  // module registry: after any *-web file this instance believes it has a DOM,
+  // so applyTheme() must find one here too (the same shim the other web tests use).
+  globalThis.document = {
+    documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} }, setAttribute() {}, classList: { add() {}, remove() {} }, dir: 'ltr' },
+    body: {}, querySelector: () => null, addEventListener() {}, removeEventListener() {},
+  };
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));

@@ -3,6 +3,8 @@
 // they set the kind and are STRIPPED from `actions`, so a VOICE1 client never
 // queues them as if they were an inject. Everything else keeps its shape.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 let voice: any, origFetch: any;
 const sent: any[] = [];

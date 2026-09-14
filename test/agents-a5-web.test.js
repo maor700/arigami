@@ -5,11 +5,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, RoutineList, routinePayload, errors, toast, origFetch;
+let React, render, prefs, RoutineList, routinePayload, errors, toast;
 const h = (...a) => React.createElement(...a);
 const AGENT = { slug: 'nili', name: 'Nili', emoji: '✍️', color: '#E0594F' };
 const noop = () => {};
@@ -26,7 +28,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => ({}), text: async () => '' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
@@ -34,10 +35,6 @@ beforeAll(async () => {
   ({ RoutineList, routinePayload } = await import(web('components/RoutineList.jsx')));
   errors = await import(web('lib/errors.js'));
   toast = await import(web('lib/toast.js'));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 test('#8 the Routine tab offers BOTH an add form and the agent home chat', () => {

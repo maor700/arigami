@@ -5,11 +5,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let store, origFetch;
+let store;
 
 // What GET /health answers, and how many times it was asked.
 let HEALTH = { sessions: [], waiting: [] };
@@ -34,7 +36,6 @@ beforeAll(async () => {
     }
     close() {}
   };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     let body = {};
@@ -47,10 +48,6 @@ beforeAll(async () => {
     return { ok: true, status: 200, url: u, json: async () => body, text: async () => JSON.stringify(body) };
   };
   store = await import(web('lib/store.js'));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const tick = () => new Promise((r) => setTimeout(r, 10));

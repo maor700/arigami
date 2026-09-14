@@ -164,7 +164,7 @@ setInterval(()=>{},1e6);
   } catch {
     throw new Error(`host did not come up: ${log.slice(-1500)}`);
   }
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

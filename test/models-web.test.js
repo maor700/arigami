@@ -6,26 +6,23 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let models, origFetch;
+let models;
 let LIST = [];
 let calls = [];
 
 beforeAll(async () => {
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     calls.push(`${init?.method || 'GET'} ${url}`);
     const body = { models: LIST, fetchedAt: 1000 };
     return { ok: true, status: 200, url: String(url), json: async () => body, text: async () => JSON.stringify(body) };
   };
   models = await import(web('lib/models.js'));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const values = () => models.modelsSnapshot().models.map((o) => o.value);

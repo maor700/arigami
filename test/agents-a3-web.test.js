@@ -8,11 +8,13 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, ActionCard, ActionAutoLine, ActionBar, BudgetsTable, fmtTokens, fmtUsd, ActivityTotals, ActivityRow, TOOL_FAMILIES, origFetch;
+let React, render, prefs, ActionCard, ActionAutoLine, ActionBar, BudgetsTable, fmtTokens, fmtUsd, ActivityTotals, ActivityRow, TOOL_FAMILIES;
 const h = (...a) => React.createElement(...a);
 const AGENT = { slug: 'bot', name: 'Bot', emoji: '🤖', color: '#E0594F' };
 
@@ -31,7 +33,6 @@ beforeAll(async () => {
   // UX1: AgentView embeds the home chat (ChatPane → the VNC client), whose module
   // scope constructs a MutationObserver — SSR rendering never uses it.
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => ({}), text: async () => '' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
@@ -40,10 +41,6 @@ beforeAll(async () => {
   ({ BudgetsTable, fmtTokens, fmtUsd } = await import(web('components/settings/Budgets.jsx')));
   ({ ActivityTotals, ActivityRow } = await import(web('components/AgentView.jsx')));
   ({ TOOL_FAMILIES } = await import(web('components/AgentCard.jsx')));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 test('ActionCard: agent avatar + name + kind + auto-approve toggle for an agent action with a kind; neither for a plain / kind-less one', () => {

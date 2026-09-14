@@ -2,6 +2,8 @@
 // mic-language pref); `lang` is the pre-VOICE1 field name; anything that is
 // not an ISO code falls back to the host default so Groq never sees junk.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 let voice: any, origFetch: any;
 const sent: any[] = [];

@@ -92,7 +92,7 @@ beforeAll(async () => {
   }
   const c = await api('POST', '/__api/agents', { name: 'Bot', slug: 'bot', emoji: '🤖', persona: 'You post.' });
   expect(c.status).toBe(201);
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

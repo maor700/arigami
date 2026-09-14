@@ -52,7 +52,12 @@ const lastUserText = (sid: string): string | null => {
   if (!fs.existsSync(f)) return null;
   const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
   if (!lines.length) return null;
-  const j = JSON.parse(lines[lines.length - 1]);
+  let j: any;
+  try {
+    j = JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null; // the stub is mid-write (torn last line) — the caller polls again
+  }
   return (j.message?.content || []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
 };
 
@@ -129,7 +134,7 @@ setInterval(()=>{},1e6);
   } catch {
     throw new Error(`host did not come up: ${log.slice(-1500)}`);
   }
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {
