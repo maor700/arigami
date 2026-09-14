@@ -13,6 +13,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
+import { syncComposioKey } from './lib/mcp-servers.js';
 import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
 import { resourceRoot } from './lib/resource-root.js';
@@ -1396,6 +1397,7 @@ export function setComposioKey(key: string): { ok: true } {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
   (cfg as any).composioApiKey = k;
+  syncComposioKey(k);
   return { ok: true };
 }
 

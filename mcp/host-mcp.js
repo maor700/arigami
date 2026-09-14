@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // arigami MCP server (stdio). Every tool is a thin fetch() to the host's
 // REST API. Session scoping: explicit session_id arg wins, else the
-// ARIGAMI_SESSION_ID env injected by the host when it spawned this claude.
+// ARIGAMI_SESSION_ID env injected by the host when it spawned this agent process.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -15,7 +15,7 @@ const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
 // Where the cockpit lives on any origin; the human's browser resolves it.
 const PUBLIC_PATH = (process.env.ARIGAMI_PUBLIC_PATH || '/__host/').replace(/\/+$/, '') + '/';
 // C1: the host injects a per-session bearer token (ARIGAMI_TOKEN) into every
-// claude it spawns; without it every /__api call is a 401 once auth is on.
+// agent process it spawns; without it every /__api call is a 401 once auth is on.
 const TOKEN = process.env.ARIGAMI_TOKEN || '';
 
 async function api(method, path, body, headers = {}) {
@@ -62,7 +62,7 @@ const TOOLS = [
   {
     name: 'create_session',
     description:
-      'Create a new host session (spawns a claude process in cwd). Returns {id, url} — `url` is a host-RELATIVE path ' +
+      'Create a new host session (spawns an agent process — claude or codex — in cwd). Returns {id, url} — `url` is a host-RELATIVE path ' +
       '(/__host/?session=<id>) that works from any device; show it as-is, never prefix it with http://localhost.\n' +
       'DISPATCH (orchestration): pass `kind` to spawn a CHILD under you — you (the caller) automatically become ' +
       'its master, and the host places it in your project folder (auto-created on first spawn). Kinds: ' +
@@ -125,7 +125,7 @@ const TOOLS = [
   {
     name: 'merge_session',
     description:
-      'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any claude turn. ' +
+      'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any agent turn. ' +
       'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
       'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
       'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
@@ -196,7 +196,7 @@ const TOOLS = [
     name: 'cronjob',
     description:
       'Schedule a durable, host-owned job (survives restart — unlike a scheduler built into the agent CLI itself ' +
-      '(Claude Code\'s CronCreate), which is ' +
+      '(e.g. Claude Code\'s CronCreate), which is ' +
       'session-local and lost on close). action "create": schedule_kind "cron" (5-field expr, e.g. "0 9 * * 1-5"), ' +
       '"interval" (e.g. "30m"/"2h"/"1d", repeats from the last run), or "at" (ISO timestamp, fires once). ' +
       'session_mode "isolated" (default) spawns a fresh session per run with `prompt` as its first message + the host\'s ' +
@@ -288,7 +288,7 @@ const TOOLS = [
   {
     name: 'delete_session',
     description:
-      'Delete a session — removes it from the rail and kills its claude process. ' +
+      'Delete a session — removes it from the rail and kills its agent process. ' +
       'Pass run_cleanup:true to also run the session metadata.cleanup commands (e.g. kill dev servers, remove the worktree). ' +
       'Idempotent: succeeds even if the session is already gone. ' +
       'NOTE: deleting the CURRENT session (no session_id, or your own) ends it immediately — call it last, only after a human confirmed (e.g. via request_action).',
@@ -306,7 +306,7 @@ const TOOLS = [
   {
     name: 'restart_session',
     description:
-      'Restart a session in place — kills its claude process and respawns it (--resume) in the same cwd. ' +
+      'Restart a session in place — kills its agent process and respawns it (resuming the conversation) in the same cwd. ' +
       'The worktree, branch, metadata, chat and tabs are all preserved; only the process is fresh, which re-establishes ' +
       'dropped MCP server connections (Linear/Notion/Figma). Also revives a dead session. ' +
       'NOTE: restarting the CURRENT session (no session_id, or your own) aborts your in-flight turn — call it last.',
@@ -579,7 +579,7 @@ const TOOLS = [
       const id = sid(a);
       await api('PATCH', `/__api/sessions/${id}`, { status: 'In Review' });
       return api('POST', `/__api/sessions/${id}/action`, {
-        prompt: a.summary || 'Claude finished — review the changes',
+        prompt: a.summary || 'The agent finished — review the changes',
         buttons: [
           { label: 'Request changes', value: 'request-changes' },
           { label: '✓ Verified', value: 'verified', style: 'primary' },
@@ -684,7 +684,7 @@ const TOOLS = [
     name: 'request_setup',
     description:
       'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
-      'Capability ids: identity (Google login in Chrome) · claude · codex (ChatGPT login / OpenAI key) · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
+      'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
       'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
       'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
       'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
@@ -1027,6 +1027,9 @@ const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities:
 // tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a
 // hidden one is refused here too (the PreToolUse hook is the outer layer).
 let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
+// P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
+const ENGINE_HIDDEN = new Set(process.env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
+const isHidden = (name) => ENGINE_HIDDEN.has(name) || !!hiddenTools?.has(name);
 
 // EXT: teach `register_listener` about the types an extension registered. One
 // call at startup (like refreshHidden's policy probe); a failure keeps the
@@ -1071,13 +1074,14 @@ async function refreshHidden() {
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   await refreshHidden();
   return {
-    tools: TOOLS.filter((t) => !hiddenTools?.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    tools: TOOLS.filter((t) => !isHidden(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
+  if (ENGINE_HIDDEN.has(tool.name)) return { content: [{ type: 'text', text: `error: tool "${tool.name}" does not exist on this engine` }], isError: true };
   if (hiddenTools?.has(tool.name))
     return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
   try {

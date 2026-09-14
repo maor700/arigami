@@ -347,4 +347,12 @@ export const strings = {
   'rail.chatModeSimple': 'פשוט',
   'rail.chatModeTerminal': 'טרמינל',
   'rail.chatModeHint': 'פשוט: רק השיחה, הפעולות מקופלות לשורה אחת · טרמינל: הכול',
+  'rail.restartConfirmTitle': 'להפעיל מחדש את הסשן?',
+  'rail.restartConfirmBody': 'עוצר את תהליך {engine} של "{name}" ומפעיל אותו מחדש במקום — ה-worktree, השיחה והמטא-דאטה נשמרים, וחיבורי ה-MCP מתחברים מחדש. כל מה שהוא עושה כרגע נקטע.',
+  'rail.restartConfirm': 'הפעלה מחדש',
+  'rail.restartFailed': 'ההפעלה מחדש נכשלה: {error}',
+  'rail.clearConfirmTitle': 'לנקות את השיחה?',
+  'rail.clearConfirmBody': 'מתחיל שיחת {engine} חדשה לגמרי עבור "{name}" — ה-worktree, יומן השיחה והמטא-דאטה נשמרים, אבל המודל שוכח כל מה שנאמר עד עכשיו. כל מה שהוא עושה כרגע נקטע.',
+  'rail.clearConfirm': 'ניקוי',
+  'rail.clearFailed': 'הניקוי נכשל: {error}',
 };

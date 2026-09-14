@@ -424,5 +424,5 @@ export const strings = {
   'launcher.mcp.checking': 'Checking…',
   'launcher.mcp.checkNow': 'Check now',
   'launcher.mcp.statusHint':
-    'Status is re-checked live (per-server health check on this session’s account). Reconnect restarts the session’s claude process to re-establish dropped servers.',
+    'Status is re-checked live (per-server health check on this session’s account). Reconnect restarts the session’s {engine} process to re-establish dropped servers.',
 };

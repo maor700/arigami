@@ -651,7 +651,7 @@ function spawnProc(s, resume) {
   if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
-    capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
+    capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global', s.engine || 'claude'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
     hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
@@ -1960,28 +1960,37 @@ function extSummary() {
 // connections (identity / composio resolved agent-first, "(shared)" when it
 // fell back). The global line refreshes every minute; an agent's line is
 // refreshed in the background whenever one of its sessions spawns.
-const capabilitiesHintCache = new Map(); // owner → line
-let capabilitiesHintCacheGlobal = '';
-export async function refreshCapabilitiesHint(owner = 'global') {
+const capabilitiesHintCache = new Map(); // owner → {connected, missing}
+let capabilitiesHintCacheGlobal = null;
+/** The line for one engine: `claude` and `codex` are engine logins, so a session only sees its own. */
+function formatCapabilitiesHint(owner, entry, engine = 'claude') {
+  if (!entry) return '';
+  const other = engine === 'codex' ? 'claude' : 'codex';
+  const connected = entry.connected.filter((id) => id !== other);
+  const missing = entry.missing.filter((id) => id !== other);
+  return (
+    (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
+    (missing.length
+      ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
+      : '')
+  );
+}
+export async function refreshCapabilitiesHint(owner = 'global', engine = 'claude') {
   try {
     const caps = await import('./capabilities.js');
     const { capabilities } = await caps.capabilitiesStatus({}, owner);
     const missing = capabilities.filter((c) => !c.ok && c.id !== 'telemetry' && c.id !== 'push' && c.id !== 'remote').map((c) => c.id);
     const connected = capabilities.filter((c) => c.ok).map((c) => (c.ownable && owner !== 'global' && c.resolvedFrom === 'global' ? `${c.id} (shared)` : c.id));
-    const line =
-      (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
-      (missing.length
-        ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
-        : '');
-    capabilitiesHintCache.set(owner, line);
-    if (owner === 'global') capabilitiesHintCacheGlobal = line;
+    capabilitiesHintCache.set(owner, { connected, missing });
+    if (owner === 'global') capabilitiesHintCacheGlobal = { connected, missing };
   } catch (e) {
     console.error('[claude] capabilities hint:', e.message);
   }
-  return capabilitiesHintCache.get(owner) || '';
+  return formatCapabilitiesHint(owner, capabilitiesHintCache.get(owner), engine);
 }
 /** The first-turn line for an owner — the agent's own if probed already, else the global one. */
-export const capabilitiesHint = (owner = 'global') => capabilitiesHintCache.get(owner) || capabilitiesHintCacheGlobal;
+export const capabilitiesHint = (owner = 'global', engine = 'claude') =>
+  capabilitiesHintCache.has(owner) ? formatCapabilitiesHint(owner, capabilitiesHintCache.get(owner), engine) : formatCapabilitiesHint('global', capabilitiesHintCacheGlobal, engine);
 refreshCapabilitiesHint().catch(() => {});
 {
   const t = setInterval(() => refreshCapabilitiesHint().catch(() => {}), 60_000);

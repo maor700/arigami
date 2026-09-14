@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { restartSession } from '../lib/store.js';
+import { engineLabel } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faRotateRight } from '@fortawesome/free-solid-svg-icons';
@@ -232,7 +233,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
           <Icon icon={faRotateRight} /> {checking ? t('launcher.mcp.checking') : t('launcher.mcp.checkNow')}
         </button>
         <span className="text-[11.5px] md:text-[10px] text-fgdim">
-          {t('launcher.mcp.statusHint')}
+          {t('launcher.mcp.statusHint', { engine: engineLabel(session?.engine) })}
         </span>
       </div>
     </div>

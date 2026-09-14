@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, codexModel } from '../lib/engines.js';
 import { restartSession, clearSessionConversation } from '../lib/store.js';
 import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
@@ -33,7 +33,7 @@ function prettyModel(m) {
   if (s.includes('sonnet')) return 'Sonnet';
   if (s.includes('haiku')) return 'Haiku';
   if (s.includes('fable')) return 'Fable';
-  return String(m);
+  return codexModel(String(m))?.label || String(m);
 }
 
 const DIR_OPTIONS = [

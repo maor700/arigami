@@ -21,6 +21,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 import { getPrefs, voiceLangFrom } from './prefs.js';
+import { normalizeEngine } from './engines.js';
 
 let state = {
   status: 'idle', // idle | recording | thinking | review | error
@@ -367,7 +368,7 @@ async function routeTranscript(transcript) {
   // and the active tab's readable content.
   const cur = st.sessions.find((s) => s.id === currentSelectedId);
   const tabs = tabsOf(cur);
-  const recentChat = renderChat(st.chats?.[currentSelectedId]);
+  const recentChat = renderChat(st.chats?.[currentSelectedId], normalizeEngine(cur?.engine));
   const activeTab = activeTabContent(cur);
   // Short-term voice-conversation memory so a follow-up answers the question
   // the router just asked. Expires after a quiet gap so old context doesn't linger.
@@ -438,7 +439,7 @@ function tabsOf(s) {
 // Compact, token-bounded render of a session's recent chat — the "terminal
 // content" Haiku reads to answer questions or decide. Noisy/huge kinds (thinking,
 // raw tool results) are summarized or skipped.
-function renderChat(events, max = 14, perCap = 320) {
+function renderChat(events, engine = 'claude', max = 14, perCap = 320) {
   if (!Array.isArray(events) || !events.length) return '';
   const clip = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, perCap);
   const lines = [];
@@ -446,8 +447,8 @@ function renderChat(events, max = 14, perCap = 320) {
     switch (e.kind) {
       case 'user': lines.push('you: ' + clip(e.text)); break;
       case 'assistant-text':
-      case 'assistant': if (e.text) lines.push('claude: ' + clip(e.text)); break;
-      case 'tool-use': lines.push(`claude → ran tool ${e.name || e.tool || e.toolName || ''}`.trim()); break;
+      case 'assistant': if (e.text) lines.push(`${engine}: ` + clip(e.text)); break;
+      case 'tool-use': lines.push(`${engine} → ran tool ${e.name || e.tool || e.toolName || ''}`.trim()); break;
       case 'result': lines.push('[turn complete]'); break;
       case 'error': lines.push('error: ' + clip(e.text)); break;
       case 'permission-request': lines.push(`[awaiting your permission: ${e.toolName || e.tool_name || ''}]`); break;

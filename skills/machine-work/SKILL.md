@@ -206,7 +206,7 @@ a human reviews the diff before it touches the live skill.
 Tools on this host do not fail when a capability is not configured — they *ask*:
 a tool result (MCP or REST) of the form
 `{ "needs_setup": "composio:gmail", "why": "read your inbox", "hint": "call request_setup" }`
-means the capability (`identity`, `claude`, `codex`, `git`, `repo:<name>`, `whatsapp`,
+means the capability (`identity`, `claude` / `codex` (the engine logins, each for its own engine's sessions), `git`, `repo:<name>`, `whatsapp`,
 `mcp:<service>`, `composio:<toolkit>`, `desktop`, `push`, `remote`, `telemetry`)
 is missing.
 
