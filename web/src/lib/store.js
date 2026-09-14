@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
 import { mergeChatEvents, prependChatEvents, appendChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
+import { setDefaultEngine } from './engines.js';
 import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
 import { sessionLabel } from '../components/ui.jsx';
@@ -426,6 +427,7 @@ export async function loadExtensions() {
 export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
+    setDefaultEngine(cfg?.defaultEngine);
     setState({ config: cfg || {} });
   } catch {
     setState({ config: null });

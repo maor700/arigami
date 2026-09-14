@@ -724,7 +724,7 @@ export function bundleRepoFromEntry(r: any): any {
 export function portableSettings(cfg: Record<string, any> | null): Record<string, unknown> {
   if (!cfg) return {};
   const out: Record<string, unknown> = {};
-  for (const k of ['defaultModel', 'voiceLang', 'sttModel', 'palette', 'devServerPorts', 'dispatcher', 'brain']) if (cfg[k] != null) out[k] = cfg[k];
+  for (const k of ['defaultModel', 'defaultEngine', 'voiceLang', 'sttModel', 'palette', 'devServerPorts', 'dispatcher', 'brain']) if (cfg[k] != null) out[k] = cfg[k];
   return out;
 }
 

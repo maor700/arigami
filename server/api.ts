@@ -10,7 +10,7 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
@@ -3310,6 +3310,12 @@ export async function handle(
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
+    }
+    // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.
+    if (p === '/__api/config/default-engine' && m === 'POST') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req)) as any;
+      return json(res, { defaultEngine: updateDefaultEngine(body?.engine) });
     }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');

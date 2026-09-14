@@ -39,6 +39,8 @@ export const strings = {
   'host.check': 'בדוק',
   // UPD1 — ה-claude CLI שמאחורי כל סשן
   'host.cli': 'Claude CLI',
+  'host.defaultEngine': 'מנוע ברירת מחדל',
+  'host.defaultEngine.hint': 'ה-CLI שעליו רץ סשן חדש כשלא נבחר מנוע — לא על ידך, לא על ידי הסוכן ולא על ידי סשן האב.',
   'host.cli.hint': 'הבינארי של claude שאיתו נפתחים סשנים. נבדק פעם ביום מול ערוץ הגרסאות ש-`claude update` עוקב אחריו; סשנים רצים שומרים את הגרסה שלהם, חדשים מקבלים את החדשה.',
   'host.cli.installed': 'מותקן {v}',
   'host.cli.updateAvailable': 'עדכון זמין → {v}',

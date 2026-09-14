@@ -11,11 +11,12 @@
 // `host` bus events (store.js → state.hostEvent).
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { useStore } from '../../lib/store.js';
+import { useStore, loadConfig } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
 import { toast, toastError } from '../../lib/toast.js';
-import { Section, Field, BTN, Toggle, hostPost, Advanced } from './shared.jsx';
+import { Section, Field, BTN, Toggle, Segmented, hostPost, Advanced } from './shared.jsx';
+import { ENGINE_IDS, engineLabel, normalizeEngine } from '../../lib/engines.js';
 import { relTime } from '../../lib/time.js';
 import Budgets from './Budgets.jsx';
 import Health from './Health.jsx';
@@ -120,6 +121,24 @@ function BackupOptions({ memory, setMemory, force, setForce, disabled }) {
         </label>
       </div>
     </Section>
+  );
+}
+
+// cfg.defaultEngine — POST /__api/config/default-engine, then the cockpit config reloads.
+function DefaultEngineField() {
+  const t = useT();
+  const { config } = useStore();
+  const [busy, setBusy] = useState(false);
+  const pick = async (engine) => {
+    setBusy(true);
+    try { await api.post('/config/default-engine', { engine }); await loadConfig(); } catch (e) { toastError(e?.message || String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Field label={t('host.defaultEngine')} hint={t('host.defaultEngine.hint')}>
+      <span className={busy ? 'pointer-events-none opacity-60' : ''}>
+        <Segmented value={normalizeEngine(config?.defaultEngine)} options={ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) }))} onChange={pick} />
+      </span>
+    </Field>
   );
 }
 
@@ -339,6 +358,7 @@ export default function Host({ section = '' }) {
             )}
           </span>
         </Field>
+        <DefaultEngineField />
         <Field label={t('host.restart')} hint={t('host.restart.hint')} wrap>
           <div className="flex flex-col items-end gap-1.5">
             <span className="flex items-center gap-2">

@@ -27,7 +27,7 @@ import {
   setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, coerceSessionOptions } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
 import { EngineToggle } from './EngineToggle.jsx';
 // Re-exported so the tests that always imported it from here keep working.
 export { EngineToggle };
@@ -508,7 +508,7 @@ export function SessionOptionsPicker({ options, onChange }) {
     api.get('/skills').then((r) => setSkills(r?.skills || [])).catch(() => {});
   }, []);
   const { models: claudeModels } = useModels();
-  const engine = options.engine || 'claude';
+  const engine = resolveEngine(options.engine);
   const modelOptions = modelOptionsFor(engine, claudeModels);
   const effortOptions = effortOptionsFor(engine, options.model);
   const set = (patch) => onChange({ ...options, ...patch });
