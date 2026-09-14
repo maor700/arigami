@@ -386,6 +386,24 @@ export function diffCounts(diff: string): { additions: number; deletions: number
   return { additions, deletions };
 }
 
+/** Pure: +/- counts of fileChange changes — an add/delete carries the raw content, an update a unified diff. */
+export function changeCounts(changes: any[]): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const c of changes) {
+    const kind = kindOf(c?.kind);
+    const lines = String(c?.diff || '').replace(/\n$/, '').split('\n').filter((_, i, a) => a.length > 1 || a[0] !== '').length;
+    if (kind === 'add') additions += lines;
+    else if (kind === 'delete') deletions += lines;
+    else {
+      const d = diffCounts(c?.diff || '');
+      additions += d.additions;
+      deletions += d.deletions;
+    }
+  }
+  return { additions, deletions };
+}
+
 /** Pure: the tool-use `input` (+ diff stats for a fileChange). */
 export function appItemInput(item: any): { input: unknown; extra: Record<string, unknown> } {
   switch (item?.type) {
@@ -399,7 +417,7 @@ export function appItemInput(item: any): { input: unknown; extra: Record<string,
       const patch = changes.map((c: any) => c?.diff || '').filter(Boolean).join('\n');
       return {
         input: { file_path: changes.map((c: any) => c?.path).filter(Boolean).join(', '), patch },
-        extra: patch ? diffCounts(patch) : {},
+        extra: patch ? changeCounts(changes) : {},
       };
     }
     case 'webSearch':

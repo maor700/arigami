@@ -280,6 +280,7 @@ function ToolDetail({ event }) {
   if (/write|create|notebook/i.test(name) && (input.content != null || input.new_source != null)) {
     return <CodeBlock sign="" text={input.content ?? input.new_source} />;
   }
+  if (typeof input.patch === 'string' && input.patch) return <CodeBlock sign="" text={input.patch} />; // codex fileChange
   if (input.command != null) return <CodeBlock sign="" text={input.command} />;
   return <CodeBlock sign="" text={prettyInput(input)} />;
 }
