@@ -22,7 +22,7 @@ import path from 'node:path';
 import { supervise, killTree } from './children.js';
 import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor } from '../accounts.js';
 import { claudeBin } from './claude-bin.js';
-import { cfg } from './config.js';
+import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
 
 function baseEnv(): NodeJS.ProcessEnv {
@@ -256,15 +256,14 @@ async function runCodexOnce(prompt: string, opts: OneShotOptions): Promise<strin
 
 // ---- engine routing ---------------------------------------------------------
 
-/** Engine for a host-level utility: cfg.defaultEngine, else the first engine with an account (claude first). */
+/** Engine for a host-level utility: the default engine when it has an account, else the other one that does. */
 export function hostEngine(): OneShotEngine {
-  const d = (cfg as any).defaultEngine;
-  if (d === 'claude' || d === 'codex') return d;
+  const d = defaultEngine();
+  const other: OneShotEngine = d === 'codex' ? 'claude' : 'codex';
   try {
-    if (hasCredentials('claude')) return 'claude';
-    if (hasCredentials('codex')) return 'codex';
+    if (!hasCredentials(d) && hasCredentials(other)) return other;
   } catch { /* accounts not loaded */ }
-  return 'claude';
+  return d;
 }
 
 /** Engine for a utility about a session: the session's own engine. */

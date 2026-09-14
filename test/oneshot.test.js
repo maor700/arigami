@@ -254,23 +254,34 @@ test('codex: a non-zero exit rejects with the error line', () => {
   expect(r.out[0].msg).toMatch(/codex exited 1: .*401/);
 }, 15000);
 
-test('hostEngine: nothing connected → claude, codex-only → codex, cfg.defaultEngine wins', () => {
-  const run = (seed) => {
+// Rule by design: the default engine when it has a connected account, else the engine that has one (claude first).
+test('hostEngine: default engine (from config.json) when it has an account, else the engine that has one', () => {
+  const run = ({ claude, codex, def }) => {
     const dir = tmp();
-    if (seed) seedCodexAccount(dir);
+    const accounts = [];
+    if (codex) {
+      seedCodexAccount(dir);
+      accounts.push(...JSON.parse(fs.readFileSync(path.join(dir, 'accounts.json'), 'utf8')).accounts);
+    }
+    if (claude) accounts.push({ id: 'acc_c', label: 'c', provider: 'claude', type: 'oauth-token', pool: true, addedAt: new Date().toISOString(), token: { v: 0, t: 'sk-ant-X' } });
+    fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ activeIds: { claude: 'acc_c', codex: 'cx_1' }, accounts }));
+    if (def) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ defaultEngine: def }));
     const r = runInChild(
       "const acc=await import('./server/accounts.js');acc.initAccounts();" +
-        "const {hostEngine,sessionEngine}=await import('./server/lib/oneshot.ts');const {cfg}=await import('./server/lib/config.ts');" +
-        "const a=hostEngine();cfg.defaultEngine='claude';const b=hostEngine();" +
-        "emit({a,b,s:sessionEngine({engine:'codex'}),t:sessionEngine({})});",
+        "const {hostEngine,sessionEngine}=await import('./server/lib/oneshot.ts');" +
+        "if(sessionEngine({engine:'codex'})!=='codex'||sessionEngine({})!=='claude')throw new Error('sessionEngine');emit(hostEngine());",
       { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'nocodex'), CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' }
     );
     if (!r.ok) throw new Error(r.error);
     return r.out[0];
   };
-  expect(run(false)).toEqual({ a: 'claude', b: 'claude', s: 'codex', t: 'claude' });
-  expect(run(true)).toEqual({ a: 'codex', b: 'claude', s: 'codex', t: 'claude' });
-}, 15000);
+  expect(run({})).toBe('claude'); // nothing connected, no default
+  expect(run({ def: 'codex' })).toBe('codex'); // nothing connected: the default stands
+  expect(run({ codex: true })).toBe('codex'); // codex-only host, no default → the engine with an account
+  expect(run({ claude: true, codex: true })).toBe('claude'); // both, no default → claude first
+  expect(run({ claude: true, codex: true, def: 'codex' })).toBe('codex'); // config.json default wins
+  expect(run({ claude: true, def: 'codex' })).toBe('claude'); // default has no account → the one that does
+}, 30000);
 
 test('P4-5 voice router: anthropic provider with no Claude creds → Groq when keyed, else a codex one-shot', () => {
   const run = (groq) => {
