@@ -3256,7 +3256,8 @@ export async function handle(
     if (p === '/__api/host/codex' && m === 'GET') {
       const cx = await import('./lib/codex-update.js');
       const st = (await cx.codexUpdater()).status();
-      return json(res, st.installed ? st : { ...st, installed: await cx.codexInstalled() });
+      const sandbox = (await import('./lib/codex-sandbox.js')).readCodexSandbox(); // P4-6
+      return json(res, { ...(st.installed ? st : { ...st, installed: await cx.codexInstalled() }), sandbox });
     }
     // The self-update watcher's view: what it last saw upstream, which channel
     // this install updates through, and whether it is allowed to apply it

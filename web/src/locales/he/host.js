@@ -42,6 +42,8 @@ export const strings = {
   'host.codexCli': 'Codex CLI',
   'host.codexCli.hint': 'הבינארי של codex שאיתו נפתחים סשני Codex. ״עדכן עכשיו״ מריץ `codex update`; לא מתעדכן אוטומטית.',
   'host.codexCli.missing': 'לא מותקן',
+  'host.codexSandbox.available': 'Codex sandbox: זמין',
+  'host.codexSandbox.unavailable': 'Codex sandbox: לא זמין במכונה הזו ({detail})',
   'host.codexCli.updatedToast': 'Codex CLI עודכן {from} → {to} — סשנים חדשים ישתמשו בו',
   'host.codexCli.failedToast': 'עדכון Codex CLI נכשל: {error}',
   'host.defaultEngine': 'מנוע ברירת מחדל',

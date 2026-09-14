@@ -65,6 +65,10 @@ Codex's built-in bubblewrap **does not come up on this machine** —
 `--dangerously-bypass-approvals-and-sandbox`, not as an option but forced in code.
 The only isolation that remains is the session's worktree.
 
+Boot probe (`server/lib/codex-sandbox.ts`): `codex sandbox -- /bin/true`, cached in `$ARIGAMI_DIR/codex-sandbox.json`,
+shown under Settings › Host › Codex CLI ("available" / "unavailable on this machine (bwrap: …)"). The spawn flags do not
+follow it yet — a pass only logs that a sandboxed mode is possible (P2-3/P3-1).
+
 Claude has separation that doesn't exist here: permission modes, the PreToolUse hook, `--disallowedTools`.
 A codex session is, permission-wise, the equivalent of `bypassPermissions` — always.
 
