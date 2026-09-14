@@ -67,15 +67,14 @@ A codex session is, permission-wise, the equivalent of `bypassPermissions` — a
 `permissions.kind === 'none'`: no approval card in the chat, and no action ever stops
 to ask. Real approval exists only in Codex's `app-server` track — **which is not implemented here**.
 
-### 3. Agents with an allowlist are refused
+### 3. Agents with an allowlist run — the policy hook is enforced
 
-`codexPrepare()` **throws** if the session's agent holds a tool/domain allowlist:
-
-> `agent "<slug>" has a tool/domain allowlist, and the codex engine cannot enforce it`
-
-This is a deliberate decision. A3 enforcement is built on the PreToolUse hook, which codex doesn't have,
-and running such an agent anyway would mean the persona promises enforcement that doesn't exist.
-A loud failure at spawn is preferable. Run that kind of agent on claude instead.
+Codex reads Claude Code's hooks format from `$CODEX_HOME/hooks.json` (same stdin shape; `tool_name`
+is `Bash` for its shell, `mcp__<server>__<tool>` for MCP; exit 2 blocks). `codexPrepare()` writes the
+`mcp/policy-hook.js` hook there for a restrictive agent and `codexBuildSpawn()` adds
+`--dangerously-bypass-hook-trust` — without it codex skips hooks silently. No `--disallowedTools`:
+restricted built-ins are hook-denied, not hidden; extension servers the allowlist never touches are
+left out of `config.toml`. Codex's snake_case built-ins are aliased onto claude names in `agent-policy.ts`.
 
 ### 4. Remote MCP grants are skipped
 

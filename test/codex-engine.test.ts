@@ -511,23 +511,70 @@ test('prepare refuses to spawn without a codex login, instead of failing with a 
   expect(r.out[0].msg).toContain('codex login');
 });
 
-test('prepare refuses an agent whose allowlist codex cannot enforce', () => {
+test('ENGINE/A3: an agent with an allowlist runs — its policy hook is written to $CODEX_HOME/hooks.json and the spawn trusts it', () => {
   const r = runInChild(
     "const st=await import('./server/state.ts');" +
       "const a=await import('./server/agents.ts');" +
       "const cx=await import('./server/codex.ts');" +
-      "a.createAgent({name:'Bot',slug:'bot',tools:['gmail','open_tab']});" +
-      "const s=st.createSession({title:'codex',engine:'codex',metadata:{agent:'bot'}});" +
-      'try{cx.codexPrepare(st.getSession(s.id),{resume:false});emit({threw:false});}' +
-      'catch(e){emit({threw:true,msg:e.message});}',
+      "const fs=await import('node:fs');" +
+      "const path=await import('node:path');" +
+      "a.createAgent({name:'Bot',slug:'bot',engine:'codex',model:'gpt-6-astra',tools:['gmail','open_tab']});" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp',model:'gpt-6-astra',metadata:{agent:'bot'}});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const home=cx.codexHomeFor(s.id);' +
+      'const hooks=JSON.parse(fs.readFileSync(path.join(home,"hooks.json"),"utf8"));' +
+      'const b=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      "a.updateAgent('bot',{tools:[]});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const b2=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      'emit({hooks,args:b.args,gone:!fs.existsSync(path.join(home,"hooks.json")),args2:b2.args});',
     env()
   );
-  expect(r.ok).toBe(true);
-  // A3's enforcement is a PreToolUse hook plus --disallowedTools; codex has
-  // neither, and the agent's own persona tells it the host enforces. Failing
-  // loudly at spawn beats running with a policy that silently does nothing.
-  expect(r.out[0].threw).toBe(true);
-  expect(r.out[0].msg).toContain('allowlist');
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  // Claude Code's hooks shape — codex reads exactly this (measured live).
+  const hook = o.hooks.hooks.PreToolUse[0].hooks[0];
+  expect(hook.type).toBe('command');
+  expect(hook.command).toContain('policy-hook.js');
+  // without the flag codex skips the hooks silently
+  expect(o.args).toContain('--dangerously-bypass-hook-trust');
+  expect(o.args).toContain('-m');
+  expect(o.args[o.args.indexOf('-m') + 1]).toBe('gpt-6-astra');
+  expect(o.gone).toBe(true);
+  expect(o.args2).not.toContain('--dangerously-bypass-hook-trust');
+});
+
+test('the hook-trust notice codex emits for OUR flag is not surfaced as an error line', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cl=await import('./server/claude.js');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const s=st.createSession({title:'codex',engine:'codex'});" +
+      "cx.codexHandleEvent(s.id,{type:'thread.started',thread_id:'t1'});" +
+      "cx.codexHandleEvent(s.id,{type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'});" +
+      "cx.codexHandleEvent(s.id,{type:'error',message:'something actually wrong'});" +
+      'emit({errors:cl.getChat(s.id,0).filter(e=>e.kind===\'error\').map(e=>e.text)});',
+    env()
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].errors).toEqual(['something actually wrong']);
+});
+
+test('a session with no agent policy gets no hooks.json and no hook-trust flag', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const fs=await import('node:fs');" +
+      "const path=await import('node:path');" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const b=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      'emit({hasHooks:fs.existsSync(path.join(cx.codexHomeFor(s.id),"hooks.json")),args:b.args});',
+    env()
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].hasHooks).toBe(false);
+  expect(r.out[0].args).not.toContain('--dangerously-bypass-hook-trust');
 });
 
 // ---- writeMessage ----------------------------------------------------------

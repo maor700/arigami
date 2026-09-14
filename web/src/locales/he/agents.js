@@ -25,6 +25,7 @@ export const strings = {
   'agent.card.slug': 'מזהה (slug)',
   'agent.card.emoji': 'אימוג׳י',
   'agent.card.color': 'צבע',
+  'agent.card.engine': 'מנוע',
   'agent.card.model': 'מודל',
   'agent.card.modelDefault': 'ברירת מחדל',
   'agent.card.budget': 'תקציב (טוקנים / יום)',

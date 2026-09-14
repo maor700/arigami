@@ -1171,6 +1171,7 @@ function ensureHomeSession(a: agents.AgentView): { session: NonNullable<ReturnTy
       cwd: (cfg as any).reposDir || cfg.defaultCwd,
       metadata: { agent: a.slug, agentHome: true },
       model: a.model || null,
+      engine: agents.engineForSpawn(null, a) || null,
       color: a.color,
     });
     created = true;
@@ -1215,8 +1216,8 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
       permissionMode = wired.permissionMode;
       metadata = wired.metadata;
     }
-    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
-    const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, color: o.color });
+    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
+    const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, engine: o.engine, color: o.color });
     spawnSafe(s.id);
     try {
       claude.sendMessage(s.id, isController ? `[Task from your project controller (${from.title || fromId})]\n\n${text}` : text);
@@ -1994,13 +1995,13 @@ export function startTicketSession(opts: {
 }
 
 /**
- * A1/A2: the ONE place a session is born from an agent — inherit its model
- * (unless overridden), its rail color, default the title to its name and stamp
- * metadata.agent (claude.js keys the persona + agent memory + ARIGAMI_AGENT
- * off that). Used by POST /__api/sessions and by cron fires (cronjob({agent})).
- * Throws on an unknown agent — never silently ignored.
+ * A1/A2: the ONE place a session is born from an agent — inherit its engine
+ * (agents.engineForSpawn) and model unless overridden, its rail color, default
+ * the title to its name and stamp metadata.agent. Used by POST /__api/sessions,
+ * cron fires, the agent home, @mention / `/as` and PM children. Throws on an
+ * unknown agent.
  */
-export function applyAgentToSession<T extends { title?: string; model?: string; metadata?: Record<string, unknown> }>(
+export function applyAgentToSession<T extends { title?: string; model?: string; engine?: string | null; metadata?: Record<string, unknown> }>(
   agentSlug: unknown,
   opts: T
 ): T & { color?: string } {
@@ -2020,6 +2021,7 @@ export function applyAgentToSession<T extends { title?: string; model?: string; 
   const { agentHome: _home, ...meta } = (opts.metadata || {}) as Record<string, unknown>;
   return {
     ...opts,
+    engine: agents.engineForSpawn(opts.engine, agent),
     model: opts.model || agent.model || undefined,
     title: opts.title || agent.name,
     metadata: { ...meta, agent: agent.slug },
@@ -2049,7 +2051,7 @@ export function startEmptySession(opts: {
     permissionMode: o.permissionMode || 'bypassPermissions',
     model: o.model,
     effort: o.effort,
-    engine: opts.engine,
+    engine: o.engine,
     metadata: o.metadata || {},
     color: o.color,
   });
@@ -4813,9 +4815,10 @@ export async function handle(
       // first turn in claude.js. An unknown agent is refused, never ignored.
       let agentColor: string | undefined;
       try {
-        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, metadata: body.metadata });
+        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
         body.title = o.title;
         body.model = o.model;
+        body.engine = o.engine;
         body.metadata = o.metadata;
         agentColor = o.color;
       } catch (e) {

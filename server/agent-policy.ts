@@ -126,6 +126,18 @@ export const shortHostName = (name: string): string => (name.startsWith(HOST_PRE
 // Claude Code built-ins are PascalCase (Bash, Read, WebFetch, Agent…); host tools
 // are snake_case (open_tab, create_session) and external ones are mcp__… .
 const isBuiltin = (name: string): boolean => /^[A-Z]/.test(name);
+
+/** Codex's snake_case built-ins → the claude built-in with the same power (else they'd read as unknown host tools and be denied). */
+export const CODEX_BUILTIN_ALIASES: Record<string, string> = {
+  view_image: 'Read',
+  update_plan: 'TodoWrite',
+  apply_patch: 'Edit',
+  web_search: 'WebSearch',
+  shell: 'Bash',
+  local_shell: 'Bash',
+  exec_command: 'Bash',
+};
+export const canonicalToolName = (name: string): string => CODEX_BUILTIN_ALIASES[name] || name;
 const serverOf = (name: string): string | null => {
   if (!name.startsWith('mcp__')) return null;
   const rest = name.slice(5);
@@ -177,7 +189,7 @@ function matchTool(pattern: string, name: string): boolean {
 /** Tool allowed under the policy? Host tools may be given long or short; built-ins by name. */
 export function toolAllowed(p: Policy | null, toolName: string): boolean {
   if (!p || p.tools === null) return true;
-  const name = shortHostName(String(toolName || ''));
+  const name = canonicalToolName(shortHostName(String(toolName || '')));
   if (!name) return true;
   if (CORE_TOOLS.includes(name)) return true;
   if (isBuiltin(name) && !RESTRICTED_BUILTINS.includes(name)) return true;

@@ -22,8 +22,9 @@ the agent surface instead of a rail row — see the last section.)
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
 
 ```
-agent.json   { slug, name, emoji, color, model?, skills: [names], tools?, domains?,
+agent.json   { slug, name, emoji, color, engine?, model?, skills: [names], tools?, domains?,
                budget?: {tokensPerDay}, homeSessionId?, createdAt, updatedAt }
+             engine: 'claude' | 'codex' (absent = claude); `model` belongs to that engine's catalog
 persona.md   ≤ ~20 lines "who you are + limits" — injected into the first turn of every
              session born from the agent (a <system-reminder> block, like the memory snapshot)
 memory/      MEMORY.md + journal/ — the agent's memory namespace (FTS scope agent:<slug>)
@@ -59,15 +60,25 @@ virtual path `agents/<slug>/…`).
 ## Server
 
 - `server/agents.ts` — CRUD (`listAgents/getAgent/createAgent/updateAgent/deleteAgent`),
-  validation (slug, `#rrggbb`, model, persona ≤ 4000 chars, skills must exist in the shipped
-  pack or `$ARIGAMI_DIR/skills`), `personaBlock(slug)`, `agents-updated` WS broadcast.
+  validation (slug, `#rrggbb`, engine ∈ {claude, codex, null}, model, persona ≤ 4000 chars,
+  skills must exist in the shipped pack or `$ARIGAMI_DIR/skills`), `personaBlock(slug)`,
+  `agents-updated` WS broadcast, `engineForSpawn(explicit, agent)`.
 - `server/claude.js` — `spawnProc` records `p.agent`; the first turn gets
   `URL_GUIDANCE + identity + personaBlock + memory snapshot (USER.md + agent MEMORY.md)`;
   env gets `ARIGAMI_AGENT`.
-- `POST /__api/sessions {agent}` — 404 on an unknown slug; `model` defaults to the agent's
-  (an explicit `model` wins); the session takes the agent's rail color; `title` defaults to the
-  agent name; `metadata.agent` is stamped. The slim sessions list already carries `metadata`,
-  so the Rail can badge rows.
+- `POST /__api/sessions {agent}` — 404 on an unknown slug; `engine` and `model` default to the
+  agent's (an explicit `engine` / `model` wins); the session takes the agent's rail color; `title`
+  defaults to the agent name; `metadata.agent` is stamped. The slim sessions list already carries
+  `metadata`, so the Rail can badge rows.
+
+### Engine
+
+- `engine?: 'claude' | 'codex'` on the record (REST, `create_agent`/`update_agent`, the agent page's
+  Advanced settings and the AgentCard draft — the model picker there lists that engine's catalog).
+- Resolution (`agents.engineForSpawn`, inside `applyAgentToSession`, used by every spawn-from-agent
+  path): explicit caller value → agent's engine → host default; `''` counts as not given.
+- A3 on Codex: the same PreToolUse hook, written to `$CODEX_HOME/hooks.json` and run with
+  `--dangerously-bypass-hook-trust`; codex built-ins are aliased onto claude names (`view_image` → Read). See `docs/ENGINES.md` §3.
 
 ### REST
 
@@ -217,7 +228,7 @@ the first `openChrome`, logins synced back) and only changes **the seed**:
   a job created from an agent's session **defaults to that agent**, `agent: ''` = none. The
   runaway-loop guard is unchanged.
 - The fire path now shares the `create_session({agent})` code: `api.applyAgentToSession()` is
-  the one helper (model / color / title / `metadata.agent`), used by `POST /__api/sessions` and
+  the one helper (engine / model / color / title / `metadata.agent`), used by `POST /__api/sessions` and
   by `startEmptySession({agent})` that `fireCron` calls — so a cron run gets the persona, the
   agent memory, the agent's connections and browser profile.
 - `Listener.agent` — stamped by `state.addListener` from the arming session's `metadata.agent`.
