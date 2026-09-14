@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { broadcast, emitLocal } from './bus.js';
 import { ladderBadge } from './supervisor.js'; // pure — no cycle
-import { cfg, ensureConfigFile } from './lib/config.js';
+import { cfg, ensureConfigFile, defaultEngine } from './lib/config.js';
 import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
 import { STATE_SCHEMA } from './lib/state-schemas.js';
 import { pickSessionAccount } from './accounts.js';
@@ -528,8 +528,9 @@ export function createSession({
   model?: string | null;
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
-  engine?: string | null; // 'claude' (default) | 'codex' — see Session.engine
+  engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
 } = {}): Session {
+  const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
   funnel.firstTime('session.first'); // K5 funnel — once per instance
   // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
   const master = metadata?.master;
@@ -565,7 +566,7 @@ export function createSession({
     tabs: [firstTab],
     activeTabId: firstTab.id,
     // Recorded as-asked, even if unimplemented — pickEngine() is what refuses to spawn it.
-    engine: engine === 'codex' ? 'codex' : 'claude',
+    engine: eng,
     claude: {
       sessionId: null,
       state: 'idle',
@@ -577,11 +578,11 @@ export function createSession({
       // rate-limited/quarantined, so a new session doesn't start dead-on-arrival.
       // Per PROVIDER: a codex session is pinned to a codex login, never to a
       // Claude token it could not use (server/lib/providers.ts).
-      accountId: pickSessionAccount(providerForEngine(engine)) || null,
+      accountId: pickSessionAccount(providerForEngine(eng)) || null,
       // Seed the session's model from the caller's pick, falling back to the
       // configured default (cfg.defaultModel); null means "no --model flag",
       // so the CLI picks. The per-session dropdown can still override later.
-      modelChoice: model || cfg.defaultModel || null,
+      modelChoice: model || (eng === 'claude' ? cfg.defaultModel : null) || null,
       effort: effort || null,
     },
     bg: [],

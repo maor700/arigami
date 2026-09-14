@@ -43,7 +43,7 @@ export interface LinearFilterTrigger {
   skill?: string; // skill dir name to run (e.g. 'onboarding'); '' = plain ticket prompt
   model?: string; // engine model value; '' = engine default
   effort?: string; // reasoning-effort value; '' = engine default
-  engine?: string; // 'claude' (default) | 'codex' — which CLI its sessions run on
+  engine?: string; // 'claude' | 'codex' | '' (= cfg.defaultEngine) — which CLI its sessions run on
   filters: Record<string, unknown>; // FilterBar facet shape (assignee/state/labels/labelOp/…)
   seen: string[]; // high-water mark; dismissed items stay here
   primed: boolean; // false until the first successful fetch seeds `seen`
@@ -83,6 +83,7 @@ export interface CronTrigger {
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
   agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's routine
+  engine?: string; // 'claude' | 'codex' | '' (= the agent's engine, else cfg.defaultEngine) — isolated runs only
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
   lastRun: number | null; // ms epoch of the last fire attempt
@@ -511,6 +512,11 @@ export function setQueueSettings(patch: Partial<QueueSettings>): QueueSettings {
 }
 
 // ---- trigger CRUD ---------------------------------------------------------
+/** 'claude'/'codex' → itself; '' → '' (host default); anything else → undefined. */
+function triggerEngine(v: unknown): string | undefined {
+  return v === 'claude' || v === 'codex' || v === '' ? v : undefined;
+}
+
 export async function createTrigger(input: {
   name?: string;
   filters?: Record<string, unknown>;
@@ -531,9 +537,7 @@ export async function createTrigger(input: {
     skill: typeof input.skill === 'string' ? input.skill : '',
     model: typeof input.model === 'string' ? input.model : '',
     effort: typeof input.effort === 'string' ? input.effort : '',
-    // '' = claude, exactly like an absent Session.engine — a trigger armed
-    // before engines existed keeps firing Claude sessions.
-    engine: input.engine === 'codex' ? 'codex' : '',
+    engine: triggerEngine(input.engine) ?? '',
     filters: input.filters && typeof input.filters === 'object' ? input.filters : {},
     seen: [],
     primed: false,
@@ -574,17 +578,14 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
   if (typeof patch.name === 'string' && patch.name.trim()) t.name = patch.name.trim();
   if (typeof patch.enabled === 'boolean') t.enabled = patch.enabled;
   if (typeof patch.autonomous === 'boolean') t.autonomous = patch.autonomous;
+  // Create falls back to the default on junk; PATCH ignores it so a typo never moves a live trigger to another CLI.
+  const pe = triggerEngine(patch.engine);
+  if (pe !== undefined) t.engine = pe;
   if (t.type === 'linear-filter') {
     if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
     if (typeof patch.skill === 'string') t.skill = patch.skill;
     if (typeof patch.model === 'string') t.model = patch.model;
     if (typeof patch.effort === 'string') t.effort = patch.effort;
-    // Unlike create (where an unrecognized value just falls back to the
-    // default), an unrecognized PATCH value is ignored: silently moving a live
-    // codex trigger back onto claude because of a typo is the quiet wrong-CLI
-    // failure this whole seam exists to avoid. 'claude'/'' set it explicitly.
-    if (patch.engine === 'codex') t.engine = 'codex';
-    else if (patch.engine === 'claude' || patch.engine === '') t.engine = '';
     if (patch.filters && typeof patch.filters === 'object') {
       t.filters = patch.filters as Record<string, unknown>;
       // Filter changed → re-prime so old matches under the new filter don't all fire.
@@ -720,6 +721,7 @@ async function fireCron(
         prompt,
         permissionMode: t.autonomous ? 'bypassPermissions' : undefined,
         agent: t.agent || null, // A2: same path as create_session({agent}) — persona, memory, model, color
+        engine: t.engine || undefined,
         metadata: {
           fromQueue: true,
           fromCronTrigger: t.id, // guard: sessions spawned by cron can't create more cron jobs
@@ -776,6 +778,7 @@ export async function createCronTrigger(input: {
   autonomous?: boolean;
   bundleKey?: string;
   agent?: string | null;
+  engine?: string;
   createdBySessionId?: string;
 }): Promise<CronTrigger> {
   // Guard against runaway scheduling loops (lesson from OpenClaw #21775 /
@@ -831,6 +834,7 @@ export async function createCronTrigger(input: {
     autonomous: !!input.autonomous,
     ...(input.bundleKey ? { bundleKey: String(input.bundleKey) } : {}),
     ...(agent ? { agent } : {}),
+    engine: triggerEngine(input.engine) ?? '',
     createdAt,
     createdBySessionId: input.createdBySessionId || null,
     lastRun: null,

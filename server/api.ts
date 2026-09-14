@@ -3872,6 +3872,7 @@ export async function handle(
             deliver: body.deliver,
             autonomous: body.autonomous,
             agent: body.agent,
+            engine: body.engine,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);

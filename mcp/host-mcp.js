@@ -224,6 +224,7 @@ const TOOLS = [
       deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
       deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
       autonomous: { type: 'boolean', description: 'create: isolated runs only — bypassPermissions + no-questions directive' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'create: CLI the isolated runs use; omit for the agent\'s engine, else the host default' },
       agent: { type: 'string', description: 'create: agent slug the isolated runs are born from (persona, memory, connections, browser profile — same as create_session({agent})). Defaults to YOUR agent when you run as one; pass "" for a plain run. Unknown slug → error.' },
       ...SID_PROP,
     }, ['action']),
@@ -242,6 +243,7 @@ const TOOLS = [
           deliver: { push: a.deliver_push, whatsapp: a.deliver_whatsapp, master: a.deliver_master },
           autonomous: a.autonomous,
           ...(a.agent !== undefined ? { agent: a.agent } : {}),
+          ...(a.engine ? { engine: a.engine } : {}),
           createdBySessionId: sid(a),
         });
       }
@@ -251,7 +253,7 @@ const TOOLS = [
           .filter((t) => t.type === 'cron')
           .map((t) => ({
             id: t.id, name: t.name, enabled: t.enabled, schedule: t.schedule, prompt: t.prompt,
-            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null,
+            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null, engine: t.engine || null,
             lastRun: t.lastRun, nextRunAt: t.nextRunAt, recentRuns: (t.runs || []).slice(-5),
           }));
       }
