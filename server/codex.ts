@@ -59,6 +59,7 @@
 //     more. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { HOME } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
@@ -93,6 +94,17 @@ import {
 /** The codex binary. Overridable for tests / a non-PATH install. */
 function codexBin(): string {
   return process.env.ARIGAMI_CODEX_BIN || 'codex';
+}
+
+let versionCache: { at: number; value: string | null } | null = null;
+/** `codex --version` → "0.153.4", cached per host process (a failed probe retries after a minute). */
+export async function codexVersion(): Promise<string | null> {
+  if (versionCache && (versionCache.value || Date.now() - versionCache.at < 60_000)) return versionCache.value;
+  const value = await new Promise<string | null>((resolve) =>
+    execFile(codexBin(), ['--version'], { timeout: 5000 }, (err, stdout) => resolve(err ? null : String(stdout).match(/\d+\.\d+\.\d+\S*/)?.[0] || null))
+  );
+  versionCache = { at: Date.now(), value };
+  return value;
 }
 
 /**

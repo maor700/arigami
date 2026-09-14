@@ -179,3 +179,24 @@ test('restart/clear dialogs and the MCP reconnect hint name the engine in both l
   }
   prefs.setPrefs({ language: 'en' });
 });
+
+/* ---------- /info on codex + GPT model names (P4-2, P4-3) ----------------- */
+
+test('/info on a codex session that ran is not "not started" and drops claude-only rows; GPT ids get the catalog name', async () => {
+  const ran = { ...SESSIONS[1], claude: { state: 'idle', sessionId: 'thread-1', modelChoice: 'gpt-5.6-terra' } };
+  const info = render(h(SlashCommands.CapabilitiesPanel, { capabilities: {}, session: ran, initialTab: 'info', onClose() {} }));
+  const i18n = await import(web('lib/i18n.js'));
+  expect(info).not.toContain(i18n.t('dialogs.claudeCodeNotStarted', { engine: 'Codex' }));
+  const dt = (k) => `<dt class="text-fgdim">${i18n.t(k)}</dt>`;
+  expect(info).not.toContain(dt('dialogs.infoOrganization'));
+  expect(info).not.toContain(dt('dialogs.infoCommands'));
+  expect(info).toContain('bypassPermissions');
+  expect(info).toContain('gpt-5.6-terra');
+  const claudeInfo = render(h(SlashCommands.CapabilitiesPanel, { capabilities: {}, session: SESSIONS[0], initialTab: 'info', onClose() {} }));
+  expect(claudeInfo).toContain(dt('dialogs.infoOrganization'));
+
+  const ladder = await import(web('components/LadderBadge.jsx'));
+  expect(ladder.configuredName('gpt-5.6-terra')).toBe('GPT-5.6-Terra');
+  expect(ladder.runningName('gpt-5.6-luna', i18n.t)).toBe('GPT-5.6-Luna');
+  expect(ladder.configuredName('claude-opus-4-8')).toBe('Opus');
+});

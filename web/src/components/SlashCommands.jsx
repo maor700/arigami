@@ -14,6 +14,7 @@ import { engineLabel, normalizeEngine } from '../lib/engines.js';
 import { providerForEngine, providerOf, windowLabel, snapshotUsage } from '../lib/providers.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
+import { useModels } from '../lib/models.js';
 import { AgentAvatar } from './AgentCard.jsx';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -252,16 +253,22 @@ function accountUsageOf(a, accountUsage) {
   return snap?.available ? snap : null;
 }
 
+/** The accounts of the session's engine's provider, and the one the session runs on. */
+function sessionAccounts(session, accounts) {
+  const provider = providerForEngine(session?.engine);
+  const list = (accounts?.accounts || []).filter((a) => providerOf(a) === provider);
+  const activeId = accounts?.activeIds?.[provider] ?? (provider === 'claude' ? accounts?.activeId : null);
+  const sessAccId = session?.claude?.accountId || activeId;
+  return { list, sessAccId, account: list.find((a) => a.id === sessAccId) || null };
+}
+
 // `/usage` + `/status` tab: which account this session runs on, plus every
 // account's session/week meters. Reads the accounts store directly.
 function AccountsUsageTab({ session, accounts, accountUsage }) {
   const t = useT();
   // Only the accounts of the provider this session's engine consumes — a
   // codex session's /status must not list Claude logins as candidates.
-  const provider = providerForEngine(session?.engine);
-  const list = (accounts?.accounts || []).filter((a) => providerOf(a) === provider);
-  const activeId = accounts?.activeIds?.[provider] ?? (provider === 'claude' ? accounts?.activeId : null);
-  const sessAccId = session?.claude?.accountId || activeId;
+  const { list, sessAccId } = sessionAccounts(session, accounts);
   const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
   if (!list.length) return <Pending engine={engineLabel(session?.engine)} />;
   return (
@@ -412,7 +419,11 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   }, [onClose]);
   // Normalize agents (strings from init, objects from initialize) to {name,…}.
   const agents = (caps.agents || []).map((a) => (typeof a === 'string' ? { name: a } : a));
-  const started = !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
+  const codex = normalizeEngine(session?.engine) === 'codex';
+  const { codexVersion } = useModels();
+  // P4-2: codex has no init report — a thread id means it ran; account/plan come from the accounts store.
+  const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
+  const codexAccount = codex ? sessionAccounts(session, accounts).account : null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6"
@@ -504,18 +515,28 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
 
           {tab === 'info' && (
             <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-[12px]">
-              {[
-                [t('dialogs.infoModel'), caps.model],
-                [t('dialogs.infoVersion'), caps.version],
-                [t('dialogs.infoPermissionMode'), caps.permissionMode],
-                [t('dialogs.infoAccount'), caps.account?.email],
-                [t('dialogs.infoOrganization'), caps.account?.organization],
-                [t('dialogs.infoPlan'), caps.account?.subscriptionType],
-                [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
-                [t('dialogs.infoTools'), caps.tools?.length],
-                [t('dialogs.infoSkills'), caps.skills?.length],
-                [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
-              ].map(([k, v]) => (
+              {(codex
+                ? [
+                    [t('dialogs.infoModel'), caps.model || session?.claude?.modelChoice],
+                    [t('dialogs.infoVersion'), codexVersion],
+                    [t('dialogs.infoPermissionMode'), 'bypassPermissions'],
+                    [t('dialogs.infoAccount'), codexAccount?.email || codexAccount?.label],
+                    [t('dialogs.infoPlan'), codexAccount?.plan],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                  ]
+                : [
+                    [t('dialogs.infoModel'), caps.model],
+                    [t('dialogs.infoVersion'), caps.version],
+                    [t('dialogs.infoPermissionMode'), caps.permissionMode],
+                    [t('dialogs.infoAccount'), caps.account?.email],
+                    [t('dialogs.infoOrganization'), caps.account?.organization],
+                    [t('dialogs.infoPlan'), caps.account?.subscriptionType],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                    [t('dialogs.infoTools'), caps.tools?.length],
+                    [t('dialogs.infoSkills'), caps.skills?.length],
+                    [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
+                  ]
+              ).map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-fgdim">{k}</dt>
                   <dd className="font-mono text-fg">{v ?? '—'}</dd>

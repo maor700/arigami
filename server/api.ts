@@ -4250,7 +4250,7 @@ export async function handle(
       const { getModels } = await import('./models.js');
       const list = await (getModels as any)();
       // Codex's catalog comes from the engine at runtime (app-server model/list, cached 5 min per login).
-      const { refreshCodexModels, codexModels } = await import('./codex.js');
+      const { refreshCodexModels, codexModels, codexVersion } = await import('./codex.js');
       const codex = await Promise.race([refreshCodexModels(), new Promise<ReturnType<typeof codexModels>>((r) => setTimeout(() => r(codexModels()), 3000))]);
       // UPD1: the picker is where new models are discovered — tell it when a
       // newer CLI (= newer list) is one click away. Cheap: the cached status.
@@ -4259,13 +4259,13 @@ export async function handle(
         const s = (await (await import('./lib/claude-update.js')).claudeUpdater()).status();
         cliUpdate = { installed: s.installed, latest: s.latest, updateAvailable: s.updateAvailable, checkedAt: s.checkedAt };
       } catch {}
-      return json(res, { ...list, codex, cliUpdate });
+      return json(res, { ...list, codex, codexVersion: await codexVersion(), cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels } = await import('./models.js');
-      const { refreshCodexModels } = await import('./codex.js');
+      const { refreshCodexModels, codexVersion } = await import('./codex.js');
       const [list, codex] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true })]);
-      return json(res, { ...list, codex });
+      return json(res, { ...list, codex, codexVersion: await codexVersion() });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).
