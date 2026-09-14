@@ -4,7 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { api, setUnauthorizedHandler } from './api.js';
 import { mergeChatEvents, prependChatEvents, appendChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
-import { setDefaultEngine, engineLabel } from './engines.js';
+import { setDefaultEngine, setCodexTransport, engineLabel } from './engines.js';
 import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
 import { sessionLabel } from '../components/ui.jsx';
@@ -428,6 +428,7 @@ export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
     setDefaultEngine(cfg?.defaultEngine);
+    setCodexTransport(cfg?.codexTransport);
     setState({ config: cfg || {} });
   } catch {
     setState({ config: null });

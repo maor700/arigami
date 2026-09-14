@@ -396,6 +396,9 @@ export default function ChangesTab({ session, active }) {
   }, [session.id, modeQ]);
 
   useEffect(() => { if (active) load(); }, [active, load]);
+  // P3-3: codex app-server's turn/diff/updated — reload while the tab is open.
+  const turnDiffAt = session.claude?.turnDiff?.at;
+  useEffect(() => { if (active && turnDiffAt) load(); }, [turnDiffAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const files = Array.isArray(data?.files) ? data.files : [];
 

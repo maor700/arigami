@@ -18,6 +18,7 @@ import { killAll, kickAutoPlayAll } from './claude.js';
 // edge would be a cycle. Without this line pickEngine() throws "engine not
 // implemented: codex" for every session that asked for it.
 import './codex.js';
+import './codex-app.js'; // re-registers 'codex' on app-server unless cfg.codexTransport is 'exec'
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';

@@ -135,6 +135,18 @@ export async function getUsage(accountId, force = false) {
 /** A reading worth persisting: a live one, or a real (non-transient) failure. */
 const persistable = (d) => d.available ? !d.stale : !TRANSIENT.has(d.reason);
 
+/** P3-1: a usage snapshot pushed by a live codex app-server (account/rateLimits/updated) — cached and broadcast like a poll. */
+export function noteLiveUsage(accountId, data) {
+  if (!accountId || !data?.available) return;
+  const key = (d) => JSON.stringify([d?.session, d?.week, d?.limitReached]);
+  const changed = key(caches.get(accountId)?.data) !== key(data);
+  caches.set(accountId, { data: { ...data, live: true }, at: Date.now() });
+  if (!changed) return;
+  if (persistable(data)) try { patchAccount(accountId, { lastUsage: compact(data) }); } catch {}
+  const { activeId } = listAccounts();
+  broadcast({ type: 'account-usage', accountId, active: accountId === activeId, usage: data });
+}
+
 /** The last usage read for an account without fetching (null when never read). */
 export const cachedUsage = (accountId) => caches.get(accountId)?.data || null;
 

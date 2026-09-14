@@ -66,7 +66,7 @@ import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { hostMcpServers } from './lib/mcp-servers.js';
 import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
-import { looksLikeCodexLimit, setCodexCatalogSource } from './lib/codex-quota.js';
+import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
@@ -933,10 +933,13 @@ const codexDriver: EngineDriver = {
 
 registerEngine(codexDriver);
 setCodexCatalogSource(() => codexModels().map((m) => m.id));
+setCodexWindowSource(() => codexModels().map((m) => ({ id: m.id, contextWindow: m.contextWindow })));
 
 // Exported for the tests, which drive the pure pieces against the recorded
 // fixtures in test/fixtures/codex-stream/ without spawning anything.
 export { codexDriver, codexPrepare, codexBuildSpawn, codexHandleEvent, codexModelArgs, flatToolName, mcpTables, TOOL_TIMEOUT_SEC };
+// Shared with the app-server driver (server/codex-app.ts).
+export { CODEX_MODEL_RE, EFFORTS, textOfContent, restrictedAgentOf, reapGivenUpHostTool, onLimitText, onTurnEnd };
 
 /** One picker row for a Codex model — the catalog fields the cockpit needs. */
 export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null; contextWindow: number | null };

@@ -268,6 +268,10 @@ export interface Config {
   modelChain: string[];
   // P2-6 — codex sessions' ladder (codex model ids), used only when the codex account pool is exhausted.
   codexModelChain: string[];
+  // P3-1 — codex driver: long-lived `codex app-server` (default) or the one-process-per-turn `codex exec` fallback; read at boot.
+  codexTransport: 'app-server' | 'exec';
+  // P3-1 — app-server approvalPolicy for sessions with no explicit permission mode.
+  codexApprovals: 'never' | 'on-request' | 'untrusted';
   // CTX1 — manual escape hatch for a model id server/lib/ctx-window.ts doesn't
   // recognize (new release, custom proxy id…): tokens per model id/alias,
   // lower-cased. Checked before the built-in table; env
@@ -389,6 +393,8 @@ export const DEFAULTS: Config = {
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
   codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+  codexTransport: 'app-server',
+  codexApprovals: 'never',
   ctxWindowOverrides: {},
   supervisor: {
     enabled: true,
@@ -513,6 +519,8 @@ function envOverrides(): Partial<Config> {
     o.modelChain = E.ARIGAMI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
   if (E.ARIGAMI_CODEX_MODEL_CHAIN != null && E.ARIGAMI_CODEX_MODEL_CHAIN !== '')
     o.codexModelChain = E.ARIGAMI_CODEX_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  if (E.ARIGAMI_CODEX_TRANSPORT) o.codexTransport = E.ARIGAMI_CODEX_TRANSPORT as Config['codexTransport'];
+  if (E.ARIGAMI_CODEX_APPROVALS) o.codexApprovals = E.ARIGAMI_CODEX_APPROVALS as Config['codexApprovals'];
   const sup: Partial<SupervisorConfig> = {};
   if (E.ARIGAMI_SUPERVISOR != null && E.ARIGAMI_SUPERVISOR !== '')
     sup.enabled = /^(1|true|yes|on)$/i.test(E.ARIGAMI_SUPERVISOR);
@@ -600,6 +608,8 @@ export const cfg: Config = {
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
   defaultEngine: merged.defaultEngine === 'codex' ? 'codex' : 'claude',
+  codexTransport: merged.codexTransport === 'exec' ? 'exec' : 'app-server',
+  codexApprovals: merged.codexApprovals === 'on-request' || merged.codexApprovals === 'untrusted' ? merged.codexApprovals : 'never',
   trustProxy: resolveTrustProxy(merged),
   hostBase: `http://${loopbackHost(merged.bind || DEFAULTS.bind)}:${merged.port || DEFAULTS.port}`,
 };

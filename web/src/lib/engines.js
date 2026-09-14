@@ -69,23 +69,28 @@ export function engineLabel(engine) {
   return ENGINE_NAMES[normalizeEngine(engine)].label;
 }
 
-/**
- * Does this engine have permission MODES to pick between?
- *
- * claude does (default / acceptEdits / plan / bypassPermissions, enforced by a
- * PreToolUse hook). `codex exec` does not: it has no live-approval channel and
- * always runs with --dangerously-bypass-approvals-and-sandbox (server/codex.ts;
- * docs/ENGINES.md limits 1-2). Offering the picker anyway would let the human
- * select "plan" and believe the session was constrained while nothing changed —
- * so a codex session is told what it runs as instead of being asked.
- */
-export function hasPermissionModes(engine) {
-  return normalizeEngine(engine) === 'claude';
+// Host's cfg.codexTransport (GET /__api/config): 'app-server' has approvals + compaction, 'exec' has neither.
+export let CODEX_TRANSPORT = 'app-server';
+
+/** Adopt the host's cfg.codexTransport; anything but 'exec' is app-server. */
+export function setCodexTransport(transport) {
+  CODEX_TRANSPORT = transport === 'exec' ? 'exec' : 'app-server';
 }
 
-/** Can this engine compact its context (auto-compact flag, /compact)? `codex exec` cannot (docs/ENGINES.md limit 5). */
+/** Does this engine have permission modes? claude: all four; codex app-server: bypass vs ask; codex exec: none (docs/ENGINES.md). */
+export function hasPermissionModes(engine) {
+  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
+}
+
+/** The permission modes this engine offers (values of the cockpit picker). */
+export function permissionModesFor(engine) {
+  if (normalizeEngine(engine) === 'claude') return ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+  return CODEX_TRANSPORT === 'app-server' ? ['default', 'bypassPermissions'] : [];
+}
+
+/** Can this engine compact its context? codex only on app-server (thread/compact/start). */
 export function supportsCompaction(engine) {
-  return normalizeEngine(engine) === 'claude';
+  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
 }
 
 /** Lowercase CLI-ish name for the terminal header. */

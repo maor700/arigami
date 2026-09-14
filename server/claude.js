@@ -25,7 +25,7 @@ import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
-import { codexChain, codexLadder, codexCatalogIds, CODEX_LIMIT_RE } from './lib/codex-quota.js';
+import { codexChain, codexLadder, codexCatalogIds, codexCatalogWindows, CODEX_LIMIT_RE } from './lib/codex-quota.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { pickEngine, registerEngine } from './lib/engine-driver.js';
@@ -1062,6 +1062,10 @@ export function chainFor(id) {
 /** Where the session sits in its chain right now + how far it can still fall. */
 // The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
 export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+/** P3-1: a codex session on the app-server driver (approvals, compaction, live turns). */
+export const isCodexAppSession = (id) => {
+  try { return isCodexSession(id) && pickEngine(getSession(id)).permissions.kind === 'rpc-request'; } catch { return false; }
+};
 
 /** P2-6: a codex session's chain — codex model ids from cfg.codexModelChain, filtered to the active account's catalog. */
 export function codexChainFor(id) {
@@ -1211,7 +1215,7 @@ export function conversationTokens(id) {
 function autoCompactFor(id, model) {
   const pct = getSession(id)?.claude?.autoCompactPct;
   if (!pct) return {};
-  return { autoCompactTokens: Math.round(resolveCtxWindow(model).window * (pct / 100)) };
+  return { autoCompactTokens: Math.round(resolveCtxWindow(model, isCodexSession(id) ? codexCatalogWindows() : null).window * (pct / 100)) };
 }
 
 /**
@@ -1376,7 +1380,7 @@ export function restoreModel(id) {
   return top;
 }
 
-// ---- P2-6: the codex model ladder (no compaction: codex exec cannot, see ENGINES.md limit 5) ----
+// ---- P2-6: the codex model ladder (P3-2: app-server compacts before the replay; exec cannot) ----
 const codexLadderCooldown = new Set();
 
 /** Drop a codex session one rung and replay `lastMsg`; same result shape as downgradeModel. */
@@ -1393,12 +1397,29 @@ export function downgradeCodexModel(id, { resetAt = null, why = 'all Codex accou
   const from = chain[rung] || getSession(id)?.claude?.modelChoice || 'default';
   const msg = lastMsg ?? lastUserMessage(id);
   const restoreAt = resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
-  appendChat(id, { kind: 'system', text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing · quota resets ${localTime(restoreAt)}` });
+  const patch = { modelChoice: nxt.model, modelRung: nxt.rung, modelRestoreAt: restoreAt, modelDowngradedFrom: chain[0] || from, ...autoCompactFor(id, nxt.model) };
+  // P3-2: app-server compacts the thread itself when the conversation does not fit the weaker rung.
+  const plan = isCodexAppSession(id) ? planReplay({ estTokens: conversationTokens(id), targetWindow: resolveCtxWindow(nxt.model, codexCatalogWindows()).window, headroom: ladderHeadroom() }) : null;
+  const compact = plan?.mode === 'compact';
+  appendChat(id, {
+    kind: 'system',
+    text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing · quota resets ${localTime(restoreAt)}` +
+      (compact ? ` · the conversation (~${Math.round(plan.estTokens / 1000)}k tokens) does not fit ${nxt.model} — compacting it first…` : ''),
+  });
   try {
-    restartWith(id, { modelChoice: nxt.model, modelRung: nxt.rung, modelRestoreAt: restoreAt, modelDowngradedFrom: chain[0] || from });
+    restartWith(id, { ...patch, ...(plan ? { ladderReplay: { mode: compact ? 'compact' : 'full', at: new Date().toISOString(), from, to: nxt.model, estTokens: plan.estTokens, targetWindow: plan.targetWindow } } : {}) });
   } catch {
     codexLadderCooldown.delete(id);
     return { ok: false, reason: 'failed' };
+  }
+  if (compact) {
+    import('./codex-app.js')
+      .then((m) => {
+        m.requestCompaction(id, `${from} → ${nxt.model}`, () => { try { if (msg) sendMessage(id, msg); } catch {} });
+        recordIncident(id, 'context-compact', { from, to: nxt.model, estTokens: plan.estTokens, targetWindow: plan.targetWindow, digest: 'codex' }, 'ok', 'conversation larger than the target window');
+      })
+      .catch(() => {});
+    return { ok: true, model: nxt.model, from, compacting: true };
   }
   const t = setTimeout(() => { try { if (msg) sendMessage(id, msg); } catch {} }, 900);
   if (t.unref) t.unref();
@@ -2574,6 +2595,8 @@ function restartWith(id, patch) {
 }
 
 export function setPermissionMode(id, mode) {
+  // Codex app-server sends approvalPolicy per turn — no respawn.
+  if (isCodexAppSession(id)) { setClaude(id, { permissionMode: mode }); mergeCaps(id, { permissionMode: mode }); return getSession(id)?.claude; }
   return restartWith(id, { permissionMode: mode });
 }
 
@@ -2612,12 +2635,15 @@ export function setEffort(id, effort) {
 // injected into the conversation, which the CLI may or may not treat as a real
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
-  if (isCodexSession(id)) throw new Error('auto-compact is not available on codex sessions');
+  if (isCodexSession(id) && !isCodexAppSession(id)) throw new Error('auto-compact is not available on codex exec sessions');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
-  if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
+  // P3-2: codex app-server watches thread/tokenUsage itself — no respawn needed.
+  const apply = isCodexAppSession(id) ? (patch) => { setClaude(id, patch); return getSession(id)?.claude; } : (patch) => restartWith(id, patch);
+  if (!p) return apply({ autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);
-  const tokens = Math.round(resolveCtxWindow(s?.claude?.model).window * (p / 100));
-  return restartWith(id, { autoCompactPct: p, autoCompactTokens: tokens });
+  const window = s?.claude?.usage?.ctxWindow && isCodexSession(id) ? s.claude.usage.ctxWindow : resolveCtxWindow(s?.claude?.model).window;
+  const tokens = Math.round(window * (p / 100));
+  return apply({ autoCompactPct: p, autoCompactTokens: tokens });
 }
 
 // Switch which account a session runs on. Restarts the session with --resume, so

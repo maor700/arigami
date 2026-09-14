@@ -4,6 +4,7 @@ import { cfg } from './lib/config.js';
 import { getAccount, getActiveId, listAccounts, quarantine, setActive } from './accounts.js';
 import { codexLimitNote, looksLikeCodexLimit, planCodexRecovery, type RecoveryPlan, type UsageSnapshot } from './lib/codex-quota.js';
 
+const LIVE_USAGE_MS = 2 * 60_000;
 const inflight = new Map<string, Promise<RecoveryPlan | null>>();
 
 /** Test seam: resolves when the recovery started for `id` has finished. */
@@ -27,6 +28,9 @@ export function onCodexLimit(id: string, text: string): Promise<RecoveryPlan | n
 async function readUsage(accountId: string | null): Promise<UsageSnapshot | null> {
   if (!accountId || getAccount(accountId)?.provider !== 'codex') return null;
   try {
+    // P3-1: a live app-server snapshot from the last minutes beats spawning a probe.
+    const live = (await import('./usage.js')).cachedUsage(accountId);
+    if (live?.live && Date.now() - (Number(live.fetchedAt) || 0) < LIVE_USAGE_MS) return live;
     const m = await import('./codex-account.js');
     return await m.codexUsage(accountId);
   } catch {

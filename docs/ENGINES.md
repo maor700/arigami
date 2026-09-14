@@ -5,9 +5,9 @@ Today there are two: `claude` and `codex` (OpenAI's CLI). The choice is made onc
 at session creation, and is stored in `session.engine`.
 
 - The seam: `server/lib/engine-driver.ts` (`EngineDriver`, `registerEngine`, `pickEngine`)
-- The implementations: `server/claude.js` and `server/codex.ts`
+- The implementations: `server/claude.js`, `server/codex-app.ts` (codex over `codex app-server`, default) and `server/codex.ts` (codex over `codex exec`, fallback)
 - Cockpit side: `web/src/lib/engines.js`
-- Tests: `test/codex-engine.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
+- Tests: `test/codex-app.test.ts`, `test/codex-engine.test.ts`, `test/engine-ui-wiring.test.js`, `test/engine-ui-web.test.js`
 
 ## How it's chosen
 
@@ -30,61 +30,50 @@ An engine with no registered driver fails loudly at spawn, and does not silently
 
 ## What works on Codex
 
-Verified live, not in theory: the session comes up in the cockpit, receives a message, calls
-Arigami's home tools via MCP (`set_status`, `publish_artifact` were measured), and `codex exec resume` remembers
-previous turns. Skills pass through verbatim via a symlink —
-`$CODEX_HOME/skills/arigami` → `SKILLS_DIR` — and the namespace comes out as `arigami:<name>`,
-exactly the name the persona already promises. All 13 skills load with no frontmatter warnings.
+Verified live: the session comes up in the cockpit, receives a message, calls Arigami's home tools via MCP, and resumes previous turns. Skills pass through via a symlink — `$CODEX_HOME/skills/arigami` → `SKILLS_DIR` — as `arigami:<name>`. The chat log, bus, personas, memory, Simple mode, worktrees and the cockpit are engine-agnostic.
 
-The chat log, the bus, personas, memory bootstrapping, "simple" mode, worktrees, and the cockpit —
-all of it is engine-agnostic and untouched.
+### Transport: app-server (default) or exec
 
-Two structural differences worth knowing before debugging:
+`cfg.codexTransport` (`ARIGAMI_CODEX_TRANSPORT`), read at boot: `server/index.ts` imports `codex-app.ts`, which registers the `codex` driver for the transport.
 
-1. **One process per turn.** `codex exec` is not a long-lived conversation over stdin/stdout.
-   It reads a single prompt, runs one turn, and exits 0. The next turn is a fresh
-   `codex exec resume <thread_id>` against the same `$CODEX_HOME`. Practical consequence:
-   stdin sits at EOF for the entire turn.
-2. **The conversation id is observed, not assigned.** codex has no `--session-id`; it invents an id
-   and announces it in `thread.started`.
+- **`app-server`** — one long-lived `codex app-server` per session, newline-delimited JSON-RPC over stdio. Handshake: `initialize` → `initialized` → `thread/start`, or `thread/resume` when a thread id is stored (a thread with no turn has no rollout and starts over silently). A message is `turn/start` when idle and `turn/steer` into the running turn otherwise (no carry-over); Stop is `turn/interrupt`; `/compact` is `thread/compact/start`. The process lives across turns; the session goes idle on `turn/completed` and is marked dead only when the process exits (the next message respawns it). Verified live 2026-09-15 (codex-cli 0.153.4): turn + tools, steer merged into the running turn, approval card deny → declined, interrupt, compaction, image input, thinking; fixtures `test/fixtures/codex-app/`.
+- **`exec`** — `server/codex.ts`, unchanged: `codex exec` per turn, `codex exec resume <thread>` for the next one, stdin at EOF during the turn, a mid-turn message carried over to the next turn. No approvals, compaction or thinking (limits 2, 5, 6 below still hold there).
+
+The thread id is observed, not assigned, on both transports.
 
 ## Limitations — what doesn't work, explicitly
 
 This list is the reason this document exists. Do not soften it.
 
-Closed on master (2026-09): A3 policy hooks (§3), per-provider accounts and real quota (Accounts section),
-quota recovery + model ladder (§5, §6b), remote MCP grants per engine (§4), Composio (§4b).
-Still open: no sandbox on this VPS (§1), no approval cards (§2), no compaction (§5) and no thinking
-stream (§6) without `app-server`, claude.ai connectors claude-only (§4b), no codex in the Docker image
-(docs/DOCKER.md).
+Closed on master (2026-09): A3 policy hooks (§3), per-provider accounts and real quota (Accounts section), quota recovery + model ladder (§5, §6b), remote MCP grants per engine (§4), Composio (§4b).
+Closed with app-server: approval cards (§2), compaction (§5), thinking (§6), live quota signal (§6b).
+Still open: no sandbox on this VPS (§1), claude.ai connectors claude-only (§4b), no codex in the Docker image (docs/DOCKER.md); on `exec`, §2/§5/§6 remain as written.
 
 ### 1. No local sandbox
 
 Codex's built-in bubblewrap **does not come up on this machine** —
-`bwrap: loopback: Failed RTM_NEWADDR`. So the process always runs with
-`--dangerously-bypass-approvals-and-sandbox`, not as an option but forced in code.
+`bwrap: loopback: Failed RTM_NEWADDR`. So exec always runs with `--dangerously-bypass-approvals-and-sandbox`, and app-server threads with `sandbox: danger-full-access` / `sandboxPolicy: dangerFullAccess`.
 The only isolation that remains is the session's worktree.
 
 Boot probe (`server/lib/codex-sandbox.ts`): `codex sandbox -- /bin/true`, cached in `$ARIGAMI_DIR/codex-sandbox.json`,
 shown under Settings › Host › Codex CLI ("available" / "unavailable on this machine (bwrap: …)"). The spawn flags do not
-follow it yet — a pass only logs that a sandboxed mode is possible (P2-3/P3-1).
+follow it on either transport — a pass only logs that a sandboxed mode is possible.
 
 Claude has separation that doesn't exist here: permission modes, the PreToolUse hook, `--disallowedTools`.
-A codex session is, permission-wise, the equivalent of `bypassPermissions` — always.
+On exec a codex session is always the equivalent of `bypassPermissions`; on app-server only approvals (§2) can stop it.
 
-### 2. No live approval bridge
+### 2. Approvals — closed with app-server
 
-`codex exec` has no equivalent of `--permission-prompt-tool`. Hence
-`permissions.kind === 'none'`: no approval card in the chat, and no action ever stops
-to ask. Real approval exists only in Codex's `app-server` track — **which is not implemented here**.
-`permission_prompt` is hidden from a codex session's tools/list (`ARIGAMI_ENGINE=codex` in the host MCP env).
+`permissions.kind === 'rpc-request'`. `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` and `item/permissions/requestApproval` become the chat permission card (`openPermission` in `server/api.ts`, the same one `permission_prompt` feeds); allow → `accept`, deny → `decline`, no answer within 30 minutes → `cancel`. `item/tool/requestUserInput` becomes the "Question for you" card (answers keyed by question id). `serverRequest/resolved` (e.g. after an interrupt) closes a card nobody answered. MCP elicitations are declined.
+
+approvalPolicy per turn: `bypassPermissions` → `cfg.codexApprovals` (`ARIGAMI_CODEX_APPROVALS`, `never` default | `on-request` | `untrusted`); the picker's ask mode (`default`) → `untrusted`. Measured: `on-request` under danger-full-access never asks, so "ask" cannot be `on-request`. A mode change applies to the next turn with no respawn. On exec: `permissions.kind === 'none'`, no cards. `permission_prompt` stays hidden from codex tools/list (`ARIGAMI_ENGINE=codex`).
 
 ### 3. Agents with an allowlist run — the policy hook is enforced
 
 Codex reads Claude Code's hooks format from `$CODEX_HOME/hooks.json` (same stdin shape; `tool_name`
 is `Bash` for its shell, `mcp__<server>__<tool>` for MCP; exit 2 blocks). `codexPrepare()` writes the
-`mcp/policy-hook.js` hook there for a restrictive agent and `codexBuildSpawn()` adds
-`--dangerously-bypass-hook-trust` — without it codex skips hooks silently. No `--disallowedTools`:
+`mcp/policy-hook.js` hook there for a restrictive agent. exec: `codexBuildSpawn()` adds
+`--dangerously-bypass-hook-trust` — without it codex skips hooks silently. app-server: that flag does not reach its threads (measured, `hooks/list` → `untrusted`), so the handshake trusts this home's `hooks.json` in-process (`hooks/list` → `config/batchWrite` `hooks.state.<key>.trusted_hash`) before `thread/start`; verified live, the hook blocked a Bash call. No `--disallowedTools`:
 restricted built-ins are hook-denied, not hidden; extension servers the allowlist never touches are
 left out of `config.toml`. Codex's snake_case built-ins are aliased onto claude names in `agent-policy.ts`.
 
@@ -99,50 +88,23 @@ Host-managed stdio servers (`composio-mcp`) live in `$ARIGAMI_DIR/mcp-servers.js
 Codex's `enabled_tools` takes exact names, so A3 drops an untouched server whole and the policy hook gates partial families (`gmail` → `GMAIL_*`).
 claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no codex equivalent — a codex session never has them.
 
-### 5. The model ladder runs (P2-6); compaction **was actually tested and found not viable** from `exec`
+### 5. The model ladder runs (P2-6); compaction closed with app-server
 
-The RES1 supervisor ticks codex sessions too, with claude-only actions gated per engine (P0-1). Quota recovery runs on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
-The Claude auth refresh is still skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
-The context modal hides auto-compact and "compact now", and `POST /autocompact` returns 400.
+The RES1 supervisor ticks codex sessions too, with claude-only actions gated per engine (P0-1). Quota recovery runs on codex (`server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. The Claude auth refresh is skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
 
-LADDER1 (compacting the context before replay) **was tested, not just assumed not to run.** The
-binary has two real config keys — `model_auto_compact_token_limit` (a token threshold)
-and `model_auto_compact_token_limit_scope` (`total` | `body_after_prefix`) —
-that look like the built-in implementation missing here. I ran five real turns on the same thread with
-`-c model_auto_compact_token_limit=3000` (both scope values, separately), and also with
-`--enable context_management` (the flag that gates these keys — they're listed as "under
-development" in `codex features list`) — until the context grew to 41,474 tokens,
-**about 14x the configured threshold, and no compaction ever happened**: no `context_compaction` or
-`compaction_trigger` event appears in the stream, and `cached_input_tokens` only grew from turn to turn, never
-shrinking.
+app-server: `thread/compact/start` returns `{}` at once and runs as its own turn with a `contextCompaction` item (no `thread/compacted` notification observed). Arigami uses it for "compact now" / `/compact`, for auto-compact (`setAutoCompact` stores the threshold without a respawn; crossing it on `thread/tokenUsage/updated` compacts once the turn ends), and for LADDER1: `downgradeCodexModel` plans the replay against the target rung's window and, when it does not fit, compacts the thread on the new rung before replaying the message (incident `context-compact`, digest `codex`). The history is compacted in place — no original thread is parked for the climb back.
 
-A plausible explanation (not just a guess): the call that actually **triggers** compaction —
-`thread/compact/start` — exists only in the app-server protocol (JSON-RPC), not
-in `exec` (limitation 2 above). Whoever calls it is probably the interactive client (the TUI), which runs
-as a single long-lived process and watches usage between turns. `codex exec` is **one process per
-turn**; there is no live process between turns that could "watch" anything, so even if the watcher exists
-in the core, the run pattern Arigami uses can't trigger it.
+exec: compaction was tested and does not happen (`model_auto_compact_token_limit=3000`, both scopes, `--enable context_management`: a thread grew to 41,474 tokens with no compaction); the context modal hides it and `POST /autocompact` returns 400.
 
-**Conclusion: compaction is not achievable via `exec` without implementing app-server. A codex session
-whose context window fills stays full — account rotation and the model ladder replay it, they do not shrink it.**
-Anyone who wants to try again: don't settle for adding the key to config.toml and thinking you're done —
-that's exactly what was tried here.
+### 6. Thinking — closed with app-server
 
-### 6. `item.type === 'reasoning'` was never observed — even at full effort
+app-server: a completed `reasoning` item's `summary`/`content` (else its streamed `item/reasoning/*Delta` text) → a `thinking` event on completion; seen live on gpt-5.5 medium (empty on low). exec never emits reasoning, even at high effort with `model_reasoning_summary="detailed"` (`test/fixtures/codex-stream/reasoning-test-*.jsonl`).
 
-Handling for it exists in `handleEvent`, but **it did not appear in any real run**, including
-a dedicated run with `gpt-5.6-terra`, `model_reasoning_effort="high"` and
-`model_reasoning_summary="detailed"` (fixture:
-`test/fixtures/codex-stream/reasoning-test-*.jsonl`). The `usage` returned from that same
-run did report `reasoning_output_tokens: 73` — the model **does** reason — the item is simply
-never emitted on the `exec --json` stream, even with every flag that's supposed to surface it. The handling
-in `handleEvent` remains written defensively and unproven. If someone wants to try again: this was tested
-and didn't work, so it's worth looking at the app-server surface (which has `item/reasoning/textDelta`
-in its protocol) before trying again on `exec`.
+Also on app-server: agent message deltas stream as partial assistant text; a `fileChange` shows as an `Edit` card carrying the patch and +/- counts; `turn/diff/updated` stamps `session.claude.turnDiff` and an open Changes tab reloads; image attachments go as `{type:'localImage', path}` input.
 
 ### 6b. Quota (rate limit) detection — regex, then confirmed by the account
 
-The turn's own error is still a regex guess (`CODEX_LIMIT_RE` in `server/lib/codex-quota.ts`; only the `unexpected status <code>` wrapper is verified live, on a 401). A match triggers `account/rateLimits/read` on the session's codex account:
+app-server: `account/rateLimits/updated` arrives with every request and lands in the account's usage cache (`usage.js noteLiveUsage`, broadcast like a poll); recovery uses that snapshot when under 2 minutes old instead of spawning a probe, and a failed turn's `codexErrorInfo` `usageLimitExceeded`/`rateLimitExceeded` counts as a limit. The turn's own error text is otherwise still a regex guess (`CODEX_LIMIT_RE` in `server/lib/codex-quota.ts`; only the `unexpected status <code>` wrapper is verified live, on a 401). A match triggers `account/rateLimits/read` on the session's codex account:
 `limitReached` or a window at ≥ 100% = confirmed (note says so, account quarantined until that window's `resetsAt`, rotate / ladder); not exhausted = a note, nothing else; unreadable (api-key, probe failed) = "unverified" note, and it acts only on the specific patterns (429, the `RateLimitReachedType` names, "usage limit"). No real quota wall has been reproduced here.
 
 ### 7. The session inherits the host's env in full
@@ -152,7 +114,7 @@ The codex process receives the host's entire `process.env` (except for
 `ARIGAMI_TOKEN` — a live token that talks to the real host.
 
 **This is parity with claude, not a regression.** A claude session works exactly the same way. It's spelled out
-here explicitly because, with no sandbox (limitation 1) and no approval bridge (limitation 2), this is what a
+here explicitly because, with no sandbox (limitation 1) and approvals off by default (limitation 2), this is what a
 codex session can reach without anyone stopping it.
 
 ### 8. `~/.codex/skills/.system/` is wiped on every upgrade
@@ -189,10 +151,7 @@ nothing.
 - **Cost is `null`, not 0.** Codex reports none; the ledger and agent page show "tokens only".
 - **The `/usage` tab doesn't exist in a codex session.** It measures a Claude subscription and **account**;
   a codex session has neither.
-- **The permission-mode picker isn't shown in a codex session.** In its place sits a line stating
-  `bypassPermissions` and explaining why. A picker where "plan" could be chosen while the server runs
-  `--dangerously-bypass-approvals-and-sandbox` regardless would be a lie in the UI.
-  The predicate: `hasPermissionModes()` in `web/src/lib/engines.js`.
+- **The permission-mode picker for codex:** app-server offers ask vs bypass (`permissionModesFor()` in `web/src/lib/engines.js`, transport from `cfg.codexTransport` in `GET /__api/config`); exec shows a static `bypassPermissions` line instead — a picker there would be a lie.
 - **The "refresh model list" button and the CLI-update badge are not shown in a codex session** — both
   talk about claude's CLI.
 - **Deleting a session cleans up its `$CODEX_HOME`** (`config/codex/<sessionId>`) — that's where

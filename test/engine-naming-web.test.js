@@ -137,17 +137,24 @@ test('the capabilities panel is titled after the engine, and drops the Claude-on
 
 /* ---------- what a codex session is NOT asked ----------------------------- */
 
-test('only claude can compact — the context modal hides auto-compact and compact-now on codex', async () => {
+test('codex compacts only on app-server — exec hides auto-compact and compact-now', async () => {
+  engines.setCodexTransport('exec');
   expect(engines.supportsCompaction('codex')).toBe(false);
   for (const v of ['claude', '', null, undefined]) expect(engines.supportsCompaction(v)).toBe(true);
+  engines.setCodexTransport('app-server');
+  expect(engines.supportsCompaction('codex')).toBe(true);
 });
 
-test('only claude has permission MODES — codex is told, not asked', async () => {
-  // The lie this guards against: `POST /permission-mode` succeeds for a codex
-  // session and the rail then shows "plan", while server/codex.ts spawns with
-  // --dangerously-bypass-approvals-and-sandbox regardless of what was stored.
+test('codex exec has no permission MODES — told, not asked; app-server offers ask vs bypass', async () => {
+  // exec spawns with --dangerously-bypass-approvals-and-sandbox whatever is stored.
+  engines.setCodexTransport('exec');
   expect(engines.hasPermissionModes('codex')).toBe(false);
+  expect(engines.permissionModesFor('codex')).toEqual([]);
   for (const v of ['claude', '', null, undefined]) expect(engines.hasPermissionModes(v)).toBe(true);
+  engines.setCodexTransport('app-server');
+  expect(engines.hasPermissionModes('codex')).toBe(true);
+  expect(engines.permissionModesFor('codex')).toEqual(['default', 'bypassPermissions']);
+  engines.setCodexTransport('exec');
 
   const { default: TermControls } = await import(web('components/TermControls.jsx'));
   const withMode = (s, permissionMode) => ({ ...s, claude: { state: 'idle', permissionMode } });
@@ -159,6 +166,8 @@ test('only claude has permission MODES — codex is told, not asked', async () =
   const i18n = await import(web('lib/i18n.js'));
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).toContain('Codex');
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).not.toContain('{engine}');
+  engines.setCodexTransport('app-server');
+  expect(render(h(TermControls, { session: withMode(SESSIONS[1], 'default') }))).toBeString();
 });
 
 /* ---------- restart / clear dialogs + MCP hint (P1-8) --------------------- */
