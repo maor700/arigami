@@ -13,10 +13,16 @@
 // normally none, and fails with "claude exited 1". This helper resolves the
 // same way a session does, just against the ACTIVE account instead of a
 // per-session assignment (there is no session).
+//
+// runOneShot() picks the engine: claude = `claude -p`, codex = `codex exec --ephemeral`.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { supervise, killTree } from './children.js';
-import { tokenForSession, getActiveId, getAccount } from '../accounts.js';
-import { cfg } from './config.js';
+import { tokenForSession, getActiveId, hasCredentials, codexAuthPathFor } from '../accounts.js';
+import { claudeBin } from './claude-bin.js';
+import { cfg, defaultEngine } from './config.js';
 import { auth } from '../auth.js';
 
 function baseEnv(): NodeJS.ProcessEnv {
@@ -32,7 +38,7 @@ function accountEnv(opts: OneShotOptions): NodeJS.ProcessEnv {
   if (opts.apiKey) return { ANTHROPIC_API_KEY: opts.apiKey };
   if (opts.token) return { CLAUDE_CODE_OAUTH_TOKEN: opts.token };
   try {
-    const r = tokenForSession(getActiveId());
+    const r = tokenForSession(opts.account ?? getActiveId());
     return r ? { CLAUDE_CODE_OAUTH_TOKEN: r.token } : {};
   } catch {
     return {};
@@ -49,9 +55,9 @@ export function isAuthFailure(reason: string): boolean {
 // Try to renew the active account's access token (oauth-login accounts carry a
 // refresh token). Returns true when a NEW token is now stored — the caller
 // re-resolves it via accountEnv() on the retry.
-async function refreshActiveToken(): Promise<boolean> {
+async function refreshActiveToken(opts: OneShotOptions): Promise<boolean> {
   try {
-    const a = getAccount(getActiveId());
+    const a = tokenForSession(opts.account ?? getActiveId())?.account;
     if (!a || a.type !== 'oauth-token' || !a.refreshToken) return false;
     const o = await import('../oauth-login.js');
     return !!(await (o as any).refreshOne(a.id));
@@ -60,8 +66,17 @@ async function refreshActiveToken(): Promise<boolean> {
   }
 }
 
+export type OneShotEngine = 'claude' | 'codex';
+
 export interface OneShotOptions {
-  model?: string; // default: 'sonnet'
+  engine?: OneShotEngine; // default: 'claude'
+  model?: string; // claude default 'sonnet'; codex: only gpt/codex/o* names pass, else codex's default
+  effort?: string; // codex model_reasoning_effort — default 'low'
+  json?: object; // JSON Schema for the final message (codex --output-schema; claude relies on the prompt)
+  account?: string | null; // account id to run as (pinned session account); default the active one
+  env?: Record<string, string>; // extra env, e.g. a session's ARIGAMI_SESSION_ID/TOKEN
+  mcpServers?: Record<string, any>; // {command,args,env?} servers — replaces the user's global MCP set
+  pluginDirs?: string[]; // claude only
   cwd?: string; // default: process.cwd()
   timeoutMs?: number; // default: 3 minutes
   tag?: string; // supervise() tag for the children.json record — default 'oneshot'
@@ -87,21 +102,29 @@ const STDERR_CAP = 20_000; // generous — this is for full diagnostic logging, 
 // active account has a refresh token, refresh it once and retry once with the
 // freshly resolved token. Explicit `opts.token`/`opts.apiKey` runs never retry.
 export async function runClaudeOneShot(prompt: string, opts: OneShotOptions = {}): Promise<string> {
+  return runOneShot(prompt, { ...opts, engine: 'claude' });
+}
+
+/** One headless completion on `opts.engine`; resolves the final message text. */
+export async function runOneShot(prompt: string, opts: OneShotOptions = {}): Promise<string> {
+  if (opts.engine === 'codex') return runCodexOnce(prompt, opts);
   try {
     return await runOnce(prompt, opts);
   } catch (e: any) {
     const explicit = !!(opts.token || opts.apiKey);
     if (opts._retried || explicit || !isAuthFailure(String(e?.message || ''))) throw e;
-    if (!(await refreshActiveToken())) throw e;
+    if (!(await refreshActiveToken(opts))) throw e;
     console.warn('[oneshot] auth failure — token refreshed, retrying once');
     return runOnce(prompt, { ...opts, _retried: true });
   }
 }
 
 function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
-  const bin = process.env.ARIGAMI_CLAUDE_BIN || 'claude';
+  const bin = claudeBin();
   const args = ['-p', prompt, '--permission-mode', 'bypassPermissions', '--output-format', 'json'];
   args.push('--model', opts.model || 'sonnet');
+  if (opts.mcpServers) args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }), '--strict-mcp-config');
+  for (const d of opts.pluginDirs || []) args.push('--plugin-dir', d);
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd || process.cwd(),
@@ -112,6 +135,7 @@ function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
         // token — its MCP/curl calls back into the host still authenticate.
         ARIGAMI_URL: cfg.hostBase,
         ARIGAMI_TOKEN: auth.hostToken,
+        ...opts.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -151,4 +175,98 @@ function runOnce(prompt: string, opts: OneShotOptions): Promise<string> {
       resolve(text);
     });
   });
+}
+
+// ---- codex ------------------------------------------------------------------
+
+const CODEX_MODEL_RE = /^(?:gpt|codex|o[0-9])[a-zA-Z0-9._-]*$/;
+const tstr = (v: unknown): string => JSON.stringify(String(v ?? ''));
+const tkey = (k: string): string => (/^[A-Za-z0-9_-]+$/.test(k) ? k : tstr(k));
+
+function codexConfig(cwd: string, servers: Record<string, any> = {}): string {
+  const out = [`[projects.${tstr(cwd)}]`, 'trust_level = "trusted"', ''];
+  for (const [name, sv] of Object.entries(servers)) {
+    if (!sv || typeof sv.command !== 'string') continue;
+    out.push(`[mcp_servers.${tkey(name)}]`, `command = ${tstr(sv.command)}`, `args = [${(sv.args || []).map(tstr).join(', ')}]`, '');
+    if (sv.env && typeof sv.env === 'object') {
+      out.push(`[mcp_servers.${tkey(name)}.env]`);
+      for (const [k, v] of Object.entries(sv.env)) out.push(`${tkey(k)} = ${tstr(v)}`);
+      out.push('');
+    }
+  }
+  return out.join('\n') + '\n';
+}
+
+// Scratch $CODEX_HOME under $ARIGAMI_DIR (codex warns about PATH aliases for a home under /tmp).
+function scratchCodexHome(tag: string): string {
+  const root = path.join(cfg.configDir || os.homedir(), 'oneshot-codex');
+  fs.mkdirSync(root, { recursive: true });
+  return fs.mkdtempSync(path.join(root, `${tag.replace(/[^\w-]/g, '_')}-`));
+}
+
+async function runCodexOnce(prompt: string, opts: OneShotOptions): Promise<string> {
+  const authSrc = codexAuthPathFor(opts.account ?? null);
+  if (!authSrc) throw new Error('codex: no Codex account is connected');
+  const cwd = opts.cwd || process.cwd();
+  const home = scratchCodexHome(opts.tag || 'oneshot');
+  try {
+    fs.symlinkSync(authSrc, path.join(home, 'auth.json'));
+    fs.writeFileSync(path.join(home, 'config.toml'), codexConfig(cwd, opts.mcpServers));
+    const outFile = path.join(home, 'last-message.txt');
+    const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-o', outFile];
+    if (opts.model && CODEX_MODEL_RE.test(opts.model)) args.push('-m', opts.model);
+    args.push('-c', `model_reasoning_effort=${JSON.stringify(opts.effort || 'low')}`);
+    if (opts.json) {
+      const schema = path.join(home, 'schema.json');
+      fs.writeFileSync(schema, JSON.stringify(opts.json));
+      args.push('--output-schema', schema);
+    }
+    args.push('-');
+    const { CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY, ...rest } = process.env;
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(process.env.ARIGAMI_CODEX_BIN || 'codex', args, {
+        cwd,
+        env: { ...rest, CODEX_HOME: home, ARIGAMI_URL: cfg.hostBase, ARIGAMI_TOKEN: auth.hostToken, ...opts.env },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      supervise(child, opts.tag || 'oneshot');
+      let err = '';
+      const keep = (d: any) => { err = (err + d).slice(-STDERR_CAP); };
+      child.stdout.on('data', keep);
+      child.stderr.on('data', keep);
+      child.stdin.on('error', () => {});
+      child.stdin.end(prompt); // EOF starts the turn; an open stdin hangs codex
+      const guard = setTimeout(() => killTree(child.pid), opts.timeoutMs || 3 * 60 * 1000);
+      child.on('error', (e) => { clearTimeout(guard); reject(e); });
+      child.on('close', (c) => {
+        clearTimeout(guard);
+        if (c) {
+          console.error(`[oneshot] codex exited ${c}\n${err}`);
+          const line = err.trim().split('\n').filter((l) => /error/i.test(l)).pop() || err.trim().split('\n').pop() || '';
+          return reject(new Error(`codex exited ${c}${line ? ': ' + line.slice(0, 500) : ''}`));
+        }
+        resolve();
+      });
+    });
+    return fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// ---- engine routing ---------------------------------------------------------
+
+/** Engine for a host-level utility: the default engine when it has an account, else the other one that does. */
+export function hostEngine(): OneShotEngine {
+  const d = defaultEngine();
+  const other: OneShotEngine = d === 'codex' ? 'claude' : 'codex';
+  try {
+    if (!hasCredentials(d) && hasCredentials(other)) return other;
+  } catch { /* accounts not loaded */ }
+  return d;
+}
+
+/** Engine for a utility about a session: the session's own engine. */
+export function sessionEngine(s: { engine?: string | null } | null | undefined): OneShotEngine {
+  return s?.engine === 'codex' ? 'codex' : 'claude';
 }

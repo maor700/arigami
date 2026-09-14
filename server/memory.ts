@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Database } from 'bun:sqlite';
 import { ARIGAMI_DIR } from './lib/instance.js';
-import { runClaudeOneShot } from './lib/oneshot.js';
+import { runOneShot, hostEngine } from './lib/oneshot.js';
 import { detectSensitive } from './lib/memory-triage.js';
 
 export const MEMORY_DIR = path.join(ARIGAMI_DIR, 'memory');
@@ -735,7 +735,7 @@ export async function runEpisodeHook(sessionId: string, trigger: string, transcr
     `credentials, or tokens. Omit anything session-specific/ephemeral.\n\n` +
     `--- transcript ---\n${transcript}\n--- end transcript ---`;
 
-  const text = await runClaudeOneShot(prompt, { cwd: ARIGAMI_DIR, timeoutMs: EPISODE_TIMEOUT_MS, tag: 'memory-episode-hook' });
+  const text = await runOneShot(prompt, { engine: hostEngine(), cwd: ARIGAMI_DIR, timeoutMs: EPISODE_TIMEOUT_MS, tag: 'memory-episode-hook' });
   const parsed = extractJson(text);
   if (parsed.episode && typeof parsed.episode === 'string') appendEpisode(sessionId, { body: parsed.episode, trigger });
   if (Array.isArray(parsed.facts) && parsed.facts.length)

@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { cfg } from './state.js';
-import { runClaudeOneShot } from './lib/oneshot.js';
+import { runOneShot, hostEngine } from './lib/oneshot.js';
 import { resourceRoot } from './lib/resource-root.js';
 
 const ROOT = resourceRoot();
@@ -364,7 +364,7 @@ let running: Promise<any> | null = null;
 export function analyze(): Promise<any> {
   if (running) return running;
   running = (async () => {
-    const text = await runClaudeOneShot(ANALYZE_PROMPT, { cwd: ROOT, timeoutMs: 4 * 60 * 1000, tag: 'skills-analyze' });
+    const text = await runOneShot(ANALYZE_PROMPT, { engine: hostEngine(), cwd: ROOT, timeoutMs: 4 * 60 * 1000, tag: 'skills-analyze' });
     const parsed = extractJson(text);
     const record = {
       summaries: parsed.summaries && typeof parsed.summaries === 'object' ? parsed.summaries : {},

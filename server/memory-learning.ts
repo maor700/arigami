@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg, type MemoryLearningConfig } from './lib/config.js';
-import { runClaudeOneShot } from './lib/oneshot.js';
+import { runOneShot, hostEngine } from './lib/oneshot.js';
 import { memAvailableMb as probeMemAvailableMb } from './lib/claude-update.js';
 import {
   prepass,
@@ -212,7 +212,7 @@ function droppedToItem(d: Dropped): RunItem {
 
 export function createLearner(deps: Partial<LearnerDeps> = {}) {
   const d: LearnerDeps = {
-    llm: (prompt) => runClaudeOneShot(prompt, { cwd: MEMORY_DIR, timeoutMs: LLM_TIMEOUT_MS, tag: 'memory-learning' }),
+    llm: (prompt) => runOneShot(prompt, { engine: hostEngine(), cwd: MEMORY_DIR, timeoutMs: LLM_TIMEOUT_MS, tag: 'memory-learning' }),
     now: () => Date.now(),
     memAvailableMb: probeMemAvailableMb,
     config: () => cfg.memory?.learning || { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },

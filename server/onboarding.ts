@@ -1245,7 +1245,9 @@ export async function runHealth(deps: HealthDeps = {}): Promise<HealthResult> {
     // 1) Claude one-shot — the only check that spends a (tiny) request.
     const ping = deps.claudePing ?? (async () => {
       const os = await import('./lib/oneshot.js');
-      return os.runClaudeOneShot('Reply with exactly the single word: pong', { timeoutMs: 90_000, tag: 'wizard-health' });
+      const engine = os.hostEngine();
+      const out = await os.runOneShot('Reply with exactly the single word: pong', { engine, timeoutMs: 90_000, tag: 'wizard-health' });
+      return engine === 'claude' ? out : `${engine}: ${out}`;
     });
     try {
       const out = (await ping()).trim();
