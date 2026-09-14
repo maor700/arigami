@@ -38,7 +38,7 @@ import {
   renderEvents,
   estimateTokens as estimateTextTokens,
 } from './lib/ladder-replay.js';
-import { runClaudeOneShot } from './lib/oneshot.js';
+import { runClaudeOneShot, runOneShot, sessionEngine } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
 import * as extensions from './extensions.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
@@ -2236,52 +2236,36 @@ function scheduleAutoPlay(id) {
   if (t.unref) t.unref();
 }
 
-// Independent, read-only one-shot Claude runs (explain / auto-review). These do
-// NOT touch the session's conversation or its main claude proc — they spawn a
-// throwaway `claude -p` in the session's worktree with ARIGAMI_SESSION_ID set,
-// so the MCP tools write results straight to that session's Changes tab. The
-// session's chat, turn, and working state are untouched. Fire-and-forget.
-const headless = new Set();
-function runHeadless(s, prompt, onExit) {
-  const cwd = untildify(s.metadata?.worktree || s.cwd) || HOME;
-  const child = spawn(
-    claudeBin(),
-    [
-      '-p', prompt,
-      '--permission-mode', 'bypassPermissions', // one-shot, no prompts; prompt enforces read-only
-      '--model', 'sonnet', // fast/cheap for these read-only utility runs (don't inherit the user's Opus default)
-      '--mcp-config', MCP_CONFIG,
-      '--strict-mcp-config', // ONLY the arigami MCP — skip the user's global servers (fast, focused)
-      '--plugin-dir', ROOT, // registers the host skill pack (explain-changes etc.)
-      '--plugin-dir', userPluginDir(), // + user/bundle skills ($ARIGAMI_DIR/skills)
-    ],
-    {
-      cwd,
-      env: {
-        ...baseEnv(),
-        ...accountEnv(s),
-        ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
-        ARIGAMI_URL: cfg.hostBase, // internal host→self base only
-        ARIGAMI_PUBLIC_PATH: '/__host/',
-        ARIGAMI_TOKEN: auth.tokenForSession(s.id),
-        ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
-        ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }
+// Independent, read-only one-shot runs (explain / auto-review / summary) on the
+// SESSION's engine. They do NOT touch the session's conversation or its main
+// proc — a throwaway one-shot in the session's worktree with ARIGAMI_SESSION_ID
+// set, so the MCP tools write results straight to that session's Changes tab.
+// Fire-and-forget.
+function runHeadless(s, prompt, onExit, { effort } = {}) {
+  const engine = sessionEngine(s);
+  const env = {
+    ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
+    ARIGAMI_URL: cfg.hostBase, // internal host→self base only
+    ARIGAMI_PUBLIC_PATH: '/__host/',
+    ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+    ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
+    ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
+  };
+  runOneShot(prompt, {
+    engine,
+    account: s.claude?.accountId || null,
+    cwd: untildify(s.metadata?.worktree || s.cwd) || HOME,
+    tag: 'headless',
+    timeoutMs: 5 * 60 * 1000,
+    effort,
+    env,
+    // ONLY the arigami MCP — skip the user's global servers (fast, focused); codex MCP children need the identity explicitly
+    mcpServers: engine === 'codex' ? { arigami: { ...HOST_SERVERS.arigami, env } } : HOST_SERVERS,
+    pluginDirs: [ROOT, userPluginDir()], // host skill pack + user/bundle skills
+  }).then(
+    () => { try { onExit?.(0); } catch {} },
+    (e) => { console.error(`[headless] ${engine} failed:`, e?.message || e); try { onExit?.(1); } catch {} }
   );
-  supervise(child, 'headless');
-  headless.add(child);
-  let err = '';
-  child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-  child.on('error', (e) => { console.error('[headless] spawn failed:', e.message); headless.delete(child); try { onExit?.(1); } catch {} });
-  child.on('close', (code) => {
-    headless.delete(child);
-    if (code) console.error(`[headless] exited ${code}${err ? ': ' + err.trim().slice(0, 300) : ''}`);
-    try { onExit?.(code || 0); } catch {}
-  });
-  if (child.unref) child.unref();
-  return child;
 }
 
 // Shell snippet that reads the right diff for the mode. PR = working tree vs the
@@ -2346,7 +2330,8 @@ export function reviewChanges(id, mode) {
       `3. You MUST finish by POSTing your findings (this is the ONLY deliverable). For each finding give the file path and, when it maps to a specific changed line, the NEW-file line number so it can attach inline:\n` +
       `   curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/review/suggestions" -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' -d '{"comments":[{"path":"<file>","line":<new-file line number, optional>,"body":"<the issue + a concrete suggested fix>"}]}'\n` +
       `Include one object per finding. If the changes look clean, POST a single comment with the worst-case path saying they look good. Do not skip the curl.`,
-    () => { clearTimeout(guard); clear(); }
+    () => { clearTimeout(guard); clear(); },
+    { effort: 'medium' }
   );
   return { ok: true, mode };
 }
