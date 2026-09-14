@@ -17,7 +17,7 @@ export const he = {
   'settings.cat.automation': 'אוטומציה',
   'settings.cat.host': 'מארח',
   'settings.cat.extensions': 'הרחבות',
-  'settings.connections.claude': 'חשבונות Claude',
+  'settings.connections.claude': 'חשבונות',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'מתקדם',
   'settings.voice.off': 'הקול כבוי במארח הזה — אין מפתח Groq (groqApiKey / GROQ_API_KEY). ההגדרות נשמרות ויחולו כשיהיה.',

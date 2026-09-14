@@ -3980,6 +3980,7 @@ export async function handle(
         accounts: accounts.map((a: any) => ({
           id: a.id,
           label: a.label,
+          provider: a.provider,
           pool: a.pool,
           active: a.active,
           available: a.available,
@@ -4028,21 +4029,72 @@ export async function handle(
       const acc = await import('./accounts.js');
       return json(res, (acc as any).listAccounts());
     }
+    // The providers a human can add an account for (server/lib/providers.ts) —
+    // the cockpit renders the "add account" chooser from this, never from a
+    // hardcoded list, so a new provider shows up without a web change.
+    if (p === '/__api/accounts/providers' && m === 'GET') {
+      const pr = await import('./lib/providers.js');
+      return json(res, { providers: pr.providerCatalog() });
+    }
+    // The paste path, per provider: claude = a setup-token / PKCE token,
+    // codex = an OpenAI API key (validated against the API before it's stored).
     if (p === '/__api/accounts' && m === 'POST') {
       const acc = await import('./accounts.js');
+      const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       try {
+        const provider = pr.normalizeProvider(body?.provider);
+        if (provider === 'codex') {
+          const cx = await import('./codex-account.js');
+          return json(res, await cx.addApiKeyAccount({ label: body?.label, key: body?.token }));
+        }
         return json(res, (acc as any).addTokenAccount({ label: body?.label, token: body?.token }));
       } catch (e) {
         return badRequest(res, e instanceof Error ? e.message : String(e));
       }
     }
+    // The browser path, per provider: claude = PKCE (server/oauth-login.js),
+    // codex = `codex login --device-auth` (server/codex-account.ts). One flow
+    // id namespace: `oauth_…` / `cdx_…` / `auth_…` say which module owns it.
+    if (p === '/__api/accounts/login/start' && m === 'POST') {
+      const pr = await import('./lib/providers.js');
+      const body = (await readBody(req)) as any;
+      const provider = pr.normalizeProvider(body?.provider);
+      if (provider === 'codex') {
+        const cx = await import('./codex-account.js');
+        return json(res, cx.startDeviceLogin({ label: body?.label }));
+      }
+      const o = await import('./oauth-login.js');
+      return json(res, { provider: 'claude', ...(o as any).startLogin({ label: body?.label, sessionId: body?.sessionId || (req.headers['x-arigami-session'] as string) || null }) });
+    }
+    if (p === '/__api/accounts/login/status' && m === 'GET') {
+      const id = u.searchParams.get('id') || '';
+      if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).loginStatus(id));
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).authStatus(id));
+      return json(res, { provider: 'claude', ...((await import('./oauth-login.js')) as any).loginStatus(id) });
+    }
+    if (p === '/__api/accounts/login/code' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const id = String(body?.id || '');
+      if (id.startsWith('cdx_')) return badRequest(res, 'a Codex login takes the code in the browser, not here');
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).submitCode(id, body?.code));
+      return json(res, await ((await import('./oauth-login.js')) as any).submitCode(id, body?.code));
+    }
+    if (p === '/__api/accounts/login/cancel' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const id = String(body?.id || '');
+      if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).cancelLogin(id));
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).cancelAuth(id));
+      return json(res, ((await import('./oauth-login.js')) as any).cancelLogin(id));
+    }
     if (p === '/__api/accounts/active' && m === 'POST') {
       const acc = (await import('./accounts.js')) as any;
+      const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       try {
         const newId = body?.id;
-        const oldId = acc.getActiveId();
+        const provider = pr.normalizeProvider(acc.getAccount(newId)?.provider);
+        const oldId = acc.getActiveId(provider);
         const out = acc.setActive(newId);
         // Re-point sessions that FOLLOW the active account onto the new one, so
         // switching accounts actually applies to existing sessions (the common
@@ -4053,8 +4105,11 @@ export async function handle(
         // including busy ones, whose in-flight turn is cut: the point of the
         // switch is that the user can prompt on the new account immediately.
         // Not-running sessions just get re-pinned for their next spawn.
+        // Only sessions whose ENGINE consumes this provider's accounts follow —
+        // a codex login switch must never restart the claude sessions.
         let repointed = 0;
         for (const s of state.listSessions({ archived: true })) {
+          if (pr.providerForEngine(s.engine) !== provider) continue;
           const aid = (s.claude as any)?.accountId ?? null;
           if (aid === newId) continue;
           const follows = aid === null || aid === oldId || !acc.getAccount(aid);

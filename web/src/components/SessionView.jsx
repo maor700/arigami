@@ -9,6 +9,7 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { engineLabel, engineTermName } from '../lib/engines.js';
+import { providerForEngine, providerOf } from '../lib/providers.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
@@ -102,14 +103,17 @@ function StatusChip({ session }) {
 }
 
 // Which account this session runs on. Reads the session's pinned accountId (or
-// the active account if unpinned) so switching accounts is VISIBLE per session —
-// otherwise a switch looks like it did nothing.
+// the active account of the PROVIDER its engine consumes, if unpinned) so
+// switching accounts is VISIBLE per session — otherwise a switch looks like it
+// did nothing. A codex session never shows a Claude login here.
 function AccountChip({ session }) {
   const t = useT();
   const { accounts } = useStore();
   const list = accounts?.accounts || [];
+  const provider = providerForEngine(session.engine);
   const pinned = session.claude?.accountId;
-  const acc = (pinned && list.find((a) => a.id === pinned)) || list.find((a) => a.active) || null;
+  const pinnedAcc = pinned ? list.find((a) => a.id === pinned) : null;
+  const acc = (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
   if (!acc) return null;
   const name = acc.email || acc.label || t('rail.accountFallback');
   return (

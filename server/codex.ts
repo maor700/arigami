@@ -72,6 +72,7 @@ import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { injectedServersFor } from './mcp-connections.js';
+import { codexRealHome, codexAuthPathFor } from './accounts.js';
 import { policyFor, isRestrictive } from './agent-policy.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
@@ -94,13 +95,14 @@ function codexBin(): string {
 }
 
 /**
- * The REAL codex home — where `codex login` put auth.json. Every session gets
- * its OWN $CODEX_HOME (thread history + generated config must not be shared),
- * and symlinks auth.json back to this one so a single login serves them all.
+ * The machine's own codex home (~/.codex) — where `codex login` on the host put
+ * auth.json and where codex keeps models_cache.json. Every session gets its OWN
+ * $CODEX_HOME (thread history + generated config must not be shared) and
+ * symlinks auth.json to the login of the ACCOUNT it is pinned to
+ * (accounts.js codexAuthPathFor): the machine login for a `codex-home`
+ * account, a codex-accounts/<id>/ directory for a chatgpt / api-key one.
  */
-function realCodexHome(): string {
-  return process.env.ARIGAMI_CODEX_HOME || process.env.CODEX_HOME || path.join(HOME, '.codex');
-}
+const realCodexHome = codexRealHome;
 
 /** $CODEX_HOME for one session. Persistent: `codex exec resume` reads the thread history from it. */
 export function codexHomeFor(sessionId: string): string {
@@ -342,12 +344,13 @@ function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   const codexHome = codexHomeFor(s.id);
   fs.mkdirSync(codexHome, { recursive: true });
 
-  // One login, many sessions: auth.json stays in the real ~/.codex and every
-  // per-session home symlinks to it. A copy would go stale the moment codex
-  // refreshes the ChatGPT token.
-  const authSrc = path.join(realCodexHome(), 'auth.json');
-  if (!fs.existsSync(authSrc)) {
-    throw new Error(`codex is not signed in — ${authSrc} is missing; run \`codex login\` on the host first`);
+  // One login, many sessions: auth.json stays where the ACCOUNT keeps it and
+  // every per-session home symlinks to it. A copy would go stale the moment
+  // codex refreshes the ChatGPT token. The session's pinned account wins; a
+  // pin to a vanished account falls back to the active codex account.
+  const authSrc = codexAuthPathFor(s.claude?.accountId);
+  if (!authSrc) {
+    throw new Error('no Codex account is connected — add one under Settings › Connections › Accounts (sign in with ChatGPT or paste an OpenAI API key), or run `codex login` on the host');
   }
   linkDir(path.join(codexHome, 'auth.json'), authSrc);
 

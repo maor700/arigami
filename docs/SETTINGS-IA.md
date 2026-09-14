@@ -86,7 +86,7 @@ Each category is a file in `web/src/components/settings/`, ≤300 lines.
 |---|---|---|---|
 | **Appearance** | `appearance` | `Appearance.jsx` | theme, language, accent, font size, terminal defaults (theme/dir) |
 | **Voice** | `voice` | `Voice.jsx` | mode, mic, recognition language, hotkey (recording), auto-send |
-| **Connections** | `connections` | `Connections.jsx` + `ClaudeAccounts.jsx` + `NativeMcp.jsx` + `Integrations.jsx` + `Channels.jsx` + `ConnectDialog.jsx` | sections: `identity` · `claude` · `mcp` (M1 — cards for the providers' own servers, above Composio) · `integrations` ("More via Composio" + git/desktop/repos as capabilities) · `channels` (WhatsApp, SMS webhook, Slack/GitHub, custom, Funnel) · `remote` · `notifications` · audit |
+| **Connections** | `connections` | `Connections.jsx` + `Accounts.jsx` (per-provider: Claude, Codex) + `NativeMcp.jsx` + `Integrations.jsx` + `Channels.jsx` + `ConnectDialog.jsx` | sections: `identity` · `claude` · `mcp` (M1 — cards for the providers' own servers, above Composio) · `integrations` ("More via Composio" + git/desktop/repos as capabilities) · `channels` (WhatsApp, SMS webhook, Slack/GitHub, custom, Funnel) · `remote` · `notifications` · audit |
 | **Automation** | `automation` | `Automation.jsx` | Brain heartbeat, telemetry (+preview, rotate), link to cron in the Launcher |
 | **Host** | `host` | `Host.jsx` + `Health.jsx` + `Access.jsx` | version/restart/upgrade, backup, **Health** (RES1 — the health state of every session, account/model quotas with reset times, and the last 24 hours of events; section `health`), users & access (pairing/users/tokens), VNC password, danger zone (sign-out, reset local preferences) |
 

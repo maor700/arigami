@@ -187,6 +187,47 @@ nothing.
 - **Deleting a session cleans up its `$CODEX_HOME`** (`config/codex/<sessionId>`) — that's where
   the conversation history lives.
 
+## Accounts are per provider
+
+An account (`server/accounts.js`) carries a `provider` — `claude` or `codex` (`server/lib/providers.ts`,
+client mirror `web/src/lib/providers.js`). A provider is bound to the engine that consumes its
+credential, and nothing crosses the line: `pickSessionAccount(provider)` pins a new session to an
+account of its engine's provider, `nextAvailable()` never rotates a claude session onto a codex login
+(or back), `tokenForSession()` ignores codex accounts, and `setActive()` is per provider
+(`activeIds`; the file's `activeId` stays the claude one for anything that reads the old shape).
+Records written before the field existed load as `claude`.
+
+Codex account types, next to claude's `keychain` / `oauth-token`:
+
+- **`codex-home`** — the machine's own `codex login` (`~/.codex/auth.json`, or `ARIGAMI_CODEX_HOME`),
+  seeded on first run exactly like the keychain account: a live pointer, never copied, not removable
+  from the cockpit, marked `codex-home-stale` in a backup because it cannot travel.
+- **`chatgpt`** — minted by `codex login --device-auth` (`server/codex-account.ts`): codex prints a URL
+  and a one-time code, the human types the code in the browser, codex writes `auth.json` and exits.
+  No TTY, no loopback port. The cockpit polls `GET /__api/accounts/login/status` until it's done.
+- **`api-key`** — an OpenAI API key. `codex login --with-api-key` accepts anything (a bogus key is
+  "Successfully logged in" — measured), so the host validates it against `GET /v1/models` first.
+  Billed per request, no plan windows.
+
+Codex credentials are **not** stored in `accounts.json`: codex refreshes its own `auth.json` in place,
+so the file has to stay a real file the CLI can write. Each `chatgpt` / `api-key` account owns
+`$ARIGAMI_DIR/codex-accounts/<id>/auth.json` (0600), and a session's `$CODEX_HOME/auth.json` is a
+symlink to the login of the account the session is pinned to (`codexAuthPathFor`). Removing the
+account removes the directory. The directory travels in a full backup like the rest of the state dir.
+
+Identity and quota come from `codex app-server` (`account/read`, `account/rateLimits/read`) run for a
+few seconds under the account's own home — no turn is spent. The numbers land in the same
+`{session, week}` shape the cockpit already draws, with each window's length attached
+(`windowMins`), because codex's windows are a property of the plan: a free account has one 30-day
+window, a paid one 5 hours + a week. The rate-limit regex in `codex.ts` (limit 6b) is no longer the
+only quota signal, but it is still what the *turn* reports.
+
+REST (generic, provider in the body): `GET /__api/accounts/providers`, `POST /__api/accounts
+{provider, label, token}` (the paste path), `POST /__api/accounts/login/start {provider, label}`,
+`GET …/login/status?id=`, `POST …/login/code`, `POST …/login/cancel`. The flow id prefix says which
+module owns it (`oauth_` claude PKCE, `cdx_` codex device-auth, `auth_` the legacy setup-token
+scrape); the older `/__api/accounts/oauth/*` routes are unchanged for the `connect-claude` playbook.
+
 ## The rule for text in the UI
 
 A string that describes the **engine** (who's working right now, who's requesting the screen, whose

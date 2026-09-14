@@ -104,9 +104,9 @@ export function thresholds(now = Date.now()): Thresholds {
 
 // ---- building the view ------------------------------------------------------
 
-/** True when every pooled account is quarantined/unusable right now. */
+/** True when every pooled CLAUDE account is quarantined/unusable right now (the model ladder is claude's). */
 function accountsAllLimited(): boolean {
-  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool);
+  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool && (a.provider || 'claude') === 'claude');
   if (!pool.length) return false;
   return pool.every((a) => !a.available);
 }

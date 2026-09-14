@@ -8,6 +8,7 @@ import { cfg, ensureConfigFile } from './lib/config.js';
 import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
 import { STATE_SCHEMA } from './lib/state-schemas.js';
 import { pickSessionAccount } from './accounts.js';
+import { providerForEngine } from './lib/providers.js';
 import * as funnel from './funnel.js';
 
 export { cfg, ensureConfigFile };
@@ -574,7 +575,9 @@ export function createSession({
       // NEW sessions — existing ones keep the account they were created on.
       // Picks the active account, or the next available one if active is
       // rate-limited/quarantined, so a new session doesn't start dead-on-arrival.
-      accountId: pickSessionAccount() || null,
+      // Per PROVIDER: a codex session is pinned to a codex login, never to a
+      // Claude token it could not use (server/lib/providers.ts).
+      accountId: pickSessionAccount(providerForEngine(engine)) || null,
       // Seed the session's model from the caller's pick, falling back to the
       // configured default (cfg.defaultModel); null means "no --model flag",
       // so the CLI picks. The per-session dropdown can still override later.

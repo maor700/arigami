@@ -22,7 +22,7 @@ import { capTitle, capFamily, manualFor } from '../setup/registry.js';
 import { Icon } from '../../lib/icons.js';
 import { faPlus, faCheck } from '@fortawesome/free-solid-svg-icons';
 import ConnectDialog from './ConnectDialog.jsx';
-import ClaudeAccounts, { ClaudeAccountsFooter } from './ClaudeAccounts.jsx';
+import Accounts, { AccountsFooter } from './Accounts.jsx';
 import AddConnection, { composioCap } from './AddConnection.jsx';
 import { Webhooks } from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
@@ -203,7 +203,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
         />
       </Section>
 
-      <ClaudeAccounts initialAdd={initialAdd} identity={identity} footer={false} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
+      <Accounts initialAdd={initialAdd} identity={identity} footer={false} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
 
       <Section id="connected" title={t('settings.connections.connected')} onRefresh={load}>
         <div className="mb-2 text-[11px] text-fgdim">{t('settings.connections.connected.hint')}</div>
@@ -233,7 +233,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
         </Section>
 
         <Section id="claude-more" title={t('settings.connections.claude.more')}>
-          <ClaudeAccountsFooter />
+          <AccountsFooter />
         </Section>
 
         {admin && (

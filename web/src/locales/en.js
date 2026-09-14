@@ -18,7 +18,7 @@ export const en = {
   'settings.cat.automation': 'Automation',
   'settings.cat.host': 'Host',
   'settings.cat.extensions': 'Extensions',
-  'settings.connections.claude': 'Claude accounts',
+  'settings.connections.claude': 'Accounts',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'Advanced',
   'settings.voice.off': 'Voice is off on this host — no Groq key (groqApiKey / GROQ_API_KEY). The settings are kept and apply once there is one.',

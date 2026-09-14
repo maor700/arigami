@@ -13,7 +13,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { HOME } from './lib/platform.js';
 import { broadcast } from './bus.js';
-import { resolveToken, getActiveId, listAccounts, patchAccount } from './accounts.js';
+import { resolveToken, getActiveId, listAccounts, patchAccount, getAccount, codexHomeOfAccount } from './accounts.js';
 
 const ENDPOINT = 'https://api.anthropic.com/api/oauth/usage';
 const TTL_MS = 60_000;
@@ -71,6 +71,16 @@ function normalize(j) {
 // the account is maxed — surface it as session:100% so callers (and auto-switch)
 // can treat the account as exhausted.
 async function fetchUsage(accountId) {
+  // Per provider: a codex account's quota comes from its own CLI's app-server
+  // (server/codex-account.ts), in the same {session, week} shape.
+  if (getAccount(accountId)?.provider === 'codex') {
+    try {
+      const m = await import('./codex-account.js');
+      return await m.codexUsage(accountId);
+    } catch {
+      return { available: false, reason: 'fetch-failed' };
+    }
+  }
   const token = resolveToken(accountId);
   if (!token) return { available: false, reason: 'no-credentials' };
   try {
@@ -128,6 +138,25 @@ export async function fetchIdentity(token) {
   }
 }
 
+// Identity by provider: claude → the OAuth profile endpoint; codex → the CLI's
+// app-server `account/read` (email + plan for ChatGPT logins; an API key has
+// no identity to expose). Never throws.
+async function identityOf(accountId) {
+  const a = getAccount(accountId);
+  if (!a) return {};
+  if (a.provider === 'codex') {
+    if (a.type === 'api-key') return {};
+    try {
+      const m = await import('./codex-account.js');
+      const ident = await m.codexIdentity(codexHomeOfAccount(a));
+      return { email: ident.email, plan: ident.plan };
+    } catch {
+      return {};
+    }
+  }
+  return fetchIdentity(resolveToken(a));
+}
+
 // Is this token actually usable for running a session? We test it the exact way
 // Claude Code does — a minimal /v1/messages inference call — because that's the
 // only authoritative signal (setup-tokens have user:inference scope, so /profile
@@ -172,16 +201,25 @@ export async function refreshAccount(id) {
   patchAccount(id, { lastUsage: compact(data) });
   broadcast({ type: 'account-usage', accountId: id, active: id === activeId, usage: data });
   if (id === activeId) broadcast({ type: 'usage-updated', usage: data });
-  const ident = await fetchIdentity(resolveToken(id));
+  const ident = await identityOf(id);
   const patch = {};
   for (const k of ['email', 'org', 'plan']) if (ident[k]) patch[k] = ident[k];
   if (Object.keys(patch).length) patchAccount(id, patch);
   return data;
 }
 
+// The per-account snapshot kept in accounts.json (what the cockpit shows before
+// the first live broadcast). Window lengths ride along because codex's windows
+// are a property of the plan, and the card labels them by length.
 const compact = (d) =>
   d.available
-    ? { session: d.session?.pct ?? null, week: d.week?.pct ?? null, at: d.fetchedAt || Date.now() }
+    ? {
+        session: d.session?.pct ?? null,
+        week: d.week?.pct ?? null,
+        ...(d.session?.windowMins ? { sessionMins: d.session.windowMins } : {}),
+        ...(d.week?.windowMins ? { weekMins: d.week.windowMins } : {}),
+        at: d.fetchedAt || Date.now(),
+      }
     : { reason: d.reason || 'unavailable', at: Date.now() };
 
 // Poll the active + pooled accounts and broadcast changes. The active account
@@ -213,7 +251,7 @@ export function startUsagePolling() {
         // One-shot identity fill (keychain accounts resolve; setup-tokens don't).
         if (!a.email && !identTried.has(a.id)) {
           identTried.add(a.id);
-          const ident = await fetchIdentity(resolveToken(a.id));
+          const ident = await identityOf(a.id);
           const patch = {};
           for (const k of ['email', 'org', 'plan']) if (ident[k]) patch[k] = ident[k];
           if (Object.keys(patch).length) patchAccount(a.id, patch);

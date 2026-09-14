@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store.js';
 import { t, useT } from '../lib/i18n.js';
 import { engineLabel, normalizeEngine } from '../lib/engines.js';
+import { providerForEngine, providerOf, windowLabel, snapshotUsage } from '../lib/providers.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -247,17 +248,19 @@ function tabsFor(engine) {
 function accountUsageOf(a, accountUsage) {
   const u = accountUsage?.[a.id];
   if (u?.available) return u;
-  const lu = a.lastUsage;
-  if (lu && !lu.reason) return { available: true, session: { pct: lu.session }, week: { pct: lu.week } };
-  return null;
+  const snap = snapshotUsage(a);
+  return snap?.available ? snap : null;
 }
 
 // `/usage` + `/status` tab: which account this session runs on, plus every
 // account's session/week meters. Reads the accounts store directly.
 function AccountsUsageTab({ session, accounts, accountUsage }) {
   const t = useT();
-  const list = accounts?.accounts || [];
-  const activeId = accounts?.activeId;
+  // Only the accounts of the provider this session's engine consumes — a
+  // codex session's /status must not list Claude logins as candidates.
+  const provider = providerForEngine(session?.engine);
+  const list = (accounts?.accounts || []).filter((a) => providerOf(a) === provider);
+  const activeId = accounts?.activeIds?.[provider] ?? (provider === 'claude' ? accounts?.activeId : null);
   const sessAccId = session?.claude?.accountId || activeId;
   const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
   if (!list.length) return <Pending engine={engineLabel(session?.engine)} />;
@@ -280,8 +283,8 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
             </div>
             {u?.available && (u.session || u.week) ? (
               <div className="mt-1">
-                <UsageBar label={t('dialogs.sessionWindow5h')} win={u.session} sub />
-                <UsageBar label={t('dialogs.week')} win={u.week} sub />
+                <UsageBar label={provider === 'claude' ? t('dialogs.sessionWindow5h') : windowLabel(t, provider, 'session', u.session)} win={u.session} sub />
+                <UsageBar label={provider === 'claude' ? t('dialogs.week') : windowLabel(t, provider, 'week', u.week)} win={u.week} sub />
               </div>
             ) : (
               <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.usageUnavailableShort')}</div>
