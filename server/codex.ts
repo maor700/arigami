@@ -34,8 +34,7 @@
 //     did for claude's bypassPermissions.
 //   - A3 allowlists: enforced by the same PreToolUse hook as claude, via $CODEX_HOME/hooks.json
 //     + --dangerously-bypass-hook-trust (without the flag codex skips hooks silently — measured).
-//   - Remote (url) MCP grants are skipped — codex keeps its own OAuth store per
-//     $CODEX_HOME, so an arigami grant minted for claude is not usable.
+//   - Remote (url) MCP servers load only with a Codex-side grant (`codex mcp login`, P2-4); Claude's grants are not usable here.
 //   - Quota recovery (P2-6) is codex-recovery.ts: rateLimits-confirmed account rotation, then cfg.codexModelChain.
 //     LADDER1's compaction was actually TRIED (not just assumed absent): five
 //     live turns with model_auto_compact_token_limit=3000 (both scope values)
@@ -65,8 +64,8 @@ import type { EngineDriver } from './lib/engine-driver.js';
 import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
-import { injectedServersFor } from './mcp-connections.js';
 import { hostMcpServers } from './lib/mcp-servers.js';
+import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
 import { looksLikeCodexLimit, setCodexCatalogSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
@@ -294,28 +293,24 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   if (isRestrictive(policy) && policy.tools !== null) {
     for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
   }
-  // M1 grants are `{type:'http', url}` entries whose credentials live in
-  // CLAUDE's own per-agent MCP store. Codex authenticates remote servers
-  // through its own `codex mcp login` under $CODEX_HOME and would just start an
-  // unauthenticated connection (and burn STARTUP_TIMEOUT_SEC doing it), so they
-  // are left out — and the session is told once, because its persona may have
-  // promised those tools.
-  if (slug) {
-    let skipped: string[] = [];
-    try {
-      skipped = Object.keys(injectedServersFor(`agent:${slug}`));
-    } catch {
-      /* no connections.json */
-    }
-    if (skipped.length && !st.warnedRemote) {
-      st.warnedRemote = true;
-      appendChat(s.id, {
-        kind: 'system',
-        text:
-          `⤷ The engine here is Codex, so the agent's remote MCP servers (${skipped.join(', ')}) aren't available in this session — ` +
-          `their credentials belong to Claude. Don't rely on their tools; Arigami's own host tools still work.`,
-      });
-    }
+  // P2-4: remote grants load only when Codex holds its own (`codex mcp login`, mcp-connections codexServersFor); Claude-only ones get a one-time note.
+  let remote: { granted: Record<string, { url: string }>; claudeOnly: string[] } = { granted: {}, claudeOnly: [] };
+  try {
+    remote = codexServersFor(slug ? `agent:${slug}` : GLOBAL);
+  } catch {
+    /* no connections.json */
+  }
+  for (const [name, sv] of Object.entries(remote.granted)) {
+    if (!servers[name] && (!isRestrictive(policy) || policy.tools === null || serverTouched(policy, name))) servers[name] = sv;
+  }
+  if (remote.claudeOnly.length && !st.warnedRemote) {
+    st.warnedRemote = true;
+    appendChat(s.id, {
+      kind: 'system',
+      text:
+        `⤷ These remote MCP servers are granted for Claude only, so this Codex session doesn't have them: ${remote.claudeOnly.join(', ')}. ` +
+        'Run the connect-mcp skill from this session to authorize them for Codex.',
+    });
   }
 
   const env: Record<string, string> = {
@@ -366,6 +361,28 @@ function restrictedAgentOf(s: Session): boolean {
   return !!slug && isRestrictive(policyFor(slug));
 }
 
+/** P2-4: `.credentials.json` → the host-wide codex MCP grant file; a real file codex left behind (a token refresh) is copied back first if newer. */
+function linkMcpCredentials(codexHome: string): void {
+  const link = path.join(codexHome, '.credentials.json');
+  const shared = codexCredentialsFile();
+  try {
+    const st = fs.lstatSync(link);
+    if (!st.isSymbolicLink() && st.isFile()) {
+      let sharedMtime = 0;
+      try { sharedMtime = fs.statSync(shared).mtimeMs; } catch { /* none yet */ }
+      if (st.mtimeMs > sharedMtime) {
+        fs.mkdirSync(codexMcpHome(), { recursive: true, mode: 0o700 });
+        fs.copyFileSync(link, shared);
+        fs.chmodSync(shared, 0o600);
+      }
+    }
+  } catch {
+    /* nothing there yet */
+  }
+  if (fs.existsSync(shared)) linkDir(link, shared);
+  else fs.rmSync(link, { force: true });
+}
+
 /** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
 export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
 
@@ -388,12 +405,16 @@ function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   linkDir(path.join(codexHome, 'auth.json'), authSrc);
 
   linkSkills(codexHome);
+  linkMcpCredentials(codexHome);
 
   const st = stateOf(s.id);
   const cwd = untildify(s.cwd) || HOME;
   const lines = [
     '# generated by server/codex.ts — rewritten before every spawn, do not edit by hand',
     `# session ${s.id}`,
+    '',
+    // P2-4: MCP OAuth tokens live in the file linkMcpCredentials() points at, never the keyring.
+    'mcp_oauth_credentials_store = "file"',
     '',
     // Without this codex asks whether the directory is trusted; the session's
     // worktree IS the sandbox boundary arigami already chose for it.

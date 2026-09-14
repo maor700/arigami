@@ -78,11 +78,10 @@ is `Bash` for its shell, `mcp__<server>__<tool>` for MCP; exit 2 blocks). `codex
 restricted built-ins are hook-denied, not hidden; extension servers the allowlist never touches are
 left out of `config.toml`. Codex's snake_case built-ins are aliased onto claude names in `agent-policy.ts`.
 
-### 4. Remote MCP grants are skipped
+### 4. Remote MCP grants are per engine
 
-Codex has its own credential store (OAuth) under `$CODEX_HOME`. A grant Arigami issued for
-claude simply isn't usable there, so `url`-type MCP servers **are skipped** when building the config.
-A remote server you want in a codex session will need its own, separate OAuth.
+Claude's grants (`claude mcp login`) can't be used by codex. A codex session loads a `url` server only when codex holds its own grant: `codex mcp login <name>` under one host-wide `$ARIGAMI_DIR/codex-mcp` home (`mcp_oauth_credentials_store="file"`, server url passed as `-c`), written to `.credentials.json` keyed `<name>|<hash>` like Claude's, and linked into every session's `$CODEX_HOME`. Ownership stays in the same `connections.json` records (`agent:<slug>` / global). Verified on this VPS 2026-09-15 (codex-cli 0.153.4): the login prints the authorize URL headless, Linear consent on the session Chrome landed on the loopback, and a codex turn called `linear.list_teams` through the linked file.
+Claude-only grants get one chat note per session. Bearer rows (GitHub) are not wired for codex. A token refresh that replaces the linked file is copied back to the shared file on the next spawn.
 
 ### 4b. External MCP servers: composio-mcp yes, claude.ai connectors no
 

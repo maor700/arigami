@@ -16,7 +16,9 @@
 // Like setup-token these are TTY programs, so they run under a pty relay
 // (lib/pty-bridge.py on POSIX, winpty on Windows — see platform.ptyArgs).
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
+import { codexMcpHome } from './mcp-connections.js';
 import { ptyArgs } from './lib/platform.js';
 import { supervise, killTree } from './lib/children.js';
 import { broadcast } from './bus.js';
@@ -114,21 +116,68 @@ export async function listServers(force = false, cwd = '') {
 // switch — changes status).
 export const invalidateLists = () => listCaches.clear();
 
+// ---- P2-4: codex's own `codex mcp login` --------------------------------------
+// One host-wide CODEX_HOME (mcp-connections codexMcpHome); the server url and the file store ride on argv, so no config.toml races.
+
+/** Pure: argv for `codex mcp <verb> <name>` with the server passed as -c overrides. */
+export function codexMcpArgs(verb, name, url) {
+  const key = /^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name);
+  return ['-c', 'mcp_oauth_credentials_store="file"', ...(url ? ['-c', `mcp_servers.${key}.url=${JSON.stringify(url)}`] : []), 'mcp', verb, name];
+}
+
+const codexBin = () => process.env.ARIGAMI_CODEX_BIN || 'codex';
+const loginKey = (name, engine) => (engine === 'codex' ? `codex:${name}` : name);
+
+/** `codex mcp logout <name>` under the codex MCP home. */
+export function codexLogout(name, url) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn(codexBin(), codexMcpArgs('logout', name, url), { env: { ...process.env, CODEX_HOME: codexMcpHome() }, stdio: ['ignore', 'pipe', 'pipe'] });
+      supervise(child, 'mcp:codex-logout');
+    } catch (e) {
+      return resolve({ ok: false, output: `spawn failed: ${e.message}` });
+    }
+    const t = setTimeout(() => { killTree(child.pid); resolve({ ok: false, output: out }); }, 15000);
+    if (t.unref) t.unref();
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('close', (code) => { clearTimeout(t); logins.delete(loginKey(name, 'codex')); resolve({ ok: code === 0, output: stripAnsi(out).trim().slice(-200) }); });
+  });
+}
+
 // ---- login / logout ---------------------------------------------------------
 /** @type {Map<string, any>} */
 const logins = new Map();
 
-const publicLogin = (f) => ({ name: f.name, state: f.state, url: f.url || null, error: f.error || null });
+const publicLogin = (f) => ({ name: f.name, state: f.state, url: f.url || null, error: f.error || null, ...(f.engine === 'codex' ? { engine: 'codex' } : {}) });
 const emitLogin = (f) => broadcast({ type: 'mcp-auth', login: publicLogin(f) });
 
+/** @param {string} name @param {string} [cwd] @param {{browser?: boolean, env?: object, engine?: string, url?: string}} [opts] */
 export function startLogin(name, cwd, opts = {}) {
   if (!name) return { name, state: 'error', url: null, error: 'no server name' };
-  const prev = logins.get(name);
+  const key = loginKey(name, opts.engine);
+  const prev = logins.get(key);
   if (prev && (prev.state === 'starting' || prev.state === 'awaiting')) return publicLogin(prev);
 
-  const f = { name, state: 'starting', url: null, error: null, buf: '' };
+  const f = { name, engine: opts.engine === 'codex' ? 'codex' : 'claude', state: 'starting', url: null, error: null, buf: '' };
   let child;
-  try {
+  if (f.engine === 'codex') {
+    try {
+      const home = codexMcpHome();
+      fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+      const [bin, ...args] = ptyArgs(BRIDGE, [codexBin(), ...codexMcpArgs('login', name, opts.url)]);
+      // BROWSER=true: codex must print the URL, never try to open one on the host.
+      child = spawn(bin, args, { env: { ...process.env, CODEX_HOME: home, BROWSER: 'true', NO_COLOR: '1' }, stdio: ['pipe', 'pipe', 'pipe'], cwd: home });
+      supervise(child, `mcp-login:codex:${name}`);
+    } catch (e) {
+      f.state = 'error';
+      f.error = `could not start codex login: ${e.message}`;
+      return publicLogin(f);
+    }
+  }
+  if (!child) try {
     // Run in the session's cwd so project-scoped .mcp.json servers (e.g. an
     // agent's local-scope grants) resolve — they don't exist from the daemon's
     // own cwd. `--no-browser` keeps the URL on stdout and stdin open for the
@@ -145,7 +194,7 @@ export function startLogin(name, cwd, opts = {}) {
     return publicLogin(f);
   }
   f.child = child;
-  logins.set(name, f);
+  logins.set(key, f);
 
   const onText = (d) => {
     f.buf += d;
@@ -167,7 +216,10 @@ export function startLogin(name, cwd, opts = {}) {
   child.on('close', (code) => {
     invalidateLists(); // status likely changed
     if (f.state === 'done' || f.state === 'error') return;
-    if (f.waits && !code) {
+    if (f.engine === 'codex' && code) {
+      f.state = 'error';
+      f.error = stripAnsi(f.buf).split('\n').map((l) => l.trim()).filter((l) => l && !/^WARNING:/.test(l)).slice(-1)[0] || 'codex mcp login failed';
+    } else if (f.waits && !code) {
       // A loopback server that waited then exited cleanly = authorization landed.
       f.state = 'done';
     } else if (code && f.pasted) {
@@ -193,8 +245,8 @@ export function startLogin(name, cwd, opts = {}) {
   return publicLogin(f);
 }
 
-export function loginStatus(name) {
-  const f = logins.get(name);
+export function loginStatus(name, engine) {
+  const f = logins.get(loginKey(name, engine));
   return f ? publicLogin(f) : { name, state: 'idle', url: null, error: null };
 }
 
@@ -228,11 +280,28 @@ export function submitRedirect(name, url) {
   return { ok: true, ...publicLogin(f) };
 }
 
+/** P2-4: codex reads no stdin for the redirect — forward the pasted loopback callback to its listener ourselves. */
+export async function submitCodexRedirect(name, url) {
+  const f = logins.get(loginKey(name, 'codex'));
+  if (!f || !f.child || f.child.killed) return { ok: false, ...loginStatus(name, 'codex'), error: 'no login in progress' };
+  let target;
+  try { target = new URL(String(url || '').trim()); } catch { return { ok: false, ...publicLogin(f), error: 'paste the full redirect URL (…/callback?code=…)' }; }
+  if (!/^(127\.0\.0\.1|localhost)$/.test(target.hostname) || !target.searchParams.get('code'))
+    return { ok: false, ...publicLogin(f), error: 'expected the loopback callback (127.0.0.1:<port>/callback/…?code=…)' };
+  try {
+    const res = await fetch(target.toString(), { signal: AbortSignal.timeout(30_000), redirect: 'manual' });
+    f.pasted = true;
+    return res.status < 400 ? { ok: true, ...publicLogin(f) } : { ok: false, ...publicLogin(f), error: `codex refused the callback (HTTP ${res.status})` };
+  } catch (e) {
+    return { ok: false, ...publicLogin(f), error: `could not reach codex's login listener: ${e.message}` };
+  }
+}
+
 /** Give up on a login in progress (the human closed the card). */
-export function cancelLogin(name) {
-  const f = logins.get(name);
+export function cancelLogin(name, engine) {
+  const f = logins.get(loginKey(name, engine));
   if (f?.child) killTree(f.child.pid);
-  logins.delete(name);
+  logins.delete(loginKey(name, engine));
   return { name, state: 'idle', url: null, error: null };
 }
 

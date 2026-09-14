@@ -312,6 +312,10 @@ export interface CapabilityProbes {
   mcp: () => mcpConn.McpState;
   // M1: the connection records this host wrote for an owner (never secrets).
   mcpConnections: (owner: Owner) => mcpConn.McpConnection[];
+  // P2-4: Codex's own MCP grants (name → live).
+  codexMcp: () => Map<string, boolean>;
+  // P2-4: the engine asking (a session's), or null for Settings/doctor — mcp:* then counts any engine's grant.
+  engine: () => mcpConn.McpEngine | null;
 }
 
 // Connected-accounts probe: one network call, cached — a tool that checks
@@ -447,6 +451,8 @@ export const defaultProbes: CapabilityProbes = {
   composioConnected: fetchComposioConnected,
   mcp: () => mcpConn.readMcpState(),
   mcpConnections: (owner) => mcpConn.readConnections(owner),
+  codexMcp: () => mcpConn.readCodexMcpGrants(),
+  engine: () => null,
 };
 
 // ---------------------------------------------------------------------------
@@ -700,18 +706,31 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
       if (spec.auth === 'oauth-byo-client')
         return { ok: false, detail: `${title} has no dynamic client registration — it needs an OAuth app of your own (client id + secret)`, data: { auth: spec.auth, url: spec.url, docs: spec.docs } };
       const state = p.mcp();
+      const codex = p.codexMcp();
+      const engine = p.engine();
       const own = p.mcpConnections(owner).find((c) => c.cap === `mcp:${s}`);
       const shared = owner === GLOBAL_OWNER ? null : p.mcpConnections(GLOBAL_OWNER).find((c) => c.cap === `mcp:${s}`);
+      let heldElsewhere: string[] = [];
       for (const [conn, from] of [[own, owner] as const, [shared, GLOBAL_OWNER] as const]) {
         if (!conn) continue;
-        if (!mcpConn.grantLive(conn.name, conn.auth || spec.auth, state)) continue;
+        const engines = mcpConn.grantEngines(conn.name, conn.auth || spec.auth, state, codex);
+        if (engine ? !engines.includes(engine) : !engines.length) {
+          if (engines.length && !heldElsewhere.length) heldElsewhere = engines;
+          continue;
+        }
         return {
           ok: true,
           owner: from,
-          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''}`,
-          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
+          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''} · ${engines.join(', ')}`,
+          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, engines, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
         };
       }
+      if (engine && heldElsewhere.length)
+        return {
+          ok: false,
+          detail: engine === 'codex' && spec.auth === 'bearer' ? `${title} is token-based — not wired for Codex sessions yet` : `${title} is granted for ${heldElsewhere.join(', ')} only — authorize it once more for ${engine}`,
+          data: { name, url: spec.url, auth: spec.auth, docs: spec.docs, engines: heldElsewhere, engine, tools: grantToolPattern(name) },
+        };
       const stale = own || shared;
       // The bearer rows never see a consent screen — saying "authorize" there
       // would send the human looking for a browser step that does not exist.
