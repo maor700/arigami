@@ -1189,6 +1189,8 @@ function handleEvent(msg) {
       // UPD1: the `claude` CLI updater's outcome — one line, wherever you are.
       if (ev?.kind === 'claude-update-done') toast(t('host.cli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
       else if (ev?.kind === 'claude-update-failed') toastError(t('host.cli.failedToast', { error: ev.error || '?' }));
+      else if (ev?.kind === 'codex-update-done') toast(t('host.codexCli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
+      else if (ev?.kind === 'codex-update-failed') toastError(t('host.codexCli.failedToast', { error: ev.error || '?' }));
       return;
     }
     default:

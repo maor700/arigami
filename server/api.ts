@@ -3204,6 +3204,12 @@ export async function handle(
       const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
       return json(res, cu.status());
     }
+    // P1-10: the `codex` CLI row — same shape, never auto-applied.
+    if (p === '/__api/host/codex' && m === 'GET') {
+      const cx = await import('./lib/codex-update.js');
+      const st = (await cx.codexUpdater()).status();
+      return json(res, st.installed ? st : { ...st, installed: await cx.codexInstalled() });
+    }
     // The self-update watcher's view: what it last saw upstream, which channel
     // this install updates through, and whether it is allowed to apply it
     // (lib/self-update.ts). Read-only — applying still goes through
@@ -3287,10 +3293,10 @@ export async function handle(
         }
         // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,
         // deferred under memory pressure) · claude/auto {enabled} (the policy toggle).
-        if (sub.startsWith('claude/') && m === 'POST') {
-          const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
-          if (sub === 'claude/check') return json(res, await cu.check({ force: true }));
-          if (sub === 'claude/update') {
+        if ((sub.startsWith('claude/') || sub.startsWith('codex/')) && m === 'POST') {
+          const cu = sub.startsWith('codex/') ? await (await import('./lib/codex-update.js')).codexUpdater() : await (await import('./lib/claude-update.js')).claudeUpdater();
+          if (sub === 'claude/check' || sub === 'codex/check') return json(res, await cu.check({ force: true }));
+          if (sub === 'claude/update' || sub === 'codex/update') {
             await cu.check({ force: true });
             const r = await cu.apply({ reason: 'manual' });
             if (r.deferred) return json(res, { ...r, error: `deferred: ${r.availableMb}MB available < ${r.minFreeMb}MB (memory pressure)`, status: cu.status() }, 409);

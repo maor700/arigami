@@ -39,6 +39,11 @@ export const strings = {
   'host.check': 'Check',
   // UPD1 — the `claude` CLI behind every session
   'host.cli': 'Claude CLI',
+  'host.codexCli': 'Codex CLI',
+  'host.codexCli.hint': 'The codex binary Codex sessions are spawned with. "Update now" runs `codex update`; never updated automatically.',
+  'host.codexCli.missing': 'not installed',
+  'host.codexCli.updatedToast': 'Codex CLI updated {from} → {to} — new sessions use it',
+  'host.codexCli.failedToast': 'Codex CLI update failed: {error}',
   'host.defaultEngine': 'Default engine',
   'host.defaultEngine.hint': 'The CLI a new session runs on when neither you, its agent nor its parent session picks one.',
   'host.cli.hint': 'The claude binary sessions are spawned with. Checked once a day against the release channel `claude update` tracks; running sessions keep their build, new ones get the new one.',
