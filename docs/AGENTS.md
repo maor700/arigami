@@ -76,7 +76,7 @@ virtual path `agents/<slug>/…`).
 - `engine?: 'claude' | 'codex'` on the record (REST, `create_agent`/`update_agent`, the agent page's
   Advanced settings and the AgentCard draft — the model picker there lists that engine's catalog).
 - Resolution (`agents.engineForSpawn`, inside `applyAgentToSession`, used by every spawn-from-agent
-  path): explicit caller value → agent's engine → host default; `''` counts as not given.
+  path): explicit caller value → agent's engine → parent's (children) → `cfg.defaultEngine`; `''` counts as not given.
 - A3 on Codex: the same PreToolUse hook, written to `$CODEX_HOME/hooks.json` and run with
   `--dangerously-bypass-hook-trust`; codex built-ins are aliased onto claude names (`view_image` → Read). See `docs/ENGINES.md` §3.
 

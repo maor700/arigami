@@ -27,7 +27,7 @@ import {
   setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, coerceSessionOptions } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
 import { EngineToggle } from './EngineToggle.jsx';
 // Re-exported so the tests that always imported it from here keep working.
 export { EngineToggle };
@@ -508,7 +508,7 @@ export function SessionOptionsPicker({ options, onChange }) {
     api.get('/skills').then((r) => setSkills(r?.skills || [])).catch(() => {});
   }, []);
   const { models: claudeModels } = useModels();
-  const engine = options.engine || 'claude';
+  const engine = resolveEngine(options.engine);
   const modelOptions = modelOptionsFor(engine, claudeModels);
   const effortOptions = effortOptionsFor(engine, options.model);
   const set = (patch) => onChange({ ...options, ...patch });
@@ -1601,6 +1601,7 @@ export function CronSubPanel() {
   const [deliverMaster, setDeliverMaster] = useState('');
   const [deliverWhatsapp, setDeliverWhatsapp] = useState('');
   const [autonomous, setAutonomous] = useState(false);
+  const [engine, setEngine] = useState('');
   const [warnOpen, setWarnOpen] = useState(false);
   const prefs = usePrefs();
   const [busy, setBusy] = useState(false);
@@ -1624,6 +1625,7 @@ export function CronSubPanel() {
         sessionMode: sessionMode === 'existing' ? `existing:${targetSessionId.trim()}` : 'isolated',
         deliver: { push: deliverPush, master: deliverMaster.trim() || undefined, whatsapp: deliverWhatsapp.trim() || undefined },
         autonomous,
+        engine: engine || undefined,
       });
       setName('');
       setPrompt('');
@@ -1675,6 +1677,7 @@ export function CronSubPanel() {
             className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
           />
         </div>
+        {sessionMode === 'isolated' && <EngineToggle options={{ engine }} onChange={(o) => setEngine(o.engine || '')} className="mb-2" />}
         <div className="mb-2 flex items-center gap-2">
           <select
             value={sessionMode}

@@ -10,7 +10,7 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
@@ -1216,7 +1216,9 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
       permissionMode = wired.permissionMode;
       metadata = wired.metadata;
     }
-    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
+    // A PM child inherits the controller's engine when the agent has none.
+    const engine = agents.engineForSpawn(null, a, isController ? from : null);
+    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: engine as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
     const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, engine: o.engine, color: o.color });
     spawnSafe(s.id);
     try {
@@ -3311,6 +3313,12 @@ export async function handle(
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
     }
+    // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.
+    if (p === '/__api/config/default-engine' && m === 'POST') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req)) as any;
+      return json(res, { defaultEngine: updateDefaultEngine(body?.engine) });
+    }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
     // ---- Webhooks (C3) — inbound routes are public (auth.ts allowlist) and
@@ -3866,6 +3874,7 @@ export async function handle(
             deliver: body.deliver,
             autonomous: body.autonomous,
             agent: body.agent,
+            engine: body.engine,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);
@@ -4814,6 +4823,8 @@ export async function handle(
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
       let agentColor: string | undefined;
+      // P2-5: a child's engine = explicit → its agent's → its master's → cfg.defaultEngine.
+      if (body.master) body.engine = agents.engineForSpawn(body.engine, body.agent ? agents.getAgent(String(body.agent)) : null, state.getSession(String(body.master))) || undefined;
       try {
         const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
         body.title = o.title;

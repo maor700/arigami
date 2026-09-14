@@ -1,6 +1,6 @@
 import { useT } from '../lib/i18n.js';
 import { useModels } from '../lib/models.js';
-import { engineOptions, coerceSessionOptions, modelOptionsFor } from '../lib/engines.js';
+import { engineOptions, coerceSessionOptions, modelOptionsFor, resolveEngine, DEFAULT_ENGINE } from '../lib/engines.js';
 
 // Segmented engine toggle shared by the Launcher and the agent forms (AgentView / AgentCard).
 // WHICH ENGINE a new session is born on. A visible segmented toggle, not a
@@ -21,9 +21,9 @@ import { engineOptions, coerceSessionOptions, modelOptionsFor } from '../lib/eng
 export function EngineToggle({ options, onChange, className = '', label, ...rest }) {
   const t = useT();
   const { models: claudeModels } = useModels();
-  const current = options.engine || 'claude';
+  const current = resolveEngine(options.engine);
   const pick = (value) =>
-    onChange(coerceSessionOptions({ ...options, engine: value === 'claude' ? '' : value }, claudeModels));
+    onChange(coerceSessionOptions({ ...options, engine: value === DEFAULT_ENGINE ? '' : value }, claudeModels));
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`} {...rest}>
       <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
@@ -56,7 +56,7 @@ export function EngineToggle({ options, onChange, className = '', label, ...rest
 
 /** An agent form's model options for `engine`: its catalog minus 'default', plus the stored value if the catalog lacks it. */
 export function agentModelOptions(engine, claudeModels, current) {
-  const list = modelOptionsFor(engine, claudeModels).filter((m) => m.value && m.value !== 'default');
+  const list = modelOptionsFor(resolveEngine(engine), claudeModels).filter((m) => m.value && m.value !== 'default');
   if (current && !list.some((m) => m.value === current)) list.push({ value: current, label: current });
   return list;
 }

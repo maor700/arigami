@@ -78,7 +78,7 @@ test('the pending queue remembers the engine, and startPending hands it back', (
   expect(r.out[0]).toEqual({ storedEmpty: 'codex', storedTicket: 'codex', startedEngine: 'codex' });
 });
 
-test('a Linear trigger stores an engine, defaults it to claude, and refuses junk', () => {
+test('a Linear trigger stores an engine, defaults it to the host default, and refuses junk', () => {
   const r = runInChild(
     `
     const t = await import('./server/triggers.js');
@@ -98,9 +98,8 @@ test('a Linear trigger stores an engine, defaults it to claude, and refuses junk
     sandbox()
   );
   expect(r.ok).toBe(true);
-  // '' = claude, the same "unset means claude" rule pickEngine() uses — so a
-  // trigger armed before engines existed keeps firing Claude sessions.
-  expect(r.out[0]).toEqual({ codex: 'codex', plain: '', junk: '', patched: 'codex', unpatched: 'codex', backToClaude: '' });
+  // '' = cfg.defaultEngine; an explicit claude is kept so a codex default can't override it.
+  expect(r.out[0]).toEqual({ codex: 'codex', plain: '', junk: '', patched: 'codex', unpatched: 'codex', backToClaude: 'claude' });
 });
 
 test('a queued item overrides its trigger\'s engine, and inherits it when unset', () => {

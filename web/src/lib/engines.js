@@ -30,10 +30,21 @@ import { t } from './i18n.js';
 import { EFFORT_OPTIONS } from './effort.js';
 
 export const ENGINE_IDS = ['claude', 'codex'];
-export const DEFAULT_ENGINE = 'claude';
+// Host default (cfg.defaultEngine from GET /__api/config, set by store.loadConfig); '' in the launcher/agent forms means this.
+export let DEFAULT_ENGINE = 'claude';
 
-/** '' / unknown / legacy-undefined all mean claude — same rule as pickEngine(). */
+/** Adopt the host's cfg.defaultEngine; unknown → claude. */
+export function setDefaultEngine(engine) {
+  DEFAULT_ENGINE = ENGINE_IDS.includes(engine) ? engine : 'claude';
+}
+
+/** A session's engine: '' / unknown / legacy-undefined all mean claude — same rule as pickEngine(). */
 export function normalizeEngine(engine) {
+  return ENGINE_IDS.includes(engine) ? engine : 'claude';
+}
+
+/** A spawn choice: '' / unknown = the host default. */
+export function resolveEngine(engine) {
   return ENGINE_IDS.includes(engine) ? engine : DEFAULT_ENGINE;
 }
 
@@ -217,7 +228,7 @@ export function effortLabelFor(engine, model, value) {
  * pending fetch would be worse than keeping it).
  */
 export function coerceSessionOptions(options, claudeModels) {
-  const engine = normalizeEngine(options?.engine);
+  const engine = resolveEngine(options?.engine);
   const out = { ...options, engine: engine === DEFAULT_ENGINE ? '' : engine };
   const known = modelOptionsFor(engine, claudeModels);
   if (out.model) {

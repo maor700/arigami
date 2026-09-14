@@ -33,7 +33,7 @@ export const PERSONA_MAX_CHARS = 4000;
 export const ACTION_KIND_RE = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
 const EMOJI_DEFAULT = '🤖';
 
-// Which CLI the agent's sessions run on (= Session.engine); absent = host default (claude).
+// Which CLI the agent's sessions run on (= Session.engine); absent = cfg.defaultEngine.
 export type AgentEngine = 'claude' | 'codex';
 export const AGENT_ENGINES: readonly AgentEngine[] = ['claude', 'codex'];
 
@@ -43,11 +43,13 @@ export function normalizeAgentEngine(v: unknown): AgentEngine | null | undefined
   return (AGENT_ENGINES as readonly string[]).includes(String(v)) ? (String(v) as AgentEngine) : undefined;
 }
 
-/** Engine for a session born from an agent: explicit caller value ('' = not given) → agent's → undefined (host default). */
-export function engineForSpawn(explicit: unknown, agent: Pick<Agent, 'engine'> | null | undefined): AgentEngine | undefined {
-  const e = normalizeAgentEngine(explicit);
-  if (e) return e;
-  return normalizeAgentEngine(agent?.engine) || undefined;
+/** Spawn engine: explicit ('' = not given) → agent's → parent's → undefined (state.createSession applies cfg.defaultEngine). */
+export function engineForSpawn(
+  explicit: unknown,
+  agent: Pick<Agent, 'engine'> | null | undefined,
+  parent?: { engine?: string | null } | null
+): AgentEngine | undefined {
+  return normalizeAgentEngine(explicit) || normalizeAgentEngine(agent?.engine) || normalizeAgentEngine(parent?.engine) || undefined;
 }
 
 export interface AgentBudget {
@@ -59,7 +61,7 @@ export interface Agent {
   name: string;
   emoji: string;
   color: string;
-  engine?: AgentEngine | null; // null/absent = host default (claude)
+  engine?: AgentEngine | null; // null/absent = cfg.defaultEngine
   model?: string | null; // model for `engine`; null/absent = engine default
   modelChain?: string[] | null; // RES1: this agent's model ladder (overrides cfg.modelChain)
   skills: string[]; // names of SHARED skills the agent should use

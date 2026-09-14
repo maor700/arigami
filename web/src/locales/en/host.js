@@ -39,6 +39,8 @@ export const strings = {
   'host.check': 'Check',
   // UPD1 — the `claude` CLI behind every session
   'host.cli': 'Claude CLI',
+  'host.defaultEngine': 'Default engine',
+  'host.defaultEngine.hint': 'The CLI a new session runs on when neither you, its agent nor its parent session picks one.',
   'host.cli.hint': 'The claude binary sessions are spawned with. Checked once a day against the release channel `claude update` tracks; running sessions keep their build, new ones get the new one.',
   'host.cli.installed': 'installed {v}',
   'host.cli.updateAvailable': 'update available → {v}',

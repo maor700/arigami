@@ -36,6 +36,8 @@ in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
 
 Spawn children with `create_session({ kind: "full", skill, prompt, metadata, title, subtask? })`:
 
+- A child runs on your engine (claude/codex) unless you pass `engine` or an `agent` that has one.
+
 - **Give every child a `subtask`** (a short slug): the host then creates its
   worktree for it — `<reposDir>/<repo>-wt-<subtask>` on branch
   `child/<subtask>-<id>` off `base` (default: your current branch) — stamps
