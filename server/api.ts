@@ -1904,7 +1904,7 @@ function spawnSafe(id: string): void {
     const error = e instanceof Error ? e : new Error(String(e));
     claude.appendChat(id, {
       kind: 'error',
-      text: `failed to start claude: ${error.message}`,
+      text: `failed to start ${state.getSession(id)?.engine || 'claude'}: ${error.message}`,
     });
     state.setClaude(id, { state: 'dead' });
   }
