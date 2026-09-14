@@ -26,6 +26,7 @@ function validate(p) {
   if (!WORD.test(p.os) || !WORD.test(p.arch)) return 'bad os/arch';
   if (typeof p.docker !== 'boolean') return 'bad docker';
   if (!SESSIONS.has(p.sessions)) return 'bad sessions';
+  if (p.engines != null && (typeof p.engines !== 'object' || !SESSIONS.has(p.engines.claude) || !SESSIONS.has(p.engines.codex))) return 'bad engines';
   if (!Array.isArray(p.events) || p.events.length > 500) return 'bad events';
   for (const e of p.events) {
     if (!e || !EVENTS.has(e.name) || !ISO.test(e.at)) return 'bad event';
@@ -64,7 +65,7 @@ export default {
       // One ping row per payload (so active instances can be counted) …
       env.TELEMETRY.writeDataPoint({
         indexes: [payload.id],
-        blobs: ['ping', payload.version, payload.os, payload.arch, payload.sessions, day],
+        blobs: ['ping', payload.version, payload.os, payload.arch, payload.sessions, day, payload.engines?.claude || '', payload.engines?.codex || ''],
         doubles: [payload.docker ? 1 : 0, payload.events.length],
       });
       // … and one row per funnel milestone.
