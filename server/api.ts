@@ -1636,7 +1636,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     updateScreenConfig({ enabled: false });
     return { ok: true };
   }
-  if (capability === 'claude') throw new Error('disconnect Claude from the Accounts view');
+  if (capability === 'claude' || capability === 'codex') throw new Error(`disconnect ${capability === 'claude' ? 'Claude' : 'Codex'} from the Accounts view`);
   if (capability.startsWith('repo:')) throw new Error('remove repositories from Setup → repositories');
   throw new Error(`${capability} has nothing to disconnect`);
 }
@@ -1802,6 +1802,19 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
     else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
     else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
+  } else if (capability === 'codex') {
+    const cx = await import('./codex-account.js');
+    const id = String(body?.id || '');
+    if (body?.token) out = await cx.addApiKeyAccount({ label: body?.label ? String(body.label) : 'setup', key: String(body.token) });
+    else if (action === 'start' || action === 'oauth-start') {
+      let st: any = cx.startBrowserLogin({ label: body?.label || 'setup' });
+      for (let i = 0; i < 60 && st.state === 'starting'; i++) { await new Promise((r) => setTimeout(r, 250)); st = cx.loginStatus(st.id); } // the URL arrives a moment after spawn
+      return { ok: true, ...st };
+    }
+    else if (action === 'poll') { const st = cx.loginStatus(id); return { ok: st.state === 'done', ...st }; }
+    else if (action === 'cancel') return { ...cx.cancelLogin(id), ok: true };
+    else if (action === 'code' || body?.code) { const r = await cx.submitCallback(id, String(body?.code || '')); return { ...r, state: r.ok ? 'awaiting' : 'error' }; }
+    else throw new Error('codex: pass {token} or {action:"start"} / {action:"code", id, code}');
   } else if (capability === 'git') {
     const gl = await import('./git-login.js');
     if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);

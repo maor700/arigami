@@ -684,7 +684,7 @@ const TOOLS = [
     name: 'request_setup',
     description:
       'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
-      'Capability ids: identity (Google login in Chrome) · claude · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
+      'Capability ids: identity (Google login in Chrome) · claude · codex (ChatGPT login / OpenAI key) · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
       'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
       'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
       'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +

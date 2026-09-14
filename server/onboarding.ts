@@ -13,7 +13,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
-import { hasCredentials } from './accounts.js';
+import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
 import { resourceRoot } from './lib/resource-root.js';
 
@@ -578,6 +578,14 @@ const claudeAuthed = (): boolean =>
   !!process.env.ANTHROPIC_API_KEY ||
   fs.existsSync(path.join(HOME, '.claude', '.credentials.json'));
 
+const codexAuthed = (): boolean => hasCredentials('codex') || hasLocalCodexLogin();
+
+// ARIGAMI_CODEX_BIN (absolute) or `codex` on PATH.
+const codexOnPath = (): boolean => {
+  const b = process.env.ARIGAMI_CODEX_BIN;
+  return b && path.isAbsolute(b) ? fs.existsSync(b) : onPath(b || 'codex');
+};
+
 const gitAuthed = (): boolean =>
   !!process.env.GH_TOKEN ||
   !!process.env.GITHUB_TOKEN ||
@@ -875,6 +883,8 @@ export interface WizardProbes {
   hasAdmin: () => boolean;
   claudeCli: () => boolean;
   claudeAuth: () => boolean;
+  codexCli: () => boolean;
+  codexAuth: () => boolean;
   gitAuth: () => boolean;
   profileApplied: () => string | null; // applied bundle name
   pendingProfile: () => string | null;
@@ -909,6 +919,8 @@ export const defaultProbes: WizardProbes = {
   },
   claudeCli: () => onPath('claude'),
   claudeAuth: () => claudeAuthed(),
+  codexCli: () => codexOnPath(),
+  codexAuth: () => codexAuthed(),
   gitAuth: () => gitAuthed() || ghCliAuthed(),
   profileApplied: () => {
     try {

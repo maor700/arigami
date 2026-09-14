@@ -21,6 +21,7 @@ const LIB = path.join(SKILLS, '_lib');
 const APPROVED_DOMAINS = new Set([
   'accounts.google.com', 'myaccount.google.com', 'google.com',
   'claude.ai', 'claude.com', 'platform.claude.com', 'console.anthropic.com',
+  'auth.openai.com', 'openai.com', 'chatgpt.com',
   'backend.composio.dev', 'composio.dev',
   'login.tailscale.com', 'tailscale.com',
   'github.com',
@@ -32,7 +33,7 @@ const APPROVED_DOMAINS = new Set([
   'localhost',
   ...MCP_CATALOG.flatMap((s) => s.domains),
 ]);
-const CAPABILITY_RE = /^(identity|claude|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>|mcp:<service>)$/;
+const CAPABILITY_RE = /^(identity|claude|codex|git|remote|whatsapp|desktop|push|telemetry|repo:<name>|composio:<toolkit>|mcp:<service>)$/;
 
 function frontmatter(content) {
   const m = content.match(/^---\n([\s\S]*?)\n---/);
@@ -47,8 +48,8 @@ function frontmatter(content) {
 
 const playbooks = fs.readdirSync(SKILLS).filter((d) => d.startsWith('connect-')).sort();
 
-test('the six JIT-setup playbooks ship', () => {
-  expect(playbooks).toEqual(['connect-claude', 'connect-composio', 'connect-github', 'connect-identity', 'connect-mcp', 'connect-tailscale']);
+test('the seven JIT-setup playbooks ship', () => {
+  expect(playbooks).toEqual(['connect-claude', 'connect-codex', 'connect-composio', 'connect-github', 'connect-identity', 'connect-mcp', 'connect-tailscale']);
 });
 
 // M1: connect-mcp is the ONE playbook for every native remote-MCP vendor — its

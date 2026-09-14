@@ -54,7 +54,7 @@ export const EVENT_MAP: Record<string, string> = {
 };
 
 // The ONLY props that survive, per wire event, and the values they may take.
-const STEP_IDS = new Set(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+const STEP_IDS = new Set(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
 const STEP_STATUS = new Set(['ok', 'todo', 'skipped', 'blocked', 'error', 'running']);
 
 export interface WireEvent {
