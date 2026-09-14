@@ -111,3 +111,7 @@ export function codexLadder(chain: string[], claude: { modelRung?: number; model
 let catalogSource: () => string[] = () => [];
 export const setCodexCatalogSource = (fn: () => string[]): void => { catalogSource = fn; };
 export const codexCatalogIds = (): string[] => { try { return catalogSource(); } catch { return []; } };
+let windowSource: () => Array<{ id: string; contextWindow: number | null }> = () => [];
+/** codex.ts registers its catalog rows' context windows here (claude.js cannot import codex.ts). */
+export const setCodexWindowSource = (fn: typeof windowSource): void => { windowSource = fn; };
+export const codexCatalogWindows = (): Array<{ id: string; contextWindow: number | null }> => { try { return windowSource(); } catch { return []; } };
