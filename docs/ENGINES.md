@@ -101,7 +101,7 @@ claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no
 
 ### 5. The model ladder runs (P2-6); compaction **was actually tested and found not viable** from `exec`
 
-Quota recovery does run on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
+The RES1 supervisor ticks codex sessions too, with claude-only actions gated per engine (P0-1). Quota recovery runs on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
 The Claude auth refresh is still skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
 The context modal hides auto-compact and "compact now", and `POST /autocompact` returns 400.
 
