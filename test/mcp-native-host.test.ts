@@ -19,6 +19,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -109,7 +110,7 @@ beforeAll(async () => {
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   // An agent WITH a tools allowlist — the case where a fresh connection would
   // otherwise be denied by A3 for lack of a matching pattern.

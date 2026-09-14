@@ -23,6 +23,7 @@ import http from 'node:http';
 import { WebSocket as WsClient } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -141,7 +142,7 @@ async function startHost(env: Record<string, string>): Promise<string> {
     try { if ((await httpJson(base + '/__api/config')).status === 200) return base; } catch {}
     await sleep(100);
   }
-  throw new Error(`host did not come up: ${log.slice(-1200)}`);
+  throw new Error(`host did not come up: ${log.slice(-1200)}${hostDiag(host)}`);
 }
 
 /**

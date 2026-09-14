@@ -15,6 +15,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -120,7 +121,7 @@ setInterval(()=>{},1e6);
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   // scout: the report's "read-only researcher" — web + desktop, no triggers, no publish.
   // nili: may publish (and hits a 2500-token cap after 2 stub turns). mailer: touches composio.
