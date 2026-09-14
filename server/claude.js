@@ -2524,7 +2524,10 @@ const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // back to the CLI's own default (no --effort flag).
 export function setEffort(id, effort) {
   const level = !effort || effort === 'default' ? null : String(effort);
-  if (level && !EFFORT_LEVELS.includes(level)) throw new Error(`invalid effort level: ${level}`);
+  const s = getSession(id);
+  const allowed = s ? pickEngine(s).effortLevels(s) : EFFORT_LEVELS;
+  if (level && !allowed.includes(level))
+    throw new Error(`invalid effort level for ${s?.claude?.modelChoice || s?.engine || 'claude'}: ${level} (allowed: ${allowed.join(', ')})`);
   return restartWith(id, { effort: level });
 }
 
@@ -2649,5 +2652,6 @@ const claudeDriver = {
   permissions: claudePermissions,
   injectMcp: claudeInjectMcp,
   modelArgs: claudeModelArgs,
+  effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);

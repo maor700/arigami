@@ -171,6 +171,7 @@ export function codexCommonEfforts() {
 }
 
 const EFFORT_KEY = {
+  minimal: 'rail.effortMinimal',
   low: 'rail.effortLow',
   medium: 'rail.effortMedium',
   high: 'rail.effortHigh',

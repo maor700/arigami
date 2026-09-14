@@ -703,3 +703,37 @@ test('the tool timeout is overridable, so the give-up path can be exercised', ()
   expect(r.ok).toBe(true);
   expect(r.out[0].toml).toContain('tool_timeout_sec = 15');
 });
+
+// ---- effort validation is per engine + model --------------------------------
+
+test('codexEffortLevels: the model row ladder, else every level codex knows (incl. minimal)', () => {
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" +
+      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','bogus']}];" +
+      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));",
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual(['low', 'medium', 'high', 'xhigh']);
+  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[2]).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+});
+
+test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on claude', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');const cl=await import('./server/claude.js');await import('./server/codex.ts');" +
+      "const tryEffort=(s,e)=>{try{cl.setEffort(s.id,e);return st.getSession(s.id).claude.effort;}catch(x){return 'ERR:'+x.message;}};" +
+      "const terra=st.createSession({title:'t',engine:'codex'});st.setClaude(terra.id,{modelChoice:'gpt-5.6-terra'});" +
+      "const old=st.createSession({title:'o',engine:'codex'});st.setClaude(old.id,{modelChoice:'gpt-5.5'});" +
+      "const c=st.createSession({title:'c'});" +
+      "emit([tryEffort(terra,'ultra'),tryEffort(old,'ultra'),tryEffort(c,'ultra'),tryEffort(c,'max'),tryEffort(old,'default')]);",
+    env()
+  );
+  expect(r.ok).toBe(true);
+  const [terra, old, claude, claudeMax, cleared] = r.out[0];
+  expect(terra).toBe('ultra');
+  expect(old).toMatch(/^ERR:invalid effort level for gpt-5.5: ultra/);
+  expect(claude).toMatch(/^ERR:invalid effort level/);
+  expect(claudeMax).toBe('max');
+  expect(cleared).toBeNull();
+});

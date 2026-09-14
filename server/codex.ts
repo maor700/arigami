@@ -132,7 +132,13 @@ const CODEX_MODEL_RE = /^(?:gpt|codex|o[0-9])[a-zA-Z0-9._-]*$/;
 // here and is not in this set is dropped, and the turn then runs at the
 // model's own default while the UI still shows the rung the human picked.
 // `ultra` is gpt-5.6-terra's top rung; claude has no equivalent.
-const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+
+/** Pure: the levels a codex model accepts — its catalog ladder, else every level codex knows. */
+export function codexEffortLevels(model: string | null | undefined, catalog: Array<{ id: string; efforts: string[] }>): string[] {
+  const row = model ? catalog.find((m) => m.id === model) : null;
+  return row?.efforts.length ? row.efforts.filter((e) => EFFORTS.has(e)) : [...EFFORTS];
+}
 
 // ---- TOML -----------------------------------------------------------------
 
@@ -905,6 +911,7 @@ const codexDriver: EngineDriver = {
   permissions: { kind: 'none' },
   injectMcp: codexInjectMcp,
   modelArgs: codexModelArgs,
+  effortLevels: (s: Session) => codexEffortLevels(s.claude?.modelChoice, codexModels()),
 };
 
 registerEngine(codexDriver);
