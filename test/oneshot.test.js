@@ -193,3 +193,81 @@ test('F3 #2: an explicit opts.token overrides the active account and is used ver
   expect(r.out[0].b.token).toBeNull();
   expect(r.out[0].b.apiKey).toBe('sk-ant-api03-CANDIDATE');
 }, 15000);
+
+// ---- codex engine: fake `codex` on ARIGAMI_CODEX_BIN writes the -o file ----
+const FAKE_CODEX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '_fake-codex.sh');
+
+function seedCodexAccount(dir) {
+  const acc = path.join(dir, 'codex-accounts', 'cx_1');
+  fs.mkdirSync(acc, { recursive: true });
+  fs.writeFileSync(path.join(acc, 'auth.json'), '{}');
+  fs.writeFileSync(
+    path.join(dir, 'accounts.json'),
+    JSON.stringify({ activeIds: { codex: 'cx_1' }, accounts: [{ id: 'cx_1', label: 'gpt', provider: 'codex', type: 'chatgpt', pool: true, addedAt: new Date().toISOString() }] })
+  );
+  return path.join(acc, 'auth.json');
+}
+
+test('codex: exec --ephemeral with the prompt on stdin, -o result, active account auth linked, claude creds stripped, scratch home removed', () => {
+  const dir = tmp();
+  const authFile = seedCodexAccount(dir);
+  const rec = path.join(dir, 'rec');
+  const r = runInChild(
+    "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runOneShot}=await import('./server/lib/oneshot.ts');" +
+      "const out=await runOneShot('say pong',{engine:'codex',model:'sonnet',json:{type:'object'},cwd:process.env.ARIGAMI_DIR,tag:'t',env:{ARIGAMI_SESSION_ID:'s1'},mcpServers:{arigami:{command:'bun',args:['x.js'],env:{A:'1'}}}});" +
+      "emit({out,left:require('node:fs').readdirSync(process.env.ARIGAMI_DIR+'/oneshot-codex')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_RECORD: rec, CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-LEAK', ANTHROPIC_API_KEY: 'leak' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.out).toBe('pong from codex');
+  expect(o.left).toEqual([]);
+  const argv = fs.readFileSync(rec + '.argv', 'utf8').trim().split('\n');
+  expect(argv.slice(0, 4)).toEqual(['exec', '--ephemeral', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox']);
+  expect(argv).toContain('-o');
+  expect(argv).toContain('--output-schema');
+  expect(argv).not.toContain('-m'); // a claude alias never reaches codex
+  expect(argv[argv.length - 1]).toBe('-');
+  expect(fs.readFileSync(rec + '.stdin', 'utf8')).toBe('say pong');
+  expect(fs.readFileSync(rec + '.auth', 'utf8').trim()).toBe(authFile);
+  expect(JSON.parse(fs.readFileSync(rec + '.schema', 'utf8'))).toEqual({ type: 'object' });
+  const env = fs.readFileSync(rec + '.env', 'utf8');
+  expect(env).not.toMatch(/CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/);
+  expect(env).toMatch(/ARIGAMI_SESSION_ID=s1/);
+  expect(env).toMatch(new RegExp(`CODEX_HOME=${dir}/oneshot-codex/`));
+  const toml = fs.readFileSync(rec + '.toml', 'utf8');
+  expect(toml).toMatch(/\[mcp_servers\.arigami\]/);
+  expect(toml).toMatch(/A = "1"/);
+}, 15000);
+
+test('codex: a non-zero exit rejects with the error line', () => {
+  const dir = tmp();
+  seedCodexAccount(dir);
+  const r = runInChild(
+    "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runOneShot}=await import('./server/lib/oneshot.ts');" +
+      "let msg=null;try{await runOneShot('x',{engine:'codex'});}catch(e){msg=e.message;}emit({msg});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_MODE: 'fail' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].msg).toMatch(/codex exited 1: .*401/);
+}, 15000);
+
+test('hostEngine: nothing connected → claude, codex-only → codex, cfg.defaultEngine wins', () => {
+  const run = (seed) => {
+    const dir = tmp();
+    if (seed) seedCodexAccount(dir);
+    const r = runInChild(
+      "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+        "const {hostEngine,sessionEngine}=await import('./server/lib/oneshot.ts');const {cfg}=await import('./server/lib/config.ts');" +
+        "const a=hostEngine();cfg.defaultEngine='claude';const b=hostEngine();" +
+        "emit({a,b,s:sessionEngine({engine:'codex'}),t:sessionEngine({})});",
+      { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'nocodex'), CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' }
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  expect(run(false)).toEqual({ a: 'claude', b: 'claude', s: 'codex', t: 'claude' });
+  expect(run(true)).toEqual({ a: 'codex', b: 'claude', s: 'codex', t: 'claude' });
+}, 15000);
