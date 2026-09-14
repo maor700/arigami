@@ -2533,6 +2533,7 @@ export function setEffort(id, effort) {
 // injected into the conversation, which the CLI may or may not treat as a real
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
+  if (isCodexSession(id)) throw new Error('auto-compact is not available on codex sessions');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
   if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);

@@ -515,6 +515,7 @@ test('codex: a 401 points at Settings › Accounts (no Claude card), a 429 never
   const s = await session(sid);
   expect(s.claude?.setupRequest || null).toBeNull();
   expect(incidents().some((i) => i.sessionId === sid && i.action === 'refresh-auth' && i.outcome === 'skipped')).toBe(true);
+  expect((await api('POST', `/__api/sessions/${sid}/autocompact`, { pct: 80 })).status).toBe(400);
 
   const lim = (await api('POST', '/__api/sessions', { title: 'codex-limit', cwd: ws, engine: 'codex', model: 'gpt-5.6-terra' })).json.id;
   await api('POST', `/__api/sessions/${lim}/message`, { text: 'LIMIT' });

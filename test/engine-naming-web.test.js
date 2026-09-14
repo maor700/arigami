@@ -137,6 +137,11 @@ test('the capabilities panel is titled after the engine, and drops the Claude-on
 
 /* ---------- what a codex session is NOT asked ----------------------------- */
 
+test('only claude can compact — the context modal hides auto-compact and compact-now on codex', async () => {
+  expect(engines.supportsCompaction('codex')).toBe(false);
+  for (const v of ['claude', '', null, undefined]) expect(engines.supportsCompaction(v)).toBe(true);
+});
+
 test('only claude has permission MODES — codex is told, not asked', async () => {
   // The lie this guards against: `POST /permission-mode` succeeds for a codex
   // session and the rail then shows "plan", while server/codex.ts spawns with
