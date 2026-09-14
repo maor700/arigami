@@ -241,9 +241,49 @@ test('request_action is suppressed like every other arigami tool', () => {
 
 test('codex usage field names are mapped onto the context meter', () => {
   const { claude } = replay('success-test');
-  // input 113904 + cached_input 96000 + cache_write 0 — codex's names, not claude's.
-  expect(claude.usage.breakdown).toMatchObject({ input: 113904, cacheRead: 96000, cacheCreation: 0, output: 298 });
-  expect(claude.usage.ctxTokens).toBe(113904 + 96000);
+  // codex's input_tokens 113904 already includes cached_input 96000.
+  expect(claude.usage.breakdown).toMatchObject({ input: 113904 - 96000, cacheRead: 96000, cacheCreation: 0, output: 298 });
+  expect(claude.usage.ctxTokens).toBe(113904);
+});
+
+test('parseRolloutTail: last turn_context model, last request usage and the window codex reported', () => {
+  const lines = [
+    '{"type":"turn_con',
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 10 }, model_context_window: 100 } } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-terra' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 228197, cached_input_tokens: 226560 }, model_context_window: 258400 } } }),
+  ].join('\n');
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" + `emit(cx.parseRolloutTail(${JSON.stringify(lines)}));emit(cx.parseRolloutTail(''));`,
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ model: 'gpt-5.6-terra', last: { input_tokens: 228197, cached_input_tokens: 226560 }, window: 258400 });
+  expect(r.out[1]).toEqual({ model: null, last: null, window: null });
+});
+
+test('turn.completed: the session model and live context come from the thread rollout, the window from codex', () => {
+  const r = runInChild(
+    "const fs=require('node:fs');const path=require('node:path');" +
+      "const st=await import('./server/state.ts');const cx=await import('./server/codex.ts');" +
+      "const s=st.createSession({title:'codex',engine:'codex'});st.setClaude(s.id,{sessionId:'th-1'});" +
+      "const d=path.join(cx.codexHomeFor(s.id),'sessions','2026','09','14');fs.mkdirSync(d,{recursive:true});" +
+      "fs.writeFileSync(path.join(d,'rollout-2026-09-14T00-00-00-th-1.jsonl')," +
+      JSON.stringify(
+        [
+          JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-terra' } }),
+          JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 129200, cached_input_tokens: 129000, output_tokens: 5 }, model_context_window: 258400 } } }),
+        ].join('\n') + '\n'
+      ) +
+      ");" +
+      "cx.codexHandleEvent(s.id,{type:'turn.completed',usage:{input_tokens:900000,cached_input_tokens:800000,output_tokens:50}});" +
+      'emit(st.getSession(s.id).claude);',
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].model).toBe('gpt-5.6-terra');
+  expect(r.out[0].usage).toMatchObject({ ctxTokens: 129200, ctxWindow: 258400, ctxPct: 50, ctxAssumed: false });
 });
 
 // ---- session id policy -----------------------------------------------------
@@ -364,7 +404,7 @@ test('parseCodexModelsCache: slug-keyed rows, priority order, hidden rows droppe
         models: [
           CACHE_ROW('gpt-5.5', 12, ['low', 'medium', 'high', 'xhigh'], { default_reasoning_level: 'xhigh' }),
           CACHE_ROW('gpt-reserve', 3, ['low'], { visibility: 'hide' }),
-          CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+          CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], { context_window: 272000, effective_context_window_percent: 95 }),
           { id: 'legacy-id-row', name: 'Legacy', visibility: 'list', priority: 5 },
           { junk: true },
         ],
@@ -376,9 +416,9 @@ test('parseCodexModelsCache: slug-keyed rows, priority order, hidden rows droppe
   expect(r.ok).toBe(true);
   const [rows, empty1, empty2] = r.out;
   expect(rows.map((m: any) => m.id)).toEqual(['gpt-6-astra', 'legacy-id-row', 'gpt-5.5']);
-  expect(rows[0]).toEqual({ id: 'gpt-6-astra', name: 'GPT-6-ASTRA', desc: 'gpt-6-astra desc', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' });
+  expect(rows[0]).toEqual({ id: 'gpt-6-astra', name: 'GPT-6-ASTRA', desc: 'gpt-6-astra desc', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium', contextWindow: 258_400 });
   expect(rows[2].defaultEffort).toBe('xhigh');
-  expect(rows[1]).toEqual({ id: 'legacy-id-row', name: 'Legacy', desc: '', efforts: [], defaultEffort: null });
+  expect(rows[1]).toEqual({ id: 'legacy-id-row', name: 'Legacy', desc: '', efforts: [], defaultEffort: null, contextWindow: null });
   expect(empty1).toEqual([]);
   expect(empty2).toEqual([]);
 });

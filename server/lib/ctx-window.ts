@@ -35,7 +35,13 @@ const KNOWN_WINDOWS: Array<{ re: RegExp; window: number }> = [
   { re: /\bsonnet\b/i, window: 200_000 },
 ];
 
-export type CtxWindowSource = 'override' | 'tag' | 'table' | 'default';
+export type CtxWindowSource = 'override' | 'tag' | 'table' | 'catalog' | 'default';
+
+/** A codex models_cache.json row reduced to what the window needs (server/codex.ts parseCodexModelsCache). */
+export interface CatalogWindow {
+  id: string;
+  contextWindow?: number | null;
+}
 
 export interface CtxWindowResult {
   window: number;
@@ -51,11 +57,19 @@ function envOverride(): number | null {
 // Resolution order: per-model override (settings, then env) > explicit [1m]
 // tag > known-model table > conservative default (flagged `assumed` so the UI
 // can say so instead of silently claiming a number we don't actually know).
-export function resolveCtxWindow(model?: string | null): CtxWindowResult {
+// A `catalog` (codex) replaces the claude table and env knob with the model's own row.
+export function resolveCtxWindow(model?: string | null, catalog?: CatalogWindow[] | null): CtxWindowResult {
   const m = String(model || '').toLowerCase();
 
-  const override = (m && cfg.ctxWindowOverrides?.[m]) || envOverride();
+  const override = (m && cfg.ctxWindowOverrides?.[m]) || (catalog ? null : envOverride());
   if (override) return { window: override, assumed: false, source: 'override' };
+
+  if (catalog) {
+    const row = catalog.find((r) => r.id.toLowerCase() === m && Number(r.contextWindow) > 0);
+    return row
+      ? { window: Number(row.contextWindow), assumed: false, source: 'catalog' }
+      : { window: CONSERVATIVE_UNKNOWN_WINDOW, assumed: true, source: 'default' };
+  }
 
   if (m.includes('[1m]')) return { window: 1_000_000, assumed: false, source: 'tag' };
 

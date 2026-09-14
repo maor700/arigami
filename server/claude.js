@@ -893,7 +893,9 @@ export async function checkMcp(id, force = false) {
 // context). We surface it as claude.usage so the UI can show a live context %.
 // Exported for the codex driver, which maps codex's usage field names onto
 // claude's before calling this (server/codex.ts).
-export function updateUsage(id, u) {
+// `catalog`: codex's model rows, so its window comes from models_cache.json (lib/ctx-window.ts).
+/** @param {string} id @param {any} u @param {import('./lib/ctx-window.js').CatalogWindow[] | null} [catalog] */
+export function updateUsage(id, u, catalog = null) {
   if (!u) return;
   const cacheRead = u.cache_read_input_tokens || 0;
   const cacheCreation = u.cache_creation_input_tokens || 0;
@@ -901,7 +903,7 @@ export function updateUsage(id, u) {
   const output = u.output_tokens || 0;
   const ctxTokens = cacheRead + cacheCreation + input;
   if (ctxTokens <= 0) return; // skip empty/partial usage blocks
-  const resolved = resolveCtxWindow(getSession(id)?.claude?.model);
+  const resolved = resolveCtxWindow(getSession(id)?.claude?.model, catalog);
   let ctxWindow = resolved.window;
   let ctxAssumed = resolved.assumed;
   // A prompt can never exceed its real window — if the measured tokens beat our

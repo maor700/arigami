@@ -165,6 +165,8 @@ interface CodexSessionState {
   carry: string[];
   /** the "remote MCP grants don't work here" note is worth saying once, not every turn */
   warnedRemote: boolean;
+  /** this thread's rollout file under $CODEX_HOME/sessions (found once) */
+  rollout?: string | null;
 }
 
 const sessions = new Map<string, CodexSessionState>();
@@ -718,16 +720,14 @@ function codexHandleEvent(id: string, raw: unknown): void {
       break;
     }
     case 'turn.completed': {
-      const u = j.usage || {};
-      // Codex's usage field names are its own; map them onto the ones the
-      // context meter and the A3 ledger already speak.
-      const mapped = {
-        input_tokens: u.input_tokens || 0,
-        output_tokens: u.output_tokens || 0,
-        cache_read_input_tokens: u.cached_input_tokens || 0,
-        cache_creation_input_tokens: u.cache_write_input_tokens || 0,
-      };
-      updateUsage(id, mapped);
+      // turn.completed sums every request of the turn (ledger); the rollout's last request is the live context.
+      const mapped = mapCodexUsage(j.usage);
+      const seen = readRollout(id, st);
+      const model = seen.model || getSession(id)?.claude?.modelChoice || null;
+      if (model && getSession(id)?.claude?.model !== model) setClaude(id, { model });
+      // The window codex reported for this request beats the catalog row.
+      const catalog = [...(model && seen.window ? [{ id: model, contextWindow: seen.window }] : []), ...codexModels()];
+      updateUsage(id, seen.last ? mapCodexUsage(seen.last) : mapped, catalog);
       noteTurnUsage(id, mapped);
       const durationMs = st.turnStartedAt ? Date.now() - st.turnStartedAt : undefined;
       setClaude(id, { state: 'idle' });
@@ -780,6 +780,90 @@ function codexHandleEvent(id: string, raw: unknown): void {
   }
 }
 
+/** Codex usage → claude field names; codex's input_tokens already includes the cached part. */
+export function mapCodexUsage(u: any) {
+  const cached = Number(u?.cached_input_tokens) || 0;
+  return {
+    input_tokens: Math.max(0, (Number(u?.input_tokens) || 0) - cached),
+    output_tokens: Number(u?.output_tokens) || 0,
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: Number(u?.cache_write_input_tokens) || 0,
+  };
+}
+
+/** Pure: the last turn_context model and last request usage in a rollout .jsonl tail (exec --json names neither). */
+export function parseRolloutTail(text: string): { model: string | null; last: any | null; window: number | null } {
+  let model: string | null = null;
+  let last: any = null;
+  let window: number | null = null;
+  for (const line of text.split('\n')) {
+    if (!line.includes('"turn_context"') && !line.includes('"token_count"')) continue;
+    try {
+      const j = JSON.parse(line);
+      if (j.type === 'turn_context' && typeof j.payload?.model === 'string') model = j.payload.model;
+      else if (j.payload?.type === 'token_count' && j.payload.info?.last_token_usage) {
+        last = j.payload.info.last_token_usage;
+        window = Number(j.payload.info.model_context_window) || window;
+      }
+    } catch {
+      /* the tail's first line is usually cut */
+    }
+  }
+  return { model, last, window };
+}
+
+const ROLLOUT_CHUNK = 1 << 20;
+const ROLLOUT_MAX_SCAN = 32 << 20;
+
+function readRollout(id: string, st: CodexSessionState): { model: string | null; last: any | null; window: number | null } {
+  const thread = getSession(id)?.claude?.sessionId;
+  if (!thread) return { model: null, last: null, window: null };
+  if (!st.rollout || !st.rollout.endsWith(`-${thread}.jsonl`)) st.rollout = findRollout(path.join(codexHomeFor(id), 'sessions'), thread);
+  if (!st.rollout) return { model: null, last: null, window: null };
+  try {
+    const fd = fs.openSync(st.rollout, 'r');
+    try {
+      // Walk back a chunk at a time: turn_context sits at the start of the turn, token_count near the end.
+      const size = fs.fstatSync(fd).size;
+      let pos = size;
+      let tail = Buffer.alloc(0);
+      let seen: { model: string | null; last: any; window: number | null } = { model: null, last: null, window: null };
+      while (pos > 0 && size - pos < ROLLOUT_MAX_SCAN) {
+        const len = Math.min(pos, ROLLOUT_CHUNK);
+        pos -= len;
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, pos);
+        tail = Buffer.concat([buf, tail]);
+        if (pos > 0 && !tail.subarray(0, len + 64).includes('"turn_context"')) continue;
+        seen = parseRolloutTail(tail.toString('utf8'));
+        if (seen.model) break;
+      }
+      return seen.model ? seen : parseRolloutTail(tail.toString('utf8'));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { model: null, last: null, window: null };
+  }
+}
+
+function findRollout(dir: string, thread: string): string | null {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const e of entries.sort((a, b) => b.name.localeCompare(a.name))) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const hit = findRollout(p, thread);
+      if (hit) return hit;
+    } else if (e.name.endsWith(`-${thread}.jsonl`)) return p;
+  }
+  return null;
+}
+
 /** The bookkeeping claude does on its `result` event — kept identical on purpose. */
 function onTurnEnd(id: string): void {
   import('./listeners.js').then((m) => m.onSessionIdle(id)).catch(() => {});
@@ -830,7 +914,7 @@ registerEngine(codexDriver);
 export { codexDriver, codexPrepare, codexBuildSpawn, codexHandleEvent, codexModelArgs, flatToolName, mcpTables, TOOL_TIMEOUT_SEC };
 
 /** One picker row for a Codex model — the catalog fields the cockpit needs. */
-export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null };
+export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null; contextWindow: number | null };
 
 /**
  * Pure: the picker rows out of one `models_cache.json` — the server-pushed
@@ -853,6 +937,8 @@ export function parseCodexModelsCache(raw: unknown): CodexModelRow[] {
         ? m.supported_reasoning_levels.map((l: any) => (typeof l === 'string' ? l : l?.effort)).filter((e: any) => typeof e === 'string')
         : [],
       defaultEffort: typeof m.default_reasoning_level === 'string' ? m.default_reasoning_level : null,
+      // The effective window codex itself enforces (rollout model_context_window = context_window × percent).
+      contextWindow: Number(m.context_window) > 0 ? Math.round((Number(m.context_window) * (Number(m.effective_context_window_percent) || 100)) / 100) : null,
     }));
 }
 
@@ -878,9 +964,9 @@ export function codexModels(): CodexModelRow[] {
     }
   }
   return [
-    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', desc: 'Balanced agentic coding model for everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' },
-    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', desc: 'Fast and affordable agentic coding model.', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium' },
-    { id: 'gpt-5.5', name: 'GPT-5.5', desc: 'Proven previous-generation model for coding and general work.', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium' },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', desc: 'Balanced agentic coding model for everyday work.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium', contextWindow: 258_400 },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', desc: 'Fast and affordable agentic coding model.', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'medium', contextWindow: 258_400 },
+    { id: 'gpt-5.5', name: 'GPT-5.5', desc: 'Proven previous-generation model for coding and general work.', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'medium', contextWindow: 258_400 },
   ];
 }
 
