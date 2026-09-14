@@ -14,6 +14,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STUB = path.join(ROOT, 'test', 'fixtures', 'claude-mcp-stub.sh');

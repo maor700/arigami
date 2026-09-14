@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 // Importing host-control.ts pulls in state.js/config.js which bind their store
 // paths at import time — point them at a scratch dir so nothing touches a real

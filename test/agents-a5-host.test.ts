@@ -128,7 +128,7 @@ setInterval(()=>{},1e6);
   expect((await api('POST', '/__api/agents', { name: 'Nili', slug: 'nili', emoji: '✍️', tools: ['git', 'publish'], budget: { tokensPerDay: 2500 } })).status).toBe(201);
   expect((await api('POST', '/__api/agents', { name: 'Mailer', slug: 'mailer', emoji: '📧', tools: ['gmail'] })).status).toBe(201);
   fs.writeFileSync(path.join(ws, 'draft.md'), '# draft\n');
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

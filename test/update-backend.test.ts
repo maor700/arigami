@@ -10,6 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 // Same reason as test/host-control.test.ts: config.js/state.js bind their
 // store paths from ARIGAMI_DIR at import time.

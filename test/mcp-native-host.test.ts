@@ -115,7 +115,7 @@ beforeAll(async () => {
   // otherwise be denied by A3 for lack of a matching pattern.
   const c = await api('POST', '/__api/agents', { name: 'Sales', slug: 'sales', emoji: '💼', persona: 'You sell.', tools: ['sessions'] });
   expect(c.status).toBe(201);
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

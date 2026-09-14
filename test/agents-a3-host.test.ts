@@ -130,7 +130,7 @@ setInterval(()=>{},1e6);
   // the stub; A5: `publish` is a family now, so publishing has to be asked for); free: unrestricted
   expect((await api('POST', '/__api/agents', { name: 'Bot', slug: 'bot', emoji: '🤖', tools: ['gmail', 'desktop', 'publish'], domains: ['example.com'], budget: { tokensPerDay: 2500 } })).status).toBe(201);
   expect((await api('POST', '/__api/agents', { name: 'Free', slug: 'free', emoji: '🕊️' })).status).toBe(201);
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

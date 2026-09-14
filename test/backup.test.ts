@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const bk = await import('../server/backup.ts');
 const tmp = (p = 'arigami-bk-') => fs.mkdtempSync(path.join(os.tmpdir(), p));

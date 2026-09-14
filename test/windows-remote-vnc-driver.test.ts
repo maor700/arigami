@@ -17,6 +17,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -8,6 +8,8 @@ import { test, expect, afterEach } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const { addWorktree, removeWorktree } = await import('../server/git.js');
 

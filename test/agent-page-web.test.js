@@ -7,11 +7,13 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, AgentView, AgentDetailsDrawer, DeleteAgentForm, MoreMenu, SessionView, TabBar, origFetch;
+let React, render, prefs, store, AgentView, AgentDetailsDrawer, DeleteAgentForm, MoreMenu, SessionView, TabBar;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -31,7 +33,6 @@ beforeAll(async () => {
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}),
@@ -45,10 +46,6 @@ beforeAll(async () => {
   ({ default: SessionView } = await import(web('components/SessionView.jsx')));
   ({ default: TabBar } = await import(web('components/TabBar.jsx')));
   await store.loadAgents();
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const noop = () => {};

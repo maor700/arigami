@@ -7,6 +7,8 @@
 import { test, expect, beforeAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
@@ -72,7 +74,9 @@ beforeAll(async () => {
 });
 const ran = [];
 const routeCalls = () => calls.filter((c) => c.url.includes('/voice/route'));
-const st = () => window.__arigamiVoice.getState();
+// Through the module, not window.__arigamiVoice: voice.js installs that bridge
+// once, at first import, and an earlier file's isolate() restore removes it.
+const st = () => voice.getState();
 const tick = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- the plan reader + the pure step ----------------------------------------------

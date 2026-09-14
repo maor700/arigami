@@ -10,11 +10,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, General, Connections, Health, HostPage, SettingsMod, origFetch;
+let React, render, prefs, store, General, Connections, Health, HostPage, SettingsMod;
 const h = (...a) => React.createElement(...a);
 
 const TOOLKITS = {
@@ -52,7 +54,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test', mediaDevices: { enumerateDevices: async () => [] } };
   globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     const body = u.includes('/composio/toolkits') ? TOOLKITS
@@ -72,10 +73,6 @@ beforeAll(async () => {
   ({ default: Health } = await import(web('components/settings/Health.jsx')));
   ({ default: HostPage } = await import(web('components/settings/Host.jsx')));
   SettingsMod = await import(web('components/Settings.jsx'));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 // The drawer is a <details>; "closed" = no `open` attribute on it.

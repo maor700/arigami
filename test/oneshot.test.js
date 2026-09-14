@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-oneshot-'));
 const FAKE_CLAUDE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '_fake-claude.js');

@@ -54,6 +54,8 @@ test('getVersion on a repo with an upstream that is 2 commits ahead', async () =
 // "available" side — the upstream tip's package.json + newest v* tag — plus
 // sharedBase=false when the two histories have no merge base (the realign case).
 import { currentVersion, compareVersions } from '../server/version.ts';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 test('currentVersion: VERSION file over package.json; compareVersions', () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cv-'));

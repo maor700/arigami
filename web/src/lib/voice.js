@@ -39,7 +39,7 @@ function set(patch) {
   for (const fn of listeners) fn();
 }
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-const getState = () => state;
+export const getState = () => state;
 export function useVoice() {
   return useSyncExternalStore(subscribe, getState, getState);
 }

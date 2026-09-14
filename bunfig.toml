@@ -1,0 +1,4 @@
+# bun test only. Every test file runs in ONE process with a shared module
+# registry, globalThis and process.env — see test/_preload.ts and test/_isolate.js.
+[test]
+preload = ["./test/_preload.ts"]

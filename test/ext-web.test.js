@@ -15,11 +15,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, ext, bridgeMod, composer, prefs, SettingsMod, ChatPane, ExtensionsPage, ExtensionCard, TabBarMod, origFetch;
+let React, render, ext, bridgeMod, composer, prefs, SettingsMod, ChatPane, ExtensionsPage, ExtensionCard, TabBarMod;
 const h = (...a) => React.createElement(...a);
 
 // A manifest as GET /__api/extensions reports it (server/extensions.ts listExtensions).
@@ -62,7 +64,6 @@ beforeAll(async () => {
   globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => ({}), text: async () => '{}' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
@@ -75,10 +76,6 @@ beforeAll(async () => {
   ({ default: ExtensionsPage, ExtensionCard } = await import(web('components/settings/Extensions.jsx')));
   TabBarMod = await import(web('components/TabBar.jsx'));
   prefs.setPrefs({ language: 'en' });
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 /* ---------- the permission algebra --------------------------------------- */
