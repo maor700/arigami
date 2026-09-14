@@ -122,6 +122,7 @@ context thin is the whole point.
    - **Launch** ready nodes via `create_session({ kind, subtask: <node.id>,
      prompt: <node instructions>, base? })`. The host auto-wires
      parent/role/worktree/branch/cleanup.
+     - A worker runs on your engine (claude/codex) unless you pass `engine`.
      - On `{deferred:true}` (at capacity): leave the node `ready`, retry next wake.
      - On spawn: set the node `state:"running"`, `worker:<id>`, `attempts++`.
    - **Handle terminal results:**

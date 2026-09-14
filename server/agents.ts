@@ -43,11 +43,13 @@ export function normalizeAgentEngine(v: unknown): AgentEngine | null | undefined
   return (AGENT_ENGINES as readonly string[]).includes(String(v)) ? (String(v) as AgentEngine) : undefined;
 }
 
-/** Engine for a session born from an agent: explicit caller value ('' = not given) → agent's → undefined (state.createSession applies cfg.defaultEngine). */
-export function engineForSpawn(explicit: unknown, agent: Pick<Agent, 'engine'> | null | undefined): AgentEngine | undefined {
-  const e = normalizeAgentEngine(explicit);
-  if (e) return e;
-  return normalizeAgentEngine(agent?.engine) || undefined;
+/** Spawn engine: explicit ('' = not given) → agent's → parent's → undefined (state.createSession applies cfg.defaultEngine). */
+export function engineForSpawn(
+  explicit: unknown,
+  agent: Pick<Agent, 'engine'> | null | undefined,
+  parent?: { engine?: string | null } | null
+): AgentEngine | undefined {
+  return normalizeAgentEngine(explicit) || normalizeAgentEngine(agent?.engine) || normalizeAgentEngine(parent?.engine) || undefined;
 }
 
 export interface AgentBudget {

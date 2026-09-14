@@ -161,12 +161,15 @@ cronTrigger = {
   sessionMode: 'isolated' | 'existing:<sessionId>',
   deliver: { push: true, whatsapp: '<jid>' /* or true = config notify.whatsappJid */, master: '<sessionId>' },
   autonomous: true,
+  engine: '',                      // 'claude' | 'codex' | '' = the agent's engine, else cfg.defaultEngine
   createdAt, createdBySessionId,
   lastRun: 1735689600000,          // ms epoch, null until first fire
   lastError: null,
   runs: [{ at, sessionId, state, summary }],   // bounded to the last 20
 }
 ```
+
+`engine` is set by `cronjob({engine})`, `POST /__api/triggers {engine}` or the Routine/Cron forms' toggle; an unknown value is ignored on PATCH and stored as `''` on create. Linear triggers use the same rule.
 
 ### Schedule (`server/cron-schedule.ts` — pure, unit-tested, no dependency)
 

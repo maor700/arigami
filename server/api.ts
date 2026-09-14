@@ -1216,7 +1216,9 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
       permissionMode = wired.permissionMode;
       metadata = wired.metadata;
     }
-    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
+    // A PM child inherits the controller's engine when the agent has none.
+    const engine = agents.engineForSpawn(null, a, isController ? from : null);
+    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: engine as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
     const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, engine: o.engine, color: o.color });
     spawnSafe(s.id);
     try {
@@ -4821,6 +4823,8 @@ export async function handle(
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
       let agentColor: string | undefined;
+      // P2-5: a child's engine = explicit → its agent's → its master's → cfg.defaultEngine.
+      if (body.master) body.engine = agents.engineForSpawn(body.engine, body.agent ? agents.getAgent(String(body.agent)) : null, state.getSession(String(body.master))) || undefined;
       try {
         const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
         body.title = o.title;

@@ -21,9 +21,10 @@ of the others: the model list and the effort levels are per-engine, not a shared
   key, `model_reasoning_effort`, and the scale is a property of the **model**:
   gpt-5.6-terra adds `ultra` above `max`, and gpt-5.5 stops at `xhigh`.
 
-The engine **is not inherited by children**: `create_session` takes an explicit `engine`, and a session
-born from a codex session is born on claude unless stated otherwise. Engine choice doesn't propagate
-through the tree under the radar.
+Resolution (`agents.engineForSpawn` + `state.createSession`): explicit `engine` → the agent's engine →
+the parent's engine (children spawned with a master) → `cfg.defaultEngine` (Settings › Host, `POST
+/__api/config/default-engine`) → `claude`. An unknown `defaultEngine` reads as claude. Cron, the Brain,
+the PM controller and agent homes without an engine all land on the default; the launcher's toggle starts on it.
 
 An engine with no registered driver fails loudly at spawn, and does not silently fall back to claude.
 
