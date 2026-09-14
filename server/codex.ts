@@ -36,7 +36,7 @@
 //     + --dangerously-bypass-hook-trust (without the flag codex skips hooks silently — measured).
 //   - Remote (url) MCP grants are skipped — codex keeps its own OAuth store per
 //     $CODEX_HOME, so an arigami grant minted for claude is not usable.
-//   - RES1's model ladder is claude-shaped and does not run for codex sessions.
+//   - Quota recovery (P2-6) is codex-recovery.ts: rateLimits-confirmed account rotation, then cfg.codexModelChain.
 //     LADDER1's compaction was actually TRIED (not just assumed absent): five
 //     live turns with model_auto_compact_token_limit=3000 (both scope values)
 //     and --enable context_management grew one thread to 41,474 tokens with
@@ -50,13 +50,7 @@
 //     reasoning-test-*.jsonl) — usage.reasoning_output_tokens was >0 on that
 //     run, so the model reasoned, it just never left the stream. Handled
 //     defensively, still not verified. See ENGINES.md limit 6.
-//   - Rate-limit detection (rateLimitNote()) is a GUESS marked as one: codex's
-//     documented RateLimitReachedType enum lives on the app-server's
-//     account/rateLimits notifications, not on exec's stream, and no run here
-//     ever hit a real quota wall (reproducing one means burning a live
-//     account's usage limit). It pattern-matches the one wrapper shape that IS
-//     verified live (error-noauth's "unexpected status <code> ..."), nothing
-//     more. See ENGINES.md limit 6b.
+//   - The turn's limit text is a regex guess (lib/codex-quota.ts); the rateLimits read is what confirms it. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -73,6 +67,7 @@ import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { hostMcpServers } from './lib/mcp-servers.js';
+import { looksLikeCodexLimit, setCodexCatalogSource } from './lib/codex-quota.js';
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
@@ -636,32 +631,10 @@ function reapGivenUpHostTool(id: string, tool: string | null): void {
   else if (tool === 'permission_prompt') expirePendingPermissions(id, 'codex gave up on the tool call (tool_timeout_sec)');
 }
 
-// `RateLimitReachedType` (rate_limit_reached, workspace_owner_credits_depleted,
-// workspace_member_credits_depleted, workspace_owner_usage_limit_reached,
-// workspace_member_usage_limit_reached) is a real enum — but it lives in the
-// app-server JSON-RPC protocol's account/rateLimits notifications, which this
-// driver does not speak (see ENGINES.md limit 2). NOT VERIFIED against a real
-// quota wall: reproducing one means actually exhausting a live account's
-// ChatGPT usage limit, which nobody did here. What IS verified (the 401 in
-// test/fixtures/codex-stream/error-noauth-*.jsonl) is that codex-cli wraps
-// every HTTP failure in the same `unexpected status <code> <reason>: <body>`
-// text on the plain error/turn.failed message — no structured `type` field.
-// This matches that wrapper for 429, plus the enum strings themselves in case
-// the ChatGPT-backend error body embeds them verbatim, plus generic wording as
-// a last resort. Until a real quota-exhausted run confirms or corrects it,
-// treat this as a guess about phrasing, exactly like the `reasoning` item.
-const RATE_LIMIT_RE =
-  /unexpected status 429\b|rate_limit_reached|workspace_(?:owner|member)_(?:credits_depleted|usage_limit_reached)|\brate[ -]?limit(?:ed|s)?\b|\busage limit\b|\bquota\b|\bcredits? (?:depleted|exhausted)\b/i;
-
-/** A human-readable note appended alongside the raw error, or null if this doesn't look like a quota wall. */
-function rateLimitNote(message: string): string | null {
-  if (!RATE_LIMIT_RE.test(message)) return null;
-  const resetHint = message.match(/reset[s]?\s*(?:at|in|on)\s*[^,."')]+/i);
-  let note =
-    "⤷ This looks like Codex's quota (rate limit / credits / usage limit) ran out, not a code error — " +
-    'this check has not been verified against a real quota exhaustion (see the note in server/codex.ts), so the detection could be wrong.';
-  if (resetHint) note += ` Codex said: "${resetHint[0]}".`;
-  return note;
+/** P2-6: a limit-looking error goes to codex-recovery.ts, which confirms it via account/rateLimits/read before noting or acting. */
+function onLimitText(id: string, text: string): void {
+  if (!looksLikeCodexLimit(text)) return;
+  import('./codex-recovery.js').then((m) => m.onCodexLimit(id, text)).catch(() => {});
 }
 
 function emitToolUse(id: string, item: any, st: CodexSessionState): ItemState {
@@ -779,8 +752,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
       if (!st.errs.has(text)) {
         st.errs.add(text);
         appendChat(id, { kind: 'error', text, isError: true });
-        const quota = rateLimitNote(text);
-        if (quota) appendChat(id, { kind: 'system', text: quota });
+        onLimitText(id, text);
       }
       // NOTE: the process still exits 0 on a failed turn (measured on a 401
       // run) — the exit code says nothing, only this event does.
@@ -802,8 +774,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
       if (!msg || st.errs.has(msg)) break;
       st.errs.add(msg);
       appendChat(id, { kind: 'error', text: msg, isError: true });
-      const quota = rateLimitNote(msg);
-      if (quota) appendChat(id, { kind: 'system', text: quota });
+      onLimitText(id, msg);
       break;
     }
     default:
@@ -940,6 +911,7 @@ const codexDriver: EngineDriver = {
 };
 
 registerEngine(codexDriver);
+setCodexCatalogSource(() => codexModels().map((m) => m.id));
 
 // Exported for the tests, which drive the pure pieces against the recorded
 // fixtures in test/fixtures/codex-stream/ without spawning anything.

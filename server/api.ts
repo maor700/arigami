@@ -4007,9 +4007,12 @@ export async function handle(
       const accountsMod = await import('./accounts.js');
       const snap = await sup.healthSnapshot();
       const { accounts } = accountsMod.listAccounts() as any;
+      const { cachedUsage } = await import('./usage.js');
+      const win = (w: any) => (w && typeof w.pct === 'number' ? { pct: w.pct, resetsAt: w.resetsAt || null, windowMins: w.windowMins || null } : null);
       return json(res, {
         ...snap,
         accounts: accounts.map((a: any) => ({
+          ...(() => { const u: any = cachedUsage(a.id); return u?.available ? { usage: { session: win(u.session), week: win(u.week) } } : {}; })(),
           id: a.id,
           label: a.label,
           provider: a.provider,
@@ -4020,6 +4023,7 @@ export async function handle(
           plan: a.plan,
         })),
         modelChain: cfg.modelChain,
+        codexModelChain: cfg.codexModelChain,
         supervisor: cfg.supervisor,
       });
     }

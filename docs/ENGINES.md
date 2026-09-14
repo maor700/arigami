@@ -92,9 +92,8 @@ claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no
 
 ### 5. The model ladder doesn't run; compaction **was actually tested and found not viable** from `exec`
 
-RES1 (dropping to a weaker model when the quota runs out, and climbing back) is claude-shaped and
-**does not run** on a codex session — unchanged. The supervisor skips the ladder, the account switch and
-the Claude auth refresh there; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
+Quota recovery does run on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
+The Claude auth refresh is still skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
 The context modal hides auto-compact and "compact now", and `POST /autocompact` returns 400.
 
 LADDER1 (compacting the context before replay) **was tested, not just assumed not to run.** The
@@ -132,21 +131,10 @@ in `handleEvent` remains written defensively and unproven. If someone wants to t
 and didn't work, so it's worth looking at the app-server surface (which has `item/reasoning/textDelta`
 in its protocol) before trying again on `exec`.
 
-### 6b. Quota (rate limit) detection — defensive, **not verified**
+### 6b. Quota (rate limit) detection — regex, then confirmed by the account
 
-Codex has a documented type `RateLimitReachedType` (`rate_limit_reached`,
-`workspace_owner_credits_depleted`, `workspace_member_credits_depleted`,
-`workspace_owner_usage_limit_reached`, `workspace_member_usage_limit_reached`)
-— but it's a field embedded in the `account/rateLimits/updated` notification of the
-app-server protocol, not of `exec`. I did not try to reproduce a real quota hit: that would require
-actually consuming a live account's entire quota, and there's no justification for that just to
-document an error message. **The detection in `handleEvent` (`rateLimitNote()` in `server/codex.ts`)
-is a guess, flagged as such in the code** — a regex over the text of `turn.failed`/`error` (the pattern `unexpected
-status <code> ...` was verified live on a 401, the `error-noauth` fixture; the hypothesis that code 429
-wraps the same way, and that the enum names might be embedded as words in the error body, was not verified).
-When an error that looks like a quota hit is received, the human gets an additional system message explaining
-this and explicitly noting that the detection is unverified — not just a generic error, but also not a false
-show of certainty.
+The turn's own error is still a regex guess (`CODEX_LIMIT_RE` in `server/lib/codex-quota.ts`; only the `unexpected status <code>` wrapper is verified live, on a 401). A match triggers `account/rateLimits/read` on the session's codex account:
+`limitReached` or a window at ≥ 100% = confirmed (note says so, account quarantined until that window's `resetsAt`, rotate / ladder); not exhausted = a note, nothing else; unreadable (api-key, probe failed) = "unverified" note, and it acts only on the specific patterns (429, the `RateLimitReachedType` names, "usage limit"). No real quota wall has been reproduced here.
 
 ### 7. The session inherits the host's env in full
 

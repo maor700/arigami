@@ -104,9 +104,9 @@ export function thresholds(now = Date.now()): Thresholds {
 
 // ---- building the view ------------------------------------------------------
 
-/** True when every pooled CLAUDE account is quarantined/unusable right now (the model ladder is claude's). */
-function accountsAllLimited(): boolean {
-  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool && (a.provider || 'claude') === 'claude');
+/** True when every pooled account of `provider` is quarantined/unusable right now. */
+function accountsAllLimited(provider: 'claude' | 'codex' = 'claude'): boolean {
+  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool && (a.provider || 'claude') === provider);
   if (!pool.length) return false;
   return pool.every((a) => !a.available);
 }
@@ -178,7 +178,7 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
   const waitingOn = (md.waitingOn as SessionView['waitingOn']) || null;
   const know = waitingOn ? childKnows(waitingOn) : null;
   const budget = slug ? budgetState(slug) : null;
-  const codex = s.engine === 'codex';
+  const provider = s.engine === 'codex' ? 'codex' : 'claude';
   return {
     id: s.id,
     title: s.title,
@@ -197,8 +197,8 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
     budgetExceeded: !!budget?.exceeded,
     lastErrorClass: errClass,
     // A limit we could not route around: the account pool is dry.
-    accountsExhausted: !codex && errClass === 'limit' && accountsAllLimited(),
-    accountsAvailable: !accountsAllLimited(),
+    accountsExhausted: errClass === 'limit' && accountsAllLimited(provider),
+    accountsAvailable: !accountsAllLimited(provider),
     modelRungsLeft: ladder.rungsLeft,
     mcpDown: down,
     mcpRequired: mcpRequired(s, down),
@@ -348,19 +348,21 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'model-down': {
-      if (s.engine === 'codex') return incident(id, d, 'skipped', { engine: 'codex' });
+      const provider = s.engine === 'codex' ? 'codex' : 'claude';
       // Climb back when the earliest quarantined account frees up, if we know.
       const soonest = (listAccounts().accounts as any[])
-        .filter((a) => a.pool && a.quarantineUntil)
+        .filter((a) => a.pool && a.quarantineUntil && (a.provider || 'claude') === provider)
         .map((a) => a.quarantineUntil)
         .sort()[0] as string | undefined;
-      const r = claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
-      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model });
+      const r =
+        provider === 'codex'
+          ? claude.downgradeCodexModel(id, { resetAt: soonest || null })
+          : claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
+      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model, ...(provider === 'codex' ? { engine: 'codex' } : {}) });
       else if (r.reason === 'bottom') incident(id, d, 'failed', { reason: 'bottom-rung' });
       return;
     }
     case 'model-restore': {
-      if (s.engine === 'codex') return incident(id, d, 'skipped', { engine: 'codex' });
       const to = claude.restoreModel(id);
       incident(id, d, to ? 'ok' : 'failed', { to });
       return;

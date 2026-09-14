@@ -114,6 +114,9 @@ export async function getUsage(accountId, force = false) {
   return data;
 }
 
+/** The last usage read for an account without fetching (null when never read). */
+export const cachedUsage = (accountId) => caches.get(accountId)?.data || null;
+
 // Best-effort account identity. Only the full macOS-login token carries
 // user:profile scope, so this returns email/org/plan for keychain accounts;
 // setup-token accounts (user:inference only) get a 403 and yield nothing.

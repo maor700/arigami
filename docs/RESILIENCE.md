@@ -139,6 +139,10 @@ account switch can fix that one.
 - `POST /__api/sessions/:id/model/restore` takes the top rung back by hand
   (Settings → Host → Health has the button) without waiting for the reset.
 
+### Codex sessions (P2-6)
+
+Same shape, codex's own pieces: a limit-looking `turn.failed` is confirmed via `account/rateLimits/read`, the account is quarantined until its window's `resetsAt`, the session re-pinned to the next codex account and the message replayed; pool dry → one rung of `cfg.codexModelChain`; bottom → `escalate`. Code: `server/codex-recovery.ts`, `server/lib/codex-quota.ts`; Health lists codex accounts with their windows.
+
 ### Fit or compact before the replay (LADDER1)
 
 A rung is a `--resume` of the same conversation — but the rungs do not share a
@@ -277,6 +281,7 @@ isolated-host tests run the 30s loop at 1s):
 ```jsonc
 {
   "modelChain": ["fable", "sonnet", "haiku"],   // ARIGAMI_MODEL_CHAIN
+  "codexModelChain": ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],   // ARIGAMI_CODEX_MODEL_CHAIN
   "supervisor": {
     "enabled": true,          // ARIGAMI_SUPERVISOR=0 turns the ladder off;
                               //   health is still computed on demand

@@ -266,6 +266,8 @@ export interface Config {
   // climbs back once the top rung's quota resets. An agent or a session may
   // override it (session.claude.modelChain). See server/supervisor.ts.
   modelChain: string[];
+  // P2-6 — codex sessions' ladder (codex model ids), used only when the codex account pool is exhausted.
+  codexModelChain: string[];
   // CTX1 — manual escape hatch for a model id server/lib/ctx-window.ts doesn't
   // recognize (new release, custom proxy id…): tokens per model id/alias,
   // lower-cased. Checked before the built-in table; env
@@ -386,6 +388,7 @@ export const DEFAULTS: Config = {
   defaultModel: null,
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
+  codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
   ctxWindowOverrides: {},
   supervisor: {
     enabled: true,
@@ -508,6 +511,8 @@ function envOverrides(): Partial<Config> {
   // isolated-host test can run the 30s loop at 1s with a 3s stall threshold.
   if (E.ARIGAMI_MODEL_CHAIN != null && E.ARIGAMI_MODEL_CHAIN !== '')
     o.modelChain = E.ARIGAMI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  if (E.ARIGAMI_CODEX_MODEL_CHAIN != null && E.ARIGAMI_CODEX_MODEL_CHAIN !== '')
+    o.codexModelChain = E.ARIGAMI_CODEX_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
   const sup: Partial<SupervisorConfig> = {};
   if (E.ARIGAMI_SUPERVISOR != null && E.ARIGAMI_SUPERVISOR !== '')
     sup.enabled = /^(1|true|yes|on)$/i.test(E.ARIGAMI_SUPERVISOR);
