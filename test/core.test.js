@@ -4,6 +4,8 @@ import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-test-'));
 process.env.ARIGAMI_STATE_FILE = path.join(tmp, 'state.json');
@@ -17,7 +19,7 @@ test('createSession: defaults, scratch naming, first tab is the session tab', ()
   expect(a.id).toStartWith('sess_');
   expect(a.title).toBe('scratch-1');
   expect(a.archived).toBe(false);
-  expect(a.metadata).toEqual({});
+  expect(a.metadata).toEqual({ chatMode: 'simple' }); // SIMPLE1: new sessions open in the Simple chat view
   expect(a.progress).toBeNull();
   expect(a.action).toBeNull();
   expect(a.tabs).toHaveLength(1);
@@ -59,7 +61,7 @@ test('patchSession: simple fields set, metadata merges, unknown keys ignored', (
 
   state.patchSession(s.id, { metadata: { branch: 'eng-1-fix' }, id: 'sess_hax', cwd: '/evil' });
   got = state.getSession(s.id);
-  expect(got.metadata).toEqual({ ticket: 'ENG-1', branch: 'eng-1-fix' }); // merged
+  expect(got.metadata).toEqual({ chatMode: 'simple', ticket: 'ENG-1', branch: 'eng-1-fix' }); // merged (chatMode is the SIMPLE1 default)
   expect(got.id).toBe(s.id);
   expect(got.cwd).not.toBe('/evil');
 
