@@ -160,3 +160,22 @@ test('only claude has permission MODES — codex is told, not asked', async () =
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).toContain('Codex');
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).not.toContain('{engine}');
 });
+
+/* ---------- restart / clear dialogs + MCP hint (P1-8) --------------------- */
+
+test('restart/clear dialogs and the MCP reconnect hint name the engine in both locales', async () => {
+  const keys = ['rail.restartConfirmBody', 'rail.clearConfirmBody', 'launcher.mcp.statusHint'];
+  const i18n = await import(web('lib/i18n.js'));
+  for (const lang of ['en', 'he']) {
+    prefs.setPrefs({ language: lang });
+    for (const k of keys) {
+      const s = i18n.t(k, { engine: 'Codex', name: 'x' });
+      expect(s).toContain('Codex');
+      expect(s).not.toContain('{engine}');
+      expect(s.toLowerCase()).not.toContain('claude');
+    }
+    for (const k of ['rail.restartConfirmTitle', 'rail.restartConfirm', 'rail.restartFailed', 'rail.clearConfirmTitle', 'rail.clearConfirm', 'rail.clearFailed'])
+      expect(i18n.t(k)).not.toBe(k);
+  }
+  prefs.setPrefs({ language: 'en' });
+});

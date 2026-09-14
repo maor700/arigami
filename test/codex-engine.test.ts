@@ -688,6 +688,19 @@ test('P1-7: composio-mcp from the host reaches config.toml with its own env; abs
   expect(run({ mcpServers: { 'composio-mcp': composio } }, ['gmail']).toml).toContain('[mcp_servers.composio-mcp]');
 });
 
+test('P1-8: the first-turn capabilities line lists only the session engine\'s login', () => {
+  const r = runInChild(
+    "const cl=await import('./server/claude.js');" +
+      "emit({codex:await cl.refreshCapabilitiesHint('global','codex'),claude:cl.capabilitiesHint('global','claude')});",
+    env({ COMPOSIO_API_KEY: '', GH_TOKEN: '', GITHUB_TOKEN: '' })
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].codex).toMatch(/\bcodex\b/);
+  expect(r.out[0].codex).not.toMatch(/\bclaude\b/);
+  expect(r.out[0].claude).toMatch(/\bclaude\b/);
+  expect(r.out[0].claude).not.toMatch(/\bcodex\b/);
+});
+
 // ---- writeMessage ----------------------------------------------------------
 
 test('a turn is written to stdin and stdin is closed — the EOF is what starts codex', () => {

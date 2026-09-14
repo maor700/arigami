@@ -1,5 +1,5 @@
 ---
-description: Build the human a custom extension for their own Arigami — a tab (a form/UI in the cockpit), a background listener that watches some source and wakes a session, a tool Claude can call, or an automation on merge/review/listener events. Scaffolds into the user's own repo, validates, loads it at runtime (no host restart), shows it in this same chat, and iterates with the human. Use when they ask for a custom tab/form/screen/button, "watch X for me", a webhook receiver, a new tool, something to run before a merge, or say "build me an extension" — Hebrew: "תבנה לי טאב", "תוסיף כלי", "תעקוב אחרי", "מאזין", "הרחבה", "תבנה לי טופס", "שיריץ בדיקה לפני מיזוג".
+description: Build the human a custom extension for their own Arigami — a tab (a form/UI in the cockpit), a background listener that watches some source and wakes a session, a tool the agent can call, or an automation on merge/review/listener events. Scaffolds into the user's own repo, validates, loads it at runtime (no host restart), shows it in this same chat, and iterates with the human. Use when they ask for a custom tab/form/screen/button, "watch X for me", a webhook receiver, a new tool, something to run before a merge, or say "build me an extension" — Hebrew: "תבנה לי טאב", "תוסיף כלי", "תעקוב אחרי", "מאזין", "הרחבה", "תבנה לי טופס", "שיריץ בדיקה לפני מיזוג".
 argument-hint: [what to build, in free text — "a form that picks features", "watch this RSS", "a tool that reads a Notion DB"]
 slash: extend
 ---
@@ -17,7 +17,7 @@ and the human's request maps onto one or two of them:
 |---|---|---|
 | "a form / a screen / a button / a tab" | `tabs[]` — a sandboxed page in the cockpit | `templates/tab` |
 | "watch X", "tell me when Y changes", "when a webhook arrives" | `listeners[]` — a poll/push provider that wakes a session | `templates/listener` |
-| "give Claude a tool that…", "read from our DB/API" | `tools[]` (+ `docs[]`) | `templates/tool` |
+| "give the agent a tool that…", "read from our DB/API" | `tools[]` (+ `docs[]`) | `templates/tool` |
 | "before every merge, run…", "when a merge finishes, notify…" | `hooks` — events, a `merge.before` gate, notification channels | `templates/hooks` |
 | "a webhook endpoint for …" | `webhooks[]` routed into a listener | `templates/listener` |
 
@@ -156,7 +156,7 @@ If it is webhook-driven, give the human the URL to POST to:
 `<the host>/__api/webhooks/custom/ext-<name>-<webhook id>` (hand over the host-relative
 path; never a `localhost:` URL).
 
-**A tool** — a tool list is fixed when a session's `claude` process spawns, so **this
+**A tool** — a tool list is fixed when a session's agent process spawns, so **this
 session cannot see it**. Say so in one sentence, and demonstrate it anyway through the
 host:
 

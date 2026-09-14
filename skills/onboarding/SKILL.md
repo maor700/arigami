@@ -41,10 +41,11 @@ Each step has `status: ok | missing | error | blocked | running`. A step is
 
 `GET /__api/onboarding/status`. Look at the **global** steps first:
 
-- `claude-auth` missing → tell the user to set `CLAUDE_CODE_OAUTH_TOKEN` (from
-  `claude setup-token`) or `ANTHROPIC_API_KEY` in the host env and restart. You
-  **cannot** fix this from here (it gated your own session — if you're running,
-  it's already ok).
+- `claude-auth` missing → on a claude session: set `CLAUDE_CODE_OAUTH_TOKEN` (from
+  `claude setup-token`) or `ANTHROPIC_API_KEY` in the host env and restart; on a
+  codex session: add a codex account in the Accounts view (ChatGPT login or OpenAI API key)
+  or run `codex login` on the host. You **cannot** fix your own engine's login from
+  here (if you're running, it's already ok).
 - `git-auth` missing → tell them to set `GH_TOKEN` (or, on a native/dev machine,
   `gh auth login`). Needed before any clone of a private repo.
 

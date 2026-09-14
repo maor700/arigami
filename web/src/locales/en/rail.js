@@ -350,4 +350,12 @@ export const strings = {
   'rail.chatModeSimple': 'Simple',
   'rail.chatModeTerminal': 'Terminal',
   'rail.chatModeHint': 'Simple: the conversation only, actions folded into one line · Terminal: everything',
+  'rail.restartConfirmTitle': 'Restart this session?',
+  'rail.restartConfirmBody': 'Kills the {engine} process for "{name}" and respawns it in place — the worktree, chat and metadata are kept, and MCP connections are re-established. Anything it is doing right now is aborted.',
+  'rail.restartConfirm': 'Restart',
+  'rail.restartFailed': 'Restart failed: {error}',
+  'rail.clearConfirmTitle': 'Clear this conversation?',
+  'rail.clearConfirmBody': 'Starts a brand new {engine} conversation for "{name}" — the worktree, chat log and metadata are kept, but the model loses all memory of what was discussed so far. Anything it is doing right now is aborted.',
+  'rail.clearConfirm': 'Clear',
+  'rail.clearFailed': 'Clear failed: {error}',
 };
