@@ -95,7 +95,7 @@ beforeAll(async () => {
   } catch {
     throw new Error(`host did not come up: ${log.slice(-1500)}`);
   }
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 afterAll(() => { try { host?.kill('SIGTERM'); } catch {} });
 
 // ---- 1. minimal mode is the recorded default -------------------------------
@@ -170,7 +170,7 @@ test('first turn introduces Arigami (not "I am Claude") and lists connectable ca
   expect(r.ok).toBe(true);
   const { text, hint } = r.out[0];
   expect(text).toMatch(/You are the agent inside Arigami/);
-  expect(text).toMatch(/not as "Claude"/);
+  expect(text).toMatch(/not by the name of the CLI\/model behind you \("Claude", "Codex"\)/); // engine-aware wording since the Codex engine
   expect(text).toMatch(/WhatsApp/);
   expect(text).toMatch(/language the human writes in/);
   expect(hint).toMatch(/needs_setup/);
