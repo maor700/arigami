@@ -271,3 +271,22 @@ test('hostEngine: nothing connected → claude, codex-only → codex, cfg.defaul
   expect(run(false)).toEqual({ a: 'claude', b: 'claude', s: 'codex', t: 'claude' });
   expect(run(true)).toEqual({ a: 'codex', b: 'claude', s: 'codex', t: 'claude' });
 }, 15000);
+
+test('P4-5 voice router: anthropic provider with no Claude creds → Groq when keyed, else a codex one-shot', () => {
+  const run = (groq) => {
+    const dir = tmp();
+    seedCodexAccount(dir);
+    const r = runInChild(
+      "globalThis.fetch=async(url)=>{globalThis.__url=String(url);return new Response(JSON.stringify({choices:[{message:{content:'{\"actions\":[],\"say\":\"groq\"}'}}]}),{status:200});};" +
+        "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+        "const {cfg}=await import('./server/lib/config.ts');cfg.voiceRouterProvider='anthropic';" +
+        "const voice=await import('./server/voice.js');" +
+        "const plan=await voice.route({transcript:'hi',context:{}});emit({say:plan.say,url:globalThis.__url||null});",
+      { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', HOME: dir, GROQ_API_KEY: groq, CLAUDE_CODE_OAUTH_TOKEN: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_OUT: 'plan: {"actions":[],"say":"codex"}' }
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  expect(run('gsk_x')).toMatchObject({ say: 'groq' });
+  expect(run('')).toEqual({ say: 'codex', url: null });
+}, 20000);

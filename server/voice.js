@@ -8,6 +8,8 @@
 // "PR" left in Latin script) works.
 import { cfg } from './lib/config.js';
 import { readToken } from './usage.js';
+import { tokenForSession } from './accounts.js';
+import { runOneShot, hostEngine } from './lib/oneshot.js';
 
 const GROQ = 'https://api.groq.com/openai/v1';
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
@@ -227,9 +229,14 @@ function priorTurns(history) {
     .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
 }
 
+function claudeToken() {
+  try { return readToken() || tokenForSession(null)?.token || null; } catch { return null; }
+}
+
 async function routeAnthropic(text, context, history) {
-  const token = readToken();
-  if (!token) throw new Error('voice router: no Claude Code credentials in keychain');
+  const token = claudeToken();
+  // No Claude credentials (codex-only host): Groq when keyed, else a one-shot on the host engine.
+  if (!token) return apiKey() ? routeGroq(text, context, history) : routeOneShot(text, context, history);
   const r = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
@@ -274,6 +281,15 @@ async function routeGroq(text, context, history) {
   const j = await r.json();
   let plan;
   try { plan = JSON.parse(j.choices?.[0]?.message?.content || '{}'); } catch { plan = {}; }
+  return normalizePlan(plan, text);
+}
+
+async function routeOneShot(text, context, history) {
+  const turns = priorTurns(history).map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+  const prompt = `${systemPrompt(context)}\n\nReply with ONLY the JSON plan object, no prose.\n\n${turns ? `${turns}\n` : ''}USER: ${text}`;
+  const out = await runOneShot(prompt, { engine: hostEngine(), model: 'haiku', timeoutMs: 60_000, tag: 'voice-router' });
+  let plan;
+  try { plan = JSON.parse((out.match(/\{[\s\S]*\}/) || ['{}'])[0]); } catch { plan = {}; }
   return normalizePlan(plan, text);
 }
 

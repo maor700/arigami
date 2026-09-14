@@ -12,4 +12,4 @@ if [ "$FAKE_CODEX_MODE" = "fail" ]; then echo "ERROR: unexpected status 401 Unau
   cp "$CODEX_HOME/config.toml" "$FAKE_CODEX_RECORD.toml"
   for a in "$@"; do [ -f "$a" ] && case "$a" in *schema.json) cp "$a" "$FAKE_CODEX_RECORD.schema";; esac; done
 }
-printf 'pong from codex' > "$out"
+printf '%s' "${FAKE_CODEX_OUT:-pong from codex}" > "$out"
