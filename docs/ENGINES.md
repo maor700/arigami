@@ -187,6 +187,11 @@ nothing.
 - **Deleting a session cleans up its `$CODEX_HOME`** (`config/codex/<sessionId>`) — that's where
   the conversation history lives.
 
+## Host utilities (one-shots)
+
+`runOneShot(prompt, {engine})` in `server/lib/oneshot.ts`: claude = `claude -p`, codex = `codex exec --ephemeral -o` in a scratch `$ARIGAMI_DIR/oneshot-codex/` home.
+Explain/review/summary run on the session's engine; memory episodes, LEARN1, skills analyze, the wizard health ping and the voice fallback run on `hostEngine()` (`cfg.defaultEngine`, else the first engine with an account, claude first). The LADDER1 digest and token verify stay claude-only.
+
 ## Accounts are per provider
 
 An account (`server/accounts.js`) carries a `provider` — `claude` or `codex` (`server/lib/providers.ts`,
