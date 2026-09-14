@@ -67,6 +67,7 @@ A codex session is, permission-wise, the equivalent of `bypassPermissions` — a
 `codex exec` has no equivalent of `--permission-prompt-tool`. Hence
 `permissions.kind === 'none'`: no approval card in the chat, and no action ever stops
 to ask. Real approval exists only in Codex's `app-server` track — **which is not implemented here**.
+`permission_prompt` is hidden from a codex session's tools/list (`ARIGAMI_ENGINE=codex` in the host MCP env).
 
 ### 3. Agents with an allowlist run — the policy hook is enforced
 

@@ -527,6 +527,7 @@ test('config.toml wires the host MCP server under the snake_case key codex actua
   expect(toml).toContain('[mcp_servers.arigami.env]');
   expect(toml).toContain('host-mcp.js');
   expect(toml).toMatch(/ARIGAMI_SESSION_ID = "sess_/);
+  expect(toml).toContain('ARIGAMI_ENGINE = "codex"');
   // The session's cwd is pre-trusted so codex never stops to ask about it.
   expect(toml).toContain('[projects."/tmp"]');
   expect(toml).toContain('trust_level = "trusted"');

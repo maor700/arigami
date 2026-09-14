@@ -1027,6 +1027,9 @@ const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities:
 // tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a
 // hidden one is refused here too (the PreToolUse hook is the outer layer).
 let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
+// P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
+const ENGINE_HIDDEN = new Set(process.env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
+const isHidden = (name) => ENGINE_HIDDEN.has(name) || !!hiddenTools?.has(name);
 
 // EXT: teach `register_listener` about the types an extension registered. One
 // call at startup (like refreshHidden's policy probe); a failure keeps the
@@ -1071,13 +1074,14 @@ async function refreshHidden() {
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   await refreshHidden();
   return {
-    tools: TOOLS.filter((t) => !hiddenTools?.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    tools: TOOLS.filter((t) => !isHidden(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
+  if (ENGINE_HIDDEN.has(tool.name)) return { content: [{ type: 'text', text: `error: tool "${tool.name}" does not exist on this engine` }], isError: true };
   if (hiddenTools?.has(tool.name))
     return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
   try {

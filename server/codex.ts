@@ -316,6 +316,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     ARIGAMI_URL: cfg.hostBase!,
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+    ARIGAMI_ENGINE: 'codex',
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
   };
 
