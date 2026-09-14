@@ -126,7 +126,7 @@ export const strings = {
   'health.active': '(פעיל)',
   'health.accountOk': 'זמין',
   'health.accountLimited': 'מוגבל · חוזר בעוד {when}',
-  'health.noAccounts': 'אין חשבונות Claude מחוברים.',
+  'health.noAccounts': 'אין חשבונות מנוע מחוברים.',
   'health.downgraded': '{from} ← {to} · חוזר בעוד {when}',
   'health.restoreNow': 'חזרה ל-{model}',
   'health.incidents': 'אירועים (24 שעות)',

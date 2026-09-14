@@ -126,7 +126,7 @@ export const strings = {
   'health.active': '(active)',
   'health.accountOk': 'available',
   'health.accountLimited': 'limited · back in {when}',
-  'health.noAccounts': 'No Claude accounts connected.',
+  'health.noAccounts': 'No engine accounts connected.',
   'health.downgraded': '{from} → {to} · back in {when}',
   'health.restoreNow': 'Back on {model}',
   'health.incidents': 'Incidents (24h)',
