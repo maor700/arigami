@@ -211,7 +211,7 @@ async function startThread(id: string, p: any): Promise<void> {
   setClaude(id, { sessionId: thread.id, ...(r.result.model ? { model: r.result.model } : {}) });
   if (getSession(id)?.claude?.state === 'restarting') setClaude(id, { state: 'idle' });
   st.ready = true;
-  void refreshCodexModels({ force: !prev });
+  void refreshCodexModels(); // model/list under the active login, 5-min cache
   if (st.compactDue) runCompaction(id, st, st.compactDue);
   const q = st.queue.splice(0);
   for (const fn of q) fn();
