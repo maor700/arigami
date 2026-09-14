@@ -206,7 +206,7 @@ a human reviews the diff before it touches the live skill.
 Tools on this host do not fail when a capability is not configured — they *ask*:
 a tool result (MCP or REST) of the form
 `{ "needs_setup": "composio:gmail", "why": "read your inbox", "hint": "call request_setup" }`
-means the capability (`identity`, `claude`, `git`, `repo:<name>`, `whatsapp`,
+means the capability (`identity`, `claude`, `codex`, `git`, `repo:<name>`, `whatsapp`,
 `mcp:<service>`, `composio:<toolkit>`, `desktop`, `push`, `remote`, `telemetry`)
 is missing.
 
@@ -216,7 +216,7 @@ When you see one:
    chat (and a push) where the human chooses **automatic** or **manual**. It blocks.
 2. `{state:"auto"}` → the human asked *you* to connect it: run the matching
    playbook — `skills/connect-<provider>/SKILL.md` (`connect-identity`,
-   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-tailscale`,
+   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-codex`, `connect-tailscale`,
    `connect-github`) —
    and finish with `report_setup({capability, ok, evidence?})`. Then call the
    original tool again.

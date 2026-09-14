@@ -239,48 +239,69 @@ export function AddRepo({ onAdd, busy }) {
   );
 }
 
-// The front door: a hero that starts the guided (chat) onboarding. But the
-// onboarding skill runs INSIDE a claude session — so if the Claude Code CLI is
-// missing (or unauthenticated) there's no session to open. Those two global
-// steps therefore hard-gate the "Go!" button: we surface the fix (install
-// command / token) + a Recheck, and only enable Go once both are ok.
-// S2 — minimal first screen: Connect Claude → Start. Nothing else blocks;
+// The front door: a hero that starts the guided (chat) onboarding. The skill
+// runs INSIDE an engine session, so Start needs one connected engine.
+// S2 — minimal first screen: Connect Claude / Connect Codex → Start. Nothing else blocks;
 // every other capability connects just-in-time from the chat (SetupCard).
 // "Run full setup" reopens the B3 wizard for people who want all the steps.
-function MinimalHero({ claude, onStart, onRecheck, onRunWizard, busy }) {
+const ENGINE_CARDS = [
+  { id: 'claude', title: 'setup.minimal.connectClaude', connected: 'wizard.claude.connected', noCli: 'wizard.claude.noCli', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce' },
+  { id: 'codex', title: 'setup.minimal.connectCodex', connected: 'wizard.codex.connected', noCli: 'wizard.codex.noCli', install: 'npm i -g @openai/codex', flow: 'codex' },
+];
+
+function EngineCard({ spec, cap, optional, onRecheck }) {
   const t = useT();
-  const cli = claude?.data?.cli !== false;
+  const cli = cap?.data?.cli !== false;
+  return (
+    <div className={`rounded-[9px] border px-3 py-2.5 ${cap?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : optional ? 'border-hair bg-bg' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
+      <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
+        {cap?.ok && <Icon icon={faCheck} />}
+        {t(spec.title)}
+        {optional && <span className="text-[11px] font-normal text-fgdim">{t('setup.minimal.optional')}</span>}
+      </div>
+      {cap?.ok ? (
+        <div className="mt-1 text-[11.5px] text-[#2f7d4f]">{t(spec.connected)}</div>
+      ) : optional ? null : !cli ? (
+        <div className="mt-2">
+          <p className="text-[11px] leading-snug text-[#8a6d1f]">{t(spec.noCli)}</p>
+          <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">{spec.install}</code>
+          <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
+        </div>
+      ) : (
+        <div className="mt-2"><OAuthCodeStep capability={spec.id} manual={{ kind: 'oauth', flow: spec.flow, token: true }} onDone={onRecheck} /></div>
+      )}
+    </div>
+  );
+}
+
+function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
+  const t = useT();
+  const anyOk = ENGINE_CARDS.some((e) => engines?.[e.id]?.ok);
   return (
     <div className="mb-4 overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel">
       <div className="px-4 py-4">
         <div className="text-[15px] font-bold text-fg">{t('setup.minimal.title')}</div>
         <p className="mt-1 text-[12px] leading-relaxed text-fgdim">{t('setup.minimal.body')}</p>
         <ol className="mt-3 flex flex-col gap-3">
-          <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
+          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{claude?.ok ? <Icon icon={faCheck} /> : '1'}</span>
-              {t('setup.minimal.connectClaude')}
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{anyOk ? <Icon icon={faCheck} /> : '1'}</span>
+              {t('setup.minimal.connectEngine')}
             </div>
-            {claude?.ok ? (
-              <div className="mt-1 text-[11.5px] text-[#2f7d4f]">{t('wizard.claude.connected')}</div>
-            ) : !cli ? (
-              <div className="mt-2">
-                <p className="text-[11px] leading-snug text-[#8a6d1f]">{t('wizard.claude.noCli')}</p>
-                <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">npm i -g @anthropic-ai/claude-code</code>
-                <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
-              </div>
-            ) : (
-              <div className="mt-2"><OAuthCodeStep capability="claude" manual={{ kind: 'oauth', flow: 'pkce', token: true }} onDone={onRecheck} /></div>
-            )}
+            <div className="mt-2 flex flex-col gap-2">
+              {ENGINE_CARDS.map((e) => (
+                <EngineCard key={e.id} spec={e} cap={engines?.[e.id]} optional={anyOk && !engines?.[e.id]?.ok} onRecheck={onRecheck} />
+              ))}
+            </div>
           </li>
-          <li className={`rounded-[9px] border px-3 py-2.5 ${claude?.ok ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
+          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
               <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">2</span>
               {t('setup.minimal.start')}
             </div>
             <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
             <button
-              type="button" disabled={busy || !claude?.ok} onClick={onStart}
+              type="button" disabled={busy || !anyOk} onClick={onStart}
               className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
             >
               {busy ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
@@ -301,7 +322,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [profiles, setProfiles] = useState([]);
-  const [claude, setClaude] = useState(null); // {ok, detail, data} from setup-api.overview()
+  const [engines, setEngines] = useState(null); // {claude, codex}: {ok, detail, data} from setup-api.overview()
   const [more, setMore] = useState(false);
   const { setupTick, wizardTick } = useStore();
 
@@ -309,7 +330,8 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
     try {
       const [st, ov] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null)]);
       setData(st);
-      setClaude(ov?.capabilities?.find((c) => c.id === 'claude') || null);
+      const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
+      setEngines({ claude: cap('claude'), codex: cap('codex') });
       setErr(null);
     } catch (e) {
       setErr(e.message);
@@ -419,7 +441,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const repoNames = [...new Set(steps.filter((s) => s.scope.startsWith('repo:')).map((s) => s.scope.slice(5)))];
   // Workspace ready = all globals ok AND some repo's steps all ok. Hero fronts
   // only while it's NOT ready (fresh workspace); quiet once a repo is usable.
-  const globalsOk = global.length > 0 && global.every((s) => s.status === 'ok');
+  const globalsOk = global.length > 0 && global.every((s) => s.status === 'ok' || s.required === false);
   const anyRepoReady = repoNames.some((n) =>
     steps.filter((s) => s.scope === `repo:${n}`).every((s) => s.status === 'ok')
   );
@@ -468,7 +490,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
         {data && (
           <>
-            <MinimalHero claude={claude} onStart={startSession} onRecheck={refresh} onRunWizard={onRunWizard ? runWizard : null} busy={busy} />
+            <MinimalHero engines={engines} onStart={startSession} onRecheck={refresh} onRunWizard={onRunWizard ? runWizard : null} busy={busy} />
 
             <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
               {more ? '▾' : '▸'} {t('setup.minimal.more')}{workspaceReady ? '' : ` · ${t('setup.minimal.moreHint')}`}

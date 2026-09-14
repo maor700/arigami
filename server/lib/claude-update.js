@@ -115,6 +115,7 @@ function runClaudeUpdate({ timeoutMs = APPLY_TIMEOUT_MS } = {}) {
  *  now()              → number
  *  store              → path|null              persisted status (checkedAt/latest/lastUpdate)
  *  log(line)          → void                   append to logs/claude-update.log
+ *  name               → 'claude'|'codex'       event kind prefix + notification title
  */
 export function createUpdater(deps = {}) {
   const d = {
@@ -131,8 +132,11 @@ export function createUpdater(deps = {}) {
     store: null,
     log: () => {},
     checkEveryMs: CHECK_EVERY_MS,
+    name: 'claude',
+    source: LATEST_URL,
     ...deps,
   };
+  const title = `${d.name === 'codex' ? 'Codex' : 'Claude'} CLI`;
 
   const st = {
     installed: null,
@@ -179,7 +183,7 @@ export function createUpdater(deps = {}) {
       minFreeMb: d.minFreeMb,
       availableMb: safeMem(),
       lastUpdate: st.lastUpdate,
-      source: LATEST_URL,
+      source: d.source,
     };
   }
   function safeMem() { try { return d.memAvailableMb(); } catch { return null; } }
@@ -221,14 +225,14 @@ export function createUpdater(deps = {}) {
     if (availableMb !== null && availableMb < d.minFreeMb) {
       st.deferred = { reason: 'memory', availableMb, minFreeMb: d.minFreeMb, since: st.deferred?.since ?? d.now(), by: reason };
       d.log(`deferred (${reason}): ${availableMb}MB available < ${d.minFreeMb}MB`);
-      if (reason === 'manual') d.emit({ kind: 'claude-update-deferred', availableMb, minFreeMb: d.minFreeMb });
+      if (reason === 'manual') d.emit({ kind: `${d.name}-update-deferred`, availableMb, minFreeMb: d.minFreeMb });
       return Promise.resolve({ deferred: true, ...st.deferred });
     }
     st.deferred = null;
     st.applying = true;
     const from = st.installed;
     const startedAt = d.now();
-    d.emit({ kind: 'claude-update-started', from, to: st.latest, reason });
+    d.emit({ kind: `${d.name}-update-started`, from, to: st.latest, reason });
     applyInflight = (async () => {
       let r;
       try { r = await d.run(); } catch (e) { r = { code: 1, output: '', error: e.message }; }
@@ -247,12 +251,12 @@ export function createUpdater(deps = {}) {
         // New spawns now get the new binary; make the picker learn its models
         // without anyone restarting anything (models.js re-keys on version).
         try { await d.onUpdated({ from: st.lastUpdate.from, to: st.lastUpdate.to }); } catch (e) { d.log(`models refetch failed: ${e.message}`); }
-        d.emit({ kind: 'claude-update-done', from: st.lastUpdate.from, to: st.lastUpdate.to, reason });
-        d.notify('Claude CLI updated', `${st.lastUpdate.from || '?'} → ${st.lastUpdate.to || '?'}`);
+        d.emit({ kind: `${d.name}-update-done`, from: st.lastUpdate.from, to: st.lastUpdate.to, reason });
+        d.notify(`${title} updated`, `${st.lastUpdate.from || '?'} → ${st.lastUpdate.to || '?'}`);
       } else {
         d.log(`update failed (${reason}): ${error}`);
-        d.emit({ kind: 'claude-update-failed', from, error, reason });
-        d.notify('Claude CLI update failed', error);
+        d.emit({ kind: `${d.name}-update-failed`, from, error, reason });
+        d.notify(`${title} update failed`, error);
       }
       return { ok, from: st.lastUpdate.from, to: st.lastUpdate.to, error, log: st.lastUpdate.log };
     })().finally(() => { st.applying = false; applyInflight = null; });
@@ -310,8 +314,10 @@ export async function claudeUpdater() {
   return singleton;
 }
 
-/** index.ts: arm the daily check + auto-apply loop. */
-export async function startClaudeUpdater() {
+/** index.ts: arm the daily check + auto-apply loop — only when a claude binary resolves. */
+export async function startClaudeUpdater({ bin } = {}) {
+  const resolved = bin ?? (await import('./claude-bin.js')).claudeBin({ force: true });
+  if (!resolved || resolved === 'claude') { console.log('[claude-update] no claude binary — daily check not started'); return null; }
   const u = await claudeUpdater();
   u.start();
   return u;

@@ -20,6 +20,8 @@ import LadderBadge from './LadderBadge.jsx';
 import { openAgent, deleteAgentConfirmed } from './DelegatedLine.jsx';
 import { untilTime, nextCronFor } from './RoutineList.jsx';
 import { UsageMini } from './Usage.jsx';
+import { DEFAULT_ENGINE, normalizeEngine } from '../lib/engines.js';
+import { snapshotUsage } from '../lib/providers.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import MicButton from './MicButton.jsx';
@@ -1417,7 +1419,13 @@ export default function Rail({
   // The header reflects the ACTIVE account. Derive it from the per-account map so
   // switching accounts updates instantly instead of lagging on the generic
   // usage-updated broadcast (which only fires when the active usage changes).
-  const activeUsage = (accounts?.activeId && accountUsage?.[accounts.activeId]) || usage;
+  // P1-11: the active engine = the selected session's, else the host default.
+  const selSession = selectedId ? sessions.find((s) => s.id === selectedId) : null;
+  const activeEngine = selSession ? normalizeEngine(selSession.engine) : DEFAULT_ENGINE;
+  const codexId = accounts?.activeIds?.codex;
+  const activeUsage = activeEngine === 'codex'
+    ? (codexId && (accountUsage?.[codexId] || snapshotUsage((accounts?.accounts || []).find((a) => a.id === codexId)))) || null
+    : (accounts?.activeId && accountUsage?.[accounts.activeId]) || usage;
   const [dragging, setDragging] = useState(false);
   const sDragId = useRef(null); // flat-mode session drag
   const fDragId = useRef(null); // flat-mode folder drag
@@ -2155,7 +2163,7 @@ export default function Rail({
       {/* usage charts (session / week) — compact, above the footer. Reflects the
           active account (see activeUsage above). F8: hidden until the first
           session exists — a percentage without context on the first screen. */}
-      {serverCount > 0 && <UsageMini usage={activeUsage} />}
+      {serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} />}
 
       {/* footer */}
       <div className="flex items-center gap-1.5 border-t border-hair px-[0.8125rem] py-2.5 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim">

@@ -70,3 +70,15 @@ test('Rail source: Pending/Triggers and Usage are hidden until a session exists'
   expect(src).toMatch(/\{\(serverCount > 0 \|\| \(pending \|\| \[\]\)\.length > 0\) && \(\s*<PendingSection/);
   expect(src).toMatch(/\{serverCount > 0 && <UsageMini/);
 });
+
+test('one-engine gate + P1-11: Start needs either engine; usage, Connections and Health are not Claude-only', () => {
+  const setup = fs.readFileSync(web('components/Setup.jsx'), 'utf8');
+  expect(setup).toMatch(/disabled=\{busy \|\| !anyOk\}/);
+  expect(setup).toMatch(/id: 'codex'.*flow: 'codex'/);
+  expect(fs.readFileSync(web('components/Wizard.jsx'), 'utf8')).toMatch(/step\.id === 'codex'/);
+  const rail = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
+  expect(rail).toMatch(/activeEngine === 'codex'/);
+  expect(rail).toMatch(/<UsageMini usage=\{activeUsage\} provider=\{activeEngine\} \/>/);
+  expect(fs.readFileSync(web('components/settings/Connections.jsx'), 'utf8')).toMatch(/OWN_SECTION = new Set\(\[[^\]]*'codex'/);
+  expect(fs.readFileSync(web('locales/en/host.js'), 'utf8')).not.toMatch(/No Claude accounts/);
+});

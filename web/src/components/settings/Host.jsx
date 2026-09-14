@@ -149,6 +149,8 @@ export default function Host({ section = '' }) {
   const [st, setSt] = useState(null);
   const [cli, setCli] = useState(null); // UPD1: GET /host/claude
   const [cliBusy, setCliBusy] = useState(null); // 'check' | 'update' | 'auto'
+  const [cx, setCx] = useState(null); // P1-10: GET /host/codex
+  const [cxBusy, setCxBusy] = useState(null); // 'check' | 'update'
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [log, setLog] = useState([]);
@@ -163,6 +165,7 @@ export default function Host({ section = '' }) {
     api.get('/host/status').then(setSt).catch(() => setSt(null));
     api.get('/version').then(setVer).catch(() => setVer(null));
     api.get('/host/claude').then(setCli).catch(() => setCli(null));
+    api.get('/host/codex').then(setCx).catch(() => setCx(null));
   };
   useEffect(() => { load(); }, []);
 
@@ -192,6 +195,7 @@ export default function Host({ section = '' }) {
     if (ev.kind === 'restarting' || ev.kind === 'restart-draining') restarting.current = true;
     // UPD1: done/failed are toasted globally (store.js); here just refresh the row.
     if (ev.kind === 'claude-update-started') setCli((c) => (c ? { ...c, applying: true } : c));
+    if (ev.kind === 'codex-update-started') setCx((c) => (c ? { ...c, applying: true } : c));
     load();
   }, [hostEvent]);
 
@@ -257,6 +261,16 @@ export default function Host({ section = '' }) {
   const cliCheck = () => cliAct('check', () => hostPost('/host/claude/check'));
   const cliUpdate = () => cliAct('update', async () => (await hostPost('/host/claude/update')).status);
   const cliAuto = (on) => cliAct('auto', () => hostPost('/host/claude/auto', 'POST', { enabled: on }));
+  const cxAct = async (what, fn) => {
+    setCxBusy(what);
+    try { setCx(await fn()); } catch (e) {
+      if (e?.status === 409 && /memory|MB/.test(e.message || '')) toastError(t('host.cli.deferredToast', { mb: cx?.availableMb ?? '?', min: cx?.minFreeMb ?? '?' }));
+      else fail(e);
+      api.get('/host/codex').then(setCx).catch(() => {});
+    } finally { setCxBusy(null); }
+  };
+  const cxCheck = () => cxAct('check', () => hostPost('/host/codex/check'));
+  const cxUpdate = () => cxAct('update', async () => (await hostPost('/host/codex/update')).status);
 
   const noSup = st && st.manager === 'none';
   const pending = st?.pendingRestart;
@@ -356,6 +370,22 @@ export default function Host({ section = '' }) {
             {(cli?.updateAvailable || cli?.applying) && (
               <button type="button" disabled={cliBusy === 'update' || cli?.applying} onClick={cliUpdate} className={BTN}>{cliBusy === 'update' || cli?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
             )}
+          </span>
+        </Field>
+        <Field label={t('host.codexCli')} hint={t('host.codexCli.hint')} wrap>
+          <span className="flex flex-wrap items-center justify-end gap-2">
+            <span className="font-mono text-[11.5px] text-fg" dir="ltr">{!cx ? '…' : cx.installed ? t('host.cli.installed', { v: cx.installed }) : t('host.codexCli.missing')}</span>
+            {cx?.updateAvailable
+              ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cx.latest })}</span>
+              : cx?.checkError ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-[#9c3b33]">{t('host.cli.checkError', { error: cx.checkError })}</span>
+              : cx?.latest && cx?.installed ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
+            {cx?.installed && (
+              <button type="button" disabled={cxBusy === 'check' || cx?.checking} onClick={cxCheck} className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-fgdim underline disabled:opacity-50">{cxBusy === 'check' || cx?.checking ? t('host.checking') : t('host.check')}</button>
+            )}
+            {(cx?.updateAvailable || cx?.applying) && (
+              <button type="button" disabled={cxBusy === 'update' || cx?.applying} onClick={cxUpdate} className={BTN}>{cxBusy === 'update' || cx?.applying ? t('host.cli.updating') : t('host.cli.updateNow')}</button>
+            )}
+            {cx?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cx.deferred.availableMb, min: cx.deferred.minFreeMb })}</span>}
           </span>
         </Field>
         <DefaultEngineField />

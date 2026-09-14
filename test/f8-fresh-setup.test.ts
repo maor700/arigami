@@ -2,7 +2,7 @@
 //   0. a full child forks its worktree from the CALLER's `cwd`, not the master's
 //      (a master in a plain workspace folder used to 500 "not a git repository");
 //   1. minimal onboarding is the recorded default: onboarding.json carries
-//      mode:'minimal', required = [pair, claude], "Run full setup" flips it;
+//      mode:'minimal', required = [pair, claude, codex], "Run full setup" flips it;
 //   3. WhatsApp tool calls answer {needs_setup:'whatsapp'} while the bridge is
 //      down (host-mcp `whatsapp` tool → POST /__api/whatsapp/tool);
 //   4. the first turn introduces Arigami (identity reminder + connectable list).
@@ -103,7 +103,7 @@ afterAll(() => { try { host?.kill('SIGTERM'); } catch {} });
 test('fresh install: wizard is minimal, onboarding.json records mode:minimal, Run-full-setup flips it', async () => {
   const w = (await api('GET', '/__api/onboarding/wizard')).json;
   expect(w.mode).toBe('minimal');
-  expect(w.required).toEqual(['pair', 'claude']);
+  expect(w.required).toEqual(['pair', 'claude', 'codex']);
   expect(w.done).toBe(false);
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.mode).toBe('minimal');
@@ -198,4 +198,48 @@ test('AUTH_RE catches the CLI "Not logged in · Please run /login" text', () => 
     { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1' });
   expect(r.ok).toBe(true);
   expect(r.out[0]).toEqual({ m: true, m2: false });
+});
+
+// ---- Codex-only host: one connected engine opens the gate --------------------
+test('codex authed, claude absent → codex capability ok, claude rows optional; workspaceReady still needs git + a ready repo', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-F8-codex-'));
+  const bin = path.join(d, 'bin');
+  const cxHome = path.join(d, 'codex-home');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(cxHome, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\necho codex-cli 0.0.0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(cxHome, 'auth.json'), '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-test"}');
+  fs.mkdirSync(path.join(d, 'repos', 'app', '.git'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'repos.json'), JSON.stringify([{ name: 'app', source: 'https://example.invalid/app.git' }]));
+  const r = runInChild(
+    "const fs=await import('node:fs');const ob=await import('./server/onboarding.js');const c=await import('./server/capabilities.js');" +
+      "const st=ob.status().steps.filter(s=>s.scope==='global').map(s=>[s.id,s.status,s.required]);" +
+      "const caps=(await c.capabilitiesStatus()).capabilities.filter(x=>x.id==='claude'||x.id==='codex').map(x=>[x.id,x.ok]);" +
+      "const w=ob.wizard();const ready=ob.workspaceReady();" +
+      "delete process.env.GH_TOKEN;const noGit=ob.workspaceReady();process.env.GH_TOKEN='ghp_test';" +
+      "fs.writeFileSync(process.env.ARIGAMI_DIR+'/repos.json','[]');const noRepo=ob.workspaceReady();" +
+      "emit({st,caps,ready,noGit,noRepo,done:w.done,claude:w.steps.find(s=>s.id==='claude').status});",
+    {
+      ARIGAMI_DIR: d, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_ONBOARDING_MODE: 'minimal',
+      ARIGAMI_REPOS_DIR: path.join(d, 'repos'), ARIGAMI_CODEX_HOME: cxHome, ARIGAMI_CODEX_BIN: '', ARIGAMI_CLAUDE_BIN: '',
+      HOME: path.join(d, 'home'), PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
+      CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '', GH_TOKEN: 'ghp_test', COMPOSIO_API_KEY: '',
+    }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.st).toEqual([
+    ['claude-cli', 'missing', false],
+    ['claude-auth', 'blocked', false],
+    ['codex-cli', 'ok', true],
+    ['codex-auth', 'ok', true],
+    ['git-auth', 'ok', null],
+  ]);
+  expect(o.caps).toEqual([['claude', false], ['codex', true]]);
+  expect(o.ready).toBe(true); // one engine opens the engine half only
+  expect(o.noGit).toBe(false);
+  expect(o.noRepo).toBe(false);
+  expect(o.claude).toBe('skipped');
+  // The wizard still needs pairing; the engine half of the gate is open.
+  expect(o.done).toBe(false);
 });

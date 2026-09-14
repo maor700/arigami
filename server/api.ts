@@ -1636,7 +1636,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     updateScreenConfig({ enabled: false });
     return { ok: true };
   }
-  if (capability === 'claude') throw new Error('disconnect Claude from the Accounts view');
+  if (capability === 'claude' || capability === 'codex') throw new Error(`disconnect ${capability === 'claude' ? 'Claude' : 'Codex'} from the Accounts view`);
   if (capability.startsWith('repo:')) throw new Error('remove repositories from Setup → repositories');
   throw new Error(`${capability} has nothing to disconnect`);
 }
@@ -1802,6 +1802,19 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
     else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
     else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
+  } else if (capability === 'codex') {
+    const cx = await import('./codex-account.js');
+    const id = String(body?.id || '');
+    if (body?.token) out = await cx.addApiKeyAccount({ label: body?.label ? String(body.label) : 'setup', key: String(body.token) });
+    else if (action === 'start' || action === 'oauth-start') {
+      let st: any = cx.startBrowserLogin({ label: body?.label || 'setup' });
+      for (let i = 0; i < 60 && st.state === 'starting'; i++) { await new Promise((r) => setTimeout(r, 250)); st = cx.loginStatus(st.id); } // the URL arrives a moment after spawn
+      return { ok: true, ...st };
+    }
+    else if (action === 'poll') { const st = cx.loginStatus(id); return { ok: st.state === 'done', ...st }; }
+    else if (action === 'cancel') return { ...cx.cancelLogin(id), ok: true };
+    else if (action === 'code' || body?.code) { const r = await cx.submitCallback(id, String(body?.code || '')); return { ...r, state: r.ok ? 'awaiting' : 'error' }; }
+    else throw new Error('codex: pass {token} or {action:"start"} / {action:"code", id, code}');
   } else if (capability === 'git') {
     const gl = await import('./git-login.js');
     if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);
@@ -3191,6 +3204,12 @@ export async function handle(
       const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
       return json(res, cu.status());
     }
+    // P1-10: the `codex` CLI row — same shape, never auto-applied.
+    if (p === '/__api/host/codex' && m === 'GET') {
+      const cx = await import('./lib/codex-update.js');
+      const st = (await cx.codexUpdater()).status();
+      return json(res, st.installed ? st : { ...st, installed: await cx.codexInstalled() });
+    }
     // The self-update watcher's view: what it last saw upstream, which channel
     // this install updates through, and whether it is allowed to apply it
     // (lib/self-update.ts). Read-only — applying still goes through
@@ -3274,10 +3293,10 @@ export async function handle(
         }
         // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,
         // deferred under memory pressure) · claude/auto {enabled} (the policy toggle).
-        if (sub.startsWith('claude/') && m === 'POST') {
-          const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
-          if (sub === 'claude/check') return json(res, await cu.check({ force: true }));
-          if (sub === 'claude/update') {
+        if ((sub.startsWith('claude/') || sub.startsWith('codex/')) && m === 'POST') {
+          const cu = sub.startsWith('codex/') ? await (await import('./lib/codex-update.js')).codexUpdater() : await (await import('./lib/claude-update.js')).claudeUpdater();
+          if (sub === 'claude/check' || sub === 'codex/check') return json(res, await cu.check({ force: true }));
+          if (sub === 'claude/update' || sub === 'codex/update') {
             await cu.check({ force: true });
             const r = await cu.apply({ reason: 'manual' });
             if (r.deferred) return json(res, { ...r, error: `deferred: ${r.availableMb}MB available < ${r.minFreeMb}MB (memory pressure)`, status: cu.status() }, 409);

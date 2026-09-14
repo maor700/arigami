@@ -41,6 +41,15 @@ export const strings = {
   'wizard.claude.tokenSave': 'שמור טוקן',
   'wizard.claude.connected': 'Claude מחובר.',
   'wizard.claude.cancel': 'ביטול',
+  'wizard.claude.optional': 'אופציונלי — Codex מחובר, כך ש-Arigami כבר יכול לרוץ. אפשר להוסיף את Claude אחר כך מההגדרות.',
+  'wizard.claude.instead': 'השתמש ב-Claude במקום',
+
+  'wizard.codex.title': 'חיבור Codex',
+  'wizard.codex.body': 'Arigami יכול להריץ את OpenAI Codex על המכונה הזו במקום Claude או לצידו. התחבר עם ChatGPT או הדבק מפתח OpenAI API.',
+  'wizard.codex.noCli': 'ה-CLI של Codex לא מותקן על המארח. התקן ואז ״בדוק שוב״:',
+  'wizard.codex.connected': 'Codex מחובר.',
+  'wizard.codex.optional': 'אופציונלי — Claude מחובר, כך ש-Arigami כבר יכול לרוץ. אפשר להוסיף את Codex אחר כך מההגדרות.',
+  'wizard.codex.instead': 'השתמש ב-Codex במקום',
 
   'wizard.git.title': 'גישה ל-Git / GitHub',
   'wizard.git.body': 'נדרש רק לשכפול ריפוזיטורים פרטיים ופתיחת PR. ריפו ציבורי עובד בלי זה.',
@@ -107,6 +116,7 @@ export const strings = {
   'wizard.health.fail': 'נכשל',
   'wizard.health.optional': 'אופציונלי',
   'wizard.health.check.claude': 'Claude עונה (claude -p ping)',
+  'wizard.health.check.codex': 'Codex עונה (codex exec ping)',
   'wizard.health.check.desktop': 'דסקטופ (X display) פעיל',
   'wizard.health.check.chrome': 'כרום זמין',
   'wizard.health.check.whatsapp': 'גשר WhatsApp',

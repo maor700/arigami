@@ -13,6 +13,7 @@ import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { relTime, untilTime } from '../../lib/time.js';
 import { toastError } from '../../lib/toast.js';
+import { PROVIDERS, normalizeProvider } from '../../lib/providers.js';
 import { Section, SettingCard, StatusPill, BTN_SM, ROW, LIST } from './shared.jsx';
 
 const DOT = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
@@ -104,6 +105,7 @@ export default function Health() {
             <div key={a.id} className={ROW}>
               <span className="min-w-0 truncate">
                 {a.label}
+                <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{PROVIDERS[normalizeProvider(a.provider)].label}</span>
                 {a.active && <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{t('health.active')}</span>}
               </span>
               <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">

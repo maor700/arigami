@@ -297,3 +297,43 @@ test('after a successful update the picker sees the new CLI\'s models without a 
   expect(second.cliVersion).toBe('2.1.258');
   expect(second.ids).toEqual(['claude-opus-5', 'claude-fable-5-1']);
 });
+
+// ---- P1-10: codex CLI row + no claude binary --------------------------------------------
+
+test('codex: doctor update line → latest; else GitHub tag; else installed when doctor is clean', async () => {
+  const { parseDoctorUpdate, codexLatest } = await import('../server/lib/codex-update.js');
+  expect(parseDoctorUpdate('   ↑ updates      0.154.0 available (current 0.153.4)')).toBe('0.154.0');
+  expect(parseDoctorUpdate('  ✓ updates      up to date')).toBeNull();
+  const ok = (output: string) => async () => ({ code: 0, output });
+  expect(await codexLatest({ doctor: ok('↑ updates 0.154.0 available'), github: async () => '9.9.9', installed: async () => '0.153.4' })).toBe('0.154.0');
+  expect(await codexLatest({ doctor: ok('✓ updates'), github: async () => '0.155.0', installed: async () => '0.153.4' })).toBe('0.155.0');
+  expect(await codexLatest({ doctor: ok('✓ updates'), github: async () => { throw new Error('rate limited'); }, installed: async () => '0.153.4' })).toBe('0.153.4');
+  await expect(codexLatest({ doctor: async () => { throw new Error('ENOENT'); }, github: async () => null, installed: async () => null })).rejects.toThrow(/latest codex/);
+});
+
+test('codex updater: events and notification carry the codex name; never auto-applies', async () => {
+  const events: any[] = [];
+  const notes: any[] = [];
+  let installed = '0.153.4';
+  const u = createUpdater({
+    name: 'codex',
+    installed: async () => installed,
+    fetchLatest: async () => '0.154.0',
+    run: async () => { installed = '0.154.0'; return { code: 0, output: 'updated' }; },
+    memAvailableMb: () => 4000,
+    auto: () => false,
+    emit: (e: any) => events.push(e),
+    notify: (title: string) => notes.push(title),
+  });
+  expect(await u.tick()).toBeNull(); // auto off: tick only checks
+  expect(u.status().updateAvailable).toBe(true);
+  const r = await u.apply({ reason: 'manual' });
+  expect(r.ok).toBe(true);
+  expect(events.map((e) => e.kind)).toEqual(['codex-update-started', 'codex-update-done']);
+  expect(notes).toEqual(['Codex CLI updated']);
+});
+
+test('startClaudeUpdater does not arm the daily check when no claude binary resolves', async () => {
+  const { startClaudeUpdater } = await import('../server/lib/claude-update.js');
+  expect(await startClaudeUpdater({ bin: 'claude' })).toBeNull();
+});
