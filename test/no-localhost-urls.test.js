@@ -31,6 +31,7 @@ const ALLOW = [
   ['mcp/host-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // internal fetch base
   ['mcp/policy-hook.js', "const HOST = process.env.ARIGAMI_URL"], // A3 hook: internal fetch base
   ['mcp/ext-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // EXT tool wrapper: internal fetch base
+  ['server/codex-account.ts', "const LOOPBACK = 'http://127.0.0.1:1455/auth/callback'"], // Codex's own OAuth callback — host-internal loopback
   ['mcp/host-mcp.js', 'url:"http://localhost:<port>"'], // allocate_port guidance → open_tab
   ['mcp/host-mcp.js', 'pass its http://localhost:<port> URL here'], // open_tab guidance
   ['mcp/host-mcp.js', 'never prefix it with http://localhost'],

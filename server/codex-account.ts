@@ -239,14 +239,14 @@ export async function validateApiKey(key: string): Promise<'valid' | 'invalid' |
 //   - the human signs in from a browser ON this machine (the session desktop,
 //     a local install): the redirect lands by itself, codex writes auth.json;
 //   - the human signs in from their own laptop/phone: the browser is sent to
-//     http://localhost:1455/auth/callback?code=…&state=… — which cannot load
+//     the loopback callback on port 1455 (…/auth/callback?code=…&state=…) — which cannot load
 //     THERE. The cockpit asks for that page's address (or just the code), and
 //     the host forwards it to the loopback itself (submitCallback). Verified:
 //     the loopback answers "State mismatch" for a wrong state and completes
 //     for the right one, so codex still owns the exchange and the file format.
 // `codex login --device-auth` would avoid the paste-back, but ChatGPT
 // workspaces can have device-code auth disabled ("contact your workspace
-// admin") — the owner's did, so it is not the default path.
+// admin") — some workspaces do, so it is not the default path.
 const LOOPBACK = 'http://127.0.0.1:1455/auth/callback';
 
 /** Pure: the authorize URL (and its `state`) out of `codex login`'s output (pty-coloured or plain). */
@@ -262,7 +262,7 @@ export function parseBrowserLogin(raw: string): { url: string | null; state: str
 
 /**
  * Pure: what the human pasted back → {code, state}. Accepts the full callback
- * address (`http://localhost:1455/auth/callback?code=…&state=…`), a bare
+ * address (the loopback's `…:1455/auth/callback?code=…&state=…`), a bare
  * `code=…&state=…` query, or just the code (state then comes from the flow).
  */
 export function parseCallback(input: string): { code: string | null; state: string | null } {
@@ -435,7 +435,7 @@ export async function submitCallback(id: string, input: string): Promise<{ ok: b
   if (f.state === 'done') return { ok: true };
   if (f.state !== 'awaiting') return { ok: false, error: `login is ${f.state}` };
   const { code, state } = parseCallback(input);
-  if (!code) return { ok: false, error: 'paste the address of the page you landed on after signing in (it starts with http://localhost:1455/…), or the code from it' };
+  if (!code) return { ok: false, error: 'paste the address your browser landed on after signing in, or the code from it' };
   const st = state || f.oauthState;
   if (!st) return { ok: false, error: 'the callback has no state — paste the whole address, not just the code' };
   try {
