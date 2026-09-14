@@ -641,6 +641,11 @@ function emitToolUse(id: string, item: any, st: CodexSessionState): ItemState {
   return meta;
 }
 
+/** Codex's notice about OUR --dangerously-bypass-hook-trust flag (emitted twice per turn as `error` items) — expected, not a failure. */
+export function isHookTrustNotice(msg: string): boolean {
+  return /--dangerously-bypass-hook-trust/.test(msg);
+}
+
 function codexHandleEvent(id: string, raw: unknown): void {
   const j = raw as any;
   const st = stateOf(id);
@@ -687,9 +692,12 @@ function codexHandleEvent(id: string, raw: unknown): void {
           if (item.text || item.summary)
             appendChat(id, { kind: 'thinking', text: String(item.text || item.summary) });
           break;
-        case 'error':
-          appendChat(id, { kind: 'error', text: String(item.message || 'codex error'), isError: true });
+        case 'error': {
+          const msg = String(item.message || 'codex error');
+          if (isHookTrustNotice(msg)) { console.warn(`[codex] ${id}: (expected) ${msg}`); break; }
+          appendChat(id, { kind: 'error', text: msg, isError: true });
           break;
+        }
         default: {
           // Codex packs the call AND its result into one `item.completed`; the
           // two are separate kinds here, so the started/completed pair is what
@@ -759,11 +767,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
         console.warn(`[codex] ${id}: ${msg}`);
         break;
       }
-      // Codex reports our own hook-trust flag as an `error` twice per turn — expected, not a failure.
-      if (/--dangerously-bypass-hook-trust/.test(msg)) {
-        console.warn(`[codex] ${id}: ${msg}`);
-        break;
-      }
+      if (isHookTrustNotice(msg)) { console.warn(`[codex] ${id}: (expected) ${msg}`); break; }
       if (!msg || st.errs.has(msg)) break;
       st.errs.add(msg);
       appendChat(id, { kind: 'error', text: msg, isError: true });

@@ -552,12 +552,16 @@ test('the hook-trust notice codex emits for OUR flag is not surfaced as an error
       "const s=st.createSession({title:'codex',engine:'codex'});" +
       "cx.codexHandleEvent(s.id,{type:'thread.started',thread_id:'t1'});" +
       "cx.codexHandleEvent(s.id,{type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'});" +
+      // measured 2026-09-14: `codex exec --json` actually delivers the notice as two item-level errors, not top-level
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_0',type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'}});" +
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_1',type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'}});" +
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_2',type:'error',message:'real item error'}});" +
       "cx.codexHandleEvent(s.id,{type:'error',message:'something actually wrong'});" +
       'emit({errors:cl.getChat(s.id,0).filter(e=>e.kind===\'error\').map(e=>e.text)});',
     env()
   );
   if (!r.ok) throw new Error(r.error);
-  expect(r.out[0].errors).toEqual(['something actually wrong']);
+  expect(r.out[0].errors).toEqual(['real item error', 'something actually wrong']);
 });
 
 test('a session with no agent policy gets no hooks.json and no hook-trust flag', () => {
