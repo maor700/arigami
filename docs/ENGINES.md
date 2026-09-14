@@ -89,7 +89,7 @@ Host-managed stdio servers (`composio-mcp`) live in `$ARIGAMI_DIR/mcp-servers.js
 Codex's `enabled_tools` takes exact names, so A3 drops an untouched server whole and the policy hook gates partial families (`gmail` → `GMAIL_*`).
 claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no codex equivalent — a codex session never has them.
 
-### 5. The model ladder doesn't run; compaction **was actually tested and found not viable** from `exec`
+### 5. The model ladder runs (P2-6); compaction **was actually tested and found not viable** from `exec`
 
 Quota recovery does run on codex (P2-6, `server/codex-recovery.ts`, pure half `server/lib/codex-quota.ts`): rotate the codex pool, then one rung of `cfg.codexModelChain` (`ARIGAMI_CODEX_MODEL_CHAIN`, default terra → luna → 5.5, filtered to the active account's catalog), same badge/restore/incidents as RES1. No compaction before the replay — plain `exec resume`.
 The Claude auth refresh is still skipped; a codex 401 gets a chat line pointing at Settings › Connections › Accounts.
