@@ -79,7 +79,7 @@ async function startHost(): Promise<void> {
   host.stdout!.on('data', (d) => { log += d; fs.appendFileSync(path.join(dir, 'host.log'), d); });
   host.stderr!.on('data', (d) => { log += d; fs.appendFileSync(path.join(dir, 'host.log'), d); });
   try {
-    await until(async () => { try { return (await fetch(base + '/__api/config')).ok; } catch { return false; } }, 30000);
+    await until(async () => { try { return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok; } catch { return false; } }, 30000);
   } catch {
     throw new Error(`host did not come up: ${log.slice(-1500)}`);
   }

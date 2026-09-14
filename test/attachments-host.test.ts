@@ -126,7 +126,7 @@ setInterval(()=>{},1e6);
   try {
     await until(async () => {
       try {
-        return (await fetch(base + '/__api/config')).ok;
+        return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
       } catch {
         return false;
       }
@@ -336,7 +336,7 @@ describe('ZIP3: end-to-end on a dedicated isolated host (real attachment size ca
     try {
       await until(async () => {
         try {
-          return (await fetch(base2 + '/__api/config')).ok;
+          return (await fetch(base2 + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
         } catch {
           return false;
         }
