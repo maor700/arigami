@@ -9,6 +9,9 @@ process died, its OAuth token expired, every pooled account hit its weekly
 limit, an MCP server stopped answering, a worker finished and forgot to report,
 a controller waited forever on a child that never got the ask.
 
+Both engines are covered: codex sessions get the same health model and ladder with their own
+accounts and model chain (§3 "Codex sessions", docs/ENGINES.md).
+
 The supervisor closes those. It computes a health state for every session once
 per tick, walks a recovery ladder for the ones it can fix, and puts everything
 it genuinely cannot fix into one queue the human reads: **"waiting for you"**.

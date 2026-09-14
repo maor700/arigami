@@ -9,6 +9,10 @@ human is still required, and the security model. The server/UI half
 (capability registry, `request_setup`, the Setup card) is in the JIT-setup
 spec and `server/capabilities.ts`.
 
+**Engine.** `mcp:<service>` grants are per engine: a codex session needs its own `codex mcp login`
+grant (the host runs it under `$ARIGAMI_DIR/codex-mcp`); `composio:*` works on both; claude.ai
+connectors are claude-only. See docs/ENGINES.md §4.
+
 ## The loop
 
 ```

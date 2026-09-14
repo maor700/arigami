@@ -15,6 +15,8 @@ in one place — the Pending queue.
   or manual defer). One **autoplay** switch governs whether it self-drains.
 - **Session** — unchanged. A pending item "started" becomes an ordinary
   create-from-ticket session, indistinguishable from a hand-launched one.
+- **Engine** — a trigger, pending item and cron job each carry `engine` (`claude` | `codex` | '' = the
+  agent's engine, else `cfg.defaultEngine`); the session they start runs on it. See docs/ENGINES.md.
 
 ## Trigger (producer)
 

@@ -52,6 +52,12 @@ Two structural differences worth knowing before debugging:
 
 This list is the reason this document exists. Do not soften it.
 
+Closed on master (2026-09): A3 policy hooks (§3), per-provider accounts and real quota (Accounts section),
+quota recovery + model ladder (§5, §6b), remote MCP grants per engine (§4), Composio (§4b).
+Still open: no sandbox on this VPS (§1), no approval cards (§2), no compaction (§5) and no thinking
+stream (§6) without `app-server`, claude.ai connectors claude-only (§4b), no codex in the Docker image
+(docs/DOCKER.md).
+
 ### 1. No local sandbox
 
 Codex's built-in bubblewrap **does not come up on this machine** —
@@ -114,7 +120,7 @@ turn**; there is no live process between turns that could "watch" anything, so e
 in the core, the run pattern Arigami uses can't trigger it.
 
 **Conclusion: compaction is not achievable via `exec` without implementing app-server. A codex session
-that gets stuck on the context quota stays stuck — no safety net, exactly as written here before.**
+whose context window fills stays full — account rotation and the model ladder replay it, they do not shrink it.**
 Anyone who wants to try again: don't settle for adding the key to config.toml and thinking you're done —
 that's exactly what was tried here.
 

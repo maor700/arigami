@@ -1,7 +1,7 @@
 # Arigami
 
-**Arigami — the self-hosted cockpit for a team of Claude agents that runs on real
-desktops, hands you the wheel when it needs you, and learns your business only
+**Arigami — the self-hosted cockpit for a team of coding agents (Claude Code or
+Codex) that runs on real desktops, hands you the wheel when it needs you, and learns your business only
 with your approval.**
 
 ![Arigami hands you the wheel: a child agent hits 2FA on its own desktop, pushes to your phone, you type the code, it continues](docs/media/hands-you-the-wheel.gif)
@@ -32,19 +32,20 @@ bin/host pair                    # prints the pairing code for the first sign-in
 ```
 
 Then open the cockpit, enter the pairing code, pick a profile bundle (see
-[Profiles](#profiles)) and let Setup walk you through Claude auth, git and
-your first repo. `install.sh --profile <bundle>` pre-selects one.
+[Profiles](#profiles)) and let Setup walk you through Claude or Codex auth, git
+and your first repo. `install.sh --profile <bundle>` pre-selects one.
 Details: [docs/INSTALL.md](docs/INSTALL.md) · [docs/DOCKER.md](docs/DOCKER.md)
 · [docs/DEPLOY.md](docs/DEPLOY.md).
 
 Prerequisites the installer handles for you: [bun](https://bun.sh) ≥ 1.2, git +
 `gh`, and the Claude Code CLI signed in with **your own subscription** — no API
 keys, no OpenRouter. (`ANTHROPIC_API_KEY` works too if you prefer metered
-billing.)
+billing.) Codex instead or as well: `npm i -g @openai/codex`, then sign in with
+ChatGPT or an OpenAI API key — see [Engines](#engines).
 
 ## What it is
 
-- **A team of Claude Code sessions, not one chat.** A project-manager session
+- **A team of agent sessions, not one chat.** A project-manager session
   decomposes work, spawns children in their own git worktrees, tasks them, reads
   back thin results, and integrates. Cron and listeners (mail, webhooks, Linear,
   Slack) wake sessions on their own. One origin, one Bun server, one UI on your
@@ -62,6 +63,13 @@ billing.)
   and budget; sessions are born from it (`create_session({agent})`) and wear its
   emoji in the rail. Create one from any chat with an editable card, DM it in
   its home chat, and manage it on its own page. See [docs/AGENTS.md](docs/AGENTS.md).
+
+## Engines
+
+Each session runs on one engine, chosen at creation: `claude` (Claude Code CLI)
+or `codex` (OpenAI Codex CLI). Accounts, quota recovery, agent allowlists and
+Composio work on both; the default is Settings › Host › default engine. What
+differs, and what does not work on Codex yet: [docs/ENGINES.md](docs/ENGINES.md).
 
 ## Profiles
 
@@ -84,7 +92,7 @@ Copy a bundle directory to make your own; see [docs/INSTALL.md](docs/INSTALL.md)
 | | Arigami | OpenClaw | Hermes Agent | Claude Cowork |
 |---|---|---|---|---|
 | Self-hosted | ✅ | ✅ | ✅ | ❌ |
-| Model / billing | your Claude Code subscription | any provider, API keys | any provider, API keys | Claude (Anthropic cloud) |
+| Model / billing | your Claude Code and/or ChatGPT/Codex login | any provider, API keys | any provider, API keys | Claude (Anthropic cloud) |
 | Multi-agent orchestration | PM → children, worktrees, cron | YAML graphs | weak | ❌ |
 | Real desktop per agent + human takeover | ✅ VNC, push to phone | ❌ | ❌ | built-in browser, cloud only |
 | Learns (memory + skills) | ✅ | via skills | ✅ core | ❌ |
@@ -120,6 +128,7 @@ vulnerabilities: [SECURITY.md](SECURITY.md).
 - [docs/AUTH.md](docs/AUTH.md) — sign-in, pairing, OIDC, migrating a live host
 - [docs/DEPLOY.md](docs/DEPLOY.md) — systemd units, restart/upgrade from the cockpit
 - [docs/DOCKER.md](docs/DOCKER.md) — image, volumes, Kubernetes notes
+- [docs/ENGINES.md](docs/ENGINES.md) — the two agent engines (Claude Code, Codex): accounts, quota, what differs, limitations
 - [docs/SPEC.md](docs/SPEC.md) — data model, REST/WS API, host MCP tools, UI
 - [docs/ONBOARDING.md](docs/ONBOARDING.md) — repos, profiles, readiness gates
 - [docs/TRIGGERS.md](docs/TRIGGERS.md) · [docs/DISPATCHER.md](docs/DISPATCHER.md) — listeners, cron, PM → children

@@ -19,6 +19,10 @@ the Rail's Team section sits **below** the sessions/folders section; **no per-ag
 skills** — agents reference shared skills by name. (UX1 later made the home chat the **home** tab of
 the agent surface instead of a rail row — see the last section.)
 
+**Engine.** An agent carries an `engine` (`claude` | `codex`, absent = `cfg.defaultEngine`); its sessions run on
+that CLI and "Claude" below means whichever engine the session runs. A3 allowlists, budgets and the ledger
+hold on both; differences (no `--disallowedTools` on codex, cost `null`) are in §Engine and docs/ENGINES.md.
+
 ## Storage — `$ARIGAMI_DIR/agents/<slug>/`
 
 ```
@@ -255,7 +259,7 @@ chip, hub filter). The S1 contract tests now expect `owner` on `card.identity` /
 - Per-agent ownership is real for `identity` and `composio:*` only; the MCP servers a session
   sees are still the user's global ones — an agent's Composio account is selected by the
   `user_id` Composio keys the connection with, not by a per-session MCP config.
-- Claude accounts (`accounts.json`) stay host-level; A3 attributes tokens/cost per agent from the stream.
+- Engine accounts (`accounts.json`, claude and codex providers) stay host-level; A3 attributes tokens/cost per agent from the stream.
 - An agent's first browser profile is empty by design — the human logs in once per agent.
 
 ---

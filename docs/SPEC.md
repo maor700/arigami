@@ -1,6 +1,6 @@
 # Arigami — v1 Specification
 
-A web-shell cockpit for running many parallel Claude Code sessions. Bun server on
+A web-shell cockpit for running many parallel agent sessions (Claude Code or Codex). Bun server on
 `localhost:3099`. The host is an **unopinionated platform**: it provides primitives
 (sessions, chat, tabs, proxy, supervisor, MCP); all workflow (tickets, worktrees,
 dev servers, review flows) lives in **skills** that drive the host through its MCP.
@@ -17,6 +17,7 @@ arigami/
                    /__ws (WebSocket), /__mcp-* (MCP helper), everything else → proxy
     state.js       session registry + persistence (~/.arigami/state.json)
     claude.js      claude CLI process manager (stream-json in/out, one proc per session)
+    codex.ts       codex CLI driver (`codex exec --json`, one proc per turn) — docs/ENGINES.md
     proxy.js       fixed-origin reverse proxy (ported from iframe-host-poc)
     pages.js       host-internal pages ported from PoC: /__ticket/<id>, compare slider
     bus.js         WebSocket hub: every state mutation broadcasts {type, payload}
@@ -138,6 +139,12 @@ Client → server: none (use REST). Reconnect = full state replay.
 - Parse stream-json into normalized chat events for the UI:
   {kind:'user'|'assistant-text'|'tool-use'|'tool-result'|'thinking'|'result'|'error', …}.
   Persist to ~/.arigami/chat/<id>.jsonl (append).
+
+### Engines
+
+`session.engine` is `claude` (this section) or `codex` (`server/codex.ts`), fixed at creation and
+dispatched through `server/lib/engine-driver.ts`; both emit the same chat events. Differences and
+limits: docs/ENGINES.md.
 
 ## Attachments (server/archive.js, claude.js saveAttachments/writeUserMessage — ZIP)
 

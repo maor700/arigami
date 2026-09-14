@@ -10,8 +10,8 @@ before is now reachable *by you only*.
 | Who | Credential | Where it comes from |
 |---|---|---|
 | A browser | cookie `arigami_sid` (HttpOnly, SameSite=Lax, `Secure` when `ARIGAMI_PUBLIC_URL` is https, 30 days) | pairing code or OIDC login |
-| A `claude` session the host spawned (MCP tools, `curl` from a skill, the review prompt) | `Authorization: Bearer $ARIGAMI_TOKEN` | injected by the host per session; dies with the session |
-| A one-shot / headless `claude -p` (skills analyze, memory episode hook) | `Bearer $ARIGAMI_TOKEN` (host-scoped) | injected by `server/lib/oneshot.ts` |
+| A `claude` or `codex` session the host spawned (MCP tools, `curl` from a skill, the review prompt) | `Authorization: Bearer $ARIGAMI_TOKEN` | injected by the host per session; dies with the session |
+| A one-shot / headless `claude -p` or `codex exec` (skills analyze, memory episode hook) | `Bearer $ARIGAMI_TOKEN` (host-scoped) | injected by `server/lib/oneshot.ts` |
 | A CLI or script you write | `Bearer arigami_pat_…` | Settings → Users & access → API tokens (admin) |
 
 Session bearer tokens live only in memory; API tokens are stored as a sha256
@@ -76,7 +76,7 @@ needs `ARIGAMI_BIND=0.0.0.0` *and* auth on.
 
 ## Internal callers — what changed
 
-Every `claude` the host spawns gets `ARIGAMI_URL` (now the loopback address the
+Every agent process the host spawns (`claude` or `codex`, same env) gets `ARIGAMI_URL` (now the loopback address the
 host actually bound, never `localhost`) and `ARIGAMI_TOKEN`. `mcp/host-mcp.js`
 sends it automatically. Skills that `curl` the host must add
 `-H "Authorization: Bearer $ARIGAMI_TOKEN"` (the bundled skills already do).
