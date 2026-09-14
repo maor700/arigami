@@ -251,3 +251,29 @@ test('a saved launcher preset persists the engine, and a pre-engine preset still
   prefs.setPrefs({ sessionPresets: [{ id: 'x', name: 'x', engine: 'evil' }] });
   expect(prefs.getPrefs().sessionPresets[0].engine).toBe('');
 });
+
+/* ---------- cfg.defaultEngine drives the launcher's '' ------------------- */
+
+test('a codex host default: the toggle starts on Codex, picking Claude sends it explicitly, junk falls back to claude', () => {
+  engines.setDefaultEngine('codex');
+  try {
+    expect(engines.DEFAULT_ENGINE).toBe('codex');
+    expect(engines.resolveEngine('')).toBe('codex');
+    expect(engines.normalizeEngine('')).toBe('claude'); // a session record without engine is still claude
+    const html = render(h(Launcher.EngineToggle, { options: { engine: '' }, onChange() {} }));
+    expect(html).toMatch(/aria-checked="true"[^>]*>Codex</);
+    expect(engines.coerceSessionOptions({ engine: 'claude' }).engine).toBe('claude');
+    expect(engines.coerceSessionOptions({ engine: 'codex' }).engine).toBe('');
+    expect(render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }))).toContain('GPT-5.6-Terra');
+    engines.setDefaultEngine('gemini');
+    expect(engines.DEFAULT_ENGINE).toBe('claude');
+  } finally {
+    engines.setDefaultEngine('claude');
+  }
+});
+
+test('Settings › Host carries the default-engine toggle', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'web/src/components/settings/Host.jsx'), 'utf8');
+  expect(src).toContain("api.post('/config/default-engine', { engine })");
+  expect(src).toContain('<DefaultEngineField />');
+});
