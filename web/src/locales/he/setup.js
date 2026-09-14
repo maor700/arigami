@@ -149,7 +149,10 @@ export const strings = {
 
   'setup.minimal.title': 'שני צעדים ואתה בפנים',
   'setup.minimal.body': 'כל השאר — GitHub, Gmail, WhatsApp, גישה מרחוק — מתחבר מתוך הצ\'אט ברגע שהסוכן צריך.',
+  'setup.minimal.connectEngine': 'חבר מנוע',
   'setup.minimal.connectClaude': 'חבר את Claude',
+  'setup.minimal.connectCodex': 'חבר את Codex',
+  'setup.minimal.optional': 'אופציונלי',
   'setup.minimal.start': 'התחל',
   'setup.minimal.startBody': 'פותח את הסשן הראשון שלך בסביבת עבודה ריקה.',
   'setup.minimal.startBtn': 'התחל',

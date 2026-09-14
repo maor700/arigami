@@ -366,10 +366,10 @@ test('DELETE /__api/setup/:capability disconnects providers via their implementa
 test('wizard: minimal mode by default, mode route flips to full and back', async () => {
   const w = (await api('GET', '/__api/onboarding/wizard')).json;
   expect(w.mode).toBe('minimal');
-  expect(w.required).toEqual(['pair', 'claude']);
+  expect(w.required).toEqual(['pair', 'claude', 'codex']);
   const full = (await api('POST', '/__api/onboarding/wizard/mode', { mode: 'full' })).json;
   expect(full.mode).toBe('full');
-  expect(full.required.length).toBe(8);
+  expect(full.required.length).toBe(9);
   const back = (await api('POST', '/__api/onboarding/wizard/mode', { mode: 'minimal' })).json;
   expect(back.mode).toBe('minimal');
 });

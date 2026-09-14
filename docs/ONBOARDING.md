@@ -83,7 +83,7 @@ and trigger-readiness.
 
 ### Taxonomy — a tree, not a flat list
 
-- **Global (credentials):** `claude-auth` (env token) → `git-auth` (GH_TOKEN / gh). Gates.
+- **Global (credentials):** `claude-cli`/`claude-auth` or `codex-cli`/`codex-auth` → `git-auth` (GH_TOKEN / gh). Gates; the engine not connected carries `required:false` once the other one is.
 - **Per-repo group** (one per `repos.json` entry): `repo:<n>.cloned` → `repo:<n>.env` → `repo:<n>.deps`.
 - **Profile-specific:** `linear-connector` (only if `profile.issueSource == "linear"`), `voice` (Groq), `playwright` (Chromium/ffmpeg binary presence).
 
@@ -273,18 +273,24 @@ and the **funnel** (`server/funnel.ts`, shipped by D3 when the user opts in).
 | id | probe (live, no network) | fixable in the wizard by | skippable |
 |---|---|---|---|
 | `pair` | an admin exists in `users.json` (C1) | Login.jsx pairing / "Pair another device" | no |
-| `claude` | CLI on PATH **and** a credential (account, keychain, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) | PKCE sign-in (`/__api/accounts/oauth/*`) or paste token (`POST wizard/claude {action:'token'}`) | no |
+| `claude` | CLI on PATH **and** a credential (account, keychain, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) | PKCE sign-in (`/__api/accounts/oauth/*`) or paste token (`POST wizard/claude {action:'token'}`) | no (`skipped` by:'auto' while codex is ok) |
+| `codex` | `codex` on PATH (or `ARIGAMI_CODEX_BIN`) **and** a codex account / `~/.codex/auth.json` | `codex login` (`POST /__api/setup/codex {action:'start'}`, callback pasted back) or an OpenAI key (`{token}`) | no (`skipped` by:'auto' while claude is ok) |
 | `git` | `GH_TOKEN` / `~/.git-credentials` / `gh` hosts.yml | PAT (`{action:'token'}` → `~/.git-credentials`, 0600) or `gh auth login --web` under the pty bridge (`{action:'gh-login'}`, device code + URL surfaced) | yes |
 | `profile` | `$ARIGAMI_DIR/profile.json` provenance | `POST /__api/profiles/apply {source}` (B1); `$ARIGAMI_DIR/pending-profile` is preselected | yes ("Start blank") |
 | `integrations` | informational (composio key / whatsapp status / tailscale) | Composio key (`{action:'composio-key'}`), WhatsApp QR (`/__api/whatsapp/*`, status file now carries `qr`), Tailscale (`/__api/remote`) | yes (Continue = complete) |
 | `repo` | `repos.json` non-empty | existing AddRepo | yes |
-| `health` | last `runHealth()` result ok | `POST /__api/onboarding/health` — `claude -p` ping (required), desktop `xdpyinfo` (required iff screen enabled), Chrome `--version` (required iff desktop), WhatsApp (info) | yes |
+| `health` | last `runHealth()` result ok | `POST /__api/onboarding/health` — engine ping on the connected engine — `claude -p` or `codex exec --ephemeral` (required), desktop `xdpyinfo` (required iff screen enabled), Chrome `--version` (required iff desktop), WhatsApp (info) | yes |
 
 Status resolution is **probe-first**: a passing probe is `ok` regardless of
 what was recorded; otherwise the record in `$ARIGAMI_DIR/onboarding.json`
 (`{status:'complete'|'skipped', at, by:'user'|'auto'|'unattended'}`) decides;
 otherwise `todo` (`blocked` when the Claude CLI is missing). `done` = every
 step `ok` or `skipped`; `current` = the first step that is neither.
+
+### Codex-only
+
+One engine is enough: with a codex login and no Claude CLI, `claude` reads `skipped`, the wizard is `done`
+after pairing, `workspaceReady()` ignores the claude rows and the health ping runs `codex exec`.
 
 ### REST
 

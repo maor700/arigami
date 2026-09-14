@@ -1,6 +1,6 @@
 // B3 — first-run wizard. A LINEAR, mobile-friendly stepper over the one
 // onboarding state machine (server/onboarding.ts wizard()):
-//   pair → claude → git → profile → integrations → repo → telemetry → health
+//   pair → claude → codex → git → profile → integrations → repo → telemetry → health
 // Every step's status/skippability comes from GET /__api/onboarding/wizard.
 // S2: the credential steps are a thin list of the shared setup components
 // (web/src/components/setup/*) — the same ones the chat's SetupCard and
@@ -69,30 +69,44 @@ function PairStep({ step }) {
   );
 }
 
-// ---- step 2: claude / step 3: git — the shared setup components ------------
+// ---- claude / codex / git — the shared setup components ------------
 // (web/src/components/setup/*): the same OAuthCodeStep/TokenStep the chat's
 // SetupCard renders. The wizard only adds the step's copy + "done" line.
-function ClaudeStep({ step, refresh }) {
+const ENGINE_STEP = {
+  claude: { key: 'wizard.claude', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce', other: 'codex' },
+  codex: { key: 'wizard.codex', install: 'npm i -g @openai/codex', flow: 'codex', other: 'claude' },
+};
+
+// claude / codex: one connected engine is enough; the other reads 'skipped'.
+function EngineStep({ step, refresh, onOther }) {
   const t = useT();
+  const e = ENGINE_STEP[step.id];
+  const other = onOther && step.status !== 'skipped' && (
+    <button type="button" className="mt-3 block cursor-pointer text-[11px] text-fgdim underline hover:text-fg" onClick={onOther}>{t(`wizard.${e.other}.instead`)}</button>
+  );
   if (step.status === 'ok')
     return (
       <>
-        <p className={BODY}>{t('wizard.claude.body')}</p>
-        <OkLine>{t('wizard.claude.connected')}</OkLine>
+        <p className={BODY}>{t(`${e.key}.body`)}</p>
+        <OkLine>{t(`${e.key}.connected`)}</OkLine>
       </>
     );
+  if (step.status === 'skipped')
+    return <p className={BODY}>{t(`${e.key}.optional`)}</p>;
   if (!step.data?.cli)
     return (
       <>
-        <p className={BODY}>{t('wizard.claude.noCli')}</p>
-        <code className="mt-2 block rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] select-all">npm i -g @anthropic-ai/claude-code</code>
+        <p className={BODY}>{t(`${e.key}.noCli`)}</p>
+        <code className="mt-2 block rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] select-all">{e.install}</code>
         <button type="button" className={`${BTN2} mt-3`} onClick={refresh}><Icon icon={faRotateRight} /> {t('wizard.recheck')}</button>
+        {other}
       </>
     );
   return (
     <>
-      <p className={`${BODY} mb-4`}>{t('wizard.claude.body')}</p>
-      <OAuthCodeStep capability="claude" manual={{ kind: 'oauth', flow: 'pkce', token: true }} onDone={refresh} />
+      <p className={`${BODY} mb-4`}>{t(`${e.key}.body`)}</p>
+      <OAuthCodeStep capability={step.id} manual={{ kind: 'oauth', flow: e.flow, token: true }} onDone={refresh} />
+      {other}
     </>
   );
 }
@@ -318,6 +332,7 @@ function HealthStep({ step, refresh, onOpen }) {
 const STEP_TITLE = {
   pair: 'wizard.pair.title',
   claude: 'wizard.claude.title',
+  codex: 'wizard.codex.title',
   git: 'wizard.git.title',
   profile: 'wizard.profile.title',
   integrations: 'wizard.integrations.title',
@@ -356,7 +371,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
     if (wizardTick) refresh();
   }, [wizardTick, refresh]);
 
-  // F8: in minimal mode only the required steps (pair, claude) are listed;
+  // F8: in minimal mode only the required steps (pair, claude, codex) are listed;
   // once done we show a Start panel instead of jumping back to step 1.
   const steps = (view?.steps || []).filter((s) => view?.mode === 'full' || !Array.isArray(view?.required) || view.required.includes(s.id));
   const finished = !!view?.done && idx === null;
@@ -434,7 +449,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
             <h2 className="mb-2 text-[16px] font-bold">{t(STEP_TITLE[step.id])}</h2>
 
             {step.id === 'pair' && <PairStep step={step} />}
-            {step.id === 'claude' && <ClaudeStep step={step} refresh={refresh} />}
+            {(step.id === 'claude' || step.id === 'codex') && <EngineStep step={step} refresh={refresh} onOther={() => { const i = steps.findIndex((x) => x.id === ENGINE_STEP[step.id].other); if (i >= 0) setIdx(i); }} />}
             {step.id === 'git' && <GitStep step={step} refresh={refresh} />}
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}

@@ -162,7 +162,10 @@ export const strings = {
   // Setup screen (minimal)
   'setup.minimal.title': 'Two steps and you’re in',
   'setup.minimal.body': 'Everything else — GitHub, Gmail, WhatsApp, remote access — connects from the chat the moment the agent needs it.',
+  'setup.minimal.connectEngine': 'Connect an engine',
   'setup.minimal.connectClaude': 'Connect Claude',
+  'setup.minimal.connectCodex': 'Connect Codex',
+  'setup.minimal.optional': 'optional',
   'setup.minimal.start': 'Start',
   'setup.minimal.startBody': 'Opens your first session in an empty workspace.',
   'setup.minimal.startBtn': 'Start',

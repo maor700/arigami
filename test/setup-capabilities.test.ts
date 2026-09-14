@@ -180,7 +180,7 @@ test('connections.log: JSONL append with the spec fields, newest-last tail, secr
 // --- minimal onboarding mode (default) ----------------------------------------
 
 const WIZ_NONE =
-  "const wp={hasAdmin:()=>true,claudeCli:()=>true,claudeAuth:()=>true,gitAuth:()=>false," +
+  "const wp={hasAdmin:()=>true,claudeCli:()=>true,claudeAuth:()=>true,codexCli:()=>true,codexAuth:()=>false,gitAuth:()=>false," +
   "profileApplied:()=>null,pendingProfile:()=>null,integrations:()=>({composio:false,whatsapp:'disconnected',tailscale:false})," +
   "repos:()=>[],health:()=>undefined,unattended:()=>false,telemetry:()=>({enabled:false,reason:'config'})};";
 
@@ -199,14 +199,14 @@ test('minimal mode (default): pair+claude ok → wizard done, current=null, opti
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
   expect(o.mode).toBe('minimal');
-  expect(o.required).toEqual(['pair', 'claude']);
+  expect(o.required).toEqual(['pair', 'claude', 'codex']);
   expect(o.done).toBe(true);
   expect(o.current).toBeNull();
   expect(o.todo).toContain('git'); // optional, not blocking
   expect(o.fullMode).toBe('full');
   expect(o.fullDone).toBe(false);
   expect(o.fullCurrent).toBe('git');
-  expect(o.fullRequired).toBe(8);
+  expect(o.fullRequired).toBe(9);
   expect(o.backDone).toBe(true);
   expect(o.events.filter((n: string) => n === 'onboarding.done').length).toBe(2); // done → not done → done again
 });

@@ -75,6 +75,7 @@ re-running is a no-op):
 | `ARIGAMI_ADMIN_EMAIL` | admin email the pairing step should use |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude subscription token from `claude setup-token` (headless) |
 | `ANTHROPIC_API_KEY` | API-key billing instead of a subscription |
+| `ARIGAMI_CODEX_BIN` | codex binary when it is not on PATH |
 | `COMPOSIO_API_KEY`, `GH_TOKEN` | integrations |
 | `ARIGAMI_PROFILE` | same as `--profile` |
 
@@ -96,15 +97,22 @@ stays on loopback. `bin/host doctor` is the health screen; `bin/host pair`
 mints a new code.
 
 What follows the code is the **minimal setup** (F8): one screen — *Connect
-Claude* (authorize link + paste the code, or a token) → **Start**, which opens
+Claude* (authorize link + paste the code, or a token) or *Connect Codex* (ChatGPT sign-in, or an
+OpenAI API key); either one enables **Start**, which opens
 the first session in the empty `$ARIGAMI_DIR/workspace`. `onboarding.json`
 records `mode:"minimal"`; nothing else is asked up front — GitHub, WhatsApp,
 Gmail, remote access connect from the chat the moment the agent needs them
 (see CONNECT.md). "Run full setup" (small link) switches to `mode:"full"` and
-opens the 8-step wizard. The first screen of the cockpit is a single question
+opens the 9-step wizard. The first screen of the cockpit is a single question
 ("What would you like me to do?") with three suggestions — screenshot a site,
 connect WhatsApp, clone a repo; ticket/trigger launchers live behind *Advanced*
 and the Linear tab only appears once Linear is connected.
+
+### Codex-only
+
+The installer sets up `claude`; for Codex instead run `npm i -g @openai/codex` as the service user, then
+*Connect Codex* on the first screen (or `codex login` on the host). Claude stays optional; `bin/host doctor`
+prints a `codex:` row.
 
 ### Update
 
