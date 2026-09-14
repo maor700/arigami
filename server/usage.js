@@ -101,18 +101,39 @@ async function fetchUsage(accountId) {
   }
 }
 
+// Reasons that say nothing about the account itself — the endpoint throttled us
+// or the network blipped. A real state (http-401, no-credentials) replaces the
+// last reading; a transient one must not, or the rail meter vanishes.
+const TRANSIENT = new Set(['usage-throttled', 'fetch-failed']);
+
+// The last reading persisted in accounts.json, rebuilt as a usage object — what
+// survives a host restart when the first live fetch is throttled.
+function snapshotOf(id) {
+  const lu = getAccount(id)?.lastUsage;
+  if (!lu || lu.reason) return null;
+  const win = (pct, mins) => (pct == null ? null : { pct, ...(mins ? { windowMins: mins } : {}) });
+  return { available: true, session: win(lu.session, lu.sessionMins), week: win(lu.week, lu.weekMins), fetchedAt: lu.at || null, stale: true };
+}
+
 // Usage for an account (defaults to the active one), cached for TTL_MS. Keeps the
-// last good data when a refresh fails. Never throws.
+// last good data (memory, else the accounts.json snapshot) when a refresh fails
+// transiently. Never throws.
 export async function getUsage(accountId, force = false) {
   const id = accountId || getActiveId();
   if (!id) return { available: false, reason: 'no-account' };
   const c = caches.get(id);
   if (!force && c && Date.now() - c.at < TTL_MS) return c.data;
   const fresh = await fetchUsage(id);
-  const data = !fresh.available && c?.data?.available ? c.data : fresh;
+  let data = fresh;
+  if (!fresh.available && TRANSIENT.has(fresh.reason)) {
+    data = c?.data?.available ? { ...c.data, stale: true } : snapshotOf(id) || fresh;
+  }
   caches.set(id, { data, at: Date.now() });
   return data;
 }
+
+/** A reading worth persisting: a live one, or a real (non-transient) failure. */
+const persistable = (d) => d.available ? !d.stale : !TRANSIENT.has(d.reason);
 
 /** The last usage read for an account without fetching (null when never read). */
 export const cachedUsage = (accountId) => caches.get(accountId)?.data || null;
@@ -201,7 +222,7 @@ export async function refreshAccount(id) {
   if (!id) return null;
   const data = await getUsage(id, true);
   const { activeId } = listAccounts();
-  patchAccount(id, { lastUsage: compact(data) });
+  if (persistable(data)) patchAccount(id, { lastUsage: compact(data) });
   broadcast({ type: 'account-usage', accountId: id, active: id === activeId, usage: data });
   if (id === activeId) broadcast({ type: 'usage-updated', usage: data });
   const ident = await identityOf(id);
@@ -247,7 +268,7 @@ export function startUsagePolling() {
         const prev = JSON.stringify(caches.get(a.id)?.data);
         const data = await getUsage(a.id, true);
         if (JSON.stringify(data) !== prev) {
-          patchAccount(a.id, { lastUsage: compact(data) });
+          if (persistable(data)) patchAccount(a.id, { lastUsage: compact(data) });
           broadcast({ type: 'account-usage', accountId: a.id, active: a.id === activeId, usage: data });
           if (a.id === activeId) broadcast({ type: 'usage-updated', usage: data });
         }
