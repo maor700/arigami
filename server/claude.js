@@ -1055,8 +1055,12 @@ export function chainFor(id) {
 }
 
 /** Where the session sits in its chain right now + how far it can still fall. */
+// The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
+export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+
 export function ladderState(id) {
   const s = getSession(id);
+  if (s?.engine === 'codex') return { chain: [], rung: 0, model: s.claude?.modelChoice || null, rungsLeft: 0, restoreAt: null };
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1073,6 +1077,7 @@ const ladderCooldown = new Set(); // guards against a downgrade cascade per sess
  */
 /** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
 export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
+  if (isCodexSession(id)) return { ok: false, reason: 'engine' };
   const { chain, rung } = ladderState(id);
   const nxt = nextRung(chain, rung);
   if (!nxt) return { ok: false, reason: 'bottom' };
@@ -1383,8 +1388,8 @@ export function lastTurnError(id) {
       if (AUTH_RE.test(t)) return 'auth';
       // A model that cannot run right now is remedied exactly like an exhausted
       // account pool — one rung down the chain.
-      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
-      if (/claude (?:exited|failed to start)/i.test(t)) return 'proc-dead';
+      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return getSession(id)?.engine === 'codex' ? 'other' : 'limit';
+      if (/(?:claude|codex) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';
     }
   }
@@ -1392,7 +1397,7 @@ export function lastTurnError(id) {
 }
 
 function tryAutoSwitch(id, text) {
-  if (switchingSessions.has(id)) return;
+  if (switchingSessions.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const curId = s?.claude?.accountId || getActiveId();
   const resetAt = parseResetAt(text);
@@ -1468,13 +1473,14 @@ async function openClaudeSetupCard(id, why) {
  * respawn actually happened.
  */
 export async function recoverAuth(id) {
+  if (isCodexSession(id)) return false;
   const before = getSession(id)?.claude?.state;
   await tryAuthRecover(id, 'unauthorized');
   return getSession(id)?.claude?.state !== before || isRunning(id);
 }
 
 async function tryAuthRecover(id, text) {
-  if (authRecovering.has(id)) return;
+  if (authRecovering.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
   // F8: the session was spawned before a Claude account existed (fresh

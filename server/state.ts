@@ -457,7 +457,7 @@ export function toWireSession(s: Session): Session {
   if (s.claude?.capabilities) out = { ...out, claude: { ...s.claude, capabilities: slimCapabilities(s.claude.capabilities) } };
   // LADDER1: the rail row + chat header badge, derived once here so both agree.
   if (s.claude) {
-    const ladder = ladderBadge(s.claude);
+    const ladder = s.engine === 'codex' ? null : ladderBadge(s.claude);
     if (ladder || out.claude?.ladder !== undefined) out = { ...out, claude: { ...(out.claude || s.claude), ladder } };
   }
   // 'busy' is already obvious in the UI (the session is visibly working) — only

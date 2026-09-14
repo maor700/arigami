@@ -41,7 +41,7 @@ export default function Health() {
   const titleOf = (id) => sessions.find((s) => s.id === id)?.title || id;
   const rows = snap?.sessions || [];
   const unhealthy = rows.filter((r) => r.state !== 'IDLE_OK' && r.state !== 'RUNNING');
-  const downgraded = sessions.filter((s) => (s.claude?.modelRung || 0) > 0);
+  const downgraded = sessions.filter((s) => s.engine !== 'codex' && (s.claude?.modelRung || 0) > 0);
   const allIncidents = log?.incidents || [];
   const reminders = allIncidents.filter((i) => REMINDER_ACTIONS.has(i.action)).length;
   const shown = filterIncidents(allIncidents, showReminders);
