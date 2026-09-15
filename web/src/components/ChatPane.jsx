@@ -4,7 +4,6 @@ import remarkGfm from 'remark-gfm';
 import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, loadFullChatEvent, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
-import SetupCard from './setup/SetupCard.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
@@ -920,7 +919,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'setup':
       // S2: host.request_setup — "the agent needs <capability>" with the
       // auto/manual decision (see setup/SetupCard.jsx).
-      return <SetupCard sessionId={sessionId} event={event} />;
+      return <HostCard name="SetupCard" props={{ sessionId, event }} />;
     case 'merge':
       // F7: host-executed merge result (merged / conflict) — in the child and
       // mirrored into its master.

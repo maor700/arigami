@@ -56,6 +56,7 @@ const CARDS = {
   'agent-adopt': 'AgentAdoptLine',
   'agent-card': 'AgentCard',
   merge: 'MergeEvent',
+  setup: 'SetupCard',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -167,4 +168,14 @@ test('merge: merged / conflict records and the approved-session merge panel rend
   expect(panel).toContain('child/x');
   // not approved / already merged → nothing
   expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, session: { id: 's1', metadata: { branch: 'child/x', merged: { sha: 'abc' } } } } }))).toBe('');
+});
+
+test('setup: pending (auto consent + buttons) and done (evidence) render through HostCard with the phase markers', () => {
+  const html = pane(fx('setup'));
+  expect(html).toContain('data-setup-phase="pending"');
+  expect(html).toContain('role="radiogroup"');
+  expect(html).toContain('Connect automatically');
+  expect(html).toContain('data-setup-phase="done"');
+  expect(html).toContain('/__artifacts/ev1/');
+  expect(html).toContain('setup-waiting');
 });
