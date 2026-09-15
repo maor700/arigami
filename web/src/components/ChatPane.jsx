@@ -5,7 +5,6 @@ import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderCha
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import SetupCard from './setup/SetupCard.jsx';
-import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
@@ -925,7 +924,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'merge':
       // F7: host-executed merge result (merged / conflict) — in the child and
       // mirrored into its master.
-      return <MergeEvent event={event} />;
+      return <HostCard name="MergeEvent" props={{ event }} />;
     case 'agent-card':
       // A1: create_agent / update_agent — the human edits + confirms the draft here.
       return <HostCard name="AgentCard" props={{ sessionId, event }} />;
@@ -1213,7 +1212,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
         {/* F7: after the human approved, the merge is one click — here, at the
             end of the transcript, until it's merged. */}
         {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (
-          <MergePanel session={session} dark />
+          <HostCard name="MergePanel" props={{ session, dark: true }} />
         )}
         {working && (
           <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">

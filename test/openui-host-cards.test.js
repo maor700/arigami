@@ -55,6 +55,7 @@ const CARDS = {
   delegated: 'DelegatedLine',
   'agent-adopt': 'AgentAdoptLine',
   'agent-card': 'AgentCard',
+  merge: 'MergeEvent',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -153,4 +154,17 @@ test('agent lines: delegated / adopt receipts and the agent card (pending form, 
   expect(html).toContain('data-agent-confirm');
   expect(html).toContain('data-agent-card="created"');
   expect(html).toContain('Ops Bot is on the team');
+});
+
+test('merge: merged / conflict records and the approved-session merge panel render through HostCard', () => {
+  const html = pane(fx('merge'));
+  expect(html).toContain('data-merge-event="merged"');
+  expect(html).toContain('53ba82c');
+  expect(html).toContain('data-merge-event="conflict"');
+  expect(html).toContain('server/api.ts, web/src/App.jsx');
+  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session: { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'alex' } } } } }));
+  expect(panel).toContain('data-merge-panel');
+  expect(panel).toContain('child/x');
+  // not approved / already merged → nothing
+  expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, session: { id: 's1', metadata: { branch: 'child/x', merged: { sha: 'abc' } } } } }))).toBe('');
 });
