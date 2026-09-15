@@ -58,6 +58,7 @@ const CARDS = {
   merge: 'MergeEvent',
   setup: 'SetupCard',
   'permission-request': 'PermissionCard',
+  'screen-request': 'ScreenRequestCard',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -199,4 +200,16 @@ test('question + permission: settled cards freeze, live cards offer buttons, and
   expect(live).toContain('git push origin master');
   // the question card's schema: AskUserQuestion tool-use events validate
   expect(hostLib.components.QuestionCard.props.safeParse({ sessionId: 's1', event: qs[1] }).success).toBe(true);
+});
+
+test('screen request: answered freezes to a line (no viewer, no buttons); live shows the viewer + take-over/cancel', () => {
+  const [done, live] = fx('screen-request');
+  const a = pane([done]);
+  expect(a).toContain('data-screen-request="answered"');
+  expect(a).toContain('took over');
+  expect(a).not.toContain('Take over');
+  const b = pane([live], { awaiting: true });
+  expect(b).toContain('data-screen-request="open"');
+  expect(b).toContain('Take over');
+  expect(b).toContain('the code is on your phone');
 });

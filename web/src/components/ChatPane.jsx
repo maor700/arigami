@@ -1,18 +1,16 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, loadFullChatEvent, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
+import { loadOlderChat, loadFullChatEvent, chatHasMore, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
-import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
-import { engineLabel } from '../lib/engines.js';
 import { prettyInput } from '../lib/pretty-input.js';
 import {
   faArrowDown,
@@ -402,95 +400,6 @@ function SystemLine({ event }) {
   );
 }
 
-// host.request_screen — the agent asks the human to look at / drive the
-// shared desktop (manual login, 2FA, CAPTCHA, payment…). Blocking, same
-// underlying mechanism as PermissionRequest (server holds the MCP tool call
-// open until answered). While unanswered the card is a small WATCH view
-// (view-only, never accepts input) + reason/hint + two buttons:
-//   Take over — opens the interactive ScreenModal (the same modal the rail
-//     icon opens) with this request's context; Done/Cancel live there.
-//   Cancel — ends the request with takenOver:false, note "cancelled by user".
-// Once answered the card freezes to a static line and unmounts the viewer,
-// so old resolved cards in history don't hold open VNC connections.
-function ScreenRequestCard({ sessionId, event }) {
-  // "<engine> wants you to look at the screen" — the request came from THIS
-  // session's engine, so a Codex session must not say Claude.
-  const engine = engineLabel(useStore().sessions.find((s) => s.id === sessionId)?.engine);
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  const answered = event.answered;
-
-  const cancel = async () => {
-    setBusy(true);
-    try {
-      await cancelScreenRequest(sessionId, event.requestId);
-      window.dispatchEvent(new CustomEvent('host:focus-input'));
-    } catch {
-      setBusy(false);
-    }
-  };
-
-  const reasonLabel = event.reason ? t(`chat.screenReason.${event.reason}`) : '';
-  const btnPrimary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-  const btnSecondary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
-  const answeredLabel = event.takenOver
-    ? t('chat.screenRequestTakenOverDone')
-    : event.note === SCREEN_CANCEL_NOTE
-      ? t('chat.screenRequestCancelled')
-      : t('chat.screenRequestDone');
-
-  return (
-    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest', { engine })}</span>
-        {reasonLabel && (
-          <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[11.5px] md:text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
-            {reasonLabel}
-          </span>
-        )}
-        {!answered && (
-          <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>
-        )}
-      </div>
-      {event.prompt && (
-        <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
-      )}
-      {event.hint && (
-        <div dir="auto" className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
-          <span className="font-bold">{t('chat.screenHint')}:</span> {event.hint}
-        </div>
-      )}
-      {answered ? (
-        <div className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-          <Icon icon={faCheck} /> {answeredLabel}
-          {event.note && event.note !== SCREEN_CANCEL_NOTE ? ` — ${event.note}` : ''}
-        </div>
-      ) : (
-        <>
-          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly sessionId={sessionId} className="mt-2.5 h-[240px] w-full rounded-lg" />
-          <div className="mt-2.5 flex items-center justify-end gap-2">
-            <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
-              {t('screen.cancelRequest')}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => openScreenTakeover(sessionId, event.requestId)}
-              title={t('screen.takeOverHint')}
-              className={btnPrimary}
-            >
-              {t('chat.screenTakeOver')}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Simple mode: the folded "behind the scenes" line --------------- */
 
 // SIMPLE1: one assistant turn's tool calls / results / thinking / status lines,
@@ -602,7 +511,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <HostCard name="PermissionCard" props={{ sessionId, event, live }} />;
     }
     case 'screen-request':
-      return <ScreenRequestCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ScreenRequestCard" props={{ sessionId, event }} />;
     case 'screenshot':
       // Consecutive screenshots are folded into the first one's row (see the
       // grouping in ChatPane below); `shots` carries the whole run.
