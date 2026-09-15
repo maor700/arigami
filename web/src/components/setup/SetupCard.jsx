@@ -22,6 +22,8 @@ import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
 import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
 import { Pill, ErrorBox } from './shared.jsx';
 import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
+import { defineHostComponent, loose, str, any, bool, z } from '../../openui/define.js';
+import { CardFrame, Btn } from '../../openui/primitives.jsx';
 
 export const TERMINAL = new Set(['done', 'failed', 'skipped', 'timeout']);
 
@@ -42,9 +44,6 @@ export function defaultMode(event) {
   const auto = event?.autoCapable ?? manualFor(event?.capability).autoCapable;
   return auto && event?.identity ? 'auto' : 'manual';
 }
-
-const btnPrimary = 'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-const btnSecondary = 'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
 
 function ModeSwitch({ mode, onChange, autoAllowed, identity }) {
   const t = useT();
@@ -92,7 +91,9 @@ function Consent({ capability, identity }) {
   );
 }
 
-export default function SetupCard({ sessionId, event }) {
+// OPENUI phase 2: a host library component on CardFrame/Btn; the manual step
+// components (TokenStep, OAuthCodeStep…) stay native inside it.
+function SetupCardView({ props: { sessionId, event } }) {
   const t = useT();
   const [override, setOverride] = useState(null); // the human's explicit auto/manual pick
   const [local, setLocal] = useState(null); // optimistic terminal state
@@ -158,20 +159,19 @@ export default function SetupCard({ sessionId, event }) {
   const statusLine = waiting ? t('setup.card.waiting') : phase === 'auto' ? t('setup.card.connecting') : phase === 'done' ? t('setup.card.completed') : null;
 
   return (
-    <div data-setup-phase={phase} className={`my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3 ${waiting ? 'setup-waiting' : ''}`}>
-      <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
-        {!terminal && <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />}
-        <span dir="auto" className="font-bold text-[var(--term-accent-strong)]">
-          {t('setup.card.needs', { name: title })}
-          {event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}
+    <CardFrame
+      tone="accent"
+      live={!terminal}
+      data-setup-phase={phase}
+      className={waiting ? 'setup-waiting' : ''}
+      label={<>{t('setup.card.needs', { name: title })}{event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}</>}
+      meta={ownerSlug && (
+        <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
+          {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
         </span>
-        {ownerSlug && (
-          <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
-            {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
-          </span>
-        )}
-        <span className="ms-auto"><Pill status={phase} /></span>
-      </div>
+      )}
+      right={<Pill status={phase} />}
+    >
       {statusLine && (
         <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold ${phase === 'done' ? 'text-[#2f7d4f]' : 'text-[var(--term-accent-fg)]'}`}>
           {waiting && <span className="pulse-yellow inline-block h-[6px] w-[6px] rounded-full bg-brand" />}
@@ -223,10 +223,10 @@ export default function SetupCard({ sessionId, event }) {
             <>
               <Consent capability={capability} identity={identity} />
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <button type="button" disabled={busy} onClick={notNow} className={btnSecondary}>{t('setup.notNow')}</button>
-                <button type="button" disabled={busy} onClick={startAuto} className={btnPrimary}>
+                <Btn variant="secondary" disabled={busy} onClick={notNow}>{t('setup.notNow')}</Btn>
+                <Btn variant="primary" disabled={busy} onClick={startAuto}>
                   <Icon icon={faWandMagicSparkles} /> {t('setup.connectAuto')}
-                </button>
+                </Btn>
               </div>
             </>
           ) : (
@@ -236,13 +236,27 @@ export default function SetupCard({ sessionId, event }) {
                 <Step {...stepProps} />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <button type="button" disabled={busy} onClick={notNow} className={btnSecondary}>{t('setup.notNow')}</button>
+                <Btn variant="secondary" disabled={busy} onClick={notNow}>{t('setup.notNow')}</Btn>
               </div>
             </>
           )}
         </div>
       )}
       <ErrorBox err={err} />
-    </div>
+    </CardFrame>
   );
+}
+
+export const SetupCardDef = defineHostComponent({
+  name: 'SetupCard',
+  description: 'Host: request_setup — the agent needs a capability; the human connects it (auto / manual)',
+  props: loose({
+    sessionId: z.string(),
+    event: loose({ requestId: str, capability: str, why: str, title: str, state: str, mode: str, autoCapable: bool, identity: any, owner: str, manual: any, lines: any, detail: any, evidence: str, enabled: bool, have: any }),
+  }),
+  component: SetupCardView,
+});
+
+export default function SetupCard({ sessionId, event }) {
+  return <SetupCardView props={{ sessionId, event }} />;
 }

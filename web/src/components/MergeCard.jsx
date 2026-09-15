@@ -11,6 +11,8 @@ import { faCheck, faTriangleExclamation, faRotateRight } from '@fortawesome/free
 import { useT } from '../lib/i18n.js';
 import { toastSuccess, toastError } from '../lib/toast.js';
 import { fmtDateTime } from '../lib/time.js';
+import { defineHostComponent, loose, str, any, bool, z } from '../openui/define.js';
+import { CardFrame, Btn } from '../openui/primitives.jsx';
 
 const short = (sha) => (sha ? String(sha).slice(0, 7) : '');
 
@@ -60,7 +62,9 @@ function useMergeStatus(sessionId, enabled) {
 // The control. Shown for the human (and in the master's view of a child).
 // `session` may be the wire form (metadata only) — everything else is fetched.
 // `dark` = render on the terminal (chat) surface with the term accent vars.
-export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
+// OPENUI phase 2: a host library component; in the chat (dark) it sits on the
+// shared CardFrame, in the Changes/Orchestration tabs it keeps its panel look.
+function MergePanelView({ props: { session, sessionId, onMerged, dense, dark } }) {
   const t = useT();
   const id = sessionId || session?.id;
   const md = session?.metadata || {};
@@ -102,14 +106,14 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
 
   const fg = dark ? 'text-[var(--term-accent-strong)]' : 'text-fg';
   const dim = dark ? 'text-[var(--term-accent-dim)]' : 'text-fgdim';
-  const box = dark
-    ? 'rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] px-3 py-2.5'
-    : 'rounded-[9px] border-[1.5px] border-[#e6d27a] bg-chip/40 px-3 py-2';
+  const box = dark ? '' : 'rounded-[9px] border-[1.5px] border-[#e6d27a] bg-chip/40 px-3 py-2';
   const field = dark
     ? 'rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-strong)]'
     : 'rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-fg';
+  const Frame = dark && !dense ? CardFrame : 'div';
+  const frameProps = dark && !dense ? { tone: 'accent', dense: true, className: 'flex flex-wrap items-center gap-2 !my-2.5' } : { className: `my-2.5 flex flex-wrap items-center gap-2 ${dense ? '' : box}` };
   return (
-    <div data-merge-panel className={`my-2.5 flex flex-wrap items-center gap-2 ${dense ? '' : box}`}>
+    <Frame data-merge-panel="" {...frameProps}>
       {!dense && (
         <span className={`flex items-center gap-1.5 font-mono text-[11px] font-bold ${fg}`}>
           <Icon icon={faCheck} /> {t('chat.mergeInto', { branch: md.branch, base: st?.base || md.base || '…' })}
@@ -129,15 +133,15 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
         <label className={`flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10px] ${dim}`}>
           <input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} disabled={busy} /> {t('chat.mergeDeleteBranch')}
         </label>
-        <button
-          type="button"
+        <Btn
+          variant="primary"
+          className="!px-3 !py-1 disabled:cursor-not-allowed disabled:shadow-none"
           onClick={merge}
           disabled={!canMerge}
           title={canMerge ? t('chat.mergeHint') : reasonText || t('chat.loading')}
-          className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
           {busy ? t('chat.merging') : t('chat.merge')}
-        </button>
+        </Btn>
         <button type="button" onClick={refresh} disabled={busy} title={t('chat.mergeRefresh')} aria-label={t('chat.mergeRefresh')} className={`cursor-pointer rounded px-1 ${dim} hover:opacity-100 disabled:opacity-40`}>
           <Icon icon={faRotateRight} />
         </button>
@@ -149,25 +153,46 @@ export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
         <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>
       )}
       {!dense && <span className={`basis-full font-mono text-[11px] md:text-[9.5px] ${dim}`}>{t('chat.mergeHint')}</span>}
-    </div>
+    </Frame>
   );
+}
+export const MergePanelDef = defineHostComponent({
+  name: 'MergePanel',
+  description: 'Host: approved → merge control (strategy, delete branch) — the host runs the merge',
+  props: loose({ session: any, sessionId: str, onMerged: any, dense: bool, dark: bool }),
+  component: MergePanelView,
+});
+export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
+  return <MergePanelView props={{ session, sessionId, onMerged, dense, dark }} />;
 }
 
 // A `{kind:'merge'}` chat event — the durable record in the child and the master.
-export function MergeEvent({ event }) {
+function MergeEventView({ props: { event } }) {
   const t = useT();
   const ok = event.state === 'merged';
   return (
-    <div className={`my-2 rounded-[9px] border px-3 py-2 font-mono text-[11px] ${ok ? 'border-[#8fcf9a] bg-[#e8f6ea] text-[#2a6b35]' : 'border-[#d98078] bg-danger/10 text-danger'}`}>
-      <div className="flex items-center gap-1.5 font-bold">
-        <Icon icon={ok ? faCheck : faTriangleExclamation} /> {t('chat.mergeCardTitle')}
-        {event.child && <span className="font-normal opacity-70">· {t('chat.mergeChild')} {event.child}</span>}
-      </div>
+    <CardFrame
+      tone={ok ? 'ok' : 'danger'}
+      data-merge-event={ok ? 'merged' : 'conflict'}
+      className="!rounded-[9px] !px-3 !py-2 font-mono text-[11px]"
+      icon={<Icon icon={ok ? faCheck : faTriangleExclamation} />}
+      label={t('chat.mergeCardTitle')}
+      meta={event.child && <span className="font-normal opacity-70">· {t('chat.mergeChild')} {event.child}</span>}
+    >
       <div className="mt-0.5">
         {ok
           ? t('chat.mergeDone', { branch: event.branch, base: event.base, sha: short(event.sha) })
           : t('chat.mergeConflictFiles', { files: (event.files || []).join(', ') })}
       </div>
-    </div>
+    </CardFrame>
   );
+}
+export const MergeEventDef = defineHostComponent({
+  name: 'MergeEvent',
+  description: 'Host: the durable merge record (merged / conflict)',
+  props: loose({ event: loose({ state: str, branch: str, base: str, sha: str, files: any, child: str }) }),
+  component: MergeEventView,
+});
+export function MergeEvent({ event }) {
+  return <MergeEventView props={{ event }} />;
 }

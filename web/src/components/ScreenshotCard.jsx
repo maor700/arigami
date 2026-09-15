@@ -10,6 +10,8 @@ import { createPortal } from 'react-dom';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCamera, faXmark, faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import { defineHostComponent, loose, any, z } from '../openui/define.js';
+import { CardFrame } from '../openui/primitives.jsx';
 
 function clock(ts) {
   try {
@@ -22,19 +24,25 @@ function clock(ts) {
 function Lightbox({ shots, index, onClose, onStep }) {
   const t = useT();
   const shot = shots[index];
+  // OPENUI phase 3: the lightbox OWNS Escape/arrows while open — on `window`
+  // in the capture phase (first in line, before the cards' document-capture
+  // handlers) and stopped there, so Escape never answers a request behind it.
   useEffect(() => {
     const onKey = (e) => {
+      if (e.key !== 'Escape' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      e.stopPropagation();
       if (e.key === 'Escape') onClose();
       else if (e.key === 'ArrowRight') onStep(1);
-      else if (e.key === 'ArrowLeft') onStep(-1);
+      else onStep(-1);
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose, onStep]);
   if (!shot) return null;
   const btn = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-[1.5px] border-ink bg-panel text-fg hover:bg-chip disabled:opacity-30';
   return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 p-3 md:p-6" onMouseDown={onClose}>
+    <div data-lightbox="" className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 p-3 md:p-6" onMouseDown={onClose}>
       <div className="flex max-h-full max-w-full flex-col items-center gap-2" onMouseDown={(e) => e.stopPropagation()}>
         <img
           src={shot.url}
@@ -81,25 +89,18 @@ function Thumb({ shot, onClick, className = '' }) {
 }
 
 // `shots` — one or more consecutive screenshot events (oldest first).
-export default function ScreenshotCard({ shots }) {
+// OPENUI phase 2: a host library component on the shared CardFrame; the
+// Lightbox stays a native portal (keyboard, focus, body-level overlay).
+function ScreenshotCardView({ props }) {
   const t = useT();
   const [open, setOpen] = useState(-1); // lightbox index
   const [expanded, setExpanded] = useState(false);
-  if (!shots?.length) return null;
+  // a shot without a url has nothing to show — drop it rather than an empty <img>
+  const shots = (Array.isArray(props.shots) ? props.shots : []).filter((s) => s && typeof s.url === 'string' && s.url);
+  if (!shots.length) return null;
   const last = shots[shots.length - 1];
   const step = (d) => setOpen((i) => Math.min(shots.length - 1, Math.max(0, i + d)));
 
-  const header = (
-    <div className="flex items-center gap-2 font-mono text-[11px]">
-      <span className="text-[var(--term-dim)]"><Icon icon={faCamera} /></span>
-      <span className="font-bold text-[var(--term-fg)]">
-        {shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
-      </span>
-      <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
-        {shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}
-      </span>
-    </div>
-  );
 
   let body;
   if (shots.length === 1) {
@@ -116,16 +117,18 @@ export default function ScreenshotCard({ shots }) {
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="mt-1.5 flex w-full cursor-pointer items-end gap-1.5 text-left"
+        data-screenshot-strip=""
+        className="mt-1.5 flex w-full cursor-pointer flex-wrap items-center gap-1.5 text-start"
         title={t('chat.more')}
       >
+        {/* phase 3: wraps on a narrow (390px, RTL) pane instead of clipping the first thumbs and pushing "more" out */}
         {tail.map((s, i) => (
           <div key={s.id || s.url} className="h-[64px] w-[102px] shrink-0 overflow-hidden rounded-[6px] border border-[var(--term-border)] bg-black" style={{ opacity: 0.55 + (0.45 * (i + 1)) / tail.length }}>
             <img src={s.url} alt="" loading="lazy" className="block h-full w-full object-cover" />
           </div>
         ))}
-        {last.caption && <span dir="auto" className="ms-1 min-w-0 truncate self-center text-[11.5px] text-[var(--term-dim)]">{last.caption}</span>}
-        <span className="ms-auto shrink-0 self-center text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.more')} ›</span>
+        {last.caption && <span dir="auto" className="ms-1 min-w-0 flex-1 truncate text-[11.5px] text-[var(--term-dim)]">{last.caption}</span>}
+        <span className="ms-auto shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.more')} ›</span>
       </button>
     );
   } else {
@@ -149,10 +152,27 @@ export default function ScreenshotCard({ shots }) {
   }
 
   return (
-    <div className="my-2 rounded-[10px] border border-[var(--term-border)] bg-[var(--term-codebg)] p-2.5">
-      {header}
+    <CardFrame
+      tone="code"
+      className="!my-2 !p-2.5"
+      icon={<Icon icon={faCamera} />}
+      label={shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
+      labelClass="text-[var(--term-fg)]"
+      right={<span className="text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</span>}
+    >
       {body}
       {open >= 0 && <Lightbox shots={shots} index={open} onClose={() => setOpen(-1)} onStep={step} />}
-    </div>
+    </CardFrame>
   );
+}
+
+export const ScreenshotCardDef = defineHostComponent({
+  name: 'ScreenshotCard',
+  description: 'Host: one screenshot or a strip of consecutive ones (capture_screen / watch mode)',
+  props: loose({ shots: z.array(loose({ url: z.string(), caption: any, ts: any, id: any })) }),
+  component: ScreenshotCardView,
+});
+
+export default function ScreenshotCard({ shots }) {
+  return <ScreenshotCardView props={{ shots }} />;
 }

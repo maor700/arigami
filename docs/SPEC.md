@@ -215,6 +215,11 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
 publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, share_days?, session_id?})
    → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:string|null, share_exp}
+render_ui({ui, title?, session_id?}) → {ok, event_id}                                     (OPENUI pilot)
+   // POST /__api/sessions/:id/ui — one `{kind:'openui', ui}` chat event. `ui` is
+   // OpenUI Lang (skills/render-ui/SKILL.md, generated from web/src/openui/library.jsx);
+   // the web card (OpenUICard.jsx) renders it with @openuidev/react-lang and shows a
+   // quiet fallback on bad input. Button/Form actions POST …/message like an ext-card.
 share_artifact({artifact_id, days?, session_id?}) → {share_url, expires_at, version, warnings[]}   (K2)
 unshare_artifact({artifact_id, session_id?})      → {revoked}                                        (K2)
    // Snapshot a static file/folder and serve it host-relative (A1). NEVER print
@@ -648,6 +653,20 @@ on demand via the `save_browser_logins` MCP tool /
 its profile back, then removes the copy — unless `config.screen.keepProfiles`
 (default false) is set. Archive only kills the desktop; the profile copy
 survives so unarchiving picks up where it left off.
+
+## One chat UI system (web/src/openui/) — OPENUI
+
+Every chat card — host cards and agent `render_ui` blocks — is built from the same primitives
+(`primitives.jsx`: CardFrame/Btn/ReceiptLine/…) and defined the same way (`{name, props: zod, description,
+component}`). Two views of one library: `library.jsx` is the AGENT set (what `render_ui` may use; its prompt is
+`skills/render-ui/SKILL.md`); `define.js` + `host.jsx` add the HOST-ONLY cards (ExtCard, ActionCard, ArtifactCard,
+ScreenshotCard, AgentCard, DelegatedLine, AgentAdoptLine, MergeEvent, MergePanel, SetupCard, QuestionCard,
+PermissionCard, ScreenRequestCard). ChatPane renders host events through `HostCard` (event → props, zod-checked,
+loose: unknown keys pass) — never through the text Renderer, since host events are already structured and the
+cards keep their store/api handlers, focus and keyboard rules. Host names are absent from the agent library and
+prompt, so a `render_ui` block naming one gets "unknown component" (test/openui-host-cards.test.js).
+The full react-lang library object (`getHostLibrary()`) is materialized lazily; the eager path costs zod/mini +
+primitives only, the parser stays in the lazy OpenUIBody chunk. Fixture page: web/host-demo.html.
 
 ## Artifacts (server/artifacts.ts, ArtifactCard.jsx) — A1
 

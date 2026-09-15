@@ -1,23 +1,17 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, loadFullChatEvent, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
+import { loadOlderChat, loadFullChatEvent, chatHasMore, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
-import ScreenshotCard from './ScreenshotCard.jsx';
-import ArtifactCard from './ArtifactCard.jsx';
-import SetupCard from './setup/SetupCard.jsx';
-import { MergeEvent, MergePanel } from './MergeCard.jsx';
-import AgentCard from './AgentCard.jsx';
-import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
-import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
-import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
+import OpenUICard from './OpenUICard.jsx';
+import { HostCard } from '../openui/host.jsx';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
 import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
-import { engineLabel } from '../lib/engines.js';
+import { prettyInput } from '../lib/pretty-input.js';
 import {
   faArrowDown,
   faArrowRotateRight,
@@ -85,14 +79,6 @@ function toolSummary(e) {
   return s.length > 90 ? `${s.slice(0, 90)}…` : s;
 }
 
-function prettyInput(input) {
-  if (input == null) return '';
-  try {
-    return JSON.stringify(input, null, 2);
-  } catch {
-    return String(input);
-  }
-}
 
 /* ---------- per-kind renderers ------------------------------------------- */
 
@@ -414,395 +400,6 @@ function SystemLine({ event }) {
   );
 }
 
-function AskUserQuestion({ sessionId, event, live }) {
-  const t = useT();
-  // The chosen label per question index — purely local, the answer is posted
-  // as a normal chat message (same call ChatFooter uses).
-  const [picked, setPicked] = useState({});
-  const [skipped, setSkipped] = useState({});
-  const [busy, setBusy] = useState(false);
-  // CHAT1: what became of the answer — null | 'tool' | 'message' | {error}.
-  const [outcome, setOutcome] = useState(null);
-  const questions = Array.isArray(event.input?.questions) ? event.input.questions : [];
-  // CHAT1: picks that already reached the host (the permission-answer the
-  // server echoed, folded onto this event) survive a reload and show on the
-  // other device. A card the host closed WITHOUT an answer ('deny': timed
-  // out, session restarted) says so — a click still works, the answer then
-  // goes in as a normal message.
-  const serverAnswers = event.answers && typeof event.answers === 'object' ? event.answers : null;
-  const closed = event.answered === 'deny' && !serverAnswers;
-
-  // Answer the whole AskUserQuestion once every question has a pick (or is
-  // skipped). The host resolves the tool's pending permission with the picks
-  // (the CLI's own answer channel — the blocked turn resumes at once) and
-  // says whether it did ({delivered:'tool'}) or had to send a plain message
-  // because nothing was pending any more ({delivered:'message'}).
-  const allAnswered = (p, sk) => questions.every((_q, qi) => p[qi] != null || sk[qi]);
-
-  const submit = async (finalPicked, finalSkipped) => {
-    setBusy(true);
-    setOutcome(null);
-    const answers = questions.map((q, qi) => ({
-      question: q.question || q.header || `Question ${qi + 1}`,
-      answer: finalPicked[qi] != null ? finalPicked[qi] : null,
-    }));
-    const content = answers.map((a) => `${a.question}: ${a.answer ?? '(no answer)'}`).join('\n');
-    try {
-      let delivered = 'message';
-      if (event.toolUseId) {
-        const r = await api.post(`/sessions/${sessionId}/question/answer`, { toolUseId: event.toolUseId, content, answers });
-        delivered = r?.delivered === 'message' ? 'message' : 'tool';
-      } else {
-        // Fallback for events without a tool_use id: deliver as a message.
-        await api.post(`/sessions/${sessionId}/message`, { text: content });
-      }
-      setOutcome(delivered);
-      window.dispatchEvent(new CustomEvent('host:focus-input')); // back to the composer
-    } catch (e) {
-      // The answer did NOT reach the session: say so and put the buttons
-      // back — never a card that looks answered while the chat waits.
-      setOutcome({ error: String(e?.message || e).replace(/^HTTP \d+ — /, '') });
-      setPicked({});
-      setSkipped({});
-    }
-    setBusy(false);
-  };
-
-  const choose = (qi, label) => {
-    if (busy || picked[qi] != null || skipped[qi]) return;
-    const np = { ...picked, [qi]: label };
-    setPicked(np);
-    if (allAnswered(np, skipped)) submit(np, skipped);
-  };
-
-  // Escape hatch: leave this question unanswered ('(no answer)' in the result) —
-  // e.g. none of the options fit, or the turn behind it already died.
-  const skip = (qi) => {
-    if (busy || picked[qi] != null || skipped[qi]) return;
-    const ns = { ...skipped, [qi]: true };
-    setSkipped(ns);
-    if (allAnswered(picked, ns)) submit(picked, ns);
-  };
-
-  // Keyboard: answer the first unanswered question with number keys (1–9),
-  // Esc/s to skip. Focus the first option so arrows/Enter work too. Only while a
-  // question is outstanding, so digits don't get captured once you're done.
-  const cardRef = useRef(null);
-  const activeQi = questions.findIndex((q, qi) => picked[qi] == null && !skipped[qi]);
-  useEffect(() => {
-    // Only the LIVE question grabs focus and the arrow/number/Esc keys. `live`
-    // (computed in ChatPane) = the session is awaiting-input AND this is the
-    // most-recent question card — so earlier unanswered questions in the same
-    // transcript don't also bind handlers and fight over focus.
-    if (!live || activeQi < 0 || busy) return;
-    cardRef.current?.querySelector('button[data-opt]')?.focus();
-    const onKey = (e) => {
-      const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-      const opts = Array.isArray(questions[activeQi]?.options) ? questions[activeQi].options : [];
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        // Move the highlight between the active question's option buttons; Enter
-        // then picks the focused one (native button activation).
-        const btns = [...(cardRef.current?.querySelectorAll('button[data-opt]') || [])];
-        if (!btns.length) return;
-        e.preventDefault(); e.stopPropagation();
-        const cur = btns.indexOf(el);
-        const step = e.key === 'ArrowDown' ? 1 : -1;
-        const start = cur < 0 ? (step > 0 ? -1 : 0) : cur;
-        btns[(start + step + btns.length) % btns.length].focus();
-      } else if (/^[1-9]$/.test(e.key)) {
-        const idx = Number(e.key) - 1;
-        if (idx < opts.length) {
-          e.preventDefault(); e.stopPropagation();
-          const o = opts[idx];
-          choose(activeQi, typeof o === 'string' ? o : o?.label ?? '');
-        }
-      } else if (e.key === 'Escape' || e.key === 's' || e.key === 'S') {
-        e.preventDefault(); e.stopPropagation();
-        skip(activeQi);
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeQi, busy, live]);
-
-  return (
-    <div ref={cardRef} className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.questionForYou')}</span>
-      </div>
-      {questions.map((q, qi) => {
-        const options = Array.isArray(q.options) ? q.options : [];
-        const chosen = picked[qi] != null ? picked[qi] : serverAnswers ? serverAnswers[q.question] : undefined;
-        const wasSkipped = skipped[qi] || (!!serverAnswers && chosen == null);
-        return (
-          <div key={qi} className="mt-3 first:mt-2.5">
-            {q.header && (
-              <div className="mb-0.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
-                {q.header}
-              </div>
-            )}
-            {q.question && (
-              <div className="mb-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
-            )}
-            {wasSkipped ? (
-              <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
-            ) : (
-              <>
-            <div className="flex flex-col gap-1.5">
-              {options.map((opt, oi) => {
-                const label = typeof opt === 'string' ? opt : opt?.label ?? '';
-                const description = typeof opt === 'string' ? '' : opt?.description ?? '';
-                const isChosen = chosen === label;
-                const settled = chosen != null;
-                return (
-                  <button
-                    key={oi}
-                    type="button"
-                    data-opt={qi === activeQi ? '' : undefined}
-                    disabled={busy || settled}
-                    onClick={() => choose(qi, label)}
-                    className={`cursor-pointer rounded-[7px] border-[1.5px] px-3 py-2 text-left outline-none transition-shadow focus-visible:border-brand focus-visible:shadow-[0_0_0_2px_var(--term-accent-strong)] disabled:cursor-default ${
-                      isChosen
-                        ? 'border-ink bg-brand text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]'
-                        : settled
-                          ? 'border-[var(--term-accent-border)] bg-transparent opacity-40'
-                          : 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] hover:border-brand'
-                    }`}
-                  >
-                    <span
-                      className={`block text-[12px] font-bold ${isChosen ? 'text-[#1a1a1a]' : 'text-[var(--term-accent-strong)]'}`}
-                    >
-                      {oi < 9 && !settled && (
-                        <span className="mr-1.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{oi + 1}</span>
-                      )}
-                      {label}
-                      {isChosen && <Icon icon={faCheck} className="ml-1" />}
-                    </span>
-                    {description && (
-                      <span
-                        className={`mt-0.5 block text-[11px] leading-snug ${isChosen ? 'text-[#4a3f12]' : 'text-[var(--term-accent-dim)]'}`}
-                      >
-                        {description}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {chosen == null && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => skip(qi)}
-                className="mt-1.5 cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
-              >
-                {t('chat.skipThisQuestion')}
-              </button>
-            )}
-              </>
-            )}
-          </div>
-        );
-      })}
-      {outcome && typeof outcome === 'object' && (
-        <div data-question-error dir="auto" className="mt-2.5 text-[11px] font-bold text-[#9c3b33]">
-          {t('chat.answerFailed')} <span className="font-mono font-normal">{outcome.error}</span>
-        </div>
-      )}
-      {outcome === 'message' && (
-        <div data-question-note dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
-      )}
-      {closed && !outcome && !Object.keys(picked).length && (
-        <div data-question-closed dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
-      )}
-    </div>
-  );
-}
-
-function PermissionRequest({ sessionId, event, live: isLive }) {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  // If the server already resolved this request (timeout, or the process
-  // died) before we clicked, retrying would just 404 forever — treat any
-  // answer failure as "gone" so the card stops offering live buttons.
-  const [expired, setExpired] = useState(false);
-  const answered = event.answered;
-  const toolName = event.toolName ?? event.tool_name ?? event.name ?? 'tool';
-  const allowRef = useRef(null);
-  const answer = async (behavior) => {
-    setBusy(true);
-    try {
-      await answerPermission(sessionId, event.requestId ?? event.request_id, behavior);
-      // Hand focus back to the composer so keyboard flow continues.
-      window.dispatchEvent(new CustomEvent('host:focus-input'));
-    } catch {
-      setBusy(false);
-      setExpired(true);
-    }
-  };
-  // A live request is the actionable card: focus Allow so Enter approves, and
-  // bind Enter/Esc (and y/n) globally so keyboard users can answer without a
-  // mouse. `isLive` (from ChatPane) = the session is blocked on the MOST RECENT
-  // request, so an old/stale card never grabs focus/keys.
-  const live = !answered && !expired && !busy && isLive;
-  useEffect(() => {
-    if (!live) return;
-    allowRef.current?.focus();
-    const onKey = (e) => {
-      const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') { e.preventDefault(); e.stopPropagation(); answer('allow'); }
-      else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') { e.preventDefault(); e.stopPropagation(); answer('deny'); }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live]);
-  return (
-    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.permissionRequest')}</span>
-        <span className="text-[var(--term-accent-dim)]">{toolName}</span>
-      </div>
-      {event.input != null && (
-        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
-          {prettyInput(event.input)}
-        </pre>
-      )}
-      <div className="mt-2.5 flex items-center gap-2">
-        {answered ? (
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-            {answered === 'allow' ? <><Icon icon={faCheck} /> {t('chat.allowed')}</> : <><Icon icon={faXmark} /> {t('chat.denied')}</>}
-            {event.answeredMessage ? ` (${event.answeredMessage})` : ''}
-          </span>
-        ) : expired ? (
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-            <Icon icon={faXmark} /> {t('chat.requestExpired')}
-          </span>
-        ) : (
-          <>
-            <button
-              ref={allowRef}
-              type="button"
-              disabled={busy}
-              onClick={() => answer('allow')}
-              title={t('chat.allowHint')}
-              className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] outline-none focus-visible:ring-2 focus-visible:ring-ink disabled:opacity-50"
-            >
-              {t('chat.allow')}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => answer('deny')}
-              title={t('chat.denyHint')}
-              className="cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3.5 py-1.5 text-[11.5px] text-[var(--term-accent-dim)] hover:bg-[var(--term-accent-bg)] disabled:opacity-50"
-            >
-              {t('chat.deny')}
-            </button>
-            <span className="ml-1 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// host.request_screen — the agent asks the human to look at / drive the
-// shared desktop (manual login, 2FA, CAPTCHA, payment…). Blocking, same
-// underlying mechanism as PermissionRequest (server holds the MCP tool call
-// open until answered). While unanswered the card is a small WATCH view
-// (view-only, never accepts input) + reason/hint + two buttons:
-//   Take over — opens the interactive ScreenModal (the same modal the rail
-//     icon opens) with this request's context; Done/Cancel live there.
-//   Cancel — ends the request with takenOver:false, note "cancelled by user".
-// Once answered the card freezes to a static line and unmounts the viewer,
-// so old resolved cards in history don't hold open VNC connections.
-function ScreenRequestCard({ sessionId, event }) {
-  // "<engine> wants you to look at the screen" — the request came from THIS
-  // session's engine, so a Codex session must not say Claude.
-  const engine = engineLabel(useStore().sessions.find((s) => s.id === sessionId)?.engine);
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  const answered = event.answered;
-
-  const cancel = async () => {
-    setBusy(true);
-    try {
-      await cancelScreenRequest(sessionId, event.requestId);
-      window.dispatchEvent(new CustomEvent('host:focus-input'));
-    } catch {
-      setBusy(false);
-    }
-  };
-
-  const reasonLabel = event.reason ? t(`chat.screenReason.${event.reason}`) : '';
-  const btnPrimary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-  const btnSecondary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
-  const answeredLabel = event.takenOver
-    ? t('chat.screenRequestTakenOverDone')
-    : event.note === SCREEN_CANCEL_NOTE
-      ? t('chat.screenRequestCancelled')
-      : t('chat.screenRequestDone');
-
-  return (
-    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.screenRequest', { engine })}</span>
-        {reasonLabel && (
-          <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[11.5px] md:text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
-            {reasonLabel}
-          </span>
-        )}
-        {!answered && (
-          <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>
-        )}
-      </div>
-      {event.prompt && (
-        <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{event.prompt}</div>
-      )}
-      {event.hint && (
-        <div dir="auto" className="mt-1.5 text-[11.5px] leading-snug text-[var(--term-accent-dim)]">
-          <span className="font-bold">{t('chat.screenHint')}:</span> {event.hint}
-        </div>
-      )}
-      {answered ? (
-        <div className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-          <Icon icon={faCheck} /> {answeredLabel}
-          {event.note && event.note !== SCREEN_CANCEL_NOTE ? ` — ${event.note}` : ''}
-        </div>
-      ) : (
-        <>
-          <ScreenView priority={SCREEN_PRIORITY.card} viewOnly sessionId={sessionId} className="mt-2.5 h-[240px] w-full rounded-lg" />
-          <div className="mt-2.5 flex items-center justify-end gap-2">
-            <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
-              {t('screen.cancelRequest')}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => openScreenTakeover(sessionId, event.requestId)}
-              title={t('screen.takeOverHint')}
-              className={btnPrimary}
-            >
-              {t('chat.screenTakeOver')}
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Simple mode: the folded "behind the scenes" line --------------- */
 
 // SIMPLE1: one assistant turn's tool calls / results / thinking / status lines,
@@ -833,68 +430,6 @@ function BehindScenes({ sessionId, group, streaming }) {
             <div key={r.key} data-event-id={r.event.id || r.key}>
               <Event sessionId={sessionId} event={r.event} recap={r.recap} />
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * EXT — a card an extension wrote into the transcript
- * (`appendChat(id, {kind:'ext-card', title, body, buttons})`).
- *
- * Deliberately minimal, and deliberately forgiving: an extension is user code,
- * so a card with a missing/odd field must degrade, never break the transcript.
- * Every field is optional; a card with nothing renderable renders nothing.
- * `buttons[]` are `{label, prompt}` — pressing one sends the prompt to the
- * session as an ordinary message, which is all a card is allowed to do.
- */
-function ExtCard({ sessionId, event }) {
-  const t = useT();
-  const [busy, setBusy] = useState('');
-  const title = typeof event.title === 'string' ? event.title.trim() : '';
-  const body = typeof event.body === 'string' ? event.body : '';
-  const buttons = (Array.isArray(event.buttons) ? event.buttons : [])
-    .filter((b) => b && typeof b.label === 'string' && b.label.trim() && typeof b.prompt === 'string' && b.prompt.trim())
-    .slice(0, 6);
-  if (!title && !body && !buttons.length) return null;
-
-  const press = async (b, i) => {
-    if (busy) return;
-    setBusy(String(i));
-    try {
-      await api.post(`/sessions/${sessionId}/message`, { text: b.prompt });
-    } catch {
-      /* the composer's own error path owns retries — a card stays quiet */
-    } finally {
-      setBusy('');
-    }
-  };
-
-  return (
-    <div data-ext-card={event.extension || true} className="my-1.5 rounded-[10px] border border-hair bg-panel px-3 py-2.5">
-      <div className="mb-1 font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">
-        {event.extension ? `${t('ext.card.from')} · ${event.extension}` : t('ext.card.from')}
-      </div>
-      {title && <div className="text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
-      {body && (
-        <div className="md mt-1 text-[12px]" dir={dirOf(body)}>
-          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
-        </div>
-      )}
-      {buttons.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {buttons.map((b, i) => (
-            <button
-              key={i}
-              type="button"
-              disabled={!!busy}
-              onClick={() => press(b, i)}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] text-fg hover:bg-brand disabled:opacity-50"
-            >
-              {b.label}
-            </button>
           ))}
         </div>
       )}
@@ -936,7 +471,7 @@ function ChatSkeleton({ label }) {
 // Memoized: the store keeps every settled event's object identity stable and
 // only replaces the trailing (streaming) one, so a delta re-renders exactly one
 // row instead of re-parsing markdown for the whole transcript.
-const Event = memo(function Event({ sessionId, event, live, recap }) {
+const Event = memo(function Event({ sessionId, event, live, stale, recap }) {
   switch (event.kind) {
     case 'user':
       return <UserMsg event={event} />;
@@ -948,7 +483,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'tool-use': {
       const name = event.name ?? event.tool ?? event.toolName;
       if (name === 'AskUserQuestion')
-        return <AskUserQuestion sessionId={sessionId} event={event} live={live} />;
+        return <HostCard name="QuestionCard" props={{ sessionId, event, live, stale }} />;
       return <ToolUse event={event} sessionId={sessionId} />;
     }
     case 'tool-result':
@@ -958,13 +493,13 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'error':
       return <ErrorLine event={event} />;
     case 'action-auto':
-      return <ActionAutoLine event={event} />;
+      return <HostCard name="ActionAutoLine" props={{ event }} />;
     case 'delegated':
       // A4: a composer @mention / `/as` handed the text to an agent.
-      return <DelegatedLine event={event} />;
+      return <HostCard name="DelegatedLine" props={{ event }} />;
     case 'agent-adopt':
       // UX2: "Adopt agent" — this session took on (or gave back) an agent's identity.
-      return <AgentAdoptLine event={event} sessionId={sessionId} />;
+      return <HostCard name="AgentAdoptLine" props={{ event, sessionId }} />;
     case 'system':
       return <SystemLine event={event} />;
     case 'permission-request': {
@@ -973,30 +508,33 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // render it (covers any such event persisted before the server change).
       const tn = event.toolName ?? event.tool_name ?? event.name;
       if (tn === 'AskUserQuestion') return null;
-      return <PermissionRequest sessionId={sessionId} event={event} live={live} />;
+      return <HostCard name="PermissionCard" props={{ sessionId, event, live, stale }} />;
     }
     case 'screen-request':
-      return <ScreenRequestCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ScreenRequestCard" props={{ sessionId, event }} />;
     case 'screenshot':
       // Consecutive screenshots are folded into the first one's row (see the
       // grouping in ChatPane below); `shots` carries the whole run.
-      return <ScreenshotCard shots={event.shots || [event]} />;
+      return <HostCard name="ScreenshotCard" props={{ shots: event.shots || [event] }} />;
     case 'artifact':
-      return <ArtifactCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ArtifactCard" props={{ sessionId, event }} />;
     case 'setup':
       // S2: host.request_setup — "the agent needs <capability>" with the
       // auto/manual decision (see setup/SetupCard.jsx).
-      return <SetupCard sessionId={sessionId} event={event} />;
+      return <HostCard name="SetupCard" props={{ sessionId, event }} />;
     case 'merge':
       // F7: host-executed merge result (merged / conflict) — in the child and
       // mirrored into its master.
-      return <MergeEvent event={event} />;
+      return <HostCard name="MergeEvent" props={{ event }} />;
     case 'agent-card':
       // A1: create_agent / update_agent — the human edits + confirms the draft here.
-      return <AgentCard sessionId={sessionId} event={event} />;
+      return <HostCard name="AgentCard" props={{ sessionId, event }} />;
     case 'ext-card':
       // EXT: an extension's own card — title + markdown + prompt buttons.
-      return <ExtCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ExtCard" props={{ sessionId, event }} />;
+    case 'openui':
+      // OPENUI: render_ui — an OpenUI Lang block rendered with the cockpit's library.
+      return <OpenUICard sessionId={sessionId} event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }
@@ -1185,6 +723,21 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           // focus and the keyboard. Find those indices once.
           const isAsk = (e) => e.kind === 'tool-use' && (e.name ?? e.tool ?? e.toolName) === 'AskUserQuestion';
           const isPerm = (e) => e.kind === 'permission-request' && (e.toolName ?? e.tool_name ?? e.name) !== 'AskUserQuestion';
+          // OPENUI phase 3: exactly ONE card may own the keyboard — the most recent
+          // blocking card of either kind (the CLI blocks on one thing at a time).
+          // A blocking card the transcript has moved past (a newer blocking card,
+          // a later user message or a turn result after it) is STALE: it freezes
+          // with no live buttons, whatever the session state says.
+          let lastBlockIdx = -1;
+          const stale = new Set();
+          for (let k = events.length - 1, movedOn = false; k >= 0; k--) {
+            const e = events[k];
+            if (isAsk(e) || isPerm(e)) {
+              if (lastBlockIdx < 0) lastBlockIdx = k;
+              if (movedOn) stale.add(k);
+              movedOn = true;
+            } else if (e.kind === 'user' || e.kind === 'result') movedOn = true;
+          }
           let lastAskIdx = -1, lastPermIdx = -1;
           // "Recap" = each completed turn's final assistant message (the last
           // assistant-text before a success `result`) — given a faint tint so
@@ -1266,16 +819,16 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={ev} /></div>);
               continue;
             }
-            const live = !!awaiting && ((isAsk(e) && i === lastAskIdx) || (isPerm(e) && i === lastPermIdx));
-            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} recap={recap.has(i)} /></div>);
+            const live = !!awaiting && i === lastBlockIdx;
+            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} /></div>);
           }
           return out;
         })()}
-        {action && <ActionCard sessionId={sessionId} action={action} />}
+        {action && <HostCard name="ActionCard" props={{ sessionId, action }} />}
         {/* F7: after the human approved, the merge is one click — here, at the
             end of the transcript, until it's merged. */}
         {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (
-          <MergePanel session={session} dark />
+          <HostCard name="MergePanel" props={{ session, dark: true }} />
         )}
         {working && (
           <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">
