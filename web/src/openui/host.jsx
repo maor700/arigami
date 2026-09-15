@@ -19,6 +19,8 @@ import '../components/ExtCard.jsx';
 import '../components/ActionCard.jsx';
 import '../components/ArtifactCard.jsx';
 import '../components/ScreenshotCard.jsx';
+import '../components/DelegatedLine.jsx';
+import '../components/AgentCard.jsx';
 
 const warned = new Set();
 /** Render host component `name` with `props` (an event + sessionId etc.). Unknown / non-host name → nothing. */

@@ -9,7 +9,8 @@
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
-import { AgentAvatar } from './AgentCard.jsx';
+import { defineHostComponent, loose, str, any, bool, agentRef, z } from '../openui/define.js';
+import { ReceiptLine, Btn, AgentAvatar } from '../openui/primitives.jsx';
 
 export const openSession = (id) => window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id } }));
 // `draftName` only matters for slug '__new__' (the AgentView create-mode surface) —
@@ -47,7 +48,9 @@ export async function deleteAgentConfirmed(agent, t) {
 
 const short = (s, n = 44) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s || '');
 
-export function DelegatedLine({ event }) {
+// OPENUI phase 2: both receipts are host library components on ReceiptLine;
+// ChatPane renders them through HostCard.
+function DelegatedLineView({ props: { event } }) {
   const t = useT();
   const a = event.agent || {};
   const how = ['child', 'home', 'session'].includes(event.how) ? event.how : 'session';
@@ -58,23 +61,32 @@ export function DelegatedLine({ event }) {
     ? t('chat.delegatedHome', { name })
     : t(how === 'child' ? 'chat.delegatedWorkChild' : 'chat.delegatedWork', { title, name });
   return (
-    <div data-delegated-line={a.slug} data-delegated-how={how} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
+    <ReceiptLine data-delegated-line={a.slug} data-delegated-how={how}>
       <AgentAvatar agent={a} size={14} />
       <span className="font-bold">{label}</span>
       {event.delivered === 'queued' && <span className="text-[var(--term-accent-dim)]">· {t('chat.delegatedQueued')}</span>}
       {event.text && <span dir="auto" className="min-w-0 flex-1 truncate">{event.text}</span>}
       {(home ? !!a.slug : !!event.target) && (
-        <button
-          type="button"
+        <Btn
+          variant="tag"
+          className="ms-auto"
           {...(home ? { 'data-delegated-open-home': a.slug } : { 'data-delegated-open': event.target })}
           onClick={() => (home ? openAgent(a.slug, 'home') : openSession(event.target))}
-          className="ms-auto cursor-pointer rounded bg-[var(--term-accent-border)] px-1.5 hover:opacity-80"
         >
           {t(home ? 'chat.delegatedOpenHome' : 'chat.delegatedOpenSession')} →
-        </button>
+        </Btn>
       )}
-    </div>
+    </ReceiptLine>
   );
+}
+export const DelegatedLineDef = defineHostComponent({
+  name: 'DelegatedLine',
+  description: 'Host: receipt — a composer @mention / `/as` handed the text to an agent',
+  props: loose({ event: loose({ agent: agentRef, target: str, targetTitle: str, how: str, delivered: str, text: any }) }),
+  component: DelegatedLineView,
+});
+export function DelegatedLine({ event }) {
+  return <DelegatedLineView props={{ event }} />;
 }
 
 /**
@@ -82,23 +94,32 @@ export function DelegatedLine({ event }) {
  * plainly that only turns from now on run under the adopted agent, and offers
  * "Revert to normal" while it's still in effect.
  */
-export function AgentAdoptLine({ event, sessionId }) {
+function AgentAdoptLineView({ props: { event, sessionId } }) {
   const t = useT();
   const reverted = !!event.reverted;
   const a = event.agent || {};
   const revert = () => api.post(`/sessions/${sessionId}/adopt-agent/revert`).catch((e) => toastError(e?.message || String(e)));
   return (
-    <div data-agent-adopt={a.slug || ''} data-agent-adopt-reverted={reverted || undefined} className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
+    <ReceiptLine data-agent-adopt={a.slug || ''} data-agent-adopt-reverted={reverted || undefined}>
       {a.slug && <AgentAvatar agent={a} size={14} />}
       <span className="font-bold">{reverted ? t('chat.agentAdoptReverted') : t('chat.agentAdopted', { name: a.name || a.slug })}</span>
       {!reverted && <span className="text-[var(--term-accent-dim)]">{t('chat.agentAdoptedHint')}</span>}
       {!reverted && (
-        <button type="button" data-agent-adopt-revert onClick={revert} className="ms-auto cursor-pointer rounded bg-[var(--term-accent-border)] px-1.5 hover:opacity-80">
+        <Btn variant="tag" className="ms-auto" data-agent-adopt-revert onClick={revert}>
           {t('chat.agentAdoptRevert')} →
-        </button>
+        </Btn>
       )}
-    </div>
+    </ReceiptLine>
   );
+}
+export const AgentAdoptLineDef = defineHostComponent({
+  name: 'AgentAdoptLine',
+  description: 'Host: receipt — this session adopted (or gave back) an agent identity',
+  props: loose({ sessionId: str, event: loose({ agent: agentRef, prevAgent: any, reverted: bool }) }),
+  component: AgentAdoptLineView,
+});
+export function AgentAdoptLine({ event, sessionId }) {
+  return <AgentAdoptLineView props={{ event, sessionId }} />;
 }
 
 export default DelegatedLine;

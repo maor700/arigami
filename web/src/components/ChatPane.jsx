@@ -6,10 +6,8 @@ import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
-import AgentCard from './AgentCard.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
-import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
@@ -898,10 +896,10 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <HostCard name="ActionAutoLine" props={{ event }} />;
     case 'delegated':
       // A4: a composer @mention / `/as` handed the text to an agent.
-      return <DelegatedLine event={event} />;
+      return <HostCard name="DelegatedLine" props={{ event }} />;
     case 'agent-adopt':
       // UX2: "Adopt agent" — this session took on (or gave back) an agent's identity.
-      return <AgentAdoptLine event={event} sessionId={sessionId} />;
+      return <HostCard name="AgentAdoptLine" props={{ event, sessionId }} />;
     case 'system':
       return <SystemLine event={event} />;
     case 'permission-request': {
@@ -930,7 +928,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <MergeEvent event={event} />;
     case 'agent-card':
       // A1: create_agent / update_agent — the human edits + confirms the draft here.
-      return <AgentCard sessionId={sessionId} event={event} />;
+      return <HostCard name="AgentCard" props={{ sessionId, event }} />;
     case 'ext-card':
       // EXT: an extension's own card — title + markdown + prompt buttons.
       return <HostCard name="ExtCard" props={{ sessionId, event }} />;

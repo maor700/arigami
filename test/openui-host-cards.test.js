@@ -52,6 +52,9 @@ const CARDS = {
   'ext-card': 'ExtCard',
   'action-auto': 'ActionAutoLine',
   artifact: 'ArtifactCard',
+  delegated: 'DelegatedLine',
+  'agent-adopt': 'AgentAdoptLine',
+  'agent-card': 'AgentCard',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -137,4 +140,17 @@ test('screenshot: one shot and a strip of five render through HostCard (thumbnai
   expect(bad).not.toContain('<img');
   const r = hostLib.components.ScreenshotCard.props.safeParse({ shots: fx('screenshot') });
   expect(r.success).toBe(true);
+});
+
+test('agent lines: delegated / adopt receipts and the agent card (pending form, created summary) render through HostCard', () => {
+  const html = pane([...fx('delegated'), ...fx('agent-adopt'), ...fx('agent-card')]);
+  expect(html).toContain('data-delegated-line="nili"');
+  expect(html).toContain('data-delegated-open="s_child"');
+  expect(html).toContain('data-agent-adopt="nili"');
+  expect(html).toContain('data-agent-adopt-revert');
+  expect(html).toContain('data-agent-card="pending"');
+  expect(html).toContain('data-agent-field="name"');
+  expect(html).toContain('data-agent-confirm');
+  expect(html).toContain('data-agent-card="created"');
+  expect(html).toContain('Ops Bot is on the team');
 });

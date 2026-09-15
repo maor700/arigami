@@ -17,13 +17,12 @@ import { toastError } from '../lib/toast.js';
 import { engineLabel } from '../lib/engines.js';
 import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
 import { faCheck, faXmark, faUserAstronaut, faCircleNotch, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
-import { AgentAvatar } from '../openui/primitives.jsx';
+import { AgentAvatar, CardFrame, Btn, ACCENT } from '../openui/primitives.jsx';
+import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
 
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
 export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish'];
 
-const btnPrimary = 'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-const btnSecondary = 'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
 const field = 'w-full rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-[11px] text-[var(--term-accent-strong)] outline-none focus:border-[var(--term-accent-fg)]';
 const label = 'mb-0.5 block font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';
 
@@ -50,7 +49,8 @@ function Pill({ state }) {
   return <span data-agent-card-state={state} className={`rounded-full border px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold ${cls}`}>{t(`agent.card.${state}`)}</span>;
 }
 
-export default function AgentCard({ sessionId, event }) {
+// OPENUI phase 2: a host library component on CardFrame/Btn; ChatPane renders it through HostCard.
+function AgentCardView({ props: { sessionId, event } }) {
   const t = useT();
   const { models } = useModels();
   const skillNames = useSkillNames();
@@ -115,16 +115,14 @@ export default function AgentCard({ sessionId, event }) {
   const shown = agent || preview;
 
   return (
-    <div data-agent-card={state} className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
-        {state === 'pending' && <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />}
-        <AgentAvatar agent={shown} size={22} />
-        <span dir="auto" className="font-bold text-[var(--term-accent-strong)]">
-          <Icon icon={faUserAstronaut} /> {title}
-          {(agent?.name || draft.name) ? <span className="font-normal"> — {agent?.name || draft.name}</span> : null}
-        </span>
-        <span className="ms-auto"><Pill state={state} /></span>
-      </div>
+    <CardFrame
+      tone="accent"
+      live={state === 'pending'}
+      data-agent-card={state}
+      icon={<AgentAvatar agent={shown} size={22} />}
+      label={<><Icon icon={faUserAstronaut} /> {title}{(agent?.name || draft.name) ? <span className="font-normal"> — {agent?.name || draft.name}</span> : null}</>}
+      right={<Pill state={state} />}
+    >
 
       {state === 'pending' && (
         <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -199,10 +197,10 @@ export default function AgentCard({ sessionId, event }) {
           )}
           {err && <div dir="auto" className="rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[#9c3b33] sm:col-span-2">{err}</div>}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
-            <button type="button" data-agent-confirm onClick={confirm} disabled={busy || !draft.name.trim()} className={btnPrimary}>
+            <Btn variant="primary" data-agent-confirm onClick={confirm} disabled={busy || !draft.name.trim()}>
               {busy ? t('agent.card.creating') : t('agent.card.confirm')}
-            </button>
-            <button type="button" data-agent-cancel onClick={cancel} disabled={busy} className={btnSecondary}>{t('agent.card.cancel')}</button>
+            </Btn>
+            <Btn variant="secondary" data-agent-cancel onClick={cancel} disabled={busy}>{t('agent.card.cancel')}</Btn>
           </div>
         </div>
       )}
@@ -228,6 +226,20 @@ export default function AgentCard({ sessionId, event }) {
       {state !== 'pending' && agent?.persona && (
         <pre dir="auto" className="mt-1.5 max-h-[140px] overflow-auto whitespace-pre-wrap rounded-[8px] border border-[var(--term-accent-border)] px-2.5 py-1.5 text-[11.5px] md:text-[10.5px] leading-relaxed text-[var(--term-accent-fg)] thin-scroll">{agent.persona}</pre>
       )}
-    </div>
+    </CardFrame>
   );
+}
+
+export const AgentCardDef = defineHostComponent({
+  name: 'AgentCard',
+  description: 'Host: create_agent / update_agent draft the human edits and confirms',
+  props: loose({
+    sessionId: z.string(),
+    event: loose({ cardId: str, action: str, state: str, draft: any, agent: any, patch: any, error: any }),
+  }),
+  component: AgentCardView,
+});
+
+export default function AgentCard({ sessionId, event }) {
+  return <AgentCardView props={{ sessionId, event }} />;
 }
