@@ -3,12 +3,13 @@
 // Tailwind + the cockpit's own tokens, plain SVG charts, no @openuidev/react-ui.
 // Renderer contract: a component receives `{ props }` (already evaluated), not
 // spread props; arguments are POSITIONAL in zod key order, so required keys first.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { z } from 'zod';
 import { defineComponent, createLibrary, useRenderNode, useTriggerAction, useSetFieldValue, useGetFieldValue, useFormName, FormNameContext } from '@openuidev/react-lang';
 import { dirOf } from '../lib/i18n.js';
+import { CardFrame, Btn } from './primitives.jsx';
 
 const str = (v) => (v == null ? '' : String(v));
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : Number(v) || 0);
@@ -36,10 +37,10 @@ const Card = defineComponent({
     const rn = useRenderNode();
     const title = str(props.title).trim();
     return (
-      <div className="rounded-lg border border-hair bg-panel px-3 py-2.5">
+      <CardFrame tone="panel" dense className="my-0">
         {title && <div className="mb-1.5 text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
         <div className="flex flex-col gap-2">{rn(list(props.children))}</div>
-      </div>
+      </CardFrame>
     );
   },
 });
@@ -210,8 +211,6 @@ const LineChart = defineComponent({
 });
 
 /* ---------- actions & forms ------------------------------------------------ */
-const btnCls = (primary) =>
-  `cursor-pointer rounded-lg border-[1.5px] px-2.5 py-1 text-[11px] disabled:opacity-50 ${primary ? 'border-ink bg-brand text-ink' : 'border-ink bg-panel text-fg hover:bg-brand'}`;
 
 const Button = defineComponent({
   name: 'Button',
@@ -221,10 +220,10 @@ const Button = defineComponent({
     const trigger = useTriggerAction();
     const label = str(props.label);
     return (
-      <button type="button" className={btnCls(props.style === 'primary')} dir={dirOf(label)}
+      <Btn variant={props.style === 'primary' ? 'primary' : 'pill'} dir={dirOf(label)}
         onClick={() => trigger(str(props.message) || label, undefined, { type: 'continue_conversation' })}>
         {label}
-      </button>
+      </Btn>
     );
   },
 });
@@ -251,7 +250,7 @@ const Form = defineComponent({
           onSubmit={(e) => { e.preventDefault(); trigger(str(props.message) || `Submitted ${name}`, name, { type: 'continue_conversation' }); }}
         >
           {rn(list(props.children))}
-          <div><button type="submit" className={btnCls(true)} dir={dirOf(label)}>{label}</button></div>
+          <div><Btn type="submit" variant="primary" dir={dirOf(label)}>{label}</Btn></div>
         </form>
       </FormNameContext.Provider>
     );
@@ -277,9 +276,11 @@ function useField(name, type, initial) {
   const form = useFormName();
   const set = useSetFieldValue();
   const get = useGetFieldValue();
+  const edited = useRef(false);
   const [v, setV] = useState(() => { const cur = get(form, name); return cur === undefined ? initial : cur; });
-  useEffect(() => { if (get(form, name) === undefined) set(form, type, name, initial, false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  return [v, (next) => { setV(next); set(form, type, name, next, false); }];
+  // Mount-time default; never runs over an edit the user already made.
+  useEffect(() => { if (!edited.current && get(form, name) === undefined) set(form, type, name, initial, false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return [v, (next) => { edited.current = true; setV(next); set(form, type, name, next, false); }];
 }
 
 const TextInput = defineComponent({
@@ -333,10 +334,9 @@ const Checkbox = defineComponent({
   },
 });
 
-export const library = createLibrary({
-  components: [Stack, Card, Text, MarkdownBlock, Stat, Table, BarChart, LineChart, Button, Form, TextInput, Select, Checkbox],
-  root: 'Stack',
-});
+/** The agent-facing set — what render_ui may use. Host cards are NOT here (see define.js / host.jsx). */
+export const AGENT_COMPONENTS = [Stack, Card, Text, MarkdownBlock, Stat, Table, BarChart, LineChart, Button, Form, TextInput, Select, Checkbox];
+export const library = createLibrary({ components: AGENT_COMPONENTS, root: 'Stack' });
 
 /** Agent-facing syntax help: the library's own signature block wrapped in a short, tool-sized preamble. */
 export const OPENUI_RULES = [

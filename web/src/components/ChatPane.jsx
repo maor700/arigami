@@ -10,6 +10,7 @@ import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
 import OpenUICard from './OpenUICard.jsx';
+import { HostCard } from '../openui/host.jsx';
 import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
 import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
@@ -841,68 +842,6 @@ function BehindScenes({ sessionId, group, streaming }) {
   );
 }
 
-/**
- * EXT — a card an extension wrote into the transcript
- * (`appendChat(id, {kind:'ext-card', title, body, buttons})`).
- *
- * Deliberately minimal, and deliberately forgiving: an extension is user code,
- * so a card with a missing/odd field must degrade, never break the transcript.
- * Every field is optional; a card with nothing renderable renders nothing.
- * `buttons[]` are `{label, prompt}` — pressing one sends the prompt to the
- * session as an ordinary message, which is all a card is allowed to do.
- */
-function ExtCard({ sessionId, event }) {
-  const t = useT();
-  const [busy, setBusy] = useState('');
-  const title = typeof event.title === 'string' ? event.title.trim() : '';
-  const body = typeof event.body === 'string' ? event.body : '';
-  const buttons = (Array.isArray(event.buttons) ? event.buttons : [])
-    .filter((b) => b && typeof b.label === 'string' && b.label.trim() && typeof b.prompt === 'string' && b.prompt.trim())
-    .slice(0, 6);
-  if (!title && !body && !buttons.length) return null;
-
-  const press = async (b, i) => {
-    if (busy) return;
-    setBusy(String(i));
-    try {
-      await api.post(`/sessions/${sessionId}/message`, { text: b.prompt });
-    } catch {
-      /* the composer's own error path owns retries — a card stays quiet */
-    } finally {
-      setBusy('');
-    }
-  };
-
-  return (
-    <div data-ext-card={event.extension || true} className="my-1.5 rounded-[10px] border border-hair bg-panel px-3 py-2.5">
-      <div className="mb-1 font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">
-        {event.extension ? `${t('ext.card.from')} · ${event.extension}` : t('ext.card.from')}
-      </div>
-      {title && <div className="text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
-      {body && (
-        <div className="md mt-1 text-[12px]" dir={dirOf(body)}>
-          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
-        </div>
-      )}
-      {buttons.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {buttons.map((b, i) => (
-            <button
-              key={i}
-              type="button"
-              disabled={!!busy}
-              onClick={() => press(b, i)}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] text-fg hover:bg-brand disabled:opacity-50"
-            >
-              {b.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // CHATWS: what the pane shows from the first paint until the tail page lands —
 // a few greyed rows shaped like a conversation, so the transcript never
 // "pops in" from an empty pane. Pure CSS pulse, no layout shift on arrival.
@@ -997,7 +936,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       return <AgentCard sessionId={sessionId} event={event} />;
     case 'ext-card':
       // EXT: an extension's own card — title + markdown + prompt buttons.
-      return <ExtCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ExtCard" props={{ sessionId, event }} />;
     case 'openui':
       // OPENUI: render_ui — an OpenUI Lang block rendered with the cockpit's library.
       return <OpenUICard sessionId={sessionId} event={event} />;

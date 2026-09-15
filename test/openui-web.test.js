@@ -181,9 +181,18 @@ test('a Form submit posts the message plus a json block of every field (defaults
   const qty = form.querySelector('input[name="qty"]');
   expect(qty.value).toBe('2');
   // edit the text field, flip the checkbox off, pick another option
-  // React's controlled-input tracker only notices a change made through the native setter.
+  // React's controlled-input tracker only notices a change made through the
+  // native setter. Focus + keyup as well as input: react-dom decides ONCE per
+  // process whether `input` events are supported (`'oninput' in <div>`), and
+  // whichever test file loaded it first under a stub document turns that off —
+  // its fallback then polls the focused element on keyup. Cover both paths.
   const setNative = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(qty), 'value').set;
-  await act(async () => { setNative.call(qty, '5'); qty.dispatchEvent(new Event('input', { bubbles: true })); });
+  await act(async () => {
+    qty.focus();
+    setNative.call(qty, '5');
+    qty.dispatchEvent(new Event('input', { bubbles: true }));
+    qty.dispatchEvent(new Event('keyup', { bubbles: true }));
+  });
   await act(async () => { form.querySelector('input[name="rush"]').click(); });
   const sel = form.querySelector('select[name="item"]');
   await act(async () => { sel.value = 'ביצים'; sel.dispatchEvent(new Event('change', { bubbles: true })); });
