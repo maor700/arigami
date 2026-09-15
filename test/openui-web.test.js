@@ -63,7 +63,12 @@ beforeAll(async () => {
   gen = await import(path.join(ROOT, 'web/scripts/openui-prompt.mjs'));
 });
 
-afterAll(() => {
+// Every root is unmounted before the globals go back: a live React root keeps
+// scheduling work into the NEXT file (with its stub document) and crashes
+// whatever async test is running there.
+const roots = [];
+afterAll(async () => {
+  for (const root of roots) { try { await act(async () => root.unmount()); } catch {} }
   if (origFetch) globalThis.fetch = origFetch;
 });
 
@@ -74,6 +79,7 @@ async function mount(el) {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
+  roots.push(root);
   await act(async () => root.render(el));
   return { host, root, flush: () => act(async () => { await new Promise((r) => setTimeout(r, 10)); }) };
 }
