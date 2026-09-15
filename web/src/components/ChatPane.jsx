@@ -5,7 +5,6 @@ import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderCha
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
 import ScreenshotCard from './ScreenshotCard.jsx';
-import ArtifactCard from './ArtifactCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
@@ -921,7 +920,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // grouping in ChatPane below); `shots` carries the whole run.
       return <ScreenshotCard shots={event.shots || [event]} />;
     case 'artifact':
-      return <ArtifactCard sessionId={sessionId} event={event} />;
+      return <HostCard name="ArtifactCard" props={{ sessionId, event }} />;
     case 'setup':
       // S2: host.request_setup — "the agent needs <capability>" with the
       // auto/manual decision (see setup/SetupCard.jsx).

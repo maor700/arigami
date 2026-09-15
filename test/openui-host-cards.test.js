@@ -51,6 +51,7 @@ afterAll(() => { if (origFetch) globalThis.fetch = origFetch; });
 const CARDS = {
   'ext-card': 'ExtCard',
   'action-auto': 'ActionAutoLine',
+  artifact: 'ArtifactCard',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -114,4 +115,13 @@ test('action: the sticky action card and the auto-approved receipt render throug
   expect(pane([], { action: { prompt: 'x', buttons: 'nope' } })).not.toContain('Action needed');
   const r = hostLib.components.ActionCard.props.safeParse({ sessionId: 's1', action: fixtures.HOST_ACTION });
   expect(r.success).toBe(true);
+});
+
+test('artifact: title, version/size/files, host-relative path, buttons and warnings render through HostCard', () => {
+  const html = pane(fx('artifact'));
+  expect(html).toContain('OpenUI pilot — screenshots');
+  expect(html).toContain('v2 · 245 KB · 5 files');
+  expect(html).toContain('/__artifacts/fQxvlBEmbVw/');
+  expect(html).toContain('a root-absolute url was found');
+  expect(html).not.toContain('localhost');
 });

@@ -33,6 +33,6 @@ export const maybe = (schema) => z.optional(z.nullable(schema));
 export const str = opt(z.string());
 export const bool = opt(z.boolean());
 export const num = opt(z.number());
-export const any = z.any();
+export const any = z.optional(z.any()); // a missing key is fine (mini's bare any() is required)
 export const agentRef = maybe(loose({ slug: str, name: str, emoji: str, color: str }));
 export { z };
