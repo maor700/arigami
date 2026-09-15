@@ -125,3 +125,16 @@ test('artifact: title, version/size/files, host-relative path, buttons and warni
   expect(html).toContain('a root-absolute url was found');
   expect(html).not.toContain('localhost');
 });
+
+test('screenshot: one shot and a strip of five render through HostCard (thumbnails, count, captions); a bad shot list renders nothing', () => {
+  // the fixture list keeps a label row between the single shot and the run of five, so ChatPane makes two cards
+  const i = fixtures.HOST_EVENTS.findIndex((e) => e.kind === 'screenshot');
+  const html = pane(fixtures.HOST_EVENTS.slice(i, i + 7));
+  expect(html).toContain('Login page loaded');
+  expect(html).toContain('5 screenshots');
+  expect((html.match(/<img /g) || []).length).toBe(1 + 4); // single thumb + the collapsed strip's last four
+  const bad = render(h(host.HostCard, { name: 'ScreenshotCard', props: { shots: [{ caption: 'no url' }] } }));
+  expect(bad).not.toContain('<img');
+  const r = hostLib.components.ScreenshotCard.props.safeParse({ shots: fx('screenshot') });
+  expect(r.success).toBe(true);
+});

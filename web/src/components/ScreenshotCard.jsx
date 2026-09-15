@@ -10,6 +10,8 @@ import { createPortal } from 'react-dom';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCamera, faXmark, faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import { defineHostComponent, loose, any, z } from '../openui/define.js';
+import { CardFrame } from '../openui/primitives.jsx';
 
 function clock(ts) {
   try {
@@ -81,25 +83,18 @@ function Thumb({ shot, onClick, className = '' }) {
 }
 
 // `shots` — one or more consecutive screenshot events (oldest first).
-export default function ScreenshotCard({ shots }) {
+// OPENUI phase 2: a host library component on the shared CardFrame; the
+// Lightbox stays a native portal (keyboard, focus, body-level overlay).
+function ScreenshotCardView({ props }) {
   const t = useT();
   const [open, setOpen] = useState(-1); // lightbox index
   const [expanded, setExpanded] = useState(false);
-  if (!shots?.length) return null;
+  // a shot without a url has nothing to show — drop it rather than an empty <img>
+  const shots = (Array.isArray(props.shots) ? props.shots : []).filter((s) => s && typeof s.url === 'string' && s.url);
+  if (!shots.length) return null;
   const last = shots[shots.length - 1];
   const step = (d) => setOpen((i) => Math.min(shots.length - 1, Math.max(0, i + d)));
 
-  const header = (
-    <div className="flex items-center gap-2 font-mono text-[11px]">
-      <span className="text-[var(--term-dim)]"><Icon icon={faCamera} /></span>
-      <span className="font-bold text-[var(--term-fg)]">
-        {shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
-      </span>
-      <span className="ms-auto text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
-        {shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}
-      </span>
-    </div>
-  );
 
   let body;
   if (shots.length === 1) {
@@ -149,10 +144,27 @@ export default function ScreenshotCard({ shots }) {
   }
 
   return (
-    <div className="my-2 rounded-[10px] border border-[var(--term-border)] bg-[var(--term-codebg)] p-2.5">
-      {header}
+    <CardFrame
+      tone="code"
+      className="!my-2 !p-2.5"
+      icon={<Icon icon={faCamera} />}
+      label={shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
+      labelClass="text-[var(--term-fg)]"
+      right={<span className="text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</span>}
+    >
       {body}
       {open >= 0 && <Lightbox shots={shots} index={open} onClose={() => setOpen(-1)} onStep={step} />}
-    </div>
+    </CardFrame>
   );
+}
+
+export const ScreenshotCardDef = defineHostComponent({
+  name: 'ScreenshotCard',
+  description: 'Host: one screenshot or a strip of consecutive ones (capture_screen / watch mode)',
+  props: loose({ shots: z.array(loose({ url: z.string(), caption: any, ts: any, id: any })) }),
+  component: ScreenshotCardView,
+});
+
+export default function ScreenshotCard({ shots }) {
+  return <ScreenshotCardView props={{ shots }} />;
 }

@@ -18,6 +18,7 @@ import { HOST_BY_NAME, HOST_COMPONENTS } from './define.js';
 import '../components/ExtCard.jsx';
 import '../components/ActionCard.jsx';
 import '../components/ArtifactCard.jsx';
+import '../components/ScreenshotCard.jsx';
 
 const warned = new Set();
 /** Render host component `name` with `props` (an event + sessionId etc.). Unknown / non-host name → nothing. */

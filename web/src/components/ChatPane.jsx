@@ -4,7 +4,6 @@ import remarkGfm from 'remark-gfm';
 import { answerPermission, cancelScreenRequest, openScreenTakeover, loadOlderChat, loadFullChatEvent, chatHasMore, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import ScreenView from './ScreenView.jsx';
-import ScreenshotCard from './ScreenshotCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
@@ -918,7 +917,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'screenshot':
       // Consecutive screenshots are folded into the first one's row (see the
       // grouping in ChatPane below); `shots` carries the whole run.
-      return <ScreenshotCard shots={event.shots || [event]} />;
+      return <HostCard name="ScreenshotCard" props={{ shots: event.shots || [event] }} />;
     case 'artifact':
       return <HostCard name="ArtifactCard" props={{ sessionId, event }} />;
     case 'setup':
