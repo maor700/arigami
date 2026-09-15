@@ -17,6 +17,7 @@ import { toastError } from '../lib/toast.js';
 import { engineLabel } from '../lib/engines.js';
 import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
 import { faCheck, faXmark, faUserAstronaut, faCircleNotch, faCaretDown, faCaretRight } from '@fortawesome/free-solid-svg-icons';
+import { AgentAvatar } from '../openui/primitives.jsx';
 
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
 export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish'];
@@ -26,20 +27,8 @@ const btnSecondary = 'cursor-pointer rounded-[7px] border-[1.5px] border-[var(--
 const field = 'w-full rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-[11px] text-[var(--term-accent-strong)] outline-none focus:border-[var(--term-accent-fg)]';
 const label = 'mb-0.5 block font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';
 
-// The emoji-in-a-ring avatar every agent surface uses (rail row, card, page).
-export function AgentAvatar({ agent, size = 22, className = '' }) {
-  const color = agent?.color || '#c4c4c4';
-  return (
-    <span
-      data-agent-avatar={agent?.slug}
-      className={`inline-flex shrink-0 items-center justify-center rounded-full ${className}`}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.58), background: `${color}22`, border: `1.5px solid ${color}`, lineHeight: 1 }}
-      aria-hidden="true"
-    >
-      {agent?.emoji || '🤖'}
-    </span>
-  );
-}
+// The emoji-in-a-ring avatar every agent surface uses (rail row, card, page) — lives in the primitives now.
+export { AgentAvatar };
 
 function useSkillNames() {
   const [skills, setSkills] = useState(null);

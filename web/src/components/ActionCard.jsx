@@ -9,12 +9,15 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { AgentAvatar } from './AgentCard.jsx';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { defineHostComponent, loose, str, any, agentRef, z } from '../openui/define.js';
+import { CardFrame, Btn, ReceiptLine, ErrorNote, Prose, AgentAvatar, ACCENT } from '../openui/primitives.jsx';
 
 // The transcript card — rendered inline (not pinned under the input). Buttons
 // are human-click-only; the answer is delivered as a message.
-export function ActionCard({ sessionId, action }) {
+// OPENUI phase 2: a host library component (define.js) built from the shared
+// primitives; ChatPane renders it through HostCard.
+function ActionCardView({ props: { sessionId, action } }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   // A3: "auto-approve this kind from now on" — only meaningful for an action
@@ -42,76 +45,84 @@ export function ActionCard({ sessionId, action }) {
     setBusy(true);
     try { await api.post(`/sessions/${sessionId}/action/dismiss`, {}); } catch { setBusy(false); }
   };
-  const btnClass = (style) =>
-    style === 'primary'
-      ? 'border-ink bg-brand text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]'
-      : style === 'danger'
-        ? 'border-danger bg-danger text-white'
-        : 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] text-[var(--term-accent-strong)] hover:border-brand';
+  const variant = (style) => (style === 'primary' ? 'primary' : style === 'danger' ? 'danger' : 'option');
   return (
-    <div className="my-2.5 rounded-[10px] border border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] p-3">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="pulse-yellow h-[7px] w-[7px] rounded-full bg-brand" />
-        <span className="font-bold text-[var(--term-accent-strong)]">{t('chat.actionNeeded')}</span>
-        {action.agent && (
-          <span data-action-agent={action.agent.slug} className="flex items-center gap-1 rounded-full border border-[var(--term-accent-border)] px-1.5 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
-            <AgentAvatar agent={action.agent} size={14} />
-            <span dir="auto">{action.agent.name}</span>
-          </span>
-        )}
-        {action.kind && <span className="rounded-full bg-[var(--term-accent-border)] px-1.5 py-px font-mono text-[11px] md:text-[9.5px] text-[var(--term-accent-fg)]">{action.kind}</span>}
+    <CardFrame
+      tone="accent"
+      live
+      label={t('chat.actionNeeded')}
+      meta={
+        <>
+          {action.agent && (
+            <span data-action-agent={action.agent.slug} className={`flex items-center gap-1 rounded-full border border-[var(--term-accent-border)] px-1.5 py-px text-[11.5px] md:text-[10px] ${ACCENT.fg}`}>
+              <AgentAvatar agent={action.agent} size={14} />
+              <span dir="auto">{action.agent.name}</span>
+            </span>
+          )}
+          {action.kind && <span className={`rounded-full bg-[var(--term-accent-border)] px-1.5 py-px font-mono text-[11px] md:text-[9.5px] ${ACCENT.fg}`}>{action.kind}</span>}
+        </>
+      }
+      right={
         <button
           type="button"
           disabled={busy}
           onClick={dismiss}
           title={t('chat.dismissNoneTitle')}
           aria-label={t('chat.dismiss')}
-          className="ml-auto cursor-pointer rounded px-1.5 text-[13px] leading-none text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] disabled:opacity-40"
+          className={`cursor-pointer rounded px-1.5 text-[13px] leading-none ${ACCENT.dim} hover:text-[var(--term-accent-strong)] disabled:opacity-40`}
         >
           <Icon icon={faXmark} />
         </button>
-      </div>
-      <div dir="auto" className="mt-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{action.prompt}</div>
+      }
+    >
+      <Prose className="mt-2">{action.prompt}</Prose>
       <div className="mt-2.5 flex flex-wrap gap-2">
         {action.buttons.map((b, i) => (
-          <button
-            key={i}
-            type="button"
-            disabled={busy}
-            onClick={() => answer(b.value)}
-            className={`cursor-pointer rounded-[7px] border-[1.5px] px-3.5 py-1.5 text-[11.5px] font-bold disabled:opacity-50 ${btnClass(b.style)}`}
-          >
-            {b.label}
-          </button>
+          <Btn key={i} variant={variant(b.style)} disabled={busy} onClick={() => answer(b.value)}>{b.label}</Btn>
         ))}
       </div>
       {canAuto && (
-        <label data-action-auto className="mt-2.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--term-accent-fg)]">
+        <label data-action-auto className={`mt-2.5 flex cursor-pointer items-center gap-1.5 text-[11px] ${ACCENT.fg}`}>
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
           {t('chat.actionAutoApprove', { kind: action.kind, agent: action.agent.name })}
         </label>
       )}
-      {err && (
-        <div data-action-error dir="auto" className="mt-2.5 text-[11px] font-bold text-[#9c3b33]">
-          {t('chat.answerFailed')} <span className="font-mono font-normal">{err}</span>
-        </div>
-      )}
-    </div>
+      {err && <ErrorNote data-action-error label={t('chat.answerFailed')}>{err}</ErrorNote>}
+    </CardFrame>
   );
+}
+
+export const ActionCardDef = defineHostComponent({
+  name: 'ActionCard',
+  description: 'Host: request_action — a question with buttons the human answers (never the agent)',
+  props: loose({ sessionId: z.string(), action: loose({ id: str, prompt: any, kind: str, agent: agentRef, buttons: any }) }),
+  component: ActionCardView,
+});
+export function ActionCard({ sessionId, action }) {
+  return <ActionCardView props={{ sessionId, action }} />;
 }
 
 // A3: the host answered a request_action itself (the kind is in the agent's
 // autoApprove list) — a one-line receipt in the transcript.
-export function ActionAutoLine({ event }) {
+function ActionAutoLineView({ props: { event } }) {
   const t = useT();
   return (
-    <div data-action-auto-line className="my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
+    <ReceiptLine data-action-auto-line="">
       {event.agent && <AgentAvatar agent={event.agent} size={14} />}
       <span className="font-bold">{t('chat.actionAutoApproved', { kind: event.actionKind || '' })}</span>
       <span dir="auto" className="min-w-0 truncate">{event.prompt}</span>
       <span className="ms-auto rounded bg-[var(--term-accent-border)] px-1.5">{event.label || event.value}</span>
-    </div>
+    </ReceiptLine>
   );
+}
+export const ActionAutoLineDef = defineHostComponent({
+  name: 'ActionAutoLine',
+  description: 'Host: receipt of a request_action the host auto-approved',
+  props: loose({ event: loose({ prompt: any, actionKind: str, value: any, label: str, agent: agentRef }) }),
+  component: ActionAutoLineView,
+});
+export function ActionAutoLine({ event }) {
+  return <ActionAutoLineView props={{ event }} />;
 }
 
 /* ---------- the sticky bar (SessionView) ---------------------------------- */

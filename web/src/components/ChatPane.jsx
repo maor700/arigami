@@ -11,7 +11,6 @@ import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
-import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
 import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
@@ -898,7 +897,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'error':
       return <ErrorLine event={event} />;
     case 'action-auto':
-      return <ActionAutoLine event={event} />;
+      return <HostCard name="ActionAutoLine" props={{ event }} />;
     case 'delegated':
       // A4: a composer @mention / `/as` handed the text to an agent.
       return <DelegatedLine event={event} />;
@@ -1214,7 +1213,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           }
           return out;
         })()}
-        {action && <ActionCard sessionId={sessionId} action={action} />}
+        {action && <HostCard name="ActionCard" props={{ sessionId, action }} />}
         {/* F7: after the human approved, the merge is one click — here, at the
             end of the transcript, until it's merged. */}
         {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (

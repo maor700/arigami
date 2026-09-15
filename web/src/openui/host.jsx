@@ -16,6 +16,7 @@
 import { HOST_BY_NAME, HOST_COMPONENTS } from './define.js';
 // Registering imports: each file calls defineHostComponent at load time.
 import '../components/ExtCard.jsx';
+import '../components/ActionCard.jsx';
 
 const warned = new Set();
 /** Render host component `name` with `props` (an event + sessionId etc.). Unknown / non-host name → nothing. */

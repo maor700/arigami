@@ -50,6 +50,7 @@ afterAll(() => { if (origFetch) globalThis.fetch = origFetch; });
 // kind → [host component name, extra props builder]
 const CARDS = {
   'ext-card': 'ExtCard',
+  'action-auto': 'ActionAutoLine',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -99,4 +100,18 @@ test('ext-card: renders through HostCard with the same markers, body markdown an
   expect(empty).not.toContain('data-ext-card');
   const junk = pane([{ kind: 'ext-card', ts: 1, title: 42, buttons: 'nope', body: { x: 1 } }]);
   expect(junk).not.toContain('data-ext-card');
+});
+
+test('action: the sticky action card and the auto-approved receipt render through HostCard with their markers', () => {
+  const html = pane(fx('action-auto'), { action: fixtures.HOST_ACTION });
+  expect(html).toContain('data-action-auto-line');
+  expect(html).toContain('send-email');
+  expect(html).toContain('data-action-agent="nili"');
+  expect(html).toContain('Merge the branch into master now?');
+  expect(html).toContain('data-action-auto'); // the auto-approve toggle (agent + kind)
+  expect(html).toContain('Discard');
+  // a bad action shape renders nothing rather than throwing
+  expect(pane([], { action: { prompt: 'x', buttons: 'nope' } })).not.toContain('Action needed');
+  const r = hostLib.components.ActionCard.props.safeParse({ sessionId: 's1', action: fixtures.HOST_ACTION });
+  expect(r.success).toBe(true);
 });
