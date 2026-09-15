@@ -6,6 +6,8 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { makeBlockingCall } from './blocking-call.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // INTERNAL base for host→self fetches only. NEVER put HOST into a value the
 // agent might echo to a human — results carry host-relative paths instead
@@ -54,6 +56,21 @@ const patchSession = async (a, body) => {
 // A1: the memory namespace a call acts in — explicit `agent` wins ("" = the
 // shared store), else the agent this session was born from (ARIGAMI_AGENT).
 const agentNs = (a) => (a?.agent !== undefined ? String(a.agent || '') : process.env.ARIGAMI_AGENT || '') || null;
+
+
+// OPENUI pilot: the render_ui syntax lives in skills/render-ui/SKILL.md (generated
+// from the web library by web/scripts/openui-prompt.mjs); the tool description
+// carries its component list so an agent can write a block without loading the skill.
+function openuiHelp() {
+  try {
+    const md = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../skills/render-ui/SKILL.md'), 'utf8');
+    return md.replace(/^---[\s\S]*?---\s*/, '').replace(/<!--[\s\S]*?-->\s*/, '').trim();
+  } catch {
+    return '';
+  }
+}
+const OPENUI_HELP = openuiHelp();
+const OPENUI_SIGNATURES = (OPENUI_HELP.match(/## Components\n\n([\s\S]*?)\n\n## /) || [])[1] || '';
 
 const SID_PROP = { session_id: { type: 'string', description: 'Host session id (defaults to ARIGAMI_SESSION_ID env)' } };
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -443,6 +460,21 @@ const TOOLS = [
         warnings: r.warnings || [], share_url: r.share_url ?? null, share_exp: r.share_exp ?? null,
       };
     },
+  },
+  {
+    name: 'render_ui',
+    description:
+      'Render a rich UI block (stats, table, bar/line chart, buttons, a form) as a card in this session\'s chat, written in OpenUI Lang. ' +
+      'One statement per line, `root = Stack([...])` required, arguments POSITIONAL in the order below, optional ones may be omitted from the end; ' +
+      'values are "strings", numbers, true/false, null, [arrays] and references to other statements. Button/Form submit come back to you as the human\'s next message ' +
+      '(a Form adds a ```json block of its fields). Keep blocks small — one card, chart, table or form. Full syntax + examples: the `render-ui` skill. ' +
+      'Prefer publish_artifact for whole pages.\n\nComponents:\n' + OPENUI_SIGNATURES,
+    inputSchema: obj({
+      ui: { type: 'string', description: 'OpenUI Lang source, e.g. root = Stack([s])\ns = Stat("Visitors", "12,480", "+8%")' },
+      title: { type: 'string', description: 'Optional card title' },
+      ...SID_PROP,
+    }, ['ui']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/ui`, { ui: a.ui, title: a.title }),
   },
   {
     name: 'share_artifact',

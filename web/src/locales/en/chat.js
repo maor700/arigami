@@ -312,4 +312,10 @@ export const strings = {
   'chat.behindScenes': 'What happened behind the scenes',
   'chat.behindScenesOne': 'What happened behind the scenes · 1 action',
   'chat.behindScenesN': 'What happened behind the scenes · {n} actions',
+  // ---- OpenUICard.jsx (OPENUI pilot) ----
+  'openui.from': 'ui block',
+  'openui.fallback': 'This UI block could not be rendered.',
+  'openui.source': 'source',
+  'openui.hideSource': 'hide source',
+  'openui.sent': 'sent',
 };

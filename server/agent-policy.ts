@@ -111,6 +111,7 @@ export const CORE_TOOLS = [
   'request_action', 'request_review', 'request_setup', 'report_setup', 'check_setup',
   'memory_write', 'memory_search', 'memory_get', 'skill_propose',
   'list_agents', 'permission_prompt', 'report_to_master',
+  'render_ui', // OPENUI: a chat card, no side effects — same standing as request_action
 ];
 
 /** Tools whose denial needs a "the routine has to be added by the human" hint (A5 #1). */

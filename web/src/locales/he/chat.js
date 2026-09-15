@@ -312,4 +312,10 @@ export const strings = {
   'chat.behindScenes': 'מה קרה מאחורי הקלעים',
   'chat.behindScenesOne': 'מה קרה מאחורי הקלעים · פעולה אחת',
   'chat.behindScenesN': 'מה קרה מאחורי הקלעים · {n} פעולות',
+  // ---- OpenUICard.jsx (OPENUI pilot) ----
+  'openui.from': 'בלוק ממשק',
+  'openui.fallback': 'לא ניתן להציג את בלוק הממשק הזה.',
+  'openui.source': 'מקור',
+  'openui.hideSource': 'הסתר מקור',
+  'openui.sent': 'נשלח',
 };

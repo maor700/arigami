@@ -53,6 +53,7 @@ beforeAll(async () => {
     globalThis.document = w.document;
     globalThis.HTMLElement = w.HTMLElement;
     globalThis.Node = w.Node;
+    globalThis.HTMLIFrameElement = w.HTMLIFrameElement; // react-dom's commit-time focus check needs it
     globalThis.Event = w.Event;
     globalThis.CustomEvent = w.CustomEvent;
     globalThis.getComputedStyle = w.getComputedStyle.bind(w);

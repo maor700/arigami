@@ -215,6 +215,11 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
 publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, share_days?, session_id?})
    → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:string|null, share_exp}
+render_ui({ui, title?, session_id?}) → {ok, event_id}                                     (OPENUI pilot)
+   // POST /__api/sessions/:id/ui — one `{kind:'openui', ui}` chat event. `ui` is
+   // OpenUI Lang (skills/render-ui/SKILL.md, generated from web/src/openui/library.jsx);
+   // the web card (OpenUICard.jsx) renders it with @openuidev/react-lang and shows a
+   // quiet fallback on bad input. Button/Form actions POST …/message like an ext-card.
 share_artifact({artifact_id, days?, session_id?}) → {share_url, expires_at, version, warnings[]}   (K2)
 unshare_artifact({artifact_id, session_id?})      → {revoked}                                        (K2)
    // Snapshot a static file/folder and serve it host-relative (A1). NEVER print

@@ -9,6 +9,7 @@ import ArtifactCard from './ArtifactCard.jsx';
 import SetupCard from './setup/SetupCard.jsx';
 import { MergeEvent, MergePanel } from './MergeCard.jsx';
 import AgentCard from './AgentCard.jsx';
+import OpenUICard from './OpenUICard.jsx';
 import { ActionCard, ActionAutoLine } from './ActionCard.jsx';
 import { DelegatedLine, AgentAdoptLine } from './DelegatedLine.jsx';
 import { SCREEN_PRIORITY, isVncInputTarget } from '../lib/useScreenConnection.js';
@@ -997,6 +998,9 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'ext-card':
       // EXT: an extension's own card — title + markdown + prompt buttons.
       return <ExtCard sessionId={sessionId} event={event} />;
+    case 'openui':
+      // OPENUI: render_ui — an OpenUI Lang block rendered with the cockpit's library.
+      return <OpenUICard sessionId={sessionId} event={event} />;
     default:
       return null; // unknown kinds are skipped, not crashed on
   }

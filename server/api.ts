@@ -370,6 +370,8 @@ function spoolUpload(req: IncomingMessage, dir: string): Promise<string> {
 // raw body (Content-Type + X-Arigami-Filename header, what the composer's XHR
 // sends — it needs upload.onprogress, which fetch can't give) or a normal
 // multipart/form-data single-file post, so curl -F works too.
+// OPENUI: cap on one render_ui block (the web card refuses the same size).
+const OPENUI_MAX_CHARS = 64 * 1024;
 const ATTACHMENT_MAX_BYTES = Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) > 0 ? Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) : 200 * 1024 * 1024; // env: tests only
 
 function spoolAttachment(
@@ -5618,6 +5620,19 @@ export async function handle(
     if (sub === 'browser/tabs' && m === 'GET') {
       const cdp = await import('./lib/chrome-cdp.js');
       return json(res, { tabs: (await cdp.listTabs(id)).map((t) => ({ url: t.url, title: t.title, type: t.type })) });
+    }
+    // ---- OPENUI pilot: render_ui — an OpenUI Lang block as a chat card ----
+    // Same shape as an extension's appendCard: one transcript event, no side
+    // effects; the web card parses/renders it and degrades on bad input.
+    if (sub === 'ui' && m === 'POST') {
+      const body = (await readBody(req, 256e3)) as any;
+      const ui = typeof body.ui === 'string' ? body.ui : '';
+      if (!ui.trim()) return badRequest(res, 'ui (OpenUI Lang source) required');
+      if (ui.length > OPENUI_MAX_CHARS) return badRequest(res, `ui too long (${ui.length} > ${OPENUI_MAX_CHARS} chars)`);
+      if (!/^\s*root\s*=/m.test(ui)) return badRequest(res, 'ui must define `root = Stack([...])`');
+      const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 120) : undefined;
+      const ev = claude.appendChat(id, { kind: 'openui', ui, ...(title ? { title } : {}) });
+      return json(res, { ok: true, event_id: ev.id }, 201);
     }
     // ---- Published artifacts (A1) — publish_artifact tool + card buttons ----
     if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));
