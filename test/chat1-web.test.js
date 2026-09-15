@@ -4,7 +4,7 @@
 //     onto its screen-request — so a reloaded page / the other device shows
 //     answered cards, not live buttons over nothing
 //   · the "Question for you" card renders the host-echoed picks as settled,
-//     and a card the host closed without an answer says so
+//     and a card the host closed without an answer says so and takes no clicks
 //   · the answer POST carries structured answers; a failed POST shows the
 //     failure and puts the buttons back; delivered:'message' shows its note
 //   · the action card shows a refused answer instead of swallowing it
@@ -161,10 +161,15 @@ test('question card: the POST carries structured answers; a refused POST is show
   const root3 = createRoot(host3);
   await act(async () => root3.render(h(ChatPane, { session: { id: 'sess_t', metadata: { chatMode: 'full' }, claude: { state: 'idle' } }, events: [question({ id: 'q3', toolUseId: 'tu_gone', answered: 'deny' })], chatLoaded: true })));
   expect(host3.innerHTML).toContain('data-question-closed');
+  // OPENUI phase 3: a closed card accepts no answer — the options are frozen
+  // (the old "send it as a plain message" fallback answered a question nothing
+  // was waiting on).
   const red3 = [...host3.querySelectorAll('button')].find((b) => /Red/.test(b.textContent));
+  expect(red3.disabled).toBe(true);
+  posts = [];
   await act(async () => { red3.click(); await new Promise((r) => setTimeout(r, 20)); });
-  expect(host3.innerHTML).toContain('data-question-note');
-  expect(host3.innerHTML).not.toContain('data-question-closed');
+  expect(posts.length).toBe(0);
+  expect(host3.innerHTML).toContain('data-question-closed');
   await act(async () => root3.unmount());
 });
 

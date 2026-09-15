@@ -185,6 +185,7 @@ test('setup: pending (auto consent + buttons) and done (evidence) render through
 test('question + permission: settled cards freeze, live cards offer buttons, and both keep their markers through HostCard', () => {
   const qs = fixtures.HOST_EVENTS.filter((e) => e.kind === 'tool-use');
   const perms = fx('permission-request');
+  const livePerm = perms.find((e) => e.requestId === 'perm_1');
   const settled = pane([qs[0], perms[0]]);
   expect(settled).toContain('data-question-card="tu_0"');
   expect(settled).toContain('Red');
@@ -192,12 +193,19 @@ test('question + permission: settled cards freeze, live cards offer buttons, and
   expect(settled).toContain('data-permission-card="deny"');
   expect(settled).toContain('timed out');
   expect(settled).not.toContain('Enter/y');
-  const live = pane([qs[1], perms[1]], { awaiting: true });
-  expect(live).toContain('data-question-card="tu_1"');
-  expect(live).toContain('data-opt'); // the live question's options are keyboard targets
-  expect(live).toContain('data-permission-card="open"');
-  expect(live).toContain('Enter/y · Esc/n');
-  expect(live).toContain('git push origin master');
+  // each alone: live (phase 3: only the NEWEST blocking card is live, so test them one at a time)
+  const liveQ = pane([qs[1]], { awaiting: true });
+  expect(liveQ).toContain('data-question-card="tu_1"');
+  expect(liveQ).toContain('data-opt'); // the live question's options are keyboard targets
+  const liveP = pane([livePerm], { awaiting: true });
+  expect(liveP).toContain('data-permission-card="open"');
+  expect(liveP).toContain('Enter/y · Esc/n');
+  expect(liveP).toContain('git push origin master');
+  // together: the older question is closed, the newer permission owns the keys
+  const both = pane([qs[1], livePerm], { awaiting: true });
+  expect(both).toContain('data-question-state="closed"');
+  expect(both).not.toContain('data-opt');
+  expect((both.match(/data-live="true"/g) || []).length).toBe(1);
   // the question card's schema: AskUserQuestion tool-use events validate
   expect(hostLib.components.QuestionCard.props.safeParse({ sessionId: 's1', event: qs[1] }).success).toBe(true);
 });

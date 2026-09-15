@@ -17,6 +17,10 @@ export const FIXTURES = [
     name: 'buttons',
     ui: 'root = Stack([t, row])\nt = Text("Deploy v0.2.1 to production?", "strong")\nrow = Stack([yes, no], "row")\nyes = Button("Deploy", "Yes, deploy v0.2.1 to production", "primary")\nno = Button("Not now", "No, hold the deploy")',
   },
+  {
+    name: 'table with 250 rows (truncation notice)',
+    ui: 'root = Stack([tbl])\ntbl = Table(["#", "item"], [' + Array.from({ length: 250 }, (_, i) => `[${i + 1}, "row ${i + 1}"]`).join(', ') + '])',
+  },
   { name: 'unknown component (fallback)', ui: 'root = Stack([x])\nx = PieChart([1,2,3])' },
   { name: 'garbage (fallback)', ui: 'this is not openui ((( ' },
 ];

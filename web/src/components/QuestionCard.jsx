@@ -7,12 +7,12 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { isVncInputTarget } from '../lib/useScreenConnection.js';
+import { keysBlocked } from '../openui/keys.js';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../openui/define.js';
 import { CardFrame, ErrorNote } from '../openui/primitives.jsx';
 
-function QuestionCardView({ props: { sessionId, event, live } }) {
+function QuestionCardView({ props: { sessionId, event, live, stale } }) {
   const t = useT();
   // The chosen label per question index — purely local, the answer is posted
   // as a normal chat message (same call ChatFooter uses).
@@ -28,7 +28,11 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
   // out, session restarted) says so — a click still works, the answer then
   // goes in as a normal message.
   const serverAnswers = event.answers && typeof event.answers === 'object' ? event.answers : null;
-  const closed = event.answered === 'deny' && !serverAnswers;
+  // OPENUI phase 3: a closed card (host closed it without an answer, or the
+  // transcript moved past it) accepts NO answers — the options freeze. The
+  // old "a click still sends a plain message" fallback is gone: it answered a
+  // question nothing was waiting on.
+  const closed = (event.answered === 'deny' && !serverAnswers) || !!stale;
 
   // Answer the whole AskUserQuestion once every question has a pick (or is
   // skipped). The host resolves the tool's pending permission with the picks
@@ -67,7 +71,7 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
   };
 
   const choose = (qi, label) => {
-    if (busy || picked[qi] != null || skipped[qi]) return;
+    if (closed || busy || picked[qi] != null || skipped[qi]) return;
     const np = { ...picked, [qi]: label };
     setPicked(np);
     if (allAnswered(np, skipped)) submit(np, skipped);
@@ -76,7 +80,7 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
   // Escape hatch: leave this question unanswered ('(no answer)' in the result) —
   // e.g. none of the options fit, or the turn behind it already died.
   const skip = (qi) => {
-    if (busy || picked[qi] != null || skipped[qi]) return;
+    if (closed || busy || picked[qi] != null || skipped[qi]) return;
     const ns = { ...skipped, [qi]: true };
     setSkipped(ns);
     if (allAnswered(picked, ns)) submit(picked, ns);
@@ -92,12 +96,11 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
     // (computed in ChatPane) = the session is awaiting-input AND this is the
     // most-recent question card — so earlier unanswered questions in the same
     // transcript don't also bind handlers and fight over focus.
-    if (!live || activeQi < 0 || busy) return;
+    if (!live || closed || activeQi < 0 || busy) return;
     cardRef.current?.querySelector('button[data-opt]')?.focus();
     const onKey = (e) => {
+      if (keysBlocked(e, cardRef.current)) return;
       const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       const opts = Array.isArray(questions[activeQi]?.options) ? questions[activeQi].options : [];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         // Move the highlight between the active question's option buttons; Enter
@@ -124,10 +127,10 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeQi, busy, live]);
+  }, [activeQi, busy, live, closed]);
 
   return (
-    <CardFrame ref={cardRef} tone="accent" live label={t('chat.questionForYou')} data-question-card={event.toolUseId || ''}>
+    <CardFrame ref={cardRef} tone="accent" live={!closed && !serverAnswers} label={t('chat.questionForYou')} data-question-card={event.toolUseId || ''} data-question-state={closed ? 'closed' : serverAnswers ? 'answered' : 'open'} data-live={(live && !closed) || undefined}>
       {questions.map((q, qi) => {
         const options = Array.isArray(q.options) ? q.options : [];
         const chosen = picked[qi] != null ? picked[qi] : serverAnswers ? serverAnswers[q.question] : undefined;
@@ -151,12 +154,12 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
                 const label = typeof opt === 'string' ? opt : opt?.label ?? '';
                 const description = typeof opt === 'string' ? '' : opt?.description ?? '';
                 const isChosen = chosen === label;
-                const settled = chosen != null;
+                const settled = chosen != null || closed;
                 return (
                   <button
                     key={oi}
                     type="button"
-                    data-opt={qi === activeQi ? '' : undefined}
+                    data-opt={qi === activeQi && !closed ? '' : undefined}
                     disabled={busy || settled}
                     onClick={() => choose(qi, label)}
                     className={`cursor-pointer rounded-[7px] border-[1.5px] px-3 py-2 text-left outline-none transition-shadow focus-visible:border-brand focus-visible:shadow-[0_0_0_2px_var(--term-accent-strong)] disabled:cursor-default ${
@@ -187,7 +190,7 @@ function QuestionCardView({ props: { sessionId, event, live } }) {
                 );
               })}
             </div>
-            {chosen == null && (
+            {chosen == null && !closed && (
               <button
                 type="button"
                 disabled={busy}
@@ -222,11 +225,12 @@ export const QuestionCardDef = defineHostComponent({
   props: loose({
     sessionId: z.string(),
     live: bool,
+    stale: bool,
     event: loose({ toolUseId: str, input: any, answered: str, answers: any }),
   }),
   component: QuestionCardView,
 });
 
-export default function QuestionCard({ sessionId, event, live }) {
-  return <QuestionCardView props={{ sessionId, event, live }} />;
+export default function QuestionCard({ sessionId, event, live, stale }) {
+  return <QuestionCardView props={{ sessionId, event, live, stale }} />;
 }

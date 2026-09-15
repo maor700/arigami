@@ -17,7 +17,7 @@ export const strings = {
   'chat.skipThisQuestion': 'דלג על שאלה זו',
   'chat.answerFailed': 'התשובה לא הגיעה לסשן — נסה שוב.',
   'chat.answerSentAsMessage': 'נשלח כהודעה — הסוכן יקרא אותה בתור הבא.',
-  'chat.questionClosed': 'השאלה נסגרה בלי תשובה (פג תוקף או שהסשן הופעל מחדש). תשובה עכשיו תישלח כהודעה.',
+  'chat.questionClosed': 'השאלה הזו נסגרה — נענתה במקום אחר, פג תוקפה או שהשיחה המשיכה הלאה. אי אפשר לענות עליה כאן.',
   'chat.screenDoneFailed': 'לא ניתן היה למסור "סיימתי" — הבקשה כבר לא פתוחה.',
   'chat.permissionRequest': 'בקשת הרשאה',
   'chat.screenRequest': '{engine} מבקש שתסתכל על המסך',
@@ -318,4 +318,6 @@ export const strings = {
   'openui.source': 'מקור',
   'openui.hideSource': 'הסתר מקור',
   'openui.sent': 'נשלח',
+  'openui.tableTruncated': 'מוצגות {shown} מתוך {total} שורות',
+  'chat.requestStale': 'נסגר — השיחה המשיכה הלאה',
 };

@@ -8,7 +8,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { z } from 'zod';
 import { defineComponent, createLibrary, useRenderNode, useTriggerAction, useSetFieldValue, useGetFieldValue, useFormName, FormNameContext } from '@openuidev/react-lang';
-import { dirOf } from '../lib/i18n.js';
+import { dirOf, useT } from '../lib/i18n.js';
 import { CardFrame, Btn } from './primitives.jsx';
 
 const str = (v) => (v == null ? '' : String(v));
@@ -86,6 +86,7 @@ const Stat = defineComponent({
   },
 });
 
+export const TABLE_MAX_ROWS = 200;
 const Table = defineComponent({
   name: 'Table',
   description: 'Rows of cells under column headers',
@@ -94,8 +95,10 @@ const Table = defineComponent({
     rows: z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
   }),
   component: ({ props }) => {
+    const t = useT();
     const cols = list(props.columns).map(str);
-    const rows = list(props.rows).map(list).slice(0, 200);
+    const all = list(props.rows);
+    const rows = all.slice(0, TABLE_MAX_ROWS).map(list);
     const dir = dirOf(cols.join(' '));
     return (
       <div className="overflow-x-auto">
@@ -111,6 +114,9 @@ const Table = defineComponent({
             ))}
           </tbody>
         </table>
+        {all.length > TABLE_MAX_ROWS && (
+          <div data-table-truncated={all.length} className="mt-1 text-[11px] text-fgdim" dir="auto">{t('openui.tableTruncated', { shown: TABLE_MAX_ROWS, total: all.length })}</div>
+        )}
       </div>
     );
   },

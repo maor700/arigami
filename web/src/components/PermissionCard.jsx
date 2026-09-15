@@ -7,13 +7,13 @@ import { useEffect, useRef, useState } from 'react';
 import { answerPermission } from '../lib/store.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { isVncInputTarget } from '../lib/useScreenConnection.js';
+import { keysBlocked } from '../openui/keys.js';
 import { prettyInput } from '../lib/pretty-input.js';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../openui/define.js';
 import { CardFrame, Btn, SettledLine, ACCENT } from '../openui/primitives.jsx';
 
-function PermissionCardView({ props: { sessionId, event, live: isLive } }) {
+function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   // If the server already resolved this request (timeout, or the process
@@ -23,6 +23,7 @@ function PermissionCardView({ props: { sessionId, event, live: isLive } }) {
   const answered = event.answered;
   const toolName = event.toolName ?? event.tool_name ?? event.name ?? 'tool';
   const allowRef = useRef(null);
+  const cardRef = useRef(null);
   const answer = async (behavior) => {
     setBusy(true);
     try {
@@ -38,14 +39,15 @@ function PermissionCardView({ props: { sessionId, event, live: isLive } }) {
   // bind Enter/Esc (and y/n) globally so keyboard users can answer without a
   // mouse. `isLive` (from ChatPane) = the session is blocked on the MOST RECENT
   // request, so an old/stale card never grabs focus/keys.
-  const live = !answered && !expired && !busy && isLive;
+  // OPENUI phase 3: a STALE request (the transcript moved past it) freezes like
+  // an expired one — no live buttons on a dead card, and no keys.
+  const frozen = !!answered || expired || !!stale;
+  const live = !frozen && !busy && isLive;
   useEffect(() => {
     if (!live) return;
     allowRef.current?.focus();
     const onKey = (e) => {
-      const el = document.activeElement;
-      const typing = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'button') || isVncInputTarget(el));
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (keysBlocked(e, cardRef.current)) return;
       if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') { e.preventDefault(); e.stopPropagation(); answer('allow'); }
       else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') { e.preventDefault(); e.stopPropagation(); answer('deny'); }
     };
@@ -54,7 +56,7 @@ function PermissionCardView({ props: { sessionId, event, live: isLive } }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live]);
   return (
-    <CardFrame tone="accent" live label={t('chat.permissionRequest')} meta={<span className={ACCENT.dim}>{toolName}</span>} data-permission-card={answered || (expired ? 'expired' : 'open')}>
+    <CardFrame ref={cardRef} tone="accent" live={!frozen} label={t('chat.permissionRequest')} meta={<span className={ACCENT.dim}>{toolName}</span>} data-permission-card={answered || (expired ? 'expired' : stale ? 'stale' : 'open')} data-live={live || undefined}>
       {event.input != null && (
         <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
           {prettyInput(event.input)}
@@ -66,9 +68,9 @@ function PermissionCardView({ props: { sessionId, event, live: isLive } }) {
             {answered === 'allow' ? <><Icon icon={faCheck} /> {t('chat.allowed')}</> : <><Icon icon={faXmark} /> {t('chat.denied')}</>}
             {event.answeredMessage ? ` (${event.answeredMessage})` : ''}
           </SettledLine>
-        ) : expired ? (
+        ) : expired || stale ? (
           <SettledLine>
-            <Icon icon={faXmark} /> {t('chat.requestExpired')}
+            <Icon icon={faXmark} /> {expired ? t('chat.requestExpired') : t('chat.requestStale')}
           </SettledLine>
         ) : (
           <>
@@ -93,11 +95,12 @@ export const PermissionCardDef = defineHostComponent({
   props: loose({
     sessionId: z.string(),
     live: bool,
+    stale: bool,
     event: loose({ requestId: str, request_id: str, toolName: str, tool_name: str, name: str, input: any, answered: str, answeredMessage: str }),
   }),
   component: PermissionCardView,
 });
 
-export default function PermissionCard({ sessionId, event, live }) {
-  return <PermissionCardView props={{ sessionId, event, live }} />;
+export default function PermissionCard({ sessionId, event, live, stale }) {
+  return <PermissionCardView props={{ sessionId, event, live, stale }} />;
 }

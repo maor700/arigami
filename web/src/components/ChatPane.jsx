@@ -471,7 +471,7 @@ function ChatSkeleton({ label }) {
 // Memoized: the store keeps every settled event's object identity stable and
 // only replaces the trailing (streaming) one, so a delta re-renders exactly one
 // row instead of re-parsing markdown for the whole transcript.
-const Event = memo(function Event({ sessionId, event, live, recap }) {
+const Event = memo(function Event({ sessionId, event, live, stale, recap }) {
   switch (event.kind) {
     case 'user':
       return <UserMsg event={event} />;
@@ -483,7 +483,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
     case 'tool-use': {
       const name = event.name ?? event.tool ?? event.toolName;
       if (name === 'AskUserQuestion')
-        return <HostCard name="QuestionCard" props={{ sessionId, event, live }} />;
+        return <HostCard name="QuestionCard" props={{ sessionId, event, live, stale }} />;
       return <ToolUse event={event} sessionId={sessionId} />;
     }
     case 'tool-result':
@@ -508,7 +508,7 @@ const Event = memo(function Event({ sessionId, event, live, recap }) {
       // render it (covers any such event persisted before the server change).
       const tn = event.toolName ?? event.tool_name ?? event.name;
       if (tn === 'AskUserQuestion') return null;
-      return <HostCard name="PermissionCard" props={{ sessionId, event, live }} />;
+      return <HostCard name="PermissionCard" props={{ sessionId, event, live, stale }} />;
     }
     case 'screen-request':
       return <HostCard name="ScreenRequestCard" props={{ sessionId, event }} />;
@@ -723,6 +723,21 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           // focus and the keyboard. Find those indices once.
           const isAsk = (e) => e.kind === 'tool-use' && (e.name ?? e.tool ?? e.toolName) === 'AskUserQuestion';
           const isPerm = (e) => e.kind === 'permission-request' && (e.toolName ?? e.tool_name ?? e.name) !== 'AskUserQuestion';
+          // OPENUI phase 3: exactly ONE card may own the keyboard — the most recent
+          // blocking card of either kind (the CLI blocks on one thing at a time).
+          // A blocking card the transcript has moved past (a newer blocking card,
+          // a later user message or a turn result after it) is STALE: it freezes
+          // with no live buttons, whatever the session state says.
+          let lastBlockIdx = -1;
+          const stale = new Set();
+          for (let k = events.length - 1, movedOn = false; k >= 0; k--) {
+            const e = events[k];
+            if (isAsk(e) || isPerm(e)) {
+              if (lastBlockIdx < 0) lastBlockIdx = k;
+              if (movedOn) stale.add(k);
+              movedOn = true;
+            } else if (e.kind === 'user' || e.kind === 'result') movedOn = true;
+          }
           let lastAskIdx = -1, lastPermIdx = -1;
           // "Recap" = each completed turn's final assistant message (the last
           // assistant-text before a success `result`) — given a faint tint so
@@ -804,8 +819,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={ev} /></div>);
               continue;
             }
-            const live = !!awaiting && ((isAsk(e) && i === lastAskIdx) || (isPerm(e) && i === lastPermIdx));
-            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} recap={recap.has(i)} /></div>);
+            const live = !!awaiting && i === lastBlockIdx;
+            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} /></div>);
           }
           return out;
         })()}
