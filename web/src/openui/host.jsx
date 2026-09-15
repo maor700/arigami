@@ -23,6 +23,8 @@ import '../components/DelegatedLine.jsx';
 import '../components/AgentCard.jsx';
 import '../components/MergeCard.jsx';
 import '../components/setup/SetupCard.jsx';
+import '../components/QuestionCard.jsx';
+import '../components/PermissionCard.jsx';
 
 const warned = new Set();
 /** Render host component `name` with `props` (an event + sessionId etc.). Unknown / non-host name → nothing. */

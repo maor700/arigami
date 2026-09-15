@@ -57,6 +57,7 @@ const CARDS = {
   'agent-card': 'AgentCard',
   merge: 'MergeEvent',
   setup: 'SetupCard',
+  'permission-request': 'PermissionCard',
 };
 const fx = (kind) => fixtures.HOST_EVENTS.filter((e) => e.kind === kind);
 const pane = (events, extra = {}) => render(h(ChatPane, { sessionId: 's1', events, mode: 'full', ...extra }));
@@ -178,4 +179,24 @@ test('setup: pending (auto consent + buttons) and done (evidence) render through
   expect(html).toContain('data-setup-phase="done"');
   expect(html).toContain('/__artifacts/ev1/');
   expect(html).toContain('setup-waiting');
+});
+
+test('question + permission: settled cards freeze, live cards offer buttons, and both keep their markers through HostCard', () => {
+  const qs = fixtures.HOST_EVENTS.filter((e) => e.kind === 'tool-use');
+  const perms = fx('permission-request');
+  const settled = pane([qs[0], perms[0]]);
+  expect(settled).toContain('data-question-card="tu_0"');
+  expect(settled).toContain('Red');
+  expect(settled).not.toMatch(/>1<\/span>/); // no live number hints once answered
+  expect(settled).toContain('data-permission-card="deny"');
+  expect(settled).toContain('timed out');
+  expect(settled).not.toContain('Enter/y');
+  const live = pane([qs[1], perms[1]], { awaiting: true });
+  expect(live).toContain('data-question-card="tu_1"');
+  expect(live).toContain('data-opt'); // the live question's options are keyboard targets
+  expect(live).toContain('data-permission-card="open"');
+  expect(live).toContain('Enter/y · Esc/n');
+  expect(live).toContain('git push origin master');
+  // the question card's schema: AskUserQuestion tool-use events validate
+  expect(hostLib.components.QuestionCard.props.safeParse({ sessionId: 's1', event: qs[1] }).success).toBe(true);
 });
