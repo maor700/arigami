@@ -367,8 +367,10 @@ profile() {
         ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" pending "$src" || return 1
         yl "host is running and no ARIGAMI_TOKEN is set — staged as pending"
         dl "  finish it in the cockpit (Setup → Profile) or: ARIGAMI_TOKEN=<admin api token> host profile apply $src"
+      elif [ "$force" = true ]; then
+        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src" --force
       else
-        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src" $([ "$force" = true ] && echo --force)
+        ARIGAMI_DIR="$DIR" bun "$ROOT/server/profiles.ts" apply "$src"
       fi
       ;;
     *) echo "usage: host profile <list|current|validate <src>|apply <name|dir|git-url> [--force]>"; return 1 ;;
@@ -516,7 +518,8 @@ ext() {
           fi
         fi
         ext_api POST /__api/extensions/add "$(printf '{"source":"%s","trust":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$trust")"; echo
-      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" $([ "$trust" = true ] && echo --trust); fi ;;
+      elif [ "$trust" = true ]; then ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" --trust
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src"; fi ;;
     trust|untrust)
       name="${1:?usage: host ext $sub <name>}"
       want=$([ "$sub" = trust ] && echo true || echo false)
@@ -598,7 +601,7 @@ import_cmd() {
     esac
     shift
   done
-  [ -n "$file" ] && [ -f "$file" ] || { echo "usage: host import <file.tgz> [--force] [--whatsapp]"; return 1; }
+  if [ -z "$file" ] || [ ! -f "$file" ]; then echo "usage: host import <file.tgz> [--force] [--whatsapp]"; return 1; fi
   kind="$(ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file" 2>/dev/null | sed -n 's/^[[:space:]]*"kind":[[:space:]]*"\([a-z]*\)".*/\1/p' | head -1)"
   [ -n "$kind" ] || { ARIGAMI_DIR="$DIR" bun "$ROOT/server/backup.ts" inspect "$file"; return 1; }
   if [ "$kind" = "bundle" ]; then
@@ -676,10 +679,9 @@ EOF
 
 uninstall() {
   if [ "$(uname -s)" = Linux ]; then uninstall_systemd; return $?; fi
-  for p in "$PLIST"; do
-    launchctl unload "$p" 2>/dev/null || true
-    [ -f "$p" ] && rm -f "$p"
-  done
+  p="$PLIST"
+  launchctl unload "$p" 2>/dev/null || true
+  [ -f "$p" ] && rm -f "$p"
   gl "✓ removed launchd agent"
 }
 
