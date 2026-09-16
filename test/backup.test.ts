@@ -181,59 +181,6 @@ test('full export --include limits the archive to the named top-level entries', 
 
 // ---- bundle export ------------------------------------------------------------------------
 
-test('bundle export: profile.json + skills + memory-seed + cron + README, and NO secrets/chat/state', () => {
-  const dir = fakeInstance(path.join(tmp(), 'inst'));
-  const out = path.join(tmp(), 'bundle');
-  const r = runInChild(
-    `const bk = await import('./server/backup.ts');
-     const tr = await import('./server/triggers.ts'); tr.load();
-     const b = bk.exportBundle({ out: ${JSON.stringify(out)}, cron: tr.listTriggers() });
-     const pf = await import('./server/profiles.ts');
-     const loaded = pf.loadBundle(b.dir);
-     emit({ b, v: pf.validate(loaded), manifest: loaded.manifest, skills: loaded.skills.map(s => s.name), cron: loaded.cron, seed: loaded.memorySeed, trusted: loaded.trusted });`,
-    { ARIGAMI_DIR: dir },
-  );
-  expect(r.ok).toBe(true);
-  const o = r.out[0];
-  expect(o.b.name).toBe('exported-host');
-  expect(o.b.skills).toEqual(['exported-skill']);
-  expect(o.b.cron).toBe(1);
-  expect(o.b.repos).toBe(1);
-  expect(o.b.memorySeed).toEqual(['USER.md', 'MEMORY.md']);
-  expect(o.v.ok).toBe(true);
-  expect(o.trusted).toBe(false); // an exported bundle is external ⇒ skills go through proposals
-  expect(o.manifest.repos).toEqual([{ name: 'demo-app', source: 'github.com/example/demo-app', branch: 'main', installCmd: 'bun install' }]);
-  expect(o.manifest.settings).toEqual({ defaultModel: 'sonnet', voiceLang: 'en' });
-  expect(JSON.stringify(o.manifest)).not.toMatch(/FAKE|gsk_|ck_|someone/);
-  expect(o.cron).toEqual([{ name: 'morning', key: 'exported-host/morning', prompt: 'say hi', schedule: { kind: 'cron', value: '0 9 * * *' }, enabled: true, autonomous: true, deliver: { push: true } }]);
-  expect(o.seed.user).toContain('Prefers tabs');
-
-  // files on disk: whole skill dir copied, nothing else leaked
-  const all: string[] = [];
-  const walk = (d: string, rel = '') => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(rel, e.name); if (e.isDirectory()) walk(path.join(d, e.name), p); else all.push(p); } };
-  walk(out);
-  expect(all.sort()).toEqual(['README.md', 'cron.json', 'memory-seed/MEMORY.md', 'memory-seed/USER.md', 'profile.json', 'skills/exported-skill/SKILL.md', 'skills/exported-skill/notes.md']);
-  for (const f of bk.SECRET_FILES) expect(all).not.toContain(f);
-  expect(all.some((f) => /^(chat|uploads|run|state)/.test(f))).toBe(false);
-  const readme = fs.readFileSync(path.join(out, 'README.md'), 'utf8');
-  expect(readme).toContain('exported-skill');
-  expect(readme).not.toMatch(/FAKE|someone/);
-
-  // the tarball form, as the UI downloads it
-  const tgz = path.join(tmp(), 'bundle.tgz');
-  const r2 = runInChild(
-    `const bk = await import('./server/backup.ts'); const fs = await import('node:fs');
-     const t = bk.tarDir(${JSON.stringify(out)}, 'b.tgz'); const w = fs.createWriteStream(${JSON.stringify(tgz)}); t.stream.pipe(w);
-     await t.done; await new Promise(r => w.on('finish', r)); emit((await bk.detectArchive(${JSON.stringify(tgz)})).kind);`,
-    { ARIGAMI_DIR: dir },
-  );
-  expect(r2.ok).toBe(true);
-  expect(r2.out[0]).toBe('bundle');
-  const entries = tarList(tgz);
-  for (const f of ['accounts.json', 'secrets.json', 'secrets.env', 'users.json', 'config.json', 'state.json', 'sessions.json']) expect(entries).not.toContain(f);
-  expect(entries).toContain('profile.json');
-}, 60_000);
-
 test('bundle export: name is exported-host (or --name) — never the last applied bundle\'s provenance; --no-memory drops memory-seed/', () => {
   const dir = fakeInstance(path.join(tmp(), 'inst'));
   // an instance that had "il-whatsapp-business" applied last

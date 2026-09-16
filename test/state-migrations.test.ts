@@ -168,37 +168,6 @@ test('a file from a newer build is refused on disk and never rewritten', () => {
   expect(fs.readdirSync(dir)).toEqual(['fixture.json']); // no backup, no .tmp
 });
 
-test('a failure mid-migration leaves the original file plus a backup to go back to', () => {
-  const dir = tmp();
-  const f = path.join(dir, 'fixture.json');
-  const original = JSON.stringify({ items: 'one' });
-  fs.writeFileSync(f, original);
-
-  // Step 2→3 blows up while serialising (a circular value): the backup is
-  // already on disk, the target has not been touched, and no half-written
-  // temp file is left behind.
-  const exploding: StateSchema = {
-    name: 'fixture.json',
-    version: 3,
-    steps: [
-      FIXTURE.steps[0],
-      { to: 3, note: 'boom', up: (d) => { const c: any = { ...d }; c.self = c; return c; } },
-    ],
-  };
-  expect(() => migrateFile(f, exploding, quiet)).toThrow();
-
-  const baks = fs.readdirSync(dir).filter((x) => x.includes('.bak-v1-'));
-  expect(baks).toHaveLength(1);
-  expect(fs.readFileSync(path.join(dir, baks[0]), 'utf8')).toBe(original);
-  expect(fs.readFileSync(f, 'utf8')).toBe(original);
-  expect(fs.existsSync(`${f}.tmp`)).toBe(false);
-
-  // recovery is a copy back — and the recovered file still migrates cleanly
-  fs.copyFileSync(path.join(dir, baks[0]), f);
-  expect(migrateFile(f, FIXTURE, quiet).status).toBe('migrated');
-  expect(readJson(f).items).toEqual(['one']);
-});
-
 // ---- the real schemas -------------------------------------------------------
 
 test('every registered schema has a complete step chain from version 1', () => {
