@@ -210,6 +210,27 @@ const TOOLS = [
       }),
   },
   {
+    name: 'send_message',
+    description:
+      'Peer-to-peer message to ANY session on this host — any engine (claude or codex), regardless of project-folder/dispatch ' +
+      'hierarchy. Use this instead of Claude Code\'s own built-in cross-session SendMessage/ListAgents when the peer might be a ' +
+      'codex-engine session (or any session outside your project folder): SendMessage/ListAgents only discover other Claude ' +
+      'Code CLI processes on this box and structurally cannot see or reach a codex session — this tool goes through the host ' +
+      'instead, so it works for any engine pairing. Find target_session_id with list_sessions (id/title/engine/status). ' +
+      'Never interrupts: delivered now if the target is idle, else queued into its pending-prompt queue and auto-played when ' +
+      'its current turn ends (delivered: "now" | "queued").',
+    inputSchema: obj({
+      target_session_id: { type: 'string', description: 'The session to message (any engine, anywhere on this host)' },
+      message: { type: 'string', description: 'The message to deliver' },
+      ...SID_PROP,
+    }, ['target_session_id', 'message']),
+    run: (a) =>
+      api('POST', `/__api/sessions/${a.target_session_id}/send`, {
+        text: a.message,
+        from: sid(a),
+      }),
+  },
+  {
     name: 'cronjob',
     description:
       'Schedule a durable, host-owned job (survives restart — unlike a scheduler built into the agent CLI itself ' +
@@ -291,13 +312,13 @@ const TOOLS = [
   },
   {
     name: 'list_sessions',
-    description: 'List host sessions (summaries).',
+    description: 'List host sessions (summaries) — the peer-discovery source for send_message/task_session. Each entry includes `engine` (claude|codex) so you can tell which channel will actually reach it.',
     inputSchema: obj({}),
     run: async () => {
       // full=1: untruncated result.summary (the web wire form caps finished workers' summaries).
       const all = await api('GET', '/__api/sessions?archived=true&full=1');
       return all.map((s) => ({
-        id: s.id, title: s.title, status: s.status, color: s.color, cwd: s.cwd,
+        id: s.id, title: s.title, status: s.status, color: s.color, cwd: s.cwd, engine: s.engine || 'claude',
         archived: s.archived, claude_state: s.claude?.state, metadata: s.metadata,
       }));
     },
