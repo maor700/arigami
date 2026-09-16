@@ -15,7 +15,7 @@ isolate();
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, ChatPane, host, hostLib, lib, define, fixtures, openuiProblem;
+let React, render, ChatPane, host, hostLib, lib, define, fixtures, openuiProblem, prefs;
 const h = (...a) => React.createElement(...a);
 let origFetch;
 
@@ -37,6 +37,14 @@ beforeAll(async () => {
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}', headers: { get: () => 'application/json' } });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
+  // lib/prefs.js's language is a module-level singleton shared by every file in
+  // this bun test process (not reset by isolate(), which only restores
+  // globalThis/process.env) — stubbing navigator.language above only feeds the
+  // 'auto' fallback and does nothing once another file has left a concrete
+  // 'he' behind. Force it explicitly so this file's English assertions never
+  // depend on file execution order.
+  prefs = await import(web('lib/prefs.js'));
+  prefs.setPrefs({ language: 'en' });
   ({ default: ChatPane } = await import(web('components/ChatPane.jsx')));
   host = await import(web('openui/host.jsx'));
   hostLib = await host.getHostLibrary();
