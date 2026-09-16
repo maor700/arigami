@@ -56,8 +56,12 @@ function exeNames(name: string): string[] {
  * Absolute path to `name`, searching PATH then `extraDirs`, honouring PATHEXT
  * on Windows. Returns null when nothing matches.
  */
-export function which(name: string, extraDirs: string[] = []): string | null {
-  const dirs = [...(process.env.PATH || '').split(path.delimiter), ...extraDirs];
+export function which(
+  name: string,
+  extraDirs: string[] = [],
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const dirs = [...(env.PATH || '').split(path.delimiter), ...extraDirs];
   const names = exeNames(name);
   for (const d of dirs) {
     if (!d) continue;
@@ -198,7 +202,7 @@ export function findChromeBin(
       }
       continue;
     }
-    const found = which(c);
+    const found = which(c, [], env);
     if (found) return found;
   }
   return null;
