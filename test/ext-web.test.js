@@ -201,6 +201,145 @@ function harness(overrides = {}) {
   return { bridge, calls, posted, win, send, api, wire: (m) => wireFn?.(m), hasWire: () => !!wireFn };
 }
 
+// A LAUNCHER tab: `sessionId: null`. Same bridge, same protocol — the whole
+// difference is that there is no session yet, which is the point of the surface.
+function launcherHarness(overrides = {}) {
+  const calls = [];
+  const posted = [];
+  const created = [];
+  const win = { id: 'the-iframe' };
+  let wireFn = null;
+  const api = {
+    post: async (p, b) => {
+      calls.push(['POST', p, b]);
+      return overrides.postResult ?? { id: 'sess_new', title: b?.title };
+    },
+    patch: async (p, b) => { calls.push(['PATCH', p, b]); return { ok: true }; },
+    del: async (p) => { calls.push(['DELETE', p]); return { ok: true }; },
+    get: async (p) => { calls.push(['GET', p]); return {}; },
+  };
+  const perms = overrides.permissions ?? ['host:create-session', 'tools:list_pulls', 'events:chat'];
+  const bridge = bridgeMod.createExtBridge({
+    sessionId: null,
+    tabId: null,
+    extension: 'hello',
+    getWindow: () => win,
+    getPermissions: () => perms,
+    getContext: () => ({ sessionId: null, tabId: null, extension: 'hello', apiVersion: 1, settings: {}, permissions: perms }),
+    post: (m) => posted.push(m),
+    onCreated: (s) => created.push(s),
+    api,
+    subscribeWire: (fn) => { wireFn = fn; return () => { wireFn = null; }; },
+  });
+  const send = (data) => bridge.onMessage({ source: win, data });
+  return { bridge, calls, posted, created, send, wire: (m) => wireFn?.(m) };
+}
+
+const callMsg = (method, args) => ({ type: 'arigami:call', id: 'c1', method, args });
+const reply = (posted) => posted.find((m) => m.type === 'arigami:result');
+
+test('launcher tab: the context says there is no session', async () => {
+  const t = launcherHarness();
+  await t.send({ type: 'arigami:hello', v: 1 });
+  expect(t.posted[0].type).toBe('arigami:init');
+  expect(t.posted[0].context.sessionId).toBe(null);
+});
+
+test('launcher tab: every session-scoped call is refused, and says why', async () => {
+  for (const [method, args] of [
+    ['sendPrompt', { text: 'hi', mode: 'now' }],
+    ['setStatus', { badge: 'x' }],
+    ['openArtifact', { path: '/a.png' }],
+  ]) {
+    const t = launcherHarness({ permissions: ['session:message', 'session:tabs', 'host:create-session'] });
+    await t.send(callMsg(method, args));
+    const r = reply(t.posted);
+    expect(r.error).toContain('needs a session');
+    // The real damage this prevents: a request to /sessions/null/... which the
+    // host answers 404 and the tab reports as "not found" to a blameless human.
+    expect(t.calls).toEqual([]);
+  }
+});
+
+test('launcher tab: runTool is NOT session-scoped and still works', async () => {
+  const t = launcherHarness();
+  await t.send(callMsg('runTool', { name: 'list_pulls', args: { repo: 'a/b' } }));
+  expect(t.calls[0][0]).toBe('POST');
+  expect(t.calls[0][1]).toBe('/ext/hello/tool/list_pulls');
+  expect(reply(t.posted).ok).toBe(true);
+});
+
+test('launcher tab: createSession posts, hands the record back, and returns the id', async () => {
+  const t = launcherHarness();
+  await t.send(callMsg('createSession', { spec: { title: 'Review a/b#7', prompt: 'review it', agent: 'code-review', metadata: { prNumber: 7 } } }));
+  expect(t.calls[0][0]).toBe('POST');
+  expect(t.calls[0][1]).toBe('/sessions');
+  expect(t.calls[0][2].title).toBe('Review a/b#7');
+  expect(t.calls[0][2].metadata).toEqual({ prNumber: 7 });
+  expect(t.created[0].id).toBe('sess_new');
+  expect(reply(t.posted).value).toEqual({ id: 'sess_new' });
+});
+
+test('launcher tab: createSession drops the orchestration fields a tab must not set', async () => {
+  const t = launcherHarness();
+  // `master`/`kind`/`subtask`/`worktree` would graft this session into someone
+  // else's dispatch tree. An allowlist, not a spread — so they never arrive.
+  await t.send(callMsg('createSession', { spec: { title: 'x', master: 's_other', kind: 'mutating', subtask: 'n1', worktree: true } }));
+  const body = t.calls[0][2];
+  expect(body.title).toBe('x');
+  for (const k of ['master', 'kind', 'subtask', 'worktree']) expect(body[k]).toBeUndefined();
+});
+
+test('launcher tab: createSession without the permission is refused before any POST', async () => {
+  const t = launcherHarness({ permissions: ['tools:list_pulls'] });
+  await t.send(callMsg('createSession', { spec: { title: 'x' } }));
+  expect(reply(t.posted).error).toContain('host:create-session');
+  expect(t.calls).toEqual([]);
+});
+
+test('launcher tab: a deferred create is reported as such, not as a session', async () => {
+  const t = launcherHarness({ postResult: { deferred: true, reason: 'at-capacity' } });
+  await t.send(callMsg('createSession', { spec: { title: 'x' } }));
+  expect(reply(t.posted).error).toContain('at-capacity');
+  expect(t.created).toEqual([]);
+});
+
+test('createSession is refused INSIDE a session — the MCP tool is that path', async () => {
+  const t = harness({ permissions: [...HELLO.permissions, 'host:create-session'] });
+  await t.send(callMsg('createSession', { spec: { title: 'x' } }));
+  expect(reply(t.posted).error).toContain('launcher tabs');
+});
+
+test('launcher tab: a session-scoped event never reaches it', async () => {
+  const t = launcherHarness();
+  await t.send(callMsg('subscribe', { events: ['chat'] }));
+  t.wire({ type: 'chat:s1', payload: { event: { kind: 'result' } } });
+  expect(t.posted.filter((m) => m.type === 'arigami:event')).toEqual([]);
+});
+
+test('extLauncherItems: only launcher tabs, only with the permission', () => {
+  const mk = (over) => ({ name: 'pr', title: 'PR', state: 'loaded', enabled: true, ...over });
+  const tabs = [
+    { id: 'pick', title: 'From PR', entry: 'ui/index.html', openFrom: ['launcher'] },
+    { id: 'side', title: 'Side', entry: 'ui/side.html', openFrom: ['tab-bar'] },
+  ];
+  // Holds the permission → the launcher tab is offered, the tab-bar one is not.
+  const ok = ext.extLauncherItems([mk({ tabs, permissions: ['host:create-session'] })]);
+  expect(ok.length).toBe(1);
+  expect(ok[0].mode).toBe('ext:pr:pick');
+  expect(ok[0].url).toBe('/__ext/pr/index.html');
+
+  // No permission → nothing. A mode that can pick but not start is worse than
+  // an absent one: the human finds out at the last click.
+  expect(ext.extLauncherItems([mk({ tabs, permissions: [] })])).toEqual([]);
+  // Disabled → nothing.
+  expect(ext.extLauncherItems([mk({ tabs, permissions: ['host:create-session'], enabled: false })])).toEqual([]);
+});
+
+test('permissionsFor: createSession asks for host:create-session', () => {
+  expect(ext.permissionsFor('createSession')).toEqual(['host:create-session']);
+});
+
 test('bridge: a message from another window is ignored entirely', async () => {
   const t = harness();
   await t.bridge.onMessage({ source: { other: true }, data: { type: 'arigami:call', id: 'c1', method: 'sendPrompt', args: { text: 'x', mode: 'now' } } });

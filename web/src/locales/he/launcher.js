@@ -243,6 +243,8 @@ export const strings = {
   'launcher.header.fromTicket': 'מכרטיס',
   'launcher.header.emptySession': 'סשן ריק',
   'launcher.header.fromTrigger': 'מטריגר',
+  'launcher.ext.gone': 'ההרחבה הזאת כבר לא מותקנת',
+  'launcher.ext.reload': 'רענון',
   'launcher.header.closeTitle': 'סגירת המשגר (esc)',
 
   // first run

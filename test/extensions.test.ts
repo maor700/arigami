@@ -139,6 +139,48 @@ test('validate: the hello example is valid; a bad manifest names every problem a
   expect(o.none.ok).toBe(false);
 });
 
+test('validate: the launcher surface is known, a typo in openFrom is named, and a launcher tab without the permission is flagged', () => {
+  const dir = tmp();
+  const mk = (name: string, tab: Record<string, unknown>, permissions: string[]) => {
+    const d = path.join(dir, name);
+    fs.mkdirSync(path.join(d, 'ui'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'ui', 'index.html'), '<!doctype html><title>x</title>');
+    fs.writeFileSync(
+      path.join(d, 'manifest.json'),
+      JSON.stringify({ name, version: '0.1.0', apiVersion: 1, permissions, tabs: [{ id: 'pick', title: 'Pick', entry: 'ui/index.html', ...tab }] })
+    );
+    return d;
+  };
+  const good = mk('good', { openFrom: ['launcher'] }, ['host:create-session']);
+  const typo = mk('typo', { openFrom: ['lawncher'] }, ['host:create-session']);
+  const noperm = mk('noperm', { openFrom: ['launcher'] }, []);
+  const o = run(
+    dir,
+    load +
+      `const g=await ext.validateExtension(${JSON.stringify(good)});` +
+      `const t=await ext.validateExtension(${JSON.stringify(typo)});` +
+      `const n=await ext.validateExtension(${JSON.stringify(noperm)});` +
+      'emit({g:{ok:g.ok,errors:g.errors,warnings:g.warnings},t:{ok:t.ok,warnings:t.warnings},n:{ok:n.ok,warnings:n.warnings}});'
+  );
+  // The surface and its permission are both known — nothing to say.
+  expect(o.g.ok).toBe(true);
+  expect(o.g.errors).toEqual([]);
+  expect(o.g.warnings.join(' ')).not.toContain('openFrom');
+  expect(o.g.warnings.join(' ')).not.toContain('host:create-session');
+
+  // A typo is a WARNING, not an error: openFrom was pass-through before the
+  // launcher surface existed, so a manifest written against an older host may
+  // carry a value this one has never heard of, and refusing to load it would
+  // be a downgrade. Still worth naming — a typo here is a tab that silently
+  // appears nowhere.
+  expect(o.t.ok).toBe(true);
+  expect(o.t.warnings.join(' ')).toContain('lawncher');
+
+  // Renders, lists, picks — and fails at the last click. Say it at validate time.
+  expect(o.n.ok).toBe(true);
+  expect(o.n.warnings.join(' ')).toContain('host:create-session');
+});
+
 // ---------------------------------------------------------------------------
 // load: what each contribution turns into
 // ---------------------------------------------------------------------------

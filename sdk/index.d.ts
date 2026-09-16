@@ -27,7 +27,17 @@ export interface ManifestTab {
   /** path inside the extension dir, must live under ui/ (e.g. "ui/index.html") */
   entry: string;
   icon?: string;
-  /** where the cockpit offers it: "tab-bar" | "slash:/pick" (wave 2) */
+  /**
+   * Where the cockpit offers it:
+   *   "tab-bar"      the session's tab bar (default surface)
+   *   "slash:/pick"  a slash command in the composer
+   *   "launcher"     a mode in the NEW-SESSION launcher, beside "From ticket"
+   *                  and "Empty session". A launcher tab runs with no session:
+   *                  `ready()` resolves with `sessionId: null`, every
+   *                  session-scoped call is refused, and the way it does its
+   *                  job is `runTool` (never session-scoped) plus
+   *                  `createSession`. See sdk/README.md § Launcher tabs.
+   */
   openFrom?: string[];
 }
 
@@ -280,7 +290,13 @@ export declare function defineManifest(m: Manifest): Manifest;
 // ---------------------------------------------------------------------------
 
 export interface TabContext {
-  sessionId: string;
+  /**
+   * null in a LAUNCHER tab — there is no session yet, and that is the whole
+   * point of the surface. Treat it as the signal: with a session you may
+   * sendPrompt/setStatus/subscribe; without one those are refused and
+   * createSession is what you have.
+   */
+  sessionId: string | null;
   tabId: string;
   extension: string;
   apiVersion: number;
@@ -302,5 +318,27 @@ export interface ArigamiSdk {
   setStatus(opts: { badge?: string; color?: string; title?: string }): Promise<void>;
   openArtifact(path: string, opts?: { title?: string }): Promise<void>;
   subscribe(events: string[], cb: (ev: any) => void): () => void;
+  /**
+   * Create a session and hand the human over to it. LAUNCHER tabs only, and
+   * only with the `host:create-session` permission — the strongest grant in
+   * the system, because a session is an agent process (`permissionMode` can
+   * be `bypassPermissions`). The cockpit closes the launcher and opens the new
+   * session, exactly as its own built-in modes do.
+   *
+   * `metadata` is yours to shape; the host reads a few well-known keys
+   * (`prNumber`, `repo`, `branch`, `agent`) where it has behaviour for them.
+   */
+  createSession(spec: {
+    title?: string;
+    cwd?: string;
+    prompt?: string;
+    skill?: string;
+    agent?: string;
+    engine?: 'claude' | 'codex';
+    model?: string;
+    effort?: string;
+    permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
+    metadata?: Record<string, unknown>;
+  }): Promise<{ id: string }>;
   close(): void;
 }

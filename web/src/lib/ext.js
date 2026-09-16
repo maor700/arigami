@@ -67,6 +67,8 @@ export function permissionsFor(method, args = {}) {
     case 'openArtifact':
     case 'close':
       return ['session:tabs'];
+    case 'createSession':
+      return ['host:create-session'];
     case 'subscribe':
     case 'unsubscribe':
       return [];
@@ -190,6 +192,43 @@ export function extTabItems(extensions) {
         tab: tb.id,
         title: tb.title || tb.id,
         icon: tb.icon || null,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Manifest `openFrom: ["launcher"]` → extra modes in the new-session launcher,
+ * beside the built-in "From ticket" / "Empty session" / "From trigger".
+ *
+ * This is the platform seam that keeps role-specific creation flows OUT of the
+ * core launcher: "review a pull request" belongs to a developer profile, not to
+ * every Arigami, so it arrives as an extension that claims a mode here rather
+ * than as a fourth hardcoded tab.
+ *
+ * Only extensions that actually hold `host:create-session` are offered. A mode
+ * that can list and pick but not start anything is worse than an absent one —
+ * the human finds out at the last click. `ext validate` warns about the same
+ * pairing, this is the runtime half of it.
+ */
+export function extLauncherItems(extensions) {
+  const out = [];
+  for (const e of extensions || []) {
+    if (!isActive(e)) continue;
+    if (!hasPermission(e.permissions || [], 'host:create-session')) continue;
+    for (const tb of e.tabs || []) {
+      if (!tb?.id || !(tb.openFrom || []).includes('launcher')) continue;
+      out.push({
+        // `mode` is what Launcher.jsx switches on; namespaced so an extension
+        // can never collide with 'ticket' | 'empty' | 'trigger'.
+        mode: `ext:${e.name}:${tb.id}`,
+        ext: e.name,
+        tab: tb.id,
+        title: tb.title || tb.id,
+        // entry is `ui/index.html`; the /__ext mount is rooted AT ui/.
+        url: `/__ext/${e.name}/${String(tb.entry || 'ui/index.html').replace(/^ui\//, '')}`,
+        trusted: e.trusted === true,
       });
     }
   }

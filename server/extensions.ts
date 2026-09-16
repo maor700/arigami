@@ -84,7 +84,15 @@ const LOG_DIR = path.join(ARIGAMI_DIR, 'logs');
 
 export const EXT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
-const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'notify'];
+// `host:create-session` is deliberately in the `host:` namespace and not
+// `session:` — every other permission here scopes a tab to the ONE session it
+// already lives in, and this one does the opposite: it spawns a new agent
+// process, with whatever permissionMode the caller asks for. It is the
+// strongest grant an extension can hold, so it reads differently in the
+// install dialog instead of hiding among its neighbours.
+const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'host:create-session', 'notify'];
+/** Surfaces a manifest tab may ask for. `slash:<name>` is matched separately. */
+const KNOWN_OPEN_FROM = ['tab-bar', 'launcher'];
 const GATE_NAMES = ['merge.before'];
 /** A gate blocks a human's merge — generous, but never forever. */
 const GATE_TIMEOUT_MS = 5 * 60_000;
@@ -396,6 +404,26 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
     if (!str(t.title)) errors.push(`tabs[${t.id}]: title is required`);
     const full = file(str(t.entry), `tabs[${t.id}].entry`);
     if (full && !full.startsWith(path.join(dir, 'ui') + path.sep)) errors.push(`tabs[${t.id}].entry must live under ui/`);
+    // A warning and not an error: openFrom was pass-through until launcher
+    // tabs existed, so a manifest written against an older host may carry a
+    // value this one has never heard of, and refusing to load it would be a
+    // downgrade. Naming it is still worth doing — an unnoticed typo here is a
+    // tab that simply never appears anywhere.
+    for (const from of t.openFrom || []) {
+      const v = String(from || '').trim();
+      if (!v) continue;
+      if (KNOWN_OPEN_FROM.includes(v) || /^slash:\/?[\w:-]+$/.test(v)) continue;
+      warnings.push(
+        `tabs[${t.id}].openFrom: "${v}" is not a surface this host offers (${KNOWN_OPEN_FROM.join(', ')}, slash:<name>) — the tab will not appear there`
+      );
+    }
+    // The launcher surface exists to create sessions. A tab that asks for it
+    // without the permission renders, and then every button on it fails at the
+    // last step — say so at validate time instead.
+    if ((t.openFrom || []).includes('launcher') && !(m.permissions || []).includes('host:create-session'))
+      warnings.push(
+        `tabs[${t.id}] opens from the launcher but the manifest does not request "host:create-session" — it will be able to list and pick, but not to start anything`
+      );
   }
 
   for (const d of m.docs || []) {

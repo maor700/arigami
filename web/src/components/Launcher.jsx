@@ -28,6 +28,8 @@ import {
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
+import { extLauncherItems } from '../lib/ext.js';
+import ExtLauncherPane from './ExtLauncherPane.jsx';
 import { EngineToggle } from './EngineToggle.jsx';
 // Re-exported so the tests that always imported it from here keep working.
 export { EngineToggle };
@@ -2103,6 +2105,18 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
   useEffect(() => {
     if (linear === false && mode === 'ticket') setModeRaw('empty');
   }, [linear, mode]);
+  // Extension-contributed modes (manifest `openFrom: ["launcher"]`). The core
+  // launcher deliberately knows nothing about what they are for — a PR review,
+  // a Jira issue, an on-call page — only that an extension claimed a mode and
+  // holds the permission to finish the job.
+  const { extensions } = useStore();
+  const extModes = useMemo(() => extLauncherItems(extensions), [extensions]);
+  const extMode = extModes.find((x) => x.mode === mode) || null;
+  // An extension that was disabled or uninstalled while its mode was open must
+  // not leave the launcher on a blank body. Same treatment `linear` gets.
+  useEffect(() => {
+    if (mode.startsWith('ext:') && !extMode) setModeRaw('empty');
+  }, [mode, extMode]);
   const [selected, setSelected] = useState(null);
   const [permMode, setPermMode] = useState('bypassPermissions');
   const [busy, setBusy] = useState(false);
@@ -2275,6 +2289,19 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
           >
             {t('launcher.header.fromTrigger')}
           </button>
+          {extModes.map((x) => (
+            <button
+              key={x.mode}
+              type="button"
+              onClick={() => setMode(x.mode)}
+              title={x.ext}
+              className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
+                mode === x.mode ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
+              }`}
+            >
+              {x.title}
+            </button>
+          ))}
         </span>
         {onClose && (
           <button
@@ -2289,7 +2316,9 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {mode === 'ticket' ? (
+        {extMode ? (
+          <ExtLauncherPane item={extMode} onCreated={onCreated} />
+        ) : mode === 'ticket' ? (
           <>
             <TicketPicker selected={selected} onPick={setSelected} sessions={sessions} />
             <PlanPanel

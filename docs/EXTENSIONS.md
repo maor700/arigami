@@ -200,6 +200,46 @@ page that passes `'queue'` explicitly behaves exactly as it did. An extension
 that holds only `session:prompts` never takes the "now" path — `'auto'` queues
 for it (with auto-play) instead.
 
+### A tab in the LAUNCHER — creation flows that are not the core's
+
+A tab whose manifest says `"openFrom": ["launcher"]` is offered as a **mode in
+the new-session launcher**, next to "From ticket", "Empty session" and "From
+trigger".
+
+This is the seam for role-shaped work. Arigami is a generic host; "review a
+pull request" belongs to a developer profile, "open the on-call page" to an
+SRE's, and neither should become a mode every Arigami carries. They are the
+same shape — pick something out of a system the core knows nothing about, then
+start a session about it — so the core offers the slot and the profile fills it.
+
+A launcher tab runs **before a session exists**, so `ready()` resolves with
+`sessionId: null` and the session-scoped calls (`sendPrompt`, `setStatus`,
+`openArtifact`) refuse with a message saying so. What it has instead:
+
+- **`runTool`** — never was session-scoped. This is how the tab reaches the
+  systems the core has no endpoint for: the extension's own server-side tools
+  shell out to `gh`, a Jira client, whatever the profile needs.
+- **`createSession(spec)`** — creates the session and hands the human over to
+  it, exactly as the built-in modes do.
+
+`createSession` needs **`host:create-session`**. That permission is in the
+`host:` namespace rather than `session:` deliberately: every other permission
+scopes a tab to the session it already lives in, and this one spawns a new
+agent process with whatever `permissionMode` it asks for. It is the strongest
+grant an extension can hold, and the install dialog prints it as such.
+
+Two guards you get for free. `bin/host ext validate` warns when a manifest
+claims the launcher surface without requesting the permission, and the cockpit
+does not offer such a mode at all — one that can list and pick but not start is
+worse than none, because the human only finds out at the last click. And
+`spec` is an allowlist: the orchestration fields `POST /__api/sessions` accepts
+(`master`, `kind`, `subtask`, `worktree`…) are dropped, so a sandboxed page
+cannot graft its session into another session's dispatch tree.
+
+Pass `agent` and the mode stays thin: the session inherits that agent's
+persona, skills, engine, model and memory namespace, so the extension only has
+to find the work — the agent already knows how to do it.
+
 ---
 
 ## 5. Runtime vs restart

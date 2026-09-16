@@ -27,7 +27,10 @@ const V = 1;
 /**
  * Create one bridge per extension tab.
  *
- * @param sessionId      the session the tab lives in — the only one it can reach
+ * @param sessionId      the session the tab lives in — the only one it can reach.
+ *                       `null` for a LAUNCHER tab: there is no session yet, so
+ *                       every session-scoped method refuses and `runTool` /
+ *                       `createSession` are what the tab has.
  * @param tabId          the tab's own id (setStatus/close act on it alone)
  * @param extension      the extension name (scopes runTool)
  * @param getWindow      () => the iframe's contentWindow (may be null before mount)
@@ -51,6 +54,10 @@ export function createExtBridge({
   getContext = () => ({}),
   getSessionState = () => getState().sessions.find((s) => s.id === sessionId)?.claude?.state || '',
   post,
+  // Called after createSession succeeds, with the created session record: the
+  // cockpit closes the launcher and opens it, the same handoff its own
+  // built-in modes do.
+  onCreated = () => {},
   api = defaultApi,
   subscribeWire = onWireEvent,
   onHello = () => {},
@@ -58,6 +65,16 @@ export function createExtBridge({
   const subs = new Set(); // event names/globs the tab asked for
   let unsubWire = null;
   let disposed = false;
+  // A launcher tab. Kept as a named condition rather than checked inline at
+  // each call site: the rule is one rule — no session, no session-scoped
+  // method — and the failure it prevents is silent and ugly (a request to
+  // `/sessions/null/message`, which the server answers 404 and the tab reports
+  // as "not found" to a human who did nothing wrong).
+  const sessionless = !sessionId;
+  const needsSession = (method) => {
+    if (!sessionless) return;
+    throw new Error(`${method} needs a session — this tab was opened from the launcher, before one exists`);
+  };
 
   const sendInit = () => {
     if (disposed) return;
@@ -83,6 +100,8 @@ export function createExtBridge({
     if (disposed || !subs.size) return;
     const ev = normalizeWireEvent(msg);
     if (!ev) return;
+    // A session-scoped event reaches a launcher tab never: it has no session to
+    // compare against, and "no session" must not read as "every session".
     if (ev.sessionId && ev.sessionId !== sessionId) return;
     let matched = false;
     for (const p of subs) {
@@ -105,6 +124,7 @@ export function createExtBridge({
 
     switch (method) {
       case 'sendPrompt': {
+        needsSession('sendPrompt');
         const text = String(args.text ?? '');
         const attachments = Array.isArray(args.attachments) && args.attachments.length ? args.attachments : null;
         if (!text.trim() && !attachments) throw new Error('text required');
@@ -146,12 +166,14 @@ export function createExtBridge({
         return r?.result;
       }
       case 'setStatus': {
+        needsSession('setStatus');
         const patch = {};
         for (const k of ['badge', 'color', 'title']) if (k in (args || {})) patch[k] = args[k];
         await api.patch(`/sessions/${sessionId}/tabs/${tabId}`, patch);
         return { ok: true };
       }
       case 'openArtifact': {
+        needsSession('openArtifact');
         const path = String(args.path || '');
         // Host-RELATIVE only, as the SDK promises. Without this an extension
         // with `session:tabs` could plant any external site in the cockpit.
@@ -176,12 +198,47 @@ export function createExtBridge({
         if (!subs.size) stopWire();
         return { ok: true };
       }
+      case 'createSession': {
+        // The launcher surface's whole reason to exist. Restricted TO it on
+        // purpose: from inside a session this would be a second, unaudited way
+        // to spawn agents that bypasses the launcher, the dispatch caps and
+        // every bit of provenance that comes with create_session. A tab that
+        // wants to spawn work from within a session has the MCP tool.
+        if (!sessionless)
+          throw new Error('createSession is for launcher tabs — inside a session, use the create_session tool');
+        const spec = (args && typeof args.spec === 'object' && args.spec) || {};
+        // An allowlist, not a spread: `spec` is whatever a sandboxed page sent,
+        // and POST /__api/sessions accepts orchestration fields (master, kind,
+        // subtask, worktree…) that would let a tab graft itself into someone
+        // else's dispatch tree.
+        const body = {};
+        for (const k of ['title', 'cwd', 'prompt', 'skill', 'agent', 'engine', 'model', 'effort'])
+          if (spec[k] != null && spec[k] !== '') body[k] = String(spec[k]);
+        if (spec.permissionMode) body.permissionMode = String(spec.permissionMode);
+        if (spec.metadata && typeof spec.metadata === 'object' && !Array.isArray(spec.metadata))
+          body.metadata = spec.metadata;
+        const s = await api.post('/sessions', body);
+        // Order matters: a deferred answer carries no `id` either, so the
+        // generic check below would swallow it and report "the host did not
+        // create a session" for something that is not a failure at all — the
+        // host is at the dispatch cap and the right move is to retry later.
+        if (s?.deferred) throw new Error(`the host deferred this: ${s.reason || 'at capacity'}`);
+        if (!s?.id) throw new Error(s?.error || 'the host did not create a session');
+        // The whole record, not just the id: the cockpit's own handoff
+        // (App.jsx onCreated) selects `session.id` and closes the launcher, and
+        // handing it the same shape its built-in modes do keeps one path.
+        onCreated(s);
+        return { id: s.id };
+      }
       default:
         throw new Error(`unknown method: ${method}`);
     }
   }
 
   async function closeTab() {
+    // Nothing to close: a launcher tab is not a tab record, it is a mode in the
+    // launcher. The human closes it by picking another mode.
+    if (sessionless) return;
     if (!hasPermission(getPermissions(), 'session:tabs')) return;
     try {
       await api.del(`/sessions/${sessionId}/tabs/${tabId}`);

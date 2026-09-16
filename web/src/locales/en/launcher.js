@@ -243,6 +243,8 @@ export const strings = {
   'launcher.header.fromTicket': 'From a ticket',
   'launcher.header.emptySession': 'Empty session',
   'launcher.header.fromTrigger': 'From trigger',
+  'launcher.ext.gone': 'This extension is no longer installed',
+  'launcher.ext.reload': 'Reload',
   'launcher.header.closeTitle': 'Close launcher (esc)',
 
   // first run

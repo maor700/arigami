@@ -41,7 +41,9 @@ import type { ListenerProvider, Hooks, ToolDef } from '@arigami/sdk';
 
   "tabs": [
     { "id": "picker", "title": "Pick features", "entry": "ui/index.html",
-      "icon": "list-check", "openFrom": ["tab-bar", "slash:/pick"] }
+      "icon": "list-check", "openFrom": ["tab-bar", "slash:/pick"] },
+    { "id": "from-pr", "title": "From PR", "entry": "ui/pr.html",
+      "openFrom": ["launcher"] }
   ],
 
   "listeners": [
@@ -233,6 +235,66 @@ is a short-lived capability for that one extension: write `href="style.css"`,
 is a public path and needs no token. Root-absolute references to your own mount
 (`src="/__ext/<name>/x.png"`) are rewritten for you; anything else absolute
 (`/__api/…`) is not reachable from a tab at all — that is what the bridge is for.
+
+### Launcher tabs — a creation flow that is not the core's
+
+`"openFrom": ["launcher"]` puts the tab in the **new-session launcher**, as a
+mode beside "From ticket", "Empty session" and "From trigger".
+
+This exists so that a creation flow belonging to a *role* does not have to
+become a mode in everybody's launcher. "Review a pull request" is a developer
+profile's; "open the on-call page" is an SRE's. Neither belongs in the core
+product, and both are the same shape — pick something from a system the host
+knows nothing about, then start a session about it.
+
+A launcher tab runs **before there is a session**, and that changes the
+contract:
+
+| | in a session tab | in a launcher tab |
+|---|---|---|
+| `ready().sessionId` | the session id | `null` |
+| `runTool` | works | works — it was never session-scoped |
+| `createSession` | refused | the point of the surface |
+| `sendPrompt`, `setStatus`, `openArtifact` | work | refused, with a message saying why |
+| `subscribe` | session events reach you | only events that carry no session |
+| `close()` | deletes the tab | no-op; the human picks another mode |
+
+```html
+<script src="/__ext-sdk.js"></script>
+<script>
+  const ctx = await arigami.ready();
+  if (ctx.sessionId === null) {
+    // launcher: list, let the human pick, then start.
+    const pulls = await arigami.runTool('list_pulls', { repo: 'acme/app' });
+    const { id } = await arigami.createSession({
+      title: 'Review acme/app#412',
+      prompt: 'Review this pull request…',
+      agent: 'code-review',
+      metadata: { pr: url, prNumber: 412, repo: 'acme/app' },
+    });
+  }
+</script>
+```
+
+`createSession` needs the **`host:create-session`** permission. It is the
+strongest grant in the system and is in the `host:` namespace for that reason:
+every other permission scopes a tab to the one session it already lives in,
+this one spawns a new agent process with whatever `permissionMode` it asks for.
+An extension whose manifest claims the launcher surface without requesting it
+gets a warning from `bin/host ext validate`, and the cockpit does not offer its
+mode at all — a mode that can list and pick but not start is worse than an
+absent one, because the human only finds out at the last click.
+
+`createSession` accepts `title`, `cwd`, `prompt`, `skill`, `agent`, `engine`,
+`model`, `effort`, `permissionMode` and `metadata`. It is an allowlist, not a
+pass-through: the orchestration fields `POST /__api/sessions` also understands
+(`master`, `kind`, `subtask`, `worktree`…) are dropped, so a tab cannot graft
+its session into somebody else's dispatch tree.
+
+`agent` is usually what you want. A session born from an agent inherits its
+persona, skills, engine, model, memory namespace and rail colour — which is how
+a role-specific launcher mode stays thin: the extension finds the work, the
+agent knows how to do it.
 
 ### Sandboxed vs trusted
 
