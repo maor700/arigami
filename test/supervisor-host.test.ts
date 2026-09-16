@@ -177,6 +177,11 @@ process.stdin.on('end',()=>{
       ARIGAMI_CLAUDE_BIN: stub,
       ARIGAMI_CODEX_BIN: codexStub,
       ARIGAMI_CODEX_HOME: codexHome,
+      // The stub above speaks `codex exec --json` (one process per turn, prompt
+      // on stdin) — cfg.codexTransport defaults to 'app-server' (a long-lived
+      // JSON-RPC process, docs/ENGINES.md), which this fixture has no idea how
+      // to answer and would just sit there past every timeout below.
+      ARIGAMI_CODEX_TRANSPORT: 'exec',
       ARIGAMI_WA_DATA_DIR: path.join(dir, 'wa'),
       ARIGAMI_TELEMETRY: '0',
       ARIGAMI_DEFAULT_CWD: ws,
