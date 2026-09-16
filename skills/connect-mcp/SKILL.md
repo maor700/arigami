@@ -89,7 +89,7 @@ its own. You never choose it — the host returns it as `name`.
 8. Summary line; then **continue the original task** — the tool that returned
    `needs_setup` can be called again from a session started after the connect.
 
-Codex's loopback callback is `127.0.0.1:<port>/callback/<id>?code=…`; the `paste` action forwards it to that listener.
+Codex's loopback callback is `localhost:<port>/callback/<id>?code=…`; the `paste` action forwards it to that listener.
 
 ## GitHub (and any other token-based row)
 `mcp:github` is `auth: 'bearer'` — no browser, no consent, no callback.
