@@ -93,25 +93,140 @@ const REMOTE_COLORS: [&str; 4] = ["#7DD3FC", "#C4B5FD", "#86EFAC", "#FCA5A5"];
 // for ports", and bin/host encodes the same rule (`[ "$DIR" != "$HOME/.arigami" ]
 // && PORT=4099`). We follow it rather than inventing a number.
 //
-// Deliberately NOT auto-probing for a free port: launching the app twice
-// would then start a SECOND host sharing ~/.arigami-desktop on some other
-// port — precisely the unsupported shared-state case above. A fixed port tied
-// to a fixed dir means the second launch is refused, which is correct.
+// Auto-probing for a free port used to be ruled out here, and the reasoning
+// was right at the time: launching the app twice would start a SECOND host
+// sharing ~/.arigami-desktop on some other port — the unsupported shared-state
+// case above, which judgeHostInfo() only WARNS about once the ports differ.
+// A fixed port was what made the second launch refuse.
 //
-// Both are overridable by env for anyone who wants a different layout.
+// The single-instance plugin (see main()) now refuses the second launch
+// directly, on the dir rather than on the port, so that argument no longer
+// applies and the fixed port only costs us: a foreign process holding :4099 —
+// another app, a stale host from a crashed session — left this one unable to
+// start at all, with a 60s wait and a generic error page. So :4099 stays the
+// PREFERRED port, and a fallback range exists for when it is taken.
+//
+// All three are overridable by env for anyone who wants a different layout.
 const DEFAULT_PORT: u16 = 4099;
 const DESKTOP_DIR_NAME: &str = ".arigami-desktop";
+/// Fallback range, scanned in order when DEFAULT_PORT is taken.
+/// `ARIGAMI_DESKTOP_PORT_RANGE=3300-4000` overrides it.
+const PORT_RANGE: (u16, u16) = (3300, 4000);
 
-/// The port this app's sidecar binds and this window points at. `ARIGAMI_PORT`
-/// wins; otherwise DEFAULT_PORT. Resolved once — env can't change under us.
+static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Parse `ARIGAMI_DESKTOP_PORT_RANGE` ("low-high"), falling back to PORT_RANGE.
+/// A reversed or unparseable value is ignored rather than fatal: a typo in an
+/// env var must not stop the app from starting.
+fn port_range() -> (u16, u16) {
+    std::env::var("ARIGAMI_DESKTOP_PORT_RANGE")
+        .ok()
+        .and_then(|v| {
+            let (a, b) = v.trim().split_once('-')?;
+            let lo: u16 = a.trim().parse().ok()?;
+            let hi: u16 = b.trim().parse().ok()?;
+            if lo == 0 || hi < lo { None } else { Some((lo, hi)) }
+        })
+        .unwrap_or(PORT_RANGE)
+}
+
+/// Is something already serving this port?
+///
+/// Probed with connect(), NOT by trying to bind. Binding is the obvious test
+/// and it is wrong here: a listener on the IPv6 wildcard `[::]` does not stop
+/// a bind to `127.0.0.1`, so the bind test called an occupied port free and
+/// the sidecar was handed a port it could not have. Both families are checked
+/// because the reverse is equally true.
+fn port_occupied(port: u16) -> bool {
+    let t = Duration::from_millis(120);
+    ["127.0.0.1", "[::1]"].iter().any(|h| {
+        format!("{h}:{port}")
+            .parse::<SocketAddr>()
+            .map(|a| TcpStream::connect_timeout(&a, t).is_ok())
+            .unwrap_or(false)
+    })
+}
+
+/// Where the chosen port is remembered, inside this instance's own dir.
+fn port_memo_path(app: &AppHandle) -> PathBuf {
+    arigami_dir(app).join("run").join("desktop-port")
+}
+
+/// Resolve the port ONCE, at startup, while the AppHandle is available.
+///
+/// Order: an explicit `ARIGAMI_PORT` (a pin — honoured even if occupied, so a
+/// deliberate override still produces the sidecar's own clear bind error
+/// rather than being silently moved), then the port we used last time, then
+/// DEFAULT_PORT, then the fallback range.
+///
+/// The memo is the reason the last-used port outranks DEFAULT_PORT. The auth
+/// cookie is per ORIGIN, so a port that moves between launches is a silent
+/// sign-out. Once this app has fallen back to, say, :3417 it stays there even
+/// after :4099 frees up — stability beats tidiness for something the user
+/// never sees.
+fn init_port(app: &AppHandle) {
+    if let Some(p) = std::env::var("ARIGAMI_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+    {
+        let _ = PORT.set(p);
+        return;
+    }
+    let memo = std::fs::read_to_string(port_memo_path(app))
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0);
+
+    let (lo, hi) = port_range();
+    let chosen = memo
+        .into_iter()
+        .chain(std::iter::once(DEFAULT_PORT))
+        .chain(lo..=hi)
+        .find(|p| !port_occupied(*p))
+        // Everything taken: hand back DEFAULT_PORT and let the sidecar fail
+        // with its own message. Inventing a port we know is busy is no worse,
+        // and a None here would mean a second error path to maintain.
+        .unwrap_or(DEFAULT_PORT);
+
+    let memo_path = port_memo_path(app);
+    if let Some(d) = memo_path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(&memo_path, chosen.to_string());
+    let _ = PORT.set(chosen);
+}
+
+/// The port this app's sidecar binds and this window points at. init_port()
+/// sets it in setup(); the fallback keeps this total for any caller that
+/// somehow runs first.
 fn arigami_port() -> u16 {
-    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
     *PORT.get_or_init(|| {
         std::env::var("ARIGAMI_PORT")
             .ok()
             .and_then(|v| v.trim().parse::<u16>().ok())
             .filter(|p| *p != 0)
             .unwrap_or(DEFAULT_PORT)
+    })
+}
+
+/// This launch's identity, handed to the sidecar as ARIGAMI_INSTANCE_ID and
+/// checked back out of /__api/config before a window is pointed at it.
+///
+/// Without it "the local server is ready" means only "something answered on
+/// the port", and something else answering is not hypothetical: with a
+/// fallback range in play the window could attach to an unrelated Arigami —
+/// another copy, a `bin/host` from a checkout — and then show that host's
+/// sessions as if they were this machine's. Not a secret and not a credential:
+/// it is only ever compared against the value this process generated.
+fn instance_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{:x}-{:x}", std::process::id(), t)
     })
 }
 
@@ -361,6 +476,7 @@ fn spawn_server(app: &AppHandle) -> std::io::Result<Child> {
     let _ = std::fs::create_dir_all(&dir);
     cmd.env("ARIGAMI_SUPERVISOR", SUPERVISOR_ENV_VALUE)
         .env("ARIGAMI_PORT", arigami_port().to_string())
+        .env("ARIGAMI_INSTANCE_ID", instance_id())
         .env("ARIGAMI_DIR", &dir)
         .stdin(Stdio::null())
         .stdout(open_log_file(app))
@@ -839,6 +955,27 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
     }
 }
 
+/// Ready AND ours: `/__api/config` answers 200 and reports the instance id
+/// this process generated. The route is public, so no cookie is needed.
+///
+/// A missing `instanceId` counts as not-ours. That is deliberate and it is
+/// only safe because the sidecar is bundled inside this same app, so it can
+/// never be an older build that does not echo the field — a server and a shell
+/// from different versions cannot meet here.
+fn local_is_ours(origin: &str) -> bool {
+    let Ok(u) = url::Url::parse(origin) else { return false };
+    let Some(host) = u.host_str().map(|h| h.to_string()) else { return false };
+    let port = u.port().unwrap_or(80);
+    let Some(addr) = resolve_addr(&host, port) else { return false };
+    let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(1000)) else {
+        return false;
+    };
+    let Some((code, body)) = http_get(stream, &host, port, "/__api/config") else {
+        return false;
+    };
+    code == 200 && body.contains(&format!("\"instanceId\":\"{}\"", instance_id()))
+}
+
 fn wait_local_ready(shell: &Arc<Shell>, origin: &str, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -848,14 +985,18 @@ fn wait_local_ready(shell: &Arc<Shell>, origin: &str, timeout: Duration) -> Resu
         // A port that answers is NOT proof that it is ours, and this is the
         // one place where getting that wrong is dangerous: navigating hands
         // the host a handoff token minted with OUR per-run secret, so a
-        // foreign Arigami on :4099 answers with "Sign-in failed". The
-        // supervisor's pre-flight catches the case too, but it cannot win the
-        // race — this thread starts before run_supervisor is even spawned at
-        // boot, and go_to_machine clears the block on every switch back to
-        // "this computer". `local_pid` is the fact that settles it: it is Some
-        // only while the supervisor holds a child of its own.
+        // foreign Arigami on this port answers with "Sign-in failed".
+        //
+        // `local_pid` is a cheap pre-check — Some only while the supervisor
+        // holds a child — but it is a proxy, not proof, and it cannot settle
+        // the race on its own: the supervisor's child can be alive and yet
+        // have lost the bind (hostlock refuses, it is on its way out) while a
+        // foreign Arigami holds the port and answers every probe. Then the
+        // proxy says "ours" about somebody else's host. local_is_ours() asks
+        // the server directly instead, and only the sidecar this process
+        // spawned knows the id.
         let ours = shell.local_pid.lock().unwrap().is_some();
-        if ours && probe(origin, true).is_ok() {
+        if ours && local_is_ours(origin) {
             return Ok(());
         }
         if Instant::now() > deadline {
@@ -1713,6 +1854,19 @@ fn handle_menu(app: &AppHandle, id: &str) {
 
 fn main() {
     tauri::Builder::default()
+        // Refuse a second copy of the app, and raise the one already running
+        // instead. This is what makes the fallback port range safe: two shells
+        // sharing ~/.arigami-desktop on two different ports is the state
+        // corruption judgeHostInfo() warns about but does not prevent (it only
+        // refuses when the DIR *and* the port match). With the second launch
+        // stopped here, there is never a second sidecar to give a port to.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             shell_status,
@@ -1727,6 +1881,9 @@ fn main() {
         .on_menu_event(|app, event| handle_menu(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
+            // Before anything reads arigami_port(): local_machine() bakes the
+            // port into the origin, and that origin is the window's identity.
+            init_port(&handle);
 
             let cfg_path = handle
                 .path()
@@ -1831,6 +1988,53 @@ fn main() {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    #[test]
+    fn port_range_parses_and_rejects_nonsense() {
+        // No env set: the compiled-in default.
+        assert_eq!(port_range(), PORT_RANGE);
+
+        // The parser is the part worth testing; drive it directly rather than
+        // mutating process env, which is shared by every test in this binary.
+        let parse = |v: &str| -> Option<(u16, u16)> {
+            let (a, b) = v.trim().split_once('-')?;
+            let lo: u16 = a.trim().parse().ok()?;
+            let hi: u16 = b.trim().parse().ok()?;
+            if lo == 0 || hi < lo { None } else { Some((lo, hi)) }
+        };
+        assert_eq!(parse("3300-4000"), Some((3300, 4000)));
+        assert_eq!(parse(" 3300 - 4000 "), Some((3300, 4000)));
+        assert_eq!(parse("4000-3300"), None, "reversed range is ignored");
+        assert_eq!(parse("0-4000"), None, "port 0 is ignored");
+        assert_eq!(parse("3300"), None, "missing separator is ignored");
+        assert_eq!(parse("abc-def"), None);
+    }
+
+    #[test]
+    fn port_occupied_sees_a_live_listener_and_not_a_dead_one() {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        assert!(port_occupied(port), "a bound port must read as occupied");
+        drop(l);
+        assert!(!port_occupied(port), "a released port must read as free");
+    }
+
+    #[test]
+    fn local_is_ours_only_accepts_our_own_instance_id() {
+        // Right shape, wrong id — a foreign Arigami on the port.
+        let origin = serve_once("200 OK", "{\"version\":\"1\",\"instanceId\":\"somebody-else\"}");
+        assert!(!local_is_ours(&origin));
+
+        // No instanceId at all — a plain `bin/host start`.
+        let origin = serve_once("200 OK", "{\"version\":\"1\",\"authMode\":\"pair\"}");
+        assert!(!local_is_ours(&origin));
+
+        // Our own sidecar.
+        let body: &'static str =
+            Box::leak(format!("{{\"version\":\"1\",\"instanceId\":\"{}\"}}", instance_id()).into_boxed_str());
+        let origin = serve_once("200 OK", body);
+        assert!(local_is_ours(&origin));
+    }
 
     /// One-shot HTTP server on a free port; returns its origin.
     fn serve_once(status: &'static str, body: &'static str) -> String {

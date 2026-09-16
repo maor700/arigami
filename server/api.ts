@@ -3384,7 +3384,21 @@ export async function handle(
     if (p === '/__api/config' && m === 'GET') {
       // Anonymous callers (login screen, bin/host health) get the minimum the
       // Login screen needs — never the full config.
-      if (!(req as any).auth) return json(res, { version: VERSION, ...auth.publicInfo() });
+      //
+      // `instanceId` echoes ARIGAMI_INSTANCE_ID when a launcher set it (the
+      // desktop shell does). It lets that launcher tell "my own sidecar
+      // answered" apart from "something answered on the port I picked", which
+      // is otherwise indistinguishable and would let the window attach to an
+      // unrelated host. Not a credential and never accepted as one: it is only
+      // ever compared by the process that generated it, so exposing it on this
+      // deliberately-public route gives an attacker nothing. Absent unless the
+      // env var is set, so a plain `bin/host start` answers as before.
+      if (!(req as any).auth)
+        return json(res, {
+          version: VERSION,
+          ...(process.env.ARIGAMI_INSTANCE_ID ? { instanceId: process.env.ARIGAMI_INSTANCE_ID } : {}),
+          ...auth.publicInfo(),
+        });
       const { groqApiKey, composioApiKey, screen, auth: authCfg, ...pub } = cfg as any;
       const { vncPassword, ...screenPub } = screen || {};
       const { clientSecret, ...oidcPub } = authCfg?.oidc || {};

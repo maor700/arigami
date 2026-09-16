@@ -13,6 +13,7 @@ tauri-build = { version = "2", features = [] }
 # TrayIconBuilder/menu APIs main.rs uses.
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
 url = "2"
 # The machine list (name + origin per machine, plus the last one used) is a
 # small JSON file in the app's config dir; serde_json also builds the status

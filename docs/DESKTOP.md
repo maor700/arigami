@@ -281,10 +281,44 @@ macOS-specific list.
    NOT terminate on quit a host it did not start). That alternative is not
    implemented.
 
-   Deliberately **not** auto-probing for a free port: launching the app twice
-   would then start a second host sharing `~/.arigami-desktop` on some other
-   port — exactly the unsupported shared-state case above. A fixed port tied
-   to a fixed dir makes the second launch refuse, which is correct.
+   **:4099 is the preferred port, with a fallback range behind it.** This
+   used to be a single fixed port, and the reasoning was sound at the time:
+   auto-probing would let a second launch start a second host sharing
+   `~/.arigami-desktop` on another port — the unsupported shared-state case
+   above, which `judgeHostInfo()` only *warns* about once the ports differ.
+   The fixed port was what made the second launch refuse.
+
+   `tauri-plugin-single-instance` now refuses the second launch outright (it
+   raises the running window instead), so that job no longer belongs to the
+   port — and a fixed port only costs us: a foreign process holding :4099, an
+   unrelated app or a stale host from a crashed session, left this one unable
+   to start at all. So the order is now: an explicit `ARIGAMI_PORT` (a pin,
+   honoured even if occupied, so a deliberate override still produces the
+   sidecar's own bind error rather than being silently moved), then the port
+   this app used last time, then :4099, then the first free port in
+   **3300–4000** (`ARIGAMI_DESKTOP_PORT_RANGE=low-high` to change it).
+
+   The last-used port outranks :4099 on purpose. The auth cookie is per
+   ORIGIN, so a port that moves between launches is a silent sign-out; once
+   this app has fallen back to, say, :3417 it stays there even after :4099
+   frees up. The choice is remembered in
+   `<ARIGAMI_DIR>/run/desktop-port`.
+
+   Occupancy is probed with `connect()`, not by trying to `bind()`. The bind
+   test is the obvious one and it is wrong here: a listener on the IPv6
+   wildcard `[::]` does not stop a bind to `127.0.0.1`, so it reported an
+   occupied port as free and handed the sidecar a port it could never have.
+   Both families are checked.
+
+   **"The port answered" is not "the port is ours."** The window is only
+   pointed at the local machine once `/__api/config` reports back the
+   `ARIGAMI_INSTANCE_ID` this process generated and handed its own sidecar
+   (`local_is_ours()`). `local_pid` being `Some` was the earlier signal and it
+   is a proxy, not proof: the supervisor's child can be alive and yet have
+   lost the bind — hostlock refused, it is on its way out — while a foreign
+   Arigami holds the port and answers every probe. The id is not a
+   credential; it is only ever compared against the value this process
+   generated, which is why echoing it on a public route costs nothing.
 
    That refusal has to be detected BEFORE the first spawn, and
    `run_supervisor()` now does exactly that: if `config_endpoint_ready()`
@@ -980,9 +1014,13 @@ does leave the sidecar behind.
   codebase; it just isn't applied in `main.rs`. Not implemented.
 - **Port collisions are handled now.** The default moved to :4099 with its
   own `~/.arigami-desktop` (decision #5), so the common collision — a
-  `bin/host` on :3099 — cannot happen at all any more; what follows is about
-  a collision on our *own* port, which a second copy of the app still causes
-  by design. This was not a hypothetical: a user
+  `bin/host` on :3099 — cannot happen at all any more, and a foreign process
+  on :4099 itself now falls back to the 3300–4000 range rather than blocking
+  the boot. A second copy of the app no longer reaches this code at all: the
+  single-instance plugin stops it before it can spawn anything. What follows
+  is the history of how that was handled before those two, and it still
+  describes the supervisor's behaviour on any collision that survives them.
+  This was not a hypothetical: a user
   launched the Windows build while a `bin/host` already owned :3099 and got a
   **new console window twice a second, without end**. Two defects combined,
   and both are fixed:

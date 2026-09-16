@@ -4,7 +4,7 @@ import path from 'node:path';
 // read below — and, since nearly everything imports config, it also covers the
 // entrypoints (tests, the MCP server) that don't go through server/index.ts.
 import { HOME } from './platform.js';
-import { ARIGAMI_DIR, DEFAULT_ARIGAMI_DIR, IS_DEFAULT_INSTANCE, PORT_SHIFT } from './instance.js';
+import { ARIGAMI_DIR, AT_DEFAULT_DIR, DEFAULT_ARIGAMI_DIR, IS_DEFAULT_INSTANCE, PORT_SHIFT } from './instance.js';
 import { migrateFile, stamp, SchemaVersionError } from './schema-version.js';
 import { CONFIG_SCHEMA } from './state-schemas.js';
 export const tilde = (p: string | undefined): string => {
@@ -17,7 +17,12 @@ export const tilde = (p: string | undefined): string => {
 // also shifts every default port range (+1000) so a second instance started
 // with no config at all doesn't fight the first one for ports.
 const CONFIG_DIR = ARIGAMI_DIR;
-const DEFAULT_DIR_TOKEN = IS_DEFAULT_INSTANCE ? '~/.arigami' : ARIGAMI_DIR;
+// AT_DEFAULT_DIR, not IS_DEFAULT_INSTANCE: this token becomes a real path
+// (stateFile, chatDir…), and under a test runner ARIGAMI_DIR is redirected to
+// a temp dir while IS_DEFAULT_INSTANCE deliberately stays true so port/display
+// offsets don't shift. Using the instance flag here sent every unisolated test
+// straight into the developer's live ~/.arigami/state.json.
+const DEFAULT_DIR_TOKEN = AT_DEFAULT_DIR ? '~/.arigami' : ARIGAMI_DIR;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const range = (a: number, b: number): number[] =>

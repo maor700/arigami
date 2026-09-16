@@ -32,6 +32,9 @@ test('startEmptySession and startTicketSession carry the engine onto the session
     `
     const api = await import('./server/api.js');
     const state = await import('./server/state.js');
+    const claude = await import('./server/claude.js');
+    const err = (id) =>
+      (claude.getChat(id).find((e) => e.kind === 'error') || {}).text || '';
     const empty = api.startEmptySession({ title: 'e', engine: 'codex' });
     const ticket = api.startTicketSession({ ticket: 'ENG-1', engine: 'codex' });
     const claudeOne = api.startEmptySession({ title: 'c' });
@@ -43,6 +46,8 @@ test('startEmptySession and startTicketSession carry the engine onto the session
       // the unimplemented engine fails LOUDLY at spawn instead of running claude
       emptyState: state.getSession(empty.id).claude.state,
       claudeState: state.getSession(claudeOne.id).claude.state,
+      emptyError: err(empty.id),
+      claudeError: err(claudeOne.id),
     });
     `,
     sandbox()
@@ -55,7 +60,19 @@ test('startEmptySession and startTicketSession carry the engine onto the session
   // pickEngine() throws for codex until its driver is registered — spawnSafe
   // records that as a dead session rather than falling back to claude.
   expect(o.emptyState).toBe('dead');
-  expect(o.claudeState).not.toBe('dead');
+  expect(o.emptyError).toContain('engine not implemented');
+
+  // Claude is dead here too, and deliberately NOT for an engine reason: this
+  // sandbox has no <ARIGAMI_DIR>/workspace, and spawnProc() refuses to start
+  // an engine whose cwd is missing rather than letting posix_spawn fail with
+  // an ENOENT that names the BINARY. Asserting on the REASON is what keeps the
+  // control meaningful — asserting `!== 'dead'` only ever passed because the
+  // spawn happened to fail late and asynchronously, which is not something
+  // this file should depend on. Creating the directory is not the fix: the
+  // spawn then succeeds, and a supervised child keeps the test process alive
+  // to its timeout.
+  expect(o.claudeError).not.toContain('engine not implemented');
+  expect(o.claudeError).toContain('folder does not exist');
 });
 
 test('the pending queue remembers the engine, and startPending hands it back', () => {
