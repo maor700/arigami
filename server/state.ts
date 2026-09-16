@@ -13,8 +13,13 @@ import * as funnel from './funnel.js';
 
 export { cfg, ensureConfigFile };
 
-export const STATE_FILE =
-  process.env.ARIGAMI_STATE_FILE || cfg.stateFile;
+// A function, not a module-load-time const: `bun test` runs every file in one
+// process, so whichever file imports this module first would otherwise freeze
+// this path for the whole run — see test/_isolate.js's header for the class of
+// bug that causes. Re-reading the env on every call costs nothing (env is
+// static for the lifetime of a real process) and makes each test's own
+// ARIGAMI_STATE_FILE win regardless of import order.
+const stateFile = (): string => process.env.ARIGAMI_STATE_FILE || cfg.stateFile;
 export const CHAT_DIR =
   process.env.ARIGAMI_CHAT_DIR || cfg.chatDir;
 
@@ -329,7 +334,7 @@ function load(): void {
   // Forward-migrate before the first read. A file already at the current
   // version is not touched; anything older is backed up next to itself first.
   try {
-    migrateFile(STATE_FILE, STATE_SCHEMA);
+    migrateFile(stateFile(), STATE_SCHEMA);
   } catch (e) {
     if (e instanceof SchemaVersionError) {
       refusedTooNew = true;
@@ -338,7 +343,7 @@ function load(): void {
     throw e; // fatal: better to stop than to boot with an empty session list
   }
   try {
-    const j = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as {
+    const j = JSON.parse(fs.readFileSync(stateFile(), 'utf8')) as {
       colorIndex?: number;
       sessions?: Session[];
       listeners?: Listener[];
@@ -403,9 +408,9 @@ export function flushState(): void {
   // one a full import just put there (see freezeState).
   if (refusedTooNew || dirSwapped) return;
   try {
-    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+    fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
     fs.writeFileSync(
-      STATE_FILE,
+      stateFile(),
       JSON.stringify(
         stamp({
           colorIndex: db.colorIndex,
