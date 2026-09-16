@@ -111,7 +111,20 @@
       $('prompt').addEventListener('input', () => { promptEdited = true; });
 
       let ctx = null;
-      let selected = null; // {url, slug, number}
+
+      // runTool hands back the MCP tool result verbatim: an array of content
+      // blocks, `[{type:'text', text:'<json>'}]`, not the object the tool
+      // returned. Verified live — the shape is easy to get wrong precisely
+      // because it looks like it should be the value, and the failure is silent
+      // (an empty list and no error). Unwrap once, here.
+      async function callTool(name, args) {
+        const r = await arigami.runTool(name, args || {});
+        if (Array.isArray(r)) {
+          const text = r.map((b) => (b && b.type === 'text' ? b.text : '')).join('');
+          try { return JSON.parse(text); } catch { return { error: text || 'the tool returned nothing readable' }; }
+        }
+        return r || {};
+      }
 
       function parseRef(s) {
         s = String(s || '').trim();
@@ -149,7 +162,7 @@
       $('mode').addEventListener('change', refreshPrompt);
 
       async function loadRepos() {
-        const r = await arigami.runTool('pr_list_repos', {});
+        const r = await callTool('pr_list_repos', {});
         const sel = $('repo');
         sel.innerHTML = '';
         const repos = (r && r.repos) || [];
@@ -171,7 +184,7 @@
         if (!repo) return;
         $('pullsNote').textContent = 'Loading pull requests…';
         $('pulls').hidden = true;
-        const r = await arigami.runTool('pr_list_pulls', {
+        const r = await callTool('pr_list_pulls', {
           repo,
           state: $('state').value,
           author: $('author').value.trim() || undefined,

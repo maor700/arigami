@@ -920,12 +920,39 @@ export async function pollMtimes(): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 /** The MCP server entries one extension contributes (see the naming note in docs). */
-function serversFor(e: ExtEntry): Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }> {
+// Resolved lazily and NOT at module load: config.ts and auth.ts both import
+// their way back here, so a top-level import would close the cycle.
+//
+// No fallback literal on purpose. cfg.hostBase is always set (config.ts derives
+// it from bind+port), so a hardcoded default here would be dead code that can
+// only ever be wrong — and being wrong is the exact bug this function exists to
+// fix. If it cannot be resolved, the key is left unset and mcp/ext-mcp.js's own
+// documented default applies.
+function hostBaseUrl(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('./lib/config.js').cfg?.hostBase || '';
+  } catch {
+    return '';
+  }
+}
+
+function hostApiToken(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('./auth.js').auth?.hostToken || '';
+  } catch {
+    return '';
+  }
+}
+
+function serversFor(e: ExtEntry, hostAuth = false): Record<string, { command: string; args: string[]; cwd: string; env: Record<string, string> }> {
   const out: Record<string, any> = {};
   const m = e.manifest;
   if (!m) return out;
   const tools = (m.tools || []) as ManifestTool[];
   const st = readState();
+  const hostBase = hostBaseUrl();
   const settings = settingsFor(m, st);
   const secrets = st.secrets[e.name] || {};
   for (const t of tools) {
@@ -936,6 +963,24 @@ function serversFor(e: ExtEntry): Record<string, { command: string; args: string
       EXT_DIR: e.dir,
       EXT_NAME: e.name,
       EXT_SETTINGS: JSON.stringify(settings),
+      // `ctx.host.api` (mcp/ext-mcp.js) reads these two, and until they were
+      // set here it only worked by accident: a tool server launched inside a
+      // SESSION inherits ARIGAMI_URL/ARIGAMI_TOKEN from the session's env
+      // (server/claude.js), but the same server launched by callExtTool — the
+      // path a TAB takes — inherited neither, fell back to the hardcoded
+      // default port in mcp/ext-mcp.js, and quietly talked to whatever else
+      // was listening there. Found by running a tab on an isolated instance on
+      // another port: its write went to a completely different host, which
+      // answered "no such session".
+      //
+      ...(hostBase ? { ARIGAMI_URL: hostBase } : {}),
+      // The TOKEN is deliberately NOT set here. On the session path this env
+      // rides into `--mcp-config` and the server inherits the session's own
+      // ARIGAMI_TOKEN, which is scoped to that one session; putting the host
+      // token here would override it and silently widen every in-session
+      // extension tool to full host scope. Only callExtTool — the tab path,
+      // where there is no session to be scoped to — adds it.
+      ...(hostAuth ? { ARIGAMI_TOKEN: hostApiToken() } : {}),
     };
     for (const [k, v] of Object.entries(t.env || {})) env[k] = String(v).replaceAll('${EXT_DIR}', e.dir);
     // Secrets ride as env and are NEVER logged or returned by the REST view.
@@ -1412,7 +1457,11 @@ export function toolPermitted(ext: string, tool: string): boolean {
 export async function callExtTool(ext: string, tool: string, args: Record<string, unknown>): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
   const e = extensions.get(ext);
   if (!e || e.state !== 'loaded') return { ok: false, error: `extension "${ext}" is not loaded` };
-  const servers = serversFor(e);
+  // hostAuth: a tab call has no session, so `ctx.host.api` authenticates with
+  // the per-boot host token. An extension's server code already runs with the
+  // host's privileges by design (docs/EXTENSIONS.md §7) — this only lets it use
+  // the REST API it is documented to have.
+  const servers = serversFor(e, true);
   const keys = Object.keys(servers);
   if (!keys.length) return { ok: false, error: `extension "${ext}" declares no tools` };
   try {

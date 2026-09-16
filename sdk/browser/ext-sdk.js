@@ -30,7 +30,12 @@
 //     'now' writes mid-turn; 'queue' only queues (waits for ▶). An omitted mode
 //     used to mean 'queue'; a page that passes 'queue' explicitly is unchanged.
 //   runTool      { name, args }                              → tool result
-//     needs permission `tools:<name>`
+//     needs permission `tools:<name>`. NOT session-scoped, so it is the one
+//     data path a LAUNCHER tab has. Returns the MCP result verbatim — content
+//     blocks, `[{type:'text',text:'<json>'}]`, not the object the tool returned.
+//   createSession { spec }                                   → {id}
+//     needs permission `host:create-session`. LAUNCHER tabs only (ready()
+//     resolves with sessionId:null there); refused from inside a session.
 //   setStatus    { badge?, color?, title? }                  → {ok:true}
 //     needs permission `session:tabs`
 //   openArtifact { path, title? }                            → {ok:true}
@@ -161,6 +166,14 @@
     /** Run a tool this extension declared (`tools:<name>` in manifest permissions). */
     runTool: function (name, args) {
       return call('runTool', { name: String(name || ''), args: args || {} });
+    },
+
+    /**
+     * Create a session and hand the human over to it. Launcher tabs only
+     * (`ready().sessionId === null`), and only with `host:create-session`.
+     */
+    createSession: function (spec) {
+      return call('createSession', { spec: spec || {} });
     },
 
     /** Badge / colour / title on THIS tab. */

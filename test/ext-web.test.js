@@ -336,6 +336,25 @@ test('extLauncherItems: only launcher tabs, only with the permission', () => {
   expect(ext.extLauncherItems([mk({ tabs, permissions: ['host:create-session'], enabled: false })])).toEqual([]);
 });
 
+test('the browser SDK exposes every method the bridge implements', async () => {
+  // The gap this closes, found by actually clicking the button and not by any
+  // of the tests above: `createSession` was added to the bridge (the shell half)
+  // and to the types, and NOT to sdk/browser/ext-sdk.js — the file that defines
+  // `window.arigami`. Every test here drives the bridge directly, so all of them
+  // passed while the page itself got "arigami.createSession is not a function".
+  const fs = await import('node:fs');
+  const bridgeSrc = fs.readFileSync(path.join(ROOT, 'web/src/lib/ext-bridge.js'), 'utf8');
+  const shimSrc = fs.readFileSync(path.join(ROOT, 'sdk/browser/ext-sdk.js'), 'utf8');
+
+  const handled = [...bridgeSrc.matchAll(/^\s*case '([a-zA-Z]+)':/gm)].map((m) => m[1]);
+  // `unsubscribe` rides on the object subscribe() returns, not as its own
+  // method; everything else is called by name from a page.
+  const expected = [...new Set(handled)].filter((m) => m !== 'unsubscribe');
+  expect(expected.length).toBeGreaterThan(4);
+  for (const m of expected)
+    expect(shimSrc).toContain(`${m}: function`);
+});
+
 test('permissionsFor: createSession asks for host:create-session', () => {
   expect(ext.permissionsFor('createSession')).toEqual(['host:create-session']);
 });

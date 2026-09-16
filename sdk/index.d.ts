@@ -307,6 +307,13 @@ export interface TabContext {
   permissions: string[];
 }
 
+/** One block of an MCP tool result, as `runTool` hands it back. */
+export interface ToolResultBlock {
+  type: string;
+  text?: string;
+  [k: string]: unknown;
+}
+
 export interface ArigamiSdk {
   ready(): Promise<TabContext>;
   /**
@@ -314,7 +321,17 @@ export interface ArigamiSdk {
    * queued with auto-play. 'now' writes mid-turn; 'queue' only queues.
    */
   sendPrompt(text: string, opts?: { mode?: 'auto' | 'now' | 'queue'; attachments?: unknown[] }): Promise<{ delivered: 'now' | 'queued' }>;
-  runTool(name: string, args?: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Call one of this extension's own tools. NOT session-scoped — it is the one
+   * data path a launcher tab has.
+   *
+   * What comes back is the MCP tool result VERBATIM: an array of content
+   * blocks, `[{type:'text', text:'<json>'}]` — not the object your `run()`
+   * returned. Unwrap it (`JSON.parse` the joined `text`). Getting this wrong
+   * fails silently: `result.rows` on an array is `undefined`, so the tab shows
+   * an empty list and no error at all.
+   */
+  runTool(name: string, args?: Record<string, unknown>): Promise<ToolResultBlock[] | unknown>;
   setStatus(opts: { badge?: string; color?: string; title?: string }): Promise<void>;
   openArtifact(path: string, opts?: { title?: string }): Promise<void>;
   subscribe(events: string[], cb: (ev: any) => void): () => void;

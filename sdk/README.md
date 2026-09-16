@@ -265,7 +265,10 @@ contract:
   const ctx = await arigami.ready();
   if (ctx.sessionId === null) {
     // launcher: list, let the human pick, then start.
-    const pulls = await arigami.runTool('list_pulls', { repo: 'acme/app' });
+    // runTool returns the MCP result VERBATIM — content blocks, not your
+    // object. Unwrap it, or you get `undefined` and no error to explain it.
+    const blocks = await arigami.runTool('list_pulls', { repo: 'acme/app' });
+    const { pulls } = JSON.parse(blocks.map((b) => b.text || '').join(''));
     const { id } = await arigami.createSession({
       title: 'Review acme/app#412',
       prompt: 'Review this pull request…',
