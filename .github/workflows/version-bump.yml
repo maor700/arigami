@@ -154,6 +154,22 @@ jobs:
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f also_latest=true
           echo "::notice::dispatched release.yml for $TAG"
 
+      # The desktop installers are opt-in per automated release: a four-target
+      # Tauri matrix bills roughly 135 minutes on a private Free-plan repo
+      # (macOS ×10, Windows ×2), which every green merge cannot afford. Set the
+      # DESKTOP_INSTALLERS repository variable to 'true' to turn it on; a
+      # hand-pushed tag builds them either way, through desktop.yml's
+      # on.push.tags. Same GITHUB_TOKEN trivia as the dispatch above.
+      - name: publish the desktop installers (opt-in)
+        if: steps.bump.outputs.released == 'true' && vars.DESKTOP_INSTALLERS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          set -eu
+          gh workflow run desktop.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "::notice::dispatched desktop.yml for $TAG"
+
       - name: summary
         if: always()
         run: |
@@ -161,6 +177,9 @@ jobs:
             echo "### Released ${{ steps.bump.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
             echo '' >> "$GITHUB_STEP_SUMMARY"
             echo 'Images and the GitHub Release are being built by `release.yml`.' >> "$GITHUB_STEP_SUMMARY"
+            if [ '${{ vars.DESKTOP_INSTALLERS }}' = 'true' ]; then
+              echo 'Desktop installers are being built by `desktop.yml`.' >> "$GITHUB_STEP_SUMMARY"
+            fi
           elif [ '${{ env.SKIP }}' = '1' ]; then
             echo '### Skipped — nothing for the bot to do on this commit' >> "$GITHUB_STEP_SUMMARY"
           else

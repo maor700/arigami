@@ -1,5 +1,5 @@
 // RES1 §4, toned down (2026-08-30, then further per direct feedback): the
-// rail no longer surfaces "ממתין לך" as a full-width pulsing bar, and it no
+// rail no longer surfaces "waiting for you" as a full-width pulsing bar, and it no
 // longer has a separate aggregated section at all. A waiting item is only a
 // small, static badge on the row it belongs to — the agent's row when the
 // blocked session was born from one, otherwise the session's own row — rolled
@@ -8,11 +8,13 @@
 import { test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, store, prefs, Rail, TeamSection, origFetch;
+let React, render, store, prefs, Rail, TeamSection;
 const h = (...a) => React.createElement(...a);
 
 // What GET /health, /agents and /folders answer in this test.
@@ -32,7 +34,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     const body = u.includes('/health') ? HEALTH : u.includes('/agents') ? AGENTS : u.includes('/folders') ? FOLDERS : {};
@@ -46,10 +47,6 @@ beforeAll(async () => {
   const RailModule = await import(web('components/Rail.jsx'));
   Rail = RailModule.default;
   TeamSection = RailModule.TeamSection;
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 beforeEach(() => {

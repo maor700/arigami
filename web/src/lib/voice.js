@@ -12,7 +12,7 @@
 // shown in the HUD and, when it asked a question (plan.kind 'ask') or just
 // answered one ('answer'), the mic re-opens by itself for the next turn with
 // the previous turns as history. The loop ends when an action ran ('act'), on
-// a stop word ("סיים"/"ביטול"/"stop"), Esc / the ✕, or 8s without speech on an
+// a stop word ("stop"/"cancel"/"done" in any UI language — STOP_WORDS below), Esc / the ✕, or 8s without speech on an
 // auto-opened turn. Command mode never writes into the composer — only an
 // explicit inject_prompt (confirmed in the HUD) reaches a session.
 //
@@ -21,6 +21,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 import { getPrefs, voiceLangFrom } from './prefs.js';
+import { normalizeEngine } from './engines.js';
 
 let state = {
   status: 'idle', // idle | recording | thinking | review | error
@@ -39,7 +40,7 @@ function set(patch) {
   for (const fn of listeners) fn();
 }
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-const getState = () => state;
+export const getState = () => state;
 export function useVoice() {
   return useSyncExternalStore(subscribe, getState, getState);
 }
@@ -51,7 +52,7 @@ let maxTimer = null;
 const MAX_RECORD_MS = 90_000; // safety cap so a forgotten recording can't balloon
 
 // Live input metering — lets the user SEE whether the mic is picking them up,
-// and lets us reject silent clips (Whisper hallucinates "תודה רבה" on silence).
+// and lets us reject silent clips (Whisper hallucinates a stock "thank you" phrase on silence).
 let audioCtx = null;
 let levelTimer = null;
 let maxLevel = 0;
@@ -221,7 +222,7 @@ async function finalize(mimeType, mode) {
     return;
   }
   // The mic never rose above near-silence → don't ship silence to Whisper (it
-  // would hallucinate, e.g. "תודה רבה"). Tell the user to check their input.
+  // would hallucinate a stock "thank you" phrase). Tell the user to check their input.
   if (peak < 0.03) {
     if (state.auto) { endConversation('silence'); return; }
     set({ status: 'error', error: 'No sound from the mic. Check the input device and that your browser has macOS microphone permission (System Settings → Privacy → Microphone).' });
@@ -367,7 +368,7 @@ async function routeTranscript(transcript) {
   // and the active tab's readable content.
   const cur = st.sessions.find((s) => s.id === currentSelectedId);
   const tabs = tabsOf(cur);
-  const recentChat = renderChat(st.chats?.[currentSelectedId]);
+  const recentChat = renderChat(st.chats?.[currentSelectedId], normalizeEngine(cur?.engine));
   const activeTab = activeTabContent(cur);
   // Short-term voice-conversation memory so a follow-up answers the question
   // the router just asked. Expires after a quiet gap so old context doesn't linger.
@@ -438,7 +439,7 @@ function tabsOf(s) {
 // Compact, token-bounded render of a session's recent chat — the "terminal
 // content" Haiku reads to answer questions or decide. Noisy/huge kinds (thinking,
 // raw tool results) are summarized or skipped.
-function renderChat(events, max = 14, perCap = 320) {
+function renderChat(events, engine = 'claude', max = 14, perCap = 320) {
   if (!Array.isArray(events) || !events.length) return '';
   const clip = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, perCap);
   const lines = [];
@@ -446,8 +447,8 @@ function renderChat(events, max = 14, perCap = 320) {
     switch (e.kind) {
       case 'user': lines.push('you: ' + clip(e.text)); break;
       case 'assistant-text':
-      case 'assistant': if (e.text) lines.push('claude: ' + clip(e.text)); break;
-      case 'tool-use': lines.push(`claude → ran tool ${e.name || e.tool || e.toolName || ''}`.trim()); break;
+      case 'assistant': if (e.text) lines.push(`${engine}: ` + clip(e.text)); break;
+      case 'tool-use': lines.push(`${engine} → ran tool ${e.name || e.tool || e.toolName || ''}`.trim()); break;
       case 'result': lines.push('[turn complete]'); break;
       case 'error': lines.push('error: ' + clip(e.text)); break;
       case 'permission-request': lines.push(`[awaiting your permission: ${e.toolName || e.tool_name || ''}]`); break;

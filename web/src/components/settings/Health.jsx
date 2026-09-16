@@ -13,6 +13,7 @@ import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { relTime, untilTime } from '../../lib/time.js';
 import { toastError } from '../../lib/toast.js';
+import { PROVIDERS, normalizeProvider } from '../../lib/providers.js';
 import { Section, SettingCard, StatusPill, BTN_SM, ROW, LIST } from './shared.jsx';
 
 const DOT = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
@@ -20,6 +21,11 @@ const DOT = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F'
 export const REMINDER_ACTIONS = new Set(['notify-human']);
 export const filterIncidents = (list, showReminders) => (showReminders ? list : list.filter((i) => !REMINDER_ACTIONS.has(i.action)));
 const OUTCOME_PILL = { ok: 'ok', failed: 'error', escalated: 'todo' };
+/** A window length in minutes → '5h' / '7d' (codex windows are per plan). */
+export const windowLabel = (mins) => (!mins ? '' : mins % 1440 === 0 ? `${mins / 1440}d` : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`);
+/** An account's quota windows as one line: '5h 40% · 7d 12%'. */
+export const usageLine = (u) =>
+  [u?.session, u?.week].filter((w) => w && typeof w.pct === 'number').map((w) => `${windowLabel(w.windowMins) || '·'} ${w.pct}%`.trim()).join(' · ');
 
 export default function Health() {
   const t = useT();
@@ -42,6 +48,7 @@ export default function Health() {
   const rows = snap?.sessions || [];
   const unhealthy = rows.filter((r) => r.state !== 'IDLE_OK' && r.state !== 'RUNNING');
   const downgraded = sessions.filter((s) => (s.claude?.modelRung || 0) > 0);
+  const chains = [(snap?.modelChain || []).join(' → '), snap?.codexModelChain?.length ? `Codex: ${snap.codexModelChain.join(' → ')}` : ''].filter(Boolean).join(' · ');
   const allIncidents = log?.incidents || [];
   const reminders = allIncidents.filter((i) => REMINDER_ACTIONS.has(i.action)).length;
   const shown = filterIncidents(allIncidents, showReminders);
@@ -98,15 +105,17 @@ export default function Health() {
         )}
       </SettingCard>
 
-      <SettingCard title={t('health.quota')} hint={t('health.quota.hint', { chain: (snap?.modelChain || []).join(' → ') || '—' })}>
+      <SettingCard title={t('health.quota')} hint={t('health.quota.hint', { chain: chains || '—' })}>
         <div className={LIST}>
           {(snap?.accounts || []).map((a) => (
             <div key={a.id} className={ROW}>
               <span className="min-w-0 truncate">
                 {a.label}
+                <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{PROVIDERS[normalizeProvider(a.provider)].label}</span>
                 {a.active && <span className="ms-1.5 text-[11.5px] md:text-[10px] text-fgdim">{t('health.active')}</span>}
               </span>
               <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+                {usageLine(a.usage) && <span className="me-2">{usageLine(a.usage)}</span>}
                 {a.available
                   ? t('health.accountOk')
                   : t('health.accountLimited', { when: untilTime(a.quarantineUntil) || '—' })}

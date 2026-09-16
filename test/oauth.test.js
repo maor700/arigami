@@ -6,6 +6,8 @@ import { test, expect } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-oauth-'));
 process.env.ARIGAMI_DIR = tmp;

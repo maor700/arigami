@@ -8,6 +8,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -52,7 +53,12 @@ const lastUserText = (sid: string): string | null => {
   if (!fs.existsSync(f)) return null;
   const lines = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
   if (!lines.length) return null;
-  const j = JSON.parse(lines[lines.length - 1]);
+  let j: any;
+  try {
+    j = JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null; // the stub is mid-write (torn last line) — the caller polls again
+  }
   return (j.message?.content || []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
 };
 
@@ -121,15 +127,15 @@ setInterval(()=>{},1e6);
   try {
     await until(async () => {
       try {
-        return (await fetch(base + '/__api/config')).ok;
+        return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
       } catch {
         return false;
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {
@@ -331,13 +337,13 @@ describe('ZIP3: end-to-end on a dedicated isolated host (real attachment size ca
     try {
       await until(async () => {
         try {
-          return (await fetch(base2 + '/__api/config')).ok;
+          return (await fetch(base2 + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
         } catch {
           return false;
         }
       }, 30000);
     } catch {
-      throw new Error(`second host did not come up: ${log2.slice(-1500)}`);
+      throw new Error(`second host did not come up: ${log2.slice(-1500)}${hostDiag(host2)}`);
     }
     const r = await fetch(base2 + '/__api/sessions', {
       method: 'POST',

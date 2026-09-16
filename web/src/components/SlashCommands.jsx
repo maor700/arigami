@@ -11,8 +11,10 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store.js';
 import { t, useT } from '../lib/i18n.js';
 import { engineLabel, normalizeEngine } from '../lib/engines.js';
+import { providerForEngine, providerOf, windowLabel, snapshotUsage } from '../lib/providers.js';
 import { UsageBar } from './Usage.jsx';
 import McpAuth from './McpAuth.jsx';
+import { useModels } from '../lib/models.js';
 import { AgentAvatar } from './AgentCard.jsx';
 import { Icon } from '../lib/icons.js';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -162,7 +164,7 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   const rows = teamRows(agents, sessions);
-  // UX1: both doors lead to the agent surface — בית is a tab of it, not a session.
+  // UX1: both doors lead to the agent surface — Home is a tab of it, not a session.
   const openHome = (a) => {
     window.dispatchEvent(new CustomEvent('host:open-agent', { detail: { slug: a.slug, tab: 'home' } }));
     onClose();
@@ -247,18 +249,26 @@ function tabsFor(engine) {
 function accountUsageOf(a, accountUsage) {
   const u = accountUsage?.[a.id];
   if (u?.available) return u;
-  const lu = a.lastUsage;
-  if (lu && !lu.reason) return { available: true, session: { pct: lu.session }, week: { pct: lu.week } };
-  return null;
+  const snap = snapshotUsage(a);
+  return snap?.available ? snap : null;
+}
+
+/** The accounts of the session's engine's provider, and the one the session runs on. */
+function sessionAccounts(session, accounts) {
+  const provider = providerForEngine(session?.engine);
+  const list = (accounts?.accounts || []).filter((a) => providerOf(a) === provider);
+  const activeId = accounts?.activeIds?.[provider] ?? (provider === 'claude' ? accounts?.activeId : null);
+  const sessAccId = session?.claude?.accountId || activeId;
+  return { list, sessAccId, account: list.find((a) => a.id === sessAccId) || null };
 }
 
 // `/usage` + `/status` tab: which account this session runs on, plus every
 // account's session/week meters. Reads the accounts store directly.
 function AccountsUsageTab({ session, accounts, accountUsage }) {
   const t = useT();
-  const list = accounts?.accounts || [];
-  const activeId = accounts?.activeId;
-  const sessAccId = session?.claude?.accountId || activeId;
+  // Only the accounts of the provider this session's engine consumes — a
+  // codex session's /status must not list Claude logins as candidates.
+  const { list, sessAccId } = sessionAccounts(session, accounts);
   const labelOf = (id) => list.find((a) => a.id === id)?.label || t('dialogs.activeAccount');
   if (!list.length) return <Pending engine={engineLabel(session?.engine)} />;
   return (
@@ -273,15 +283,15 @@ function AccountsUsageTab({ session, accounts, accountUsage }) {
           <div key={a.id} className="rounded-md border border-hair bg-bg px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11.5px] font-bold text-fg">{a.label}</span>
-              {a.active && <span className="rounded-full bg-ink px-1.5 py-0.5 text-[11px] md:text-[9px] font-bold text-panel">{t('dialogs.active')}</span>}
+              {a.active && <span className="rounded-full bg-fg px-1.5 py-0.5 text-[11px] md:text-[9px] font-bold text-bg">{t('dialogs.active')}</span>}
               {(a.email || a.plan) && (
                 <span className="text-[11.5px] md:text-[10px] text-fgdim">{[a.email, a.plan].filter(Boolean).join(' · ')}</span>
               )}
             </div>
             {u?.available && (u.session || u.week) ? (
               <div className="mt-1">
-                <UsageBar label={t('dialogs.sessionWindow5h')} win={u.session} sub />
-                <UsageBar label={t('dialogs.week')} win={u.week} sub />
+                <UsageBar label={provider === 'claude' ? t('dialogs.sessionWindow5h') : windowLabel(t, provider, 'session', u.session)} win={u.session} sub />
+                <UsageBar label={provider === 'claude' ? t('dialogs.week') : windowLabel(t, provider, 'week', u.week)} win={u.week} sub />
               </div>
             ) : (
               <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.usageUnavailableShort')}</div>
@@ -409,7 +419,11 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
   }, [onClose]);
   // Normalize agents (strings from init, objects from initialize) to {name,…}.
   const agents = (caps.agents || []).map((a) => (typeof a === 'string' ? { name: a } : a));
-  const started = !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
+  const codex = normalizeEngine(session?.engine) === 'codex';
+  const { codexVersion } = useModels();
+  // P4-2: codex has no init report — a thread id means it ran; account/plan come from the accounts store.
+  const started = codex ? !!session?.claude?.sessionId : !!(caps.commands?.length || caps.slashCommands?.length || caps.mcpServers?.length || caps.counts?.commands);
+  const codexAccount = codex ? sessionAccounts(session, accounts).account : null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6"
@@ -501,18 +515,28 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
 
           {tab === 'info' && (
             <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-[12px]">
-              {[
-                [t('dialogs.infoModel'), caps.model],
-                [t('dialogs.infoVersion'), caps.version],
-                [t('dialogs.infoPermissionMode'), caps.permissionMode],
-                [t('dialogs.infoAccount'), caps.account?.email],
-                [t('dialogs.infoOrganization'), caps.account?.organization],
-                [t('dialogs.infoPlan'), caps.account?.subscriptionType],
-                [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
-                [t('dialogs.infoTools'), caps.tools?.length],
-                [t('dialogs.infoSkills'), caps.skills?.length],
-                [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
-              ].map(([k, v]) => (
+              {(codex
+                ? [
+                    [t('dialogs.infoModel'), caps.model || session?.claude?.modelChoice],
+                    [t('dialogs.infoVersion'), codexVersion],
+                    [t('dialogs.infoPermissionMode'), 'bypassPermissions'],
+                    [t('dialogs.infoAccount'), codexAccount?.email || codexAccount?.label],
+                    [t('dialogs.infoPlan'), codexAccount?.plan],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                  ]
+                : [
+                    [t('dialogs.infoModel'), caps.model],
+                    [t('dialogs.infoVersion'), caps.version],
+                    [t('dialogs.infoPermissionMode'), caps.permissionMode],
+                    [t('dialogs.infoAccount'), caps.account?.email],
+                    [t('dialogs.infoOrganization'), caps.account?.organization],
+                    [t('dialogs.infoPlan'), caps.account?.subscriptionType],
+                    [t('dialogs.infoMcpServers'), caps.mcpServers?.length],
+                    [t('dialogs.infoTools'), caps.tools?.length],
+                    [t('dialogs.infoSkills'), caps.skills?.length],
+                    [t('dialogs.infoCommands'), caps.commands?.length || caps.slashCommands?.length],
+                  ]
+              ).map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-fgdim">{k}</dt>
                   <dd className="font-mono text-fg">{v ?? '—'}</dd>

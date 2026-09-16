@@ -62,7 +62,8 @@ export const EXCLUDES = ['run', 'chrome-sessions', 'chrome-base', 'logs', 'user-
 // instance dir. The ownership records (agents/<slug>/connections.json,
 // mcp-connections.json) DO travel — they are names and URLs, no secrets, and the
 // capability check re-reports "needs authentication" on the new machine.
-export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json'];
+// codex/<sid>/config.toml carries the session's ARIGAMI_TOKEN (regenerated at spawn); the thread history beside it stays.
+export const CREDENTIAL_GLOBS = ['.credentials.json', '*/.credentials.json', './*/.credentials.json', './codex/*/config.toml'];
 // EXT: the user repo ($ARIGAMI_DIR/user) IS backed up — it holds the
 // extensions, the skills and the mcp catalog — but never its installed
 // dependencies, which `bun install` rebuilds (nor its @arigami/sdk symlink,
@@ -175,7 +176,8 @@ function packageVersion(): string {
 /**
  * B4 backup portability (#2): what exportFull() writes for accounts.json
  * instead of the raw file. A `keychain` account (accounts.js) is a live
- * pointer into THIS machine's OS credential store — it cannot travel, and
+ * pointer into THIS machine's OS credential store, and a `codex-home` account
+ * the same kind of pointer into ~/.codex — neither can travel, and
  * shipping it as-is is a dead reference that only fails once a session on
  * the new machine tries to authenticate. Kept as a record (not dropped) but
  * renamed off `type: 'keychain'` so accounts.js's seed() doesn't treat it as
@@ -190,17 +192,20 @@ function packageVersion(): string {
  * CLI-invokable module has no business paying for. The two are asserted
  * identical in test/backup.test.ts.
  */
-export function sanitizeAccountsForExport(raw: { activeId?: string | null; accounts?: any[] } | null): any {
+const LOCAL_TYPES = new Set(['keychain', 'codex-home']);
+export function sanitizeAccountsForExport(raw: { activeId?: string | null; activeIds?: Record<string, string | null>; accounts?: any[] } | null): any {
   if (!raw || !Array.isArray(raw.accounts)) return raw;
-  if (!raw.accounts.some((a) => a && a.type === 'keychain')) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize
+  if (!raw.accounts.some((a) => a && LOCAL_TYPES.has(a.type))) return raw; // nothing to rewrite — same reference, byte-identical on re-serialize
   let activeId = raw.activeId ?? null;
+  const activeIds: Record<string, string | null> = { ...(raw.activeIds || {}) };
   const accounts = raw.accounts.map((a) => {
-    if (!a || a.type !== 'keychain') return a;
+    if (!a || !LOCAL_TYPES.has(a.type)) return a;
     if (activeId === a.id) activeId = null;
+    for (const p of Object.keys(activeIds)) if (activeIds[p] === a.id) activeIds[p] = null;
     const { type, pool, ...rest } = a;
-    return { ...rest, type: 'keychain-stale', pool: false, needsReauth: true };
+    return { ...rest, type: `${type}-stale`, pool: false, needsReauth: true };
   });
-  return { ...raw, activeId, accounts };
+  return { ...raw, activeId, ...(raw.activeIds ? { activeIds } : {}), accounts };
 }
 
 function gitCommit(): string | null {
@@ -826,7 +831,7 @@ export function bundleRepoFromEntry(r: any): any {
 export function portableSettings(cfg: Record<string, any> | null): Record<string, unknown> {
   if (!cfg) return {};
   const out: Record<string, unknown> = {};
-  for (const k of ['defaultModel', 'voiceLang', 'sttModel', 'palette', 'devServerPorts', 'dispatcher', 'brain']) if (cfg[k] != null) out[k] = cfg[k];
+  for (const k of ['defaultModel', 'defaultEngine', 'voiceLang', 'sttModel', 'palette', 'devServerPorts', 'dispatcher', 'brain']) if (cfg[k] != null) out[k] = cfg[k];
   return out;
 }
 

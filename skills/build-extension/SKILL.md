@@ -1,5 +1,5 @@
 ---
-description: Build the human a custom extension for their own Arigami — a tab (a form/UI in the cockpit), a background listener that watches some source and wakes a session, a tool Claude can call, or an automation on merge/review/listener events. Scaffolds into the user's own repo, validates, loads it at runtime (no host restart), shows it in this same chat, and iterates with the human. Use when they ask for a custom tab/form/screen/button, "watch X for me", a webhook receiver, a new tool, something to run before a merge, or say "build me an extension" — Hebrew: "תבנה לי טאב", "תוסיף כלי", "תעקוב אחרי", "מאזין", "הרחבה", "תבנה לי טופס", "שיריץ בדיקה לפני מיזוג".
+description: Build the human a custom extension for their own Arigami — a tab (a form/UI in the cockpit), a background listener that watches some source and wakes a session, a tool the agent can call, or an automation on merge/review/listener events. Scaffolds into the user's own repo, validates, loads it at runtime (no host restart), shows it in this same chat, and iterates with the human. Use when they ask for a custom tab/form/screen/button, "watch X for me", a webhook receiver, a new tool, something to run before a merge, or say "build me an extension" — Hebrew: "תבנה לי טאב", "תוסיף כלי", "תעקוב אחרי", "מאזין", "הרחבה", "תבנה לי טופס", "שיריץ בדיקה לפני מיזוג".
 argument-hint: [what to build, in free text — "a form that picks features", "watch this RSS", "a tool that reads a Notion DB"]
 slash: extend
 ---
@@ -17,7 +17,7 @@ and the human's request maps onto one or two of them:
 |---|---|---|
 | "a form / a screen / a button / a tab" | `tabs[]` — a sandboxed page in the cockpit | `templates/tab` |
 | "watch X", "tell me when Y changes", "when a webhook arrives" | `listeners[]` — a poll/push provider that wakes a session | `templates/listener` |
-| "give Claude a tool that…", "read from our DB/API" | `tools[]` (+ `docs[]`) | `templates/tool` |
+| "give the agent a tool that…", "read from our DB/API" | `tools[]` (+ `docs[]`) | `templates/tool` |
 | "before every merge, run…", "when a merge finishes, notify…" | `hooks` — events, a `merge.before` gate, notification channels | `templates/hooks` |
 | "a webhook endpoint for …" | `webhooks[]` routed into a listener | `templates/listener` |
 
@@ -48,10 +48,11 @@ runs sandboxed and **cannot** call `/__api`; everything goes through `window.ari
 ## 1. Clarify — at most ONE question
 
 Read the request, pick the contribution kind(s) from the table, and ask **one**
-question only if you genuinely cannot start without the answer. Good single questions:
+question only if you genuinely cannot start without the answer. Good single questions
+(ask in the human's own language — these are just illustrative in English):
 
-> "טאב עם טופס שמחזיר פרומפט לצ'אט, או מאזין שמעיר אותי כשמשהו משתנה?"
-> "מה בדיוק לבדוק לפני merge — typecheck, טסטים, או שניהם?"
+> "A tab with a form that returns a prompt to the chat, or a listener that pings me when something changes?"
+> "What exactly should be checked before merge — typecheck, tests, or both?"
 
 Everything else you **decide yourself** and show — a name (`^[a-z0-9][a-z0-9-]*$`,
 derived from what they asked), the fields of a form, the poll interval. It is faster
@@ -155,7 +156,7 @@ If it is webhook-driven, give the human the URL to POST to:
 `<the host>/__api/webhooks/custom/ext-<name>-<webhook id>` (hand over the host-relative
 path; never a `localhost:` URL).
 
-**A tool** — a tool list is fixed when a session's `claude` process spawns, so **this
+**A tool** — a tool list is fixed when a session's agent process spawns, so **this
 session cannot see it**. Say so in one sentence, and demonstrate it anyway through the
 host:
 
@@ -183,7 +184,7 @@ The human will want changes. Edit the file, and:
   re-run `bin/host ext validate` first, every time.
 * a **new tool** or a **new doc/skill** — still needs a new session.
 
-Keep the loop tight: change one thing, show it, ask "ככה?" — not a list of options.
+Keep the loop tight: change one thing, show it, ask "Like this?" (in the human's own language) — not a list of options.
 
 ---
 
@@ -198,11 +199,13 @@ Keep the loop tight: change one thing, show it, ask "ככה?" — not a list of 
        commit -q -m "arigami: extension $NAME"
    ```
 
-2. **Tell them where it lives and what it costs**, in two sentences, no lists:
+2. **Tell them where it lives and what it costs**, in two sentences, no lists — in the
+   human's own language (illustrative English below):
 
-   > הקוד יושב אצלך ב-`~/.arigami/user/extensions/<name>/` — ריפו גיט שלך, נפרד לגמרי
-   > מהליבה, ונכנס לגיבוי. שים לב: קוד של הרחבה רץ בתוך ההוסט עם ההרשאות שלו (כמו סקיל
-   > עם Bash), וההרשאות שהיא מבקשת רשומות ב-`manifest.json`.
+   > Your code lives at `~/.arigami/user/extensions/<name>/` — your own git repo, entirely
+   > separate from the core, and it's included in backups. Note: extension code runs inside
+   > the host with its own permissions (like a skill with Bash), and the permissions it asks
+   > for are listed in `manifest.json`.
 
 3. If they want it off the machine: `git -C ~/.arigami/user remote add origin <url>` —
    or `gh repo create <name> --private --source ~/.arigami/user --push` if `gh` is

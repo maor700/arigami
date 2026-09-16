@@ -49,7 +49,7 @@
   "permissions": ["session:message", "session:tabs", "tools:hello_echo", "notify", "events:merge.*"],
   "settings": {
     "schema": {
-      "greeting": { "type": "string", "default": "שלום", "title": "Greeting", "description": "What the tool and the tab greet with" }
+      "greeting": { "type": "string", "default": "hello", "title": "Greeting", "description": "What the tool and the tab greet with" }
     }
   }
 }

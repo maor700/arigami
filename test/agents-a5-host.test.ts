@@ -15,6 +15,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -114,13 +115,13 @@ setInterval(()=>{},1e6);
   try {
     await until(async () => {
       try {
-        return (await fetch(base + '/__api/config')).ok;
+        return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
       } catch {
         return false;
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   // scout: the report's "read-only researcher" — web + desktop, no triggers, no publish.
   // nili: may publish (and hits a 2500-token cap after 2 stub turns). mailer: touches composio.
@@ -128,7 +129,7 @@ setInterval(()=>{},1e6);
   expect((await api('POST', '/__api/agents', { name: 'Nili', slug: 'nili', emoji: '✍️', tools: ['git', 'publish'], budget: { tokensPerDay: 2500 } })).status).toBe(201);
   expect((await api('POST', '/__api/agents', { name: 'Mailer', slug: 'mailer', emoji: '📧', tools: ['gmail'] })).status).toBe(201);
   fs.writeFileSync(path.join(ws, 'draft.md'), '# draft\n');
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

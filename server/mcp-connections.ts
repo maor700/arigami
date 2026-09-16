@@ -86,7 +86,7 @@ export function removeConnection(owner: string, cap: string): boolean {
 
 export const findConnection = (owner: string, cap: string): McpConnection | null => readConnections(owner).find((c) => c.cap === cap) ?? null;
 
-/** Every owner that has a connections file, with its records (Settings → "שייך ל"). */
+/** Every owner that has a connections file, with its records (Settings → "Belongs to"). */
 export function allConnections(): Array<{ owner: string; connections: McpConnection[] }> {
   const out = [{ owner: GLOBAL, connections: readConnections(GLOBAL) }];
   let slugs: string[] = [];
@@ -165,6 +165,53 @@ export function injectedServersFor(owner: string, state: McpState = readMcpState
     out[c.name] = { type: 'http', url: c.url };
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// P2-4 — Codex's own grants: `codex mcp login` under one host-wide CODEX_HOME, `.credentials.json` keyed like Claude's
+// ---------------------------------------------------------------------------
+
+export type McpEngine = 'claude' | 'codex';
+
+/** The CODEX_HOME every `codex mcp login` runs under; each codex session links its `.credentials.json` here. */
+export const codexMcpHome = (): string => path.join(ARIGAMI_DIR, 'codex-mcp');
+export const codexCredentialsFile = (dir: string = codexMcpHome()): string => path.join(dir, '.credentials.json');
+
+/** grant name → true when codex holds a usable token for it (`<name>|<hash>` → {server_name, access_token}, verified on codex-cli 0.153.4). */
+export function readCodexMcpGrants(dir: string = codexMcpHome()): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  const creds = readJson<Record<string, any>>(codexCredentialsFile(dir), {});
+  for (const [key, v] of Object.entries(creds && typeof creds === 'object' ? creds : {})) {
+    const name = typeof v?.server_name === 'string' && v.server_name ? v.server_name : key.split('|')[0];
+    if (!out.get(name)) out.set(name, !!v?.access_token);
+  }
+  return out;
+}
+
+/** Which engines hold a usable grant for this name. Bearer servers are claude-only (codex bearer is not wired). */
+export function grantEngines(name: string, auth: McpAuth, state: McpState = readMcpState(), codex: Map<string, boolean> = readCodexMcpGrants()): McpEngine[] {
+  const out: McpEngine[] = [];
+  if (grantLive(name, auth, state)) out.push('claude');
+  if (auth !== 'bearer' && codex.get(name) === true) out.push('codex');
+  return out;
+}
+
+/** The `[mcp_servers.<name>] url` tables a codex session acting as `owner` gets: its agent's grants, then the host's, codex-granted only. */
+export function codexServersFor(owner: string, codex: Map<string, boolean> = readCodexMcpGrants()): { granted: Record<string, { url: string }>; claudeOnly: string[] } {
+  const granted: Record<string, { url: string }> = {};
+  const claudeOnly: string[] = [];
+  const state = readMcpState();
+  for (const o of slugOfOwner(owner) ? [owner, GLOBAL] : [GLOBAL]) {
+    for (const c of readConnections(o)) {
+      const spec = mcpSpec(c.slug);
+      const auth = c.auth || spec?.auth || 'oauth';
+      if (granted[c.name] || claudeOnly.includes(c.name)) continue;
+      const engines = grantEngines(c.name, auth, state, codex);
+      if (engines.includes('codex')) granted[c.name] = { url: c.url };
+      else if (engines.includes('claude')) claudeOnly.push(c.name);
+    }
+  }
+  return { granted, claudeOnly };
 }
 
 export { grantName };

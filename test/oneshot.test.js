@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-oneshot-'));
 const FAKE_CLAUDE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '_fake-claude.js');
@@ -191,3 +193,111 @@ test('F3 #2: an explicit opts.token overrides the active account and is used ver
   expect(r.out[0].b.token).toBeNull();
   expect(r.out[0].b.apiKey).toBe('sk-ant-api03-CANDIDATE');
 }, 15000);
+
+// ---- codex engine: fake `codex` on ARIGAMI_CODEX_BIN writes the -o file ----
+const FAKE_CODEX = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '_fake-codex.sh');
+
+function seedCodexAccount(dir) {
+  const acc = path.join(dir, 'codex-accounts', 'cx_1');
+  fs.mkdirSync(acc, { recursive: true });
+  fs.writeFileSync(path.join(acc, 'auth.json'), '{}');
+  fs.writeFileSync(
+    path.join(dir, 'accounts.json'),
+    JSON.stringify({ activeIds: { codex: 'cx_1' }, accounts: [{ id: 'cx_1', label: 'gpt', provider: 'codex', type: 'chatgpt', pool: true, addedAt: new Date().toISOString() }] })
+  );
+  return path.join(acc, 'auth.json');
+}
+
+test('codex: exec --ephemeral with the prompt on stdin, -o result, active account auth linked, claude creds stripped, scratch home removed', () => {
+  const dir = tmp();
+  const authFile = seedCodexAccount(dir);
+  const rec = path.join(dir, 'rec');
+  const r = runInChild(
+    "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runOneShot}=await import('./server/lib/oneshot.ts');" +
+      "const out=await runOneShot('say pong',{engine:'codex',model:'sonnet',json:{type:'object'},cwd:process.env.ARIGAMI_DIR,tag:'t',env:{ARIGAMI_SESSION_ID:'s1'},mcpServers:{arigami:{command:'bun',args:['x.js'],env:{A:'1'}}}});" +
+      "emit({out,left:require('node:fs').readdirSync(process.env.ARIGAMI_DIR+'/oneshot-codex')});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_RECORD: rec, CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-LEAK', ANTHROPIC_API_KEY: 'leak' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.out).toBe('pong from codex');
+  expect(o.left).toEqual([]);
+  const argv = fs.readFileSync(rec + '.argv', 'utf8').trim().split('\n');
+  expect(argv.slice(0, 4)).toEqual(['exec', '--ephemeral', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox']);
+  expect(argv).toContain('-o');
+  expect(argv).toContain('--output-schema');
+  expect(argv).not.toContain('-m'); // a claude alias never reaches codex
+  expect(argv[argv.length - 1]).toBe('-');
+  expect(fs.readFileSync(rec + '.stdin', 'utf8')).toBe('say pong');
+  expect(fs.readFileSync(rec + '.auth', 'utf8').trim()).toBe(authFile);
+  expect(JSON.parse(fs.readFileSync(rec + '.schema', 'utf8'))).toEqual({ type: 'object' });
+  const env = fs.readFileSync(rec + '.env', 'utf8');
+  expect(env).not.toMatch(/CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY/);
+  expect(env).toMatch(/ARIGAMI_SESSION_ID=s1/);
+  expect(env).toMatch(new RegExp(`CODEX_HOME=${dir}/oneshot-codex/`));
+  const toml = fs.readFileSync(rec + '.toml', 'utf8');
+  expect(toml).toMatch(/\[mcp_servers\.arigami\]/);
+  expect(toml).toMatch(/A = "1"/);
+}, 15000);
+
+test('codex: a non-zero exit rejects with the error line', () => {
+  const dir = tmp();
+  seedCodexAccount(dir);
+  const r = runInChild(
+    "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+      "const {runOneShot}=await import('./server/lib/oneshot.ts');" +
+      "let msg=null;try{await runOneShot('x',{engine:'codex'});}catch(e){msg=e.message;}emit({msg});",
+    { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_MODE: 'fail' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].msg).toMatch(/codex exited 1: .*401/);
+}, 15000);
+
+// Rule by design: the default engine when it has a connected account, else the engine that has one (claude first).
+test('hostEngine: default engine (from config.json) when it has an account, else the engine that has one', () => {
+  const run = ({ claude, codex, def }) => {
+    const dir = tmp();
+    const accounts = [];
+    if (codex) {
+      seedCodexAccount(dir);
+      accounts.push(...JSON.parse(fs.readFileSync(path.join(dir, 'accounts.json'), 'utf8')).accounts);
+    }
+    if (claude) accounts.push({ id: 'acc_c', label: 'c', provider: 'claude', type: 'oauth-token', pool: true, addedAt: new Date().toISOString(), token: { v: 0, t: 'sk-ant-X' } });
+    fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ activeIds: { claude: 'acc_c', codex: 'cx_1' }, accounts }));
+    if (def) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ defaultEngine: def }));
+    const r = runInChild(
+      "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+        "const {hostEngine,sessionEngine}=await import('./server/lib/oneshot.ts');" +
+        "if(sessionEngine({engine:'codex'})!=='codex'||sessionEngine({})!=='claude')throw new Error('sessionEngine');emit(hostEngine());",
+      { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', HOME: dir, ARIGAMI_CODEX_HOME: path.join(dir, 'nocodex'), CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' }
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  expect(run({})).toBe('claude'); // nothing connected, no default
+  expect(run({ def: 'codex' })).toBe('codex'); // nothing connected: the default stands
+  expect(run({ codex: true })).toBe('codex'); // codex-only host, no default → the engine with an account
+  expect(run({ claude: true, codex: true })).toBe('claude'); // both, no default → claude first
+  expect(run({ claude: true, codex: true, def: 'codex' })).toBe('codex'); // config.json default wins
+  expect(run({ claude: true, def: 'codex' })).toBe('claude'); // default has no account → the one that does
+}, 30000);
+
+test('P4-5 voice router: anthropic provider with no Claude creds → Groq when keyed, else a codex one-shot', () => {
+  const run = (groq) => {
+    const dir = tmp();
+    seedCodexAccount(dir);
+    const r = runInChild(
+      "globalThis.fetch=async(url)=>{globalThis.__url=String(url);return new Response(JSON.stringify({choices:[{message:{content:'{\"actions\":[],\"say\":\"groq\"}'}}]}),{status:200});};" +
+        "const acc=await import('./server/accounts.js');acc.initAccounts();" +
+        "const {cfg}=await import('./server/lib/config.ts');cfg.voiceRouterProvider='anthropic';" +
+        "const voice=await import('./server/voice.js');" +
+        "const plan=await voice.route({transcript:'hi',context:{}});emit({say:plan.say,url:globalThis.__url||null});",
+      { ARIGAMI_DIR: dir, ARIGAMI_PORT: '', HOME: dir, GROQ_API_KEY: groq, CLAUDE_CODE_OAUTH_TOKEN: '', ARIGAMI_CODEX_BIN: FAKE_CODEX, FAKE_CODEX_OUT: 'plan: {"actions":[],"say":"codex"}' }
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  expect(run('gsk_x')).toMatchObject({ say: 'groq' });
+  expect(run('')).toEqual({ say: 'codex', url: null });
+}, 20000);

@@ -6,11 +6,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, composer, slash, DelegatedLine, origFetch;
+let React, render, prefs, composer, slash, DelegatedLine;
 const h = (...a) => React.createElement(...a);
 const AGENTS = [
   { slug: 'mila', name: 'Mila', emoji: '✍️', color: '#E0594F', skills: ['campaign-brief'] },
@@ -36,7 +38,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => ({}), text: async () => '' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
@@ -44,10 +45,6 @@ beforeAll(async () => {
   composer = await import(web('lib/composer.js'));
   slash = await import(web('components/SlashCommands.jsx'));
   ({ DelegatedLine } = await import(web('components/DelegatedLine.jsx')));
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 // ---- parsing ---------------------------------------------------------------------
@@ -163,7 +160,7 @@ test('DelegatedLine: a work session names its title, a home hand-off says "נפ�
   expect(html).toContain('data-delegated-open="s_child"');
   expect(html).toContain('פתח סשן');
   expect(html).toContain('write it');
-  // home → the agent surface's בית tab, not a session
+  // home → the agent surface's home tab, not a session
   const home = render(h(DelegatedLine, { event: { ...ev, how: 'home', delivered: 'queued' } }));
   expect(home).toContain('נפתח בבית של Mila');
   expect(home).toContain('data-delegated-open-home="mila"');

@@ -9,6 +9,7 @@ import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { engineLabel, engineTermName } from '../lib/engines.js';
+import { providerForEngine, providerOf } from '../lib/providers.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { extOfTab, findExtension, extSlashItems } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
@@ -102,14 +103,17 @@ function StatusChip({ session }) {
 }
 
 // Which account this session runs on. Reads the session's pinned accountId (or
-// the active account if unpinned) so switching accounts is VISIBLE per session —
-// otherwise a switch looks like it did nothing.
+// the active account of the PROVIDER its engine consumes, if unpinned) so
+// switching accounts is VISIBLE per session — otherwise a switch looks like it
+// did nothing. A codex session never shows a Claude login here.
 function AccountChip({ session }) {
   const t = useT();
   const { accounts } = useStore();
   const list = accounts?.accounts || [];
+  const provider = providerForEngine(session.engine);
   const pinned = session.claude?.accountId;
-  const acc = (pinned && list.find((a) => a.id === pinned)) || list.find((a) => a.active) || null;
+  const pinnedAcc = pinned ? list.find((a) => a.id === pinned) : null;
+  const acc = (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
   if (!acc) return null;
   const name = acc.email || acc.label || t('rail.accountFallback');
   return (
@@ -312,9 +316,9 @@ function MachineChip({ session }) {
 
 /**
  * UX1 — a session born from an agent is a JOB, not the agent. It keeps the
- * agent's face, and says so in words: "סשן עבודה · נולד מ-<agent>", linking back
+ * agent's face, and says so in words: "Work session · born from <agent>", linking back
  * to the agent surface. The agent's own home chat never renders this header (it
- * is the בית tab of the agent surface instead).
+ * is the Home tab of the agent surface instead).
  */
 export function BornFromChip({ session, className = '' }) {
   const tt = useT();
@@ -338,7 +342,7 @@ export function BornFromChip({ session, className = '' }) {
   );
 }
 
-/* ---------- SIMPLE1: chat view toggle (פשוט | טרמינל) --------------------- */
+/* ---------- SIMPLE1: chat view toggle (Simple | Terminal) --------------------- */
 
 // Per-session, persisted in metadata.chatMode (the host reads it every turn).
 // The Simple default for an unset session on a phone-width viewport is what
@@ -1641,7 +1645,7 @@ function ContentTab({ tab }) {
 /* ---------- the session view ------------------------------------------------ */
 
 /**
- * UX1 — the agent's home chat, embedded as the **בית** tab of the agent surface.
+ * UX1 — the agent's home chat, embedded as the **Home** tab of the agent surface.
  * The same transcript and composer a session has, minus the session chrome (no
  * tab bar, no "claude-code" terminal header): this is a DM with the agent, not a
  * job. It is no longer reachable as a rail row — the surface owns it.

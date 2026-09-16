@@ -1,7 +1,7 @@
-// UX1 web: "בית" (a place) vs "סשן עבודה" (a job).
+// UX1 web: "home" (a place) vs "work session" (a job).
 //   · the agent SURFACE — accent header, big avatar, persona line, live status,
-//     budget bar, and the tabs בית / … / ריצות
-//   · the ריצות tab lists the work sessions with their cost, never the home chat
+//     budget bar, and the tabs home / … / runs
+//   · the runs tab lists the work sessions with their cost, never the home chat
 //   · a work session says whose job it is (BornFromChip) — the home chat doesn't
 //   · the composer's "turn the last message into a work session" acts on the last
 //     HUMAN line (lastHumanText)
@@ -11,11 +11,13 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, Rail, AgentView, RunsList, SurfaceStatus, BudgetBar, personaLine, BornFromChip, lastHumanText, teamRows, origFetch;
+let React, render, prefs, store, Rail, AgentView, RunsList, SurfaceStatus, BudgetBar, personaLine, BornFromChip, lastHumanText, teamRows;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -43,7 +45,6 @@ beforeAll(async () => {
   // The agent surface embeds the home chat (ChatPane → the VNC client), whose
   // module scope constructs a MutationObserver — SSR never uses it.
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}),
@@ -59,10 +60,6 @@ beforeAll(async () => {
   ({ lastHumanText } = await import(web('lib/composer.js')));
   ({ teamRows } = await import(web('components/SlashCommands.jsx')));
   await store.loadAgents();
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const noop = () => {};

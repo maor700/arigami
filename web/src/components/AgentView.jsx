@@ -1,7 +1,7 @@
 // The **agent surface** (#/agents/<slug>[/<tab>]) — a PLACE, not a session.
 //
 // UX1: clicking a Team row lands here, not in "just another session". The
-// surface owns the agent's home chat (the בית tab — the DM, embedded), so a
+// surface owns the agent's home chat (the Home tab — the DM, embedded), so a
 // home chat is no longer a rail row at all; work sessions born from the agent
 // stay in the Sessions section and link back here (SessionView BornFromChip).
 // Its own header treatment — big avatar, persona line, live status, budget bar,
@@ -26,7 +26,9 @@ import { relTime } from '../lib/time.js';
 import { errText } from '../lib/errors.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { AgentAvatar, TOOL_FAMILIES } from './AgentCard.jsx';
-import { fmtTokens, fmtUsd } from './settings/Budgets.jsx';
+import { EngineToggle, agentModelOptions } from './EngineToggle.jsx';
+import { engineLabel } from '../lib/engines.js';
+import { fmtTokens, fmtCost } from './settings/Budgets.jsx';
 import AgentConnectionsPanel from './settings/AgentConnections.jsx';
 import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
 import SessionView from './SessionView.jsx';
@@ -48,13 +50,13 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const { models } = useModels();
   const [skillNames, setSkillNames] = useState([]);
   const [form, setForm] = useState({
-    name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, model: agent.model || '', persona: agent.persona || '',
+    name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, engine: agent.engine || '', model: agent.model || '', persona: agent.persona || '',
     skills: agent.skills || [], tools: agent.tools || [], budget: agent.budget?.tokensPerDay ? String(agent.budget.tokensPerDay) : '',
     domains: (agent.domains || []).join(', '), autoApprove: agent.autoApprove || [],
   });
   const [busy, setBusy] = useState(false);
   // Advanced (model/budget/tools/skills) opens only when something is already set there.
-  const [advanced, setAdvanced] = useState(!!(agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length));
+  const [advanced, setAdvanced] = useState(!!(agent.engine || agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length));
   useEffect(() => { api.get('/skills').then((r) => setSkillNames((r?.skills || []).map((s) => s.name))).catch(() => {}); }, []);
   const set = (k) => (e) => setForm((c) => ({ ...c, [k]: e.target.value }));
   const toggle = (k, v) => setForm((c) => ({ ...c, [k]: c[k].includes(v) ? c[k].filter((x) => x !== v) : [...c[k], v] }));
@@ -62,7 +64,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
     setBusy(true);
     try {
       const body = {
-        name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, model: form.model || null, persona: form.persona,
+        name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, engine: form.engine || null, model: form.model || null, persona: form.persona,
         skills: form.skills, tools: form.tools, budget: Number(form.budget) > 0 ? { tokensPerDay: Number(form.budget) } : null,
         domains: form.domains.split(',').map((d) => d.trim()).filter(Boolean), autoApprove: form.autoApprove,
       };
@@ -106,12 +108,19 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       {advanced && (
       <section className="rounded-[10px] border border-hair p-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* the model list below is this engine's catalog; switching engines drops a model the new one lacks */}
+          <EngineToggle
+            data-agent-field="engine"
+            className="sm:col-span-2"
+            label={t('agent.card.engine')}
+            options={{ engine: form.engine, model: form.model }}
+            onChange={(o) => setForm((c) => ({ ...c, engine: o.engine || '', model: o.model || '' }))}
+          />
           <div>
             <label className={lbl}>{t('agent.card.model')}</label>
-            <select value={form.model} onChange={set('model')} className={input}>
+            <select data-agent-field="model" value={form.model} onChange={set('model')} className={input}>
               <option value="">{t('agent.card.modelDefault')}</option>
-              {(models || []).filter((m) => m.value && m.value !== 'default').map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              {form.model && !(models || []).some((m) => m.value === form.model) && <option value={form.model}>{form.model}</option>}
+              {agentModelOptions(form.engine, models, form.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
           <div><label className={lbl}>{t('agent.card.budget')}</label><input type="number" min="0" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={input} /></div>
@@ -219,7 +228,7 @@ export function ActivityRow({ e, onOpenSession }) {
         {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-[11.5px] md:text-[10px] text-fgdim underline">{String(e.sessionId).slice(5, 11)}</button> : null}
         {e.sessionId && what ? ' · ' : ''}{what}
       </span>
-      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtUsd(e.costUsd)}</span>}
+      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtCost(e.costUsd, t)}</span>}
     </div>
   );
 }
@@ -229,7 +238,7 @@ export function ActivityTotals({ totals, budget }) {
   const at = budget?.resetsAt ? new Date(budget.resetsAt) : null;
   const hhmm = at ? `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : '';
   const cells = [
-    ['tokens', fmtTokens(totals?.tokens)], ['cost', fmtUsd(totals?.costUsd)], ['turns', totals?.turns ?? 0], ['runs', totals?.sessions ?? 0],
+    ['tokens', fmtTokens(totals?.tokens)], ['cost', fmtCost(totals?.costUsd, t)], ['turns', totals?.turns ?? 0], ['runs', totals?.sessions ?? 0],
     ['actions', totals?.actions ?? 0], ['artifacts', totals?.artifacts ?? 0], ['denied', totals?.denied ?? 0],
   ];
   return (
@@ -312,7 +321,7 @@ function ActivityTab({ agent, onOpenSession }) {
 }
 
 /**
- * UX1 — the **בית** tab: the agent's home chat, embedded. Opening the tab is
+ * UX1 — the **Home** tab: the agent's home chat, embedded. Opening the tab is
  * what get-or-creates the home session (`GET /__api/agents/:slug/home`, the same
  * call the rail row used to make), so the DM keeps its transcript, its ledger
  * and its id — it just stopped being a rail row.
@@ -356,7 +365,7 @@ function HomeTab({ agent, onOpenSession }) {
 }
 
 /**
- * UX1 — the **ריצות** tab: every session born from this agent (the work it did),
+ * UX1 — the **Runs** tab: every session born from this agent (the work it did),
  * with its state and what it cost. The home chat is not a run — it is the tab
  * next door.
  */
@@ -374,7 +383,7 @@ export function RunsList({ sessions, onOpenSession }) {
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
             <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
             {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[11px] md:text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
-            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtUsd(s.costUsd)}</span>
+            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtCost(s.costUsd, t)}</span>
             <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
           </button>
         ))}
@@ -389,7 +398,7 @@ export function RunsTab({ agent, onOpenSession }) {
   const [data, setData] = useState(null);
   useEffect(() => {
     let stop = false;
-    // limit=1 — the ledger rows belong to the פעילות tab; we only want sessions[].
+    // limit=1 — the ledger rows belong to the Activity tab; we only want sessions[].
     api.get(`/agents/${agent.slug}/activity?range=30d&limit=1`)
       .then((d) => { if (!stop) setData(d); })
       .catch(() => { if (!stop) setData({ sessions: [] }); });
@@ -511,6 +520,7 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
       </div>
       <div className="mt-3">
         <div className={row}><span className={rowLbl}>{t('agent.card.budget')}</span><span className="min-w-0 flex-1"><BudgetBar budget={budget} /></span></div>
+        {line(t('agent.card.engine'), agent.engine ? engineLabel(agent.engine) : null, 'engine')}
         {line(t('agent.card.model'), agent.model || t('agent.card.modelDefault'), 'model')}
         {line(t('agent.card.tools'), tools.length ? tools.map((id) => (TOOL_FAMILIES.includes(id) ? t(`agent.tool.${id}`) : id)).join(' · ') : null, 'tools')}
         {line(t('agent.card.domains'), (agent.domains || []).join(', '), 'domains')}
@@ -649,14 +659,14 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   // Create mode: an in-memory draft, never fetched — there is nothing on disk
-  // yet. Only the פרסונה tab makes sense until POST /agents returns a slug.
+  // yet. Only the Persona tab makes sense until POST /agents returns a slug.
   const draft = { slug: null, name: draftName || '', emoji: '🤖', color: DRAFT_COLOR, model: '', persona: '', skills: [], tools: [], budget: null, domains: [], autoApprove: [], updatedAt: 0 };
   const agent = isNew ? draft : (fetched || (agents || []).find((a) => a.slug === slug) || null);
   const color = agent?.color || '#c4c4c4';
   const effectiveTab = isNew ? 'persona' : tab;
-  // A tab that opens "the agent's home session" (Routine → הוסף דרך הצ׳אט, an
-  // activity row) means the בית tab — leaving the surface for it and being
-  // bounced back by App would only flicker.
+  // A tab that opens "the agent's home session" (Routine → "Add via the chat",
+  // an activity row) means the Home tab —
+  // leaving the surface for it and being bounced back by App would only flicker.
   const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
   const closePop = () => setPop(null);
 

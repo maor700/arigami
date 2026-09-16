@@ -17,7 +17,7 @@ export const strings = {
   'chat.skipThisQuestion': 'skip this question',
   'chat.answerFailed': 'The answer did not reach the session — try again.',
   'chat.answerSentAsMessage': 'Sent as a message — the agent reads it on its next turn.',
-  'chat.questionClosed': 'This question was closed without an answer (timed out or the session restarted). An answer now goes in as a message.',
+  'chat.questionClosed': 'This question is closed — it was answered elsewhere, timed out, or the session moved on. No answer can be given here.',
   'chat.screenDoneFailed': 'Could not deliver "Done" — the request is no longer open.',
   'chat.permissionRequest': 'Permission request',
   'chat.screenRequest': '{engine} wants you to look at the screen',
@@ -312,4 +312,12 @@ export const strings = {
   'chat.behindScenes': 'What happened behind the scenes',
   'chat.behindScenesOne': 'What happened behind the scenes · 1 action',
   'chat.behindScenesN': 'What happened behind the scenes · {n} actions',
+  // ---- OpenUICard.jsx (OPENUI pilot) ----
+  'openui.from': 'ui block',
+  'openui.fallback': 'This UI block could not be rendered.',
+  'openui.source': 'source',
+  'openui.hideSource': 'hide source',
+  'openui.sent': 'sent',
+  'openui.tableTruncated': 'showing {shown} of {total} rows',
+  'chat.requestStale': 'closed — the session moved on',
 };

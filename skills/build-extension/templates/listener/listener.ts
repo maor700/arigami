@@ -67,7 +67,7 @@ export const provider: ListenerProvider<Args, WM> = {
       kind: 'ok',
       shouldFire: true,
       nextWatermark: { lastId: fresh[0].id },
-      summary: `{{title}}: ${fresh.length} חדשים — ${fresh.slice(0, max).map((i) => i.title).join(' · ')}`,
+      summary: `{{title}}: ${fresh.length} new — ${fresh.slice(0, max).map((i) => i.title).join(' · ')}`,
     };
   },
 

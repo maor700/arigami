@@ -259,11 +259,19 @@ export interface Config {
   // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
   // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
   defaultModel: string | null;
+  // Engine a new session runs on when neither the caller, its agent nor its parent names one; unknown = claude.
+  defaultEngine: 'claude' | 'codex';
   // RES1 — the host-wide model ladder. When every pooled account has hit its
   // limit, the supervisor drops one rung of this chain instead of stopping, and
   // climbs back once the top rung's quota resets. An agent or a session may
   // override it (session.claude.modelChain). See server/supervisor.ts.
   modelChain: string[];
+  // P2-6 — codex sessions' ladder (codex model ids), used only when the codex account pool is exhausted.
+  codexModelChain: string[];
+  // P3-1 — codex driver: long-lived `codex app-server` (default) or the one-process-per-turn `codex exec` fallback; read at boot.
+  codexTransport: 'app-server' | 'exec';
+  // P3-1 — app-server approvalPolicy for sessions with no explicit permission mode.
+  codexApprovals: 'never' | 'on-request' | 'untrusted';
   // CTX1 — manual escape hatch for a model id server/lib/ctx-window.ts doesn't
   // recognize (new release, custom proxy id…): tokens per model id/alias,
   // lower-cased. Checked before the built-in table; env
@@ -382,7 +390,11 @@ export const DEFAULTS: Config = {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
   defaultModel: null,
+  defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
+  codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+  codexTransport: 'app-server',
+  codexApprovals: 'never',
   ctxWindowOverrides: {},
   supervisor: {
     enabled: true,
@@ -505,6 +517,10 @@ function envOverrides(): Partial<Config> {
   // isolated-host test can run the 30s loop at 1s with a 3s stall threshold.
   if (E.ARIGAMI_MODEL_CHAIN != null && E.ARIGAMI_MODEL_CHAIN !== '')
     o.modelChain = E.ARIGAMI_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  if (E.ARIGAMI_CODEX_MODEL_CHAIN != null && E.ARIGAMI_CODEX_MODEL_CHAIN !== '')
+    o.codexModelChain = E.ARIGAMI_CODEX_MODEL_CHAIN.split(',').map((m) => m.trim()).filter(Boolean);
+  if (E.ARIGAMI_CODEX_TRANSPORT) o.codexTransport = E.ARIGAMI_CODEX_TRANSPORT as Config['codexTransport'];
+  if (E.ARIGAMI_CODEX_APPROVALS) o.codexApprovals = E.ARIGAMI_CODEX_APPROVALS as Config['codexApprovals'];
   const sup: Partial<SupervisorConfig> = {};
   if (E.ARIGAMI_SUPERVISOR != null && E.ARIGAMI_SUPERVISOR !== '')
     sup.enabled = /^(1|true|yes|on)$/i.test(E.ARIGAMI_SUPERVISOR);
@@ -591,6 +607,9 @@ export const cfg: Config = {
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
+  defaultEngine: merged.defaultEngine === 'codex' ? 'codex' : 'claude',
+  codexTransport: merged.codexTransport === 'exec' ? 'exec' : 'app-server',
+  codexApprovals: merged.codexApprovals === 'on-request' || merged.codexApprovals === 'untrusted' ? merged.codexApprovals : 'never',
   trustProxy: resolveTrustProxy(merged),
   hostBase: `http://${loopbackHost(merged.bind || DEFAULTS.bind)}:${merged.port || DEFAULTS.port}`,
 };
@@ -672,6 +691,20 @@ export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
   const out = { ...file, host: { ...(file.host || {}), ...patch } } as any;
   writeConfigFile(out);
   cfg.host = next;
+  return next;
+}
+
+/** The host default engine; anything but 'codex' reads as claude. */
+export function defaultEngine(): 'claude' | 'codex' {
+  return cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+}
+
+// Persist cfg.defaultEngine (Settings › Host); an unknown value falls back to claude.
+export function updateDefaultEngine(engine: unknown): 'claude' | 'codex' {
+  ensureConfigFile();
+  const next = engine === 'codex' ? 'codex' : 'claude';
+  writeConfigFile({ ...(loadFile() as Record<string, unknown>), defaultEngine: next });
+  cfg.defaultEngine = next;
   return next;
 }
 

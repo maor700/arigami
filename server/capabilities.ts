@@ -25,7 +25,7 @@ import * as ob from './onboarding.js';
 // ---------------------------------------------------------------------------
 
 export type ManualKind = 'token' | 'oauth' | 'qr' | 'toggle' | 'repo' | 'takeover';
-export type Playbook = 'connect-identity' | 'connect-composio' | 'connect-claude' | 'connect-tailscale' | 'connect-github' | 'connect-mcp';
+export type Playbook = 'connect-identity' | 'connect-composio' | 'connect-claude' | 'connect-codex' | 'connect-tailscale' | 'connect-github' | 'connect-mcp';
 
 /**
  * M1 — WHERE a connection's tokens live and who the calls go through:
@@ -115,7 +115,7 @@ export const isNeedsSetup = (x: unknown): x is NeedsSetup =>
 
 // Static ids. `repo:<name>`, `composio:<toolkit>` and `mcp:<service>` are
 // dynamic (see getCapability()).
-export const STATIC_CAPABILITY_IDS = ['identity', 'claude', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry'] as const;
+export const STATIC_CAPABILITY_IDS = ['identity', 'claude', 'codex', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry'] as const;
 // M1: what Composio still brokers for us. Linear/Notion/GitHub moved to their
 // vendors' own MCP servers (mcp:*), and `whatsapp` was never our WhatsApp —
 // Composio's toolkit is the Business Cloud API, ours is the local bridge.
@@ -124,7 +124,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = ['gmail', 'googledrive', 'googlecalendar'
 export const knownMcpServices = (): string[] => connectableMcp().map((s) => s.slug);
 /** @deprecated snapshot taken at import; call knownMcpServices() for the live list. */
 export const KNOWN_MCP_SERVICES: readonly string[] = connectableMcp().map((s) => s.slug);
-const CAP_ID_RE = /^(identity|claude|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
+const CAP_ID_RE = /^(identity|claude|codex|git|whatsapp|desktop|push|remote|telemetry|repo:[A-Za-z0-9._-]{1,64}|composio:[a-z0-9_-]{1,40}|mcp:[a-z0-9-]{1,40})$/;
 export const isCapabilityId = (id: unknown): id is string => typeof id === 'string' && CAP_ID_RE.test(id);
 
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ export const isCapabilityId = (id: unknown): id is string => typeof id === 'stri
 // real per-identity state are ownable: `identity` (the Google login in the
 // agent's own Chrome profile → $ARIGAMI_DIR/agents/<slug>/identity.json) and
 // `composio:*` (a Composio connected account with user_id = the owner).
-// Everything else (claude, git, whatsapp, desktop, push, remote, telemetry,
+// Everything else (claude, codex, git, whatsapp, desktop, push, remote, telemetry,
 // repo:*) is host-level and resolves to 'global' for every owner. A session
 // born from an agent resolves the agent's connection FIRST, then the global.
 // ---------------------------------------------------------------------------
@@ -294,6 +294,7 @@ export interface CapabilityProbes {
   // A2: called with the owner being resolved ('global' or 'agent:<slug>').
   identity: (owner?: Owner) => Identity | null;
   claude: () => { cli: boolean; authed: boolean };
+  codex: () => { cli: boolean; authed: boolean };
   git: () => { authed: boolean; gh: boolean };
   repos: () => Array<{ name: string; present: boolean; dir: string; source: string }>;
   whatsapp: () => { status: string; qr: string | null; user: string | null; reason?: string };
@@ -311,6 +312,10 @@ export interface CapabilityProbes {
   mcp: () => mcpConn.McpState;
   // M1: the connection records this host wrote for an owner (never secrets).
   mcpConnections: (owner: Owner) => mcpConn.McpConnection[];
+  // P2-4: Codex's own MCP grants (name → live).
+  codexMcp: () => Map<string, boolean>;
+  // P2-4: the engine asking (a session's), or null for Settings/doctor — mcp:* then counts any engine's grant.
+  engine: () => mcpConn.McpEngine | null;
 }
 
 // Connected-accounts probe: one network call, cached — a tool that checks
@@ -396,6 +401,7 @@ const desktopProbe = (): { enabled: boolean; display: string | null; up: boolean
 export const defaultProbes: CapabilityProbes = {
   identity: readIdentity,
   claude: () => ({ cli: ob.defaultProbes.claudeCli(), authed: ob.defaultProbes.claudeAuth() }),
+  codex: () => ({ cli: ob.defaultProbes.codexCli(), authed: ob.defaultProbes.codexAuth() }),
   git: () => ({ authed: ob.defaultProbes.gitAuth(), gh: !!which('gh') }),
   repos: () =>
     ob.listRepos().map((r) => {
@@ -445,6 +451,8 @@ export const defaultProbes: CapabilityProbes = {
   composioConnected: fetchComposioConnected,
   mcp: () => mcpConn.readMcpState(),
   mcpConnections: (owner) => mcpConn.readConnections(owner),
+  codexMcp: () => mcpConn.readCodexMcpGrants(),
+  engine: () => null,
 };
 
 // ---------------------------------------------------------------------------
@@ -492,6 +500,26 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
       },
       autoCapable: true,
       playbook: 'connect-claude',
+      events: [...SETUP_EVENTS, 'accounts'],
+    },
+    {
+      id: 'codex',
+      title: 'Codex',
+      group: 'core',
+      provider: 'local',
+      check: () => {
+        const c = p.codex();
+        if (!c.cli) return { ok: false, detail: 'Codex CLI not found on PATH — install it first (npm i -g @openai/codex)', data: { cli: false } };
+        return c.authed ? { ok: true, detail: 'signed in', data: { cli: true } } : { ok: false, detail: 'sign in with ChatGPT or paste an OpenAI API key', data: { cli: true } };
+      },
+      manual: {
+        kind: 'oauth',
+        start: '/__api/accounts/login/start',
+        fields: [{ name: 'token', label: 'OpenAI API key (sk-…)', secret: true }],
+        help: 'Sign in with ChatGPT (codex login; paste the callback address back if the browser is not on this host) or paste an OpenAI API key.',
+      },
+      autoCapable: true,
+      playbook: 'connect-codex',
       events: [...SETUP_EVENTS, 'accounts'],
     },
     {
@@ -678,18 +706,31 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
       if (spec.auth === 'oauth-byo-client')
         return { ok: false, detail: `${title} has no dynamic client registration — it needs an OAuth app of your own (client id + secret)`, data: { auth: spec.auth, url: spec.url, docs: spec.docs } };
       const state = p.mcp();
+      const codex = p.codexMcp();
+      const engine = p.engine();
       const own = p.mcpConnections(owner).find((c) => c.cap === `mcp:${s}`);
       const shared = owner === GLOBAL_OWNER ? null : p.mcpConnections(GLOBAL_OWNER).find((c) => c.cap === `mcp:${s}`);
+      let heldElsewhere: string[] = [];
       for (const [conn, from] of [[own, owner] as const, [shared, GLOBAL_OWNER] as const]) {
         if (!conn) continue;
-        if (!mcpConn.grantLive(conn.name, conn.auth || spec.auth, state)) continue;
+        const engines = mcpConn.grantEngines(conn.name, conn.auth || spec.auth, state, codex);
+        if (engine ? !engines.includes(engine) : !engines.length) {
+          if (engines.length && !heldElsewhere.length) heldElsewhere = engines;
+          continue;
+        }
         return {
           ok: true,
           owner: from,
-          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''}`,
-          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
+          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''} · ${engines.join(', ')}`,
+          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, engines, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
         };
       }
+      if (engine && heldElsewhere.length)
+        return {
+          ok: false,
+          detail: engine === 'codex' && spec.auth === 'bearer' ? `${title} is token-based — not wired for Codex sessions yet` : `${title} is granted for ${heldElsewhere.join(', ')} only — authorize it once more for ${engine}`,
+          data: { name, url: spec.url, auth: spec.auth, docs: spec.docs, engines: heldElsewhere, engine, tools: grantToolPattern(name) },
+        };
       const stale = own || shared;
       // The bearer rows never see a consent screen — saying "authorize" there
       // would send the human looking for a browser step that does not exist.

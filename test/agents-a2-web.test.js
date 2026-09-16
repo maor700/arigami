@@ -3,15 +3,17 @@
 // ownable capability and whether the browser profile exists; the Routine
 // list renders cron jobs (enabled state, next run) + listeners; the SetupCard
 // raised by an agent session wears an owner chip; the Connections hub offers
-// the "שייך ל" owner filter with the agents.
+// the "belongs to" owner filter with the agents.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, TeamSection, nextCronFor, AgentConnections, RoutineList, untilTime, SetupCard, Connections, origFetch;
+let React, render, prefs, store, TeamSection, nextCronFor, AgentConnections, RoutineList, untilTime, SetupCard, Connections;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -31,7 +33,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({ ok: true, status: 200, url: String(url), json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}), text: async () => '' });
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
@@ -43,10 +44,6 @@ beforeAll(async () => {
   ({ default: SetupCard } = await import(web('components/setup/SetupCard.jsx')));
   ({ default: Connections } = await import(web('components/settings/Connections.jsx')));
   await store.loadAgents();
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const noop = () => {};

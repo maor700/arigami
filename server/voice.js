@@ -4,9 +4,12 @@
 //
 // The browser records a short clip (push-to-talk) and posts it here; we never
 // expose the Groq key to the client. The router is intentionally model-driven
-// so Hebrew + Hebrew/English code-switching ("תעבור ל-session של ה-PR") works.
+// so Hebrew + Hebrew/English code-switching (a Hebrew sentence with "session" /
+// "PR" left in Latin script) works.
 import { cfg } from './lib/config.js';
 import { readToken } from './usage.js';
+import { tokenForSession } from './accounts.js';
+import { runOneShot, hostEngine } from './lib/oneshot.js';
 
 const GROQ = 'https://api.groq.com/openai/v1';
 const ANTHROPIC = 'https://api.anthropic.com/v1/messages';
@@ -97,7 +100,7 @@ const COMMANDS = `
 - restore_session {sessionId} — unarchive a session
 - focus_input {} — focus the chat composer
 - set_theme {mode} — "light"|"dark"|"toggle"
-- set_terminal {sessionId?, theme?, dir?} — theme "light"|"dark"; dir "auto"|"ltr"|"rtl" (RTL/ימין-לשמאל = "rtl")
+- set_terminal {sessionId?, theme?, dir?} — theme "light"|"dark"; dir "auto"|"ltr"|"rtl" (right-to-left = "rtl")
 - open_settings {} — open settings
 - dismiss {} — close any open overlay (settings / new-session dialog / a dialog) and return to the current view
 - interrupt {sessionId?} — stop the working agent
@@ -226,9 +229,14 @@ function priorTurns(history) {
     .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
 }
 
+function claudeToken() {
+  try { return readToken() || tokenForSession(null)?.token || null; } catch { return null; }
+}
+
 async function routeAnthropic(text, context, history) {
-  const token = readToken();
-  if (!token) throw new Error('voice router: no Claude Code credentials in keychain');
+  const token = claudeToken();
+  // No Claude credentials (codex-only host): Groq when keyed, else a one-shot on the host engine.
+  if (!token) return apiKey() ? routeGroq(text, context, history) : routeOneShot(text, context, history);
   const r = await fetch(ANTHROPIC, {
     method: 'POST',
     headers: {
@@ -273,6 +281,15 @@ async function routeGroq(text, context, history) {
   const j = await r.json();
   let plan;
   try { plan = JSON.parse(j.choices?.[0]?.message?.content || '{}'); } catch { plan = {}; }
+  return normalizePlan(plan, text);
+}
+
+async function routeOneShot(text, context, history) {
+  const turns = priorTurns(history).map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+  const prompt = `${systemPrompt(context)}\n\nReply with ONLY the JSON plan object, no prose.\n\n${turns ? `${turns}\n` : ''}USER: ${text}`;
+  const out = await runOneShot(prompt, { engine: hostEngine(), model: 'haiku', timeoutMs: 60_000, tag: 'voice-router' });
+  let plan;
+  try { plan = JSON.parse((out.match(/\{[\s\S]*\}/) || ['{}'])[0]); } catch { plan = {}; }
   return normalizePlan(plan, text);
 }
 

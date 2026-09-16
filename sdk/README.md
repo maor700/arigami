@@ -36,7 +36,7 @@ import type { ListenerProvider, Hooks, ToolDef } from '@arigami/sdk';
   "name": "feature-picker",
   "version": "0.2.0",
   "apiVersion": 1,
-  "title": "בחירת פיצ'רים",
+  "title": "Feature picker",
   "description": "A form that returns a prompt to the chat",
 
   "tabs": [

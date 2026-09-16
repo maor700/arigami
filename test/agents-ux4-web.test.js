@@ -1,16 +1,18 @@
-// UX4 web: "אי אפשר למחוק אייג'נט קיים" — the rail's Team row menu offers a
+// UX4 web: "can't delete an existing agent" — the rail's Team row menu offers a
 // delete action (the only place the rail exposed before was the persona
 // tab's buried, unlabeled trailing button), and the agent surface header
 // carries the same delete action so it is reachable from every tab and on
-// mobile, not just at the bottom of פרסונה.
+// mobile, not just at the bottom of the persona tab.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, store, TeamSection, AgentView, origFetch;
+let React, render, prefs, store, TeamSection, AgentView;
 const h = (...a) => React.createElement(...a);
 
 const AGENTS = [
@@ -30,7 +32,6 @@ beforeAll(async () => {
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}),
@@ -43,10 +44,6 @@ beforeAll(async () => {
   ({ TeamSection } = await import(web('components/Rail.jsx')));
   ({ default: AgentView } = await import(web('components/AgentView.jsx')));
   await store.loadAgents();
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 const noop = () => {};

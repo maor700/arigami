@@ -11,6 +11,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SETUP_TIMEOUT_MS = 6000;
@@ -79,9 +80,9 @@ async function startHost(): Promise<void> {
   host.stdout!.on('data', (d) => { log += d; fs.appendFileSync(path.join(dir, 'host.log'), d); });
   host.stderr!.on('data', (d) => { log += d; fs.appendFileSync(path.join(dir, 'host.log'), d); });
   try {
-    await until(async () => { try { return (await fetch(base + '/__api/config')).ok; } catch { return false; } }, 30000);
+    await until(async () => { try { return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok; } catch { return false; } }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
 }
 async function stopHost(): Promise<void> {
@@ -98,7 +99,7 @@ beforeAll(async () => {
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
   await startHost();
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 afterAll(() => { try { host?.kill('SIGTERM'); } catch {} });
 
 async function newSession(title: string): Promise<string> {

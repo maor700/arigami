@@ -1,6 +1,6 @@
 # Arigami — v1 Specification
 
-A web-shell cockpit for running many parallel Claude Code sessions. Bun server on
+A web-shell cockpit for running many parallel agent sessions (Claude Code or Codex). Bun server on
 `localhost:3099`. The host is an **unopinionated platform**: it provides primitives
 (sessions, chat, tabs, proxy, supervisor, MCP); all workflow (tickets, worktrees,
 dev servers, review flows) lives in **skills** that drive the host through its MCP.
@@ -17,6 +17,7 @@ arigami/
                    /__ws (WebSocket), /__mcp-* (MCP helper), everything else → proxy
     state.js       session registry + persistence (~/.arigami/state.json)
     claude.js      claude CLI process manager (stream-json in/out, one proc per session)
+    codex.ts       codex CLI driver (`codex exec --json`, one proc per turn) — docs/ENGINES.md
     proxy.js       fixed-origin reverse proxy (ported from iframe-host-poc)
     pages.js       host-internal pages ported from PoC: /__ticket/<id>, compare slider
     bus.js         WebSocket hub: every state mutation broadcasts {type, payload}
@@ -139,6 +140,12 @@ Client → server: none (use REST). Reconnect = full state replay.
   {kind:'user'|'assistant-text'|'tool-use'|'tool-result'|'thinking'|'result'|'error', …}.
   Persist to ~/.arigami/chat/<id>.jsonl (append).
 
+### Engines
+
+`session.engine` is `claude` (this section) or `codex` (`server/codex.ts`), fixed at creation and
+dispatched through `server/lib/engine-driver.ts`; both emit the same chat events. Differences and
+limits: docs/ENGINES.md.
+
 ## Attachments (server/archive.js, claude.js saveAttachments/writeUserMessage — ZIP)
 
 - **Two upload paths**, chosen client-side by size (`web/src/lib/attachments.js`,
@@ -208,6 +215,11 @@ request_screen({prompt, reason?, hint?, session_id?}) → {ok, note?}
 capture_screen({caption?, session_id?})   // screenshot card in the chat timeline (T3)
 publish_artifact({path, title, entry?, open?=true, notify?=false, share?=false, share_days?, session_id?})
    → {artifact_id, path:'/__artifacts/<id>/', version, bytes, files, warnings[], share_url:string|null, share_exp}
+render_ui({ui, title?, session_id?}) → {ok, event_id}                                     (OPENUI pilot)
+   // POST /__api/sessions/:id/ui — one `{kind:'openui', ui}` chat event. `ui` is
+   // OpenUI Lang (skills/render-ui/SKILL.md, generated from web/src/openui/library.jsx);
+   // the web card (OpenUICard.jsx) renders it with @openuidev/react-lang and shows a
+   // quiet fallback on bad input. Button/Form actions POST …/message like an ext-card.
 share_artifact({artifact_id, days?, session_id?}) → {share_url, expires_at, version, warnings[]}   (K2)
 unshare_artifact({artifact_id, session_id?})      → {revoked}                                        (K2)
    // Snapshot a static file/folder and serve it host-relative (A1). NEVER print
@@ -294,11 +306,12 @@ Two layers, same shape as the Hermes/OpenClaw comparison in
   what happened today) and `episodes/*.md` (session summaries), all indexed
   with FTS5 (`bun:sqlite`, file-granularity rows, `tokenize='trigram'`).
   Trigram (substring, not whole-token) indexing is deliberate: Hebrew glues
-  single-letter prefixes (ה/ו/ב/ל/מ/ש/כ) directly onto the next word with no
-  boundary, so the FTS5 default (`unicode61`, whole-token) tokenizes "הסודי"
-  as one token a query for "סודי" alone can never match — trigram matches it
-  as a substring like any other language, no hand-maintained prefix-letter
-  list needed (M1b). A DB created before this fix self-heals in place (drop +
+  single-letter prefixes (he/vav/bet/lamed/mem/shin/kaf — roughly "the/and/in/to/from/that/as")
+  directly onto the next word with no boundary, so the FTS5 default
+  (`unicode61`, whole-token) tokenizes "ha-sodi" ("the-secret", one glued token)
+  as one token a query for the bare "sodi" ("secret") alone can never match — trigram
+  matches it as a substring like any other language, no hand-maintained
+  prefix-letter list needed (M1b). A DB created before this fix self-heals in place (drop +
   full re-scan from disk) the first time `memory.ts`'s `db()` runs after
   upgrade — detected via `sqlite_master`, not a separate migration step.
   Ranking: FTS5 `rank` (bm25) first, then a hit containing the whole query as
@@ -307,7 +320,7 @@ Two layers, same shape as the Hermes/OpenClaw comparison in
   called; snippets capped ~700 chars. Trade-off: queries under 3 characters
   can't match anything (inherent to trigram).
 
-**Gate** (spec "סגור-תחילה" — start closed): every write to
+**Gate** (spec "closed-first" — start closed): every write to
 USER.md/MEMORY.md/journal is (1) `sanitize()`d against credential-shaped
 strings, prompt-injection phrasing, and exfiltration patterns — refused
 outright, not stored; (2) deduped against existing lines (normalized,
@@ -640,6 +653,20 @@ on demand via the `save_browser_logins` MCP tool /
 its profile back, then removes the copy — unless `config.screen.keepProfiles`
 (default false) is set. Archive only kills the desktop; the profile copy
 survives so unarchiving picks up where it left off.
+
+## One chat UI system (web/src/openui/) — OPENUI
+
+Every chat card — host cards and agent `render_ui` blocks — is built from the same primitives
+(`primitives.jsx`: CardFrame/Btn/ReceiptLine/…) and defined the same way (`{name, props: zod, description,
+component}`). Two views of one library: `library.jsx` is the AGENT set (what `render_ui` may use; its prompt is
+`skills/render-ui/SKILL.md`); `define.js` + `host.jsx` add the HOST-ONLY cards (ExtCard, ActionCard, ArtifactCard,
+ScreenshotCard, AgentCard, DelegatedLine, AgentAdoptLine, MergeEvent, MergePanel, SetupCard, QuestionCard,
+PermissionCard, ScreenRequestCard). ChatPane renders host events through `HostCard` (event → props, zod-checked,
+loose: unknown keys pass) — never through the text Renderer, since host events are already structured and the
+cards keep their store/api handlers, focus and keyboard rules. Host names are absent from the agent library and
+prompt, so a `render_ui` block naming one gets "unknown component" (test/openui-host-cards.test.js).
+The full react-lang library object (`getHostLibrary()`) is materialized lazily; the eager path costs zod/mini +
+primitives only, the parser stays in the lazy OpenUIBody chunk. Fixture page: web/host-demo.html.
 
 ## Artifacts (server/artifacts.ts, ArtifactCard.jsx) — A1
 

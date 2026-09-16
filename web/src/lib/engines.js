@@ -10,13 +10,12 @@
 // Where each engine's model list comes from:
 //   claude — fetched. server/models.js runs a `claude` CLI handshake and the
 //            cockpit reads it through lib/models.js (revalidating cache).
-//   codex  — static, right here. There is NO equivalent handshake to run: the
-//            Codex CLI keeps its model metadata in $CODEX_HOME/models_cache.json
-//            (a server-pushed catalog it refreshes on its own schedule), which
-//            the Arigami server does not read. The list below is transcribed
-//            from that file on the host — codex-cli 0.153.4, read 2026-09-09 —
-//            filtered to `visibility: "list"` and ordered by its `priority`.
-//            Adding a model when Codex ships one is a one-line edit here.
+//   codex  — fetched too, from the same GET /models: server/codex.ts
+//            codexModels() asks `codex app-server` model/list under the ACTIVE
+//            codex account (models_cache.json only while that call is in flight)
+//            — the catalog is per login. lib/models.js hands the rows to
+//            setCodexCatalog(); CODEX_MODELS below is only the fallback shown
+//            until that first fetch lands.
 //
 // Why the effort scales are NOT shared (the thing not to "simplify"):
 // `claude --effort` is a flag with one fixed ladder for every model. Codex has
@@ -29,10 +28,21 @@ import { t } from './i18n.js';
 import { EFFORT_OPTIONS } from './effort.js';
 
 export const ENGINE_IDS = ['claude', 'codex'];
-export const DEFAULT_ENGINE = 'claude';
+// Host default (cfg.defaultEngine from GET /__api/config, set by store.loadConfig); '' in the launcher/agent forms means this.
+export let DEFAULT_ENGINE = 'claude';
 
-/** '' / unknown / legacy-undefined all mean claude — same rule as pickEngine(). */
+/** Adopt the host's cfg.defaultEngine; unknown → claude. */
+export function setDefaultEngine(engine) {
+  DEFAULT_ENGINE = ENGINE_IDS.includes(engine) ? engine : 'claude';
+}
+
+/** A session's engine: '' / unknown / legacy-undefined all mean claude — same rule as pickEngine(). */
 export function normalizeEngine(engine) {
+  return ENGINE_IDS.includes(engine) ? engine : 'claude';
+}
+
+/** A spawn choice: '' / unknown = the host default. */
+export function resolveEngine(engine) {
   return ENGINE_IDS.includes(engine) ? engine : DEFAULT_ENGINE;
 }
 
@@ -59,18 +69,28 @@ export function engineLabel(engine) {
   return ENGINE_NAMES[normalizeEngine(engine)].label;
 }
 
-/**
- * Does this engine have permission MODES to pick between?
- *
- * claude does (default / acceptEdits / plan / bypassPermissions, enforced by a
- * PreToolUse hook). `codex exec` does not: it has no live-approval channel and
- * always runs with --dangerously-bypass-approvals-and-sandbox (server/codex.ts;
- * docs/ENGINES.md limits 1-2). Offering the picker anyway would let the human
- * select "plan" and believe the session was constrained while nothing changed —
- * so a codex session is told what it runs as instead of being asked.
- */
+// Host's cfg.codexTransport (GET /__api/config): 'app-server' has approvals + compaction, 'exec' has neither.
+export let CODEX_TRANSPORT = 'app-server';
+
+/** Adopt the host's cfg.codexTransport; anything but 'exec' is app-server. */
+export function setCodexTransport(transport) {
+  CODEX_TRANSPORT = transport === 'exec' ? 'exec' : 'app-server';
+}
+
+/** Does this engine have permission modes? claude: all four; codex app-server: bypass vs ask; codex exec: none (docs/ENGINES.md). */
 export function hasPermissionModes(engine) {
-  return normalizeEngine(engine) === 'claude';
+  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
+}
+
+/** The permission modes this engine offers (values of the cockpit picker). */
+export function permissionModesFor(engine) {
+  if (normalizeEngine(engine) === 'claude') return ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+  return CODEX_TRANSPORT === 'app-server' ? ['default', 'bypassPermissions'] : [];
+}
+
+/** Can this engine compact its context? codex only on app-server (thread/compact/start). */
+export function supportsCompaction(engine) {
+  return normalizeEngine(engine) === 'claude' || CODEX_TRANSPORT === 'app-server';
 }
 
 /** Lowercase CLI-ish name for the terminal header. */
@@ -89,7 +109,8 @@ export function engineOptions() {
 
 // `efforts` is that model's own `supported_reasoning_levels`, in the catalog's
 // order (weakest → strongest); `defaultEffort` its `default_reasoning_level`,
-// which is what Codex uses when the config key is absent.
+// which is what Codex uses when the config key is absent. FALLBACK only — see
+// codexCatalog().
 export const CODEX_MODELS = [
   {
     value: 'gpt-5.6-terra',
@@ -114,16 +135,46 @@ export const CODEX_MODELS = [
   },
 ];
 
+// The live catalog (server rows from GET /models, see lib/models.js), or null
+// before the first fetch lands. Module state rather than a hook argument so
+// every consumer — pickers, coerceSessionOptions, effort labels — sees the same
+// list without threading it through; setCodexCatalog(null) restores the fallback.
+let liveCodexModels = null;
+
+/** Adopt the server's Codex catalog rows ({id, name, desc, efforts, defaultEffort}); null/empty = keep the fallback. */
+export function setCodexCatalog(rows) {
+  liveCodexModels =
+    Array.isArray(rows) && rows.length
+      ? rows
+          .filter((r) => r && typeof r.id === 'string')
+          .map((r) => ({
+            value: r.id,
+            label: r.name || r.id,
+            desc: r.desc || '',
+            efforts: Array.isArray(r.efforts) && r.efforts.length ? r.efforts : CODEX_COMMON_EFFORTS,
+            defaultEffort: r.defaultEffort || null,
+          }))
+      : null;
+  return liveCodexModels;
+}
+
+/** The Codex models the picker offers right now: the live catalog, else the fallback. */
+export function codexCatalog() {
+  return liveCodexModels || CODEX_MODELS;
+}
+
 // With no model pinned, Codex picks its own (config `model`, else the
 // server-recommended one) — we can't know which, so offer only the rungs every
 // listed model has. Anything above that would be a level the chosen model may
 // reject.
-export const CODEX_COMMON_EFFORTS = CODEX_MODELS.reduce(
-  (acc, m) => acc.filter((e) => m.efforts.includes(e)),
-  CODEX_MODELS[0].efforts
-);
+const commonEfforts = (list) => list.reduce((acc, m) => acc.filter((e) => m.efforts.includes(e)), list[0].efforts);
+export const CODEX_COMMON_EFFORTS = commonEfforts(CODEX_MODELS);
+export function codexCommonEfforts() {
+  return commonEfforts(codexCatalog());
+}
 
 const EFFORT_KEY = {
+  minimal: 'rail.effortMinimal',
   low: 'rail.effortLow',
   medium: 'rail.effortMedium',
   high: 'rail.effortHigh',
@@ -135,20 +186,19 @@ const EFFORT_KEY = {
 /**
  * The model `<select>`'s options for this engine. `claudeModels` is the live
  * list from useModels() — passed in rather than imported so this module stays
- * pure and testable (and so a Codex-only render never triggers the claude
- * handshake fetch).
+ * pure and testable (the one GET /models carries both engines' catalogs).
  */
 export function modelOptionsFor(engine, claudeModels) {
   if (normalizeEngine(engine) !== 'codex') return claudeModels || [];
   return [
     { value: 'default', label: t('rail.effortDefault'), desc: t('launcher.options.codexModelDefaultDesc') },
-    ...CODEX_MODELS.map(({ value, label, desc }) => ({ value, label, desc })),
+    ...codexCatalog().map(({ value, label, desc }) => ({ value, label, desc })),
   ];
 }
 
 /** The catalog entry for a Codex model value, or null (incl. 'default'/''). */
 export function codexModel(model) {
-  return CODEX_MODELS.find((m) => m.value === model) || null;
+  return codexCatalog().find((m) => m.value === model) || null;
 }
 
 /**
@@ -161,7 +211,7 @@ export function codexModel(model) {
 export function effortOptionsFor(engine, model) {
   if (normalizeEngine(engine) !== 'codex') return EFFORT_OPTIONS;
   const m = codexModel(model);
-  const levels = m ? m.efforts : CODEX_COMMON_EFFORTS;
+  const levels = m ? m.efforts : codexCommonEfforts();
   return [
     { value: 'default', label: t('rail.effortDefault') },
     ...levels.map((e) => ({ value: e, label: t(EFFORT_KEY[e]) || e })),
@@ -186,13 +236,13 @@ export function effortLabelFor(engine, model, value) {
  * pending fetch would be worse than keeping it).
  */
 export function coerceSessionOptions(options, claudeModels) {
-  const engine = normalizeEngine(options?.engine);
+  const engine = resolveEngine(options?.engine);
   const out = { ...options, engine: engine === DEFAULT_ENGINE ? '' : engine };
   const known = modelOptionsFor(engine, claudeModels);
   if (out.model) {
     const listed = known.some((o) => o.value === out.model);
-    // Claude with an unloaded list → keep. Codex's list is static, so an
-    // unlisted value there is genuinely wrong.
+    // Claude with an unloaded list → keep. Codex always has a list (live or
+    // fallback), so an unlisted value there is genuinely wrong.
     if (!listed && (engine === 'codex' || (claudeModels && claudeModels.length))) out.model = '';
   }
   if (out.effort && !effortOptionsFor(engine, out.model).some((o) => o.value === out.effort)) out.effort = '';

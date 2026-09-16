@@ -1,5 +1,5 @@
 ---
-description: Register an SMS listener that receives incoming SMS messages from the user's phone via Macrodroid webhook. Use when Claude needs to receive SMS verification codes, OTPs, or monitor incoming text messages. The phone forwards SMS to Arigami's webhook endpoint, and the listener wakes the session when new messages arrive.
+description: Register an SMS listener that receives incoming SMS messages from the user's phone via Macrodroid webhook. Use when the agent needs to receive SMS verification codes, OTPs, or monitor incoming text messages. The phone forwards SMS to Arigami's webhook endpoint, and the listener wakes the session when new messages arrive.
 argument-hint: [from-filter, e.g. "+972..." to only match a specific sender]
 ---
 

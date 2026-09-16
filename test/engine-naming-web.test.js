@@ -1,6 +1,6 @@
 // The cockpit must call a session's engine by ITS name.
 //
-// The rule under test (docs/ENGINES.md, "הכלל לגבי טקסט בממשק"): a string that
+// The rule under test (docs/ENGINES.md, "the rule for UI text"): a string that
 // describes the ENGINE — who is working, who wants the screen, whose
 // capabilities these are, what you are replying to — follows `session.engine`.
 // A string that describes ARIGAMI, or that genuinely describes the Claude Code
@@ -14,6 +14,8 @@
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
@@ -135,12 +137,24 @@ test('the capabilities panel is titled after the engine, and drops the Claude-on
 
 /* ---------- what a codex session is NOT asked ----------------------------- */
 
-test('only claude has permission MODES — codex is told, not asked', async () => {
-  // The lie this guards against: `POST /permission-mode` succeeds for a codex
-  // session and the rail then shows "plan", while server/codex.ts spawns with
-  // --dangerously-bypass-approvals-and-sandbox regardless of what was stored.
+test('codex compacts only on app-server — exec hides auto-compact and compact-now', async () => {
+  engines.setCodexTransport('exec');
+  expect(engines.supportsCompaction('codex')).toBe(false);
+  for (const v of ['claude', '', null, undefined]) expect(engines.supportsCompaction(v)).toBe(true);
+  engines.setCodexTransport('app-server');
+  expect(engines.supportsCompaction('codex')).toBe(true);
+});
+
+test('codex exec has no permission MODES — told, not asked; app-server offers ask vs bypass', async () => {
+  // exec spawns with --dangerously-bypass-approvals-and-sandbox whatever is stored.
+  engines.setCodexTransport('exec');
   expect(engines.hasPermissionModes('codex')).toBe(false);
+  expect(engines.permissionModesFor('codex')).toEqual([]);
   for (const v of ['claude', '', null, undefined]) expect(engines.hasPermissionModes(v)).toBe(true);
+  engines.setCodexTransport('app-server');
+  expect(engines.hasPermissionModes('codex')).toBe(true);
+  expect(engines.permissionModesFor('codex')).toEqual(['default', 'bypassPermissions']);
+  engines.setCodexTransport('exec');
 
   const { default: TermControls } = await import(web('components/TermControls.jsx'));
   const withMode = (s, permissionMode) => ({ ...s, claude: { state: 'idle', permissionMode } });
@@ -152,4 +166,46 @@ test('only claude has permission MODES — codex is told, not asked', async () =
   const i18n = await import(web('lib/i18n.js'));
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).toContain('Codex');
   expect(i18n.t('rail.noPermissionModes', { engine: 'Codex' })).not.toContain('{engine}');
+  engines.setCodexTransport('app-server');
+  expect(render(h(TermControls, { session: withMode(SESSIONS[1], 'default') }))).toBeString();
+});
+
+/* ---------- restart / clear dialogs + MCP hint (P1-8) --------------------- */
+
+test('restart/clear dialogs and the MCP reconnect hint name the engine in both locales', async () => {
+  const keys = ['rail.restartConfirmBody', 'rail.clearConfirmBody', 'launcher.mcp.statusHint'];
+  const i18n = await import(web('lib/i18n.js'));
+  for (const lang of ['en', 'he']) {
+    prefs.setPrefs({ language: lang });
+    for (const k of keys) {
+      const s = i18n.t(k, { engine: 'Codex', name: 'x' });
+      expect(s).toContain('Codex');
+      expect(s).not.toContain('{engine}');
+      expect(s.toLowerCase()).not.toContain('claude');
+    }
+    for (const k of ['rail.restartConfirmTitle', 'rail.restartConfirm', 'rail.restartFailed', 'rail.clearConfirmTitle', 'rail.clearConfirm', 'rail.clearFailed'])
+      expect(i18n.t(k)).not.toBe(k);
+  }
+  prefs.setPrefs({ language: 'en' });
+});
+
+/* ---------- /info on codex + GPT model names (P4-2, P4-3) ----------------- */
+
+test('/info on a codex session that ran is not "not started" and drops claude-only rows; GPT ids get the catalog name', async () => {
+  const ran = { ...SESSIONS[1], claude: { state: 'idle', sessionId: 'thread-1', modelChoice: 'gpt-5.6-terra' } };
+  const info = render(h(SlashCommands.CapabilitiesPanel, { capabilities: {}, session: ran, initialTab: 'info', onClose() {} }));
+  const i18n = await import(web('lib/i18n.js'));
+  expect(info).not.toContain(i18n.t('dialogs.claudeCodeNotStarted', { engine: 'Codex' }));
+  const dt = (k) => `<dt class="text-fgdim">${i18n.t(k)}</dt>`;
+  expect(info).not.toContain(dt('dialogs.infoOrganization'));
+  expect(info).not.toContain(dt('dialogs.infoCommands'));
+  expect(info).toContain('bypassPermissions');
+  expect(info).toContain('gpt-5.6-terra');
+  const claudeInfo = render(h(SlashCommands.CapabilitiesPanel, { capabilities: {}, session: SESSIONS[0], initialTab: 'info', onClose() {} }));
+  expect(claudeInfo).toContain(dt('dialogs.infoOrganization'));
+
+  const ladder = await import(web('components/LadderBadge.jsx'));
+  expect(ladder.configuredName('gpt-5.6-terra')).toBe('GPT-5.6-Terra');
+  expect(ladder.runningName('gpt-5.6-luna', i18n.t)).toBe('GPT-5.6-Luna');
+  expect(ladder.configuredName('claude-opus-4-8')).toBe('Opus');
 });

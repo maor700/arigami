@@ -13,11 +13,13 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, engines, prefs, Launcher, origFetch;
+let React, render, engines, prefs, Launcher;
 const h = (...a) => React.createElement(...a);
 
 const CLAUDE_MODELS = [
@@ -37,7 +39,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/skills') ? { skills: [] } : { models: [] }),
@@ -50,15 +51,12 @@ beforeAll(async () => {
   Launcher = await import(web('components/Launcher.jsx'));
 });
 
-afterAll(() => {
-  globalThis.fetch = origFetch;
-});
-
 const values = (opts) => opts.map((o) => o.value);
 
 /* ---------- the model list is engine-specific ----------------------------- */
 
-test('Codex gets its own static model list — no claude handshake models leak in', () => {
+test('Codex gets its own model list (fallback until GET /models lands) — no claude handshake models leak in', () => {
+  engines.setCodexCatalog(null);
   const codex = engines.modelOptionsFor('codex', CLAUDE_MODELS);
   expect(values(codex)).toEqual(['default', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
   // the fetched claude list must not appear under codex, and vice versa
@@ -71,6 +69,34 @@ test('an unset / unknown engine means claude — same rule as the server pickEng
     expect(engines.normalizeEngine(v)).toBe('claude');
     expect(values(engines.modelOptionsFor(v, CLAUDE_MODELS))).toEqual(['default', 'claude-opus-5[1m]']);
   }
+});
+
+// The catalog is per LOGIN: a business workspace lists models a personal plan
+// doesn't. GET /models carries the active codex account's rows and the picker
+// must show THOSE — the transcribed fallback is only for before the fetch.
+test('the live Codex catalog from the server replaces the fallback, models and ladders alike', () => {
+  const live = engines.setCodexCatalog([
+    { id: 'gpt-6-astra', name: 'GPT-6-Astra', desc: 'Most capable.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol', desc: 'Workhorse.', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', desc: '', efforts: ['low', 'medium', 'high', 'xhigh'], defaultEffort: 'xhigh' },
+  ]);
+  try {
+    expect(live.length).toBe(3);
+    expect(values(engines.modelOptionsFor('codex', CLAUDE_MODELS))).toEqual(['default', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5']);
+    expect(engines.modelOptionsFor('codex', CLAUDE_MODELS)[1].label).toBe('GPT-6-Astra');
+    // the ladder follows the live row, not a transcribed one
+    expect(values(engines.effortOptionsFor('codex', 'gpt-6-astra'))).toEqual(['default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+    // no model pinned → the rungs every LIVE model has (gpt-5.5 caps it at xhigh)
+    expect(values(engines.effortOptionsFor('codex', ''))).toEqual(['default', 'low', 'medium', 'high', 'xhigh']);
+    // a model the fallback knew but this login doesn't list is dropped, not POSTed
+    expect(engines.coerceSessionOptions({ engine: 'codex', model: 'gpt-5.6-terra', effort: 'ultra' }, CLAUDE_MODELS).model).toBe('');
+    expect(engines.coerceSessionOptions({ engine: 'codex', model: 'gpt-6-astra', effort: 'ultra' }, CLAUDE_MODELS).model).toBe('gpt-6-astra');
+  } finally {
+    engines.setCodexCatalog(null);
+  }
+  // empty / null → back to the fallback
+  expect(values(engines.modelOptionsFor('codex', CLAUDE_MODELS))).toEqual(['default', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
+  expect(engines.setCodexCatalog([])).toBeNull();
 });
 
 /* ---------- the effort ladder is engine- AND model-specific --------------- */
@@ -98,8 +124,8 @@ test("Codex's effort ladder comes from the model, and is not Claude's", () => {
 test('with no Codex model pinned, only rungs every listed model supports are offered', () => {
   // we can't know which model Codex will pick, so nothing model-specific
   expect(values(engines.effortOptionsFor('codex', ''))).toEqual(['default', 'low', 'medium', 'high', 'xhigh']);
-  for (const m of engines.CODEX_MODELS) {
-    for (const e of engines.CODEX_COMMON_EFFORTS) expect(m.efforts).toContain(e);
+  for (const m of engines.codexCatalog()) {
+    for (const e of engines.codexCommonEfforts()) expect(m.efforts).toContain(e);
   }
 });
 
@@ -224,4 +250,30 @@ test('a saved launcher preset persists the engine, and a pre-engine preset still
   // and a junk value is not trusted through to the server
   prefs.setPrefs({ sessionPresets: [{ id: 'x', name: 'x', engine: 'evil' }] });
   expect(prefs.getPrefs().sessionPresets[0].engine).toBe('');
+});
+
+/* ---------- cfg.defaultEngine drives the launcher's '' ------------------- */
+
+test('a codex host default: the toggle starts on Codex, picking Claude sends it explicitly, junk falls back to claude', () => {
+  engines.setDefaultEngine('codex');
+  try {
+    expect(engines.DEFAULT_ENGINE).toBe('codex');
+    expect(engines.resolveEngine('')).toBe('codex');
+    expect(engines.normalizeEngine('')).toBe('claude'); // a session record without engine is still claude
+    const html = render(h(Launcher.EngineToggle, { options: { engine: '' }, onChange() {} }));
+    expect(html).toMatch(/aria-checked="true"[^>]*>Codex</);
+    expect(engines.coerceSessionOptions({ engine: 'claude' }).engine).toBe('claude');
+    expect(engines.coerceSessionOptions({ engine: 'codex' }).engine).toBe('');
+    expect(render(h(Launcher.SessionOptionsPicker, { options: { engine: '', skill: '', model: '', effort: '' }, onChange() {} }))).toContain('GPT-5.6-Terra');
+    engines.setDefaultEngine('gemini');
+    expect(engines.DEFAULT_ENGINE).toBe('claude');
+  } finally {
+    engines.setDefaultEngine('claude');
+  }
+});
+
+test('Settings › Host carries the default-engine toggle', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'web/src/components/settings/Host.jsx'), 'utf8');
+  expect(src).toContain("api.post('/config/default-engine', { engine })");
+  expect(src).toContain('<DefaultEngineField />');
 });

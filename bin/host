@@ -73,14 +73,16 @@ render_unit() { # render_unit <src> — substitutes the __TOKENS__ for this chec
 # The claude CLI the host resolves (mirrors server/claude.js): an explicit
 # ARIGAMI_CLAUDE_BIN — from the env, $DIR/env (systemd EnvironmentFile) or
 # $DIR/secrets.env — wins; otherwise `claude` on PATH.
-claude_bin() {
-  b="${ARIGAMI_CLAUDE_BIN:-}"
+claude_bin() { engine_bin ARIGAMI_CLAUDE_BIN claude; }
+codex_bin() { engine_bin ARIGAMI_CODEX_BIN codex; }
+engine_bin() { # engine_bin <VAR> <name>
+  eval "b=\"\${$1:-}\""
   for f in "$DIR/env" "$DIR/secrets.env" "$ROOT/.local.env"; do
     [ -n "$b" ] && break
     [ -f "$f" ] || continue
-    b="$(sed -n 's/^[[:space:]]*ARIGAMI_CLAUDE_BIN[[:space:]]*=[[:space:]]*//p' "$f" | tail -1 | sed 's/^["'"'"']//; s/["'"'"']$//')"
+    b="$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$f" | tail -1 | sed 's/^["'"'"']//; s/["'"'"']$//')"
   done
-  if [ -z "$b" ]; then b="$(command -v claude 2>/dev/null || true)"; fi
+  if [ -z "$b" ]; then b="$(command -v "$2" 2>/dev/null || true)"; fi
   printf '%s' "$b"
 }
 manager_name() {
@@ -251,6 +253,14 @@ doctor() {
     echo "  claude: $(r "ARIGAMI_CLAUDE_BIN=$cbin is not executable")"
   else
     echo "  claude: $(r "not found") — set ARIGAMI_CLAUDE_BIN in $DIR/env or add it to PATH"
+  fi
+  # codex: optional second engine; one connected engine is enough.
+  xbin="$(codex_bin)"
+  if [ -n "$xbin" ] && [ -x "$xbin" ] || command -v "$xbin" >/dev/null 2>&1; then
+    v="$("$xbin" --version 2>/dev/null | head -1)"
+    echo "  codex: $(g "${v:-found}") $(d "($xbin)")"
+  else
+    echo "  codex: $(y "not found") — optional engine: npm i -g @openai/codex (or set ARIGAMI_CODEX_BIN)"
   fi
   echo
   dl "files:"

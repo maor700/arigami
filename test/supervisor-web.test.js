@@ -8,11 +8,13 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, store, prefs, Health, origFetch;
+let React, render, store, prefs, Health;
 const h = (...a) => React.createElement(...a);
 
 // What GET /health and GET /health/incidents answer in this test.
@@ -31,7 +33,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     const body = u.includes('/health/incidents') ? INCIDENTS : u.includes('/health') ? HEALTH : {};
@@ -43,10 +44,6 @@ beforeAll(async () => {
   prefs = await import(web('lib/prefs.js'));
   prefs.setPrefs({ language: 'en' });
   Health = (await import(web('components/settings/Health.jsx'))).default;
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 // ---- the locales carry every computed key the new UI builds -----------------

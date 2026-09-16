@@ -27,7 +27,7 @@ export function chromeSessionDir(sessionId: string): string {
   return path.join(CHROME_SESSIONS_DIR, sessionId);
 }
 
-// A2: an agent ("צוות") owns a persistent profile of its own —
+// A2: an agent (Team section) owns a persistent profile of its own —
 // $ARIGAMI_DIR/agents/<slug>/browser/. Sessions born from the agent clone THAT
 // (not chrome-base) on first open, and sync their logins back into it, so the
 // agent keeps its own identity across sessions. Slug shape = agents.ts SLUG_RE

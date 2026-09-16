@@ -42,6 +42,7 @@ const env = (extra: Record<string, string> = {}) => ({
   ARIGAMI_PORT: '',
   ARIGAMI_FUNNEL_QUIET: '1',
   ARIGAMI_CODEX_HOME: codexHome,
+  CLAUDE_CONFIG_DIR: path.join(dir, 'no-claude-config'),
   ...extra,
 });
 
@@ -202,25 +203,24 @@ test('the 401 run: log noise is dropped, reconnect spam is dropped, the real fai
 });
 
 test('a turn.failed shaped like a 429 gets a plain-language quota note, not just the raw error', () => {
-  // No fixture backs this — no live run here ever hit a real quota wall (see
-  // the NOT VERIFIED comment on rateLimitNote() in server/codex.ts). This only
-  // tests OUR heuristic against the one wrapper shape that IS verified live
-  // (codex-cli wraps every HTTP failure as "unexpected status <code> ..." —
-  // see error-noauth), not that codex actually reports quota this way.
+  // No real quota wall backs this; with no codex account to read rateLimits from, the note says unverified.
   const r = runInChild(
     "const st=await import('./server/state.ts');" +
       "const cl=await import('./server/claude.js');" +
       "const cx=await import('./server/codex.ts');" +
+      "const rec=await import('./server/codex-recovery.ts');" +
       "const s=st.createSession({title:'codex',engine:'codex'});" +
       "cx.codexHandleEvent(s.id,{type:'turn.failed',error:{message:'unexpected status 429 Too Many Requests: resets in 2 hours'}});" +
+      'await new Promise((r)=>setTimeout(r,50));await rec.settled(s.id);' +
       'emit({events:cl.getChat(s.id,0)});',
-    env()
+    env({ ARIGAMI_CODEX_BIN: '/bin/false' })
   );
   expect(r.ok).toBe(true);
   const { events } = r.out[0];
-  expect(kinds(events)).toEqual(['error', 'system']);
-  expect(events[1].text).toContain('מכסה');
+  expect(kinds(events).slice(0, 2)).toEqual(['error', 'system']);
+  expect(events[1].text).toContain('quota');
   expect(events[1].text).toContain('resets in 2 hours');
+  expect(events[1].text).toContain('unverified');
 });
 
 test('an ordinary turn.failed does not get a quota note', () => {
@@ -241,9 +241,49 @@ test('request_action is suppressed like every other arigami tool', () => {
 
 test('codex usage field names are mapped onto the context meter', () => {
   const { claude } = replay('success-test');
-  // input 113904 + cached_input 96000 + cache_write 0 — codex's names, not claude's.
-  expect(claude.usage.breakdown).toMatchObject({ input: 113904, cacheRead: 96000, cacheCreation: 0, output: 298 });
-  expect(claude.usage.ctxTokens).toBe(113904 + 96000);
+  // codex's input_tokens 113904 already includes cached_input 96000.
+  expect(claude.usage.breakdown).toMatchObject({ input: 113904 - 96000, cacheRead: 96000, cacheCreation: 0, output: 298 });
+  expect(claude.usage.ctxTokens).toBe(113904);
+});
+
+test('parseRolloutTail: last turn_context model, last request usage and the window codex reported', () => {
+  const lines = [
+    '{"type":"turn_con',
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 10 }, model_context_window: 100 } } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-terra' } }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 228197, cached_input_tokens: 226560 }, model_context_window: 258400 } } }),
+  ].join('\n');
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" + `emit(cx.parseRolloutTail(${JSON.stringify(lines)}));emit(cx.parseRolloutTail(''));`,
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ model: 'gpt-5.6-terra', last: { input_tokens: 228197, cached_input_tokens: 226560 }, window: 258400 });
+  expect(r.out[1]).toEqual({ model: null, last: null, window: null });
+});
+
+test('turn.completed: the session model and live context come from the thread rollout, the window from codex', () => {
+  const r = runInChild(
+    "const fs=require('node:fs');const path=require('node:path');" +
+      "const st=await import('./server/state.ts');const cx=await import('./server/codex.ts');" +
+      "const s=st.createSession({title:'codex',engine:'codex'});st.setClaude(s.id,{sessionId:'th-1'});" +
+      "const d=path.join(cx.codexHomeFor(s.id),'sessions','2026','09','14');fs.mkdirSync(d,{recursive:true});" +
+      "fs.writeFileSync(path.join(d,'rollout-2026-09-14T00-00-00-th-1.jsonl')," +
+      JSON.stringify(
+        [
+          JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.6-terra' } }),
+          JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 129200, cached_input_tokens: 129000, output_tokens: 5 }, model_context_window: 258400 } } }),
+        ].join('\n') + '\n'
+      ) +
+      ");" +
+      "cx.codexHandleEvent(s.id,{type:'turn.completed',usage:{input_tokens:900000,cached_input_tokens:800000,output_tokens:50}});" +
+      'emit(st.getSession(s.id).claude);',
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].model).toBe('gpt-5.6-terra');
+  expect(r.out[0].usage).toMatchObject({ ctxTokens: 129200, ctxWindow: 258400, ctxPct: 50, ctxAssumed: false });
 });
 
 // ---- session id policy -----------------------------------------------------
@@ -342,6 +382,116 @@ test('model and effort: a codex model and effort ride argv, a claude alias does 
   expect(alias.args).not.toContain('-c');
 });
 
+// ---- codexModels(): the catalog is per login --------------------------------
+
+const CACHE_ROW = (slug: string, priority: number, efforts: string[], extra: Record<string, unknown> = {}) => ({
+  slug,
+  display_name: slug.toUpperCase(),
+  description: `${slug} desc`,
+  visibility: 'list',
+  priority,
+  default_reasoning_level: 'medium',
+  supported_reasoning_levels: efforts.map((effort) => ({ effort, description: effort })),
+  ...extra,
+});
+
+test('parseCodexModelsCache: slug-keyed rows, priority order, hidden rows dropped, ladder from the row', () => {
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" +
+      'emit(cx.parseCodexModelsCache(' +
+      JSON.stringify({
+        fetched_at: 'x',
+        models: [
+          CACHE_ROW('gpt-5.5', 12, ['low', 'medium', 'high', 'xhigh'], { default_reasoning_level: 'xhigh' }),
+          CACHE_ROW('gpt-reserve', 3, ['low'], { visibility: 'hide' }),
+          CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], { context_window: 272000, effective_context_window_percent: 95 }),
+          { id: 'legacy-id-row', name: 'Legacy', visibility: 'list', priority: 5 },
+          { junk: true },
+        ],
+      }) +
+      '));' +
+      'emit(cx.parseCodexModelsCache({}));emit(cx.parseCodexModelsCache(null));',
+    env()
+  );
+  expect(r.ok).toBe(true);
+  const [rows, empty1, empty2] = r.out;
+  expect(rows.map((m: any) => m.id)).toEqual(['gpt-6-astra', 'legacy-id-row', 'gpt-5.5']);
+  expect(rows[0]).toEqual({ id: 'gpt-6-astra', name: 'GPT-6-ASTRA', desc: 'gpt-6-astra desc', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultEffort: 'medium', contextWindow: 258_400 });
+  expect(rows[2].defaultEffort).toBe('xhigh');
+  expect(rows[1]).toEqual({ id: 'legacy-id-row', name: 'Legacy', desc: '', efforts: [], defaultEffort: null, contextWindow: null });
+  expect(empty1).toEqual([]);
+  expect(empty2).toEqual([]);
+});
+
+/** A `codex app-server` stand-in that answers initialize and model/list with `rows`. */
+function fakeAppServer(adir: string, rows: unknown[]): string {
+  const bin = path.join(adir, 'fake-codex.js');
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env bun
+let buf='';process.stdin.on('data',(d)=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){const l=buf.slice(0,i);buf=buf.slice(i+1);let j;try{j=JSON.parse(l);}catch{continue;}
+if(j.id===0)process.stdout.write(JSON.stringify({id:0,result:{}})+'\\n');
+else if(j.method==='model/list')process.stdout.write(JSON.stringify({id:j.id,result:{data:${JSON.stringify(rows)}}})+'\\n');}});
+`,
+    { mode: 0o755 }
+  );
+  return bin;
+}
+
+test('codexModels(): the engine\'s model/list for the ACTIVE login, its models_cache.json only until that lands, never a hardcoded list', () => {
+  const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexmodels-'));
+  try {
+    const home = path.join(adir, 'machine-home');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'auth.json'), '{"auth_mode":"chatgpt"}');
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-5.6-terra', 7, ['low', 'medium'])] }));
+    const accHome = path.join(adir, 'codex-accounts', 'acc_biz');
+    fs.mkdirSync(accHome, { recursive: true });
+    fs.writeFileSync(path.join(accHome, 'auth.json'), '{"auth_mode":"chatgpt"}');
+    fs.writeFileSync(path.join(accHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-6-astra', 1, ['low', 'medium', 'ultra'], { context_window: 272000, effective_context_window_percent: 95 })] }));
+    const accounts = (activeCodex: string | null) => ({
+      activeId: null,
+      activeIds: { claude: null, codex: activeCodex },
+      accounts: activeCodex ? [{ id: activeCodex, provider: 'codex', type: 'chatgpt', label: 'biz', email: null, plan: null, createdAt: 1 }] : [],
+    });
+    const live = [
+      { id: 'gpt-6-astra', displayName: 'GPT-6-Astra', description: 'd', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'ultra' }], defaultReasoningEffort: 'low', isDefault: true },
+      { id: 'gpt-6-nova', displayName: 'GPT-6-Nova', description: '', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'minimal' }], defaultReasoningEffort: 'minimal' },
+      { id: 'codex-auto-review', displayName: 'x', hidden: true, supportedReasoningEfforts: [] },
+    ];
+    const run = (active: string | null, bin: string) => {
+      fs.writeFileSync(path.join(adir, 'accounts.json'), JSON.stringify(accounts(active)));
+      return runInChild(
+        "const ac=await import('./server/accounts.js');ac.initAccounts();" +
+          "const cx=await import('./server/codex.ts');" +
+          'const before=cx.codexModels().map(m=>m.id);const rows=await cx.refreshCodexModels();' +
+          "emit({active:ac.getActiveId('codex'),before,rows,after:cx.codexModels().map(m=>m.id)});",
+        { ARIGAMI_DIR: adir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_CODEX_HOME: home, ARIGAMI_CODEX_BIN: bin, ARIGAMI_CODEX_PROBE_TIMEOUT_MS: '5000' }
+      );
+    };
+    const biz = run('acc_biz', fakeAppServer(adir, live));
+    expect(biz.ok).toBe(true);
+    expect(biz.out[0].active).toBe('acc_biz');
+    expect(biz.out[0].before).toEqual(['gpt-6-astra']); // the engine's cache while model/list is in flight
+    expect(biz.out[0].rows).toEqual([
+      { id: 'gpt-6-astra', name: 'GPT-6-Astra', desc: 'd', efforts: ['low', 'ultra'], defaultEffort: 'low', contextWindow: 258_400 },
+      { id: 'gpt-6-nova', name: 'GPT-6-Nova', desc: '', efforts: ['minimal'], defaultEffort: 'minimal', contextWindow: null },
+    ]);
+    expect(biz.out[0].after).toEqual(['gpt-6-astra', 'gpt-6-nova']);
+
+    // engine unreachable → its cache (active login first, then the machine's), then nothing at all
+    const down = run('acc_biz', '/bin/false');
+    expect(down.ok).toBe(true);
+    expect(down.out[0].after).toEqual(['gpt-6-astra']);
+    fs.rmSync(path.join(accHome, 'models_cache.json'));
+    expect(run('acc_biz', '/bin/false').out[0].after).toEqual(['gpt-5.6-terra']);
+    fs.rmSync(path.join(home, 'models_cache.json'));
+    expect(run(null, '/bin/false').out[0].after).toEqual([]);
+  } finally {
+    fs.rmSync(adir, { recursive: true, force: true });
+  }
+});
+
 // ---- prepare(): the generated $CODEX_HOME ----------------------------------
 
 function prepared(create = "{title:'codex',engine:'codex',cwd:'/tmp'}", pre = '') {
@@ -376,6 +526,7 @@ test('config.toml wires the host MCP server under the snake_case key codex actua
   expect(toml).toContain('[mcp_servers.arigami.env]');
   expect(toml).toContain('host-mcp.js');
   expect(toml).toMatch(/ARIGAMI_SESSION_ID = "sess_/);
+  expect(toml).toContain('ARIGAMI_ENGINE = "codex"');
   // The session's cwd is pre-trusted so codex never stops to ask about it.
   expect(toml).toContain('[projects."/tmp"]');
   expect(toml).toContain('trust_level = "trusted"');
@@ -419,23 +570,134 @@ test('prepare refuses to spawn without a codex login, instead of failing with a 
   expect(r.out[0].msg).toContain('codex login');
 });
 
-test('prepare refuses an agent whose allowlist codex cannot enforce', () => {
+test('ENGINE/A3: an agent with an allowlist runs — its policy hook is written to $CODEX_HOME/hooks.json and the spawn trusts it', () => {
   const r = runInChild(
     "const st=await import('./server/state.ts');" +
       "const a=await import('./server/agents.ts');" +
       "const cx=await import('./server/codex.ts');" +
-      "a.createAgent({name:'Bot',slug:'bot',tools:['gmail','open_tab']});" +
-      "const s=st.createSession({title:'codex',engine:'codex',metadata:{agent:'bot'}});" +
-      'try{cx.codexPrepare(st.getSession(s.id),{resume:false});emit({threw:false});}' +
-      'catch(e){emit({threw:true,msg:e.message});}',
+      "const fs=await import('node:fs');" +
+      "const path=await import('node:path');" +
+      "a.createAgent({name:'Bot',slug:'bot',engine:'codex',model:'gpt-6-astra',tools:['gmail','open_tab']});" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp',model:'gpt-6-astra',metadata:{agent:'bot'}});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const home=cx.codexHomeFor(s.id);' +
+      'const hooks=JSON.parse(fs.readFileSync(path.join(home,"hooks.json"),"utf8"));' +
+      'const b=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      "a.updateAgent('bot',{tools:[]});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const b2=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      'emit({hooks,args:b.args,gone:!fs.existsSync(path.join(home,"hooks.json")),args2:b2.args});',
     env()
   );
-  expect(r.ok).toBe(true);
-  // A3's enforcement is a PreToolUse hook plus --disallowedTools; codex has
-  // neither, and the agent's own persona tells it the host enforces. Failing
-  // loudly at spawn beats running with a policy that silently does nothing.
-  expect(r.out[0].threw).toBe(true);
-  expect(r.out[0].msg).toContain('allowlist');
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  // Claude Code's hooks shape — codex reads exactly this (measured live).
+  const hook = o.hooks.hooks.PreToolUse[0].hooks[0];
+  expect(hook.type).toBe('command');
+  expect(hook.command).toContain('policy-hook.js');
+  // without the flag codex skips the hooks silently
+  expect(o.args).toContain('--dangerously-bypass-hook-trust');
+  expect(o.args).toContain('-m');
+  expect(o.args[o.args.indexOf('-m') + 1]).toBe('gpt-6-astra');
+  expect(o.gone).toBe(true);
+  expect(o.args2).not.toContain('--dangerously-bypass-hook-trust');
+});
+
+test('the hook-trust notice codex emits for OUR flag is not surfaced as an error line', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cl=await import('./server/claude.js');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const s=st.createSession({title:'codex',engine:'codex'});" +
+      "cx.codexHandleEvent(s.id,{type:'thread.started',thread_id:'t1'});" +
+      "cx.codexHandleEvent(s.id,{type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'});" +
+      // measured 2026-09-14: `codex exec --json` actually delivers the notice as two item-level errors, not top-level
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_0',type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'}});" +
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_1',type:'error',message:'`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.'}});" +
+      "cx.codexHandleEvent(s.id,{type:'item.completed',item:{id:'item_2',type:'error',message:'real item error'}});" +
+      "cx.codexHandleEvent(s.id,{type:'error',message:'something actually wrong'});" +
+      'emit({errors:cl.getChat(s.id,0).filter(e=>e.kind===\'error\').map(e=>e.text)});',
+    env()
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].errors).toEqual(['real item error', 'something actually wrong']);
+});
+
+test('a session with no agent policy gets no hooks.json and no hook-trust flag', () => {
+  const r = runInChild(
+    "const st=await import('./server/state.ts');" +
+      "const cx=await import('./server/codex.ts');" +
+      "const fs=await import('node:fs');" +
+      "const path=await import('node:path');" +
+      "const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'});" +
+      'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+      'const b=cx.codexBuildSpawn(st.getSession(s.id),{resume:false,sessionId:null});' +
+      'emit({hasHooks:fs.existsSync(path.join(cx.codexHomeFor(s.id),"hooks.json")),args:b.args});',
+    env()
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].hasHooks).toBe(false);
+  expect(r.out[0].args).not.toContain('--dangerously-bypass-hook-trust');
+});
+
+test('P1-7: composio-mcp from the host reaches config.toml with its own env; absent when not configured or not allowed', () => {
+  const run = (claudeJson: unknown, tools: string[] | null) => {
+    const adir = fs.mkdtempSync(path.join(dir, 'composio-'));
+    const cdir = path.join(adir, 'claude');
+    fs.mkdirSync(cdir);
+    if (claudeJson) fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify(claudeJson));
+    const r = runInChild(
+      "const st=await import('./server/state.ts');" +
+        "const a=await import('./server/agents.ts');" +
+        "const cx=await import('./server/codex.ts');" +
+        "const ms=await import('./server/lib/mcp-servers.ts');" +
+        "const fs=await import('node:fs');" +
+        "const path=await import('node:path');" +
+        (tools ? `a.createAgent({name:'Bot',slug:'bot',engine:'codex',tools:${JSON.stringify(tools)}});` : '') +
+        `const s=st.createSession({title:'codex',engine:'codex',cwd:'/tmp'${tools ? ",metadata:{agent:'bot'}" : ''}});` +
+        'cx.codexPrepare(st.getSession(s.id),{resume:false});' +
+        'const toml=fs.readFileSync(path.join(cx.codexHomeFor(s.id),"config.toml"),"utf8");' +
+        "const synced=ms.syncComposioKey('new-key');" +
+        'emit({toml,own:fs.existsSync(ms.mcpServersFile())?JSON.parse(fs.readFileSync(ms.mcpServersFile(),"utf8")):null,synced,' +
+        '  claude:fs.existsSync(ms.claudeJsonPath())?JSON.parse(fs.readFileSync(ms.claudeJsonPath(),"utf8")):null});',
+      env({ ARIGAMI_DIR: adir, CLAUDE_CONFIG_DIR: cdir })
+    );
+    if (!r.ok) throw new Error(r.error);
+    return r.out[0];
+  };
+  const composio = { command: 'node', args: ['/x/composio-mcp-connected'], env: { COMPOSIO_API_KEY: 'old-key' } };
+  const on = run({ mcpServers: { 'composio-mcp': composio, linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } } }, null);
+  expect(on.toml).toContain('[mcp_servers.composio-mcp]');
+  expect(on.toml).toContain('command = "node"');
+  const block = on.toml.split('[mcp_servers.composio-mcp.env]')[1].split('\n\n')[0];
+  expect(block).toContain('COMPOSIO_API_KEY = "old-key"');
+  expect(block).not.toContain('ARIGAMI_TOKEN');
+  expect(on.toml).not.toContain('linear');
+  expect(Object.keys(on.own.mcpServers)).toEqual(['composio-mcp']);
+  expect(on.synced).toBe(true);
+  expect(on.own.mcpServers['composio-mcp'].env.COMPOSIO_API_KEY).toBe('new-key');
+  expect(on.claude.mcpServers['composio-mcp'].env.COMPOSIO_API_KEY).toBe('new-key');
+  expect(on.claude.mcpServers.linear.url).toBe('https://mcp.linear.app/mcp');
+
+  const off = run(null, null);
+  expect(off.toml).not.toContain('mcp_servers.composio-mcp');
+  expect(off.synced).toBe(false);
+
+  expect(run({ mcpServers: { 'composio-mcp': composio } }, ['open_tab']).toml).not.toContain('composio-mcp');
+  expect(run({ mcpServers: { 'composio-mcp': composio } }, ['gmail']).toml).toContain('[mcp_servers.composio-mcp]');
+});
+
+test('P1-8: the first-turn capabilities line lists only the session engine\'s login', () => {
+  const r = runInChild(
+    "const cl=await import('./server/claude.js');" +
+      "emit({codex:await cl.refreshCapabilitiesHint('global','codex'),claude:cl.capabilitiesHint('global','claude')});",
+    env({ COMPOSIO_API_KEY: '', GH_TOKEN: '', GITHUB_TOKEN: '' })
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].codex).toMatch(/\bcodex\b/);
+  expect(r.out[0].codex).not.toMatch(/\bclaude\b/);
+  expect(r.out[0].claude).toMatch(/\bclaude\b/);
+  expect(r.out[0].claude).not.toMatch(/\bcodex\b/);
 });
 
 // ---- writeMessage ----------------------------------------------------------
@@ -519,4 +781,39 @@ test('the tool timeout is overridable, so the give-up path can be exercised', ()
   );
   expect(r.ok).toBe(true);
   expect(r.out[0].toml).toContain('tool_timeout_sec = 15');
+});
+
+// ---- effort validation is per engine + model --------------------------------
+
+test('codexEffortLevels: the model row ladder, else every level codex knows (incl. minimal)', () => {
+  const r = runInChild(
+    "const cx=await import('./server/codex.ts');" +
+      "const cat=[{id:'gpt-5.5',efforts:['low','medium','high','xhigh']},{id:'gpt-5.6-terra',efforts:['low','medium','high','xhigh','max','ultra','bogus']}];" +
+      "emit(cx.codexEffortLevels('gpt-5.5',cat));emit(cx.codexEffortLevels('gpt-5.6-terra',cat));emit(cx.codexEffortLevels(null,cat));",
+    env()
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual(['low', 'medium', 'high', 'xhigh']);
+  expect(r.out[1]).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+  expect(r.out[2]).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+});
+
+test('setEffort: ultra is accepted on gpt-5.6-terra, refused on gpt-5.5 and on claude', () => {
+  fs.writeFileSync(path.join(codexHome, 'models_cache.json'), JSON.stringify({ models: [CACHE_ROW('gpt-5.6-terra', 1, ['low', 'max', 'ultra']), CACHE_ROW('gpt-5.5', 2, ['low', 'xhigh'])] }));
+  const r = runInChild(
+    "const st=await import('./server/state.ts');const cl=await import('./server/claude.js');await import('./server/codex.ts');" +
+      "const tryEffort=(s,e)=>{try{cl.setEffort(s.id,e);return st.getSession(s.id).claude.effort;}catch(x){return 'ERR:'+x.message;}};" +
+      "const terra=st.createSession({title:'t',engine:'codex'});st.setClaude(terra.id,{modelChoice:'gpt-5.6-terra'});" +
+      "const old=st.createSession({title:'o',engine:'codex'});st.setClaude(old.id,{modelChoice:'gpt-5.5'});" +
+      "const c=st.createSession({title:'c'});" +
+      "emit([tryEffort(terra,'ultra'),tryEffort(old,'ultra'),tryEffort(c,'ultra'),tryEffort(c,'max'),tryEffort(old,'default')]);",
+    env({ ARIGAMI_CODEX_BIN: '/bin/false' })
+  );
+  expect(r.ok).toBe(true);
+  const [terra, old, claude, claudeMax, cleared] = r.out[0];
+  expect(terra).toBe('ultra');
+  expect(old).toMatch(/^ERR:invalid effort level for gpt-5.5: ultra/);
+  expect(claude).toMatch(/^ERR:invalid effort level/);
+  expect(claudeMax).toBe('max');
+  expect(cleared).toBeNull();
 });

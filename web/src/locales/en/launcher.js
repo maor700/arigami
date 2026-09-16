@@ -318,6 +318,37 @@ export const strings = {
   // accounts
   'launcher.account.typeKeychain': 'macOS login',
   'launcher.account.typeToken': 'setup-token',
+  'launcher.account.typeCodexHome': 'this machine’s codex login',
+  'launcher.account.typeChatgpt': 'ChatGPT login',
+  'launcher.account.typeApiKey': 'API key',
+  // providers (the add-account chooser + the card badge)
+  'launcher.account.providerLabel': 'Provider',
+  'launcher.account.providerHint':
+    'Which product the login belongs to. Claude accounts run Claude Code sessions; Codex accounts run Codex sessions — they are never interchangeable.',
+  'launcher.account.providerBadge': '{provider} account',
+  'launcher.account.groupHeading': '{provider} accounts',
+  'launcher.account.noneForProvider': 'No {provider} account yet — sessions on the {provider} engine cannot start until one is added.',
+  'launcher.account.codexBrowser': '🔓 Sign in with ChatGPT',
+  'launcher.account.codexPasteKey': 'Paste an OpenAI API key instead',
+  'launcher.account.codexAddBody':
+    'Sign in with ChatGPT through your browser — Codex mints the login and stores it for this account. Make sure the browser is signed in to the ChatGPT account you want to add.',
+  'launcher.account.codexStep1': 'Open the sign-in page',
+  'launcher.account.codexStep1b': ' and sign in as the ChatGPT account you want to add.',
+  'launcher.account.codexStep2':
+    'After signing in, the browser lands on a page that cannot load (its address starts with http://localhost:1455/…). Copy that address and paste it here:',
+  'launcher.account.codexCallbackPlaceholder': 'http://localhost:1455/auth/callback?code=…&state=…',
+  'launcher.account.codexCallbackHint':
+    'If the browser is on this same machine, the sign-in completes by itself — nothing to paste. The link is valid for about 15 minutes.',
+  'launcher.account.codexVerifying': 'Signed in — reading the account…',
+  'launcher.account.codexStarting': 'Starting codex login…',
+  'launcher.account.codexDone': 'Codex account added',
+  'launcher.account.codexPasteTitle': 'Paste an OpenAI API key',
+  'launcher.account.codexPasteBody':
+    'An API key from platform.openai.com. It is checked against the API before it is stored, and usage is billed per request to that key — not to a ChatGPT plan.',
+  'launcher.account.apiKeyUsage': 'API key · billed per use, no plan windows',
+  'launcher.account.limitReached': 'limit reached',
+  'launcher.account.windowHours': '{n}-hour window',
+  'launcher.account.windowDays': '{n}-day window',
   'launcher.account.coolingDown': 'cooling down · resets in {time}',
   'launcher.account.atSessionLimit': 'at session limit',
   'launcher.account.tokenInvalid': 'token invalid — re-add',
@@ -336,7 +367,8 @@ export const strings = {
   'launcher.account.inPool': 'In auto-switch pool',
   'launcher.account.remove': 'Remove',
   'launcher.account.title': 'Accounts',
-  'launcher.account.subtitle': '· which Claude login the host runs sessions on',
+  'launcher.account.subtitle': '· which login each engine runs sessions on — Claude accounts for Claude sessions, Codex accounts for Codex sessions',
+  'launcher.account.usageWindow': 'Usage window',
   'launcher.account.close': 'Close',
   'launcher.account.emptyList': 'No accounts yet. Add one below.',
   'launcher.account.addAccount': '+ Add account',
@@ -392,5 +424,5 @@ export const strings = {
   'launcher.mcp.checking': 'Checking…',
   'launcher.mcp.checkNow': 'Check now',
   'launcher.mcp.statusHint':
-    'Status is re-checked live (per-server health check on this session’s account). Reconnect restarts the session’s claude process to re-establish dropped servers.',
+    'Status is re-checked live (per-server health check on this session’s account). Reconnect restarts the session’s {engine} process to re-establish dropped servers.',
 };

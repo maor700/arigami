@@ -13,7 +13,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { HOME } from './lib/platform.js';
 import { broadcast } from './bus.js';
-import { resolveToken, getActiveId, listAccounts, patchAccount } from './accounts.js';
+import { resolveToken, getActiveId, listAccounts, patchAccount, getAccount, codexHomeOfAccount } from './accounts.js';
 
 const ENDPOINT = 'https://api.anthropic.com/api/oauth/usage';
 const TTL_MS = 60_000;
@@ -71,6 +71,16 @@ function normalize(j) {
 // the account is maxed — surface it as session:100% so callers (and auto-switch)
 // can treat the account as exhausted.
 async function fetchUsage(accountId) {
+  // Per provider: a codex account's quota comes from its own CLI's app-server
+  // (server/codex-account.ts), in the same {session, week} shape.
+  if (getAccount(accountId)?.provider === 'codex') {
+    try {
+      const m = await import('./codex-account.js');
+      return await m.codexUsage(accountId);
+    } catch {
+      return { available: false, reason: 'fetch-failed' };
+    }
+  }
   const token = resolveToken(accountId);
   if (!token) return { available: false, reason: 'no-credentials' };
   try {
@@ -91,18 +101,54 @@ async function fetchUsage(accountId) {
   }
 }
 
+// Reasons that say nothing about the account itself — the endpoint throttled us
+// or the network blipped. A real state (http-401, no-credentials) replaces the
+// last reading; a transient one must not, or the rail meter vanishes.
+const TRANSIENT = new Set(['usage-throttled', 'fetch-failed']);
+
+// The last reading persisted in accounts.json, rebuilt as a usage object — what
+// survives a host restart when the first live fetch is throttled.
+function snapshotOf(id) {
+  const lu = getAccount(id)?.lastUsage;
+  if (!lu || lu.reason) return null;
+  const win = (pct, mins) => (pct == null ? null : { pct, ...(mins ? { windowMins: mins } : {}) });
+  return { available: true, session: win(lu.session, lu.sessionMins), week: win(lu.week, lu.weekMins), fetchedAt: lu.at || null, stale: true };
+}
+
 // Usage for an account (defaults to the active one), cached for TTL_MS. Keeps the
-// last good data when a refresh fails. Never throws.
+// last good data (memory, else the accounts.json snapshot) when a refresh fails
+// transiently. Never throws.
 export async function getUsage(accountId, force = false) {
   const id = accountId || getActiveId();
   if (!id) return { available: false, reason: 'no-account' };
   const c = caches.get(id);
   if (!force && c && Date.now() - c.at < TTL_MS) return c.data;
   const fresh = await fetchUsage(id);
-  const data = !fresh.available && c?.data?.available ? c.data : fresh;
+  let data = fresh;
+  if (!fresh.available && TRANSIENT.has(fresh.reason)) {
+    data = c?.data?.available ? { ...c.data, stale: true } : snapshotOf(id) || fresh;
+  }
   caches.set(id, { data, at: Date.now() });
   return data;
 }
+
+/** A reading worth persisting: a live one, or a real (non-transient) failure. */
+const persistable = (d) => d.available ? !d.stale : !TRANSIENT.has(d.reason);
+
+/** P3-1: a usage snapshot pushed by a live codex app-server (account/rateLimits/updated) — cached and broadcast like a poll. */
+export function noteLiveUsage(accountId, data) {
+  if (!accountId || !data?.available) return;
+  const key = (d) => JSON.stringify([d?.session, d?.week, d?.limitReached]);
+  const changed = key(caches.get(accountId)?.data) !== key(data);
+  caches.set(accountId, { data: { ...data, live: true }, at: Date.now() });
+  if (!changed) return;
+  if (persistable(data)) try { patchAccount(accountId, { lastUsage: compact(data) }); } catch {}
+  const { activeId } = listAccounts();
+  broadcast({ type: 'account-usage', accountId, active: accountId === activeId, usage: data });
+}
+
+/** The last usage read for an account without fetching (null when never read). */
+export const cachedUsage = (accountId) => caches.get(accountId)?.data || null;
 
 // Best-effort account identity. Only the full macOS-login token carries
 // user:profile scope, so this returns email/org/plan for keychain accounts;
@@ -126,6 +172,25 @@ export async function fetchIdentity(token) {
   } catch {
     return {};
   }
+}
+
+// Identity by provider: claude → the OAuth profile endpoint; codex → the CLI's
+// app-server `account/read` (email + plan for ChatGPT logins; an API key has
+// no identity to expose). Never throws.
+async function identityOf(accountId) {
+  const a = getAccount(accountId);
+  if (!a) return {};
+  if (a.provider === 'codex') {
+    if (a.type === 'api-key') return {};
+    try {
+      const m = await import('./codex-account.js');
+      const ident = await m.codexIdentity(codexHomeOfAccount(a));
+      return { email: ident.email, plan: ident.plan };
+    } catch {
+      return {};
+    }
+  }
+  return fetchIdentity(resolveToken(a));
 }
 
 // Is this token actually usable for running a session? We test it the exact way
@@ -169,19 +234,28 @@ export async function refreshAccount(id) {
   if (!id) return null;
   const data = await getUsage(id, true);
   const { activeId } = listAccounts();
-  patchAccount(id, { lastUsage: compact(data) });
+  if (persistable(data)) patchAccount(id, { lastUsage: compact(data) });
   broadcast({ type: 'account-usage', accountId: id, active: id === activeId, usage: data });
   if (id === activeId) broadcast({ type: 'usage-updated', usage: data });
-  const ident = await fetchIdentity(resolveToken(id));
+  const ident = await identityOf(id);
   const patch = {};
   for (const k of ['email', 'org', 'plan']) if (ident[k]) patch[k] = ident[k];
   if (Object.keys(patch).length) patchAccount(id, patch);
   return data;
 }
 
+// The per-account snapshot kept in accounts.json (what the cockpit shows before
+// the first live broadcast). Window lengths ride along because codex's windows
+// are a property of the plan, and the card labels them by length.
 const compact = (d) =>
   d.available
-    ? { session: d.session?.pct ?? null, week: d.week?.pct ?? null, at: d.fetchedAt || Date.now() }
+    ? {
+        session: d.session?.pct ?? null,
+        week: d.week?.pct ?? null,
+        ...(d.session?.windowMins ? { sessionMins: d.session.windowMins } : {}),
+        ...(d.week?.windowMins ? { weekMins: d.week.windowMins } : {}),
+        at: d.fetchedAt || Date.now(),
+      }
     : { reason: d.reason || 'unavailable', at: Date.now() };
 
 // Poll the active + pooled accounts and broadcast changes. The active account
@@ -206,14 +280,14 @@ export function startUsagePolling() {
         const prev = JSON.stringify(caches.get(a.id)?.data);
         const data = await getUsage(a.id, true);
         if (JSON.stringify(data) !== prev) {
-          patchAccount(a.id, { lastUsage: compact(data) });
+          if (persistable(data)) patchAccount(a.id, { lastUsage: compact(data) });
           broadcast({ type: 'account-usage', accountId: a.id, active: a.id === activeId, usage: data });
           if (a.id === activeId) broadcast({ type: 'usage-updated', usage: data });
         }
         // One-shot identity fill (keychain accounts resolve; setup-tokens don't).
         if (!a.email && !identTried.has(a.id)) {
           identTried.add(a.id);
-          const ident = await fetchIdentity(resolveToken(a.id));
+          const ident = await identityOf(a.id);
           const patch = {};
           for (const k of ['email', 'org', 'plan']) if (ident[k]) patch[k] = ident[k];
           if (Object.keys(patch).length) patchAccount(a.id, patch);

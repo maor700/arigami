@@ -1,5 +1,5 @@
 // UX2 end-to-end against an ISOLATED host (tmp ARIGAMI_DIR, own port, auth off,
-// stub claude): "אמץ סוכן" — POST /sessions/:id/adopt-agent sets metadata.agent
+// stub claude): "Adopt agent" — POST /sessions/:id/adopt-agent sets metadata.agent
 // (+ a {kind:'agent-adopt'} receipt) so A3's per-turn policy/budget checks pick
 // up the adopted agent from the very next spawn; a spent budget refuses the
 // adoption itself (429, session untouched); .../adopt-agent/revert restores

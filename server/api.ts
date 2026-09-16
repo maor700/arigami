@@ -10,7 +10,8 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
+import { syncComposioKey } from './lib/mcp-servers.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
@@ -369,6 +370,8 @@ function spoolUpload(req: IncomingMessage, dir: string): Promise<string> {
 // raw body (Content-Type + X-Arigami-Filename header, what the composer's XHR
 // sends — it needs upload.onprogress, which fetch can't give) or a normal
 // multipart/form-data single-file post, so curl -F works too.
+// OPENUI: cap on one render_ui block (the web card refuses the same size).
+const OPENUI_MAX_CHARS = 64 * 1024;
 const ATTACHMENT_MAX_BYTES = Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) > 0 ? Number(process.env.ARIGAMI_ATTACHMENT_MAX_BYTES) : 200 * 1024 * 1024; // env: tests only
 
 function spoolAttachment(
@@ -565,10 +568,11 @@ function readBody(
   });
 }
 
-interface PermissionResult {
+export interface PermissionResult {
   behavior: string;
   message?: string;
   updatedInput?: unknown;
+  timedOut?: boolean;
 }
 
 async function handlePermissionRequest(
@@ -578,7 +582,6 @@ async function handlePermissionRequest(
   const sessionId = body.session_id as string | undefined;
   const s = sessionId && state.getSession(sessionId);
   if (!s) return badRequest(res, `unknown session_id: ${sessionId}`);
-  const requestId = 'perm_' + nano();
   const toolName = (body.tool_name || body.toolName || 'unknown') as string;
   const input = body.input ?? {};
   // NOTE on AskUserQuestion: we deliberately keep it on the normal (blocking)
@@ -590,9 +593,21 @@ async function handlePermissionRequest(
   // blocked turn). We only hide the redundant permission *bubble* in the UI — see
   // ChatPane's permission-request case.
   const toolUseId = typeof body.tool_use_id === 'string' && body.tool_use_id ? body.tool_use_id : undefined;
+  const promise = openPermission(sessionId, { toolName, input, toolUseId }).then(({ timedOut: _t, ...r }) => r);
+  // CHAT1: long-poll legs (see respondBlocking) — the MCP process re-attaches
+  // instead of dying at its fetch timeout while the human is still deciding.
+  await respondBlocking(res, body, sessionId, promise);
+}
+
+/** A permission (or AskUserQuestion) card; resolves with the human's answer, or deny on timeout. Also used by codex app-server approvals. */
+export function openPermission(
+  sessionId: string,
+  { toolName, input, toolUseId, timeoutMs }: { toolName: string; input: unknown; toolUseId?: string; timeoutMs?: number }
+): Promise<PermissionResult> {
+  const requestId = 'perm_' + nano();
   const isQuestion = toolName === 'AskUserQuestion';
-  const timeoutMs = isQuestion ? QUESTION_TIMEOUT_MS : PERMISSION_TIMEOUT_MS;
-  const promise = new Promise<PermissionResult>((resolve) => {
+  const ms = timeoutMs || (isQuestion ? QUESTION_TIMEOUT_MS : PERMISSION_TIMEOUT_MS);
+  return new Promise<PermissionResult>((resolve) => {
     const timer = setTimeout(() => {
       pendingPermissions.delete(requestId);
       state.setClaude(sessionId, { state: 'working' });
@@ -605,38 +620,28 @@ async function handlePermissionRequest(
       });
       resolve({
         behavior: 'deny',
+        timedOut: true,
         message: isQuestion
-          ? `The human did not answer the question card within ${Math.max(1, Math.round(timeoutMs / 60000))} minutes. Do not re-ask the same question right away — continue with a sensible default and say which one you picked.`
-          : `Permission request timed out after ${Math.max(1, Math.round(timeoutMs / 60000))} minutes`,
+          ? `The human did not answer the question card within ${Math.max(1, Math.round(ms / 60000))} minutes. Do not re-ask the same question right away — continue with a sensible default and say which one you picked.`
+          : `Permission request timed out after ${Math.max(1, Math.round(ms / 60000))} minutes`,
       });
-    }, timeoutMs);
-    pendingPermissions.set(requestId, {
-      resolve,
-      timer,
-      sessionId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
+    }, ms);
+    pendingPermissions.set(requestId, { resolve, timer, sessionId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
     state.setClaude(sessionId, { state: 'awaiting-input' });
-    claude.appendChat(sessionId, {
-      kind: 'permission-request',
-      requestId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
-    broadcast({
-      type: `permission-request:${sessionId}`,
-      requestId,
-      toolName,
-      input,
-      ...(toolUseId ? { toolUseId } : {}),
-    });
+    claude.appendChat(sessionId, { kind: 'permission-request', requestId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
+    broadcast({ type: `permission-request:${sessionId}`, requestId, toolName, input, ...(toolUseId ? { toolUseId } : {}) });
   });
-  // CHAT1: long-poll legs (see respondBlocking) — the MCP process re-attaches
-  // instead of dying at its fetch timeout while the human is still deciding.
-  await respondBlocking(res, body, sessionId, promise);
+}
+
+/** Close a codex card the engine resolved itself (serverRequest/resolved) — no answer is sent. */
+export function dismissPermission(sessionId: string, toolUseId: string, message = 'resolved by the engine'): void {
+  for (const [requestId, entry] of pendingPermissions) {
+    if (entry.sessionId !== sessionId || entry.toolUseId !== toolUseId) continue;
+    clearTimeout(entry.timer);
+    pendingPermissions.delete(requestId);
+    claude.appendChat(sessionId, { kind: 'permission-answer', requestId, toolUseId, behavior: 'deny', message });
+    entry.resolve({ behavior: 'deny', message });
+  }
 }
 
 // Force-deny any permission request left pending for a session — e.g. its
@@ -948,6 +953,12 @@ function ownerOfRequest(explicit: unknown, me: import('./auth.js').Principal | n
   return me?.kind === 'session' ? ownerOfSession(me.sessionId, capability) : caps.GLOBAL_OWNER;
 }
 
+/** P2-4: capability probes that answer for a session's engine (mcp:* grants are per engine). */
+function sessionProbes(sessionId: string | null | undefined): Partial<caps.CapabilityProbes> {
+  const s = sessionId ? state.getSession(sessionId) : null;
+  return s ? { engine: () => (s.engine === 'codex' ? 'codex' : 'claude') } : {};
+}
+
 // Every transition: one `setup-update` chat event (same id as the `setup`
 // card — the web merges by id) + a bus `setup` broadcast for non-chat views
 // (Settings → Connections re-fetches capabilities on it).
@@ -1034,7 +1045,7 @@ function resolveSetupsFor(capability: string, detail: string, human = true, owne
   return n;
 }
 
-// ---- A1 agents ("צוות") ----------------------------------------------------------
+// ---- A1 agents (the Team section) ----------------------------------------------------------
 
 /**
  * The {kind:'agent-card'} chat card (like SetupCard/MergeCard): create_agent /
@@ -1183,6 +1194,7 @@ function ensureHomeSession(a: agents.AgentView): { session: NonNullable<ReturnTy
       cwd: (cfg as any).reposDir || cfg.defaultCwd,
       metadata: { agent: a.slug, agentHome: true },
       model: a.model || null,
+      engine: agents.engineForSpawn(null, a) || null,
       color: a.color,
     });
     created = true;
@@ -1227,8 +1239,10 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
       permissionMode = wired.permissionMode;
       metadata = wired.metadata;
     }
-    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
-    const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, color: o.color });
+    // A PM child inherits the controller's engine when the agent has none.
+    const engine = agents.engineForSpawn(null, a, isController ? from : null);
+    const o = applyAgentToSession(a.slug, { title, model: undefined as string | undefined, engine: engine as string | undefined, metadata: { ...metadata, delegatedFrom: fromId } });
+    const s = state.createSession({ title: o.title, cwd, permissionMode, metadata: o.metadata, model: o.model, engine: o.engine, color: o.color });
     spawnSafe(s.id);
     try {
       claude.sendMessage(s.id, isController ? `[Task from your project controller (${from.title || fromId})]\n\n${text}` : text);
@@ -1252,14 +1266,14 @@ async function delegateToAgent(fromId: string, agentSlug: string, text: string, 
 }
 
 /**
- * UX2 — "אמץ סוכן": a session already underway takes on an existing agent's
+ * UX2 — "Adopt agent": a session already underway takes on an existing agent's
  * persona/skills/model/connections/policy for its NEXT turn onward, without
  * spawning a new session. `metadata.agent` is the single source both A3's
  * per-turn policy/budget checks (claude.js policyArgs / budgetRefusalFor) and
  * mcpConfigFor read fresh on every spawn, so setting it here is enough — the
  * only extra step is telling the model (a queued `[host]` line with the
  * adopted persona) and leaving a chat receipt so the human can revert.
- * `adoptedFrom` remembers what to restore ("החזר לרגיל") — null if the session
+ * `adoptedFrom` remembers what to restore ("Revert to normal") — null if the session
  * had no agent at all before adopting.
  */
 function adoptAgentIntoSession(sessionId: string, agentSlug: string): { session: NonNullable<ReturnType<typeof state.getSession>>; agent: agents.AgentView } {
@@ -1317,7 +1331,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     settleAgentCard(String(body.sessionId || ''), cm[1], { state: 'cancelled' }, '[host] The human cancelled the Agent card — do not create the agent.');
     return json(res, { ok: true });
   }
-  // A3: Settings → מארח → תקציבים — agent × model × daily cap × used today.
+  // A3: Settings → Host → Budgets — agent × model × daily cap × used today.
   if (p === '/__api/agents/budgets' && m === 'GET') {
     const rows = agents.listAgentViews().map((a) => {
       const b = ledger.budgetState(a.slug)!;
@@ -1374,7 +1388,7 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
     return json(res, { ...view, audit: caps.readAudit(50, owner), browserProfile: fs.existsSync(chrome.agentBrowserDir(slug)) });
   }
   if (sub === 'routine' && m === 'GET') {
-    // A2: the agent's שגרה — cron jobs whose runs are born from it + listeners its sessions armed.
+    // A2: the agent's routine — cron jobs whose runs are born from it + listeners its sessions armed.
     const t = await import('./triggers.js');
     const cron = t.listTriggers().filter((x: any) => x.type === 'cron' && x.agent === slug).map((x: any) => ({ ...x, nextRunAt: t.nextRunFor(x) }));
     const listeners = state.listListeners().filter((l: any) => l.agent === slug);
@@ -1427,7 +1441,7 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
   const capability = String(body.capability || '').trim();
   // A2: a session born from an agent asks for the AGENT's connection (agent first, then the shared one).
   const owner = ownerOfSession(sessionId, capability);
-  const cap = caps.getCapability(capability, {}, owner);
+  const cap = caps.getCapability(capability, sessionProbes(sessionId), owner);
   if (!cap) return badRequest(res, `unknown capability: ${capability} — use a registry id (GET /__api/setup/capabilities)`);
   // F6: never an empty why — the card and the audit fall back to the capability title.
   const why = (String(body.why || '').trim() || cap.title).slice(0, 300);
@@ -1611,8 +1625,10 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     const name = rec?.name || mcpCat.grantName(slug, owner);
     const { scope, cwd } = mcpScope(owner);
     if ((rec?.auth || spec?.auth) !== 'bearer') await mcpAuth.logout(name, cwd);
+    if (mcpConn.readCodexMcpGrants().has(name)) await mcpAuth.codexLogout(name, rec?.url || spec?.url);
     await mcpAuth.removeServer(name, { scope, cwd });
     mcpAuth.cancelLogin(name);
+    mcpAuth.cancelLogin(name, 'codex');
     return { ok: true, removed: mcpConn.removeConnection(owner, capability), name, owner };
   }
   if (capability === 'remote') {
@@ -1645,7 +1661,7 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     updateScreenConfig({ enabled: false });
     return { ok: true };
   }
-  if (capability === 'claude') throw new Error('disconnect Claude from the Accounts view');
+  if (capability === 'claude' || capability === 'codex') throw new Error(`disconnect ${capability === 'claude' ? 'Claude' : 'Codex'} from the Accounts view`);
   if (capability.startsWith('repo:')) throw new Error('remove repositories from Setup → repositories');
   throw new Error(`${capability} has nothing to disconnect`);
 }
@@ -1732,23 +1748,58 @@ function recordMcpConnection(owner: caps.Owner, spec: mcpCat.McpServerSpec, name
 type McpLoginStatus = { state: string; url: string | null; error: string | null };
 
 /** `claude mcp login` prints the authorize URL a beat after it starts; wait for it. */
-async function waitForAuthUrl(name: string, timeoutMs = 20_000): Promise<McpLoginStatus> {
+async function waitForAuthUrl(name: string, timeoutMs = 20_000, engine?: mcpConn.McpEngine): Promise<McpLoginStatus> {
   const t0 = Date.now();
   for (;;) {
-    const st = mcpAuth.loginStatus(name) as McpLoginStatus;
+    const st = mcpAuth.loginStatus(name, engine) as McpLoginStatus;
     if (st.url || st.state === 'error' || st.state === 'done' || Date.now() - t0 > timeoutMs) return st;
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
+/** P2-4: a codex grant — `codex mcp login` under the codex MCP home; no `claude mcp add`, the session config.toml writes the url. */
+async function applyCodexMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: caps.Owner, name: string, url: string): Promise<Record<string, unknown>> {
+  if (spec.auth === 'bearer') throw new Error(`${spec.title} is token-based — not wired for Codex sessions yet`);
+  const action = String(body?.action || '');
+  const engine = 'codex' as const;
+  if (action === 'cancel') return { ok: true, engine, ...mcpAuth.cancelLogin(name, engine) };
+  if (action === 'poll' || action === 'status') {
+    const st = mcpAuth.loginStatus(name, engine) as McpLoginStatus;
+    if (mcpConn.readCodexMcpGrants().get(name)) {
+      const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
+      mcpAuth.cancelLogin(name, engine);
+      return { ok: true, state: 'done', name, owner, engine, connection, ...(toolsAdded ? { toolsAdded } : {}) };
+    }
+    return { ...st, ok: false, name, owner, engine };
+  }
+  if (action === 'code' || action === 'paste' || body?.code || body?.url) {
+    const r = await mcpAuth.submitCodexRedirect(name, String(body?.code || body?.url || ''));
+    if (!r.ok) throw new Error(r.error || 'could not hand the redirect URL to the codex login');
+    return { ...r, ok: false, name, owner, engine };
+  }
+  mcpAuth.startLogin(name, undefined, { engine, url });
+  const st = await waitForAuthUrl(name, 20_000, engine);
+  if (st.state === 'error') throw new Error(st.error || 'could not start the codex MCP login');
+  if (!st.url) throw new Error(`${spec.title}: \`codex mcp login\` did not print an authorize URL`);
+  return { ...st, ok: false, id: name, name, url: st.url, owner, engine, domains: spec.domains, docs: spec.docs };
+}
+
+/** Which engine a setup request is for: explicit body.engine, else the calling session's. */
+function setupEngine(body: any, req: IncomingMessage): mcpConn.McpEngine {
+  if (body?.engine === 'codex' || body?.engine === 'claude') return body.engine;
+  const sid = String(body?.sessionId || req.headers['x-arigami-session'] || req.headers['x-session-id'] || '');
+  return sid && state.getSession(sid)?.engine === 'codex' ? 'codex' : 'claude';
+}
+
 /** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
-async function applyMcpSetup(slug: string, body: any, owner: caps.Owner): Promise<Record<string, unknown>> {
+async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine: mcpConn.McpEngine = 'claude'): Promise<Record<string, unknown>> {
   const spec = mcpCat.mcpSpec(slug);
   if (!spec) throw new Error(`${slug} is not in the native MCP catalog`);
   if (spec.auth === 'oauth-byo-client') throw new Error(`${spec.title} needs an OAuth client of your own (no dynamic registration) — not connectable from here yet`);
   const action = String(body?.action || '');
   const name = mcpCat.grantName(spec.slug, owner);
   const url = body?.readonly && spec.readonlyUrl ? spec.readonlyUrl : spec.url;
+  if (engine === 'codex') return applyCodexMcpSetup(spec, body, owner, name, url);
   const { scope, cwd } = mcpScope(owner);
 
   // --- bearer (GitHub PAT): no browser at all -------------------------------
@@ -1811,6 +1862,19 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     else if (action === 'cancel') return { ok: true, ...o.cancelLogin(body?.id) };
     else if (action === 'code' || action === 'oauth-code' || body?.code) out = await o.submitCode(body?.id, body?.code);
     else throw new Error('claude: pass {token} or {action:"start"} / {action:"code", id, code}');
+  } else if (capability === 'codex') {
+    const cx = await import('./codex-account.js');
+    const id = String(body?.id || '');
+    if (body?.token) out = await cx.addApiKeyAccount({ label: body?.label ? String(body.label) : 'setup', key: String(body.token) });
+    else if (action === 'start' || action === 'oauth-start') {
+      let st: any = cx.startBrowserLogin({ label: body?.label || 'setup' });
+      for (let i = 0; i < 60 && st.state === 'starting'; i++) { await new Promise((r) => setTimeout(r, 250)); st = cx.loginStatus(st.id); } // the URL arrives a moment after spawn
+      return { ok: true, ...st };
+    }
+    else if (action === 'poll') { const st = cx.loginStatus(id); return { ok: st.state === 'done', ...st }; }
+    else if (action === 'cancel') return { ...cx.cancelLogin(id), ok: true };
+    else if (action === 'code' || body?.code) { const r = await cx.submitCallback(id, String(body?.code || '')); return { ...r, state: r.ok ? 'awaiting' : 'error' }; }
+    else throw new Error('codex: pass {token} or {action:"start"} / {action:"code", id, code}');
   } else if (capability === 'git') {
     const gl = await import('./git-login.js');
     if (body?.token) out = ob.setGitToken(String(body.token), body?.host ? String(body.host) : undefined);
@@ -1859,7 +1923,7 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id, owner };
     }
   } else if (capability.startsWith('mcp:')) {
-    return await applyMcpSetup(capability.slice(4), body, owner);
+    return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req));
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
@@ -1913,7 +1977,7 @@ function spawnSafe(id: string): void {
     const error = e instanceof Error ? e : new Error(String(e));
     claude.appendChat(id, {
       kind: 'error',
-      text: `failed to start claude: ${error.message}`,
+      text: `failed to start ${state.getSession(id)?.engine || 'claude'}: ${error.message}`,
     });
     state.setClaude(id, { state: 'dead' });
   }
@@ -2006,13 +2070,13 @@ export function startTicketSession(opts: {
 }
 
 /**
- * A1/A2: the ONE place a session is born from an agent — inherit its model
- * (unless overridden), its rail color, default the title to its name and stamp
- * metadata.agent (claude.js keys the persona + agent memory + ARIGAMI_AGENT
- * off that). Used by POST /__api/sessions and by cron fires (cronjob({agent})).
- * Throws on an unknown agent — never silently ignored.
+ * A1/A2: the ONE place a session is born from an agent — inherit its engine
+ * (agents.engineForSpawn) and model unless overridden, its rail color, default
+ * the title to its name and stamp metadata.agent. Used by POST /__api/sessions,
+ * cron fires, the agent home, @mention / `/as` and PM children. Throws on an
+ * unknown agent.
  */
-export function applyAgentToSession<T extends { title?: string; model?: string; metadata?: Record<string, unknown> }>(
+export function applyAgentToSession<T extends { title?: string; model?: string; engine?: string | null; metadata?: Record<string, unknown> }>(
   agentSlug: unknown,
   opts: T
 ): T & { color?: string } {
@@ -2032,6 +2096,7 @@ export function applyAgentToSession<T extends { title?: string; model?: string; 
   const { agentHome: _home, ...meta } = (opts.metadata || {}) as Record<string, unknown>;
   return {
     ...opts,
+    engine: agents.engineForSpawn(opts.engine, agent),
     model: opts.model || agent.model || undefined,
     title: opts.title || agent.name,
     metadata: { ...meta, agent: agent.slug },
@@ -2061,7 +2126,7 @@ export function startEmptySession(opts: {
     permissionMode: o.permissionMode || 'bypassPermissions',
     model: o.model,
     effort: o.effort,
-    engine: opts.engine,
+    engine: o.engine,
     metadata: o.metadata || {},
     color: o.color,
   });
@@ -3026,7 +3091,7 @@ export async function handle(
     if (p === '/__mcp/agent-card' && m === 'POST') {
       return handleAgentCard(res, await readBody(req));
     }
-    // ---- A1 agents ("צוות") REST (server/agents.ts) ----
+    // ---- A1 agents (the Team section) REST (server/agents.ts) ----
     if (p === '/__api/agents' || p.startsWith('/__api/agents/')) {
       return await handleAgents(req, res, u, p, m || 'GET');
     }
@@ -3043,7 +3108,10 @@ export async function handle(
       if (rest.startsWith('capabilities/') && m === 'GET') {
         const id = decodeURIComponent(rest.slice('capabilities/'.length));
         const owner = caps.isOwnable(id) ? qOwner : caps.GLOBAL_OWNER;
-        const cap = caps.getCapability(id, {}, owner);
+        const qEngine = u.searchParams.get('engine');
+        const probes: Partial<caps.CapabilityProbes> =
+          qEngine === 'codex' || qEngine === 'claude' ? { engine: () => qEngine } : me?.kind === 'session' ? sessionProbes(me.sessionId) : {};
+        const cap = caps.getCapability(id, probes, owner);
         if (!cap) return badRequest(res, `unknown capability: ${id}`);
         const why = (u.searchParams.get('why') || '').trim() || cap.title; // F6: never empty
         // CONN1: a session under an agent allowlist that excludes this capability's
@@ -3060,8 +3128,8 @@ export async function handle(
               hint: 'do not call request_setup (it cannot change an allowlist); ask the human (request_action) to tick the tool family for this agent, or hand the task to an agent that has it',
             });
         }
-        const r = await caps.ensure(id, why, {}, owner);
-        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, {}, owner) } : r);
+        const r = await caps.ensure(id, why, probes, owner);
+        return json(res, 'ok' in r ? { ...r, status: await caps.statusOf(cap, probes, owner) } : r);
       }
       if (rest === 'identity' && m === 'GET') return json(res, { identity: caps.readIdentity(qOwner), owner: qOwner });
       // DELETE /__api/setup/:capability — disconnect (identity or a provider) + audit.
@@ -3136,11 +3204,12 @@ export async function handle(
         // the session principal / body.sessionId); Settings passes owner explicitly.
         const owner = ownerOfRequest(body?.owner ?? u.searchParams.get('owner'), me?.kind === 'session' ? me : body?.sessionId && state.getSession(String(body.sessionId)) ? ({ kind: 'session', sessionId: String(body.sessionId), user: null } as any) : me, capability);
         if (!owner) return badRequest(res, `invalid owner: ${body?.owner} — "global" or "agent:<slug>"`);
-        const cap = caps.getCapability(capability, {}, owner);
+        const sProbes: Partial<caps.CapabilityProbes> = capability.startsWith('mcp:') ? { engine: () => setupEngine(body, req) } : {};
+        const cap = caps.getCapability(capability, sProbes, owner);
         if (!cap) return badRequest(res, `unknown capability: ${capability}`);
         try {
           const out = await applyManualSetup(capability, body, req, owner);
-          const status = await caps.statusOf(cap, {}, owner);
+          const status = await caps.statusOf(cap, sProbes, owner);
           let closed = 0;
           if (status.ok) {
             closed = resolveSetupsFor(capability, status.detail, true, owner);
@@ -3198,6 +3267,13 @@ export async function handle(
     if (p === '/__api/host/claude' && m === 'GET') {
       const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
       return json(res, cu.status());
+    }
+    // P1-10: the `codex` CLI row — same shape, never auto-applied.
+    if (p === '/__api/host/codex' && m === 'GET') {
+      const cx = await import('./lib/codex-update.js');
+      const st = (await cx.codexUpdater()).status();
+      const sandbox = (await import('./lib/codex-sandbox.js')).readCodexSandbox(); // P4-6
+      return json(res, { ...(st.installed ? st : { ...st, installed: await cx.codexInstalled() }), sandbox });
     }
     // The self-update watcher's view: what it last saw upstream, which channel
     // this install updates through, and whether it is allowed to apply it
@@ -3282,10 +3358,10 @@ export async function handle(
         }
         // UPD1: claude/check (re-probe now) · claude/update (run `claude update`,
         // deferred under memory pressure) · claude/auto {enabled} (the policy toggle).
-        if (sub.startsWith('claude/') && m === 'POST') {
-          const cu = await (await import('./lib/claude-update.js')).claudeUpdater();
-          if (sub === 'claude/check') return json(res, await cu.check({ force: true }));
-          if (sub === 'claude/update') {
+        if ((sub.startsWith('claude/') || sub.startsWith('codex/')) && m === 'POST') {
+          const cu = sub.startsWith('codex/') ? await (await import('./lib/codex-update.js')).codexUpdater() : await (await import('./lib/claude-update.js')).claudeUpdater();
+          if (sub === 'claude/check' || sub === 'codex/check') return json(res, await cu.check({ force: true }));
+          if (sub === 'claude/update' || sub === 'codex/update') {
             await cu.check({ force: true });
             const r = await cu.apply({ reason: 'manual' });
             if (r.deferred) return json(res, { ...r, error: `deferred: ${r.availableMb}MB available < ${r.minFreeMb}MB (memory pressure)`, status: cu.status() }, 409);
@@ -3320,6 +3396,12 @@ export async function handle(
         screen: { ...screenPub, hasVncPassword: !!vncPassword },
         voiceEnabled: !!(groqApiKey || process.env.GROQ_API_KEY),
       });
+    }
+    // Host default engine (Settings › Host): {engine} → {defaultEngine}; unknown → claude.
+    if (p === '/__api/config/default-engine' && m === 'POST') {
+      if (!auth.isAdmin((req as any).auth)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req)) as any;
+      return json(res, { defaultEngine: updateDefaultEngine(body?.engine) });
     }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
@@ -3401,6 +3483,7 @@ export async function handle(
           configData.composioApiKey = pollData.api_key;
           fs.writeFileSync(configPath, JSON.stringify(configData, null, 2) + '\n');
           (cfg as any).composioApiKey = pollData.api_key;
+          syncComposioKey(pollData.api_key);
           return json(res, { authenticated: true });
         }
         return json(res, { authenticated: false });
@@ -3876,6 +3959,7 @@ export async function handle(
             deliver: body.deliver,
             autonomous: body.autonomous,
             agent: body.agent,
+            engine: body.engine,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);
@@ -3925,7 +4009,7 @@ export async function handle(
     }
     if (p === '/__api/pending' && m === 'GET') {
       const t = await import('./triggers.js');
-      // RES1 §3: the aggregated "ממתין לך" queue rides along here too, so the
+      // RES1 §3: the aggregated "waiting for you" queue rides along here too, so the
       // one endpoint answers "what is waiting for me" in full.
       const sup = await import('./supervisor-loop.js');
       const waiting = await sup.waitingQueue().catch(() => []);
@@ -3975,7 +4059,7 @@ export async function handle(
       return notFound(res);
     }
     // ---- RES1 — the supervisor's read surface -------------------------------
-    // /health      the per-session health map + the "ממתין לך" queue + a 24h
+    // /health      the per-session health map + the "waiting for you" queue + a 24h
     //              incident tally, plus per-account/model quota with reset times.
     // /health/incidents?hours=  what the supervisor actually did.
     // /waiting     the queue on its own (the rail pill polls/streams this).
@@ -3987,11 +4071,15 @@ export async function handle(
       const accountsMod = await import('./accounts.js');
       const snap = await sup.healthSnapshot();
       const { accounts } = accountsMod.listAccounts() as any;
+      const { cachedUsage } = await import('./usage.js');
+      const win = (w: any) => (w && typeof w.pct === 'number' ? { pct: w.pct, resetsAt: w.resetsAt || null, windowMins: w.windowMins || null } : null);
       return json(res, {
         ...snap,
         accounts: accounts.map((a: any) => ({
+          ...(() => { const u: any = cachedUsage(a.id); return u?.available ? { usage: { session: win(u.session), week: win(u.week) } } : {}; })(),
           id: a.id,
           label: a.label,
+          provider: a.provider,
           pool: a.pool,
           active: a.active,
           available: a.available,
@@ -3999,6 +4087,7 @@ export async function handle(
           plan: a.plan,
         })),
         modelChain: cfg.modelChain,
+        codexModelChain: cfg.codexModelChain,
         supervisor: cfg.supervisor,
       });
     }
@@ -4040,21 +4129,73 @@ export async function handle(
       const acc = await import('./accounts.js');
       return json(res, (acc as any).listAccounts());
     }
+    // The providers a human can add an account for (server/lib/providers.ts) —
+    // the cockpit renders the "add account" chooser from this, never from a
+    // hardcoded list, so a new provider shows up without a web change.
+    if (p === '/__api/accounts/providers' && m === 'GET') {
+      const pr = await import('./lib/providers.js');
+      return json(res, { providers: pr.providerCatalog() });
+    }
+    // The paste path, per provider: claude = a setup-token / PKCE token,
+    // codex = an OpenAI API key (validated against the API before it's stored).
     if (p === '/__api/accounts' && m === 'POST') {
       const acc = await import('./accounts.js');
+      const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       try {
+        const provider = pr.normalizeProvider(body?.provider);
+        if (provider === 'codex') {
+          const cx = await import('./codex-account.js');
+          return json(res, await cx.addApiKeyAccount({ label: body?.label, key: body?.token }));
+        }
         return json(res, (acc as any).addTokenAccount({ label: body?.label, token: body?.token }));
       } catch (e) {
         return badRequest(res, e instanceof Error ? e.message : String(e));
       }
     }
+    // The browser path, per provider: claude = PKCE (server/oauth-login.js),
+    // codex = `codex login` + its loopback callback (server/codex-account.ts).
+    // One flow id namespace: `oauth_…` / `cdx_…` / `auth_…` say which module
+    // owns it; `login/code` takes the pasted code (claude) or callback URL (codex).
+    if (p === '/__api/accounts/login/start' && m === 'POST') {
+      const pr = await import('./lib/providers.js');
+      const body = (await readBody(req)) as any;
+      const provider = pr.normalizeProvider(body?.provider);
+      if (provider === 'codex') {
+        const cx = await import('./codex-account.js');
+        return json(res, cx.startBrowserLogin({ label: body?.label }));
+      }
+      const o = await import('./oauth-login.js');
+      return json(res, { provider: 'claude', ...(o as any).startLogin({ label: body?.label, sessionId: body?.sessionId || (req.headers['x-arigami-session'] as string) || null }) });
+    }
+    if (p === '/__api/accounts/login/status' && m === 'GET') {
+      const id = u.searchParams.get('id') || '';
+      if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).loginStatus(id));
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).authStatus(id));
+      return json(res, { provider: 'claude', ...((await import('./oauth-login.js')) as any).loginStatus(id) });
+    }
+    if (p === '/__api/accounts/login/code' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const id = String(body?.id || '');
+      if (id.startsWith('cdx_')) return json(res, await (await import('./codex-account.js')).submitCallback(id, body?.code));
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).submitCode(id, body?.code));
+      return json(res, await ((await import('./oauth-login.js')) as any).submitCode(id, body?.code));
+    }
+    if (p === '/__api/accounts/login/cancel' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const id = String(body?.id || '');
+      if (id.startsWith('cdx_')) return json(res, (await import('./codex-account.js')).cancelLogin(id));
+      if (id.startsWith('auth_')) return json(res, ((await import('./accounts-auth.js')) as any).cancelAuth(id));
+      return json(res, ((await import('./oauth-login.js')) as any).cancelLogin(id));
+    }
     if (p === '/__api/accounts/active' && m === 'POST') {
       const acc = (await import('./accounts.js')) as any;
+      const pr = await import('./lib/providers.js');
       const body = (await readBody(req)) as any;
       try {
         const newId = body?.id;
-        const oldId = acc.getActiveId();
+        const provider = pr.normalizeProvider(acc.getAccount(newId)?.provider);
+        const oldId = acc.getActiveId(provider);
         const out = acc.setActive(newId);
         // Re-point sessions that FOLLOW the active account onto the new one, so
         // switching accounts actually applies to existing sessions (the common
@@ -4065,8 +4206,11 @@ export async function handle(
         // including busy ones, whose in-flight turn is cut: the point of the
         // switch is that the user can prompt on the new account immediately.
         // Not-running sessions just get re-pinned for their next spawn.
+        // Only sessions whose ENGINE consumes this provider's accounts follow —
+        // a codex login switch must never restart the claude sessions.
         let repointed = 0;
         for (const s of state.listSessions({ archived: true })) {
+          if (pr.providerForEngine(s.engine) !== provider) continue;
           const aid = (s.claude as any)?.accountId ?? null;
           if (aid === newId) continue;
           const follows = aid === null || aid === oldId || !acc.getAccount(aid);
@@ -4173,6 +4317,9 @@ export async function handle(
     if (p === '/__api/models' && m === 'GET') {
       const { getModels } = await import('./models.js');
       const list = await (getModels as any)();
+      // Codex's catalog comes from the engine at runtime (app-server model/list, cached 5 min per login).
+      const { refreshCodexModels, codexModels, codexVersion } = await import('./codex.js');
+      const codex = await Promise.race([refreshCodexModels(), new Promise<ReturnType<typeof codexModels>>((r) => setTimeout(() => r(codexModels()), 3000))]);
       // UPD1: the picker is where new models are discovered — tell it when a
       // newer CLI (= newer list) is one click away. Cheap: the cached status.
       let cliUpdate = null;
@@ -4180,11 +4327,13 @@ export async function handle(
         const s = (await (await import('./lib/claude-update.js')).claudeUpdater()).status();
         cliUpdate = { installed: s.installed, latest: s.latest, updateAvailable: s.updateAvailable, checkedAt: s.checkedAt };
       } catch {}
-      return json(res, { ...list, cliUpdate });
+      return json(res, { ...list, codex, codexVersion: await codexVersion(), cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
       const { getModels } = await import('./models.js');
-      return json(res, await (getModels as any)(true));
+      const { refreshCodexModels, codexVersion } = await import('./codex.js');
+      const [list, codex] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true })]);
+      return json(res, { ...list, codex, codexVersion: await codexVersion() });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).
@@ -4484,7 +4633,7 @@ export async function handle(
     }
     // ---- LEARN1: autonomous memory learning (server/memory-learning.ts) ------
     // GET  /memory/learning            status: mode, pending, next run, recent runs, manual-block preview
-    // POST /memory/learning/run        "למד עכשיו" — one triage run; applies in auto mode (or {apply:true})
+    // POST /memory/learning/run        "Learn now" — one triage run; applies in auto mode (or {apply:true})
     // POST /memory/learning/apply      manual mode: apply a stored run {runId, keys?} or approve pre-pass clusters {keys}
     // POST /memory/learning/mode       {mode:'auto'|'manual', minBatch?, maxAgeHours?}
     // POST /memory/learning/undo/:seq  revert one applied line by its write-log seq
@@ -4763,10 +4912,13 @@ export async function handle(
       // rail color, stamp metadata.agent; the persona + agent memory go into the
       // first turn in claude.js. An unknown agent is refused, never ignored.
       let agentColor: string | undefined;
+      // P2-5: a child's engine = explicit → its agent's → its master's → cfg.defaultEngine.
+      if (body.master) body.engine = agents.engineForSpawn(body.engine, body.agent ? agents.getAgent(String(body.agent)) : null, state.getSession(String(body.master))) || undefined;
       try {
-        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, metadata: body.metadata });
+        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
         body.title = o.title;
         body.model = o.model;
+        body.engine = o.engine;
         body.metadata = o.metadata;
         agentColor = o.color;
       } catch (e) {
@@ -5085,7 +5237,7 @@ export async function handle(
         return json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status || 500);
       }
     }
-    // UX2: "אמץ סוכן" — this session takes on an existing agent from its next
+    // UX2: "Adopt agent" — this session takes on an existing agent from its next
     // turn on, without spawning anything. Reversible via .../adopt-agent/revert.
     if (sub === 'adopt-agent' && m === 'POST') {
       const body = (await readBody(req)) as any;
@@ -5480,6 +5632,19 @@ export async function handle(
     if (sub === 'browser/tabs' && m === 'GET') {
       const cdp = await import('./lib/chrome-cdp.js');
       return json(res, { tabs: (await cdp.listTabs(id)).map((t) => ({ url: t.url, title: t.title, type: t.type })) });
+    }
+    // ---- OPENUI pilot: render_ui — an OpenUI Lang block as a chat card ----
+    // Same shape as an extension's appendCard: one transcript event, no side
+    // effects; the web card parses/renders it and degrades on bad input.
+    if (sub === 'ui' && m === 'POST') {
+      const body = (await readBody(req, 256e3)) as any;
+      const ui = typeof body.ui === 'string' ? body.ui : '';
+      if (!ui.trim()) return badRequest(res, 'ui (OpenUI Lang source) required');
+      if (ui.length > OPENUI_MAX_CHARS) return badRequest(res, `ui too long (${ui.length} > ${OPENUI_MAX_CHARS} chars)`);
+      if (!/^\s*root\s*=/m.test(ui)) return badRequest(res, 'ui must define `root = Stack([...])`');
+      const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 120) : undefined;
+      const ev = claude.appendChat(id, { kind: 'openui', ui, ...(title ? { title } : {}) });
+      return json(res, { ok: true, event_id: ev.id }, 201);
     }
     // ---- Published artifacts (A1) — publish_artifact tool + card buttons ----
     if (sub === 'artifacts' && m === 'GET') return json(res, artifacts.list(id));

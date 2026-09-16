@@ -13,7 +13,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
 import { cfg } from './lib/config.js';
-import { hasCredentials } from './accounts.js';
+import { syncComposioKey } from './lib/mcp-servers.js';
+import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
 import { resourceRoot } from './lib/resource-root.js';
 
@@ -570,6 +571,7 @@ export interface Step {
   dependsOn: string[];
   action?: string;
   detail?: string;
+  required?: boolean; // false = not needed for readiness (the other engine is connected)
 }
 
 const claudeAuthed = (): boolean =>
@@ -577,6 +579,14 @@ const claudeAuthed = (): boolean =>
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN ||
   !!process.env.ANTHROPIC_API_KEY ||
   fs.existsSync(path.join(HOME, '.claude', '.credentials.json'));
+
+const codexAuthed = (): boolean => hasCredentials('codex') || hasLocalCodexLogin();
+
+// ARIGAMI_CODEX_BIN (absolute) or `codex` on PATH.
+const codexOnPath = (): boolean => {
+  const b = process.env.ARIGAMI_CODEX_BIN;
+  return b && path.isAbsolute(b) ? fs.existsSync(b) : onPath(b || 'codex');
+};
 
 const gitAuthed = (): boolean =>
   !!process.env.GH_TOKEN ||
@@ -620,11 +630,18 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
   //    Guided manual install (not auto): npm/bun global + PATH refresh + auth are
   //    too flaky to silently automate. In the container it's baked in → always ok.
   const cliOk = onPath('claude');
+  const claudeOk = claudeAuthed();
+  const codexCliOk = codexOnPath();
+  const codexOk = codexCliOk && codexAuthed();
+  // One connected engine is enough; the other engine's rows turn optional.
+  const claudeReq = !codexOk || (cliOk && claudeOk);
+  const codexReq = !(cliOk && claudeOk);
   steps.push({
     id: 'claude-cli',
     title: 'Claude Code CLI installed',
     scope: 'global',
     status: cliOk ? 'ok' : 'missing',
+    required: claudeReq,
     autoFixable: false,
     dependsOn: [],
     action: 'onboarding.claudeInstallHelp',
@@ -632,18 +649,38 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
       ? undefined
       : 'Install globally: npm i -g @anthropic-ai/claude-code (or `brew install claude`), then Recheck',
   });
-  const claudeOk = claudeAuthed();
   steps.push({
     id: 'claude-auth',
     title: 'Claude Code authentication',
     scope: 'global',
     status: !cliOk ? 'blocked' : claudeOk ? 'ok' : 'missing',
+    required: claudeReq,
     autoFixable: false, // CLAUDE_CODE_OAUTH_TOKEN / setup-token is user-driven
     dependsOn: ['claude-cli'],
     action: 'onboarding.claudeAuthHelp',
     detail: claudeOk
       ? undefined
       : 'Sign in with `claude` (subscription login → macOS keychain), add an account in the Accounts view, or set CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY',
+  });
+  steps.push({
+    id: 'codex-cli',
+    title: 'Codex CLI installed',
+    scope: 'global',
+    status: codexCliOk ? 'ok' : 'missing',
+    required: codexReq,
+    autoFixable: false,
+    dependsOn: [],
+    detail: codexCliOk ? undefined : 'Install globally: npm i -g @openai/codex, then Recheck',
+  });
+  steps.push({
+    id: 'codex-auth',
+    title: 'Codex authentication',
+    scope: 'global',
+    status: !codexCliOk ? 'blocked' : codexOk ? 'ok' : 'missing',
+    required: codexReq,
+    autoFixable: false,
+    dependsOn: ['codex-cli'],
+    detail: codexOk ? undefined : 'Sign in with ChatGPT or add an OpenAI API key in the Accounts view (or run `codex login`)',
   });
   const gitOk = gitAuthed();
   steps.push({
@@ -727,7 +764,7 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
 export function ready(repoName: string): boolean {
   const { steps } = status();
   const relevant = steps.filter(
-    (s) => s.scope === 'global' || s.scope === `repo:${repoName}`
+    (s) => (s.scope === 'global' && s.required !== false) || s.scope === `repo:${repoName}`
   );
   return relevant.length > 0 && relevant.every((s) => s.status === 'ok');
 }
@@ -738,7 +775,7 @@ export function ready(repoName: string): boolean {
 export function workspaceReady(): boolean {
   const { steps } = status();
   const globalsOk = steps
-    .filter((s) => s.scope === 'global')
+    .filter((s) => s.scope === 'global' && s.required !== false)
     .every((s) => s.status === 'ok');
   if (!globalsOk) return false;
   const names = [
@@ -752,7 +789,7 @@ export function workspaceReady(): boolean {
 // ===========================================================================
 // B3 / K5 — the first-run WIZARD state machine.
 //
-// One linear flow: pair → claude → git → profile → integrations → repo → health.
+// One linear flow: pair → claude → codex → git → profile → integrations → repo → health.
 // Every step has a live PROBE (filesystem / env / config — never a network
 // call except the explicit health run) and a persisted RECORD in
 // $ARIGAMI_DIR/onboarding.json ({status:'complete'|'skipped', at, by}). The
@@ -767,7 +804,7 @@ export function workspaceReady(): boolean {
 // stored alongside the records so restarts don't re-emit.
 // ===========================================================================
 
-export const WIZARD_STEPS = ['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health'] as const;
+export const WIZARD_STEPS = ['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health'] as const;
 export type WizardStepId = (typeof WIZARD_STEPS)[number];
 export type WizardStatus = 'ok' | 'todo' | 'skipped' | 'blocked' | 'error' | 'running';
 
@@ -791,7 +828,7 @@ export interface WizardView {
   done: boolean;
   completedAt?: string;
   unattended: boolean;
-  // S1 (JIT setup): 'minimal' (default) = only pair + claude are required;
+  // S1 (JIT setup): 'minimal' (default) = only pair + one engine are required;
   // everything else is optional and connects just-in-time from the chat.
   // 'full' = the classic linear wizard ("Run full setup").
   mode: OnboardingMode;
@@ -799,10 +836,11 @@ export interface WizardView {
 }
 
 export type OnboardingMode = 'minimal' | 'full';
-export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude'];
+// claude/codex: whichever is not connected reads 'skipped' once the other is.
+export const MINIMAL_REQUIRED: readonly WizardStepId[] = ['pair', 'claude', 'codex'];
 
 export interface HealthCheck {
-  id: 'claude' | 'desktop' | 'chrome' | 'whatsapp';
+  id: 'claude' | 'codex' | 'desktop' | 'chrome' | 'whatsapp';
   ok: boolean;
   required: boolean;
   detail: string;
@@ -875,6 +913,8 @@ export interface WizardProbes {
   hasAdmin: () => boolean;
   claudeCli: () => boolean;
   claudeAuth: () => boolean;
+  codexCli: () => boolean;
+  codexAuth: () => boolean;
   gitAuth: () => boolean;
   profileApplied: () => string | null; // applied bundle name
   pendingProfile: () => string | null;
@@ -909,6 +949,8 @@ export const defaultProbes: WizardProbes = {
   },
   claudeCli: () => onPath('claude'),
   claudeAuth: () => claudeAuthed(),
+  codexCli: () => codexOnPath(),
+  codexAuth: () => codexAuthed(),
   gitAuth: () => gitAuthed() || ghCliAuthed(),
   profileApplied: () => {
     try {
@@ -951,6 +993,7 @@ export const defaultProbes: WizardProbes = {
 const TITLES: Record<WizardStepId, string> = {
   pair: 'Pair this device',
   claude: 'Connect Claude',
+  codex: 'Connect Codex',
   git: 'Git / GitHub access',
   profile: 'Profile bundle',
   integrations: 'Integrations',
@@ -962,6 +1005,7 @@ const TITLES: Record<WizardStepId, string> = {
 const SKIPPABLE: Record<WizardStepId, boolean> = {
   pair: false,
   claude: false,
+  codex: false,
   git: true,
   profile: true,
   integrations: true,
@@ -984,6 +1028,13 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
   const admin = p.hasAdmin();
   const cli = p.claudeCli();
   const cauth = p.claudeAuth();
+  const xcli = p.codexCli();
+  const xauth = p.codexAuth();
+  const claudeOk = cli && cauth;
+  const codexOk = xcli && xauth;
+  // An engine step not connected while the other engine is: skipped by the probe.
+  const engine = (id: 'claude' | 'codex', ok: boolean, otherOk: boolean, fallback: WizardStatus) =>
+    !ok && otherOk ? { status: 'skipped' as WizardStatus, by: 'auto' as const } : resolve(id, ok, fallback);
   const gauth = p.gitAuth();
   const applied = p.profileApplied();
   const pending = p.pendingProfile();
@@ -1006,13 +1057,30 @@ function computeSteps(file: OnboardingFile, p: WizardProbes): WizardStep[] {
       title: TITLES.claude,
       fixable: cli,
       skippable: SKIPPABLE.claude,
-      ...resolve('claude', cli && cauth, cli ? 'todo' : 'blocked'),
-      detail: !cli
-        ? 'Claude Code CLI not found on PATH — install it first (npm i -g @anthropic-ai/claude-code)'
-        : cauth
-          ? 'signed in'
-          : 'sign in with Claude (PKCE) or paste a token',
+      ...engine('claude', claudeOk, codexOk, cli ? 'todo' : 'blocked'),
+      detail: claudeOk
+        ? 'signed in'
+        : codexOk
+          ? 'optional — Codex is connected'
+          : !cli
+            ? 'Claude Code CLI not found on PATH — install it first (npm i -g @anthropic-ai/claude-code)'
+            : 'sign in with Claude (PKCE) or paste a token',
       data: { cli, authed: cauth },
+    },
+    {
+      id: 'codex',
+      title: TITLES.codex,
+      fixable: xcli,
+      skippable: SKIPPABLE.codex,
+      ...engine('codex', codexOk, claudeOk, xcli ? 'todo' : 'blocked'),
+      detail: codexOk
+        ? 'signed in'
+        : claudeOk
+          ? 'optional — Claude is connected'
+          : !xcli
+            ? 'Codex CLI not found on PATH — install it first (npm i -g @openai/codex)'
+            : 'sign in with ChatGPT or paste an OpenAI API key',
+      data: { cli: xcli, authed: xauth },
     },
     {
       id: 'git',
@@ -1197,6 +1265,8 @@ let healthRunning = false;
 
 export interface HealthDeps {
   claudePing?: () => Promise<string>;
+  codexPing?: () => Promise<string>;
+  engine?: () => 'claude' | 'codex';
   desktopDisplay?: () => string | null; // ':99' when a desktop is configured
   chromeVersion?: () => string | null;
   whatsapp?: () => string;
@@ -1237,21 +1307,31 @@ export function desktopUpSync(display: string): boolean {
 /** S1 capabilities registry reuses the same desktop gate. */
 export const desktopUp = (display: string): boolean => desktopUpSync(display);
 
+/** The engine the health check pings: the default engine when connected, else claude, else codex. */
+export function healthEngine(p: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes): 'claude' | 'codex' {
+  const ok = { claude: p.claudeCli() && p.claudeAuth(), codex: p.codexCli() && p.codexAuth() };
+  const d = (cfg as any).defaultEngine;
+  if ((d === 'claude' || d === 'codex') && ok[d as 'claude' | 'codex']) return d;
+  return ok.claude || !ok.codex ? 'claude' : 'codex';
+}
+
 export async function runHealth(deps: HealthDeps = {}): Promise<HealthResult> {
   if (healthRunning) throw new Error('health check already running');
   healthRunning = true;
   const checks: HealthCheck[] = [];
   try {
-    // 1) Claude one-shot — the only check that spends a (tiny) request.
-    const ping = deps.claudePing ?? (async () => {
+    // 1) Engine one-shot on the connected engine — the only check that spends a (tiny) request.
+    const eng = deps.engine ? deps.engine() : healthEngine();
+    const oneShot = async () => {
       const os = await import('./lib/oneshot.js');
-      return os.runClaudeOneShot('Reply with exactly the single word: pong', { timeoutMs: 90_000, tag: 'wizard-health' });
-    });
+      return os.runOneShot('Reply with exactly the single word: pong', { engine: eng, timeoutMs: 90_000, tag: 'wizard-health' });
+    };
+    const ping = (eng === 'codex' ? deps.codexPing : deps.claudePing) ?? oneShot;
     try {
       const out = (await ping()).trim();
-      checks.push({ id: 'claude', ok: true, required: true, detail: out.slice(0, 80) || 'ok' });
+      checks.push({ id: eng, ok: true, required: true, detail: out.slice(0, 80) || 'ok' });
     } catch (e) {
-      checks.push({ id: 'claude', ok: false, required: true, detail: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
+      checks.push({ id: eng, ok: false, required: true, detail: (e instanceof Error ? e.message : String(e)).slice(0, 200) });
     }
     // 2) Desktop — required only when screen is enabled in config.
     const screenOn = deps.screenEnabled ? deps.screenEnabled() : !!cfg.screen?.enabled;
@@ -1317,6 +1397,7 @@ export function setComposioKey(key: string): { ok: true } {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
   (cfg as any).composioApiKey = k;
+  syncComposioKey(k);
   return { ok: true };
 }
 

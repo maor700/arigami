@@ -18,7 +18,7 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
 
 // Probes where NOTHING is connected — the fresh-install baseline.
 const NONE =
-  "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
+  "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),codex:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
   "repos:()=>[{name:'app',present:false,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'disconnected',qr:null,user:null}),desktop:()=>({enabled:false,display:null,up:false})," +
   "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),telemetry:()=>({enabled:false,reason:'config'})," +
@@ -26,7 +26,7 @@ const NONE =
 // Everything connected.
 const ALL =
   "const probes={identity:()=>({email:'a@b.c',provider:'google',connectedAt:'t',chromeProfile:'base',providers:{}})," +
-  "claude:()=>({cli:true,authed:true}),git:()=>({authed:true,gh:true})," +
+  "claude:()=>({cli:true,authed:true}),codex:()=>({cli:true,authed:true}),git:()=>({authed:true,gh:true})," +
   "repos:()=>[{name:'app',present:true,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'connected',qr:null,user:'me'}),desktop:()=>({enabled:true,display:':99',up:true})," +
   "push:()=>true,remote:()=>({available:true,loggedIn:true,serving:true,httpsUrl:'https://h/__host/'}),telemetry:()=>({enabled:true,reason:'config'})," +
@@ -35,7 +35,7 @@ const ALL =
 test('registry: every spec id resolves; statics + repos + known toolkits are listed with manual.kind/autoCapable/playbook', () => {
   const r = runInChild(
     `const c=await import('./server/capabilities.js');${NONE}` +
-      "const ids=['identity','claude','git','repo:app','whatsapp','composio:gmail','desktop','push','remote','telemetry'];" +
+      "const ids=['identity','claude','codex','git','repo:app','whatsapp','composio:gmail','desktop','push','remote','telemetry'];" +
       'const resolved=ids.map(id=>{const cap=c.getCapability(id,probes);return cap&&{id:cap.id,kind:cap.manual.kind,auto:cap.autoCapable,playbook:cap.playbook||null};});' +
       'const all=c.listCapabilities(probes).map(x=>x.id);' +
       "emit({resolved,all,bad:[c.getCapability('nope'),c.getCapability('composio:../x'),c.isCapabilityId('repo:a b')]});",
@@ -43,17 +43,18 @@ test('registry: every spec id resolves; statics + repos + known toolkits are lis
   );
   if (!r.ok) throw new Error(r.error);
   const { resolved, all, bad } = r.out[0];
-  expect(resolved.map((x: any) => x.id)).toEqual(['identity', 'claude', 'git', 'repo:app', 'whatsapp', 'composio:gmail', 'desktop', 'push', 'remote', 'telemetry']);
+  expect(resolved.map((x: any) => x.id)).toEqual(['identity', 'claude', 'codex', 'git', 'repo:app', 'whatsapp', 'composio:gmail', 'desktop', 'push', 'remote', 'telemetry']);
   const byId = Object.fromEntries(resolved.map((x: any) => [x.id, x]));
   expect(byId.identity).toEqual({ id: 'identity', kind: 'takeover', auto: false, playbook: 'connect-identity' });
   expect(byId.claude).toEqual({ id: 'claude', kind: 'oauth', auto: true, playbook: 'connect-claude' });
+  expect(byId.codex).toEqual({ id: 'codex', kind: 'oauth', auto: true, playbook: 'connect-codex' });
   expect(byId.git).toEqual({ id: 'git', kind: 'token', auto: true, playbook: 'connect-github' });
   expect(byId['repo:app'].kind).toBe('repo');
   expect(byId.whatsapp).toEqual({ id: 'whatsapp', kind: 'qr', auto: false, playbook: null });
   expect(byId['composio:gmail']).toEqual({ id: 'composio:gmail', kind: 'oauth', auto: true, playbook: 'connect-composio' });
   expect(byId.remote).toEqual({ id: 'remote', kind: 'toggle', auto: true, playbook: 'connect-tailscale' });
   for (const id of ['desktop', 'push', 'telemetry']) expect(byId[id].kind).toBe('toggle');
-  expect(all.slice(0, 8)).toEqual(['identity', 'claude', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry']);
+  expect(all.slice(0, 9)).toEqual(['identity', 'claude', 'codex', 'git', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry']);
   expect(all).toContain('repo:app');
   expect(all).toContain('composio:gmail');
   expect(bad).toEqual([null, null, false]);
@@ -77,7 +78,7 @@ test('check(): nothing connected → all not ok with a human detail; everything 
   const all = r.out[1];
   expect(all.identity).toBe('a@b.c');
   const m = Object.fromEntries(all.all.map(([id, ok, mode]: any) => [id, { ok, mode }]));
-  for (const id of ['identity', 'claude', 'git', 'repo:app', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry', 'composio:gmail']) expect(m[id].ok).toBe(true);
+  for (const id of ['identity', 'claude', 'codex', 'git', 'repo:app', 'whatsapp', 'desktop', 'push', 'remote', 'telemetry', 'composio:gmail']) expect(m[id].ok).toBe(true);
   expect(m['composio:slack'].ok).toBe(false); // not in the connected set
   expect(m['composio:slack'].mode).toBe('auto'); // identity + autoCapable
   expect(m.whatsapp.mode).toBe('manual'); // never auto (QR)
@@ -101,6 +102,25 @@ test('ensure(): returns {ok} when connected, the exact needs_setup shape otherwi
   expect(o.shape).toEqual({ needs_setup: 'whatsapp', why: 'send a message', hint: 'call request_setup' });
   expect(o.isA).toBe(true);
   expect(o.isB).toBe(false);
+});
+
+test('codex capability: CLI missing / not signed in / signed in; manual = codex login start + an OpenAI key field', () => {
+  const r = runInChild(
+    `const c=await import('./server/capabilities.js');${NONE}` +
+      "const st=async(cx)=>{const cap=c.getCapability('codex',{...probes,codex:()=>cx});const k=await cap.check();return [k.ok,k.data.cli];};" +
+      "const cap=c.getCapability('codex',probes);" +
+      "emit({noCli:await st({cli:false,authed:true}),out:await st({cli:true,authed:false}),in:await st({cli:true,authed:true}),manual:cap.manual,events:cap.events,id:c.isCapabilityId('codex')});",
+    env(fresh())
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.noCli).toEqual([false, false]);
+  expect(o.out).toEqual([false, true]);
+  expect(o.in).toEqual([true, true]);
+  expect(o.manual.start).toBe('/__api/accounts/login/start');
+  expect(o.manual.fields[0]).toMatchObject({ name: 'token', secret: true });
+  expect(o.events).toContain('accounts');
+  expect(o.id).toBe(true);
 });
 
 test('identity.json: write/merge/mark provider/clear; refuses secrets and bad emails; never stores tokens', () => {
@@ -160,7 +180,7 @@ test('connections.log: JSONL append with the spec fields, newest-last tail, secr
 // --- minimal onboarding mode (default) ----------------------------------------
 
 const WIZ_NONE =
-  "const wp={hasAdmin:()=>true,claudeCli:()=>true,claudeAuth:()=>true,gitAuth:()=>false," +
+  "const wp={hasAdmin:()=>true,claudeCli:()=>true,claudeAuth:()=>true,codexCli:()=>true,codexAuth:()=>false,gitAuth:()=>false," +
   "profileApplied:()=>null,pendingProfile:()=>null,integrations:()=>({composio:false,whatsapp:'disconnected',tailscale:false})," +
   "repos:()=>[],health:()=>undefined,unattended:()=>false,telemetry:()=>({enabled:false,reason:'config'})};";
 
@@ -179,14 +199,14 @@ test('minimal mode (default): pair+claude ok → wizard done, current=null, opti
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
   expect(o.mode).toBe('minimal');
-  expect(o.required).toEqual(['pair', 'claude']);
+  expect(o.required).toEqual(['pair', 'claude', 'codex']);
   expect(o.done).toBe(true);
   expect(o.current).toBeNull();
   expect(o.todo).toContain('git'); // optional, not blocking
   expect(o.fullMode).toBe('full');
   expect(o.fullDone).toBe(false);
   expect(o.fullCurrent).toBe('git');
-  expect(o.fullRequired).toBe(8);
+  expect(o.fullRequired).toBe(9);
   expect(o.backDone).toBe(true);
   expect(o.events.filter((n: string) => n === 'onboarding.done').length).toBe(2); // done → not done → done again
 });

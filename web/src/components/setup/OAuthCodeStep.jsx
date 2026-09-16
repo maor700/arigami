@@ -8,6 +8,7 @@
 //            a phone can't complete it; hence the same page also takes the final
 //            redirect URL pasted back (the CLI's own "paste the redirect URL"
 //            path). Both are offered; whichever lands first wins.
+//   codex    Codex: `codex login` on the host; same loopback + paste-back as mcp.
 // Every flow also offers "paste a token instead" (TokenStep) when
 // `manual.token` is true. Links are absolute provider URLs the server hands
 // back — never a host-local address — so they work from a phone too.
@@ -26,7 +27,8 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
   const t = useT();
   const flow = manual.flow || 'pkce';
   // Flows where the human can finish by pasting something back from the browser.
-  const pasteBack = flow === 'pkce' || flow === 'mcp';
+  const pasteBack = flow === 'pkce' || flow === 'mcp' || flow === 'codex';
+  const loopback = flow === 'mcp' || flow === 'codex'; // paste the redirect URL, then keep polling
   const [mode, setMode] = useState(null); // null | 'link' | 'token'
   const [link, setLink] = useState(null); // {id?, url, code?}
   const [code, setCode] = useState('');
@@ -80,7 +82,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
       // M1: handing the redirect URL to `claude mcp login` is not the end — the
       // token exchange happens after it, so stay on the card and let the poll
       // report success (the pkce flow, by contrast, is done at this point).
-      if (flow === 'mcp') return;
+      if (loopback) return;
       setLink(null);
       setMode(null);
       onDone?.(r);
@@ -132,15 +134,15 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
           </div>
         )}
         {flow === 'redirect' && <Spinner>{t('setup.oauth.waitingConsent')}</Spinner>}
-        {flow === 'mcp' && <Spinner>{t('setup.oauth.waitingConsent')}</Spinner>}
+        {loopback && <Spinner>{t('setup.oauth.waitingConsent')}</Spinner>}
         {pasteBack && (
           <>
-            <div className="text-[11px] text-fgdim">{t(flow === 'mcp' ? 'setup.oauth.mcpHint' : 'setup.oauth.linkHint')}</div>
-            <input className={INPUT} value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(flow === 'mcp' ? 'setup.oauth.redirectPlaceholder' : 'setup.oauth.codePlaceholder')} spellCheck={false} onKeyDown={(e) => e.key === 'Enter' && code.trim() && exchange()} />
+            <div className="text-[11px] text-fgdim">{t(loopback ? 'setup.oauth.mcpHint' : 'setup.oauth.linkHint')}</div>
+            <input className={INPUT} value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(loopback ? 'setup.oauth.redirectPlaceholder' : 'setup.oauth.codePlaceholder')} spellCheck={false} onKeyDown={(e) => e.key === 'Enter' && code.trim() && exchange()} />
           </>
         )}
         <div className="flex gap-2">
-          {pasteBack && <button type="button" className={BTN} disabled={busy || !code.trim()} onClick={exchange}>{t(flow === 'mcp' ? 'setup.oauth.submitRedirect' : 'setup.oauth.exchange')}</button>}
+          {pasteBack && <button type="button" className={BTN} disabled={busy || !code.trim()} onClick={exchange}>{t(loopback ? 'setup.oauth.submitRedirect' : 'setup.oauth.exchange')}</button>}
           {flow === 'pkce' && sessionId && <button type="button" className={BTN2} disabled={busy} onClick={readFromBrowser} title={t('setup.oauth.readBrowserHint')}>{t('setup.oauth.readBrowser')}</button>}
           <button type="button" className={BTN2} onClick={cancel}>{t('setup.cancel')}</button>
         </div>
@@ -152,7 +154,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-2">
         <button type="button" className={BTN} disabled={busy} onClick={start}>
-          {t(flow === 'device' ? 'setup.oauth.signInDevice' : flow === 'redirect' ? 'setup.oauth.signInRedirect' : flow === 'mcp' ? 'setup.oauth.signInMcp' : 'setup.oauth.signIn')}
+          {t(flow === 'device' ? 'setup.oauth.signInDevice' : flow === 'redirect' ? 'setup.oauth.signInRedirect' : flow === 'mcp' ? 'setup.oauth.signInMcp' : flow === 'codex' ? 'setup.oauth.signInCodex' : 'setup.oauth.signIn')}
         </button>
         {manual.token !== false && <button type="button" className={BTN2} onClick={() => setMode('token')}>{t('setup.oauth.pasteToken')}</button>}
         {onCancel && <button type="button" className={BTN2} onClick={onCancel}>{t('setup.cancel')}</button>}

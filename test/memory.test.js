@@ -169,10 +169,10 @@ test('FTS5 search finds written content by keyword, scoped and ranked', () => {
   expect(o.none).toEqual([]);
 });
 
-// M1b: Hebrew attaches single-letter prefixes (ה/ו/ב/ל/מ/ש/כ) directly onto
-// the next word with no boundary — unicode61 (whole-token) FTS tokenized
-// "הסודי" as ONE token, so a query for "סודי" alone never matched it even
-// though "הסודי" (the full prefixed word) and English terms did. trigram
+// M1b: Hebrew attaches single-letter prefixes (he/vav/bet/lamed/mem/shin/kaf)
+// directly onto the next word with no boundary — unicode61 (whole-token) FTS
+// tokenized "ha-sodi" (the-secret) as ONE token, so a query for the bare "sodi"
+// alone never matched it even though the full prefixed word and English terms did. trigram
 // (substring) indexing fixes this without a hand-maintained prefix-letter list.
 test('Hebrew: a bare word matches inside its prefixed form, and multi-word queries find scattered prefixed terms', () => {
   const dir = tmp();
@@ -202,7 +202,7 @@ test('ranking: a hit containing the query as one contiguous run outranks a hit w
   const dir = tmp();
   const r = runInChild(
     "const m=await import('./server/memory.ts');" +
-      "m.writeMemory({target:'memory',action:'add',content:'רשימת קניות: חלב, ביצים'});" + // 'קוד' + 'סודי' scattered nowhere near each other
+      "m.writeMemory({target:'memory',action:'add',content:'רשימת קניות: חלב, ביצים'});" + // the two query tokens scattered nowhere near each other
       "m.writeMemory({target:'memory',action:'replace',old_text:'רשימת קניות: חלב, ביצים',content:'הערה: יש קוד באתר, ובנפרד יש גם עניין סודי לגמרי אחר'});" +
       "m.writeMemory({target:'user',action:'add',content:'הקוד הסודי נמצא בכספת'});" + // contiguous phrase
       "const hits=m.searchMemory({query:'קוד סודי'});" +
@@ -211,7 +211,7 @@ test('ranking: a hit containing the query as one contiguous run outranks a hit w
   );
   if (!r.ok) throw new Error(r.error);
   const o = r.out[0];
-  expect(o.paths[0]).toBe('USER.md'); // the contiguous "קוד...סודי" phrase ranks first
+  expect(o.paths[0]).toBe('USER.md'); // the contiguous two-token phrase ranks first
   expect(o.paths).toContain('MEMORY.md');
 });
 

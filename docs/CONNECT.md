@@ -1,6 +1,6 @@
 # Connecting services just-in-time (`connect-*` playbooks)
 
-Arigami starts with the minimum — pairing and one Claude account. Everything
+Arigami starts with the minimum — pairing and one engine account (Claude or Codex). Everything
 else (Linear/Notion/Sentry over their own MCP servers, Gmail via Composio,
 GitHub, Tailscale remote access, a repo, WhatsApp…)
 is connected **from inside the chat, the moment a task needs it**. This
@@ -8,6 +8,10 @@ document covers the agent-driven half of that: what is automated, where the
 human is still required, and the security model. The server/UI half
 (capability registry, `request_setup`, the Setup card) is in the JIT-setup
 spec and `server/capabilities.ts`.
+
+**Engine.** `mcp:<service>` grants are per engine: a codex session needs its own `codex mcp login`
+grant (the host runs it under `$ARIGAMI_DIR/codex-mcp`); `composio:*` works on both; claude.ai
+connectors are claude-only. See docs/ENGINES.md §4.
 
 ## The loop
 
@@ -37,6 +41,7 @@ human can flip it. Nothing runs automatically without that click.
 | `mcp:<service>` | `connect-mcp` | start `claude mcp login <grant> --no-browser` on the host, open the vendor's own authorize URL, approve with the connected identity, let the loopback callback land (or paste the redirect URL back), poll until the grant is live | vendor login page / 2FA, a workspace or org the card did not name, an admin-approval wall |
 | `composio:<toolkit>` | `connect-composio` | fetch the Composio redirect URL, open it, pick the identity account, "unverified app → Advanced → continue", Allow, poll until ACTIVE | provider login page (Slack/Notion/Linear), any password/2FA, redirect outside the allowlist |
 | `claude` | `connect-claude` | mint the PKCE authorize URL, click Authorize when claude.ai is signed in, read the code from the callback URL, POST it for exchange | claude.ai login (password / email code) |
+| `codex` | `connect-codex` | start `codex login` on the host, open the ChatGPT authorize URL, approve with the signed-in account, the loopback callback lands on the host by itself | OpenAI login (password / 2FA / email code) |
 | `remote` | `connect-tailscale` | `tailscale login` URL, Google SSO with the identity account, Connect device, enable `serve` via REST | password/2FA, non-Google SSO, `sudo`, tailnet without HTTPS certs, admin approval |
 | `git` | `connect-github` | `gh auth login --web` under the host pty-bridge, open the device page, type the one-time device code, Authorize, poll gh | GitHub login page, org SSO |
 | `whatsapp` | — (manual only) | — | the QR is scanned by the human on the phone; the card shows it |
@@ -51,7 +56,7 @@ is `Input.insertText`, and the evidence screenshot is `Page.captureScreenshot`
 of the front **tab**, not a scrot of the whole desktop/root window. Only `key`
 (a raw key combo with no page-level CDP equivalent) still falls back to
 `skills/_lib/xinput.py` (XTEST), and only when the session actually has a
-desktop (`$DISPLAY` set) — none of the six playbooks below call it today.
+desktop (`$DISPLAY` set) — none of the playbooks below call it today.
 They all follow `skills/machine-work/SKILL.md` for narration, the four
 screenshot moments and the hand-over protocol.
 
@@ -71,7 +76,7 @@ screenshot moments and the hand-over protocol.
    does not). A redirect that leaves the list is a hand-over, never followed by
    the agent. The union across playbooks is: `accounts.google.com`,
    `myaccount.google.com`, `google.com`, `claude.ai`, `claude.com`,
-   `platform.claude.com`, `console.anthropic.com`, `backend.composio.dev`,
+   `platform.claude.com`, `console.anthropic.com`, `auth.openai.com`, `openai.com`, `chatgpt.com`, `backend.composio.dev`,
    `composio.dev`, `login.tailscale.com`, `tailscale.com`, `github.com`, plus the
    provider domain of a non-Google Composio toolkit (`slack.com`, `linear.app`,
    `notion.so`), and — for `connect-mcp` — the vendor domains of

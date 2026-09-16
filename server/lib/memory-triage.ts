@@ -64,7 +64,7 @@ export interface PrepassResult {
 
 // ---- sensitive data (never auto-stored) ----------------------------------------
 
-/** Israeli ID (ת"ז) check digit — Luhn variant over exactly 9 digits. */
+/** Israeli ID number check digit — Luhn variant over exactly 9 digits. */
 export function isValidIsraeliId(digits: string): boolean {
   if (!/^\d{9}$/.test(digits)) return false;
   let sum = 0;

@@ -318,6 +318,37 @@ export const strings = {
   // accounts
   'launcher.account.typeKeychain': 'כניסת macOS',
   'launcher.account.typeToken': 'setup-token',
+  'launcher.account.typeCodexHome': 'כניסת codex של המכונה הזו',
+  'launcher.account.typeChatgpt': 'כניסת ChatGPT',
+  'launcher.account.typeApiKey': 'מפתח API',
+  // providers (the add-account chooser + the card badge)
+  'launcher.account.providerLabel': 'ספק',
+  'launcher.account.providerHint':
+    'לאיזה מוצר שייכת הכניסה. חשבונות Claude מריצים סשנים של Claude Code; חשבונות Codex מריצים סשנים של Codex — הם לעולם לא מתחלפים זה בזה.',
+  'launcher.account.providerBadge': 'חשבון {provider}',
+  'launcher.account.groupHeading': 'חשבונות {provider}',
+  'launcher.account.noneForProvider': 'אין עדיין חשבון {provider} — סשנים על מנוע {provider} לא יוכלו להתחיל עד שיתווסף אחד.',
+  'launcher.account.codexBrowser': '🔓 כניסה עם ChatGPT',
+  'launcher.account.codexPasteKey': 'הדבקת מפתח API של OpenAI במקום',
+  'launcher.account.codexAddBody':
+    'היכנסו עם ChatGPT דרך הדפדפן — Codex יוצר את הכניסה ושומר אותה לחשבון הזה. ודאו שהדפדפן מחובר לחשבון ChatGPT שאתם רוצים להוסיף.',
+  'launcher.account.codexStep1': 'פתחו את דף הכניסה',
+  'launcher.account.codexStep1b': ' והיכנסו בתור חשבון ה-ChatGPT שאתם רוצים להוסיף.',
+  'launcher.account.codexStep2':
+    'אחרי הכניסה הדפדפן ינחת על דף שלא נטען (הכתובת שלו מתחילה ב-http://localhost:1455/…). העתיקו את הכתובת הזו והדביקו כאן:',
+  'launcher.account.codexCallbackPlaceholder': 'http://localhost:1455/auth/callback?code=…&state=…',
+  'launcher.account.codexCallbackHint':
+    'אם הדפדפן על אותה מכונה כמו ה-host, הכניסה מסתיימת לבד — אין מה להדביק. הקישור תקף כ-15 דקות.',
+  'launcher.account.codexVerifying': 'מחובר — קורא את פרטי החשבון…',
+  'launcher.account.codexStarting': 'מפעיל codex login…',
+  'launcher.account.codexDone': 'חשבון Codex נוסף',
+  'launcher.account.codexPasteTitle': 'הדבקת מפתח API של OpenAI',
+  'launcher.account.codexPasteBody':
+    'מפתח API מ-platform.openai.com. הוא נבדק מול ה-API לפני השמירה, והשימוש מחויב לפי בקשה למפתח הזה — לא לתוכנית ChatGPT.',
+  'launcher.account.apiKeyUsage': 'מפתח API · חיוב לפי שימוש, בלי חלונות תוכנית',
+  'launcher.account.limitReached': 'הגיע למגבלה',
+  'launcher.account.windowHours': 'חלון של {n} שעות',
+  'launcher.account.windowDays': 'חלון של {n} ימים',
   'launcher.account.coolingDown': 'בהתקררות · מתאפס בעוד {time}',
   'launcher.account.atSessionLimit': 'הגיע למגבלת הסשן',
   'launcher.account.tokenInvalid': 'טוקן לא תקין — הוסיפו מחדש',
@@ -336,7 +367,8 @@ export const strings = {
   'launcher.account.inPool': 'ב-pool להחלפה אוטומטית',
   'launcher.account.remove': 'הסרה',
   'launcher.account.title': 'חשבונות',
-  'launcher.account.subtitle': '· באיזו כניסת Claude ה-host מריץ סשנים',
+  'launcher.account.subtitle': '· באיזו כניסה כל מנוע מריץ סשנים — חשבונות Claude לסשני Claude, חשבונות Codex לסשני Codex',
+  'launcher.account.usageWindow': 'חלון שימוש',
   'launcher.account.close': 'סגירה',
   'launcher.account.emptyList': 'אין חשבונות עדיין. הוסיפו אחד למטה.',
   'launcher.account.addAccount': '+ הוספת חשבון',
@@ -392,5 +424,5 @@ export const strings = {
   'launcher.mcp.checking': 'בודק…',
   'launcher.mcp.checkNow': 'בדיקה עכשיו',
   'launcher.mcp.statusHint':
-    'הסטטוס נבדק מחדש בזמן אמת (בדיקת בריאות לכל שרת על החשבון של הסשן הזה). חיבור מחדש מפעיל מחדש את תהליך claude של הסשן כדי לשחזר שרתים שנפלו.',
+    'הסטטוס נבדק מחדש בזמן אמת (בדיקת בריאות לכל שרת על החשבון של הסשן הזה). חיבור מחדש מפעיל מחדש את תהליך {engine} של הסשן כדי לשחזר שרתים שנפלו.',
 };

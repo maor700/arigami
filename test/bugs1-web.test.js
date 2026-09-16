@@ -34,6 +34,8 @@ test('B11: the hash wins over the query; no query → plain hash routing', () =>
 
 // ---- B18 / B5 / B26 (components) ------------------------------------------
 import fs from 'node:fs';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 const src = (p) => fs.readFileSync(path.join(ROOT, 'web/src', p), 'utf8');
 
 test('B18: diff code rows are forced LTR (the cockpit document is RTL in Hebrew)', async () => {

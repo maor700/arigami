@@ -5,6 +5,8 @@ import { test, expect, beforeAll } from 'bun:test';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
@@ -67,4 +69,16 @@ test('Rail source: Pending/Triggers and Usage are hidden until a session exists'
   const src = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
   expect(src).toMatch(/\{\(serverCount > 0 \|\| \(pending \|\| \[\]\)\.length > 0\) && \(\s*<PendingSection/);
   expect(src).toMatch(/\{serverCount > 0 && <UsageMini/);
+});
+
+test('one-engine gate + P1-11: Start needs either engine; usage, Connections and Health are not Claude-only', () => {
+  const setup = fs.readFileSync(web('components/Setup.jsx'), 'utf8');
+  expect(setup).toMatch(/disabled=\{busy \|\| !anyOk\}/);
+  expect(setup).toMatch(/id: 'codex'.*flow: 'codex'/);
+  expect(fs.readFileSync(web('components/Wizard.jsx'), 'utf8')).toMatch(/step\.id === 'codex'/);
+  const rail = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
+  expect(rail).toMatch(/activeEngine === 'codex'/);
+  expect(rail).toMatch(/<UsageMini usage=\{activeUsage\} provider=\{activeEngine\} \/>/);
+  expect(fs.readFileSync(web('components/settings/Connections.jsx'), 'utf8')).toMatch(/OWN_SECTION = new Set\(\[[^\]]*'codex'/);
+  expect(fs.readFileSync(web('locales/en/host.js'), 'utf8')).not.toMatch(/No Claude accounts/);
 });

@@ -2,7 +2,7 @@
 // mechanism: what leaves the box is exactly the K5 funnel (server/funnel.ts)
 // reduced to allow-listed event NAMES + timestamps, plus a handful of
 // non-identifying facts about the install (version/commit, os/arch, docker,
-// bucketed session count) under a random instance id.
+// bucketed session count, bucketed per engine) under a random instance id.
 //
 // Effective state = DO_NOT_TRACK=1 → off, else ARIGAMI_TELEMETRY env → that,
 // else config.telemetry.enabled (Settings toggle / wizard step). When off,
@@ -54,7 +54,7 @@ export const EVENT_MAP: Record<string, string> = {
 };
 
 // The ONLY props that survive, per wire event, and the values they may take.
-const STEP_IDS = new Set(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+const STEP_IDS = new Set(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
 const STEP_STATUS = new Set(['ok', 'todo', 'skipped', 'blocked', 'error', 'running']);
 
 export interface WireEvent {
@@ -74,8 +74,11 @@ export interface Payload {
   arch: string;
   docker: boolean;
   sessions: '0' | '1' | '2-5' | '6+';
+  engines: Record<(typeof ENGINES)[number], Payload['sessions']>;
   events: WireEvent[];
 }
+
+export const ENGINES = ['claude', 'codex'] as const;
 
 interface TelemetryState {
   cursor: number; // number of funnel.jsonl lines already considered
@@ -226,12 +229,14 @@ export interface Facts {
   version: string;
   commit: string | null;
   sessions: number;
+  engines?: Partial<Record<(typeof ENGINES)[number], number>>;
 }
 
 let factsProvider: () => Promise<Facts> = async () => {
   let version = '0.0.0';
   let commit: string | null = null;
   let sessions = 0;
+  const engines = { claude: 0, codex: 0 };
   try {
     const v = await import('./version.js');
     const info = await v.getVersion();
@@ -242,11 +247,13 @@ let factsProvider: () => Promise<Facts> = async () => {
   }
   try {
     const st = await import('./state.js');
-    sessions = st.listSessions({ archived: true }).length;
+    const all = st.listSessions({ archived: true });
+    sessions = all.length;
+    for (const s of all) engines[s.engine === 'codex' ? 'codex' : 'claude']++;
   } catch {
     /* CLI / tests without state */
   }
-  return { version, commit, sessions };
+  return { version, commit, sessions, engines };
 };
 
 /** Tests / the CLI inject their own facts so nothing heavy is imported. */
@@ -268,7 +275,7 @@ export function assertClean(p: Payload): void {
     throw new Error(`telemetry payload rejected: ${what}`);
   };
   const keys = Object.keys(p).sort().join(',');
-  if (keys !== 'arch,commit,docker,events,id,os,sentAt,sessions,v,version') bad(`unexpected keys ${keys}`);
+  if (keys !== 'arch,commit,docker,engines,events,id,os,sentAt,sessions,v,version') bad(`unexpected keys ${keys}`);
   if (!UUID_RE.test(p.id)) bad('id');
   if (!ISO_DATE.test(p.sentAt)) bad('sentAt');
   if (!SEMVER_ISH.test(p.version) || FORBIDDEN_STRING.test(p.version.replace(/\./g, ''))) bad('version');
@@ -276,6 +283,8 @@ export function assertClean(p: Payload): void {
   if (!WORD.test(p.os) || !WORD.test(p.arch)) bad('os/arch');
   if (typeof p.docker !== 'boolean') bad('docker');
   if (!['0', '1', '2-5', '6+'].includes(p.sessions)) bad('sessions');
+  if (!p.engines || typeof p.engines !== 'object' || Object.keys(p.engines).sort().join(',') !== ENGINES.join(',')) bad('engines');
+  for (const e of ENGINES) if (!['0', '1', '2-5', '6+'].includes(p.engines[e])) bad(`engines.${e}`);
   if (!Array.isArray(p.events) || p.events.length > MAX_EVENTS_PER_SEND) bad('events');
   const wire = new Set(Object.values(EVENT_MAP));
   for (const e of p.events) {
@@ -317,6 +326,7 @@ export async function buildPayload(opts: { fromCursor?: number; now?: Date } = {
     arch: process.arch,
     docker: inDocker(),
     sessions: bucketSessions(f.sessions),
+    engines: { claude: bucketSessions(f.engines?.claude ?? 0), codex: bucketSessions(f.engines?.codex ?? 0) },
     events: fresh,
   };
   assertClean(payload);

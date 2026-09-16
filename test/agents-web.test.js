@@ -1,15 +1,17 @@
-// A1 web: the Rail renders the "צוות"/Team section BELOW the sessions and
+// A1 web: the Rail renders the "Team" section BELOW the sessions and
 // ABOVE archived, agent rows show emoji + status, a session born from an
 // agent wears the agent's emoji, the AgentCard renders its pending form and
 // its created summary, and agent-card updates fold on reload.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, Rail, AgentCard, store, fold, origFetch;
+let React, render, prefs, Rail, AgentCard, store, fold;
 
 const AGENTS = [
   { slug: 'marketing-lead', name: 'Marketing Lead', emoji: '📣', color: '#E0594F', skills: ['dispatch'], homeSessionId: 'sess_home', persona: '' },
@@ -31,7 +33,6 @@ beforeAll(async () => {
   // The store's loadAgents() fetches /__api/agents — answer it from here
   // (restored in afterAll: bun test shares globals across files, and the
   // webhook/proxy suites need the real fetch).
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => ({
     ok: true, status: 200, url: String(url),
     json: async () => (String(url).includes('/agents') ? { agents: AGENTS } : {}),
@@ -47,13 +48,9 @@ beforeAll(async () => {
   await store.loadAgents();
 });
 
-afterAll(() => {
-  globalThis.fetch = origFetch;
-});
-
 const sessions = [
   { id: 'sess_free', title: 'free one', status: 'In Progress', color: '#2C6BD6', metadata: {}, claude: { state: 'idle' }, createdAt: '2026-08-30T10:00:00Z' },
-  // UX1: the home chat is the agent surface's בית tab — it must NOT be a rail row…
+  // UX1: the home chat is the agent surface's home tab — it must NOT be a rail row…
   { id: 'sess_home', title: 'Marketing Lead', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead', agentHome: true }, claude: { state: 'working' }, createdAt: '2026-08-30T10:00:00Z' },
   // …while a work session born from the agent stays in the Sessions section.
   { id: 'sess_work', title: 'landing page copy', status: 'In Progress', color: '#E0594F', metadata: { agent: 'marketing-lead' }, claude: { state: 'idle' }, createdAt: '2026-08-30T10:30:00Z' },
@@ -77,7 +74,7 @@ test('Rail (he): the צוות section sits below the sessions and above archived
   expect(html).toContain('+ סוכן חדש');
   expect(html).toContain('data-rail-agent="marketing-lead"');
   expect(html).toContain('data-rail-agent="ops"');
-  // marketing-lead has a working session → "עובד"; ops has none → "פנוי"
+  // marketing-lead has a working session → "busy"; ops has none → "available"
   const mk = html.slice(html.indexOf('data-rail-agent="marketing-lead"'), html.indexOf('data-rail-agent="ops"'));
   expect(mk).toContain('עובד');
   expect(mk).toContain('dispatch');

@@ -14,6 +14,8 @@ import { api } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { HOST_ORIGIN } from '../lib/hostUrl.js';
 import { faCube, faArrowUpRightFromSquare, faLink, faCheck, faTriangleExclamation, faWindowRestore, faShareNodes, faBan } from '@fortawesome/free-solid-svg-icons';
+import { defineHostComponent, loose, str, num, any, z } from '../openui/define.js';
+import { CardFrame, Btn, btnClass } from '../openui/primitives.jsx';
 
 // A share_url is host-relative unless the server has ARIGAMI_PUBLIC_URL; the
 // browser always knows its own origin, so show an absolute link either way.
@@ -44,7 +46,9 @@ export function fmtBytes(n) {
   return `${(n / 1048576).toFixed(1)} MB`;
 }
 
-export default function ArtifactCard({ sessionId, event }) {
+// OPENUI phase 2: a host library component built from the shared primitives;
+// ChatPane renders it through HostCard.
+function ArtifactCardView({ props: { sessionId, event } }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -111,36 +115,40 @@ export default function ArtifactCard({ sessionId, event }) {
     } catch {}
   };
 
-  const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-[var(--term-border)] px-2 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-fg)] hover:bg-[var(--term-hover,rgba(127,127,127,0.15))] disabled:opacity-50';
+  const btn = btnClass('chip');
 
   return (
-    <div className="my-2 rounded-[10px] border border-[var(--term-border)] bg-[var(--term-codebg)] p-2.5">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="text-[var(--term-dim)]"><Icon icon={faCube} /></span>
-        <span dir="auto" className="min-w-0 truncate font-bold text-[var(--term-fg)]">{event.title || t('chat.artifact')}</span>
+    <CardFrame
+      tone="code"
+      className="!my-2 !p-2.5"
+      icon={<Icon icon={faCube} />}
+      label={event.title || t('chat.artifact')}
+      labelClass="truncate text-[var(--term-fg)]"
+      meta={
         <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
           v{event.version} · {fmtBytes(event.bytes)} · {t('chat.artifactFiles', { n: event.files })}
         </span>
-        <span className="ms-auto shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{clock(event.ts)}</span>
-      </div>
+      }
+      right={<span className="text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{clock(event.ts)}</span>}
+    >
       <div dir="ltr" className="mt-1 truncate font-mono text-[11.5px] md:text-[10px] text-[var(--term-dim)]" title={abs}>{path}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        <button type="button" className={btn} onClick={openTab} disabled={opening} title={t('chat.artifactOpenTabHint')}>
+        <Btn variant="chip" onClick={openTab} disabled={opening} title={t('chat.artifactOpenTabHint')}>
           <Icon icon={faArrowUpRightFromSquare} /> {t('chat.artifactOpenTab')}
-        </button>
+        </Btn>
         {canWindow && (
           <a href={path} target="_blank" rel="noopener noreferrer" className={btn} title={t('chat.artifactOpenWindowHint')}>
             <Icon icon={faWindowRestore} /> {t('chat.artifactOpenWindow')}
           </a>
         )}
-        <button type="button" className={btn} onClick={copy} title={abs}>
+        <Btn variant="chip" onClick={copy} title={abs}>
           <Icon icon={copied ? faCheck : faLink} /> {copied ? t('chat.copied') : t('chat.artifactCopyLink')}
-        </button>
+        </Btn>
         {canWindow && aid && !share && (
           <span className="inline-flex items-center gap-1">
-            <button type="button" className={btn} onClick={mintShare} disabled={shareBusy} title={t('chat.artifactShareHint')}>
+            <Btn variant="chip" onClick={mintShare} disabled={shareBusy} title={t('chat.artifactShareHint')}>
               <Icon icon={faShareNodes} /> {t('chat.artifactShare')}
-            </button>
+            </Btn>
             <select
               value={shareDays}
               onChange={(e) => setShareDays(Number(e.target.value))}
@@ -163,12 +171,12 @@ export default function ArtifactCard({ sessionId, event }) {
           {share.exp && (
             <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.artifactShareExpires', { when: fmtExpiry(share.exp) })}</span>
           )}
-          <button type="button" className={btn} onClick={copyShare} title={t('chat.artifactShareCopy')}>
+          <Btn variant="chip" onClick={copyShare} title={t('chat.artifactShareCopy')}>
             <Icon icon={shareCopied ? faCheck : faLink} /> {shareCopied ? t('chat.copied') : t('chat.artifactShareCopy')}
-          </button>
-          <button type="button" className={btn} onClick={revokeShare} disabled={shareBusy} title={t('chat.artifactShareRevoke')}>
+          </Btn>
+          <Btn variant="chip" onClick={revokeShare} disabled={shareBusy} title={t('chat.artifactShareRevoke')}>
             <Icon icon={faBan} /> {t('chat.artifactShareRevoke')}
-          </button>
+          </Btn>
         </div>
       )}
       {shareErr && <div dir="auto" className="mt-1 text-[11.5px] md:text-[10.5px] text-red-500">{shareErr}</div>}
@@ -182,6 +190,20 @@ export default function ArtifactCard({ sessionId, event }) {
           ))}
         </ul>
       )}
-    </div>
+    </CardFrame>
   );
+}
+
+export const ArtifactCardDef = defineHostComponent({
+  name: 'ArtifactCard',
+  description: 'Host: a published artifact (publish_artifact) — open / copy / share',
+  props: loose({
+    sessionId: z.string(),
+    event: loose({ artifactId: str, title: str, path: str, entry: str, version: num, bytes: num, files: num, warnings: any, shareUrl: str, shareExp: any, ts: any }),
+  }),
+  component: ArtifactCardView,
+});
+
+export default function ArtifactCard({ sessionId, event }) {
+  return <ArtifactCardView props={{ sessionId, event }} />;
 }

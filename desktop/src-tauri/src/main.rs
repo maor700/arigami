@@ -200,11 +200,11 @@ fn normalize_origin(input: &str) -> Result<String, String> {
         let plain = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok();
         format!("{}://{}", if plain { "http" } else { "https" }, s)
     };
-    let u = url::Url::parse(&with_scheme).map_err(|e| format!("Not a valid address: {e}"))?;
+    let u = url::Url::parse(&with_scheme).map_err(|e| format!("Invalid address: {e}"))?;
     if u.scheme() != "http" && u.scheme() != "https" {
         return Err("Only http or https".into());
     }
-    let host = u.host_str().ok_or_else(|| "The address has no host".to_string())?;
+    let host = u.host_str().ok_or_else(|| "The address has no host name".to_string())?;
     let mut origin = format!("{}://{}", u.scheme(), host);
     if let Some(p) = u.port() {
         origin.push_str(&format!(":{p}"));
@@ -636,11 +636,11 @@ fn http_status(stream: TcpStream, host: &str, port: u16, path: &str) -> Option<u
 /// missing the add is refused rather than silently allowed: an unverified
 /// machine is the thing being fixed.
 fn verify_arigami(origin: &str) -> Result<(), String> {
-    let u = url::Url::parse(origin).map_err(|e| format!("Not a valid address: {e}"))?;
+    let u = url::Url::parse(origin).map_err(|e| format!("Invalid address: {e}"))?;
     let https = u.scheme() == "https";
     let host = u
         .host_str()
-        .ok_or_else(|| "The address has no host".to_string())?
+        .ok_or_else(|| "The address has no host name".to_string())?
         .to_string();
     let port = u.port().unwrap_or(if https { 443 } else { 80 });
 
@@ -665,13 +665,13 @@ fn verify_arigami(origin: &str) -> Result<(), String> {
         String::from_utf8_lossy(&out.stdout).to_string()
     } else {
         let addr = resolve_addr(&host, port)
-            .ok_or_else(|| format!("Could not resolve {host} — is Tailscale connected?"))?;
+            .ok_or_else(|| format!("Couldn't resolve {host} to an address — is Tailscale connected?"))?;
         let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(3000))
             .map_err(|_| format!("No answer from {host}:{port}"))?;
         let (code, body) = http_get(stream, &host, port, "/__api/config")
             .ok_or_else(|| format!("{host}:{port} answered, but not as an HTTP server"))?;
         if code != 200 {
-            return Err(format!("The server answered {code}, not 200"));
+            return Err(format!("The server answered {code} instead of 200"));
         }
         body
     };
@@ -684,15 +684,15 @@ fn verify_arigami(origin: &str) -> Result<(), String> {
 }
 
 fn probe(origin: &str, require_ok: bool) -> Result<(), String> {
-    let u = url::Url::parse(origin).map_err(|e| format!("Not a valid address: {e}"))?;
+    let u = url::Url::parse(origin).map_err(|e| format!("Invalid address: {e}"))?;
     let https = u.scheme() == "https";
     let host = u
         .host_str()
-        .ok_or_else(|| "The address has no host".to_string())?
+        .ok_or_else(|| "The address has no host name".to_string())?
         .to_string();
     let port = u.port().unwrap_or(if https { 443 } else { 80 });
     let addr = resolve_addr(&host, port)
-        .ok_or_else(|| format!("Could not resolve {host} — is Tailscale connected?"))?;
+        .ok_or_else(|| format!("Couldn't resolve {host} to an address — is Tailscale connected?"))?;
     let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(3000))
         .map_err(|_| format!("No answer from {host}:{port} — the machine is off, or Tailscale is disconnected"))?;
     if https {
@@ -701,7 +701,7 @@ fn probe(origin: &str, require_ok: bool) -> Result<(), String> {
     let code = http_status(stream, &host, port, "/__api/config")
         .ok_or_else(|| format!("{host}:{port} answered, but not as an HTTP server"))?;
     if require_ok && code != 200 {
-        return Err(format!("The server answered {code}, not 200"));
+        return Err(format!("The server answered {code} instead of 200"));
     }
     Ok(())
 }
@@ -822,7 +822,7 @@ fn run_supervisor(app: AppHandle, shell: Arc<Shell>) {
                 }
                 Err(e) => {
                     *shell.local_error.lock().unwrap() = Some(format!(
-                        "Could not start the local Arigami server: {e}\nLog: {}",
+                        "Couldn't start the local Arigami server: {e}\nLog: {}",
                         log_path(&app).display()
                     ));
                     std::thread::sleep(Duration::from_secs(2));
@@ -860,7 +860,7 @@ fn wait_local_ready(shell: &Arc<Shell>, origin: &str, timeout: Duration) -> Resu
         }
         if Instant::now() > deadline {
             return Err(format!(
-                "The local Arigami server did not answer in time on {origin}. Is something else holding the port?"
+                "The local Arigami server didn't answer in time on {origin}. Is something else holding the port?"
             ));
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -1414,11 +1414,16 @@ fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
     }
     let app2 = app.clone();
     let shell2 = shell.clone();
+    // Decision from the task brief: "confirm before quitting, and don't
+    // downplay it" — say plainly that quitting kills every active session, don't
+    // soften it into generic "quit?" copy.
     std::thread::spawn(move || {
         let extra = if shell2.local_wanted.load(Ordering::SeqCst) {
             let n = busy_sessions(&local_machine().origin);
             if n > 0 {
-                format!("\n\n{n} sessions are running on this computer — they will be closed.")
+                format!("
+
+There are {n} active sessions on this computer — they will be closed.")
             } else {
                 String::new()
             }
@@ -1428,7 +1433,7 @@ fn confirm_and_quit(app: &AppHandle, shell: &Arc<Shell>) {
         let confirmed = app2
             .dialog()
             .message(format!(
-                "Quitting stops the local Arigami server and ends every session running on it.{extra}\n\nContinue?"
+                "Quitting shuts down the local Arigami server and ends every active session on it.{extra}\n\nContinue?"
             ))
             .title("Quit Arigami")
             .buttons(MessageDialogButtons::OkCancel)
@@ -1554,7 +1559,7 @@ fn switch_machine(
                 let ok = app
                     .dialog()
                     .message(format!(
-                        "Switching to {} stops the local server — {n} sessions running on it will be closed.\n\nContinue?",
+                        "Switching to {} shuts down the local server — {n} active sessions on it will be closed.\n\nContinue?",
                         machine.name
                     ))
                     .title("Switch machine")
@@ -1629,10 +1634,10 @@ async fn add_machine(
 fn forget_machine(app: AppHandle, state: State<'_, Arc<Shell>>, id: String) -> Result<(), String> {
     let shell = state.inner().clone();
     if id == LOCAL_ID {
-        return Err("This computer cannot be removed".into());
+        return Err("This computer can't be removed".into());
     }
     if shell.windows.lock().unwrap().values().any(|w| w.machine.id == id) {
-        return Err("That machine is open in a window — switch away from it first".into());
+        return Err("The machine is open in a window — switch to another machine first".into());
     }
     shell.cfg.lock().unwrap().machines.retain(|m| m.id != id);
     shell.save();

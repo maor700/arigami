@@ -7,10 +7,12 @@
 # (`bun run build:web` + `bun build --compile` + `bun scripts/bundle-resources.ts`)
 # aimed at desktop/src-tauri/resources-staged/ instead of a bare dist/ dir.
 #
-# Runs unmodified on macOS, Linux and Windows (Git Bash). `bun build --compile`
-# picks the host target, so on Windows the sidecar is staged as
-# `arigami-server.exe` — the exact name main.rs's resolve_server_binary()
-# looks for there. Windows and Linux have both been built and run from this
+# Platform-agnostic: .github/workflows/desktop.yml runs this same script on
+# the Linux, macOS and Windows runners (git-bash there) before `tauri build`,
+# so each installer gets a sidecar compiled for its own platform. `bun build
+# --compile` picks the host target and adds the .exe suffix on Windows by
+# itself, which is the exact name main.rs's resolve_server_binary() looks for
+# there. macOS, Windows and Linux have all been built and run from this
 # script; see docs/DESKTOP.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root

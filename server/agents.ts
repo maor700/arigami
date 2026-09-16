@@ -1,4 +1,4 @@
-// Agents ("צוות", PRD-ARIGAMI-AGENTS §1–§3 A1). An agent is WHO: a persistent
+// Agents (the Team section, PRD-ARIGAMI-AGENTS §1–§3 A1). An agent is WHO: a persistent
 // identity a session can be born from — persona, referenced (shared) skills,
 // its own memory namespace, default model, tool/domain allowlists and a budget.
 // Sessions stay the unit of work (WHAT/WHEN): `create_session({agent})` inherits
@@ -33,6 +33,25 @@ export const PERSONA_MAX_CHARS = 4000;
 export const ACTION_KIND_RE = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
 const EMOJI_DEFAULT = '🤖';
 
+// Which CLI the agent's sessions run on (= Session.engine); absent = cfg.defaultEngine.
+export type AgentEngine = 'claude' | 'codex';
+export const AGENT_ENGINES: readonly AgentEngine[] = ['claude', 'codex'];
+
+/** valid → the engine; ''/null/undefined → null (default); anything else → undefined (invalid). */
+export function normalizeAgentEngine(v: unknown): AgentEngine | null | undefined {
+  if (v === undefined || v === null || v === '') return null;
+  return (AGENT_ENGINES as readonly string[]).includes(String(v)) ? (String(v) as AgentEngine) : undefined;
+}
+
+/** Spawn engine: explicit ('' = not given) → agent's → parent's → undefined (state.createSession applies cfg.defaultEngine). */
+export function engineForSpawn(
+  explicit: unknown,
+  agent: Pick<Agent, 'engine'> | null | undefined,
+  parent?: { engine?: string | null } | null
+): AgentEngine | undefined {
+  return normalizeAgentEngine(explicit) || normalizeAgentEngine(agent?.engine) || normalizeAgentEngine(parent?.engine) || undefined;
+}
+
 export interface AgentBudget {
   tokensPerDay?: number;
 }
@@ -42,7 +61,8 @@ export interface Agent {
   name: string;
   emoji: string;
   color: string;
-  model?: string | null; // `claude --model` value; null/absent = CLI default
+  engine?: AgentEngine | null; // null/absent = cfg.defaultEngine
+  model?: string | null; // model for `engine`; null/absent = engine default
   modelChain?: string[] | null; // RES1: this agent's model ladder (overrides cfg.modelChain)
   skills: string[]; // names of SHARED skills the agent should use
   tools?: string[]; // allowlist — families / tool names / mcp__<server>__* patterns (A3: host-enforced, agent-policy.ts)
@@ -66,6 +86,7 @@ export interface AgentInput {
   name?: string;
   emoji?: string;
   color?: string;
+  engine?: string | null;
   model?: string | null;
   modelChain?: string[] | null;
   skills?: string[];
@@ -224,6 +245,8 @@ function validateFields(input: AgentInput): string | null {
   if (input.name !== undefined && String(input.name).length > 80) return 'name too long (max 80)';
   if (input.emoji !== undefined && [...String(input.emoji)].length > 4) return 'emoji must be a single glyph';
   if (input.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(input.color))) return 'color must be #rrggbb';
+  if (input.engine !== undefined && normalizeAgentEngine(input.engine) === undefined)
+    return `invalid engine "${input.engine}" — one of ${AGENT_ENGINES.join(', ')} (or null for the host default)`;
   if (input.model !== undefined && input.model !== null && !/^[A-Za-z0-9._:-]{1,80}$/.test(String(input.model)))
     return 'invalid model';
   if (input.modelChain !== undefined && input.modelChain !== null) {
@@ -267,6 +290,7 @@ export function createAgent(input: AgentInput): AgentResult {
     name,
     emoji: String(input.emoji || EMOJI_DEFAULT),
     color: input.color ? String(input.color) : pickColor(),
+    ...(normalizeAgentEngine(input.engine) ? { engine: normalizeAgentEngine(input.engine)! } : {}),
     model: input.model ? String(input.model) : null,
     ...(cleanList(input.modelChain)?.length ? { modelChain: cleanList(input.modelChain) } : {}),
     skills: cleanList(input.skills) || [],
@@ -293,6 +317,11 @@ export function updateAgent(slug: string, patch: AgentInput & { homeSessionId?: 
   if (patch.name !== undefined) next.name = String(patch.name).trim();
   if (patch.emoji !== undefined) next.emoji = String(patch.emoji || EMOJI_DEFAULT);
   if (patch.color !== undefined) next.color = String(patch.color);
+  if (patch.engine !== undefined) {
+    const e = normalizeAgentEngine(patch.engine);
+    if (e) next.engine = e;
+    else delete next.engine;
+  }
   if (patch.model !== undefined) next.model = patch.model ? String(patch.model) : null;
   if (patch.modelChain !== undefined) {
     const l = cleanList(patch.modelChain);
@@ -348,6 +377,7 @@ export function personaBlock(slug: string): string {
   if (!a) return '';
   const lines: string[] = [];
   lines.push(`You are running as the agent "${a.name}" ${a.emoji} (slug: ${a.slug}) — one of the human's team of agents in Arigami. Stay in this role for the whole session.`);
+  if (a.engine === 'codex') lines.push(`Your engine is Codex (OpenAI)${a.model ? `, model ${a.model}` : ''}; Arigami's host tools, memory and skills are the same as on any other engine.`);
   if (a.persona.trim()) lines.push('', '## Persona', a.persona.trim());
   if (a.skills.length)
     lines.push('', `## Skills you should use (shared skills, invoke as /arigami:<name> or /arigami-user:<name>): ${a.skills.join(', ')}`);

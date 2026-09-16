@@ -1,4 +1,4 @@
-// A2 — an agent's שגרה (routine): the cron jobs whose isolated runs are born
+// A2 — an agent's routine: the cron jobs whose isolated runs are born
 // from the agent (cronjob({agent}) / POST /__api/triggers {agent}) and the
 // listeners its sessions armed. Presentational list (RoutineList — pure
 // props, SSR-testable) + container (RoutinePanel — GET /__api/agents/:slug/routine,
@@ -18,6 +18,8 @@ import { useStore, setDraft } from '../lib/store.js';
 import { relTime } from '../lib/time.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import * as setupApi from '../lib/setup-api.js';
+import { EngineToggle } from './EngineToggle.jsx';
+import { engineLabel } from '../lib/engines.js';
 import { faPlay, faTrash, faComments, faClock, faSatelliteDish, faPlus } from '@fortawesome/free-solid-svg-icons';
 
 const btn = 'cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40';
@@ -51,24 +53,25 @@ export function nextCronFor(slug, triggers) {
  * The form state → the POST /__api/triggers body, or null when it is not
  * postable yet (a job with no prompt or no schedule is not a job).
  */
-export function routinePayload({ kind, value, name, prompt }) {
+export function routinePayload({ kind, value, name, prompt, engine }) {
   const p = String(prompt || '').trim();
   const v = String(value || '').trim();
   if (!p || !v) return null;
-  return { name: String(name || '').trim() || p.slice(0, 48), prompt: p, schedule: { kind: kind || 'cron', value: v } };
+  return { name: String(name || '').trim() || p.slice(0, 48), prompt: p, schedule: { kind: kind || 'cron', value: v }, ...(engine ? { engine } : {}) };
 }
 
-/** The inline "add a scheduled job" form — schedule + prompt, nothing else. */
+/** The inline "add a scheduled job" form — schedule + prompt + engine ('' = the agent's, else the host default). */
 export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
   const t = useT();
   const [kind, setKind] = useState('cron');
   const [value, setValue] = useState('0 7 * * *');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [engine, setEngine] = useState(agent.engine || '');
   const field = 'w-full rounded-md border border-border bg-transparent px-2 py-1 font-mono text-[11px] text-fg';
   const submit = (e) => {
     e?.preventDefault?.();
-    const payload = routinePayload({ kind, value, name, prompt });
+    const payload = routinePayload({ kind, value, name, prompt, engine });
     if (payload) onCreate?.(payload);
   };
   return (
@@ -82,6 +85,7 @@ export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
         <input dir="ltr" data-routine-schedule value={value} onChange={(e) => setValue(e.target.value)} placeholder={t(`agent.routine.form.ph.${kind}`)} aria-label={t('agent.routine.form.schedule')} className={`${field} flex-1`} />
       </div>
       <input dir="auto" data-routine-name value={name} onChange={(e) => setName(e.target.value)} placeholder={t('agent.routine.form.name')} aria-label={t('agent.routine.form.name')} className={field} />
+      <EngineToggle data-routine-engine options={{ engine }} onChange={(o) => setEngine(o.engine || '')} />
       <textarea dir="auto" data-routine-prompt rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t('agent.routine.form.prompt', { name: agent.name })} aria-label={t('agent.routine.form.prompt', { name: agent.name })} className={`${field} resize-y`} />
       <div className="flex items-center gap-1.5">
         <button type="submit" data-routine-save disabled={busy || !prompt.trim() || !value.trim()} className={btn}>{t('agent.routine.form.save')}</button>
@@ -116,6 +120,7 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
               <span dir="auto" className="block truncate font-mono font-bold">{c.name}</span>
               <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">
                 {c.schedule?.kind}: {c.schedule?.value}
+                {c.engine ? ` · ${engineLabel(c.engine)}` : ''}
                 {c.enabled && c.nextRunAt ? ` · ${t('launcher.cron.metaNextRun')} ${untilTime(c.nextRunAt, t)}` : ''}
                 {c.lastRun ? ` · ${t('launcher.cron.metaLastRun')} ${relTime(c.lastRun)}` : ''}
               </span>

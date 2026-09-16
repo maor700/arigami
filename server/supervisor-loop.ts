@@ -10,7 +10,7 @@
 //      line, and each one refusing to touch a WAITING_HUMAN session
 //   §3 orchestration liveness — synthesize a child's missing report, re-deliver
 //      an ask the child never got, and aggregate everything a human owes into
-//      the "ממתין לך" queue
+//      the "waiting for you" queue
 //
 // The loop never restarts the host and never touches anything outside a session.
 import {
@@ -104,9 +104,9 @@ export function thresholds(now = Date.now()): Thresholds {
 
 // ---- building the view ------------------------------------------------------
 
-/** True when every pooled account is quarantined/unusable right now. */
-function accountsAllLimited(): boolean {
-  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool);
+/** True when every pooled account of `provider` is quarantined/unusable right now. */
+function accountsAllLimited(provider: 'claude' | 'codex' = 'claude'): boolean {
+  const pool = (listAccounts().accounts as any[]).filter((a) => a.pool && (a.provider || 'claude') === provider);
   if (!pool.length) return false;
   return pool.every((a) => !a.available);
 }
@@ -178,6 +178,7 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
   const waitingOn = (md.waitingOn as SessionView['waitingOn']) || null;
   const know = waitingOn ? childKnows(waitingOn) : null;
   const budget = slug ? budgetState(slug) : null;
+  const provider = s.engine === 'codex' ? 'codex' : 'claude';
   return {
     id: s.id,
     title: s.title,
@@ -196,8 +197,8 @@ export function viewOf(s: Session, now = Date.now(), hasLiveChildren = false): S
     budgetExceeded: !!budget?.exceeded,
     lastErrorClass: errClass,
     // A limit we could not route around: the account pool is dry.
-    accountsExhausted: errClass === 'limit' && accountsAllLimited(),
-    accountsAvailable: !accountsAllLimited(),
+    accountsExhausted: errClass === 'limit' && accountsAllLimited(provider),
+    accountsAvailable: !accountsAllLimited(provider),
     modelRungsLeft: ladder.rungsLeft,
     mcpDown: down,
     mcpRequired: mcpRequired(s, down),
@@ -337,18 +338,27 @@ async function run(s: Session, d: Decision): Promise<void> {
       return;
     }
     case 'refresh-auth': {
+      if (s.engine === 'codex') {
+        receipt(id, '⤷ Codex is not signed in (or its login expired) — reconnect it in Settings › Connections › Accounts (Codex)');
+        incident(id, d, 'skipped', { engine: 'codex' });
+        return;
+      }
       const ok = await claude.recoverAuth(id);
       incident(id, d, ok ? 'ok' : 'failed');
       return;
     }
     case 'model-down': {
+      const provider = s.engine === 'codex' ? 'codex' : 'claude';
       // Climb back when the earliest quarantined account frees up, if we know.
       const soonest = (listAccounts().accounts as any[])
-        .filter((a) => a.pool && a.quarantineUntil)
+        .filter((a) => a.pool && a.quarantineUntil && (a.provider || 'claude') === provider)
         .map((a) => a.quarantineUntil)
         .sort()[0] as string | undefined;
-      const r = claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
-      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model });
+      const r =
+        provider === 'codex'
+          ? claude.downgradeCodexModel(id, { resetAt: soonest || null })
+          : claude.downgradeModel(id, { resetAt: soonest || null, why: 'all accounts limited' });
+      if (r.ok) incident(id, d, 'ok', { from: r.from, to: r.model, ...(provider === 'codex' ? { engine: 'codex' } : {}) });
       else if (r.reason === 'bottom') incident(id, d, 'failed', { reason: 'bottom-rung' });
       return;
     }

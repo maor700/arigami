@@ -116,12 +116,13 @@ context thin is the whole point.
 2. **Loop — on each wake (or right after writing the plan):**
    - **Reconcile.** Re-read `ORCHESTRATION.json`. `list_sessions`, filter to
      `metadata.master == <me>`. Update each node's `state`/`worker` from its
-     worker's `metadata.result` and `claude_state`. (Read results, branches,
+     worker's `metadata.result` and `claude_state` (the agent process state, on either engine). (Read results, branches,
      diffs — never chat.)
    - **Compute the ready-set** (formula above).
    - **Launch** ready nodes via `create_session({ kind, subtask: <node.id>,
      prompt: <node instructions>, base? })`. The host auto-wires
      parent/role/worktree/branch/cleanup.
+     - A worker runs on your engine (claude/codex) unless you pass `engine`.
      - On `{deferred:true}` (at capacity): leave the node `ready`, retry next wake.
      - On spawn: set the node `state:"running"`, `worker:<id>`, `attempts++`.
    - **Handle terminal results:**
@@ -206,7 +207,7 @@ The human may be on a phone, another machine or a tailnet — a
 - Caps are global across the whole tree (`config.json` → `dispatcher.maxMutating` /
   `maxReadOnly`). Depth never lets the fleet exceed them.
 - **Watchdog (auto-armed).** When you spawn a worker the host arms a watchdog that
-  wakes *you* if that worker **crashes** (claude dies) or **stalls** (no state
+  wakes *you* if that worker **crashes** (its agent process dies) or **stalls** (no state
   change or report past `dispatcher.stallTimeoutSec`). Treat its wake like any
   terminal signal: bounded auto-retry (kill-with-cleanup + respawn, within
   `maxAttempts`) then escalate. The watchdog retires itself once the worker reports
@@ -228,7 +229,7 @@ The human may be on a phone, another machine or a tailnet — a
 Tools on this host do not fail when a capability is not configured — they *ask*:
 a tool result (MCP or REST) of the form
 `{ "needs_setup": "composio:gmail", "why": "read your inbox", "hint": "call request_setup" }`
-means the capability (`identity`, `claude`, `git`, `repo:<name>`, `whatsapp`,
+means the capability (`identity`, `claude` / `codex` (the engine logins, each for its own engine's sessions), `git`, `repo:<name>`, `whatsapp`,
 `mcp:<service>`, `composio:<toolkit>`, `desktop`, `push`, `remote`, `telemetry`)
 is missing.
 
@@ -238,7 +239,7 @@ When you see one:
    chat (and a push) where the human chooses **automatic** or **manual**. It blocks.
 2. `{state:"auto"}` → the human asked *you* to connect it: run the matching
    playbook — `skills/connect-<provider>/SKILL.md` (`connect-identity`,
-   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-tailscale`,
+   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-codex`, `connect-tailscale`,
    `connect-github`) —
    and finish with `report_setup({capability, ok, evidence?})`. Then call the
    original tool again.

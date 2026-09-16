@@ -15,12 +15,14 @@ const env = (dir: string, extra: Record<string, string> = {}) => ({
   // 'minimal' (pair+claude only — see test/setup-capabilities.test.ts).
   ARIGAMI_ONBOARDING_MODE: 'full',
   HOME: path.join(dir, 'home'),
+  CODEX_HOME: '', // a Codex session's own login must not make healthEngine() pick codex
+  ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex'),
   ...extra,
 });
 
 // Probes that make NOTHING pass — the "fresh container" baseline.
 const NONE =
-  "const probes={hasAdmin:()=>false,claudeCli:()=>true,claudeAuth:()=>false,gitAuth:()=>false," +
+  "const probes={hasAdmin:()=>false,claudeCli:()=>true,claudeAuth:()=>false,codexCli:()=>true,codexAuth:()=>false,gitAuth:()=>false," +
   "profileApplied:()=>null,pendingProfile:()=>null,integrations:()=>({composio:false,whatsapp:'disconnected',tailscale:false})," +
   "repos:()=>[],health:()=>undefined,unattended:()=>false,telemetry:()=>({enabled:false,reason:'config'})};";
 
@@ -38,7 +40,7 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   );
   expect(r.ok).toBe(true);
   const { v1, v2 } = r.out[0];
-  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+  expect(v1.steps.map((s: any) => s.id)).toEqual(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
   expect(v1.current).toBe('pair');
   expect(v1.done).toBe(false);
   expect(v1.steps.every((s: any) => s.status === 'todo')).toBe(true);
@@ -48,12 +50,12 @@ test('fresh instance: every step todo, current=pair, not done; one funnel event 
   // Second read = same view, and NO new events (emitted once per transition).
   expect(v2.steps.map((s: any) => s.status)).toEqual(v1.steps.map((s: any) => s.status));
   const ev = readFunnel(dir);
-  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(8);
+  expect(ev.filter((e) => e.name === 'onboarding.step').length).toBe(9);
   expect(ev.every((e) => typeof e.at === 'string' && e.step && e.status)).toBe(true);
   // onboarding.json persisted with the emitted map.
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.version).toBe(1);
-  expect(Object.keys(file.emitted).length).toBe(8);
+  expect(Object.keys(file.emitted).length).toBe(9);
 });
 
 test('probe-ok wins, skip/complete records persist, done flips exactly once', () => {
@@ -74,7 +76,7 @@ test('probe-ok wins, skip/complete records persist, done flips exactly once', ()
   );
   expect(r.ok).toBe(true);
   const o = r.out[0];
-  expect(o.a).toBe('git'); // pair + claude satisfied by probes
+  expect(o.a).toBe('git'); // pair + claude satisfied by probes, codex auto-skipped
   expect(o.threw).toBe(true); // claude is not skippable
   expect(o.bStatus).toBe('skipped');
   expect(o.c.done).toBe(true);
@@ -142,9 +144,9 @@ test('health: injected deps → result persisted; claude failure fails the step'
   const dir = fresh();
   const r = runInChild(
     `const ob=await import('./server/onboarding.js');${NONE}probes.hasAdmin=()=>true;probes.claudeAuth=()=>true;` +
-      "const good=await ob.runHealth({claudePing:async()=>'pong',desktopDisplay:()=>null,chromeVersion:()=>null,whatsapp:()=>'disconnected',screenEnabled:()=>false});" +
+      "const good=await ob.runHealth({engine:()=>'claude',claudePing:async()=>'pong',desktopDisplay:()=>null,chromeVersion:()=>null,whatsapp:()=>'disconnected',screenEnabled:()=>false});" +
       "const v=ob.wizard({...probes,health:()=>ob.readOnboardingFile().health});" +
-      "const bad=await ob.runHealth({claudePing:async()=>{throw new Error('Not logged in')},desktopDisplay:()=>':99',chromeVersion:()=>'Chrome 1',whatsapp:()=>'connected',screenEnabled:()=>true});" +
+      "const bad=await ob.runHealth({engine:()=>'claude',claudePing:async()=>{throw new Error('Not logged in')},desktopDisplay:()=>':99',chromeVersion:()=>'Chrome 1',whatsapp:()=>'connected',screenEnabled:()=>true});" +
       "emit({good,v:v.steps.find(s=>s.id==='health'),bad});",
     env(dir)
   );
@@ -158,6 +160,44 @@ test('health: injected deps → result persisted; claude failure fails the step'
   expect(bad.checks.find((c: any) => c.id === 'desktop').required).toBe(true);
   const file = JSON.parse(fs.readFileSync(path.join(dir, 'onboarding.json'), 'utf8'));
   expect(file.health.ok).toBe(false);
+});
+
+test('one-engine gate: codex authed + claude absent → claude auto-skipped, done; neither → claude not skippable', () => {
+  const r = runInChild(
+    `const ob=await import('./server/onboarding.js');${NONE}probes.hasAdmin=()=>true;` +
+      "const cx={...probes,claudeCli:()=>false,codexAuth:()=>true};" +
+      "const min=ob.wizard(cx);const v=ob.setOnboardingMode('full',cx);ob.setOnboardingMode('minimal',cx);" +
+      "let threw=false;try{ob.wizardAct('claude','skip','user',probes);}catch{threw=true;}" +
+      "const none=ob.wizard(probes);" +
+      "emit({claude:v.steps.find(s=>s.id==='claude'),codex:v.steps.find(s=>s.id==='codex').status,cur:v.current,minDone:min.done,minCur:min.current,threw,noneDone:none.done,noneCur:none.current," +
+      "eng:[ob.healthEngine(cx),ob.healthEngine({...probes,claudeAuth:()=>true}),ob.healthEngine({...probes,claudeAuth:()=>true,codexAuth:()=>true})]});",
+    env(fresh(), { ARIGAMI_ONBOARDING_MODE: '' })
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.claude.status).toBe('skipped');
+  expect(o.claude.by).toBe('auto');
+  expect(o.claude.detail).toMatch(/Codex is connected/);
+  expect(o.codex).toBe('ok');
+  expect(o.cur).toBe('git'); // full mode moves past both engines
+  expect(o.minDone).toBe(true);
+  expect(o.minCur).toBeNull();
+  expect(o.threw).toBe(true);
+  expect(o.noneDone).toBe(false);
+  expect(o.noneCur).toBe('claude');
+  expect(o.eng).toEqual(['codex', 'claude', 'claude']);
+});
+
+test('health: the ping runs on the connected engine (codex → codex check)', () => {
+  const r = runInChild(
+    "const ob=await import('./server/onboarding.js');" +
+      "const h=await ob.runHealth({engine:()=>'codex',codexPing:async()=>'pong',claudePing:async()=>{throw new Error('claude must not run')},desktopDisplay:()=>null,chromeVersion:()=>null,whatsapp:()=>'disconnected',screenEnabled:()=>false});" +
+      'emit(h);',
+    env(fresh())
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].ok).toBe(true);
+  expect(r.out[0].checks[0]).toMatchObject({ id: 'codex', ok: true, required: true, detail: 'pong' });
 });
 
 test('funnel: a late `install` is backdated to the earliest known event, or the data dir birth time (F4 #5)', () => {
@@ -218,7 +258,7 @@ test('doctor output lists the same steps in order', () => {
     env(fresh())
   );
   const lines = r.out[0].txt.split('\n');
-  expect(lines.slice(0, 8).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
-  expect(lines[8]).toContain('mode: full');
-  expect(lines[9]).toContain('current step → pair');
+  expect(lines.slice(0, 9).map((l: string) => l.trim().split(/\s+/)[1])).toEqual(['pair', 'claude', 'codex', 'git', 'profile', 'integrations', 'repo', 'telemetry', 'health']);
+  expect(lines[9]).toContain('mode: full');
+  expect(lines[10]).toContain('current step → pair');
 });

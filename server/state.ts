@@ -4,10 +4,11 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { broadcast, emitLocal } from './bus.js';
 import { ladderBadge } from './supervisor.js'; // pure — no cycle
-import { cfg, ensureConfigFile } from './lib/config.js';
+import { cfg, ensureConfigFile, defaultEngine } from './lib/config.js';
 import { migrateFile, stamp, SchemaVersionError } from './lib/schema-version.js';
 import { STATE_SCHEMA } from './lib/state-schemas.js';
 import { pickSessionAccount } from './accounts.js';
+import { providerForEngine } from './lib/providers.js';
 import * as funnel from './funnel.js';
 
 export { cfg, ensureConfigFile };
@@ -104,6 +105,11 @@ interface ClaudeState {
   screenRequest?: { requestId: string; reason?: string } | null;
   // S1: an open request_setup card this session is blocked on (manual/ask mode).
   setupRequest?: { id: string; capability: string } | null;
+  // Auto-compact threshold (% of the window, and the token count it resolved to).
+  autoCompactPct?: number | null;
+  autoCompactTokens?: number | null;
+  // P3-3: codex app-server's last turn/diff/updated (the Changes tab reloads on `at`).
+  turnDiff?: { at: number; additions: number; deletions: number } | null;
 }
 
 interface ReviewTarget {
@@ -301,7 +307,7 @@ export interface Listener {
   authFails: number; // consecutive auth failures
   lastPolledAt?: number;
   lastError?: string | null;
-  agent?: string | null; // A2: the agent the arming session was born from (metadata.agent) — the agent's שגרה
+  agent?: string | null; // A2: the agent the arming session was born from (metadata.agent) — the agent's routine
 }
 
 // ---- Store ----
@@ -547,8 +553,9 @@ export function createSession({
   model?: string | null;
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
-  engine?: string | null; // 'claude' (default) | 'codex' — see Session.engine
+  engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
 } = {}): Session {
+  const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
   funnel.firstTime('session.first'); // K5 funnel — once per instance
   // pm.first_tree: a master's SECOND child makes it a tree (≥2 children).
   const master = metadata?.master;
@@ -584,7 +591,7 @@ export function createSession({
     tabs: [firstTab],
     activeTabId: firstTab.id,
     // Recorded as-asked, even if unimplemented — pickEngine() is what refuses to spawn it.
-    engine: engine === 'codex' ? 'codex' : 'claude',
+    engine: eng,
     claude: {
       sessionId: null,
       state: 'idle',
@@ -594,11 +601,13 @@ export function createSession({
       // NEW sessions — existing ones keep the account they were created on.
       // Picks the active account, or the next available one if active is
       // rate-limited/quarantined, so a new session doesn't start dead-on-arrival.
-      accountId: pickSessionAccount() || null,
+      // Per PROVIDER: a codex session is pinned to a codex login, never to a
+      // Claude token it could not use (server/lib/providers.ts).
+      accountId: pickSessionAccount(providerForEngine(eng)) || null,
       // Seed the session's model from the caller's pick, falling back to the
       // configured default (cfg.defaultModel); null means "no --model flag",
       // so the CLI picks. The per-session dropdown can still override later.
-      modelChoice: model || cfg.defaultModel || null,
+      modelChoice: model || (eng === 'claude' ? cfg.defaultModel : null) || null,
       effort: effort || null,
     },
     bg: [],

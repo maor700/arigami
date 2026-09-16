@@ -102,3 +102,20 @@ test('invalid CLAUDE_CODE_MAX_CONTEXT_TOKENS (non-numeric/zero) is ignored', () 
   expect(resolve('claude-nova-9000', { CLAUDE_CODE_MAX_CONTEXT_TOKENS: 'nope' }).source).toBe('default');
   expect(resolve('claude-nova-9000', { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '0' }).source).toBe('default');
 });
+
+function resolveCatalog(model, catalog, env = {}) {
+  const r = runInChild(
+    `const {resolveCtxWindow}=await import('./server/lib/ctx-window.js');` +
+      `emit(resolveCtxWindow(${JSON.stringify(model)},${JSON.stringify(catalog)}));`,
+    { ARIGAMI_DIR: freshDir(), ARIGAMI_PORT: '', ...env }
+  );
+  expect(r.ok).toBe(true);
+  return r.out[0];
+}
+
+test('codex catalog: the model row\'s context window wins; the claude env knob does not apply', () => {
+  const cat = [{ id: 'gpt-5.6-terra', contextWindow: 258_400 }, { id: 'gpt-5.5', contextWindow: null }];
+  expect(resolveCatalog('gpt-5.6-terra', cat, { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '999' })).toEqual({ window: 258_400, assumed: false, source: 'catalog' });
+  expect(resolveCatalog('gpt-5.5', cat)).toEqual({ window: 200_000, assumed: true, source: 'default' });
+  expect(resolveCatalog(null, cat)).toEqual({ window: 200_000, assumed: true, source: 'default' });
+});

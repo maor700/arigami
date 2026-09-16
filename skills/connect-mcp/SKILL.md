@@ -13,6 +13,12 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
 Server side: `server/mcp-catalog.ts` (the catalog), `server/mcp-auth.js`
 (the pty-bridge around `claude mcp login`), `POST /__api/setup/mcp:<service>`.
 
+**Grants are per engine.** A Claude grant (`claude mcp login`) is useless to a Codex session and vice
+versa. The host picks the engine from the calling session (`X-Arigami-Session`), so a Codex session runs
+`codex mcp login` with no change to the steps below; pass `"engine":"codex"|"claude"` to override.
+The capability check says which engines hold the grant (`status.data.engines`); from a Codex session
+"granted for claude only" is `ok:false` — connect it again here.
+
 What this connects is a **named grant**. The host derives the name from the
 owner: `linear` for the host, `linear--<agent>` when an agent session asks for
 its own. You never choose it — the host returns it as `name`.
@@ -48,6 +54,7 @@ its own. You never choose it — the host returns it as `name`.
    `connect.sh api POST /__api/setup/mcp:<service> '{"action":"start"}'` →
    `{name, url, state:"awaiting", domains, docs}`.
    `url` is the vendor's authorize URL. No `url` → read `error`, report, stop.
+   Codex: the reply carries `engine:"codex"`; the consent names "Codex" as the client — that is expected.
    (Read-only variant, when the human asked for one: `{"action":"start","readonly":true}`.)
 2. `export CONNECT_ALLOW="<domains from step 1> localhost"`, then
    `connect.sh open "<url>"`, `wait-url '<vendor domain>' 45`, `shot first`,
@@ -82,12 +89,14 @@ its own. You never choose it — the host returns it as `name`.
 8. Summary line; then **continue the original task** — the tool that returned
    `needs_setup` can be called again from a session started after the connect.
 
+Codex's loopback callback is `127.0.0.1:<port>/callback/<id>?code=…`; the `paste` action forwards it to that listener.
+
 ## GitHub (and any other token-based row)
 `mcp:github` is `auth: 'bearer'` — no browser, no consent, no callback.
 One call does it: `connect.sh api POST /__api/setup/mcp:github '{}'` — the host
 reuses the token `gh auth login` already stored (the `git` capability). It fails
 with "no GitHub token on this host" → run `skills/connect-github` first, then
-retry. Report as usual; there is no screenshot to take, so evidence is the
+retry. Not wired for Codex sessions yet (the host says so). Report as usual; there is no screenshot to take, so evidence is the
 `poll` result, and say plainly that no browser was involved.
 
 ## Failure handling

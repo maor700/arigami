@@ -406,7 +406,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 
 - **The list** lives in `app_config_dir()/machines.json`: `{machines: [{id,
   name, origin, local}], last}`. Only *remote* machines and the last choice
-  are persisted; **"המחשב הזה"** is synthesised at runtime (`local_machine()`)
+  are persisted; **"This computer"** is synthesised at runtime (`local_machine()`)
   so its port always matches the build. `normalize_origin()` turns what the
   human types into an origin: an explicit scheme wins; otherwise a hostname
   gets `https` (that's what `tailscale serve` gives you) and a bare IP or
@@ -418,8 +418,8 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
   window alone.
 - **The indicator is deliberately unmissable**, because the two machines
   render a byte-identical cockpit and one day the human will run something
-  heavy on the wrong one. The window title (`Arigami — <name> (מקומי|מרוחק)`),
-  a menu titled `מכונה: <name>`, the tray tooltip, and a coloured strip the
+  heavy on the wrong one. The window title (`Arigami — <name> (local|remote)`),
+  a menu titled `Machine: <name>`, the tray tooltip, and a coloured strip the
   shell paints across the top of the page — all live at once, all per machine
   (local keeps the brand yellow). The strip follows the same rule as the chip
   below: **with one machine it is not drawn at all**. There is nothing to tell
@@ -435,7 +435,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
   **It does not exist until there is a second machine.** With only "this
   computer" there is nothing to switch to, and a control that never does
   anything is worse than none. The way to get a second one is
-  **Settings › Host › מכונות**, which opens the same machines window — that
+  **Settings › Host › Machines**, which opens the same machines window — that
   section is the entry point, and it too renders only inside the shell.
 
   The channel is a global, not IPC. On page load (and again on every
@@ -492,7 +492,7 @@ one jar, so a switch is a navigation, not a re-login (verified — see below).
 #### Known limitation: on Linux, two open windows share one menu bar
 
 `app.set_menu()` sets **one** menu for the whole app, so with two machine
-windows open on Linux both menu bars read `מכונה: <the focused window's
+windows open on Linux both menu bars read `Machine: <the focused window's
 machine>`. The title bar, the strip and the in-page chip are per window and
 stay correct, so the indicator is never wrong — just doubled. On macOS there is
 only one menu bar to begin with and it belongs to the focused window, which
@@ -578,6 +578,59 @@ Linux and `%LOCALAPPDATA%\io.arigami.desktop\logs\arigami-server.log` on
 Windows (both keyed by the bundle *identifier*, not "Arigami"). macOS's exact
 path is still unverified, so don't take "~/Library/Logs/Arigami/" on faith;
 `find ~/Library/Logs -iname arigami-server.log` if it isn't where you expect.
+
+### The same thing, in CI
+
+`.github/workflows/desktop.yml` runs exactly the sequence above — icons,
+`desktop/build.sh`, `tauri build` — on four runners (`ubuntu-22.04` for Linux
+x64, `windows-latest`, `macos-latest` for arm64, `macos-15-intel` for Intel —
+`macos-13`, the old Intel label, is retired) and attaches the resulting
+installers to the GitHub Release for the tag. It uses the npm
+`@tauri-apps/cli` (via `bun x`) rather than `cargo install tauri-cli`, which
+would compile the CLI from source on every runner.
+
+It is deliberately not part of every release: on a private repo on the Free
+plan macOS minutes bill ×10 and Windows ×2, so a full matrix is roughly
+135 billed minutes (measured). A tag you push by hand builds them; an automated
+release only does when the `DESKTOP_INSTALLERS` repository variable is `true`.
+**Run workflow** takes a `targets` input (`all`, or a comma list of
+`linux-x64`, `windows-x64`, `macos-arm64`, `macos-x64`) so one platform can be
+built alone. docs/RELEASING.md has the full table.
+
+To exercise the workflow from a branch (GitHub only offers **Run workflow**
+for files on the default branch), push a CI-test tag: `v0.0.0-ci-test` builds
+everything, `v0.0.0-ci-linux-x64` one line, `v0.0.0-ci-linux-x64+windows-x64`
+two. Such a tag skips the version gate, is ignored by release.yml (no images),
+and lands its files on a pre-release titled "delete me". Delete the tag and
+the pre-release when done (`gh release delete <tag> --cleanup-tag --yes`).
+
+#### Signing — wired, off until the secrets exist
+
+Every platform builds unsigned until these repository secrets exist; the
+workflow turns signing on by itself when they do (no edit needed):
+
+| Secret | What |
+| --- | --- |
+| `APPLE_CERTIFICATE` | the Developer ID Application certificate, `.p12` exported from Keychain, base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+| `APPLE_SIGNING_IDENTITY` | its name, `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Apple ID + an **app-specific** password + team id — adds notarization (all three, or none) |
+| `WINDOWS_CERTIFICATE` | the code-signing `.pfx`, base64 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | its password |
+
+What the workflow does with them: on macOS the certificate goes into a
+throwaway keychain, the sidecar (`resources-staged/arigami-server`, a Bun
+compiled binary the bundler would otherwise leave unsigned inside
+`Resources/`) is signed with hardened-runtime + the JIT entitlements Bun
+documents, then the Tauri bundler signs the `.app`/`.dmg` with
+`APPLE_SIGNING_IDENTITY` and notarizes when the `APPLE_ID` trio is there. On
+Windows the `.pfx` is imported into the runner's user store, the sidecar
+`.exe` is signed with `signtool`, and the bundler signs the app + `.msi`/`.exe`
+via `bundle.windows.certificateThumbprint` (passed as `--config`, timestamped
+at DigiCert). Both paths are untested — nobody has the certificates yet — so
+expect the first signed run to need a look. Without the secrets both
+platforms warn on first launch (Gatekeeper: right-click → Open; SmartScreen:
+More info → Run anyway).
 
 ### What was proven (Linux, full Tauri build+run, done live in this session)
 
@@ -676,9 +729,9 @@ under `/tmp`, `ARIGAMI_WA_AUTOSTART=0`. The "remote" machines were a second
 Arigami server on another port plus small Python stand-ins.
 
 - **Boot on the remembered machine.** Config read, machine restored, title
-  reads `Arigami — <name> (מרוחק)`. The local sidecar did **not** start,
+  reads `Arigami — <name> (remote)`. The local sidecar did **not** start,
   because the remembered machine was remote.
-- **Every switch path**: the picker's "עבור", a menu item, the `Ctrl+Alt+N`
+- **Every switch path**: the picker's "Switch", a menu item, the `Ctrl+Alt+N`
   accelerator, and a chip on the error page. All four navigate the window
   and retitle it.
 - **`Ctrl+Shift+M`** opens the machines window; `Escape` closes it.
@@ -882,11 +935,13 @@ does leave the sidecar behind.
   (there is a window manager on `:99` after all, and `wmctrl`/`xdotool` are
   installed): the main window hides, an extra `machine-N` window closes for
   real, and closing the last window on "this computer" stops the sidecar.
-- **macOS code signing of the nested sidecar binary is unresearched.** For a
-  local/dev `cargo tauri build` this should be a non-issue, but if this ever
-  moves to Developer ID signing + notarization for distribution, an
-  unsigned Mach-O binary sitting inside `Resources/` may need its own
-  `codesign` pass (or `--deep`) — not looked into here.
+- **macOS code signing of the nested sidecar binary is wired, not proven.**
+  For a local/dev `cargo tauri build` it is a non-issue. For Developer ID
+  signing + notarization, an unsigned Mach-O inside `Resources/` fails
+  notarization, so `.github/workflows/desktop.yml`'s "sign the sidecar" step
+  codesigns it (hardened runtime + Bun's JIT entitlements) before the bundler
+  signs the `.app` — see "Signing" above. That step has never run for real:
+  no certificate exists yet.
 - **Orphaned sidecars on quit — fixed, in two layers.** `quit_now()` only
   ever covered the app's *own* exits (the menu item, the tray, a signal
   through `ctrlc`). macOS's Dock → Quit and anything else that leaves through

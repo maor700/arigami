@@ -25,6 +25,7 @@ import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
 import { injectedServersFor } from './mcp-connections.js';
 import { effectiveChain, rungOf, nextRung, rungsLeft } from './supervisor.js';
+import { codexChain, codexLadder, codexCatalogIds, codexCatalogWindows, CODEX_LIMIT_RE } from './lib/codex-quota.js';
 import { resolveCtxWindow } from './lib/ctx-window.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { pickEngine, registerEngine } from './lib/engine-driver.js';
@@ -38,7 +39,7 @@ import {
   renderEvents,
   estimateTokens as estimateTextTokens,
 } from './lib/ladder-replay.js';
-import { runClaudeOneShot } from './lib/oneshot.js';
+import { runClaudeOneShot, runOneShot, sessionEngine } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
 import * as extensions from './extensions.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
@@ -666,7 +667,7 @@ function spawnProc(s, resume) {
   if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
-    capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
+    capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global', s.engine || 'claude'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
     hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
@@ -908,7 +909,9 @@ export async function checkMcp(id, force = false) {
 // context). We surface it as claude.usage so the UI can show a live context %.
 // Exported for the codex driver, which maps codex's usage field names onto
 // claude's before calling this (server/codex.ts).
-export function updateUsage(id, u) {
+// `catalog`: codex's model rows, so its window comes from models_cache.json (lib/ctx-window.ts).
+/** @param {string} id @param {any} u @param {import('./lib/ctx-window.js').CatalogWindow[] | null} [catalog] */
+export function updateUsage(id, u, catalog = null) {
   if (!u) return;
   const cacheRead = u.cache_read_input_tokens || 0;
   const cacheCreation = u.cache_creation_input_tokens || 0;
@@ -916,7 +919,7 @@ export function updateUsage(id, u) {
   const output = u.output_tokens || 0;
   const ctxTokens = cacheRead + cacheCreation + input;
   if (ctxTokens <= 0) return; // skip empty/partial usage blocks
-  const resolved = resolveCtxWindow(getSession(id)?.claude?.model);
+  const resolved = resolveCtxWindow(getSession(id)?.claude?.model, catalog);
   let ctxWindow = resolved.window;
   let ctxAssumed = resolved.assumed;
   // A prompt can never exceed its real window — if the measured tokens beat our
@@ -949,12 +952,14 @@ export function recordTurn(id, j) {
   if (!p?.agent) return;
   const b = p.turn;
   const tokens = b.input + b.output + b.cacheCreation + b.cacheRead;
+  // total_cost_usd null = the engine reports no cost (codex): recorded as null, not $0.
+  const uncosted = j.total_cost_usd === null;
   const total = Number(j.total_cost_usd) || 0;
   const costUsd = total >= p.lastCostUsd ? total - p.lastCostUsd : total;
   p.lastCostUsd = total;
   p.turn = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
   if (tokens > 0 || costUsd > 0)
-    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
+    appendActivity(p.agent, { kind: 'turn', sessionId: id, tokens, breakdown: b, costUsd: uncosted ? null : Math.round(costUsd * 1e6) / 1e6, model: getSession(id)?.claude?.model || null, durationMs: j.duration_ms });
   try {
     const st = budgetState(p.agent);
     const day = localDay();
@@ -1029,7 +1034,7 @@ function parseResetAt(text) {
 }
 
 // RES1 — one line in $ARIGAMI_DIR/incidents.jsonl per automatic recovery, so
-// Settings → מארח → בריאות can answer "what did the host do while I slept".
+// Settings → Host → Health can answer "what did the host do while I slept".
 // Never allowed to fail the recovery it is describing.
 function recordIncident(id, action, detail = {}, outcome = 'ok', reason = 'quota') {
   try {
@@ -1070,8 +1075,31 @@ export function chainFor(id) {
 }
 
 /** Where the session sits in its chain right now + how far it can still fall. */
+// The RES1 ladder, account switch and auth refresh are claude-shaped; a codex session never enters them.
+export const isCodexSession = (id) => getSession(id)?.engine === 'codex';
+/** P3-1: a codex session on the app-server driver (approvals, compaction, live turns). */
+export const isCodexAppSession = (id) => {
+  try { return isCodexSession(id) && pickEngine(getSession(id)).permissions.kind === 'rpc-request'; } catch { return false; }
+};
+
+/** P2-6: a codex session's chain — codex model ids from cfg.codexModelChain, filtered to the active account's catalog. */
+export function codexChainFor(id) {
+  const s = getSession(id);
+  const slug = typeof s?.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const agent = slug ? getAgent(slug) : null;
+  const own = agent?.engine === 'codex' ? agent : null;
+  return codexChain({
+    sessionChain: s?.claude?.modelChain,
+    agentChain: own?.modelChain,
+    configChain: cfg.codexModelChain,
+    catalog: codexCatalogIds(),
+    modelChoice: s?.claude?.modelDowngradedFrom || s?.claude?.modelChoice || own?.model || null,
+  });
+}
+
 export function ladderState(id) {
   const s = getSession(id);
+  if (s?.engine === 'codex') return codexLadder(codexChainFor(id), s.claude);
   const chain = chainFor(id);
   const stored = Number.isFinite(s?.claude?.modelRung) ? Number(s.claude.modelRung) : rungOf(chain, s?.claude?.modelChoice);
   const rung = stored > 0 ? Math.min(stored, chain.length - 1) : 0;
@@ -1088,6 +1116,7 @@ const ladderCooldown = new Set(); // guards against a downgrade cascade per sess
  */
 /** @param {string} id @param {{resetAt?: string|null, why?: string}} [opts] */
 export function downgradeModel(id, { resetAt = null, why = 'quota' } = {}) {
+  if (isCodexSession(id)) return { ok: false, reason: 'engine' };
   const { chain, rung } = ladderState(id);
   const nxt = nextRung(chain, rung);
   if (!nxt) return { ok: false, reason: 'bottom' };
@@ -1201,7 +1230,7 @@ export function conversationTokens(id) {
 function autoCompactFor(id, model) {
   const pct = getSession(id)?.claude?.autoCompactPct;
   if (!pct) return {};
-  return { autoCompactTokens: Math.round(resolveCtxWindow(model).window * (pct / 100)) };
+  return { autoCompactTokens: Math.round(resolveCtxWindow(model, isCodexSession(id) ? codexCatalogWindows() : null).window * (pct / 100)) };
 }
 
 /**
@@ -1321,6 +1350,7 @@ async function compactAndRespawn(id, { from, to, plan, patch, lastMsg }) {
  * replay, exactly like downgradeModel/tryAutoSwitch.
  */
 export function restoreModel(id) {
+  if (isCodexSession(id)) return restoreCodexModel(id);
   const { chain, rung } = ladderState(id);
   if (rung <= 0) return null;
   const top = chain[0];
@@ -1365,6 +1395,70 @@ export function restoreModel(id) {
   return top;
 }
 
+// ---- P2-6: the codex model ladder (P3-2: app-server compacts before the replay; exec cannot) ----
+const codexLadderCooldown = new Set();
+
+/** Drop a codex session one rung and replay `lastMsg`; same result shape as downgradeModel. */
+/** @param {string} id @param {{resetAt?: string|null, why?: string, lastMsg?: string|null}} [opts] */
+export function downgradeCodexModel(id, { resetAt = null, why = 'all Codex accounts limited', lastMsg = null } = {}) {
+  if (!isCodexSession(id)) return { ok: false, reason: 'engine' };
+  const { chain, rung } = ladderState(id);
+  const nxt = nextRung(chain, rung);
+  if (!nxt) return { ok: false, reason: 'bottom' };
+  if (codexLadderCooldown.has(id)) return { ok: false, reason: 'cooling' };
+  codexLadderCooldown.add(id);
+  const cd = setTimeout(() => codexLadderCooldown.delete(id), 30_000);
+  if (cd.unref) cd.unref();
+  const from = chain[rung] || getSession(id)?.claude?.modelChoice || 'default';
+  const msg = lastMsg ?? lastUserMessage(id);
+  const restoreAt = resetAt || new Date(Date.now() + Math.max(0.01, cfg.supervisor?.modelBackoffMin ?? 60) * 60_000).toISOString();
+  const patch = { modelChoice: nxt.model, modelRung: nxt.rung, modelRestoreAt: restoreAt, modelDowngradedFrom: chain[0] || from, ...autoCompactFor(id, nxt.model) };
+  // P3-2: app-server compacts the thread itself when the conversation does not fit the weaker rung.
+  const plan = isCodexAppSession(id) ? planReplay({ estTokens: conversationTokens(id), targetWindow: resolveCtxWindow(nxt.model, codexCatalogWindows()).window, headroom: ladderHeadroom() }) : null;
+  const compact = plan?.mode === 'compact';
+  appendChat(id, {
+    kind: 'system',
+    text: `⤷ ${from} is out of quota (${why}) — switched to ${nxt.model} and continuing · quota resets ${localTime(restoreAt)}` +
+      (compact ? ` · the conversation (~${Math.round(plan.estTokens / 1000)}k tokens) does not fit ${nxt.model} — compacting it first…` : ''),
+  });
+  try {
+    restartWith(id, { ...patch, ...(plan ? { ladderReplay: { mode: compact ? 'compact' : 'full', at: new Date().toISOString(), from, to: nxt.model, estTokens: plan.estTokens, targetWindow: plan.targetWindow } } : {}) });
+  } catch {
+    codexLadderCooldown.delete(id);
+    return { ok: false, reason: 'failed' };
+  }
+  if (compact) {
+    import('./codex-app.js')
+      .then((m) => {
+        m.requestCompaction(id, `${from} → ${nxt.model}`, () => { try { if (msg) sendMessage(id, msg); } catch {} });
+        recordIncident(id, 'context-compact', { from, to: nxt.model, estTokens: plan.estTokens, targetWindow: plan.targetWindow, digest: 'codex' }, 'ok', 'conversation larger than the target window');
+      })
+      .catch(() => {});
+    return { ok: true, model: nxt.model, from, compacting: true };
+  }
+  const t = setTimeout(() => { try { if (msg) sendMessage(id, msg); } catch {} }, 900);
+  if (t.unref) t.unref();
+  return { ok: true, model: nxt.model, from };
+}
+
+/** Climb a codex session back to its top rung; no replay unless a turn was in flight. */
+export function restoreCodexModel(id) {
+  const { chain, rung } = ladderState(id);
+  if (rung <= 0) return null;
+  const top = chain[0];
+  const lastMsg = getSession(id)?.claude?.state === 'working' ? lastUserMessage(id) : null;
+  appendChat(id, { kind: 'system', text: `⤷ quota reset — back on ${top}` });
+  restartWith(id, { modelChoice: top, modelRung: 0, modelRestoreAt: null, modelDowngradedFrom: null });
+  if (lastMsg) {
+    const t = setTimeout(() => { try { sendMessage(id, lastMsg); } catch {} }, 900);
+    if (t.unref) t.unref();
+  }
+  return top;
+}
+
+/** P2-6 incidents from codex-recovery.ts, same neck as the claude ones. */
+export const recordCodexIncident = (id, action, detail, outcome = 'ok', reason = 'quota') => recordIncident(id, action, detail, outcome, reason);
+
 /**
  * RES1 — the error family of the session's LAST turn, for the supervisor's
  * health model. Reads the transcript tail backwards and stops at the first
@@ -1398,8 +1492,9 @@ export function lastTurnError(id) {
       if (AUTH_RE.test(t)) return 'auth';
       // A model that cannot run right now is remedied exactly like an exhausted
       // account pool — one rung down the chain.
-      if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
-      if (/claude (?:exited|failed to start)/i.test(t)) return 'proc-dead';
+      if (getSession(id)?.engine === 'codex') { if (CODEX_LIMIT_RE.test(t)) return 'limit'; }
+      else if (LIMIT_RE.test(t) || MODEL_UNAVAILABLE_RE.test(t)) return 'limit';
+      if (/(?:claude|codex) (?:exited|failed to start)/i.test(t)) return 'proc-dead';
       return 'other';
     }
   }
@@ -1407,7 +1502,7 @@ export function lastTurnError(id) {
 }
 
 function tryAutoSwitch(id, text) {
-  if (switchingSessions.has(id)) return;
+  if (switchingSessions.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const curId = s?.claude?.accountId || getActiveId();
   const resetAt = parseResetAt(text);
@@ -1483,13 +1578,14 @@ async function openClaudeSetupCard(id, why) {
  * respawn actually happened.
  */
 export async function recoverAuth(id) {
+  if (isCodexSession(id)) return false;
   const before = getSession(id)?.claude?.state;
   await tryAuthRecover(id, 'unauthorized');
   return getSession(id)?.claude?.state !== before || isRunning(id);
 }
 
 async function tryAuthRecover(id, text) {
-  if (authRecovering.has(id)) return;
+  if (authRecovering.has(id) || isCodexSession(id)) return;
   const s = getSession(id);
   const accountId = s?.claude?.accountId || getActiveId();
   // F8: the session was spawned before a Claude account existed (fresh
@@ -1965,28 +2061,37 @@ function extSummary() {
 // connections (identity / composio resolved agent-first, "(shared)" when it
 // fell back). The global line refreshes every minute; an agent's line is
 // refreshed in the background whenever one of its sessions spawns.
-const capabilitiesHintCache = new Map(); // owner → line
-let capabilitiesHintCacheGlobal = '';
-export async function refreshCapabilitiesHint(owner = 'global') {
+const capabilitiesHintCache = new Map(); // owner → {connected, missing}
+let capabilitiesHintCacheGlobal = null;
+/** The line for one engine: `claude` and `codex` are engine logins, so a session only sees its own. */
+function formatCapabilitiesHint(owner, entry, engine = 'claude') {
+  if (!entry) return '';
+  const other = engine === 'codex' ? 'claude' : 'codex';
+  const connected = entry.connected.filter((id) => id !== other);
+  const missing = entry.missing.filter((id) => id !== other);
+  return (
+    (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
+    (missing.length
+      ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
+      : '')
+  );
+}
+export async function refreshCapabilitiesHint(owner = 'global', engine = 'claude') {
   try {
     const caps = await import('./capabilities.js');
     const { capabilities } = await caps.capabilitiesStatus({}, owner);
     const missing = capabilities.filter((c) => !c.ok && c.id !== 'telemetry' && c.id !== 'push' && c.id !== 'remote').map((c) => c.id);
     const connected = capabilities.filter((c) => c.ok).map((c) => (c.ownable && owner !== 'global' && c.resolvedFrom === 'global' ? `${c.id} (shared)` : c.id));
-    const line =
-      (connected.length ? `Connected now${owner !== 'global' ? ` for ${owner}` : ''}: ${connected.join(', ')}. ` : '') +
-      (missing.length
-        ? `Capabilities available to connect just-in-time (a tool returns {needs_setup} → call request_setup({capability, why}); the human gets a card in the chat): ${missing.join(', ')}.`
-        : '');
-    capabilitiesHintCache.set(owner, line);
-    if (owner === 'global') capabilitiesHintCacheGlobal = line;
+    capabilitiesHintCache.set(owner, { connected, missing });
+    if (owner === 'global') capabilitiesHintCacheGlobal = { connected, missing };
   } catch (e) {
     console.error('[claude] capabilities hint:', e.message);
   }
-  return capabilitiesHintCache.get(owner) || '';
+  return formatCapabilitiesHint(owner, capabilitiesHintCache.get(owner), engine);
 }
 /** The first-turn line for an owner — the agent's own if probed already, else the global one. */
-export const capabilitiesHint = (owner = 'global') => capabilitiesHintCache.get(owner) || capabilitiesHintCacheGlobal;
+export const capabilitiesHint = (owner = 'global', engine = 'claude') =>
+  capabilitiesHintCache.has(owner) ? formatCapabilitiesHint(owner, capabilitiesHintCache.get(owner), engine) : formatCapabilitiesHint('global', capabilitiesHintCacheGlobal, engine);
 refreshCapabilitiesHint().catch(() => {});
 {
   const t = setInterval(() => refreshCapabilitiesHint().catch(() => {}), 60_000);
@@ -2008,7 +2113,7 @@ function memoryBootstrapPrefix(p) {
   return URL_GUIDANCE + identity + persona + block;
 }
 
-// SIMPLE1: the "פשוט" chat view. While a session is in Simple mode the human
+// SIMPLE1: the "Simple" chat view. While a session is in Simple mode the human
 // only sees the assistant's prose (tool activity is folded behind a counter),
 // so the model has to actually answer like a person: a line or two. USER.md
 // carries the same preference globally; this is the hard per-session rule.
@@ -2016,7 +2121,7 @@ function memoryBootstrapPrefix(p) {
 // flipping the toggle takes effect on the next message without a restart.
 export const SIMPLE_MODE_REMINDER =
   '<system-reminder>\n' +
-  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" (פשוט) view, where only ' +
+  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" view, where only ' +
   'your prose reaches them — tool calls, edits, bash output and thinking are folded away behind a counter. ' +
   'Hard rule for what you write to the human in this chat: at most two sentences by default — the outcome and the one ' +
   'thing that matters. Details only when asked. No headers, tables, bullet lists, code dumps or step-by-step narration ' +
@@ -2251,52 +2356,36 @@ function scheduleAutoPlay(id) {
   if (t.unref) t.unref();
 }
 
-// Independent, read-only one-shot Claude runs (explain / auto-review). These do
-// NOT touch the session's conversation or its main claude proc — they spawn a
-// throwaway `claude -p` in the session's worktree with ARIGAMI_SESSION_ID set,
-// so the MCP tools write results straight to that session's Changes tab. The
-// session's chat, turn, and working state are untouched. Fire-and-forget.
-const headless = new Set();
-function runHeadless(s, prompt, onExit) {
-  const cwd = untildify(s.metadata?.worktree || s.cwd) || HOME;
-  const child = spawn(
-    claudeBin(),
-    [
-      '-p', prompt,
-      '--permission-mode', 'bypassPermissions', // one-shot, no prompts; prompt enforces read-only
-      '--model', 'sonnet', // fast/cheap for these read-only utility runs (don't inherit the user's Opus default)
-      '--mcp-config', MCP_CONFIG,
-      '--strict-mcp-config', // ONLY the arigami MCP — skip the user's global servers (fast, focused)
-      '--plugin-dir', ROOT, // registers the host skill pack (explain-changes etc.)
-      '--plugin-dir', userPluginDir(), // + user/bundle skills ($ARIGAMI_DIR/skills)
-    ],
-    {
-      cwd,
-      env: {
-        ...baseEnv(),
-        ...accountEnv(s),
-        ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
-        ARIGAMI_URL: cfg.hostBase, // internal host→self base only
-        ARIGAMI_PUBLIC_PATH: '/__host/',
-        ARIGAMI_TOKEN: auth.tokenForSession(s.id),
-        ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
-        ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }
+// Independent, read-only one-shot runs (explain / auto-review / summary) on the
+// SESSION's engine. They do NOT touch the session's conversation or its main
+// proc — a throwaway one-shot in the session's worktree with ARIGAMI_SESSION_ID
+// set, so the MCP tools write results straight to that session's Changes tab.
+// Fire-and-forget.
+function runHeadless(s, prompt, onExit, { effort } = {}) {
+  const engine = sessionEngine(s);
+  const env = {
+    ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
+    ARIGAMI_URL: cfg.hostBase, // internal host→self base only
+    ARIGAMI_PUBLIC_PATH: '/__host/',
+    ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+    ARIGAMI_SKILLS: path.join(ROOT, 'skills'),
+    ARIGAMI_USER_SKILLS: USER_SKILLS_DIR,
+  };
+  runOneShot(prompt, {
+    engine,
+    account: s.claude?.accountId || null,
+    cwd: untildify(s.metadata?.worktree || s.cwd) || HOME,
+    tag: 'headless',
+    timeoutMs: 5 * 60 * 1000,
+    effort,
+    env,
+    // ONLY the arigami MCP — skip the user's global servers (fast, focused); codex MCP children need the identity explicitly
+    mcpServers: engine === 'codex' ? { arigami: { ...HOST_SERVERS.arigami, env } } : HOST_SERVERS,
+    pluginDirs: [ROOT, userPluginDir()], // host skill pack + user/bundle skills
+  }).then(
+    () => { try { onExit?.(0); } catch {} },
+    (e) => { console.error(`[headless] ${engine} failed:`, e?.message || e); try { onExit?.(1); } catch {} }
   );
-  supervise(child, 'headless');
-  headless.add(child);
-  let err = '';
-  child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-  child.on('error', (e) => { console.error('[headless] spawn failed:', e.message); headless.delete(child); try { onExit?.(1); } catch {} });
-  child.on('close', (code) => {
-    headless.delete(child);
-    if (code) console.error(`[headless] exited ${code}${err ? ': ' + err.trim().slice(0, 300) : ''}`);
-    try { onExit?.(code || 0); } catch {}
-  });
-  if (child.unref) child.unref();
-  return child;
 }
 
 // Shell snippet that reads the right diff for the mode. PR = working tree vs the
@@ -2361,7 +2450,8 @@ export function reviewChanges(id, mode) {
       `3. You MUST finish by POSTing your findings (this is the ONLY deliverable). For each finding give the file path and, when it maps to a specific changed line, the NEW-file line number so it can attach inline:\n` +
       `   curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/review/suggestions" -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' -d '{"comments":[{"path":"<file>","line":<new-file line number, optional>,"body":"<the issue + a concrete suggested fix>"}]}'\n` +
       `Include one object per finding. If the changes look clean, POST a single comment with the worst-case path saying they look good. Do not skip the curl.`,
-    () => { clearTimeout(guard); clear(); }
+    () => { clearTimeout(guard); clear(); },
+    { effort: 'medium' }
   );
   return { ok: true, mode };
 }
@@ -2520,6 +2610,8 @@ function restartWith(id, patch) {
 }
 
 export function setPermissionMode(id, mode) {
+  // Codex app-server sends approvalPolicy per turn — no respawn.
+  if (isCodexAppSession(id)) { setClaude(id, { permissionMode: mode }); mergeCaps(id, { permissionMode: mode }); return getSession(id)?.claude; }
   return restartWith(id, { permissionMode: mode });
 }
 
@@ -2546,7 +2638,10 @@ const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // back to the CLI's own default (no --effort flag).
 export function setEffort(id, effort) {
   const level = !effort || effort === 'default' ? null : String(effort);
-  if (level && !EFFORT_LEVELS.includes(level)) throw new Error(`invalid effort level: ${level}`);
+  const s = getSession(id);
+  const allowed = s ? pickEngine(s).effortLevels(s) : EFFORT_LEVELS;
+  if (level && !allowed.includes(level))
+    throw new Error(`invalid effort level for ${s?.claude?.modelChoice || s?.engine || 'claude'}: ${level} (allowed: ${allowed.join(', ')})`);
   return restartWith(id, { effort: level });
 }
 
@@ -2555,11 +2650,15 @@ export function setEffort(id, effort) {
 // injected into the conversation, which the CLI may or may not treat as a real
 // slash command over stream-json stdin). null/0 disables it.
 export function setAutoCompact(id, pct) {
+  if (isCodexSession(id) && !isCodexAppSession(id)) throw new Error('auto-compact is not available on codex exec sessions');
   const p = pct == null ? null : Math.min(95, Math.max(50, Number(pct) || 0));
-  if (!p) return restartWith(id, { autoCompactPct: null, autoCompactTokens: null });
+  // P3-2: codex app-server watches thread/tokenUsage itself — no respawn needed.
+  const apply = isCodexAppSession(id) ? (patch) => { setClaude(id, patch); return getSession(id)?.claude; } : (patch) => restartWith(id, patch);
+  if (!p) return apply({ autoCompactPct: null, autoCompactTokens: null });
   const s = getSession(id);
-  const tokens = Math.round(resolveCtxWindow(s?.claude?.model).window * (p / 100));
-  return restartWith(id, { autoCompactPct: p, autoCompactTokens: tokens });
+  const window = s?.claude?.usage?.ctxWindow && isCodexSession(id) ? s.claude.usage.ctxWindow : resolveCtxWindow(s?.claude?.model).window;
+  const tokens = Math.round(window * (p / 100));
+  return apply({ autoCompactPct: p, autoCompactTokens: tokens });
 }
 
 // Switch which account a session runs on. Restarts the session with --resume, so
@@ -2670,5 +2769,6 @@ const claudeDriver = {
   permissions: claudePermissions,
   injectMcp: claudeInjectMcp,
   modelArgs: claudeModelArgs,
+  effortLevels: () => EFFORT_LEVELS,
 };
 registerEngine(claudeDriver);

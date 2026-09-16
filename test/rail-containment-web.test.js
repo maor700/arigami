@@ -9,11 +9,13 @@
 import { test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolate } from './_isolate.js';
+isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, store, prefs, Rail, insertAt, dropZone, origFetch;
+let React, render, store, prefs, Rail, insertAt, dropZone;
 const h = (...a) => React.createElement(...a);
 
 let HEALTH = { sessions: [], waiting: [] };
@@ -32,7 +34,6 @@ beforeAll(async () => {
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
   globalThis.WebSocket = class { close() {} };
-  origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     const body = u.includes('/health') ? HEALTH : u.includes('/agents') ? AGENTS : u.includes('/folders') ? FOLDERS : {};
@@ -47,10 +48,6 @@ beforeAll(async () => {
   Rail = RailModule.default;
   insertAt = RailModule.insertAt;
   dropZone = RailModule.dropZone;
-});
-
-afterAll(() => {
-  globalThis.fetch = origFetch;
 });
 
 beforeEach(() => {

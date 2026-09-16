@@ -41,6 +41,15 @@ export const strings = {
   'wizard.claude.tokenSave': 'Save token',
   'wizard.claude.connected': 'Claude is connected.',
   'wizard.claude.cancel': 'Cancel',
+  'wizard.claude.optional': 'Optional — Codex is connected, so Arigami can already run. You can add Claude later from Settings.',
+  'wizard.claude.instead': 'Use Claude instead',
+
+  'wizard.codex.title': 'Connect Codex',
+  'wizard.codex.body': 'Arigami can run OpenAI Codex on this machine instead of (or next to) Claude. Sign in with ChatGPT or paste an OpenAI API key.',
+  'wizard.codex.noCli': 'The Codex CLI is not installed on this host. Install it, then Recheck:',
+  'wizard.codex.connected': 'Codex is connected.',
+  'wizard.codex.optional': 'Optional — Claude is connected, so Arigami can already run. You can add Codex later from Settings.',
+  'wizard.codex.instead': 'Use Codex instead',
 
   'wizard.git.title': 'Git / GitHub access',
   'wizard.git.body': 'Needed only to clone private repositories and open pull requests. Public repos work without it.',
@@ -107,6 +116,7 @@ export const strings = {
   'wizard.health.fail': 'fail',
   'wizard.health.optional': 'optional',
   'wizard.health.check.claude': 'Claude answers (claude -p ping)',
+  'wizard.health.check.codex': 'Codex answers (codex exec ping)',
   'wizard.health.check.desktop': 'Desktop (X display) up',
   'wizard.health.check.chrome': 'Chrome available',
   'wizard.health.check.whatsapp': 'WhatsApp bridge',

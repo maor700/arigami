@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import {
   bumpVersion, parseConventional, groupCommits, renderSection, insertSection, extractSection,
   setPackageVersion, repoUrlFromPackage, isNoise, lastTag, commitsSince, main, CHANGELOG_HEADER,
-  autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit, setChartAppVersion, MIRRORED,
+  autoBump, NOTHING_TO_RELEASE, clampZeroVer, releaseBoundary, lastVersionCommit, setChartAppVersion, setCargoVersion, setCargoLockVersion, MIRRORED,
 } from '../scripts/release.ts';
 
 test('bumpVersion: patch/minor/major and an explicit X.Y.Z', () => {
@@ -309,6 +309,50 @@ test('setChartAppVersion: rewrites a semver appVersion, leaves "latest" (and the
   expect(setChartAppVersion('appVersion: 1.2.3\n', '1.2.4')).toBe('appVersion: 1.2.4\n');
 });
 
+test('setCargoVersion/setCargoLockVersion: the desktop crate only, never a dependency', () => {
+  const toml = [
+    '[package]',
+    'name = "arigami-desktop"',
+    'version = "0.1.0"',
+    'edition = "2021"',
+    '',
+    '[dependencies]',
+    'tauri = { version = "2", features = ["tray-icon"] }',
+    'serde_json = "1"',
+    '',
+  ].join('\n');
+  const out = setCargoVersion(toml, '0.2.0');
+  expect(out).toContain('version = "0.2.0"');
+  expect(out).toContain('tauri = { version = "2", features = ["tray-icon"] }'); // a dep is never line-anchored
+  expect(out).toContain('edition = "2021"');
+
+  // the lock lists every crate in the graph; only our own entry moves
+  const lock = [
+    '[[package]]',
+    'name = "anyhow"',
+    'version = "1.0.99"',
+    '',
+    '[[package]]',
+    'name = "arigami-desktop"',
+    'version = "0.1.0"',
+    'dependencies = [',
+    ' "ctrlc",',
+    ']',
+    '',
+    '[[package]]',
+    'name = "ctrlc"',
+    'version = "3.5.0"',
+    '',
+  ].join('\n');
+  const lout = setCargoLockVersion(lock, '0.2.0');
+  expect(lout).toContain('name = "arigami-desktop"\nversion = "0.2.0"');
+  expect(lout).toContain('name = "anyhow"\nversion = "1.0.99"');
+  expect(lout).toContain('name = "ctrlc"\nversion = "3.5.0"');
+  // exactly one line differs — a stale lock would dirty the checkout on the next cargo build
+  const changed = lock.split('\n').filter((l, i) => l !== lout.split('\n')[i]);
+  expect(changed).toEqual(['version = "0.1.0"']);
+});
+
 test('a release mirrors the number into every MIRRORED file that exists, skipping the rest', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rel-mirror-'));
   const g = (...a: string[]) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
@@ -318,6 +362,8 @@ test('a release mirrors the number into every MIRRORED file that exists, skippin
   write('package.json', '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   write('web/package.json', '{ "version": "0.1.0" }\n');
   write('desktop/src-tauri/tauri.conf.json', '{\n  "$schema": "https://schema.tauri.app/config/2",\n  "productName": "Arigami",\n  "version": "0.1.0",\n  "identifier": "io.arigami.desktop"\n}\n');
+  write('desktop/src-tauri/Cargo.toml', '[package]\nname = "arigami-desktop"\nversion = "0.1.0"\n\n[dependencies]\ntauri = { version = "2" }\n');
+  write('desktop/src-tauri/Cargo.lock', '[[package]]\nname = "arigami-desktop"\nversion = "0.1.0"\n\n[[package]]\nname = "tauri"\nversion = "2.11.5"\n');
   write('deploy/helm/arigami-control-plane/Chart.yaml', 'apiVersion: v2\nname: arigami-control-plane\nversion: 0.1.0\nappVersion: "0.1.0"\n');
   write('deploy/helm/arigami-tenant/Chart.yaml', 'apiVersion: v2\nname: arigami-tenant\nversion: 0.2.0\nappVersion: "latest"\n');
   // control-plane/package.json deliberately absent — a missing mirror is skipped, not an error
@@ -333,6 +379,10 @@ test('a release mirrors the number into every MIRRORED file that exists, skippin
   expect(JSON.parse(read('web/package.json')).version).toBe('0.2.0');
   expect(JSON.parse(read('desktop/src-tauri/tauri.conf.json')).version).toBe('0.2.0');
   expect(JSON.parse(read('desktop/src-tauri/tauri.conf.json')).productName).toBe('Arigami'); // nothing else touched
+  expect(read('desktop/src-tauri/Cargo.toml')).toContain('version = "0.2.0"');
+  expect(read('desktop/src-tauri/Cargo.toml')).toContain('tauri = { version = "2" }'); // the dep is not the app
+  expect(read('desktop/src-tauri/Cargo.lock')).toContain('name = "arigami-desktop"\nversion = "0.2.0"');
+  expect(read('desktop/src-tauri/Cargo.lock')).toContain('name = "tauri"\nversion = "2.11.5"');
   expect(read('deploy/helm/arigami-control-plane/Chart.yaml')).toContain('appVersion: "0.2.0"');
   expect(read('deploy/helm/arigami-control-plane/Chart.yaml')).toContain('version: 0.1.0');
   expect(read('deploy/helm/arigami-tenant/Chart.yaml')).toContain('appVersion: "latest"'); // untouched

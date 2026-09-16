@@ -66,6 +66,16 @@ first-run setup.
 3. Before opening a PR make sure `bun test test/` and the typecheck pass
    (or don't regress), and that `scripts/check-public-readiness.sh` and
    `scripts/check-personal-data.sh` are green.
+   `bun test` runs every file in ONE process — shared `globalThis`,
+   `process.env` and module registry, in readdir order (different on CI).
+   A test that assigns to either (browser shims, `process.env.ARIGAMI_*`)
+   must call `isolate()` from `test/_isolate.js` at the top so the next file
+   starts clean. A hook that boots a host needs its own timeout
+   (`beforeAll(fn, 60_000)` — bun caps hooks at 5s). A module that binds
+   env-derived paths at import (state, config, the WhatsApp bridge) is
+   tested out of process (`test/_child.js`, or a self-spawning file like
+   `test/bugs1-whatsapp.test.ts`). `test/_preload.ts` strips inherited
+   `ARIGAMI_*` so a run started inside an Arigami session sees what CI sees.
 4. Open a PR against `master`. CI runs tests and the readiness check.
 5. Never commit secrets, hostnames, IPs, tokens or personal data. `.env*`
    files, `*-logs.txt` and anything under your data dir are ignored on

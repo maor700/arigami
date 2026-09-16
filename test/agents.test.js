@@ -146,3 +146,113 @@ test('memory namespace: agent writes land in agents/<slug>/memory, shared search
   expect(o.get.content).toContain('QUARTZ');
   expect(o.esc.error).toBe('invalid path');
 });
+
+// ---- ENGINE: an agent runs on an engine; every spawn path resolves it the same way ----
+
+test('engine: validated (claude | codex | null), stored only when set, removable on update', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const a=await import('./server/agents.ts');" +
+      "const bad=a.createAgent({name:'Bad',slug:'bad',engine:'gemini'});" +
+      "const c=a.createAgent({name:'Astra',slug:'astra',engine:'codex',model:'gpt-6-astra'});" +
+      "const plain=a.createAgent({name:'Plain',slug:'plain'});" +
+      "const explicitClaude=a.createAgent({name:'C',slug:'c',engine:'claude'});" +
+      "const onDisk=JSON.parse(require('node:fs').readFileSync(a.agentDir('astra')+'/agent.json','utf8'));" +
+      "const badUp=a.updateAgent('astra',{engine:'nope'});" +
+      "const up=a.updateAgent('astra',{engine:null});" +
+      "const up2=a.updateAgent('plain',{engine:'codex'});" +
+      "emit({bad,c,plain,explicitClaude,onDisk,badUp,up,up2,persona:a.personaBlock('c')});",
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.bad.ok).toBe(false);
+  expect(o.bad.error).toContain('invalid engine');
+  expect(o.c.ok).toBe(true);
+  expect(o.c.agent.engine).toBe('codex');
+  expect(o.c.agent.model).toBe('gpt-6-astra');
+  expect(o.onDisk.engine).toBe('codex');
+  expect('engine' in o.plain.agent).toBe(false);
+  expect(o.explicitClaude.agent.engine).toBe('claude');
+  expect(o.badUp.ok).toBe(false);
+  expect(o.up.ok).toBe(true);
+  expect('engine' in o.up.agent).toBe(false);
+  expect(o.up2.agent.engine).toBe('codex');
+});
+
+test('engineForSpawn: explicit caller value wins, else the agent, else the host default; "" never overrides', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const a=await import('./server/agents.ts');" +
+      "const codex={engine:'codex'}, claude={engine:'claude'}, none={};" +
+      'emit({' +
+      "  agentWins:a.engineForSpawn(undefined,codex)," +
+      "  emptyStringIsNotGiven:a.engineForSpawn('',codex)," +
+      "  nullIsNotGiven:a.engineForSpawn(null,codex)," +
+      "  explicitWins:a.engineForSpawn('claude',codex)," +
+      "  explicitCodex:a.engineForSpawn('codex',none)," +
+      "  bothAbsent:a.engineForSpawn(undefined,none)," +
+      "  noAgent:a.engineForSpawn(undefined,null)," +
+      "  agentClaude:a.engineForSpawn(undefined,claude)," +
+      "  junkExplicit:a.engineForSpawn('gemini',codex)," +
+      '});',
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.agentWins).toBe('codex');
+  expect(o.emptyStringIsNotGiven).toBe('codex');
+  expect(o.nullIsNotGiven).toBe('codex');
+  expect(o.explicitWins).toBe('claude');
+  expect(o.explicitCodex).toBe('codex');
+  expect(o.bothAbsent).toBeUndefined();
+  expect(o.noAgent).toBeUndefined();
+  expect(o.agentClaude).toBe('claude');
+  expect(o.junkExplicit).toBe('codex');
+});
+
+test('personaBlock names the engine for a codex agent and stays silent for the default', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const a=await import('./server/agents.ts');" +
+      "a.createAgent({name:'Astra',slug:'astra',engine:'codex',model:'gpt-6-astra'});" +
+      "a.createAgent({name:'Plain',slug:'plain'});" +
+      "emit({astra:a.personaBlock('astra'),plain:a.personaBlock('plain')});",
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].astra).toContain('Your engine is Codex');
+  expect(r.out[0].astra).toContain('gpt-6-astra');
+  expect(r.out[0].plain).not.toContain('Your engine');
+});
+
+test('ENGINE/A3: codex built-ins (snake_case) are judged as their claude equivalents, not as unknown host tools', () => {
+  const dir = tmp();
+  const r = runInChild(
+    "const a=await import('./server/agents.ts');" +
+      "const pol=await import('./server/agent-policy.ts');" +
+      "a.createAgent({name:'Astra',slug:'astra',engine:'codex',tools:['desktop','web','publish']});" +
+      "const p=pol.policyFor('astra');" +
+      "a.createAgent({name:'Dev',slug:'dev',engine:'codex',tools:['git']});" +
+      "const g=pol.policyFor('dev');" +
+      'emit({' +
+      "  viewImage:pol.toolAllowed(p,'view_image'), updatePlan:pol.toolAllowed(p,'update_plan')," +
+      "  applyPatch:pol.toolAllowed(p,'apply_patch'), webSearch:pol.toolAllowed(p,'web_search')," +
+      "  shell:pol.toolAllowed(p,'shell'), bash:pol.toolAllowed(p,'Bash'), whatsapp:pol.toolAllowed(p,'mcp__arigami__whatsapp')," +
+      "  gitApplyPatch:pol.toolAllowed(g,'apply_patch'), gitShell:pol.toolAllowed(g,'shell'), gitWebSearch:pol.toolAllowed(g,'web_search')," +
+      '});',
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.viewImage).toBe(true);
+  expect(o.updatePlan).toBe(true);
+  expect(o.applyPatch).toBe(false); // Edit — no `git`
+  expect(o.webSearch).toBe(true); // WebSearch — `web` family
+  expect(o.shell).toBe(false); // Bash — not granted
+  expect(o.bash).toBe(false);
+  expect(o.whatsapp).toBe(false);
+  expect(o.gitApplyPatch).toBe(true);
+  expect(o.gitShell).toBe(true);
+  expect(o.gitWebSearch).toBe(false);
+});

@@ -43,6 +43,7 @@ these keys:
   "arch": "x64",
   "docker": true,
   "sessions": "2-5",
+  "engines": { "claude": "2-5", "codex": "1" },
   "events": [
     { "name": "install", "at": "2026-08-29T18:02:11.412Z" },
     { "name": "onboarding_step", "at": "…", "step": "claude", "status": "ok" },
@@ -59,6 +60,7 @@ these keys:
 | `os`, `arch` | `process.platform` / `process.arch` (`linux`, `darwin`, `win32` · `x64`, `arm64`). |
 | `docker` | Whether the host runs in a container. |
 | `sessions` | Number of sessions ever created, bucketed: `0`, `1`, `2-5`, `6+`. |
+| `engines` | The same count split by engine (`claude`, `codex`), same buckets. |
 | `events` | Funnel milestones since the last send (see below). Each is a name and an ISO timestamp; `onboarding_step` also carries the step id and its status, both from closed enums. |
 
 ### The funnel (K5)

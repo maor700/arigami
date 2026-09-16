@@ -137,7 +137,7 @@ test('the tab template talks ONLY through window.arigami — no /__api, no token
   expect(html).not.toContain('fetch(');
   expect(html).not.toContain('ARIGAMI_TOKEN');
   expect(html).not.toContain('localhost');
-  expect(raw).toContain('dir="rtl"'); // RTL-aware, per the skill
+  expect(raw).toContain('dir="auto"'); // RTL-aware, per the skill: direction follows the page's language, not a hardcoded one
 });
 
 // ---------------------------------------------------------------------------

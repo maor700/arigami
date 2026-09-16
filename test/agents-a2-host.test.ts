@@ -14,6 +14,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -82,17 +83,17 @@ beforeAll(async () => {
   try {
     await until(async () => {
       try {
-        return (await fetch(base + '/__api/config')).ok;
+        return (await fetch(base + '/__api/config', { signal: AbortSignal.timeout(3000) })).ok;
       } catch {
         return false;
       }
     }, 30000);
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   const c = await api('POST', '/__api/agents', { name: 'Bot', slug: 'bot', emoji: '🤖', persona: 'You post.' });
   expect(c.status).toBe(201);
-});
+}, 60_000); // the host boot below waits up to 30s; bun caps hooks at 5s by default
 
 afterAll(() => {
   try {

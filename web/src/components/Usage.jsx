@@ -8,6 +8,7 @@ import { useT } from '../lib/i18n.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { Icon } from '../lib/icons.js';
 import { faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
+import { windowLabel } from '../lib/providers.js';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
 // tight, red when nearly exhausted. `left` is a 0–100 percentage.
@@ -101,11 +102,13 @@ function MiniBar({ title, win }) {
 // nothing when usage isn't available so the rail stays clean. Collapsible:
 // collapsed (default) shows only the 5h session line; expanded adds the 7d
 // week window too. State persists across sessions via prefs.
-export function UsageMini({ usage }) {
+export function UsageMini({ usage, provider = 'claude' }) {
   const t = useT();
   const prefs = usePrefs();
   if (!usage?.available || (!usage.session && !usage.week)) return null;
   const expanded = prefs.usageExpanded;
+  // codex windows are labelled by length (a free plan has one 30-day window)
+  const label = (which) => provider === 'codex' ? windowLabel(t, provider, which, usage[which]) : t(which === 'session' ? 'dialogs.sessionWindow5h' : 'dialogs.weekWindow7d');
   return (
     <div className="flex flex-col gap-2 border-t border-hair px-[13px] py-2.5">
       <button
@@ -116,8 +119,8 @@ export function UsageMini({ usage }) {
         <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
         <Icon icon={expanded ? faChevronUp : faChevronDown} />
       </button>
-      <MiniBar title={t('dialogs.sessionWindow5h')} win={usage.session} />
-      {expanded && <MiniBar title={t('dialogs.weekWindow7d')} win={usage.week} />}
+      <MiniBar title={label('session')} win={usage.session} />
+      {(expanded || !usage.session) && <MiniBar title={label('week')} win={usage.week} />}
     </div>
   );
 }

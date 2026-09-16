@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { fmtTokens, contextColor } from './ui.jsx';
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
+import { supportsCompaction } from '../lib/engines.js';
 
 // Context categories we can derive from the stream-json usage block. (Claude
 // Code's /context splits further — system prompt, tools, memory… — but the
@@ -20,6 +21,7 @@ const CELLS = COLS * ROWS; // each cell ≈ 1/200th of the window
 // coloured by what occupies it; the rest is free space.
 export default function ContextModal({ session, usage, onClose }) {
   const t = useT();
+  const canCompact = supportsCompaction(session.engine);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
@@ -112,7 +114,10 @@ export default function ContextModal({ session, usage, onClose }) {
           </div>
         </div>
 
-        <div className="border-t border-hair px-[18px] py-3">
+        {!canCompact && (
+          <div className="border-t border-hair px-[18px] py-3 text-[11px] text-fgdim">{t('dialogs.ctxNoCompactionCodex')}</div>
+        )}
+        {canCompact && <div className="border-t border-hair px-[18px] py-3">
           <label className="flex cursor-pointer items-center gap-2.5 text-[12px]">
             <input
               type="checkbox"
@@ -135,17 +140,17 @@ export default function ContextModal({ session, usage, onClose }) {
             <span className="font-mono text-[11px] text-fgdim">%</span>
           </label>
           <div className="mt-1.5 pl-[24px] text-[11px] text-fgdim">{t('dialogs.ctxAutoCompactRestartNote')}</div>
-        </div>
+        </div>}
 
         <div className="flex items-center justify-end gap-2 border-t border-hair px-[18px] py-2.5">
-          <button
+          {canCompact && <button
             type="button"
             disabled={compacting}
             onClick={compactNow}
             className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
           >
             {compacting ? t('dialogs.compacting') : t('dialogs.compactNow')}
-          </button>
+          </button>}
           <button
             type="button"
             onClick={onClose}

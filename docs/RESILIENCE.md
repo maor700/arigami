@@ -1,5 +1,7 @@
 # Resilience — the host supervisor (RES1)
 
+> UI labels below are given in English; the actual on-screen text is i18n'd and renders in whichever language the user picked under Settings → Appearance → Language.
+
 > The business keeps running unless a human answer is genuinely required.
 
 A session used to stop for reasons no human needed to hear about: the `claude`
@@ -7,9 +9,12 @@ process died, its OAuth token expired, every pooled account hit its weekly
 limit, an MCP server stopped answering, a worker finished and forgot to report,
 a controller waited forever on a child that never got the ask.
 
+Both engines are covered: codex sessions get the same health model and ladder with their own
+accounts and model chain (§3 "Codex sessions", docs/ENGINES.md).
+
 The supervisor closes those. It computes a health state for every session once
 per tick, walks a recovery ladder for the ones it can fix, and puts everything
-it genuinely cannot fix into one queue the human reads: **"ממתין לך"**.
+it genuinely cannot fix into one queue the human reads: **"waiting for you"**.
 
 Two files, split the same way as `watchdog.ts` / `listeners.ts`:
 
@@ -135,7 +140,11 @@ account switch can fix that one.
 - A 30s per-session cooldown stops a replay that fails the same way from walking
   the whole chain in one second.
 - `POST /__api/sessions/:id/model/restore` takes the top rung back by hand
-  (Settings → מארח → בריאות has the button) without waiting for the reset.
+  (Settings → Host → Health has the button) without waiting for the reset.
+
+### Codex sessions (P2-6)
+
+Same shape, codex's own pieces: a limit-looking `turn.failed` is confirmed via `account/rateLimits/read`, the account is quarantined until its window's `resetsAt`, the session re-pinned to the next codex account and the message replayed; pool dry → one rung of `cfg.codexModelChain`; bottom → `escalate`. Code: `server/codex-recovery.ts`, `server/lib/codex-quota.ts`; Health lists codex accounts with their windows.
 
 ### Fit or compact before the replay (LADDER1)
 
@@ -165,7 +174,7 @@ window with 70% headroom (`cfg.supervisor.ladderHeadroom`,
   rung's window (`context-restore` incident), with a short interim note of what
   happened on the weaker rung — the digest was a stop-gap, never the history.
 - **the cockpit** shows a quiet badge on the rail row and the chat header while a
-  session runs below its model — "רץ על הייקו · מכסת Fable מתאפסת ב-18:50"
+  session runs below its model — "running on haiku · Fable quota resets at 18:50"
   (`claude.ladder`, derived in `state.toWireSession`; null on the top rung) — plus
   one system line at the switch and one at the climb back. No toasts.
 
@@ -230,7 +239,7 @@ session's chat, so the human can find it from either end.
 |---|---|
 | `GET /__api/health` | the health map, the waiting queue, a 24h incident tally, per-account quota with reset times, and the host's model chain |
 | `GET /__api/health/incidents?hours=24` | what the supervisor actually did, newest first |
-| `GET /__api/waiting` | the "ממתין לך" queue on its own |
+| `GET /__api/waiting` | the "waiting for you" queue on its own |
 | `POST /__api/sessions/:id/model/restore` | climb back to the top rung now |
 | `POST /__api/sessions/:id/model` | `{model, modelChain?}` — set the session's model and/or its ladder |
 
@@ -260,7 +269,7 @@ when something the cockpit renders actually changed.
   the folder's existing "needs your input" rollup uses) onto the folder's
   count chip or the Team header while collapsed; opening either reveals the
   real per-row badges instead.
-- **Settings → מארח → בריאות**: the computed state of every live session, the
+- **Settings → Host → Health**: the computed state of every live session, the
   account/model quota picture (who is quarantined and until when, which sessions
   are a rung below their model, with a "back on `<model>`" button), and the last
   24h of incidents with what the host did and how it turned out.
@@ -275,6 +284,7 @@ isolated-host tests run the 30s loop at 1s):
 ```jsonc
 {
   "modelChain": ["fable", "sonnet", "haiku"],   // ARIGAMI_MODEL_CHAIN
+  "codexModelChain": ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],   // ARIGAMI_CODEX_MODEL_CHAIN
   "supervisor": {
     "enabled": true,          // ARIGAMI_SUPERVISOR=0 turns the ladder off;
                               //   health is still computed on demand

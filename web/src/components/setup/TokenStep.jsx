@@ -12,7 +12,7 @@ export default function TokenStep({ capability, onDone, onCancel, placeholder, a
   const [token, setToken] = useState('');
   const { busy, err, run } = useAction();
   const fam = capFamily(capability);
-  const ph = placeholder || t(`setup.token.placeholder.${['claude', 'git', 'composio'].includes(fam) ? fam : 'generic'}`);
+  const ph = placeholder || t(`setup.token.placeholder.${['claude', 'codex', 'git', 'composio'].includes(fam) ? fam : 'generic'}`);
 
   const save = () =>
     run(async () => {

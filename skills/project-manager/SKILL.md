@@ -36,6 +36,8 @@ in `docs/SIDEBAR-FOLDERS.md` and `docs/DISPATCHER.md`.
 
 Spawn children with `create_session({ kind: "full", skill, prompt, metadata, title, subtask? })`:
 
+- A child runs on your engine (claude/codex) unless you pass `engine` or an `agent` that has one.
+
 - **Give every child a `subtask`** (a short slug): the host then creates its
   worktree for it — `<reposDir>/<repo>-wt-<subtask>` on branch
   `child/<subtask>-<id>` off `base` (default: your current branch) — stamps
@@ -165,7 +167,7 @@ per-wake — most projects won't produce one.
 Tools on this host do not fail when a capability is not configured — they *ask*:
 a tool result (MCP or REST) of the form
 `{ "needs_setup": "composio:gmail", "why": "read your inbox", "hint": "call request_setup" }`
-means the capability (`identity`, `claude`, `git`, `repo:<name>`, `whatsapp`,
+means the capability (`identity`, `claude` / `codex` (the engine logins, each for its own engine's sessions), `git`, `repo:<name>`, `whatsapp`,
 `mcp:<service>`, `composio:<toolkit>`, `desktop`, `push`, `remote`, `telemetry`)
 is missing.
 
@@ -175,7 +177,7 @@ When you see one:
    chat (and a push) where the human chooses **automatic** or **manual**. It blocks.
 2. `{state:"auto"}` → the human asked *you* to connect it: run the matching
    playbook — `skills/connect-<provider>/SKILL.md` (`connect-identity`,
-   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-tailscale`,
+   `connect-composio`, `connect-mcp`, `connect-claude`, `connect-codex`, `connect-tailscale`,
    `connect-github`) —
    and finish with `report_setup({capability, ok, evidence?})`. Then call the
    original tool again.

@@ -22,6 +22,7 @@ import http from 'node:http';
 import { WebSocket as WsClient } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hostDiag } from './_host-diag.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -114,7 +115,7 @@ beforeAll(async () => {
   try {
     await until(async () => { try { return (await httpJson(base + '/__api/config')).status === 200; } catch { return false; } });
   } catch {
-    throw new Error(`host did not come up: ${log.slice(-1500)}`);
+    throw new Error(`host did not come up: ${log.slice(-1500)}${hostDiag(host)}`);
   }
   // Explicit hook timeout: bun's default is 5s, and a cold `bun server/index.ts`
   // on a loaded box regularly needs more than that — without this the file

@@ -22,7 +22,7 @@ import { capTitle, capFamily, manualFor } from '../setup/registry.js';
 import { Icon } from '../../lib/icons.js';
 import { faPlus, faCheck } from '@fortawesome/free-solid-svg-icons';
 import ConnectDialog from './ConnectDialog.jsx';
-import ClaudeAccounts, { ClaudeAccountsFooter } from './ClaudeAccounts.jsx';
+import Accounts, { AccountsFooter } from './Accounts.jsx';
 import AddConnection, { composioCap } from './AddConnection.jsx';
 import { Webhooks } from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
@@ -31,7 +31,7 @@ import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BT
 
 // Families rendered by a section of their own — everything else falls into the
 // "infrastructure status" list in the drawer (git, desktop, repo:*).
-const OWN_SECTION = new Set(['identity', 'claude', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp']);
+const OWN_SECTION = new Set(['identity', 'claude', 'codex', 'whatsapp', 'remote', 'push', 'telemetry', 'composio', 'mcp']);
 export const CONNECTIONS_ADVANCED_IDS = ['owner', 'claude-more', 'channels', 'remote-advanced', 'status', 'audit'];
 const PICKER_SECTIONS = new Set(['mcp', 'integrations', 'add']);
 
@@ -54,7 +54,7 @@ function Notifications() {
   );
 }
 
-// A2: "שייך ל:" — the hub shows the host's (global) connections or ONE agent's.
+// A2: "Belongs to:" — the hub shows the host's (global) connections or ONE agent's.
 function OwnerFilter({ owner, agents, onChange }) {
   const t = useT();
   if (!agents?.length) return null;
@@ -203,7 +203,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
         />
       </Section>
 
-      <ClaudeAccounts initialAdd={initialAdd} identity={identity} footer={false} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
+      <Accounts initialAdd={initialAdd} identity={identity} footer={false} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
 
       <Section id="connected" title={t('settings.connections.connected')} onRefresh={load}>
         <div className="mb-2 text-[11px] text-fgdim">{t('settings.connections.connected.hint')}</div>
@@ -233,7 +233,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
         </Section>
 
         <Section id="claude-more" title={t('settings.connections.claude.more')}>
-          <ClaudeAccountsFooter />
+          <AccountsFooter />
         </Section>
 
         {admin && (

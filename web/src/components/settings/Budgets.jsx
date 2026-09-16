@@ -1,4 +1,4 @@
-// A3 — Settings › Host › תקציבים: one row per agent (avatar/name × model × daily
+// A3 — Settings › Host › Budgets: one row per agent (avatar/name × model × daily
 // token cap × used today). Caps are edited inline → PATCH /__api/agents/:slug
 // {budget:{tokensPerDay}}; the "used" column is GET /__api/agents/budgets
 // (today's 'turn' lines of the agent's activity ledger, host-local day).
@@ -17,6 +17,8 @@ export const fmtTokens = (n) => {
   return String(v);
 };
 export const fmtUsd = (n) => (Number(n) > 0 ? `$${Number(n).toFixed(Number(n) >= 1 ? 2 : 3)}` : '$0');
+/** null cost = the engine reports none (codex) → "tokens only", never $0. */
+export const fmtCost = (n, t) => (n == null ? t('agent.tokensOnly') : fmtUsd(n));
 
 export function BudgetRow({ row, onSaved }) {
   const t = useT();
@@ -55,7 +57,7 @@ export function BudgetRow({ row, onSaved }) {
       <td className="py-1.5 font-mono text-[11.5px] md:text-[10.5px]" dir="ltr">
         <span className={row.exceeded ? 'font-bold text-danger' : 'text-fg'}>{fmtTokens(row.usedTokens)}</span>
         {row.cap ? <span className="text-fgdim"> / {fmtTokens(row.cap)} · {pct}%</span> : null}
-        <span className="text-fgdim"> · {fmtUsd(row.usedCostUsd)}</span>
+        <span className="text-fgdim"> · {fmtCost(row.usedCostUsd, t)}</span>
         {row.exceeded && <span className="ms-1 rounded-full bg-danger/15 px-1.5 text-[11px] md:text-[9.5px] text-danger">{t('host.budgets.exceeded')}</span>}
       </td>
     </tr>

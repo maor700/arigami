@@ -32,12 +32,10 @@
 //     bubblewrap sandbox cannot start on this box — `bwrap: loopback: Failed
 //     RTM_NEWADDR`). Isolation comes from the session's worktree, as it already
 //     did for claude's bypassPermissions.
-//   - A3 allowlists are NOT enforceable here (no PreToolUse hook, no
-//     --disallowedTools). prepare() refuses to spawn such a session rather than
-//     running it with a policy that silently does nothing.
-//   - Remote (url) MCP grants are skipped — codex keeps its own OAuth store per
-//     $CODEX_HOME, so an arigami grant minted for claude is not usable.
-//   - RES1's model ladder is claude-shaped and does not run for codex sessions.
+//   - A3 allowlists: enforced by the same PreToolUse hook as claude, via $CODEX_HOME/hooks.json
+//     + --dangerously-bypass-hook-trust (without the flag codex skips hooks silently — measured).
+//   - Remote (url) MCP servers load only with a Codex-side grant (`codex mcp login`, P2-4); Claude's grants are not usable here.
+//   - Quota recovery (P2-6) is codex-recovery.ts: rateLimits-confirmed account rotation, then cfg.codexModelChain.
 //     LADDER1's compaction was actually TRIED (not just assumed absent): five
 //     live turns with model_auto_compact_token_limit=3000 (both scope values)
 //     and --enable context_management grew one thread to 41,474 tokens with
@@ -51,15 +49,10 @@
 //     reasoning-test-*.jsonl) — usage.reasoning_output_tokens was >0 on that
 //     run, so the model reasoned, it just never left the stream. Handled
 //     defensively, still not verified. See ENGINES.md limit 6.
-//   - Rate-limit detection (rateLimitNote()) is a GUESS marked as one: codex's
-//     documented RateLimitReachedType enum lives on the app-server's
-//     account/rateLimits notifications, not on exec's stream, and no run here
-//     ever hit a real quota wall (reproducing one means burning a live
-//     account's usage limit). It pattern-matches the one wrapper shape that IS
-//     verified live (error-noauth's "unexpected status <code> ..."), nothing
-//     more. See ENGINES.md limit 6ב.
+//   - The turn's limit text is a regex guess (lib/codex-quota.ts); the rateLimits read is what confirms it. See ENGINES.md limit 6b.
 
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { HOME } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
@@ -71,8 +64,12 @@ import type { EngineDriver } from './lib/engine-driver.js';
 import type { Session } from './state.js';
 import { SKILLS_DIR, USER_SKILLS_DIR } from './skills.js';
 import * as extensions from './extensions.js';
-import { injectedServersFor } from './mcp-connections.js';
-import { policyFor, isRestrictive } from './agent-policy.js';
+import { hostMcpServers } from './lib/mcp-servers.js';
+import { codexServersFor, codexCredentialsFile, codexMcpHome, GLOBAL } from './mcp-connections.js';
+import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from './lib/codex-quota.js';
+import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
+import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
+import { bunExecShell } from './lib/bun-exec.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
   appendChat,
@@ -93,14 +90,26 @@ function codexBin(): string {
   return process.env.ARIGAMI_CODEX_BIN || 'codex';
 }
 
-/**
- * The REAL codex home — where `codex login` put auth.json. Every session gets
- * its OWN $CODEX_HOME (thread history + generated config must not be shared),
- * and symlinks auth.json back to this one so a single login serves them all.
- */
-function realCodexHome(): string {
-  return process.env.ARIGAMI_CODEX_HOME || process.env.CODEX_HOME || path.join(HOME, '.codex');
+let versionCache: { at: number; value: string | null } | null = null;
+/** `codex --version` → "0.153.4", cached per host process (a failed probe retries after a minute). */
+export async function codexVersion(): Promise<string | null> {
+  if (versionCache && (versionCache.value || Date.now() - versionCache.at < 60_000)) return versionCache.value;
+  const value = await new Promise<string | null>((resolve) =>
+    execFile(codexBin(), ['--version'], { timeout: 5000 }, (err, stdout) => resolve(err ? null : String(stdout).match(/\d+\.\d+\.\d+\S*/)?.[0] || null))
+  );
+  versionCache = { at: Date.now(), value };
+  return value;
 }
+
+/**
+ * The machine's own codex home (~/.codex) — where `codex login` on the host put
+ * auth.json and where codex keeps models_cache.json. Every session gets its OWN
+ * $CODEX_HOME (thread history + generated config must not be shared) and
+ * symlinks auth.json to the login of the ACCOUNT it is pinned to
+ * (accounts.js codexAuthPathFor): the machine login for a `codex-home`
+ * account, a codex-accounts/<id>/ directory for a chatgpt / api-key one.
+ */
+const realCodexHome = codexRealHome;
 
 /** $CODEX_HOME for one session. Persistent: `codex exec resume` reads the thread history from it. */
 export function codexHomeFor(sessionId: string): string {
@@ -130,7 +139,13 @@ const CODEX_MODEL_RE = /^(?:gpt|codex|o[0-9])[a-zA-Z0-9._-]*$/;
 // here and is not in this set is dropped, and the turn then runs at the
 // model's own default while the UI still shows the rung the human picked.
 // `ultra` is gpt-5.6-terra's top rung; claude has no equivalent.
-const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+
+/** Pure: the levels a codex model accepts — its catalog ladder, else every level codex knows. */
+export function codexEffortLevels(model: string | null | undefined, catalog: Array<{ id: string; efforts: string[] }>): string[] {
+  const row = model ? catalog.find((m) => m.id === model) : null;
+  return row?.efforts.length ? row.efforts.filter((e) => EFFORTS.has(e)) : [...EFFORTS];
+}
 
 // ---- TOML -----------------------------------------------------------------
 
@@ -163,6 +178,8 @@ interface CodexSessionState {
   carry: string[];
   /** the "remote MCP grants don't work here" note is worth saying once, not every turn */
   warnedRemote: boolean;
+  /** this thread's rollout file under $CODEX_HOME/sessions (found once) */
+  rollout?: string | null;
 }
 
 const sessions = new Map<string, CodexSessionState>();
@@ -243,8 +260,8 @@ function linkSkills(codexHome: string): void {
 }
 
 /**
- * The MCP dict, as TOML. Same three sources mcpConfigFor() feeds claude — the
- * host server, the enabled extensions' servers, and (see below) the agent's own
+ * The MCP dict, as TOML. The host server, the enabled extensions' servers, the
+ * host-managed external servers (lib/mcp-servers.ts), and (see below) the agent's own
  * remote grants — only written to $CODEX_HOME/config.toml instead of passed as
  * inline JSON on argv, because codex has no `--mcp-config`.
  *
@@ -260,28 +277,40 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   } catch {
     /* a broken extension must never stop a session from starting */
   }
-  // M1 grants are `{type:'http', url}` entries whose credentials live in
-  // CLAUDE's own per-agent MCP store. Codex authenticates remote servers
-  // through its own `codex mcp login` under $CODEX_HOME and would just start an
-  // unauthenticated connection (and burn STARTUP_TIMEOUT_SEC doing it), so they
-  // are left out — and the session is told once, because its persona may have
-  // promised those tools.
-  if (slug) {
-    let skipped: string[] = [];
-    try {
-      skipped = Object.keys(injectedServersFor(`agent:${slug}`));
-    } catch {
-      /* no connections.json */
+  // Host-managed external servers (composio-mcp) — claude gets them from ~/.claude.json.
+  const external = new Set<string>();
+  try {
+    for (const [name, sv] of Object.entries(hostMcpServers())) {
+      if (servers[name]) continue;
+      servers[name] = sv;
+      external.add(name);
     }
-    if (skipped.length && !st.warnedRemote) {
-      st.warnedRemote = true;
-      appendChat(s.id, {
-        kind: 'system',
-        text:
-          `⤷ המנוע כאן הוא Codex, ולכן שרתי ה-MCP המרוחקים של הסוכן (${skipped.join(', ')}) לא זמינים בסשן הזה — ` +
-          `האישורים שלהם שייכים ל-Claude. אל תסתמך על הכלים שלהם; כלי הבית של אריגמי כן עובדים.`,
-      });
-    }
+  } catch {
+    /* unreadable mcp-servers.json — the session still starts */
+  }
+  // A3: a server the allowlist never touches is not loaded at all (claude's `--disallowedTools mcp__<server>`).
+  const policy = policyFor(slug);
+  if (isRestrictive(policy) && policy.tools !== null) {
+    for (const name of Object.keys(servers)) if (!serverTouched(policy, name)) delete servers[name];
+  }
+  // P2-4: remote grants load only when Codex holds its own (`codex mcp login`, mcp-connections codexServersFor); Claude-only ones get a one-time note.
+  let remote: { granted: Record<string, { url: string }>; claudeOnly: string[] } = { granted: {}, claudeOnly: [] };
+  try {
+    remote = codexServersFor(slug ? `agent:${slug}` : GLOBAL);
+  } catch {
+    /* no connections.json */
+  }
+  for (const [name, sv] of Object.entries(remote.granted)) {
+    if (!servers[name] && (!isRestrictive(policy) || policy.tools === null || serverTouched(policy, name))) servers[name] = sv;
+  }
+  if (remote.claudeOnly.length && !st.warnedRemote) {
+    st.warnedRemote = true;
+    appendChat(s.id, {
+      kind: 'system',
+      text:
+        `⤷ These remote MCP servers are granted for Claude only, so this Codex session doesn't have them: ${remote.claudeOnly.join(', ')}. ` +
+        'Run the connect-mcp skill from this session to authorize them for Codex.',
+    });
   }
 
   const env: Record<string, string> = {
@@ -289,6 +318,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     ARIGAMI_URL: cfg.hostBase!,
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
+    ARIGAMI_ENGINE: 'codex',
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
   };
 
@@ -310,7 +340,7 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     );
     // The host server carries this session's identity; an extension server gets
     // whatever env it declared, plus the same identity so it can call back.
-    const svEnv = { ...env, ...((sv as any).env && typeof (sv as any).env === 'object' ? (sv as any).env : {}) };
+    const svEnv = { ...(external.has(name) ? {} : env), ...((sv as any).env && typeof (sv as any).env === 'object' ? (sv as any).env : {}) };
     out.push(`[mcp_servers.${tkey(name)}.env]`);
     for (const [k, v] of Object.entries(svEnv)) out.push(`${tkey(k)} = ${tstr(v)}`);
     out.push('');
@@ -325,39 +355,66 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
  * idempotent, and that is what makes a mid-session change to the extensions or
  * the user's skills take effect on the next turn instead of the next restart.
  */
-function codexPrepare(s: Session, _opts: { resume: boolean }): void {
-  // A3 has no equivalent here: codex has no PreToolUse hook and no
-  // --disallowedTools, so an allowlist would be advisory at best while the
-  // agent's persona promises it is enforced. Refusing to spawn is the honest
-  // failure — loud, at spawn, exactly like pickEngine() refusing an
-  // unimplemented engine.
+/** A3: does the session's agent carry an allowlist? */
+function restrictedAgentOf(s: Session): boolean {
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-  if (slug && isRestrictive(policyFor(slug))) {
-    throw new Error(
-      `agent "${slug}" has a tool/domain allowlist, and the codex engine cannot enforce it ` +
-        `(no PreToolUse hook, no --disallowedTools) — run this agent on the claude engine`
-    );
-  }
+  return !!slug && isRestrictive(policyFor(slug));
+}
 
+/** P2-4: `.credentials.json` → the host-wide codex MCP grant file; a real file codex left behind (a token refresh) is copied back first if newer. */
+function linkMcpCredentials(codexHome: string): void {
+  const link = path.join(codexHome, '.credentials.json');
+  const shared = codexCredentialsFile();
+  try {
+    const st = fs.lstatSync(link);
+    if (!st.isSymbolicLink() && st.isFile()) {
+      let sharedMtime = 0;
+      try { sharedMtime = fs.statSync(shared).mtimeMs; } catch { /* none yet */ }
+      if (st.mtimeMs > sharedMtime) {
+        fs.mkdirSync(codexMcpHome(), { recursive: true, mode: 0o700 });
+        fs.copyFileSync(link, shared);
+        fs.chmodSync(shared, 0o600);
+      }
+    }
+  } catch {
+    /* nothing there yet */
+  }
+  if (fs.existsSync(shared)) linkDir(link, shared);
+  else fs.rmSync(link, { force: true });
+}
+
+/** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
+export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
+
+function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   const codexHome = codexHomeFor(s.id);
   fs.mkdirSync(codexHome, { recursive: true });
 
-  // One login, many sessions: auth.json stays in the real ~/.codex and every
-  // per-session home symlinks to it. A copy would go stale the moment codex
-  // refreshes the ChatGPT token.
-  const authSrc = path.join(realCodexHome(), 'auth.json');
-  if (!fs.existsSync(authSrc)) {
-    throw new Error(`codex is not signed in — ${authSrc} is missing; run \`codex login\` on the host first`);
+  // A3: the policy hook (mcp/policy-hook.js), rewritten per spawn; codexBuildSpawn adds the trust flag for the same sessions.
+  if (restrictedAgentOf(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy')) + '\n');
+  else fs.rmSync(codexHooksFile(codexHome), { force: true });
+
+  // One login, many sessions: auth.json stays where the ACCOUNT keeps it and
+  // every per-session home symlinks to it. A copy would go stale the moment
+  // codex refreshes the ChatGPT token. The session's pinned account wins; a
+  // pin to a vanished account falls back to the active codex account.
+  const authSrc = codexAuthPathFor(s.claude?.accountId);
+  if (!authSrc) {
+    throw new Error('no Codex account is connected — add one under Settings › Connections › Accounts (sign in with ChatGPT or paste an OpenAI API key), or run `codex login` on the host');
   }
   linkDir(path.join(codexHome, 'auth.json'), authSrc);
 
   linkSkills(codexHome);
+  linkMcpCredentials(codexHome);
 
   const st = stateOf(s.id);
   const cwd = untildify(s.cwd) || HOME;
   const lines = [
     '# generated by server/codex.ts — rewritten before every spawn, do not edit by hand',
     `# session ${s.id}`,
+    '',
+    // P2-4: MCP OAuth tokens live in the file linkMcpCredentials() points at, never the keyring.
+    'mcp_oauth_credentials_store = "file"',
     '',
     // Without this codex asks whether the directory is trusted; the session's
     // worktree IS the sandbox boundary arigami already chose for it.
@@ -399,6 +456,8 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     // RTM_NEWADDR), and arigami already isolates a session in its worktree and
     // grants claude bypassPermissions — same posture, different flag name.
     '--dangerously-bypass-approvals-and-sandbox',
+    // A3: without this flag codex silently skips the hooks.json prepare() wrote (measured).
+    ...(restrictedAgentOf(s) ? ['--dangerously-bypass-hook-trust'] : []),
     // A session cwd is often a plain directory (~/repos, an artifact dir), not a repo.
     '--skip-git-repo-check',
     ...codexModelArgs({ model: s.claude?.modelChoice, effort: s.claude?.effort }),
@@ -593,32 +652,10 @@ function reapGivenUpHostTool(id: string, tool: string | null): void {
   else if (tool === 'permission_prompt') expirePendingPermissions(id, 'codex gave up on the tool call (tool_timeout_sec)');
 }
 
-// `RateLimitReachedType` (rate_limit_reached, workspace_owner_credits_depleted,
-// workspace_member_credits_depleted, workspace_owner_usage_limit_reached,
-// workspace_member_usage_limit_reached) is a real enum — but it lives in the
-// app-server JSON-RPC protocol's account/rateLimits notifications, which this
-// driver does not speak (see ENGINES.md limit 2). NOT VERIFIED against a real
-// quota wall: reproducing one means actually exhausting a live account's
-// ChatGPT usage limit, which nobody did here. What IS verified (the 401 in
-// test/fixtures/codex-stream/error-noauth-*.jsonl) is that codex-cli wraps
-// every HTTP failure in the same `unexpected status <code> <reason>: <body>`
-// text on the plain error/turn.failed message — no structured `type` field.
-// This matches that wrapper for 429, plus the enum strings themselves in case
-// the ChatGPT-backend error body embeds them verbatim, plus generic wording as
-// a last resort. Until a real quota-exhausted run confirms or corrects it,
-// treat this as a guess about phrasing, exactly like the `reasoning` item.
-const RATE_LIMIT_RE =
-  /unexpected status 429\b|rate_limit_reached|workspace_(?:owner|member)_(?:credits_depleted|usage_limit_reached)|\brate[ -]?limit(?:ed|s)?\b|\busage limit\b|\bquota\b|\bcredits? (?:depleted|exhausted)\b/i;
-
-/** A human-readable Hebrew note appended alongside the raw error, or null if this doesn't look like a quota wall. */
-function rateLimitNote(message: string): string | null {
-  if (!RATE_LIMIT_RE.test(message)) return null;
-  const resetHint = message.match(/reset[s]?\s*(?:at|in|on)\s*[^,."')]+/i);
-  let note =
-    '⤷ נראה שזו מכסה (rate limit / credits / usage limit) של Codex שנגמרה, לא שגיאה בקוד — ' +
-    'הבדיקה הזו לא אומתה מול מכסה אמיתית (ראו הערה ב-server/codex.ts), אז יכול להיות שהזיהוי שגוי.';
-  if (resetHint) note += ` Codex ציין: "${resetHint[0]}".`;
-  return note;
+/** P2-6: a limit-looking error goes to codex-recovery.ts, which confirms it via account/rateLimits/read before noting or acting. */
+function onLimitText(id: string, text: string): void {
+  if (!looksLikeCodexLimit(text)) return;
+  import('./codex-recovery.js').then((m) => m.onCodexLimit(id, text)).catch(() => {});
 }
 
 function emitToolUse(id: string, item: any, st: CodexSessionState): ItemState {
@@ -629,6 +666,11 @@ function emitToolUse(id: string, item: any, st: CodexSessionState): ItemState {
   // twice, exactly as it would for claude, so both halves are suppressed.
   if (!meta.host) appendChat(id, { kind: 'tool-use', toolUseId: String(item.id), name: meta.name, input: itemInput(item) });
   return meta;
+}
+
+/** Codex's notice about OUR --dangerously-bypass-hook-trust flag (emitted twice per turn as `error` items) — expected, not a failure. */
+export function isHookTrustNotice(msg: string): boolean {
+  return /--dangerously-bypass-hook-trust/.test(msg);
 }
 
 function codexHandleEvent(id: string, raw: unknown): void {
@@ -677,9 +719,12 @@ function codexHandleEvent(id: string, raw: unknown): void {
           if (item.text || item.summary)
             appendChat(id, { kind: 'thinking', text: String(item.text || item.summary) });
           break;
-        case 'error':
-          appendChat(id, { kind: 'error', text: String(item.message || 'codex error'), isError: true });
+        case 'error': {
+          const msg = String(item.message || 'codex error');
+          if (isHookTrustNotice(msg)) { console.warn(`[codex] ${id}: (expected) ${msg}`); break; }
+          appendChat(id, { kind: 'error', text: msg, isError: true });
           break;
+        }
         default: {
           // Codex packs the call AND its result into one `item.completed`; the
           // two are separate kinds here, so the started/completed pair is what
@@ -700,24 +745,22 @@ function codexHandleEvent(id: string, raw: unknown): void {
       break;
     }
     case 'turn.completed': {
-      const u = j.usage || {};
-      // Codex's usage field names are its own; map them onto the ones the
-      // context meter and the A3 ledger already speak.
-      const mapped = {
-        input_tokens: u.input_tokens || 0,
-        output_tokens: u.output_tokens || 0,
-        cache_read_input_tokens: u.cached_input_tokens || 0,
-        cache_creation_input_tokens: u.cache_write_input_tokens || 0,
-      };
-      updateUsage(id, mapped);
+      // turn.completed sums every request of the turn (ledger); the rollout's last request is the live context.
+      const mapped = mapCodexUsage(j.usage);
+      const seen = readRollout(id, st);
+      const model = seen.model || getSession(id)?.claude?.modelChoice || null;
+      if (model && getSession(id)?.claude?.model !== model) setClaude(id, { model });
+      // The window codex reported for this request beats the catalog row.
+      const catalog = [...(model && seen.window ? [{ id: model, contextWindow: seen.window }] : []), ...codexModels()];
+      updateUsage(id, seen.last ? mapCodexUsage(seen.last) : mapped, catalog);
       noteTurnUsage(id, mapped);
       const durationMs = st.turnStartedAt ? Date.now() - st.turnStartedAt : undefined;
       setClaude(id, { state: 'idle' });
       // The turn's own text already landed as assistant-text; this event is the
       // footer (duration, tokens), so it carries no text of its own.
       appendChat(id, { kind: 'result', text: '', isError: false, durationMs });
-      // costUsd is not reported by codex at all — the ledger records tokens only.
-      recordTurn(id, { duration_ms: durationMs, total_cost_usd: 0 });
+      // codex reports no cost — null makes the ledger record tokens only.
+      recordTurn(id, { duration_ms: durationMs, total_cost_usd: null });
       onTurnEnd(id);
       break;
     }
@@ -730,8 +773,7 @@ function codexHandleEvent(id: string, raw: unknown): void {
       if (!st.errs.has(text)) {
         st.errs.add(text);
         appendChat(id, { kind: 'error', text, isError: true });
-        const quota = rateLimitNote(text);
-        if (quota) appendChat(id, { kind: 'system', text: quota });
+        onLimitText(id, text);
       }
       // NOTE: the process still exits 0 on a failed turn (measured on a 401
       // run) — the exit code says nothing, only this event does.
@@ -749,16 +791,100 @@ function codexHandleEvent(id: string, raw: unknown): void {
         console.warn(`[codex] ${id}: ${msg}`);
         break;
       }
+      if (isHookTrustNotice(msg)) { console.warn(`[codex] ${id}: (expected) ${msg}`); break; }
       if (!msg || st.errs.has(msg)) break;
       st.errs.add(msg);
       appendChat(id, { kind: 'error', text: msg, isError: true });
-      const quota = rateLimitNote(msg);
-      if (quota) appendChat(id, { kind: 'system', text: quota });
+      onLimitText(id, msg);
       break;
     }
     default:
       break;
   }
+}
+
+/** Codex usage → claude field names; codex's input_tokens already includes the cached part. */
+export function mapCodexUsage(u: any) {
+  const cached = Number(u?.cached_input_tokens) || 0;
+  return {
+    input_tokens: Math.max(0, (Number(u?.input_tokens) || 0) - cached),
+    output_tokens: Number(u?.output_tokens) || 0,
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: Number(u?.cache_write_input_tokens) || 0,
+  };
+}
+
+/** Pure: the last turn_context model and last request usage in a rollout .jsonl tail (exec --json names neither). */
+export function parseRolloutTail(text: string): { model: string | null; last: any | null; window: number | null } {
+  let model: string | null = null;
+  let last: any = null;
+  let window: number | null = null;
+  for (const line of text.split('\n')) {
+    if (!line.includes('"turn_context"') && !line.includes('"token_count"')) continue;
+    try {
+      const j = JSON.parse(line);
+      if (j.type === 'turn_context' && typeof j.payload?.model === 'string') model = j.payload.model;
+      else if (j.payload?.type === 'token_count' && j.payload.info?.last_token_usage) {
+        last = j.payload.info.last_token_usage;
+        window = Number(j.payload.info.model_context_window) || window;
+      }
+    } catch {
+      /* the tail's first line is usually cut */
+    }
+  }
+  return { model, last, window };
+}
+
+const ROLLOUT_CHUNK = 1 << 20;
+const ROLLOUT_MAX_SCAN = 32 << 20;
+
+function readRollout(id: string, st: CodexSessionState): { model: string | null; last: any | null; window: number | null } {
+  const thread = getSession(id)?.claude?.sessionId;
+  if (!thread) return { model: null, last: null, window: null };
+  if (!st.rollout || !st.rollout.endsWith(`-${thread}.jsonl`)) st.rollout = findRollout(path.join(codexHomeFor(id), 'sessions'), thread);
+  if (!st.rollout) return { model: null, last: null, window: null };
+  try {
+    const fd = fs.openSync(st.rollout, 'r');
+    try {
+      // Walk back a chunk at a time: turn_context sits at the start of the turn, token_count near the end.
+      const size = fs.fstatSync(fd).size;
+      let pos = size;
+      let tail = Buffer.alloc(0);
+      let seen: { model: string | null; last: any; window: number | null } = { model: null, last: null, window: null };
+      while (pos > 0 && size - pos < ROLLOUT_MAX_SCAN) {
+        const len = Math.min(pos, ROLLOUT_CHUNK);
+        pos -= len;
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, pos);
+        tail = Buffer.concat([buf, tail]);
+        if (pos > 0 && !tail.subarray(0, len + 64).includes('"turn_context"')) continue;
+        seen = parseRolloutTail(tail.toString('utf8'));
+        if (seen.model) break;
+      }
+      return seen.model ? seen : parseRolloutTail(tail.toString('utf8'));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { model: null, last: null, window: null };
+  }
+}
+
+function findRollout(dir: string, thread: string): string | null {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const e of entries.sort((a, b) => b.name.localeCompare(a.name))) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const hit = findRollout(p, thread);
+      if (hit) return hit;
+    } else if (e.name.endsWith(`-${thread}.jsonl`)) return p;
+  }
+  return null;
 }
 
 /** The bookkeeping claude does on its `result` event — kept identical on purpose. */
@@ -802,37 +928,125 @@ const codexDriver: EngineDriver = {
   permissions: { kind: 'none' },
   injectMcp: codexInjectMcp,
   modelArgs: codexModelArgs,
+  effortLevels: (s: Session) => codexEffortLevels(s.claude?.modelChoice, codexModels()),
 };
 
 registerEngine(codexDriver);
+setCodexCatalogSource(() => codexModels().map((m) => m.id));
+setCodexWindowSource(() => codexModels().map((m) => ({ id: m.id, contextWindow: m.contextWindow })));
 
 // Exported for the tests, which drive the pure pieces against the recorded
 // fixtures in test/fixtures/codex-stream/ without spawning anything.
 export { codexDriver, codexPrepare, codexBuildSpawn, codexHandleEvent, codexModelArgs, flatToolName, mcpTables, TOOL_TIMEOUT_SEC };
+// Shared with the app-server driver (server/codex-app.ts).
+export { CODEX_MODEL_RE, EFFORTS, textOfContent, restrictedAgentOf, reapGivenUpHostTool, onLimitText, onTurnEnd };
+
+/** One picker row for a Codex model — the catalog fields the cockpit needs. */
+export type CodexModelRow = { id: string; name: string; desc: string; efforts: string[]; defaultEffort: string | null; contextWindow: number | null };
 
 /**
- * The models codex actually offers. There is no live handshake for this the way
- * claude has one — `~/.codex/models_cache.json` is a background-refreshed local
- * cache, so read it when it's there and fall back to what was seen on
- * 0.153.4 when it isn't. `visibility: "hide"` rows (gpt-reserve,
- * codex-auto-review) are internal and deliberately not offered.
+ * Pure: the picker rows out of one `models_cache.json` — the server-pushed
+ * catalog codex refreshes on its own schedule. Rows are keyed `slug`, ranked
+ * by `priority` (lower first), and `visibility: "hide"` rows (gpt-reserve,
+ * codex-auto-review) are internal and deliberately not offered. `efforts` is
+ * the model's own `supported_reasoning_levels` in catalog order, which is why
+ * the cockpit's effort ladder is per model (web/src/lib/engines.js).
  */
-export function codexModels(): { id: string; name: string }[] {
+export function parseCodexModelsCache(raw: unknown): CodexModelRow[] {
+  const rows: any[] = Array.isArray(raw) ? raw : Array.isArray((raw as any)?.models) ? (raw as any).models : [];
+  return rows
+    .filter((m) => m && typeof (m.slug || m.id) === 'string' && m.visibility !== 'hide')
+    .sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0))
+    .map((m) => ({
+      id: String(m.slug || m.id),
+      name: String(m.display_name || m.name || m.slug || m.id),
+      desc: typeof m.description === 'string' ? m.description : '',
+      efforts: Array.isArray(m.supported_reasoning_levels)
+        ? m.supported_reasoning_levels.map((l: any) => (typeof l === 'string' ? l : l?.effort)).filter((e: any) => typeof e === 'string')
+        : [],
+      defaultEffort: typeof m.default_reasoning_level === 'string' ? m.default_reasoning_level : null,
+      // The effective window codex itself enforces (rollout model_context_window = context_window × percent).
+      contextWindow: Number(m.context_window) > 0 ? Math.round((Number(m.context_window) * (Number(m.effective_context_window_percent) || 100)) / 100) : null,
+    }));
+}
+
+/** Pure: rows out of the engine's `model/list` (app-server) answer; hidden models dropped. */
+export function parseCodexModelList(result: unknown): CodexModelRow[] {
+  const rows: any[] = Array.isArray((result as any)?.data) ? (result as any).data : [];
+  return rows
+    .filter((m) => m && typeof (m.id || m.model) === 'string' && !m.hidden)
+    .map((m) => ({
+      id: String(m.id || m.model),
+      name: String(m.displayName || m.id || m.model),
+      desc: typeof m.description === 'string' ? m.description : '',
+      efforts: Array.isArray(m.supportedReasoningEfforts)
+        ? m.supportedReasoningEfforts.map((e: any) => (typeof e === 'string' ? e : e?.reasoningEffort)).filter((e: any) => typeof e === 'string')
+        : [],
+      defaultEffort: typeof m.defaultReasoningEffort === 'string' ? m.defaultReasoningEffort : null,
+      contextWindow: null,
+    }));
+}
+
+const MODEL_LIST_TTL_MS = 5 * 60_000;
+let liveModels: { home: string; rows: CodexModelRow[]; at: number } | null = null;
+let modelsInflight: Promise<CodexModelRow[]> | null = null;
+let lastModelsAttempt: { home: string; at: number } | null = null;
+
+/** The codex home whose login decides the catalog: the active codex account, else the machine's ~/.codex. */
+function catalogHome(): string {
+  return codexHomeOfAccount(getActiveId('codex')) || realCodexHome();
+}
+
+/** The engine's own models_cache.json rows under `home` ([] when absent). */
+function cachedCatalog(home: string): CodexModelRow[] {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(realCodexHome(), 'models_cache.json'), 'utf8'));
-    const rows: any[] = Array.isArray(raw) ? raw : Array.isArray(raw?.models) ? raw.models : [];
-    const out = rows
-      .filter((m) => m && typeof m.id === 'string' && m.visibility !== 'hide')
-      .map((m) => ({ id: String(m.id), name: String(m.display_name || m.name || m.id) }));
-    if (out.length) return out;
+    return parseCodexModelsCache(JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8')));
   } catch {
-    /* no cache yet — fall through */
+    return [];
   }
-  return [
-    { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra' },
-    { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna' },
-    { id: 'gpt-5.5', name: 'GPT-5.5' },
-  ];
+}
+
+/** What is known without asking the engine: the last live answer for `home`, else its cache, else the machine's. */
+function knownCatalog(home: string): CodexModelRow[] {
+  if (liveModels?.home === home) return liveModels.rows;
+  const cached = cachedCatalog(home);
+  if (cached.length || home === realCodexHome()) return cached;
+  return cachedCatalog(realCodexHome());
+}
+
+/** Ask the engine for its model list now (`codex app-server` model/list); context windows merged from its cache. */
+export function refreshCodexModels({ force = false }: { force?: boolean } = {}): Promise<CodexModelRow[]> {
+  const home = catalogHome();
+  if (!force && liveModels?.home === home && Date.now() - liveModels.at < MODEL_LIST_TTL_MS) return Promise.resolve(liveModels.rows);
+  if (modelsInflight) return modelsInflight;
+  // A failed ask is not retried for the TTL either — codexModels() is on every turn's path.
+  if (!force && lastModelsAttempt?.home === home && Date.now() - lastModelsAttempt.at < MODEL_LIST_TTL_MS) return Promise.resolve(knownCatalog(home));
+  lastModelsAttempt = { home, at: Date.now() };
+  modelsInflight = import('./codex-account.js')
+    .then((ca) => ca.appServerCall(home, [{ method: 'model/list', params: {} }]))
+    .then((r) => {
+      const rows = parseCodexModelList(r['model/list']?.result);
+      if (!rows.length) return knownCatalog(home);
+      const windows = new Map(cachedCatalog(home).map((m) => [m.id, m.contextWindow]));
+      liveModels = { home, rows: rows.map((m) => ({ ...m, contextWindow: windows.get(m.id) ?? null })), at: Date.now() };
+      return liveModels.rows;
+    })
+    .catch(() => knownCatalog(home))
+    .finally(() => {
+      modelsInflight = null;
+    });
+  return modelsInflight;
+}
+
+/**
+ * The models codex offers, synchronously: the engine's last `model/list` answer
+ * for the active login, else its models_cache.json while that call is in flight.
+ * Never a hardcoded list — an unreachable engine yields [].
+ */
+export function codexModels(): CodexModelRow[] {
+  const home = catalogHome();
+  void refreshCodexModels();
+  return knownCatalog(home);
 }
 
 // Deliberately NOT used: `codex queue --thread <id> --message <t>` exists and

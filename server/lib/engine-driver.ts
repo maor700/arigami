@@ -1,5 +1,5 @@
 // The agent-engine seam: pickEngine(session) returns the EngineDriver for its process — same pattern as screen-driver.ts's pickDriver().
-// Only 'claude' exists today, registered by claude.js via registerEngine(); a future 'codex' driver is untouched here — see /tmp/codex-research/CODEX-ENGINE.md.
+// Two engines register via registerEngine(): 'claude' (claude.js) and 'codex' (codex.ts) — see docs/ENGINES.md.
 // This file has zero imports from claude.js on purpose (registry pattern, not a direct import) so claude.js -> engine-driver.ts stays one-way, never a cycle.
 
 import type { Session } from '../state.js';
@@ -27,7 +27,7 @@ export type EnginePermissions =
 
 export interface EngineDriver {
   readonly id: EngineId;
-  /** Runs before spawn (codex would write CODEX_HOME/config.toml here); claude's is a no-op. Called synchronously today — see registerEngine() note in claude.js. */
+  /** Runs synchronously before spawn (codex writes $CODEX_HOME/config.toml here); claude's is a no-op. */
   prepare(session: Session, opts: { resume: boolean }): void;
   /** sessionId is already resolved by the caller; this only arranges it into argv. */
   buildSpawn(session: Session, opts: { resume: boolean; sessionId: string | null }): BuiltSpawn;
@@ -63,20 +63,22 @@ export interface EngineDriver {
   injectMcp(session: Session): string[];
   /** --model/--effort or the engine's equivalent. */
   modelArgs(opts: { model?: string | null; effort?: string | null }): string[];
+  /** The effort levels this session's model accepts (validated by setEffort). */
+  effortLevels(session: Session): string[];
 }
 
-// Codex-shape notes for a future implementer (not applicable to claude, no interface change needed):
+// Codex-shape notes (handled in codex.ts handleEvent):
 // Codex reports {server, tool} as separate fields, not a flat name — handleEvent has to compose mcp__<server>__<tool> itself.
 // Codex's item.started/item.completed are two events sharing one item.id — handleEvent must correlate across calls, not assume 1 event = 1 tool call.
 
 const registry = new Map<EngineId, EngineDriver>();
 
-/** Each engine implementation calls this once at module load (claude.js does it at the bottom of the file). */
+/** Each engine implementation calls this once at module load (claude.js and codex.ts, at the bottom of the file). */
 export function registerEngine(driver: EngineDriver): void {
   registry.set(driver.id, driver);
 }
 
-/** Defaults to 'claude'; throws (does not silently fall back) for a named-but-unregistered engine like 'codex' today. */
+/** Defaults to 'claude'; throws (does not silently fall back) for a named engine with no registered driver. */
 export function pickEngine(session?: Pick<Session, 'engine'> | null): EngineDriver {
   const id: EngineId = (session?.engine as EngineId) || 'claude';
   const driver = registry.get(id);

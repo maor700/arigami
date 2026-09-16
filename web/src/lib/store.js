@@ -5,6 +5,7 @@ import { clearShellSignInGuard } from './shell.js';
 import { api, setUnauthorizedHandler } from './api.js';
 import { mergeChatEvents, prependChatEvents, appendChatEvents, foldSetupUpdates } from './chat-merge.js';
 import { confirmDialog } from './confirm.js';
+import { setDefaultEngine, setCodexTransport, engineLabel } from './engines.js';
 import { toast, toastError } from './toast.js';
 import { t } from './i18n.js';
 import { sessionLabel } from '../components/ui.jsx';
@@ -32,7 +33,7 @@ let state = {
   wizardTick: 0, // B3: bumps on every onboarding.step bus event (Wizard.jsx re-reads)
   setupTick: 0, // S2: bumps on every setup.* bus event (Connections card / Setup re-read)
   // RES1: the supervisor's health map (sessionId → {state, reason, dot, since})
-  // and the aggregated "ממתין לך" queue. Both arrive as a `health` bus event
+  // and the aggregated "waiting for you" queue. Both arrive as a `health` bus event
   // whenever they change; `loadHealth()` is the initial snapshot.
   health: {},
   waiting: [],
@@ -138,31 +139,31 @@ export function setLastSent(sessionId, draft) {
 
 // Stop a session's running turn and, if it had an in-flight prompt, restore
 // it to that session's draft so the composer isn't left empty after Esc/■.
-// Confirm-then-restart a session's claude proc in place (worktree/chat/metadata
+// Confirm-then-restart a session's agent process in place (worktree/chat/metadata
 // survive; MCP connections are re-established). Shared by the rail row menu and
 // the terminal-header gear menu. Completion is announced by upsertSession when
 // claude.state leaves 'restarting'.
 export async function restartSession(session) {
   if (!session?.id) return;
   const ok = await confirmDialog({
-    title: 'Restart this session?',
-    body: `Kills the claude process for "${sessionLabel(session)}" and respawns it in place — the worktree, chat and metadata are kept, and MCP connections are re-established. Anything it is doing right now is aborted.`,
-    confirmLabel: 'Restart',
+    title: t('rail.restartConfirmTitle'),
+    body: t('rail.restartConfirmBody', { engine: engineLabel(session.engine), name: sessionLabel(session) }),
+    confirmLabel: t('rail.restartConfirm'),
   });
-  if (ok) await api.post(`/sessions/${session.id}/restart`).catch((e) => toastError(`Restart failed: ${e.message || e}`));
+  if (ok) await api.post(`/sessions/${session.id}/restart`).catch((e) => toastError(t('rail.restartFailed', { error: e.message || e })));
 }
 
-// Confirm-then-clear: drops the claude conversation and starts fresh in the
+// Confirm-then-clear: drops the agent conversation and starts fresh in the
 // SAME tab (worktree/metadata/chat log survive — only the model's memory of
 // the conversation resets, same as this tab becoming a brand new session).
 export async function clearSessionConversation(session) {
   if (!session?.id) return;
   const ok = await confirmDialog({
-    title: 'Clear this conversation?',
-    body: `Starts a brand new claude conversation for "${sessionLabel(session)}" — the worktree, chat log and metadata are kept, but the model loses all memory of what was discussed so far. Anything it is doing right now is aborted.`,
-    confirmLabel: 'Clear',
+    title: t('rail.clearConfirmTitle'),
+    body: t('rail.clearConfirmBody', { engine: engineLabel(session.engine), name: sessionLabel(session) }),
+    confirmLabel: t('rail.clearConfirm'),
   });
-  if (ok) await api.post(`/sessions/${session.id}/clear`).catch((e) => toastError(`Clear failed: ${e.message || e}`));
+  if (ok) await api.post(`/sessions/${session.id}/clear`).catch((e) => toastError(t('rail.clearFailed', { error: e.message || e })));
 }
 
 // SIMPLE1: per-session chat presentation ('simple' | 'full'). Stored in
@@ -427,6 +428,8 @@ export async function loadExtensions() {
 export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
+    setDefaultEngine(cfg?.defaultEngine);
+    setCodexTransport(cfg?.codexTransport);
     setState({ config: cfg || {} });
   } catch {
     setState({ config: null });
@@ -1193,6 +1196,8 @@ function handleEvent(msg) {
       // UPD1: the `claude` CLI updater's outcome — one line, wherever you are.
       if (ev?.kind === 'claude-update-done') toast(t('host.cli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
       else if (ev?.kind === 'claude-update-failed') toastError(t('host.cli.failedToast', { error: ev.error || '?' }));
+      else if (ev?.kind === 'codex-update-done') toast(t('host.codexCli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
+      else if (ev?.kind === 'codex-update-failed') toastError(t('host.codexCli.failedToast', { error: ev.error || '?' }));
       return;
     }
     default:

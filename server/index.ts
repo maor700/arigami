@@ -18,6 +18,7 @@ import { killAll, kickAutoPlayAll } from './claude.js';
 // edge would be a cycle. Without this line pickEngine() throws "engine not
 // implemented: codex" for every session that asked for it.
 import './codex.js';
+import './codex-app.js'; // re-registers 'codex' on app-server unless cfg.codexTransport is 'exec'
 import { migrateLegacyMcpRegistration, autoStartBridge, stopBridge } from './whatsapp-bridge.js';
 import { sweepOrphans, HOST_ID } from './lib/children.js';
 import { claimHost, releaseHost } from './lib/hostlock.js';
@@ -451,6 +452,10 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./lib/claude-update.js')
     .then((m: any) => m.startClaudeUpdater())
     .catch((e: any) => console.error('[host] claude updater failed to start:', e?.message));
+  // P4-6: can codex's own sandbox start here? Cached for Settings › Host; spawn flags unchanged.
+  import('./lib/codex-sandbox.js')
+    .then((m: any) => m.probeCodexSandbox())
+    .catch((e: any) => console.error('[host] codex sandbox probe failed:', e?.message));
   // The same idea for Arigami itself: notice a new release without anyone
   // opening Settings. Checks every few hours (cfg.host.updateCheck), announces
   // once per version, and only applies it when cfg.host.autoUpgrade is on.

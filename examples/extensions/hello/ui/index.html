@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="he" dir="rtl">
+<html lang="en" dir="auto">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -27,12 +27,12 @@
   </head>
   <body>
     <h1 id="title">Hello</h1>
-    <p class="sub" id="ctx">מתחבר לקוקפיט…</p>
+    <p class="sub" id="ctx">Connecting to the cockpit…</p>
 
-    <textarea id="text" placeholder="מה לשלוח לסשן?">תסביר בשתי שורות מה זו הרחבה ב-Arigami.</textarea>
+    <textarea id="text" placeholder="What to send to the session?">Explain in two lines what an Arigami extension is.</textarea>
     <div class="row">
-      <button id="send" disabled>שלח לסשן</button>
-      <button id="echo" disabled>הרץ hello_echo</button>
+      <button id="send" disabled>Send to session</button>
+      <button id="echo" disabled>Run hello_echo</button>
     </div>
     <pre id="log">—</pre>
 
@@ -48,18 +48,18 @@
       (async () => {
         try {
           const ctx = await arigami.ready();
-          const greeting = (ctx.settings && ctx.settings.greeting) || 'שלום';
+          const greeting = (ctx.settings && ctx.settings.greeting) || 'hello';
           $('title').textContent = greeting + '!';
-          $('ctx').textContent = 'סשן ' + ctx.sessionId + (ctx.cwd ? ' · ' + ctx.cwd : '');
+          $('ctx').textContent = 'Session ' + ctx.sessionId + (ctx.cwd ? ' · ' + ctx.cwd : '');
           $('send').disabled = false;
           $('echo').disabled = false;
-          log('מוכן. permissions: ' + (ctx.permissions || []).join(', '));
+          log('Ready. permissions: ' + (ctx.permissions || []).join(', '));
 
           arigami.subscribe(['chat'], (ev) => {
             if (ev && ev.kind === 'result') arigami.setStatus({ badge: '✓' }).catch(() => {});
           });
         } catch (e) {
-          $('ctx').textContent = 'הדף לא רץ בתוך טאב של Arigami';
+          $('ctx').textContent = 'This page is not running inside an Arigami tab';
           log(String((e && e.message) || e));
         }
       })();
@@ -72,7 +72,7 @@
           await arigami.setStatus({ badge: r.delivered === 'now' ? '→' : '⏳' });
           log(r);
         } catch (e) {
-          log('שגיאה: ' + ((e && e.message) || e));
+          log('Error: ' + ((e && e.message) || e));
         }
       };
 
@@ -80,7 +80,7 @@
         try {
           log(await arigami.runTool('hello_echo', { text: 'from the tab' }));
         } catch (e) {
-          log('שגיאה: ' + ((e && e.message) || e));
+          log('Error: ' + ((e && e.message) || e));
         }
       };
     </script>

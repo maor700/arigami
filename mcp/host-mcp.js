@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 // arigami MCP server (stdio). Every tool is a thin fetch() to the host's
 // REST API. Session scoping: explicit session_id arg wins, else the
-// ARIGAMI_SESSION_ID env injected by the host when it spawned this claude.
+// ARIGAMI_SESSION_ID env injected by the host when it spawned this agent process.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { makeBlockingCall } from './blocking-call.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // INTERNAL base for host→self fetches only. NEVER put HOST into a value the
 // agent might echo to a human — results carry host-relative paths instead
@@ -15,7 +17,7 @@ const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
 // Where the cockpit lives on any origin; the human's browser resolves it.
 const PUBLIC_PATH = (process.env.ARIGAMI_PUBLIC_PATH || '/__host/').replace(/\/+$/, '') + '/';
 // C1: the host injects a per-session bearer token (ARIGAMI_TOKEN) into every
-// claude it spawns; without it every /__api call is a 401 once auth is on.
+// agent process it spawns; without it every /__api call is a 401 once auth is on.
 const TOKEN = process.env.ARIGAMI_TOKEN || '';
 
 async function api(method, path, body, headers = {}) {
@@ -55,6 +57,21 @@ const patchSession = async (a, body) => {
 // shared store), else the agent this session was born from (ARIGAMI_AGENT).
 const agentNs = (a) => (a?.agent !== undefined ? String(a.agent || '') : process.env.ARIGAMI_AGENT || '') || null;
 
+
+// OPENUI pilot: the render_ui syntax lives in skills/render-ui/SKILL.md (generated
+// from the web library by web/scripts/openui-prompt.mjs); the tool description
+// carries its component list so an agent can write a block without loading the skill.
+function openuiHelp() {
+  try {
+    const md = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../skills/render-ui/SKILL.md'), 'utf8');
+    return md.replace(/^---[\s\S]*?---\s*/, '').replace(/<!--[\s\S]*?-->\s*/, '').trim();
+  } catch {
+    return '';
+  }
+}
+const OPENUI_HELP = openuiHelp();
+const OPENUI_SIGNATURES = (OPENUI_HELP.match(/## Components\n\n([\s\S]*?)\n\n## /) || [])[1] || '';
+
 const SID_PROP = { session_id: { type: 'string', description: 'Host session id (defaults to ARIGAMI_SESSION_ID env)' } };
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
@@ -62,7 +79,7 @@ const TOOLS = [
   {
     name: 'create_session',
     description:
-      'Create a new host session (spawns a claude process in cwd). Returns {id, url} — `url` is a host-RELATIVE path ' +
+      'Create a new host session (spawns an agent process — claude or codex — in cwd). Returns {id, url} — `url` is a host-RELATIVE path ' +
       '(/__host/?session=<id>) that works from any device; show it as-is, never prefix it with http://localhost.\n' +
       'DISPATCH (orchestration): pass `kind` to spawn a CHILD under you — you (the caller) automatically become ' +
       'its master, and the host places it in your project folder (auto-created on first spawn). Kinds: ' +
@@ -78,7 +95,7 @@ const TOOLS = [
       cwd: { type: 'string' },
       prompt: { type: 'string', description: 'First message to send to the new session. Merged in after `skill`\'s own instructions if both are given.' },
       skill: { type: 'string', description: 'Name of a bundled skill (from GET /__api/skills) for the session to run, e.g. for ticket work' },
-      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session (default "claude"). NOT inherited from you: a child runs on the engine named here, so an engine choice never spreads through a tree unseen. An engine with no registered driver fails loudly at spawn rather than quietly falling back.' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'Which agent-engine CLI drives the new session. Default: the `agent`\'s engine, else (with `kind`) your own engine, else the host default engine.' },
       model: { type: 'string', description: 'Model value for the chosen `engine` (claude: a `--model` alias or full id; codex: e.g. gpt-5.6-terra); omit for that engine\'s default' },
       effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], description: 'Reasoning effort. claude: `--effort` (low…max). codex: the `model_reasoning_effort` config key, and its ladder is per-model — gpt-5.6-terra adds `ultra`, gpt-5.5 stops at `xhigh`. Omit for the model\'s own default.' },
       permission_mode: { type: 'string', enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'] },
@@ -90,7 +107,7 @@ const TOOLS = [
       branch_prefix: { type: 'string', description: 'full+worktree only: branch prefix (default "child")' },
       needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
       needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
-      agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s default model (unless `model` is given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
+      agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s engine and default model (unless `engine` / `model` are given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
     }),
     run: async (a) => {
       const body = {
@@ -125,7 +142,7 @@ const TOOLS = [
   {
     name: 'merge_session',
     description:
-      'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any claude turn. ' +
+      'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any agent turn. ' +
       'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
       'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
       'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
@@ -196,7 +213,7 @@ const TOOLS = [
     name: 'cronjob',
     description:
       'Schedule a durable, host-owned job (survives restart — unlike a scheduler built into the agent CLI itself ' +
-      '(Claude Code\'s CronCreate), which is ' +
+      '(e.g. Claude Code\'s CronCreate), which is ' +
       'session-local and lost on close). action "create": schedule_kind "cron" (5-field expr, e.g. "0 9 * * 1-5"), ' +
       '"interval" (e.g. "30m"/"2h"/"1d", repeats from the last run), or "at" (ISO timestamp, fires once). ' +
       'session_mode "isolated" (default) spawns a fresh session per run with `prompt` as its first message + the host\'s ' +
@@ -224,6 +241,7 @@ const TOOLS = [
       deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
       deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
       autonomous: { type: 'boolean', description: 'create: isolated runs only — bypassPermissions + no-questions directive' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'create: CLI the isolated runs use; omit for the agent\'s engine, else the host default' },
       agent: { type: 'string', description: 'create: agent slug the isolated runs are born from (persona, memory, connections, browser profile — same as create_session({agent})). Defaults to YOUR agent when you run as one; pass "" for a plain run. Unknown slug → error.' },
       ...SID_PROP,
     }, ['action']),
@@ -242,6 +260,7 @@ const TOOLS = [
           deliver: { push: a.deliver_push, whatsapp: a.deliver_whatsapp, master: a.deliver_master },
           autonomous: a.autonomous,
           ...(a.agent !== undefined ? { agent: a.agent } : {}),
+          ...(a.engine ? { engine: a.engine } : {}),
           createdBySessionId: sid(a),
         });
       }
@@ -251,7 +270,7 @@ const TOOLS = [
           .filter((t) => t.type === 'cron')
           .map((t) => ({
             id: t.id, name: t.name, enabled: t.enabled, schedule: t.schedule, prompt: t.prompt,
-            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null,
+            sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null, engine: t.engine || null,
             lastRun: t.lastRun, nextRunAt: t.nextRunAt, recentRuns: (t.runs || []).slice(-5),
           }));
       }
@@ -286,7 +305,7 @@ const TOOLS = [
   {
     name: 'delete_session',
     description:
-      'Delete a session — removes it from the rail and kills its claude process. ' +
+      'Delete a session — removes it from the rail and kills its agent process. ' +
       'Pass run_cleanup:true to also run the session metadata.cleanup commands (e.g. kill dev servers, remove the worktree). ' +
       'Idempotent: succeeds even if the session is already gone. ' +
       'NOTE: deleting the CURRENT session (no session_id, or your own) ends it immediately — call it last, only after a human confirmed (e.g. via request_action).',
@@ -304,7 +323,7 @@ const TOOLS = [
   {
     name: 'restart_session',
     description:
-      'Restart a session in place — kills its claude process and respawns it (--resume) in the same cwd. ' +
+      'Restart a session in place — kills its agent process and respawns it (resuming the conversation) in the same cwd. ' +
       'The worktree, branch, metadata, chat and tabs are all preserved; only the process is fresh, which re-establishes ' +
       'dropped MCP server connections (Linear/Notion/Figma). Also revives a dead session. ' +
       'NOTE: restarting the CURRENT session (no session_id, or your own) aborts your in-flight turn — call it last.',
@@ -443,6 +462,21 @@ const TOOLS = [
     },
   },
   {
+    name: 'render_ui',
+    description:
+      'Render a rich UI block (stats, table, bar/line chart, buttons, a form) as a card in this session\'s chat, written in OpenUI Lang. ' +
+      'One statement per line, `root = Stack([...])` required, arguments POSITIONAL in the order below, optional ones may be omitted from the end; ' +
+      'values are "strings", numbers, true/false, null, [arrays] and references to other statements. Button/Form submit come back to you as the human\'s next message ' +
+      '(a Form adds a ```json block of its fields). Keep blocks small — one card, chart, table or form. Full syntax + examples: the `render-ui` skill. ' +
+      'Prefer publish_artifact for whole pages.\n\nComponents:\n' + OPENUI_SIGNATURES,
+    inputSchema: obj({
+      ui: { type: 'string', description: 'OpenUI Lang source, e.g. root = Stack([s])\ns = Stat("Visitors", "12,480", "+8%")' },
+      title: { type: 'string', description: 'Optional card title' },
+      ...SID_PROP,
+    }, ['ui']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/ui`, { ui: a.ui, title: a.title }),
+  },
+  {
     name: 'share_artifact',
     description:
       'Mint an expiring public link for an already-published artifact (its CURRENT version). Anyone with the link can open that one artifact — ' +
@@ -577,7 +611,7 @@ const TOOLS = [
       const id = sid(a);
       await api('PATCH', `/__api/sessions/${id}`, { status: 'In Review' });
       return api('POST', `/__api/sessions/${id}/action`, {
-        prompt: a.summary || 'Claude finished — review the changes',
+        prompt: a.summary || 'The agent finished — review the changes',
         buttons: [
           { label: 'Request changes', value: 'request-changes' },
           { label: '✓ Verified', value: 'verified', style: 'primary' },
@@ -682,7 +716,7 @@ const TOOLS = [
     name: 'request_setup',
     description:
       'Ask for a capability this host does not have yet (JIT setup) — call it whenever a tool answers {needs_setup:"<capability>", why, hint}. ' +
-      'Capability ids: identity (Google login in Chrome) · claude · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
+      'Capability ids: identity (Google login in Chrome) · claude (Claude account) · codex (ChatGPT login / OpenAI key) — the engine logins, each only for sessions on that engine · git (gh/PAT) · repo:<name> · whatsapp · composio:<toolkit> (gmail/googledrive/googlecalendar/slack/linear/notion…) · desktop · push · remote (tailscale) · telemetry. ' +
       'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
       'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
       'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
@@ -929,13 +963,13 @@ const TOOLS = [
       sessionId: a.session_id || process.env.ARIGAMI_SESSION_ID,
     }),
   },
-  // ---- A1 agents ("צוות") — persistent identities sessions are born from ----
+  // ---- A1 agents (the Team section) — persistent identities sessions are born from ----
   {
     name: 'create_agent',
     description:
       'Create a persistent AGENT (who): name, emoji, persona (≤~20 lines "who you are + limits", goes into the system prompt of every session born from it), ' +
       'default model, referenced SHARED skills (names from GET /__api/skills — agents have no private skills), tool/domain allowlists and a daily token budget. ' +
-      'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under "צוות"; sessions born from it (create_session({agent})) carry its emoji/color. ' +
+      'The agent gets its own memory namespace ($ARIGAMI_DIR/agents/<slug>/memory) and a rail entry under Team; sessions born from it (create_session({agent})) carry its emoji/color. ' +
       'confirm (default true): post an editable Agent card in THIS chat — the human confirms/cancels there and you get a message with the decision; nothing is written before that. ' +
       'confirm:false creates it immediately (only when the human already spelled out every field). Returns the card payload {cardId, state, agent?}. ' +
       'KEEP IT SIMPLE: ask the human only for name, emoji and a few persona lines; leave model/budget/tools/domains/skills unset unless they asked — the card hides them under "advanced settings" and everything has a sensible default.',
@@ -944,7 +978,8 @@ const TOOLS = [
       slug: { type: 'string', description: 'lowercase letters/digits/hyphens; derived from name when omitted (pass one for Hebrew names)' },
       emoji: { type: 'string' },
       color: { type: 'string', description: '#rrggbb (host picks a free palette color when omitted)' },
-      model: { type: 'string', description: '`claude --model` value; omit for the CLI default' },
+      engine: { type: 'string', enum: ['claude', 'codex'], description: 'CLI the agent\'s sessions run on; omit for the host default engine' },
+      model: { type: 'string', description: 'Model for the agent\'s engine (claude alias/id, or a codex catalog slug); omit for the engine default' },
       persona: { type: 'string' },
       skills: { type: 'array', items: { type: 'string' }, description: 'Names of shared skills the agent should use' },
       tools: { type: 'array', items: { type: 'string' }, description: 'Tool allowlist (advisory in A1)' },
@@ -960,21 +995,22 @@ const TOOLS = [
   },
   {
     name: 'list_agents',
-    description: 'List the agents ("צוות") on this host: slug, name, emoji, color, model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
+    description: 'List the agents (the Team section) on this host: slug, name, emoji, color, engine (claude|codex; absent = host default), model, skills, tools, budget, homeSessionId, persona. Use a slug with create_session({agent}).',
     inputSchema: obj({}),
     run: async () => (await api('GET', '/__api/agents')).agents,
   },
   {
     name: 'update_agent',
     description:
-      'Update an agent: any of name/emoji/color/model/persona/skills/tools/domains/budget (only the fields you pass change; skills/tools/domains replace the list). ' +
+      'Update an agent: any of name/emoji/color/engine/model/persona/skills/tools/domains/budget (only the fields you pass change; skills/tools/domains replace the list). ' +
       'Applied immediately (the human sees an "updated" Agent card in this chat). Existing sessions of the agent keep their spawn-time persona until restarted.',
     inputSchema: obj({
       slug: { type: 'string' },
       name: { type: 'string' },
       emoji: { type: 'string' },
       color: { type: 'string' },
-      model: { type: ['string', 'null'] },
+      engine: { type: ['string', 'null'], enum: ['claude', 'codex', null], description: 'CLI the agent\'s sessions run on; null = host default engine' },
+      model: { type: ['string', 'null'], description: 'Model for the agent\'s engine; null = engine default' },
       persona: { type: 'string' },
       skills: { type: 'array', items: { type: 'string' } },
       tools: { type: 'array', items: { type: 'string' } },
@@ -1023,6 +1059,9 @@ const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities:
 // tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a
 // hidden one is refused here too (the PreToolUse hook is the outer layer).
 let hiddenTools = null; // Set<string> | null (null = unrestricted / not yet known)
+// P2-3: codex never asks for permission, so a permission_prompt card would wait 30 minutes for nobody.
+const ENGINE_HIDDEN = new Set(process.env.ARIGAMI_ENGINE === 'codex' ? ['permission_prompt'] : []);
+const isHidden = (name) => ENGINE_HIDDEN.has(name) || !!hiddenTools?.has(name);
 
 // EXT: teach `register_listener` about the types an extension registered. One
 // call at startup (like refreshHidden's policy probe); a failure keeps the
@@ -1067,13 +1106,14 @@ async function refreshHidden() {
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   await refreshHidden();
   return {
-    tools: TOOLS.filter((t) => !hiddenTools?.has(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    tools: TOOLS.filter((t) => !isHidden(t.name)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool) return { content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }], isError: true };
+  if (ENGINE_HIDDEN.has(tool.name)) return { content: [{ type: 'text', text: `error: tool "${tool.name}" does not exist on this engine` }], isError: true };
   if (hiddenTools?.has(tool.name))
     return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
   try {
