@@ -25,6 +25,7 @@
     "host:create-session",
     "tools:pr_list_repos",
     "tools:pr_list_pulls",
+    "tools:pr_prepare",
     "tools:pr_import_comments"
   ],
   "settings": {

@@ -62,8 +62,8 @@ export function parsePrRef(input: string): { slug: string; number: number } | nu
 export function reviewPrompt(prUrl: string, reviewMode: string): string {
   const checkout =
     reviewMode === 'nocheckout'
-      ? 'Do NOT check the branch out. Read the diff with `gh pr diff` and review from that alone — this repo may be in use by another session.'
-      : 'Check the PR out into its own worktree (`gh pr checkout`) so you can read the code around each change, not only the diff.';
+      ? 'The branch is NOT checked out — this session runs outside the repo. Read the diff with `gh pr diff` and review from that alone.'
+      : 'The PR is already checked out into its own worktree (pr_prepare did it before this session was created), and this session starts in it: read the code around each change, not only the diff.';
   return [
     `Review the pull request ${prUrl}.`,
     '',
@@ -143,7 +143,19 @@ const listPulls: ToolDef<{ repo: string; state?: string; author?: string; search
   },
 };
 
-const importComments: ToolDef<{ session: string; pr?: string; repo?: string; number?: number }> = {
+/**
+ * A bot's comment is not review feedback.
+ *
+ * Not a hypothetical filter: the first real PR this was run against carried
+ * four comments, and two of them were a linear-code linkback (an HTML comment)
+ * and a vercel deployment table with `[vc]: #<base64>` metadata. Importing
+ * those buries the two comments a human actually wrote. `user.type` is the
+ * authoritative signal; the `[bot]` suffix catches the rest.
+ */
+const isBot = (u: any): boolean =>
+  u?.type === 'Bot' || /\[bot\]$/i.test(String(u?.login || ''));
+
+const importComments: ToolDef<{ session: string; pr?: string; repo?: string; number?: number; includeBots?: boolean }> = {
   name: 'pr_import_comments',
   description:
     'Pull a pull request\'s existing review comments into this session\'s Changes tab as suggestions the human can accept or reject. Run it before writing your own review so you do not repeat a point somebody already made.',
@@ -155,6 +167,7 @@ const importComments: ToolDef<{ session: string; pr?: string; repo?: string; num
       pr: { type: 'string', description: 'PR url or owner/repo#123. Omit to use the session\'s metadata.' },
       repo: { type: 'string', description: 'owner/repo (with `number`, instead of `pr`)' },
       number: { type: 'number', description: 'PR number (with `repo`)' },
+      includeBots: { type: 'boolean', description: 'Also import comments posted by bots (CI, preview deployments, linkbacks). Off by default — they are not review feedback.' },
     },
   },
   async run(args, ctx: ToolCtx) {
@@ -191,9 +204,16 @@ const importComments: ToolDef<{ session: string; pr?: string; repo?: string; num
     if (!inline.ok && !general.ok)
       return { error: inline.err.trim() || general.err.trim() || 'gh api failed' };
 
+    // Plain text, NOT markdown. Comments.jsx renders a body with
+    // `whitespace-pre-wrap` and nothing else, so `**bold**` arrives on screen
+    // as literal asterisks. Verified by looking at the rendered card.
+    const attribute = (login: string, body: string) => `@${login || 'someone'} on GitHub:\n\n${body}`;
     const comments: Record<string, unknown>[] = [];
+    const wantBots = args?.includeBots === true;
+    let skipped = 0;
     for (const c of parseJson<any[]>(inline.out, [])) {
       if (!c?.body) continue;
+      if (!wantBots && isBot(c.user)) { skipped++; continue; }
       comments.push({
         kind: c.line || c.original_line ? 'line' : 'file',
         path: c.path,
@@ -201,21 +221,120 @@ const importComments: ToolDef<{ session: string; pr?: string; repo?: string; num
         // current diff); original_line keeps it anchored somewhere useful
         // instead of dropping the comment on the floor.
         line: c.line ?? c.original_line ?? undefined,
-        body: `**@${c.user?.login || 'someone'} on GitHub:**\n\n${c.body}`,
+        body: attribute(c.user?.login, c.body),
       });
     }
     for (const c of parseJson<any[]>(general.out, [])) {
       if (!c?.body) continue;
-      comments.push({ kind: 'feature', body: `**@${c.user?.login || 'someone'} on GitHub:**\n\n${c.body}` });
+      if (!wantBots && isBot(c.user)) { skipped++; continue; }
+      comments.push({ kind: 'feature', body: attribute(c.user?.login, c.body) });
     }
-    if (!comments.length) return { imported: 0, pr: `${slug}#${number}` };
+    if (!comments.length) return { imported: 0, skippedBots: skipped, pr: `${slug}#${number}` };
 
     // They arrive as SUGGESTIONS, not as the session's own comments: these are
     // other people's words, and the human decides which of them this review
     // should carry. That is the same accept/reject the auto-review already uses.
     await ctx.host.api('POST', `/__api/sessions/${encodeURIComponent(session)}/review/suggestions`, { comments });
-    return { imported: comments.length, pr: `${slug}#${number}` };
+    return { imported: comments.length, skippedBots: skipped, pr: `${slug}#${number}` };
   },
 };
 
-export const tools: ToolDef[] = [listRepos, listPulls, importComments];
+const prepare: ToolDef<{ pr: string; mode?: string }> = {
+  name: 'pr_prepare',
+  description:
+    "Put the pull request on disk and return the directory a review session should run in. Call this BEFORE creating the session: a session's cwd is fixed when it is created and cannot be changed afterwards.",
+  inputSchema: {
+    type: 'object',
+    required: ['pr'],
+    properties: {
+      pr: { type: 'string', description: 'PR url or owner/repo#123' },
+      mode: { type: 'string', description: "worktree (default) = check it out. nocheckout = do nothing and return no cwd." },
+    },
+  },
+  async run(args, ctx: ToolCtx) {
+    const ref = parsePrRef(String(args?.pr || ''));
+    if (!ref) return { error: `could not read a PR out of "${args?.pr}"` };
+    if (args?.mode === 'nocheckout') return { cwd: null, mode: 'nocheckout' };
+
+    // reposDir is the host's, not ours to invent: a clone anywhere else is
+    // invisible to the repo picker and to every other session.
+    const cfg = await ctx.host.api('GET', '/__api/config');
+    const reposDir = String(cfg?.reposDir || '').trim();
+    if (!reposDir) return { error: 'the host has no reposDir configured' };
+
+    const name = ref.slug.split('/')[1];
+    const clone = `${reposDir}/${name}`;
+    const wt = `${clone}-pr-${ref.number}`;
+
+    const exists = await Bun.file(`${clone}/.git/HEAD`).exists().catch(() => false);
+    if (!exists) {
+      // --filter=blob:none, not --depth: the Changes tab's `pr` mode diffs
+      // against the merge-base, so a shallow clone has nothing to diff and the
+      // tab comes up empty. Blobless keeps the full commit graph (merge-base
+      // works) and fetches file contents only when something reads them.
+      const c = await gh(['repo', 'clone', ref.slug, clone, '--', '--filter=blob:none'], 600_000);
+      if (!c.ok) return { error: c.err.trim() || `could not clone ${ref.slug}` };
+    }
+
+    const f = await gh(['api', `repos/${ref.slug}`, '--jq', '.default_branch'], 20_000);
+    const base = f.ok ? f.out.trim() || 'main' : 'main';
+    const git = async (a: string[], t = 180_000) => {
+      const p = Bun.spawn(['git', '-C', clone, ...a], { stdout: 'pipe', stderr: 'pipe' });
+      const kill = setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, t);
+      const [out, err, code] = await Promise.all([
+        new Response(p.stdout).text(),
+        new Response(p.stderr).text(),
+        p.exited,
+      ]);
+      clearTimeout(kill);
+      return { ok: code === 0, out, err };
+    };
+    // The base, as a remote-tracking ref: that is what the Changes tab's `pr`
+    // mode diffs against, and writing to refs/remotes/ is allowed even while
+    // the local branch of the same name is checked out.
+    const fb = await git(['fetch', 'origin', `${base}:refs/remotes/origin/${base}`, '--force']);
+    if (!fb.ok) return { error: fb.err.trim() || `could not fetch ${base}` };
+
+    // refs/pull/<n>/head exists on the BASE repo even when the PR comes from a
+    // fork, so this covers both without adding a remote.
+    //
+    // Fetched to FETCH_HEAD and checked out DETACHED, deliberately. The obvious
+    // version — fetch into a local `arigami-pr-<n>` branch — works exactly once:
+    // on the second run git refuses with "refusing to fetch into branch …
+    // checked out at <worktree>", which is the common case (reviewing the same
+    // PR again, or the PR got new commits). No branch, no conflict.
+    const fh = await git(['fetch', 'origin', `pull/${ref.number}/head`, '--force']);
+    if (!fh.ok) return { error: fh.err.trim() || `could not fetch PR #${ref.number}` };
+    const head = await git(['rev-parse', 'FETCH_HEAD']);
+    const sha = head.out.trim();
+    if (!head.ok || !sha) return { error: 'could not resolve the PR head' };
+
+    const already = await Bun.file(`${wt}/.git`).exists().catch(() => false);
+    if (!already) {
+      const w = await git(['worktree', 'add', '--detach', wt, sha]);
+      if (!w.ok && !/already exists/i.test(w.err)) return { error: w.err.trim() || 'could not create the worktree' };
+      return { cwd: wt, sha, base, repo: ref.slug, number: ref.number, created: true };
+    }
+
+    // Reusing a worktree from an earlier review. Only move it when it is clean:
+    // a review session is not supposed to edit anything, but if something did,
+    // silently discarding it would be the worst possible behaviour here.
+    const wtGit = async (a: string[]) => {
+      const p = Bun.spawn(['git', '-C', wt, ...a], { stdout: 'pipe', stderr: 'pipe' });
+      const [out, err, code] = await Promise.all([
+        new Response(p.stdout).text(),
+        new Response(p.stderr).text(),
+        p.exited,
+      ]);
+      return { ok: code === 0, out, err };
+    };
+    const dirty = (await wtGit(['status', '--porcelain'])).out.trim();
+    if (dirty)
+      return { cwd: wt, sha: null, base, repo: ref.slug, number: ref.number, reused: true, note: 'the existing worktree has uncommitted changes and was left exactly as it is — it may not match the PR head' };
+    const co = await wtGit(['checkout', '--detach', sha]);
+    if (!co.ok) return { error: co.err.trim() || 'could not move the worktree to the PR head' };
+    return { cwd: wt, sha, base, repo: ref.slug, number: ref.number, reused: true };
+  },
+};
+
+export const tools: ToolDef[] = [listRepos, listPulls, prepare, importComments];

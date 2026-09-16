@@ -139,8 +139,8 @@
       function defaultPrompt(url, mode) {
         const checkout =
           mode === 'nocheckout'
-            ? 'Do NOT check the branch out. Read the diff with `gh pr diff` and review from that alone.'
-            : 'Check the PR out into its own worktree (`gh pr checkout`) so you can read the code around each change.';
+            ? 'The branch is NOT checked out — this session runs outside the repo. Read the diff with `gh pr diff` and review from that alone.'
+            : 'The PR is already checked out into its own worktree, and this session starts in it: read the code around each change, not only the diff.';
         return [
           `Review the pull request ${url}.`,
           '',
@@ -229,12 +229,29 @@
         if (!ref) return;
         $('start').disabled = true;
         err('');
+        const label = $('start').textContent;
         try {
           const agent = String((ctx && ctx.settings && ctx.settings.agent) || '').trim();
+
+          // Check the PR out FIRST, because a session's cwd is fixed when it is
+          // created and cannot be changed afterwards. Without this the session
+          // starts in the default workspace and the Changes tab says "Not a git
+          // repository" — no diff, and nowhere for an imported comment to hang.
+          // A first clone is slow, so say what is happening.
+          let cwd = null;
+          if ($('mode').value !== 'nocheckout') {
+            $('start').textContent = 'Checking the PR out…';
+            const p = await callTool('pr_prepare', { pr: ref.url, mode: $('mode').value });
+            if (p.error) throw new Error(p.error);
+            cwd = p.cwd || null;
+          }
+          $('start').textContent = 'Starting…';
+
           await arigami.createSession({
             title: `Review ${ref.slug}#${ref.number}`,
             prompt: $('prompt').value,
             permissionMode: $('perm').value,
+            ...(cwd ? { cwd } : {}),
             ...(agent ? { agent } : {}),
             // prNumber is the key the host already reads: it is what makes the
             // published review land on THIS PR instead of "the open PR for the
@@ -244,6 +261,7 @@
           // The cockpit closes the launcher and opens the session from here.
         } catch (e) {
           err(String((e && e.message) || e));
+          $('start').textContent = label;
           $('start').disabled = false;
         }
       });

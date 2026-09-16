@@ -96,7 +96,23 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
           onCancel={() => setEditing(false)}
         />
       ) : (
-        <div dir={comment.dir || 'auto'} className={`whitespace-pre-wrap text-[11.5px] leading-snug ${resolved ? 'text-fgdim line-through decoration-fgdim/50' : 'text-fg'}`}>
+        <div
+          dir={comment.dir || 'auto'}
+          className={`whitespace-pre-wrap text-[11.5px] leading-snug ${
+            resolved
+              ? 'text-fgdim line-through decoration-fgdim/50'
+              : // A suggestion card hardcodes a near-white background
+                // (bg-[#fffdf2]) in BOTH themes, so its text has to be
+                // hardcoded dark too. `text-fg` is a theme token — light in
+                // dark mode — which put light text on a near-white card and
+                // made every suggestion unreadable for anyone in the dark
+                // theme. The header beside it was already hardcoded (#8a6d1f);
+                // only the body was left following the theme.
+                suggested
+                ? 'text-[#3a3426]'
+                : 'text-fg'
+          }`}
+        >
           {comment.body}
         </div>
       )}
