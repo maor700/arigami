@@ -1,0 +1,52 @@
+{
+  "name": "pr-review",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "title": "PR review",
+  "description": "Start a session from a GitHub pull request, and pull the PR's existing comments into the session's own review UI. The first extension that claims a mode in the launcher (openFrom: \"launcher\") — GitHub belongs to a developer profile, not to every Arigami.",
+  "tabs": [
+    {
+      "id": "from-pr",
+      "title": "From PR",
+      "entry": "ui/index.html",
+      "icon": "code-pull-request",
+      "openFrom": ["launcher"]
+    }
+  ],
+  "tools": [{ "kind": "module", "name": "pr", "module": "tools/module.ts" }],
+  "docs": [
+    {
+      "file": "docs/USAGE.md",
+      "skill": "pr-review",
+      "description": "Use when reviewing a GitHub pull request in this session — to pull the PR's existing review comments into the Changes tab, or to publish the review back. The session's metadata.prNumber names the PR."
+    }
+  ],
+  "permissions": [
+    "host:create-session",
+    "tools:pr_list_repos",
+    "tools:pr_list_pulls",
+    "tools:pr_import_comments"
+  ],
+  "settings": {
+    "schema": {
+      "agent": {
+        "type": "string",
+        "default": "",
+        "title": "Review agent",
+        "description": "Slug of the agent a review session is born from (list_agents). Empty = a plain session. The agent is what makes this mode thin: it already carries the persona, the skills and the model."
+      },
+      "reviewMode": {
+        "type": "string",
+        "default": "worktree",
+        "title": "Default checkout",
+        "description": "worktree = check the PR out and review the code on disk. nocheckout = review from the diff alone, touching nothing."
+      },
+      "repos": {
+        "type": "string",
+        "default": "",
+        "title": "Repositories",
+        "description": "Comma-separated owner/repo list to offer in the picker. Empty = ask gh for the ones you can push to."
+      }
+    }
+  }
+}
