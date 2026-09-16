@@ -18,12 +18,14 @@ import { tabSrc } from '../lib/hostUrl.js';
 import { findExtension } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
 import { currentLang, useT } from '../lib/i18n.js';
+import { currentTheme, usePrefs } from '../lib/prefs.js';
 
 export default function ExtLauncherPane({ item, onCreated }) {
   const t = useT();
   const { extensions } = useStore();
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef(null);
+  const bridgeRef = useRef(null);
   const extRecord = useMemo(() => findExtension(extensions, item.ext), [extensions, item.ext]);
   // Fail closed, exactly as ExtTab does: an extension we have no record for is
   // sandboxed, and flipping the answer remounts the iframe because `sandbox`
@@ -54,6 +56,7 @@ export default function ExtLauncherPane({ item, onCreated }) {
           cwd: '',
           settings: l.ext?.settings || {},
           lang: currentLang(),
+          theme: currentTheme(),
           permissions: l.ext?.permissions || [],
         };
       },
@@ -65,13 +68,21 @@ export default function ExtLauncherPane({ item, onCreated }) {
         try { iframeRef.current?.contentWindow?.postMessage(msg, '*'); } catch { /* iframe gone */ }
       },
     });
+    bridgeRef.current = bridge;
     const onMsg = (e) => bridge.onMessage(e);
     window.addEventListener('message', onMsg);
     return () => {
       window.removeEventListener('message', onMsg);
       bridge.dispose();
+      bridgeRef.current = null;
     };
   }, [item.ext, item.tab, onCreated]);
+
+  // A live theme switch must reach the tab: it is a separate document that
+  // cannot see our CSS, so without this it keeps the palette it booted with.
+  // Re-sending the context is enough — the SDK treats init as idempotent.
+  const prefs = usePrefs();
+  useEffect(() => { bridgeRef.current?.sendInit?.(); }, [prefs.theme]);
 
   if (!extRecord) {
     return (

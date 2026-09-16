@@ -304,6 +304,15 @@ export interface TabContext {
   cwd?: string;
   settings: Record<string, unknown>;
   lang?: string;
+  /**
+   * The cockpit's current theme, 'light' or 'dark'. A tab is a separate
+   * document in a sandboxed iframe, so it cannot read the cockpit's CSS and
+   * `prefers-color-scheme` is the WRONG signal — it reports the OS preference,
+   * which is routinely the opposite of the theme the human chose in Arigami.
+   * Honour this instead, and re-read it on every `arigami:init` (the shell
+   * re-sends the context when the theme changes).
+   */
+  theme?: 'light' | 'dark';
   permissions: string[];
 }
 

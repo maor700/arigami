@@ -299,6 +299,36 @@ persona, skills, engine, model, memory namespace and rail colour — which is ho
 a role-specific launcher mode stays thin: the extension finds the work, the
 agent knows how to do it.
 
+### Match the cockpit's theme
+
+`ready()` gives you `theme: 'light' | 'dark'`. **Use it, and do not use
+`prefers-color-scheme`.** A tab is a separate document, so `color-scheme: light
+dark` with `Canvas`/`CanvasText` resolves from the *operating system's*
+preference — which is routinely the opposite of the theme the human chose in
+Arigami, and you get a white panel inside a dark cockpit.
+
+The shell re-sends `arigami:init` whenever the theme changes, so apply it on
+every init rather than once at boot, and a live switch lands:
+
+```html
+<style>
+  :root { color-scheme: light; --bg: #ffffff; --fg: #1a1a1a; }
+  html[data-theme="dark"] { color-scheme: dark; --bg: #0b0d10; --fg: #e8eaee; }
+  body { background: var(--bg); color: var(--fg); }
+</style>
+<script>
+  const apply = (c) => { document.documentElement.dataset.theme = c.theme || 'dark'; };
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'arigami:init') apply(e.data.context);
+  });
+  apply(await arigami.ready());
+</script>
+```
+
+`ctx.lang` is there for the same reason — set `document.documentElement.lang`
+from it so the page reads right-to-left when the cockpit does.
+`examples/extensions/pr-review` does both.
+
 ### Sandboxed vs trusted
 
 The above is the **sandboxed** tier: the default, and what you want for a form, a

@@ -15,6 +15,15 @@
   --hb-chip: color-mix(in srgb, var(--color-brand) 16%, #ffffff); /* accent chip fill */
   --hb-fg2: #3d3d42; /* one step under primary: folder names, child rows (rail) */
   --hb-sel: rgba(0, 0, 0, 0.055); /* selected rail row fill (6% ink) */
+  /* Auto-review / imported suggestion cards. Theme-flipped like everything
+     else here: the card used to hardcode a near-white fill in BOTH themes
+     while its body text followed --hb-fg, which is near-white in the dark
+     theme — 1.09:1, invisible. A card that opts out of the palette has to opt
+     out of all four values, not one. */
+  --hb-suggest: #fffdf2; /* card fill */
+  --hb-suggest-fg: #3a3426; /* card body text */
+  --hb-suggest-line: #cdbb66; /* card border */
+  --hb-suggest-label: #8a6d1f; /* the "SUGGESTION" label */
 }
 
 /* Dark = the landing page's palette (arigami-site global.css: --bg/--bg-2/--bg-3, --line, --fg). */
@@ -29,6 +38,12 @@
   --hb-chip: color-mix(in srgb, var(--color-brand) 24%, #0b0d10);
   --hb-fg2: #c9ced6;
   --hb-sel: rgba(255, 255, 255, 0.06);
+  /* Same card, dark: an amber-tinted near-black rather than a light card
+     dropped into a dark page, so it reads as "set apart" and not as "broken". */
+  --hb-suggest: #1c1a12;
+  --hb-suggest-fg: #e7e1cd;
+  --hb-suggest-line: #5c5024;
+  --hb-suggest-label: #d5b866;
 }
 
 @theme {
@@ -36,6 +51,10 @@
   --color-ink: #2a2a2a;
   --color-chip: var(--hb-chip);
   --color-hair: var(--hb-hair);
+  --color-suggest: var(--hb-suggest);
+  --color-suggest-fg: var(--hb-suggest-fg);
+  --color-suggest-line: var(--hb-suggest-line);
+  --color-suggest-label: var(--hb-suggest-label);
   --color-rail: var(--hb-rail);
   --color-term: #1b1b1d;
   --color-danger: #b23b30;

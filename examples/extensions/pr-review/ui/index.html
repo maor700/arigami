@@ -5,38 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>From PR — Arigami</title>
     <style>
-      :root { color-scheme: light dark; }
+      /* Follow ARIGAMI's theme, not the OS's.
+         `color-scheme: light dark` + Canvas/CanvasText was the first version of
+         this file and it is wrong here: those resolve from
+         prefers-color-scheme, which is the operating system's preference and is
+         routinely the opposite of the theme the human picked in Arigami — a
+         white tab sitting inside a dark cockpit. The shell hands the real one
+         over as `ctx.theme`; the script below puts it on <html data-theme> and
+         these variables flip, the same mechanism the cockpit itself uses. */
+      :root {
+        color-scheme: light;
+        --bg: #ffffff; --fg: #1a1a1a; --dim: #777777;
+        --line: rgba(128,128,128,.4); --hair: rgba(128,128,128,.25);
+        --hover: rgba(128,128,128,.12); --err: #b3261e;
+      }
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0b0d10; --fg: #e8eaee; --dim: #8e96a4;
+        --line: #303743; --hair: #262b33;
+        --hover: rgba(255,255,255,.07); --err: #ff8a80;
+      }
       * { box-sizing: border-box; }
       body {
         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
         margin: 0; padding: 18px; line-height: 1.5; font-size: 13px;
-        background: Canvas; color: CanvasText;
+        background: var(--bg); color: var(--fg);
       }
       label { display: block; margin-bottom: 12px; }
       .lbl { display: block; margin-bottom: 4px; font-size: 9.5px; letter-spacing: .06em;
-        text-transform: uppercase; opacity: .65; font-family: ui-monospace, monospace; }
+        text-transform: uppercase; color: var(--dim); font-family: ui-monospace, monospace; }
       input, select, textarea {
         width: 100%; padding: 7px 9px; border-radius: 7px; font: inherit;
-        border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit;
+        border: 1px solid var(--line); background: transparent; color: inherit;
       }
       textarea { min-height: 96px; resize: vertical; }
       .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
       .row > label { flex: 1 1 140px; margin-bottom: 0; }
       button { padding: 7px 14px; border-radius: 7px; font: inherit; cursor: pointer;
-        border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; }
-      button:hover:not(:disabled) { background: rgba(128,128,128,.12); }
+        border: 1px solid var(--line); background: transparent; color: inherit; }
+      button:hover:not(:disabled) { background: var(--hover); }
       button:disabled { opacity: .5; cursor: default; }
-      button.primary { font-weight: 700; border-color: CanvasText; }
+      button.primary { font-weight: 700; border-color: var(--fg); }
       ul { list-style: none; margin: 10px 0 0; padding: 0; max-height: 300px; overflow: auto;
-        border: 1px solid rgba(128,128,128,.25); border-radius: 8px; }
-      li { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid rgba(128,128,128,.18); }
+        border: 1px solid var(--hair); border-radius: 8px; }
+      li { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--hair); }
       li:last-child { border-bottom: 0; }
-      li:hover, li[aria-selected="true"] { background: rgba(128,128,128,.14); }
-      .num { font-family: ui-monospace, monospace; opacity: .6; margin-right: 6px; }
-      .meta { font-size: 11px; opacity: .6; margin-top: 2px; }
-      .note { font-size: 11.5px; opacity: .7; margin: 8px 0 0; }
-      .err { color: #b3261e; font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
-      hr { border: 0; border-top: 1px solid rgba(128,128,128,.25); margin: 16px 0; }
+      li:hover, li[aria-selected="true"] { background: var(--hover); }
+      .num { font-family: ui-monospace, monospace; color: var(--dim); margin-right: 6px; }
+      .meta { font-size: 11px; color: var(--dim); margin-top: 2px; }
+      .note { font-size: 11.5px; color: var(--dim); margin: 8px 0 0; }
+      .err { color: var(--err); font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
+      hr { border: 0; border-top: 1px solid var(--hair); margin: 16px 0; }
     </style>
   </head>
   <body>
@@ -266,8 +285,20 @@
         }
       });
 
+      // The shell re-sends the context whenever the theme flips, so applying it
+      // here (and not only once at boot) is what makes a live switch land.
+      function applyContext(c) {
+        document.documentElement.dataset.theme = c && c.theme === 'light' ? 'light' : 'dark';
+        if (c && c.lang) document.documentElement.lang = c.lang;
+      }
+      window.addEventListener('message', (e) => {
+        const m = e.data;
+        if (m && m.type === 'arigami:init') applyContext(m.context);
+      });
+
       (async () => {
         ctx = await arigami.ready();
+        applyContext(ctx);
         // A launcher tab: no session yet. If this ever renders inside a session
         // the buttons would fail at the last step, so say so up front.
         if (ctx.sessionId !== null) {

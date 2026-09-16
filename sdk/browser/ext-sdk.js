@@ -17,7 +17,11 @@
 // shell → iframe
 //   { type:'arigami:init',   v:1, context }           {sessionId, tabId, extension,
 //                                                      apiVersion, agent, cwd,
-//                                                      settings, lang, permissions}
+//                                                      settings, lang, theme,
+//                                                      permissions}
+//     Re-sent whenever the cockpit's theme changes, so a tab that applies
+//     `context.theme` on every init follows a live switch. Never read
+//     prefers-color-scheme: that is the OS's preference, not Arigami's.
 //   { type:'arigami:result', v:1, id, ok:true,  value }
 //   { type:'arigami:result', v:1, id, ok:false, error }
 //   { type:'arigami:event',  v:1, name, payload }     only names the tab subscribed to

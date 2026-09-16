@@ -18,6 +18,7 @@ import MicButton from './MicButton.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
+import { currentTheme, usePrefs } from '../lib/prefs.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
 import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -1511,6 +1512,7 @@ function UrlTab({ tab, active, session }) {
           cwd: l.session?.cwd || '',
           settings: l.ext?.settings || {},
           lang: currentLang(),
+          theme: currentTheme(),
           permissions: l.ext?.permissions || [],
         };
       },
@@ -1532,6 +1534,12 @@ function UrlTab({ tab, active, session }) {
       bridgeRef.current = null;
     };
   }, [extName, session?.id, tab.id]);
+  // A live theme switch must reach the tab: it is a separate document that
+  // cannot see our CSS, so without this it keeps the palette it booted with.
+  // Re-sending the context is enough — the SDK treats init as idempotent.
+  const extPrefs = usePrefs();
+  useEffect(() => { bridgeRef.current?.sendInit?.(); }, [extPrefs.theme]);
+
   // Command bus → reload the live tab (voice: "reload the page"). Only the
   // ACTIVE tab responds — otherwise every hidden URL tab in the session would
   // remount its iframe and lose its navigation/scroll/login state. Bumping the

@@ -47,7 +47,7 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
   const replies = comment.replies || [];
 
   const border = suggested
-    ? 'border-[#cdbb66] bg-[#fffdf2]'
+    ? 'border-suggest-line bg-suggest'
     : resolved
       ? 'border-hair/60 bg-bg/40'
       : 'border-hair bg-bg';
@@ -55,7 +55,7 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
   return (
     <div className={`rounded-md border px-2.5 py-1.5 ${border}`}>
       <div className="mb-0.5 flex items-center gap-1.5">
-        <span className={`font-mono text-[11px] md:text-[9px] font-bold tracking-wide uppercase ${suggested ? 'text-[#8a6d1f]' : 'text-fgdim'}`}>
+        <span className={`font-mono text-[11px] md:text-[9px] font-bold tracking-wide uppercase ${suggested ? 'text-suggest-label' : 'text-fgdim'}`}>
           {suggested ? <><Icon icon={faWandMagicSparkles} /> {t('chat.suggestion')}</> : t('chat.you')}
         </span>
         {resolved && (
@@ -101,15 +101,12 @@ export function CommentItem({ comment, onDelete, onResolve, onEdit, onReply, onA
           className={`whitespace-pre-wrap text-[11.5px] leading-snug ${
             resolved
               ? 'text-fgdim line-through decoration-fgdim/50'
-              : // A suggestion card hardcodes a near-white background
-                // (bg-[#fffdf2]) in BOTH themes, so its text has to be
-                // hardcoded dark too. `text-fg` is a theme token — light in
-                // dark mode — which put light text on a near-white card and
-                // made every suggestion unreadable for anyone in the dark
-                // theme. The header beside it was already hardcoded (#8a6d1f);
-                // only the body was left following the theme.
+              : // A suggestion card sets its own fill, so it must set its own
+                // text colour from the same themed pair — `text-fg` here put
+                // near-white text on the card's near-white fill in the dark
+                // theme (1.09:1, invisible). See --hb-suggest* in index.css.
                 suggested
-                ? 'text-[#3a3426]'
+                ? 'text-suggest-fg'
                 : 'text-fg'
           }`}
         >

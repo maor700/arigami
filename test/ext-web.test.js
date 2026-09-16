@@ -336,6 +336,36 @@ test('extLauncherItems: only launcher tabs, only with the permission', () => {
   expect(ext.extLauncherItems([mk({ tabs, permissions: ['host:create-session'], enabled: false })])).toEqual([]);
 });
 
+test('the tab context carries the cockpit theme, and sendInit can push a change', async () => {
+  // A tab is a separate document in a sandboxed iframe: it cannot read the
+  // cockpit's CSS, and `prefers-color-scheme` is the OS's preference, which is
+  // routinely the opposite of the theme the human chose here. So the theme has
+  // to travel in the context — and it has to be re-sendable, or a tab that is
+  // already mounted keeps the palette it booted with.
+  const posted = [];
+  const win = { id: 'the-iframe' };
+  let theme = 'dark';
+  const bridge = bridgeMod.createExtBridge({
+    sessionId: 's1',
+    tabId: 'tab_1',
+    extension: 'hello',
+    getWindow: () => win,
+    getPermissions: () => HELLO.permissions,
+    getContext: () => ({ sessionId: 's1', tabId: 'tab_1', extension: 'hello', apiVersion: 1, settings: {}, theme, permissions: [] }),
+    post: (m) => posted.push(m),
+  });
+  await bridge.onMessage({ source: win, data: { type: 'arigami:hello', v: 1 } });
+  expect(posted[0].type).toBe('arigami:init');
+  expect(posted[0].context.theme).toBe('dark');
+
+  // the cockpit flips; the shell re-sends rather than reloading the iframe
+  theme = 'light';
+  bridge.sendInit();
+  const last = posted[posted.length - 1];
+  expect(last.type).toBe('arigami:init');
+  expect(last.context.theme).toBe('light');
+});
+
 test('the browser SDK exposes every method the bridge implements', async () => {
   // The gap this closes, found by actually clicking the button and not by any
   // of the tests above: `createSession` was added to the bridge (the shell half)

@@ -222,6 +222,17 @@ export function subscribe(fn) {
 
 export const getPrefs = () => state;
 
+/**
+ * The theme the cockpit is actually rendering in, 'light' | 'dark'.
+ *
+ * Exported because an extension TAB needs it: it is a separate document in a
+ * sandboxed iframe, so it cannot read our CSS variables, and
+ * `prefers-color-scheme` is the wrong signal — it reports the OS preference,
+ * which is routinely the opposite of the theme chosen here. The shell hands
+ * this over in the tab context instead.
+ */
+export const currentTheme = () => (state.theme === 'light' ? 'light' : 'dark');
+
 export function setPrefs(patch) {
   state = sanitize({ ...state, ...patch });
   try {
