@@ -682,7 +682,7 @@ export function status(): { environment: EnvInfo; steps: Step[] } {
     dependsOn: ['codex-cli'],
     detail: codexOk ? undefined : 'Sign in with ChatGPT or add an OpenAI API key in the Accounts view (or run `codex login`)',
   });
-  const gitOk = gitAuthed();
+  const gitOk = gitAuthed() || ghCliAuthed();
   steps.push({
     id: 'git-auth',
     title: 'Git / GitHub authentication',
