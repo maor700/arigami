@@ -5234,6 +5234,47 @@ export async function handle(
         note: 'child is busy — the task is in its pending-prompt queue and will auto-play when the turn ends',
       });
     }
+    // PEER1: ad hoc peer-to-peer session messaging, unrestricted by the
+    // project-folder/controller hierarchy task_session enforces above. This is
+    // the host-native stand-in for Claude Code CLI's own cross-session
+    // SendMessage — that mechanism is entirely internal to the `claude` binary
+    // (peers find each other via a local socket registry, e.g. /tmp/cc-socks,
+    // that this server never creates or reads) and codex sessions never join
+    // it at all, so ListAgents/SendMessage cannot see or reach a codex-engine
+    // session no matter what. This route instead goes through the same
+    // session-object layer every session already has (any signed-in principal
+    // may already read/patch any session id here — see auth.ts's
+    // canReadFullList and the lack of an id === principal.sessionId guard on
+    // this whole sub-route family), so it works for any engine pairing.
+    // Never interrupts: idle → send now; busy → the pending-prompts queue with
+    // auto-play, same as task_session, so an unrelated peer ping can't hijack
+    // a turn in progress.
+    if (sub === 'send' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      const from = typeof body.from === 'string' ? body.from : '';
+      if (!text) return badRequest(res, 'text required');
+      if (!from) return badRequest(res, 'from (your session id) required');
+      if (s.archived) return json(res, { error: `session ${id} is archived` }, 409);
+      const fromLabel = state.getSession(from)?.title || from;
+      const wrapped = `[Message from ${fromLabel} (peer session)]\n\n${text}`;
+      if (s.claude?.state === 'idle') {
+        try {
+          claude.sendMessage(id, wrapped);
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 500);
+        }
+        return json(res, { ok: true, delivered: 'now' });
+      }
+      state.addPendingPrompt(id, wrapped);
+      state.setPromptAutoPlay(id, true);
+      claude.kickAutoPlay(id);
+      return json(res, {
+        ok: true,
+        delivered: 'queued',
+        note: 'target is busy — the message is in its pending-prompt queue and will auto-play when the turn ends',
+      });
+    }
     // A4: composer @mention / `/as <agent> <text>` → a session born from the
     // agent (or its home chat), with a receipt line in this chat.
     if (sub === 'delegate' && m === 'POST') {

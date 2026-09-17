@@ -512,6 +512,37 @@ test('a master waiting on a child that never got the ask has it re-delivered', a
   expect(incidents().some((i) => i.sessionId === master && i.action === 'redeliver-ask')).toBe(true);
 }, 60000);
 
+// PEER1: send_message's host route (/__api/sessions/:id/send) — reaches a
+// codex-engine peer with no project-folder/controller relationship at all,
+// unlike task_session (which 403s for exactly this pairing, per the assertion
+// below). This is what fixes ListAgents/SendMessage being blind to codex
+// sessions: those are a Claude Code CLI-internal mechanism this host never
+// touches, so codex peers were previously unreachable by any cross-session
+// message short of dragging both into the same project folder.
+test('send_message reaches a codex peer with no shared project folder (task_session cannot)', async () => {
+  const claudeSid = (await api('POST', '/__api/sessions', { title: 'peer-claude', cwd: ws })).json.id;
+  const codexSid = (await api('POST', '/__api/sessions', { title: 'peer-codex', cwd: ws, engine: 'codex' })).json.id;
+  expect((await session(codexSid)).engine).toBe('codex');
+
+  // No folder, no controller relationship between these two — task_session
+  // refuses exactly the way the bug report describes.
+  const blocked = await api('POST', `/__api/sessions/${codexSid}/task`, { from: claudeSid, text: 'hi' });
+  expect(blocked.status).toBe(403);
+  expect(blocked.json.error).toMatch(/not authorized.*project folder/);
+
+  // The peer channel has no such restriction and reaches the codex session.
+  const sent = await api('POST', `/__api/sessions/${codexSid}/send`, {
+    from: claudeSid,
+    text: 'ping from a peer session, cross-engine',
+  });
+  expect(sent.status).toBe(200);
+  expect(sent.json.delivered).toBe('now');
+  await until(async () => /ok codex/.test(await chatText(codexSid)), 20000);
+  const transcript = await chatText(codexSid);
+  expect(transcript).toContain('Message from peer-claude');
+  expect(transcript).toContain('ping from a peer session, cross-engine');
+}, 30000);
+
 test('codex: a 401 points at Settings › Accounts (no Claude card), a 429 never touches the claude ladder', async () => {
   const sid = (await api('POST', '/__api/sessions', { title: 'codex-auth', cwd: ws, engine: 'codex' })).json.id;
   expect((await session(sid)).engine).toBe('codex');
