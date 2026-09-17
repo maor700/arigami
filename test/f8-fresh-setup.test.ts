@@ -222,7 +222,11 @@ test('codex authed, claude absent → codex capability ok, claude rows optional;
     {
       ARIGAMI_DIR: d, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', ARIGAMI_ONBOARDING_MODE: 'minimal',
       ARIGAMI_REPOS_DIR: path.join(d, 'repos'), ARIGAMI_CODEX_HOME: cxHome, ARIGAMI_CODEX_BIN: '', ARIGAMI_CLAUDE_BIN: '',
-      HOME: path.join(d, 'home'), PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
+      // Deliberately narrow — no real claude/codex CLI on this PATH should be able
+      // to shadow the fake `codex` stub — but runInChild still has to spawn the
+      // very bun binary running this test, which a curl-installed bun (~/.bun/bin,
+      // not symlinked into /usr/local/bin) would otherwise drop off the map.
+      HOME: path.join(d, 'home'), PATH: `${bin}:${path.dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
       CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '', GH_TOKEN: 'ghp_test', COMPOSIO_API_KEY: '',
     }
   );

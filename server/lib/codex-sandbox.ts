@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { ARIGAMI_DIR } from './instance.js';
 
 export const SANDBOX_FILE = path.join(ARIGAMI_DIR, 'codex-sandbox.json');
@@ -24,12 +24,45 @@ type Runner = () => Promise<RunResult>;
 
 const codexBin = (): string => process.env.ARIGAMI_CODEX_BIN || 'codex';
 
+// spawn, not execFile: the probe never has input to give, and a child that
+// (mistakenly, or because it's a test double built for a different codex
+// subcommand) waits to read stdin before it does anything would otherwise
+// hang for the full PROBE_TIMEOUT_MS with its stdin pipe just sitting open.
+// An explicitly closed stdin makes that class of hang impossible instead of
+// merely unlikely.
 const runProbe: Runner = () =>
   new Promise((resolve) => {
-    execFile(codexBin(), ['sandbox', '--', '/bin/true'], { timeout: PROBE_TIMEOUT_MS, cwd: os.tmpdir(), env: { ...process.env, NO_COLOR: '1' } }, (err: any, stdout, stderr) => {
-      const output = `${stdout || ''}${stderr || ''}`.trim();
-      if (err?.code === 'ENOENT') return resolve({ code: 127, output, missing: true });
-      resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, output: err?.killed ? `timed out after ${PROBE_TIMEOUT_MS}ms` : output });
+    let child;
+    try {
+      child = spawn(codexBin(), ['sandbox', '--', '/bin/true'], {
+        cwd: os.tmpdir(),
+        env: { ...process.env, NO_COLOR: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (e: any) {
+      return resolve({ code: 127, output: String(e?.message || e), missing: e?.code === 'ENOENT' });
+    }
+    let output = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      resolve({ code: 1, output: `timed out after ${PROBE_TIMEOUT_MS}ms` });
+    }, PROBE_TIMEOUT_MS);
+    child.stdout?.on('data', (d) => (output += d));
+    child.stderr?.on('data', (d) => (output += d));
+    child.once('error', (err: any) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: 127, output: String(err?.message || err), missing: err?.code === 'ENOENT' });
+    });
+    child.once('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, output: output.trim() });
     });
   });
 

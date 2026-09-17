@@ -24,6 +24,14 @@ export function runInChild(body, env = {}) {
     encoding: 'utf8',
     timeout: 30000,
   });
+  // spawnSync itself (not the child) can fail — e.g. `bun` missing from a
+  // deliberately narrowed PATH — leaving stdout/stderr as `null`. JSON.parse(null)
+  // happily parses the STRING "null" and returns the JS value null without
+  // throwing, which used to slip past the try/catch below and hand callers a
+  // `null` they'd crash on with a confusing TypeError instead of this message.
+  if (r.error || typeof r.stdout !== 'string') {
+    throw new Error(`failed to spawn child bun process (code ${r.status}): ${r.error?.message || 'no stdout'}`);
+  }
   let parsed;
   try {
     parsed = JSON.parse(r.stdout);

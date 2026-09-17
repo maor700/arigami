@@ -12,7 +12,7 @@ isolate(); // restore globalThis/process.env after this file (bun test shares th
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, ScreenEmptyState;
+let React, render, ScreenEmptyState, prefs;
 
 beforeAll(async () => {
   globalThis.window = globalThis;
@@ -28,6 +28,14 @@ beforeAll(async () => {
   globalThis.MutationObserver = class { observe() {} disconnect() {} takeRecords() { return []; } };
   React = (await import(path.join(ROOT, 'web/node_modules/react/index.js'))).default;
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
+  // lib/prefs.js's language is a module-level singleton shared by every file in
+  // this bun test process (not reset by isolate(), which only restores
+  // globalThis/process.env) — stubbing navigator.language above only feeds the
+  // 'auto' fallback and does nothing once another file has left a concrete
+  // 'he' behind. Force it explicitly so this file's English assertions never
+  // depend on file execution order.
+  prefs = await import(web('lib/prefs.js'));
+  prefs.setPrefs({ language: 'en' });
   ({ ScreenEmptyState } = await import(web('components/ScreenSidePanel.jsx')));
 });
 
