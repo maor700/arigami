@@ -11,7 +11,7 @@ import { isWin, pidAlive, HOME } from './lib/platform.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
-import { supervise, killTree } from './lib/children.js';
+import { supervise, killTree, killByTag } from './lib/children.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
@@ -2731,7 +2731,18 @@ export function clearConversation(id) {
 
 export function killAll() {
   for (const id of [...procs.keys()]) kill(id);
-  for (const c of [...headless]) stopChild(c);
+  // The one-shot headless runs (explain / auto-review / status summary) are
+  // supervised under the `headless` tag rather than held in a local set — this
+  // line used to read a `headless` binding that was never defined anywhere in
+  // this module, so killAll() threw ReferenceError. It is called from
+  // shutdown(), so EVERY graceful stop aborted right here: the WhatsApp bridge
+  // was left running, the host lock was never released, and the process hung
+  // "alive but not responding" instead of exiting.
+  try {
+    killByTag('headless');
+  } catch (e) {
+    console.error('[claude] could not stop headless runs:', e?.message);
+  }
 }
 
 // LADDER1: what happened on the weaker rung while the full history was parked —

@@ -300,6 +300,29 @@ export interface SweepPlan {
  *  - otherwise: ours and orphaned → killable, subject to the pid-reuse check
  *    the caller does with real start times.
  */
+/**
+ * Kill every supervised child carrying `tag`, for THIS host.
+ *
+ * Exists because shutdown has to stop the one-shot headless runs it started —
+ * a `runOneShot` can be five minutes long, and a host that exits while one is
+ * mid-flight leaves a `claude` holding a session's worktree with nobody to
+ * reap it. The pids are already recorded here by supervise(); killAll() used to
+ * reach for a module-level `headless` set that does not exist, which threw
+ * ReferenceError and aborted the rest of shutdown.
+ */
+export function killByTag(tag: string): number {
+  let killed = 0;
+  for (const r of readRecords()) {
+    if (r.tag !== tag) continue;
+    // Only ours: another instance on the same machine keeps its own records,
+    // but a stale record from a previous boot could name a recycled pid.
+    if (r.hostId && r.hostId !== HOST_ID) continue;
+    killTree(r.pid);
+    killed++;
+  }
+  return killed;
+}
+
 export function planSweep(
   records: ChildRecord[],
   me: { hostId: string; hostPid: number },

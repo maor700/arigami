@@ -3259,6 +3259,15 @@ export async function handle(
       const v = await import('./version.js');
       return json(res, await v.getVersion({ refresh: u.searchParams.get('refresh') === '1' }));
     }
+    // What this machine is doing, and which session is doing it. Public to any
+    // signed-in caller (and to agents through the host_resources tool) because
+    // the whole point is that a session can ask before it starts something
+    // expensive — see server/lib/resources.ts.
+    if (p === '/__api/host/resources' && m === 'GET') {
+      const r = await import('./lib/resources.js');
+      const top = Number(new URL(req.url || '/', 'http://localhost').searchParams.get('top'));
+      return json(res, r.sample({ topProcesses: Number.isFinite(top) && top > 0 ? Math.min(top, 100) : 12 }));
+    }
     if (p === '/__api/host/status' && m === 'GET') {
       const hc = await import('./host-control.js');
       return json(res, await hc.hostStatus());
@@ -5139,7 +5148,7 @@ export async function handle(
     if (sub === 'listeners' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const type = body.type || 'github-pr';
-      const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms';
+      const core = type === 'github-pr' || type === 'linear-issue' || type === 'slack' || type === 'whatsapp' || type === 'sms' || type === 'host-load';
       // EXT: any type an extension registered is as valid as a core one.
       if (!core) {
         const reg = await import('./listeners-registry.js');
@@ -5170,7 +5179,9 @@ export async function handle(
                 ? await listeners.registerWhatsappListener(id, body)
                 : type === 'sms'
                   ? listeners.registerSmsListener(id, body)
-                  : await listeners.registerGithubPrListener(id, body);
+                  : type === 'host-load'
+                    ? listeners.registerHostLoadListener(id, body)
+                    : await listeners.registerGithubPrListener(id, body);
         return json(res, l, 201);
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));

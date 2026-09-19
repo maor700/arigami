@@ -426,6 +426,14 @@ server.listen(cfg.port, cfg.bind, () => {
   import('./mcp-auth.js')
     .then((m: any) => m.listServers(true))
     .catch(() => {});
+  // CPU% is a DELTA between two samples of os.cpus(), so the very first caller
+  // after boot would otherwise get null — blind on the primary cross-platform
+  // signal, at exactly the moment a session is most likely to ask "is this
+  // machine free?". Take the baseline now so the first real question has an
+  // answer. See server/lib/resources.ts.
+  import('./lib/resources.js')
+    .then((m) => m.primeCpu())
+    .catch(() => {});
   // EXT: load the installed extensions BEFORE the listener scheduler, so an
   // extension's listener type is registered by the time the first tick polls a
   // listener rehydrated from state.json.

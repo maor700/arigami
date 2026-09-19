@@ -352,6 +352,26 @@ const TOOLS = [
     run: (a) => api('POST', `/__api/sessions/${sid(a)}/restart`),
   },
   {
+    name: 'host_resources',
+    description:
+      'What this MACHINE is doing right now: CPU, memory, swap, disk, the heaviest processes, and how much of it each SESSION accounts for. ' +
+      'Ask before you start something expensive (a full build, a test matrix, a big clone), and ask again when something is inexplicably slow.\n' +
+      '`pressure` is the short answer — "ok" | "busy" | "critical" — and `why` is the sentence to repeat to a human.\n' +
+      'WHEN IT IS "critical": do not start new heavy work. Either wait for it to clear (register_listener type "host-load"), or look at ' +
+      '`processes`/`sessions` and work out WHAT is eating the machine — often it is a runaway dev server or a session that was left running. ' +
+      'Say what you found; do not kill anything that is not yours.\n' +
+      'NULLS ARE HONEST: a field is null when THIS platform cannot measure it (loadavg on Windows, per-process CPU on Windows, swap off Linux). ' +
+      'null means "unknown", never "zero" — do not read a null as idle.',
+    inputSchema: obj({
+      top: { type: 'number', description: 'How many of the heaviest processes to return (default 12, max 100)' },
+      ...SID_PROP,
+    }),
+    run: async (a) => {
+      const top = Number.isFinite(a.top) && a.top > 0 ? Math.min(Math.round(a.top), 100) : 12;
+      return await api('GET', `/__api/host/resources?top=${top}`);
+    },
+  },
+  {
     name: 'host_restart',
     description:
       'Restart the Arigami HOST process itself (not a session) — e.g. after a merge to master so the new code runs, ' +
@@ -653,6 +673,10 @@ const TOOLS = [
       'type "slack" — watches a Slack channel/DM (or a single thread) and wakes this session on new messages. ' +
       'Slack target: pass channel_id (a channel/DM id like C0123ABCD / D0123ABCD), optionally thread_ts to watch one thread, or a Slack message url. Requires a Slack user token connected in the host settings. ' +
       'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored. ' +
+      'type "host-load" — watches THIS MACHINE and wakes this session when it calms down. This is how you PAUSE instead of making a loaded box worse: call host_resources, see "critical", register this, and stop. '
+      + 'until: "ok" (default, comfortable) | "not-critical" (just out of the red); for_sec: how long it must HOLD before waking you (default 60 — load is spiky and a one-sample dip is not a free machine); interval_sec: min 15. '
+      + 'The wake-up carries the heaviest processes, so you can see what had been eating it. No target required. '
+      + 
       'type "whatsapp" — watches the local WhatsApp DB (written by the whatsapp-mcp Baileys process) and wakes this session when new incoming messages arrive. No target required. ' +
       'For personal chats (default): omit group_jid — only direct messages are tracked. ' +
       'For a specific group: pass group_jid (e.g. "120363000000000000@g.us") — tracking starts immediately and stops when the listener is cancelled. Group messages are NOT stored unless explicitly subscribed. ' +
@@ -667,7 +691,7 @@ const TOOLS = [
       // EXT: the enum is filled in at startup from GET /__api/listener-types so
       // a type an extension contributed is offered like a built-in one; the
       // static list here is the fallback when the host isn't answering yet.
-      type: { type: 'string', enum: ['github-pr', 'linear-issue', 'slack', 'whatsapp', 'sms'], description: 'Listener type (default github-pr)' },
+      type: { type: 'string', enum: ['github-pr', 'linear-issue', 'slack', 'whatsapp', 'sms', 'host-load'], description: 'Listener type (default github-pr)' },
       url: { type: 'string', description: 'GitHub PR url, or a Slack message url (for type slack)' },
       owner: { type: 'string' },
       repo: { type: 'string' },
@@ -675,7 +699,9 @@ const TOOLS = [
       issue_id: { type: 'string', description: 'Linear issue identifier (ENG-1234) or UUID — for type linear-issue' },
       channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
       thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
-      fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms'] } },
+      fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
+      until: { type: 'string', enum: ['ok', 'not-critical'], description: 'host-load: how calm is calm enough (default "ok")' },
+      for_sec: { type: 'number', description: 'host-load: how long the bar must hold before waking you (default 60)' },
       group_jid: { type: 'string', description: 'WhatsApp group JID to track (e.g. "120363000000000000@g.us") — for type whatsapp. Omit for personal messages only.' },
       contacts: { type: 'array', items: { type: 'string' }, description: 'WhatsApp contact filter — an ARRAY of JIDs / E.164 phones / display-name substrings (one contact = one-element array, e.g. ["+972500000000"]). Only messages whose chat or group-sender resolves to one of them wake the session. Omit for no contact filter. For type whatsapp.' },
       db_path: { type: 'string', description: 'Override WhatsApp DB path (for type whatsapp, default: <whatsapp-mcp data dir>/whatsapp.db — ~/.local/lib/whatsapp-mcp/data natively, /data/.arigami/whatsapp/data in Docker)' },

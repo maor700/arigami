@@ -603,6 +603,43 @@ async function pollOne(l: Listener): Promise<void> {
 
   if (l.type === 'worker') return pollWorker(l, now);
 
+  // ---- host load (local sampling, no network) --------------------------------
+  if (l.type === 'host-load') {
+    const res = await import('./lib/resources.js');
+    const snap = res.sample({ topProcesses: 6 });
+    const wm = (l.watermark || { clearSince: null }) as unknown as import('./lib/resources.js').HostLoadWatermark;
+    const j = res.judgeHostLoad(
+      wm,
+      { pressure: snap.pressure, why: snap.why, measured: res.wasMeasured(snap) },
+      l.params as { until?: 'ok' | 'not-critical'; forSec?: number },
+      now
+    );
+    if (!j.fire) {
+      // The streak lives in the watermark, so it has to persist on a NON-firing
+      // poll too — otherwise `forSec` restarts from zero every time and the
+      // listener never fires at all.
+      patchListener(l.id, {
+        watermark: j.next as unknown as Record<string, unknown>,
+        lastPolledAt: now,
+        nextPollAt: now + l.intervalSec * 1000,
+        backoffLevel: 0,
+      });
+      return;
+    }
+    // The heaviest processes ride along: the session woke up to decide what to
+    // do next, and "who was eating the machine" is most of that decision.
+    const top = snap.processes.slice(0, 3).map((p) => `${p.name} ${p.rssMb}MB`).join(', ');
+    llog(l.id, 'fire', `pressure cleared (${snap.pressure})`);
+    // TERMINAL. "Wake me when the machine calms down" is a one-shot request:
+    // once you are awake, it is answered. Non-terminal re-fires on every
+    // subsequent poll for as long as the machine stays calm — measured live at
+    // 31 fires in eight minutes, which would wake a session every 15s forever.
+    // A session that wants to wait again registers again.
+    enqueue(l, `🟢 ${j.summary}${top ? ` Heaviest now: ${top}.` : ''}`, j.next as unknown as Record<string, unknown>, true);
+    return;
+  }
+
+
   // ---- whatsapp poller (synchronous SQLite read, no network) -----------------
   if (l.type === 'whatsapp') {
     const { dbPath, groupJid } = l.params as { dbPath: string; groupJid?: string | null };
@@ -1106,6 +1143,40 @@ function whatsappGroupJids(groupJid: string | null | undefined, contacts: Resolv
 }
 
 // ---- SMS webhook listener ---------------------------------------------------
+
+/**
+ * "Wake me when this machine calms down."
+ *
+ * The listener machinery already is the pause/resume mechanism — a session that
+ * registers one and stops IS a paused session, and it resumes when the signal
+ * fires. So waiting for the machine needs no new concept, only a new type.
+ */
+export function registerHostLoadListener(sessionId: string, args: Record<string, any>) {
+  const s = getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+
+  const now = Date.now();
+  const until = args.until === 'not-critical' ? 'not-critical' : 'ok';
+  const forSec = Number(args.for_sec) > 0 ? Math.min(Number(args.for_sec), 3600) : 60;
+  // Polling faster than this measures noise: cpuPct is an average over the
+  // interval between samples, so a 5s poll reports a 5s spike as the state.
+  const intervalSec = Number(args.interval_sec) > 0 ? Math.max(Number(args.interval_sec), 15) : 30;
+  const ttlDays = Number(args.ttl_days) > 0 ? Number(args.ttl_days) : 1;
+
+  const listener = addListener({
+    sessionId,
+    type: 'host-load',
+    label: until === 'not-critical' ? 'Machine out of the red' : 'Machine free',
+    params: { until, forSec },
+    fireOn: ['host_clear'],
+    watermark: { clearSince: null } as Record<string, unknown>,
+    ttlAt: now + ttlDays * 86_400_000,
+    intervalSec,
+    nextPollAt: now + intervalSec * 1000,
+  });
+  llog(listener.id, 'info', `armed — waiting for pressure "${until}" to hold ${forSec}s, checking every ${intervalSec}s`);
+  return listener;
+}
 
 export function registerSmsListener(sessionId: string, args: Record<string, any>) {
   const s = getSession(sessionId);
