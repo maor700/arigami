@@ -398,5 +398,43 @@ export interface ArigamiSdk {
     permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
     metadata?: Record<string, unknown>;
   }): Promise<{ id: string }>;
+  /**
+   * The session's INBOX — what people said to us, normalized across providers.
+   * Needs `session:inbox`.
+   *
+   * These live on the bridge and NOT as extension tools on purpose. An
+   * extension's tools are mounted into the session's MCP config too, so an
+   * `inbox_submit` tool would hand the agent the ability to approve and send
+   * its own drafted replies. Through the bridge the cockpit makes the call, as
+   * the signed-in human, and the agent cannot reach it at all.
+   */
+  inboxList(): Promise<{ items: InboxItemView[] }>;
+  /** Record a decision or edit the drafted texts. Nothing else is patchable. */
+  inboxPatch(
+    itemId: string,
+    patch: { decision?: InboxDecisionValue | null; replyOverride?: string | null; noteToAgent?: string | null }
+  ): Promise<InboxItemView>;
+  /** Send the batch. The ONLY path by which anything reaches a person. */
+  inboxSubmit(note?: string): Promise<{ ok: boolean; submitted: number }>;
+  /** Force a drafting run over items the signal gate skipped ("explain it"). */
+  inboxEnrich(): Promise<{ ok: boolean; count?: number; skipped?: string }>;
   close(): void;
+}
+
+export type InboxDecisionValue = 'fix' | 'reply' | 'both' | 'discuss' | 'dismiss';
+
+/** An inbox item as a tab sees it (server/state.ts InboxItem). */
+export interface InboxItemView extends InboxItemInput {
+  id: string;
+  createdAt: string;
+  enriching?: boolean;
+  enrichment?: {
+    explanation: string;
+    explanationDir?: string | null;
+    proposal: { fix?: string | null; reply?: string | null; replyDir?: string | null };
+  } | null;
+  decision?: InboxDecisionValue | null;
+  replyOverride?: string | null;
+  noteToAgent?: string | null;
+  settled?: { at: string; decision: string; note?: string } | null;
 }

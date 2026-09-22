@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en" dir="auto" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inbox</title>
+    <style>
+      /* Arigami's own tokens, copied from web/src/index.css so this reads as the
+         product and not as a drawing of it. Values measured off the running
+         cockpit, not guessed. */
+      :root {
+        --bg:#ffffff; --panel:#fcfcfb; --fg:#1a1a1a; --fgdim:#777777; --fg2:#3d3d42;
+        --border:#e2e2e0; --hair:#ececec; --rail:#fafafa; --brand:#6eceb7; --ink:#2a2a2a;
+        --sug:#fffdf2; --sugfg:#3a3426; --sugline:#cdbb66; --suglabel:#8a6d1f;
+        --add:#e6ffed; --del:#ffeef0; --addfg:#22863a; --delfg:#b31d28;
+        --sel:rgba(0,0,0,.055);
+        --c-fix-bg:#fdf6e3; --c-fix-line:#d9c48a; --c-fix-fg:#7a5c12;
+        --c-rep-bg:#e9f8f1; --c-rep-line:#8fd3ba; --c-rep-fg:#15654a;
+        --c-bot-bg:#e8f3fa; --c-bot-line:#8dc2dd; --c-bot-fg:#14556e;
+        --c-dis-bg:#f8ecf8; --c-dis-line:#d3a8d0; --c-dis-fg:#6d2168;
+        /* Arigami's own syntax palette (index.css --sx-*), not invented here. */
+        --sx-comment:#008000; --sx-keyword:#0000ff; --sx-string:#a31515;
+        --sx-number:#098658; --sx-title:#795e26; --sx-type:#267f99; --sx-variable:#0070c1;
+        /* the diff gutter: a tint you read as "added/removed", under the code */
+        --add:#e6ffed; --del:#ffeef0; --add-mark:#22863a; --del-mark:#b31d28;
+        --add-line:#a6e3b8; --del-line:#f0b4b8;
+        /* the two halves of a suggestion card */
+        --exp-bg:#fffdf2; --exp-fg:#3a3426; --exp-line:#cdbb66; --exp-label:#8a6d1f;
+        --out-bg:#eef6ff; --out-fg:#14324d; --out-line:#8ab6dd; --out-label:#1a5a8a;
+      }
+      html[data-theme="dark"] {
+        --bg:#0b0d10; --panel:#111418; --fg:#e8eaee; --fgdim:#8e96a4; --fg2:#c9ced6;
+        --border:#303743; --hair:#262b33; --rail:#111418; --brand:#6eceb7; --ink:#2a2a2a;
+        --sug:#1c1a12; --sugfg:#e7e1cd; --sugline:#5c5024; --suglabel:#d5b866;
+        --add:#0f2417; --del:#2a1416; --addfg:#7ee2a8; --delfg:#ff9b96;
+        --sel:rgba(255,255,255,.06);
+        --c-fix-bg:#2a2412; --c-fix-line:#5c5024; --c-fix-fg:#e3c777;
+        --c-rep-bg:#10241c; --c-rep-line:#1f5c48; --c-rep-fg:#7ee2c0;
+        --c-bot-bg:#101f2a; --c-bot-line:#1f4a5c; --c-bot-fg:#7ecfe2;
+        --c-dis-bg:#221024; --c-dis-line:#5c1f57; --c-dis-fg:#e29ede;
+        --sx-comment:#6a9955; --sx-keyword:#569cd6; --sx-string:#ce9178;
+        --sx-number:#b5cea8; --sx-title:#dcdcaa; --sx-type:#4ec9b0; --sx-variable:#9cdcfe;
+        --add:#0f2417; --del:#2a1416; --add-mark:#7ee2a8; --del-mark:#ff9b96;
+        --add-line:#1e5136; --del-line:#5c2a2e;
+        --exp-bg:#1c1a12; --exp-fg:#e7e1cd; --exp-line:#5c5024; --exp-label:#d5b866;
+        --out-bg:#0f1a24; --out-fg:#cfe2f2; --out-line:#245070; --out-label:#7ab8e0;
+      }
+      /* Arigami's UI-size setting is ONE factor on the root font-size
+         (web/src/index.css): html { font-size: calc(100% * var(--ui-scale)) }.
+         Only rem/em follow it — which is why nothing below is sized in px.
+         Note the Changes tab itself is written in px and does NOT scale. */
+      html{font-size:calc(100% * var(--ui-scale, 1))}
+      *{box-sizing:border-box}
+      body{margin:0;background:var(--bg);color:var(--fg);font:0.8125rem/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+      .app{display:flex;flex-direction:column;height:100vh}
+
+      /* ── header: the same shape as the Changes tab's ─────────────────────── */
+      .hdr{display:flex;align-items:center;gap:0.625rem;height:2.125rem;flex:0 0 2.125rem;padding:0 0.625rem;border-bottom:1px solid var(--hair)}
+      .hdr b{font-size:0.8125rem}
+      .seg{display:flex;overflow:hidden;border:1.5px solid var(--ink);border-radius:0.5rem}
+      html[data-theme="dark"] .seg{border-color:var(--border)}
+      .seg button{padding:2px 0.625rem;font-size:0.6875rem;border:0;background:var(--panel);color:var(--fgdim);cursor:pointer}
+      .seg button+button{border-left:1.5px solid var(--ink)}
+      html[data-theme="dark"] .seg button+button{border-left-color:var(--border)}
+      .seg button.on{background:var(--brand);color:#1a1a1a;font-weight:700}
+      .spacer{margin-left:auto}
+      .ghost{border:1px solid var(--hair);background:transparent;color:var(--fgdim);border-radius:0.4375rem;padding:0.1875rem 0.5625rem;font-size:0.6875rem;cursor:pointer}
+
+      .body{display:flex;min-height:0;flex:1}
+
+      /* ── left: the item list, 16.25rem like the Changes file list ───────────── */
+      .list{width:16.25rem;flex:0 0 16.25rem;border-right:1px solid var(--hair);overflow-y:auto;background:var(--bg)}
+      .row{display:flex;gap:0.5rem;align-items:flex-start;padding:0.5rem 0.625rem;border-bottom:1px solid var(--hair);cursor:pointer}
+      .row:hover{background:var(--sel)}
+      .row.on{background:var(--sel);box-shadow:inset 2px 0 0 var(--brand)}
+      .row .who{font-size:0.71875rem;font-weight:600;line-height:1.3}
+      .row .meta{font-size:0.65625rem;color:var(--fgdim);margin-top:1px}
+      .row .txt{font-size:0.6875rem;color:var(--fg2);margin-top:0.1875rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .chip{margin-left:auto;flex:0 0 auto;font-size:0.5625rem;letter-spacing:.05em;text-transform:uppercase;font-weight:700;
+        padding:2px 0.375rem;border-radius:0.3125rem;border:1px solid var(--hair);color:var(--fgdim)}
+      /* Every chip is a TOKEN pair, never a hardcoded colour — a card that sets
+         its own fill in one theme and reads its text from the palette is the
+         exact bug that made suggestion cards invisible in dark mode. */
+      .chip.fix{background:var(--c-fix-bg);border-color:var(--c-fix-line);color:var(--c-fix-fg)}
+      .chip.reply{background:var(--c-rep-bg);border-color:var(--c-rep-line);color:var(--c-rep-fg)}
+      .chip.both{background:var(--c-bot-bg);border-color:var(--c-bot-line);color:var(--c-bot-fg)}
+      .chip.discuss{background:var(--c-dis-bg);border-color:var(--c-dis-line);color:var(--c-dis-fg)}
+      .chip.dismiss{background:transparent;color:var(--fgdim);text-decoration:line-through}
+      .dot{width:0.375rem;height:0.375rem;border-radius:50%;background:var(--brand);flex:0 0 0.375rem;margin-top:0.3125rem}
+      .dot.mute{background:var(--hair)}
+
+      /* ── right: the item ──────────────────────────────────────────────── */
+      .item{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+      .crumb{display:flex;align-items:center;gap:0.5rem;height:1.75rem;flex:0 0 1.75rem;padding:0 0.75rem;border-bottom:1px solid var(--hair);
+        font-size:0.6875rem;color:var(--fgdim);font-family:ui-monospace,monospace}
+      .scroll{overflow-y:auto;padding:0.75rem;display:flex;flex-direction:column;gap:0.75rem;min-height:0;flex:1}
+      .said{white-space:pre-wrap;font-size:0.8125rem}
+      .lbl{font-size:0.59375rem;letter-spacing:.06em;text-transform:uppercase;color:var(--fgdim);font-family:ui-monospace,monospace;margin-bottom:0.25rem}
+
+      /* hunk: rendered here, NOT DiffView — the context is GitHub's diff_hunk,
+         a few lines, not a file diff. */
+      /* The code is coloured as CODE — Arigami's --sx-* palette, the same one
+         DiffView feeds from lowlight. The +/- is a GUTTER: a faint row tint and
+         a coloured sign in its own column. Tinting the whole line one flat
+         green/red was the problem — it washes the syntax out and the line stops
+         reading as source. */
+      /* DiffView's exact recipe (web/src/components/DiffView.jsx):
+           ADD_BG rgba(95,181,106,.16) / DEL_BG rgba(217,128,120,.16) — the same
+           TRANSLUCENT tints in both themes, which is why they work in both;
+           the hunk header on rgba(80,120,200,.10);
+           a line-number gutter, then the sign in text-fgdim — NOT green/red,
+           the colour lives in the row background only;
+           font-mono, leading 1.55, whitespace-pre, dir=ltr on the code. */
+      .hunk{border:1px solid var(--hair);border-radius:0.5rem;overflow:hidden}
+      .hunk .hh{padding:0.125rem 0.5rem;background:rgba(80,120,200,.10);color:var(--fgdim);
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.65625rem}
+      .hunk pre{margin:0}
+      .hunk .l{display:flex;min-width:0;white-space:pre;direction:ltr;text-align:left;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.6875rem;line-height:1.55;color:var(--fg)}
+      .hunk .l .g{flex:0 0 2.25rem;padding-right:0.5rem;text-align:right;color:var(--fgdim);
+        font-variant-numeric:tabular-nums;user-select:none}
+      .hunk .l .sign{flex:0 0 0.75rem;color:var(--fgdim);user-select:none}
+      .hunk .l.a{background:rgba(95,181,106,.16)}
+      .hunk .l.d{background:rgba(217,128,120,.16)}
+      .k{color:var(--sx-keyword)} .s{color:var(--sx-string)} .t{color:var(--sx-type)}
+      .f{color:var(--sx-title)} .v{color:var(--sx-variable)} .n{color:var(--sx-number)}
+      .cm{color:var(--sx-comment);font-style:italic}
+
+      /* the SUGGESTION card — the same one the Changes tab already uses */
+      /* Two different objects, so two different colours. AMBER is the model
+         talking to YOU — an explanation, a proposed fix, safe to skim. BLUE is
+         text that LEAVES THE MACHINE if you approve it. They were one amber
+         card divided by a dashed line, which is exactly how a reply gets
+         skimmed as commentary and sent by accident. */
+      .card{border:1px solid;border-radius:0.5rem;padding:0.5rem 0.625rem}
+      .card .top{display:flex;align-items:center;gap:0.375rem;margin-bottom:0.3125rem}
+      .card .tag{font-family:ui-monospace,monospace;font-size:0.5625rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+      .card .acts{margin-left:auto;display:flex;gap:0.5rem;font-family:ui-monospace,monospace;font-size:0.59375rem}
+      .card p{margin:0 0 0.375rem}
+      .card p:last-child{margin-bottom:0}
+      /* Direction is PER CARD, not per page. The model picks a language per
+         item (InboxProposal carries explanationDir and replyDir separately),
+         so a Hebrew explanation and an English reply sit in one item and each
+         is laid out correctly. The diff never flips — DiffView forces dir=ltr
+         on code, and so does the hunk above. */
+      .card[dir="rtl"] .top{flex-direction:row-reverse}
+      .card[dir="rtl"] .acts{margin-left:0;margin-right:auto}
+      .explain{border-color:var(--exp-line);background:var(--exp-bg);color:var(--exp-fg)}
+      .explain .tag,.explain .acts{color:var(--exp-label)}
+      .outgoing{border-color:var(--out-line);background:var(--out-bg);color:var(--out-fg)}
+      .outgoing .tag,.outgoing .acts{color:var(--out-label)}
+      .outgoing textarea{border-color:var(--out-line);color:var(--out-fg);background:transparent}
+
+      textarea{width:100%;border:1px solid var(--border);background:transparent;color:inherit;border-radius:0.4375rem;
+        padding:0.4375rem 0.5625rem;font:inherit;resize:vertical;min-height:3.625rem}
+      textarea.reply{font-family:ui-monospace,monospace;font-size:0.75rem}
+
+      /* ── decision bar + submit bar ─────────────────────────────────────── */
+      .decide{display:flex;gap:0.375rem;align-items:center;flex:0 0 auto;padding:0.5rem 0.75rem;border-top:1px solid var(--hair);background:var(--panel)}
+      .decide button{border:1.5px solid var(--border);background:transparent;color:var(--fg);border-radius:0.4375rem;padding:0.25rem 0.6875rem;font-size:0.71875rem;cursor:pointer}
+      .decide button.on{background:var(--brand);color:#1a1a1a;font-weight:700;border-color:var(--brand)}
+      .bar{display:flex;align-items:center;gap:0.625rem;flex:0 0 auto;height:2.5rem;padding:0 0.75rem;border-top:1px solid var(--hair);background:var(--panel)}
+      .bar .count{font-family:ui-monospace,monospace;font-size:0.6875rem;color:var(--fgdim)}
+      .bar input{flex:1;border:1px solid var(--border);background:transparent;color:inherit;border-radius:0.4375rem;padding:0.3125rem 0.5625rem;font:inherit;font-size:0.75rem}
+      .submit{border:1.5px solid var(--ink);background:var(--brand);color:#1a1a1a;font-weight:700;border-radius:0.5rem;
+        padding:0.3125rem 0.875rem;font-size:0.71875rem;cursor:pointer;box-shadow:2px 2px 0 var(--ink)}
+    
+      .empty{display:flex;flex:1;align-items:center;justify-content:center;color:var(--fgdim);font-size:0.8125rem;padding:2rem;text-align:center}
+      .busy{opacity:.5;pointer-events:none}
+      .spin{display:inline-block;width:0.7rem;height:0.7rem;border:2px solid var(--fgdim);border-top-color:transparent;border-radius:50%;animation:sp 0.8s linear infinite}
+      @keyframes sp{to{transform:rotate(360deg)}}
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="hdr">
+        <b>Inbox</b>
+        <span class="seg" id="filter">
+          <button data-f="needs" class="on">Needs you</button><button data-f="all">All</button><button data-f="settled">Settled</button>
+        </span>
+        <span class="mono" id="src" style="font-size:0.6875rem;color:var(--fgdim)"></span>
+        <span class="spacer"></span>
+        <button class="ghost" id="refresh">⟳ refresh</button>
+      </div>
+
+      <div class="body">
+        <div class="list" id="list"></div>
+        <div class="item" id="item"><div class="empty">Nothing selected.</div></div>
+      </div>
+
+      <div class="bar">
+        <span class="count" id="count"></span>
+        <input id="note" placeholder="A note that rides along with the whole batch (optional)" />
+        <button class="submit" id="submit" disabled>Submit</button>
+      </div>
+    </div>
+
+    <script src="/__ext-sdk.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const DECISIONS = ['fix', 'reply', 'both', 'discuss', 'dismiss'];
+
+      let items = [];
+      let selected = null;
+      let filter = 'needs';
+
+      // The cockpit hands the theme over and re-sends it on every change; a tab
+      // cannot read the cockpit's CSS and prefers-color-scheme is the OS's
+      // answer, not Arigami's.
+      const applyCtx = (c) => {
+        document.documentElement.dataset.theme = c && c.theme === 'light' ? 'light' : 'dark';
+        if (c && c.lang) document.documentElement.lang = c.lang;
+      };
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'arigami:init') applyCtx(e.data.context);
+      });
+
+      /* ---- render ---------------------------------------------------------- */
+
+      const visible = () =>
+        items.filter((i) =>
+          filter === 'all' ? true : filter === 'settled' ? !!i.settled : !i.settled
+        );
+
+      function renderList() {
+        const rows = visible();
+        $('list').innerHTML = rows.length
+          ? rows.map((i) => {
+              const d = i.settled ? i.settled.decision : i.decision;
+              const chip = d ? `<span class="chip ${esc(d)}">${esc(d)}</span>` : '';
+              const sub = i.context && i.context.kind === 'code' ? ` · ${esc((i.context.path || '').split('/').pop())}` : '';
+              return `<div class="row ${i.id === selected ? 'on' : ''}" data-id="${esc(i.id)}">
+                  <span class="dot ${i.signal ? '' : 'mute'}"></span>
+                  <span style="min-width:0">
+                    <div class="who">${esc(i.source.author || 'someone')}</div>
+                    <div class="meta mono">${esc(i.source.kind)}${sub}</div>
+                    <div class="txt">${esc(i.body).slice(0, 180)}</div>
+                  </span>${chip}
+                </div>`;
+            }).join('')
+          : '<div class="empty">Nothing here.</div>';
+        const src = items.find((i) => i.source && i.source.title);
+        $('src').textContent = src ? src.source.title : '';
+      }
+
+      // GitHub's diff_hunk, rendered the way the Changes tab renders a diff:
+      // a line-number gutter, a DIM sign, and the colour only in the row tint.
+      function renderHunk(c) {
+        const lines = String(c.hunk || '').split('\n');
+        let oldN = 0, newN = 0;
+        const head = /^@@ -(\d+)[,\d]* \+(\d+)/.exec(lines[0] || '');
+        if (head) { oldN = +head[1]; newN = +head[2]; }
+        const rows = lines.map((l, idx) => {
+          if (idx === 0 && l.startsWith('@@')) return `<div class="hh">${esc(l)}</div>`;
+          const ch = l[0];
+          const cls = ch === '+' ? 'a' : ch === '-' ? 'd' : '';
+          const n = ch === '+' ? newN++ : ch === '-' ? oldN++ : (oldN++, newN++);
+          return `<div class="l ${cls}"><span class="g">${n || ''}</span><span class="sign">${esc(ch === '+' || ch === '-' ? ch : ' ')}</span><span>${esc(l.slice(1)) || '&nbsp;'}</span></div>`;
+        });
+        return `<div class="hunk">${rows[0] || ''}<pre>${rows.slice(1).join('')}</pre></div>`;
+      }
+
+      function renderContext(c) {
+        if (!c || c.kind === 'none') return '';
+        if (c.kind === 'code')
+          return `<div><div class="lbl">Context · ${esc(c.path)}${c.lines ? ' ' + esc(c.lines) : ''}</div>${renderHunk(c)}</div>`;
+        if (c.kind === 'text')
+          return `<div><div class="lbl">${esc(c.title || 'Quoted')}</div><div class="said" dir="${esc(c.dir || 'auto')}">${esc(c.body)}</div></div>`;
+        if (c.kind === 'thread')
+          return `<div><div class="lbl">${esc(c.title || 'Thread')}</div>` +
+            (c.messages || []).map((m) => `<div class="said"${m.focus ? ' style="font-weight:600"' : ''}>${esc(m.author)}: ${esc(m.text)}</div>`).join('') + '</div>';
+        return '';
+      }
+
+      function renderItem() {
+        const i = items.find((x) => x.id === selected);
+        if (!i) { $('item').innerHTML = '<div class="empty">Nothing selected.</div>'; return; }
+        const en = i.enrichment;
+        const proposedReply = (en && en.proposal && en.proposal.reply) || '';
+        const reply = i.replyOverride != null ? i.replyOverride : proposedReply;
+
+        const explain = i.enriching
+          ? `<div class="card explain"><div class="top"><span class="tag">✨ reading it…</span><span class="acts"><span class="spin"></span></span></div></div>`
+          : en
+            ? `<div class="card explain" dir="${esc(en.explanationDir || 'auto')}">
+                 <div class="top"><span class="tag">✨ What the agent thinks</span></div>
+                 <p>${esc(en.explanation)}</p>
+                 ${en.proposal && en.proposal.fix ? `<p style="opacity:.85"><b>Proposed fix:</b> ${esc(en.proposal.fix)}</p>` : ''}
+               </div>`
+            : `<div class="card explain"><div class="top"><span class="tag">✨ not read yet</span>
+                 <span class="acts"><span id="explain-it" style="cursor:pointer">explain it</span></span></div></div>`;
+
+        // Blue is the text that LEAVES the machine. It is a different colour
+        // from the amber explanation on purpose — one is commentary, the other
+        // is a message to a person.
+        const outgoing = `<div class="card outgoing">
+            <div class="top"><span class="tag">↗ This text will be sent to ${esc(i.source.author || 'them')}</span></div>
+            <textarea class="reply" id="reply" dir="${esc((en && en.proposal && en.proposal.replyDir) || 'auto')}"
+              placeholder="Nothing drafted — write the reply yourself, or leave it empty.">${esc(reply)}</textarea>
+          </div>`;
+
+        $('item').innerHTML = `
+          <div class="crumb">
+            <span>${esc(i.source.provider)} · ${esc(i.source.kind)}</span>
+            ${i.source.url ? `<span>·</span><span><a href="${esc(i.source.url)}" target="_blank" rel="noreferrer" style="color:inherit">open ↗</a></span>` : ''}
+            <span class="spacer"></span><span>${esc(i.source.at || '')}</span>
+          </div>
+          <div class="scroll">
+            <div><div class="lbl">${esc(i.source.author || 'someone')} said</div>
+              <div class="said" dir="${esc(i.dir || 'auto')}">${esc(i.body)}</div></div>
+            ${renderContext(i.context)}
+            ${explain}
+            ${outgoing}
+            <div>
+              <div class="lbl">Note to the agent — stays on this machine</div>
+              <textarea id="note-agent" placeholder="e.g. do it, but don't touch the stories file">${esc(i.noteToAgent || '')}</textarea>
+            </div>
+          </div>
+          <div class="decide">
+            <span class="lbl" style="margin:0 0.25rem 0 0">Decision</span>
+            ${DECISIONS.map((d) => `<button data-d="${d}" class="${i.decision === d ? 'on' : ''}">${d[0].toUpperCase() + d.slice(1)}</button>`).join('')}
+          </div>`;
+        if (i.settled) $('item').querySelector('.decide').classList.add('busy');
+      }
+
+      function renderBar() {
+        const decided = items.filter((i) => i.decision && !i.settled).length;
+        const pending = items.filter((i) => !i.decision && !i.settled).length;
+        $('count').textContent = `${decided} decided · ${pending} pending`;
+        $('submit').disabled = !decided && !$('note').value.trim();
+        $('submit').textContent = decided ? `Submit ${decided} decision${decided > 1 ? 's' : ''}` : 'Submit';
+      }
+
+      const renderAll = () => { renderList(); renderItem(); renderBar(); };
+
+      /* ---- data ------------------------------------------------------------ */
+
+      async function load() {
+        const r = await arigami.inboxList();
+        items = (r && r.items) || [];
+        if (!items.some((i) => i.id === selected)) selected = (visible()[0] || {}).id || null;
+        renderAll();
+      }
+
+      async function patch(itemId, p) {
+        const next = await arigami.inboxPatch(itemId, p);
+        items = items.map((i) => (i.id === itemId ? next : i));
+        renderAll();
+      }
+
+      /* ---- events ---------------------------------------------------------- */
+
+      $('filter').addEventListener('click', (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        [...e.currentTarget.children].forEach((x) => x.classList.toggle('on', x === b));
+        filter = b.dataset.f;
+        if (!visible().some((i) => i.id === selected)) selected = (visible()[0] || {}).id || null;
+        renderAll();
+      });
+
+      $('list').addEventListener('click', (e) => {
+        const row = e.target.closest('.row'); if (!row) return;
+        selected = row.dataset.id;
+        renderAll();
+      });
+
+      $('item').addEventListener('click', async (e) => {
+        const b = e.target.closest('button[data-d]');
+        if (b) {
+          const i = items.find((x) => x.id === selected);
+          // clicking the active decision clears it
+          return patch(selected, { decision: i && i.decision === b.dataset.d ? null : b.dataset.d });
+        }
+        if (e.target.id === 'explain-it') {
+          e.target.textContent = 'reading…';
+          try { await arigami.inboxEnrich(); } catch (err) { e.target.textContent = 'failed'; return; }
+          // The run posts back asynchronously; session-updated brings it in.
+          setTimeout(() => load().catch(() => {}), 1500);
+        }
+      });
+
+      // Save the two text boxes on blur rather than per keystroke: each save is
+      // a round trip, and a half-typed reply is not worth persisting.
+      $('item').addEventListener('blur', (e) => {
+        if (!selected) return;
+        if (e.target.id === 'reply') patch(selected, { replyOverride: e.target.value });
+        if (e.target.id === 'note-agent') patch(selected, { noteToAgent: e.target.value });
+      }, true);
+
+      $('note').addEventListener('input', renderBar);
+      $('refresh').addEventListener('click', load);
+
+      $('submit').addEventListener('click', async () => {
+        $('submit').disabled = true;
+        try {
+          const r = await arigami.inboxSubmit($('note').value.trim());
+          $('note').value = '';
+          $('submit').textContent = `Sent ${r.submitted}`;
+          await load();
+        } catch (err) {
+          $('submit').textContent = String((err && err.message) || err).slice(0, 40);
+          $('submit').disabled = false;
+        }
+      });
+
+      /* ---- boot ------------------------------------------------------------ */
+
+      (async () => {
+        const ctx = await arigami.ready();
+        applyCtx(ctx);
+        if (ctx.sessionId === null) {
+          $('item').innerHTML = '<div class="empty">The inbox belongs to a session — open this from a session tab.</div>';
+          return;
+        }
+        await load();
+        // The host broadcasts session-updated when the drafting run posts its
+        // explanations back, so the panel fills in without a manual refresh.
+        arigami.subscribe(['session-updated'], () => load().catch(() => {}));
+      })().catch((e) => {
+        $('item').innerHTML = `<div class="empty">${esc(String((e && e.message) || e))}</div>`;
+      });
+    </script>
+  </body>
+</html>

@@ -198,6 +198,43 @@ export function createExtBridge({
         if (!subs.size) stopWire();
         return { ok: true };
       }
+      // The inbox goes through the BRIDGE and not through an extension tool,
+      // and that is a safety decision rather than a style one. An extension's
+      // tools are also mounted into the session's --mcp-config, so an
+      // `inbox_submit` tool would let the AGENT approve and send its own
+      // drafted replies — the submit gate exists precisely to stop that. Here
+      // the cockpit makes the call, as the signed-in human, and the agent has
+      // no way to reach it.
+      case 'inboxList': {
+        needsSession('inboxList');
+        return await api.get(`/sessions/${sessionId}/inbox`);
+      }
+      case 'inboxPatch': {
+        needsSession('inboxPatch');
+        const itemId = String(args.itemId || '');
+        if (!itemId) throw new Error('itemId required');
+        // An allowlist, mirroring the REST route: a tab may record a decision
+        // and edit the drafted texts. It may not touch `body`, `source` or
+        // `settled` — what a person wrote is not the cockpit's to rewrite.
+        const patch = {};
+        for (const k of ['decision', 'replyOverride', 'noteToAgent'])
+          if (k in (args.patch || {})) patch[k] = args.patch[k];
+        if (!Object.keys(patch).length) throw new Error('nothing to patch');
+        return await api.patch(`/sessions/${sessionId}/inbox/${encodeURIComponent(itemId)}`, patch);
+      }
+      case 'inboxSubmit': {
+        needsSession('inboxSubmit');
+        return await api.post(`/sessions/${sessionId}/inbox/submit`, {
+          note: args.note ? String(args.note) : '',
+        });
+      }
+      case 'inboxEnrich': {
+        needsSession('inboxEnrich');
+        // The "explain it" button on a low-signal item. It starts a READ-ONLY
+        // drafting run; it cannot send anything, and what it writes back is
+        // whitelisted to the agent's own fields.
+        return await api.post(`/sessions/${sessionId}/inbox/enrich-now`, {});
+      }
       case 'createSession': {
         // The launcher surface's whole reason to exist. Restricted TO it on
         // purpose: from inside a session this would be a second, unaudited way

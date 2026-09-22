@@ -37,6 +37,10 @@
 //     needs permission `tools:<name>`. NOT session-scoped, so it is the one
 //     data path a LAUNCHER tab has. Returns the MCP result verbatim — content
 //     blocks, `[{type:'text',text:'<json>'}]`, not the object the tool returned.
+//   inboxList / inboxPatch / inboxSubmit                     → the session inbox
+//     needs permission `session:inbox`. On the bridge, NOT as tools: an
+//     extension tool is mounted into the agent's MCP config, and submit is the
+//     one gate a human must hold.
 //   createSession { spec }                                   → {id}
 //     needs permission `host:create-session`. LAUNCHER tabs only (ready()
 //     resolves with sessionId:null there); refused from inside a session.
@@ -178,6 +182,25 @@
      */
     createSession: function (spec) {
       return call('createSession', { spec: spec || {} });
+    },
+
+    /**
+     * The session's inbox — what people said to us. Needs `session:inbox`.
+     * Deliberately here and not as extension tools: a tool is also visible to
+     * the AGENT, and submit is the one gate a human must hold.
+     */
+    inboxList: function () {
+      return call('inboxList', {});
+    },
+    inboxPatch: function (itemId, patch) {
+      return call('inboxPatch', { itemId: String(itemId || ''), patch: patch || {} });
+    },
+    inboxSubmit: function (note) {
+      return call('inboxSubmit', { note: note == null ? '' : String(note) });
+    },
+    /** "explain it" on an item the signal gate skipped. Read-only run. */
+    inboxEnrich: function () {
+      return call('inboxEnrich', {});
     },
 
     /** Badge / colour / title on THIS tab. */

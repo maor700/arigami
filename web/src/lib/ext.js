@@ -69,6 +69,11 @@ export function permissionsFor(method, args = {}) {
       return ['session:tabs'];
     case 'createSession':
       return ['host:create-session'];
+    case 'inboxList':
+    case 'inboxPatch':
+    case 'inboxSubmit':
+    case 'inboxEnrich':
+      return ['session:inbox'];
     case 'subscribe':
     case 'unsubscribe':
       return [];

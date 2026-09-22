@@ -51,6 +51,10 @@ export const EXT_API_VERSION = 1;
 
 export const USER_DIR = path.join(ARIGAMI_DIR, 'user');
 export const EXT_DIR = path.join(USER_DIR, 'extensions');
+// Where importFresh() stages a throwaway copy of an extension. Under user/ so
+// `@arigami/sdk` still resolves by walking up, and OUTSIDE extensions/ so a
+// staged copy is never mistaken for an installed extension.
+const RELOAD_DIR = path.join(USER_DIR, '.arigami-reload');
 export const USER_SKILLS_TARGET = path.join(USER_DIR, 'skills');
 export const USER_MCP_CATALOG = path.join(USER_DIR, 'mcp-catalog.json');
 export const EXT_STATE_FILE = path.join(ARIGAMI_DIR, 'extensions.json');
@@ -90,7 +94,7 @@ const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 // process, with whatever permissionMode the caller asks for. It is the
 // strongest grant an extension can hold, so it reads differently in the
 // install dialog instead of hiding among its neighbours.
-const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'host:create-session', 'notify'];
+const KNOWN_PERMISSIONS = ['session:message', 'session:prompts', 'session:tabs', 'session:artifacts', 'session:listeners', 'session:inbox', 'host:create-session', 'notify'];
 /** Surfaces a manifest tab may ask for. `slash:<name>` is matched separately. */
 const KNOWN_OPEN_FROM = ['tab-bar', 'launcher'];
 const GATE_NAMES = ['merge.before'];
@@ -119,7 +123,7 @@ const hostLog = (msg: string) => process.stderr.write(`[ext] ${msg}\n`);
 // ---------------------------------------------------------------------------
 // §1 — the user repo: $ARIGAMI_DIR/user
 // ---------------------------------------------------------------------------
-const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', '.arigami-reload.*', ''].join('\n');
+const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', '.arigami-reload.*', '.arigami-reload/', ''].join('\n');
 
 function isDir(p: string): boolean {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
@@ -516,23 +520,67 @@ function mtimeOf(p: string): number {
 let loadSeq = 0;
 let importSeq = 0;
 
+/**
+ * Import a module and actually get the version on disk.
+ *
+ * This used to copy the file to `.arigami-reload.<n>.<file>` BESIDE itself and
+ * import that. It worked exactly once per host process and then every later
+ * import failed with "Cannot find module" — Bun caches a directory's listing,
+ * so a file created in an already-resolved directory is invisible to the
+ * resolver. The visible symptom was that the FIRST .ts module a host ever
+ * loaded worked and every one after it broke, which meant the shipped `hello`
+ * example could not load at all and no extension could contribute a listener
+ * or hooks alongside another. Reproduced on a clean master before changing
+ * anything.
+ *
+ * Two things were tried and rejected. A `?v=<n>` query busts nothing — Bun
+ * keys its module cache on the resolved path and ignores the query, so an
+ * edited file kept serving the old exports, which defeats the entire purpose.
+ * Copying into a subdirectory of the extension works, but `cpSync` refuses to
+ * copy a directory into itself and a lone file there loses its relative
+ * siblings.
+ *
+ * So: copy the whole extension into a fresh directory per import. A directory
+ * that did not exist cannot be in the resolver's cache, and copying the tree
+ * keeps `./sibling.ts` working — which the old single-file copy did not: it
+ * would happily serve a STALE sibling after an edit. The copy lives under
+ * `$ARIGAMI_DIR/user/` so `@arigami/sdk` still resolves by walking up, and
+ * NOT under `user/extensions/`, where it would be mistaken for an extension.
+ */
 async function importFresh(full: string): Promise<any> {
-  const alias = path.join(path.dirname(full), `.arigami-reload.${loadSeq}.${++importSeq}.${path.basename(full)}`);
+  const extRoot = path.dirname(full).startsWith(EXT_DIR)
+    ? path.join(EXT_DIR, path.relative(EXT_DIR, full).split(path.sep)[0])
+    : path.dirname(full);
+  const rel = path.relative(extRoot, full);
+  const shadow = path.join(RELOAD_DIR, `${path.basename(extRoot)}-${loadSeq}-${++importSeq}`);
   try {
-    fs.copyFileSync(full, alias);
-  } catch {
-    hostLog(`could not shadow ${path.basename(full)} for a fresh import — an edit to it needs a host restart`);
+    fs.mkdirSync(RELOAD_DIR, { recursive: true });
+    fs.cpSync(extRoot, shadow, {
+      recursive: true,
+      // node_modules would make this expensive for nothing: resolution walks
+      // up to user/node_modules anyway.
+      filter: (src) => path.basename(src) !== 'node_modules',
+    });
+  } catch (e) {
+    hostLog(`could not shadow ${path.basename(extRoot)} for a fresh import (${(e as Error)?.message}) — an edit needs a host restart`);
     return import(pathToFileURL(full).href);
   }
   try {
-    return await import(pathToFileURL(alias).href);
+    return await import(pathToFileURL(path.join(shadow, rel)).href);
   } finally {
-    try { fs.rmSync(alias, { force: true }); } catch {}
+    try { fs.rmSync(shadow, { recursive: true, force: true }); } catch { /* swept next boot */ }
   }
 }
 
-/** Sweep aliases a crash may have left behind (they are hidden, but not litter). */
+/**
+ * Sweep staging a crash may have left behind: the whole .arigami-reload dir,
+ * plus the `.arigami-reload.*` single files the previous scheme wrote, which
+ * are still on disk in any instance that ran the old loader.
+ */
 function sweepReloadAliases(dir: string): void {
+  // Staging from a crashed load. Cheap and unconditional: the directory only
+  // ever holds copies, so anything still here is by definition abandoned.
+  try { fs.rmSync(RELOAD_DIR, { recursive: true, force: true }); } catch { /* next boot */ }
   const seen = new Set<string>();
   const walk = (d: string, depth: number) => {
     if (depth > 3 || seen.has(d)) return;
