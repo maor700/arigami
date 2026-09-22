@@ -347,7 +347,6 @@ unchanged either way: same `window.arigami`, same protocol v1.
 Ask for the tier only when the tab must be same-origin. The case it was built for
 is a tab that embeds **host-proxied** URLs (`/?__target=…`): the proxy is a
 service worker plus the auth cookie, and an opaque origin can have neither.
-`examples/extensions/compare` is that tab, and the shipped example.
 
 Asking is not getting. The host serves a tab unsandboxed only when the manifest
 asks **and** a human granted it (`bin/host ext add --trust`, `bin/host ext trust

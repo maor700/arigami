@@ -781,37 +781,6 @@ function runHook(ext: string, event: string, fn: (ev: any, ctx: HookCtx) => any,
 }
 
 // ---------------------------------------------------------------------------
-// one-shot migration: config.json `prodUrl` → the compare extension's settings
-// ---------------------------------------------------------------------------
-// "Compare to prod" used to be core: a toggle on every proxied url tab, whose
-// baseline came from `prodUrl` in config.json. It is an extension now
-// (examples/extensions/compare) and the config key is gone — so a host that had
-// one carries it over, once, the first time the extension is present. Mutates
-// `st`; the caller writes it.
-const COMPARE_MIGRATION = 'compare-baseline-from-prodUrl';
-
-function migrateCompareBaseline(st: ExtState): void {
-  if (st.migrated[COMPARE_MIGRATION]) return;
-  const e = extensions.get('compare');
-  if (!e || e.state === 'error') return; // not installed (yet) — ask again next reload
-  let prodUrl = '';
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(ARIGAMI_DIR, 'config.json'), 'utf8'));
-    prodUrl = typeof raw?.prodUrl === 'string' ? raw.prodUrl.trim() : '';
-  } catch {
-    /* no config.json, or not JSON — nothing to carry over */
-  }
-  // Mark it done either way: this asks the old config exactly once.
-  st.migrated[COMPARE_MIGRATION] = true;
-  if (!prodUrl) return;
-  const cur = st.settings.compare || {};
-  if (typeof cur.baselineUrl === 'string' && cur.baselineUrl.trim()) return; // the human already chose
-  st.settings.compare = { ...cur, baselineUrl: prodUrl };
-  hostLog(`carried config.json prodUrl over to the compare extension's baselineUrl (${prodUrl}) — the core "compare to prod" toggle is now that extension`);
-  extLog('compare', `baselineUrl migrated from config.json prodUrl: ${prodUrl}`);
-}
-
-// ---------------------------------------------------------------------------
 // load / reload
 // ---------------------------------------------------------------------------
 function teardown(e: ExtEntry): void {
@@ -859,7 +828,6 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
       if (entry.sha) { st.sha[name] = entry.sha; }
     }
 
-    migrateCompareBaseline(st);
     writeState(st);
     ensureExtPlugin();
     refreshFamilies();

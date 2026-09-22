@@ -1468,9 +1468,9 @@ function UrlTab({ tab, active, session }) {
   const extName = extOfTab(tab);
   const extRecord = useMemo(() => findExtension(extensions, extName), [extensions, extName]);
   // …unless the human granted it the TRUSTED tier, in which case the host also
-  // omits the CSP sandbox header and the tab is same-origin with the cockpit
-  // (it needs to be — see examples/extensions/compare, which embeds proxied
-  // URLs). Fail-closed: an extension we have no record for yet is sandboxed,
+  // omits the CSP sandbox header and the tab is same-origin with the cockpit.
+  // This is required by extensions that embed host-proxied URLs. Fail-closed:
+  // an extension we have no record for yet is sandboxed,
   // and the iframe is remounted if that answer ever flips, because `sandbox`
   // only takes effect at navigation.
   const extSandboxed = !!extName && extRecord?.trusted !== true;

@@ -54,8 +54,7 @@ session = {
 tab =
   | { id, type:'session', title }                       // the chat terminal
   | { id, type:'url', title, url, color?, badge? }      // proxied iframe
-      // (`compare?: {url}` is dead: the vs-prod slider is an extension now,
-      //  examples/extensions/compare — old state.json files still parse)
+      // (`compare?: {url}` is dead legacy state; old state.json files still parse)
   | { id, type:'content', title, format:'html'|'markdown', body, badge? }
 ```
 
@@ -197,7 +196,7 @@ set_title({title, session_id?})       set_color({color, session_id?})
 set_status({status, session_id?})     set_metadata({patch, session_id?})  // merge
 set_progress({steps, session_id?})    // null/[] clears
 open_tab({type:'url'|'content'|'ext', title, url?, format?, body?, badge?, ext?, tab?, params?, session_id?}) → {tab_id}
-// `compare_url`/`compare` are gone — the vs-prod slider is examples/extensions/compare
+// legacy `compare_url`/`compare` fields are gone
 update_tab({tab_id, …same fields…})   close_tab({tab_id})   activate_tab({tab_id})
 request_action({prompt, buttons:[{label,value,style?}], session_id?})
 request_screen({prompt, reason?, hint?, session_id?}) → {ok, takenOver, note?}
@@ -835,8 +834,8 @@ Keep verbatim behavior: per-tab targets via Service Worker (x-poc-target),
 ?__target= pinning, Location/Set-Cookie rewrites, WebSocket upgrade proxying,
 Vercel bypass header, gzip handling. Strip: card overlay injection, old chat
 relay, responder supervisor (replaced by claude.js). Keep host pages: /__ticket/<id>
-(Linear renderer incl. GitHub PR view), /__ticket-img. (/__compare, the vs-prod
-slider, has since moved out of the core into examples/extensions/compare.)
+(Linear renderer incl. GitHub PR view), /__ticket-img. The legacy `/__compare`
+page is not part of the core.
 URL tabs iframe `http://localhost:3099/?__target=<url>` (SW per-iframe-client
 targeting works as it does for PoC tabs today; each iframe is its own SW client).
 
@@ -866,9 +865,8 @@ text. Layout per wireframe (IDE shell):
   awaiting); footer: reply textarea (↵ send, shift-↵ newline) + send btn;
   action bar (yellow #FEF6CC, 2px top border) when session.action set;
   permission requests render inline in chat as Allow/Deny buttons.
-- **URL tab content**: iframe via proxy. (The "compare to prod" toggle this line
-  described is gone from the core — it is examples/extensions/compare, a trusted
-  extension tab.)
+- **URL tab content**: iframe via proxy. The legacy "compare to prod" toggle is
+  not part of the core.
 - **Content tab**: rendered html (sandboxed iframe srcdoc) or markdown.
 - **Launcher (main area when "+ New session")**: header "Start a session" +
   segmented [From a ticket | Empty session], ✕ closes.
@@ -935,8 +933,7 @@ start | stop | restart | status | logs -f | doctor — same UX as PoC bin/host
 ## Config ($ARIGAMI_DIR/config.json, default ~/.arigami — extend PoC lib/config.js)
 
 { port: 3099, defaultCwd: '~/Desktop/repos', reposDir, linearWorkspace,
-  // `prodUrl` was removed with the compare slider; the baseline is now the
-  // compare extension's own `baselineUrl` setting (migrated on first load).
+  // legacy `prodUrl` was removed with the compare slider.
   palette, devServerPorts: [3020..3030],
   screen: { enabled: true, vncHost: '127.0.0.1', vncPort: 5900, vncPassword?,
             display?, autoSnapshots: false, snapshotIntervalMs: 10000, snapshotMinIntervalMs: 30000,

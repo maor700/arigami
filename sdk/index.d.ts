@@ -124,8 +124,7 @@ export interface Manifest {
    * Settings › Extensions confirmation), which is recorded in
    * `$ARIGAMI_DIR/extensions.json`; a `git pull` that adds this flag therefore
    * escalates nothing. Ask for it only when the tab must embed host-proxied
-   * URLs or otherwise be same-origin — `examples/extensions/compare` is the
-   * shipped example.
+   * URLs or otherwise be same-origin.
    */
   trusted?: boolean;
   tabs?: ManifestTab[];

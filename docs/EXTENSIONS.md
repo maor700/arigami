@@ -374,8 +374,7 @@ session through `window.arigami`.
 The tier exists for one real case: **a tab that must embed host-PROXIED URLs**
 (`/?__target=…`). The proxy is a service worker plus the auth cookie, and an
 opaque origin can have neither, so those panes come back blank or 401 in a
-sandboxed tab. `examples/extensions/compare` is that case, and the shipped
-example of the tier.
+sandboxed tab.
 
 Say the consequence out loud, because that is the whole point of the grant: **a
 trusted tab runs with your full cockpit session, exactly like the core UI.** The
@@ -425,21 +424,6 @@ open_tab({ type: "ext", ext: "hello" })
 
 `docs/USAGE.md` inside it explains each piece; the loader turns that file into
 the skill `/arigami-ext:hello`.
-
-`examples/extensions/compare` is the second one, and the shipped example of the
-**trusted** tier (§7.1): the vs-baseline slider that used to be a core page and
-a toggle on every url tab. It needs the tier because both of its panes are
-embedded through the host proxy, which a sandboxed page's opaque origin cannot
-use at all.
-
-```bash
-bin/host ext add examples/extensions/compare --trust
-```
-
-Then `/compare` in the composer, the "+" tab popover, or
-`open_tab({type:'ext', ext:'compare', params:{a:'<url>'}})`. Its baseline is the
-`baselineUrl` setting (Settings › Extensions) — a host that had the old
-`prodUrl` in config.json has it carried over automatically, once.
 
 ---
 

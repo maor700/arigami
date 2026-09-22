@@ -163,11 +163,8 @@ interface TabUrl {
   badge?: string;
   color?: string;
   /**
-   * Dead field. The "compare to prod" slider used to live in the core and
-   * stamped this on url tabs; it is an extension now
-   * (examples/extensions/compare). Kept only so a state.json written before
-   * that still parses and round-trips — nothing reads it, and nothing new
-   * writes it.
+   * Dead legacy field. Kept only so an older state.json still parses and
+   * round-trips — nothing reads it, and nothing new writes it.
    */
   compare?: unknown;
   // EXT: an extension tab is a `url` tab whose url is /__ext/<ext>/…; these two

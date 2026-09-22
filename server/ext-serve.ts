@@ -28,8 +28,8 @@
 // loadOne). A granted extension is served with NO `content-security-policy`
 // sandbox and the cockpit gives its iframe no `sandbox` attribute, so the page
 // is same-origin with the cockpit: it keeps the session cookie, can use the
-// host proxy's service worker — the reason the tier exists, see
-// examples/extensions/compare — and can call /__api as the signed-in human. No
+// host proxy's service worker — the reason the tier exists — and can call
+// /__api as the signed-in human. No
 // asset token is minted for it, because none is needed.
 import fs from 'node:fs';
 import path from 'node:path';
