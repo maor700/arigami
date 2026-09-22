@@ -2526,6 +2526,76 @@ export function summarizeSession(id, { full = false } = {}) {
   return { ok: true, full, sinceSeq };
 }
 
+// ---- inbox enrichment --------------------------------------------------------
+//
+// One headless run per session that reads the pending inbox items and drafts,
+// for each: what the person is actually saying, whether they are right, what to
+// change, and the exact text of a reply.
+//
+// READ-ONLY by construction, and said three ways in the prompt, because this is
+// the one place the agent reads other people's messages and could plausibly
+// conclude that answering them is the job. It drafts; the operator submits.
+//
+// Engine-agnostic: runHeadless() resolves the session's engine, so Codex and
+// Claude get the same prompt through their own drivers.
+const enrichRuns = new Set();
+
+export function enrichInbox(id, { force = false } = {}) {
+  const s = getSession(id);
+  if (!s) throw new Error(`no such session: ${id}`);
+  if (enrichRuns.has(id)) return { ok: true, skipped: 'in-flight' };
+  // `signal` is the gate: CI notices and "LGTM" are not worth a model run and
+  // render raw, with an "explain it" button that passes force.
+  const todo = listInbox(id).filter((i) => !i.settled && !i.enrichment && (force || i.signal));
+  if (!todo.length) return { ok: true, skipped: 'nothing-to-do' };
+
+  for (const i of todo) patchInboxItem(id, i.id, { enriching: true });
+  enrichRuns.add(id);
+  const clear = () => {
+    enrichRuns.delete(id);
+    for (const i of todo) {
+      const cur = listInbox(id).find((x) => x.id === i.id);
+      if (cur?.enriching) patchInboxItem(id, i.id, { enriching: false });
+    }
+  };
+  // A run that dies without calling back would leave every item spinning
+  // forever; five minutes matches the one-shot ceiling elsewhere.
+  const guard = setTimeout(clear, 5 * 60 * 1000);
+
+  const rendered = todo
+    .map((i, n) => {
+      const c = i.context || {};
+      const ctx =
+        c.kind === 'code'
+          ? `\nCODE IT POINTS AT (${c.path}${c.lines ? ` ${c.lines}` : ''}):\n${c.hunk}`
+          : c.kind === 'text'
+            ? `\nTEXT IT POINTS AT:\n${c.body}`
+            : c.kind === 'thread'
+              ? `\nTHREAD:\n${(c.messages || []).map((m) => `${m.author}: ${m.text}`).join('\n')}`
+              : '';
+      return `### ITEM ${n + 1} · id=${i.id}\nFROM: ${i.source.author} on ${i.source.provider} (${i.source.kind})\nSAID:\n${i.body}${ctx}`;
+    })
+    .join('\n\n');
+
+  runHeadless(
+    s,
+    `${todo.length} message(s) came in from people about this work. For each one, explain it to the operator and draft what to do. READ-ONLY: read whatever code you need to judge the comment, but do NOT edit files, commit, push, or reply to anyone anywhere. You have no permission to contact a human — the operator reviews your drafts and sends them.\n\n` +
+      `${rendered}\n\n` +
+      `For EACH item produce:\n` +
+      `- "explanation": what the person is actually saying and whether they are right, in 1-2 sentences. Write it to the OPERATOR, not to the commenter. Plain, direct, no bullet points, no preamble, no flattery. Check the code before agreeing or disagreeing.\n` +
+      `- "fix": if code should change, one or two sentences saying what - otherwise null.\n` +
+      `- "reply": the exact text to send back, if a reply is warranted - otherwise null. One or two sentences, the way a person types to a colleague. No emojis, no "thanks for the review", no restating their comment back at them. If you disagree, say so plainly and briefly.\n` +
+      `- "reply_dir": "ltr" or "rtl" for that reply's script.\n` +
+      `- "explanation_dir": same, for the explanation.\n\n` +
+      `LANGUAGE: choose per item. Anything that lands in GitHub or Linear is English. A private Slack message follows the language of that conversation. The explanation follows the language the operator converses in. Nothing here is fixed - you decide from context.\n\n` +
+      `Deliver by POSTing (this is the ONLY deliverable):\n` +
+      `curl -s -X POST "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/inbox/enrich" -H "Authorization: Bearer $ARIGAMI_TOKEN" -H 'content-type: application/json' -d '{"items":[{"id":"<item id>","explanation":"...","explanation_dir":"ltr","fix":null,"reply":"...","reply_dir":"ltr"}]}'\n` +
+      `One object per item, using the exact ids above. Do not skip the curl.`,
+    () => { clearTimeout(guard); clear(); }
+  );
+  return { ok: true, count: todo.length };
+}
+
 // stream-json interrupt (SIGINT-equivalent): control_request over stdin
 export function interrupt(id) {
   const p = record(id);

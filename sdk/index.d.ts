@@ -157,6 +157,39 @@ export interface ListenerCtx {
   signal: AbortSignal;
   extDir: string;
   apiVersion: number;
+  /**
+   * Append to the INBOX of the session this listener belongs to — the normalized
+   * "a person said this to us" queue the cockpit renders (GitHub review comment,
+   * Linear comment, Slack message…).
+   *
+   * This is the whole reason an adapter can be an extension. A listener has no
+   * other way to reach the host: `ctx` deliberately carries no REST client, and
+   * `PollOutcome` carries only a summary and a watermark. This one method is
+   * scoped to one session and one operation instead.
+   *
+   * Duplicates are dropped by `source.ref`, so a poller that re-delivers the
+   * same comment (which they all do — the watermark only advances after the
+   * wake lands) does not need to dedup for itself. Returns how many were NEW.
+   *
+   * Adding an item never contacts anybody. Items sit pending until a human
+   * submits the batch; see formatInboxSubmit() in server/api.ts.
+   */
+  inbox: { add(items: InboxItemInput[]): number };
+}
+
+/** What an adapter fills in. The host assigns id/createdAt. */
+export interface InboxItemInput {
+  source: { provider: string; kind: string; ref: string; url?: string; author?: string; at?: string; title?: string };
+  /** The original text, verbatim — never rewritten by the adapter. */
+  body: string;
+  dir?: string | null;
+  context:
+    | { kind: 'code'; path: string; lines?: string; hunk: string }
+    | { kind: 'thread'; title?: string; messages: { author: string; ts?: string; text: string; focus?: boolean }[] }
+    | { kind: 'text'; title?: string; body: string; dir?: string | null }
+    | { kind: 'none' };
+  /** False for CI notices, "LGTM", status changes — they render raw, unenriched. */
+  signal: boolean;
 }
 
 /** The listener row a provider is allowed to see (never the whole record). */

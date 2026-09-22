@@ -2255,6 +2255,61 @@ async function runCleanup(s: any): Promise<CleanupResult[]> {
   return results;
 }
 
+/**
+ * Compose ONE prompt out of everything the operator decided in the inbox.
+ *
+ * This is the only way an incoming message turns into action, and the only
+ * place an outgoing reply is ever authorized — which is what makes "never
+ * contact anyone on my behalf" enforceable rather than merely instructed. An
+ * adapter can fill the inbox; only a human pressing submit can empty it
+ * outward.
+ */
+function formatInboxSubmit(items: any[], note: string): string {
+  const out = [
+    '## Incoming messages — reviewed',
+    '',
+    'I went through the messages below and decided what to do with each one.',
+    'For anything marked "reply": send EXACTLY the text quoted, nothing added.',
+    'For anything marked "fix": do the work, then come back to me before replying.',
+    'Do not contact anyone about the items I dismissed.',
+    '',
+  ];
+  if (note) out.push(`My note: ${note}`, '');
+
+  const verb: Record<string, string> = {
+    fix: 'FIX — do the work, do not reply yet',
+    reply: 'REPLY — send the text below as is',
+    both: 'FIX AND REPLY — do the work, then send the text below',
+    discuss: "LET'S TALK — do nothing yet, explain your thinking to me first",
+    dismiss: 'DISMISSED — no action, no reply',
+  };
+
+  for (const [n, i] of items.entries()) {
+    const src = i.source || {};
+    out.push(
+      `### ${n + 1}. ${verb[i.decision] || i.decision} · ${src.author || 'someone'} on ${src.provider || '?'}` +
+        `${src.url ? ` — ${src.url}` : ''}`
+    );
+    out.push('', `> ${String(i.body || '').split('\n').join('\n> ')}`, '');
+    if (i.context?.kind === 'code')
+      out.push(`\`${i.context.path}${i.context.lines ? ` ${i.context.lines}` : ''}\``, '');
+    const fix = i.enrichment?.proposal?.fix;
+    if (fix && (i.decision === 'fix' || i.decision === 'both')) out.push(`What to change: ${fix}`, '');
+    // The operator's own instruction outranks the proposal, and is carried for
+    // EVERY decision — including dismiss, where "no action" may still need a
+    // reason the agent should remember.
+    if (i.noteToAgent) out.push(`My instruction for this one: ${String(i.noteToAgent)}`, '');
+    const reply = i.replyOverride ?? i.enrichment?.proposal?.reply;
+    if (reply && (i.decision === 'reply' || i.decision === 'both'))
+      out.push('Reply to send, verbatim:', '```', String(reply), '```', '');
+  }
+  out.push(
+    'When you have sent something, say what went where. If anything I approved',
+    'turns out to be wrong once you look at the code, stop and tell me instead.'
+  );
+  return out.join('\n');
+}
+
 function formatReview(s: any, verdict: string, summary: string): string {
   const comments = (s.review?.comments || []).filter(
     (c: any) => !c.suggested
@@ -6207,6 +6262,104 @@ export async function handle(
       });
       if (body.activate !== false) state.activateTab(id, '__changes');
       return json(res, { ok: true });
+    }
+    // ---- inbox: things people said to us (state.ts InboxItem) --------------
+    if (parts[3] === 'inbox' && !parts[4] && m === 'GET') {
+      return json(res, { items: state.listInbox(id) });
+    }
+    // An adapter (an extension listener, a skill) appends here. Dedup by
+    // source.ref happens in state, so an at-least-once poller is safe to retry.
+    if (parts[3] === 'inbox' && !parts[4] && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const list = Array.isArray(body?.items) ? body.items : [];
+      const bad = list.find((i: any) => !i?.source?.ref || typeof i?.body !== 'string');
+      if (bad) return badRequest(res, 'each item needs source.ref and a string body');
+      const added = state.addInboxItems(id, list);
+      if (added === null) return notFound(res, `no such session: ${id}`);
+      // Enrichment is triggered HERE and not by the adapter. In legacy-host the
+      // adapter was core code and could remember; here an adapter is an
+      // extension, and "every provider must also kick the enrichment" is a rule
+      // that the third one will forget. Fire-and-forget: a failed draft must
+      // never fail the ingest, or a poller retries forever.
+      if (added.some((i) => i.signal)) {
+        try {
+          (claude as any).enrichInbox(id);
+        } catch (e) {
+          console.error('[inbox] enrich failed:', (e as Error)?.message);
+        }
+      }
+      return json(res, { added: added.length, items: added }, 201);
+    }
+    // Where the headless enrichment run posts its drafts back. Whitelisted:
+    // the run may fill the agent's OWN fields and nothing else — it cannot set
+    // a decision, edit the person's body, or mark anything settled. A model
+    // that could decide would make the submit gate decorative.
+    if (parts[3] === 'inbox' && parts[4] === 'enrich' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const list = Array.isArray(body?.items) ? body.items : [];
+      let updated = 0;
+      for (const r of list) {
+        if (!r?.id) continue;
+        const ok = state.patchInboxItem(id, String(r.id), {
+          enriching: false,
+          enrichment: {
+            explanation: String(r.explanation || ''),
+            explanationDir: r.explanation_dir ? String(r.explanation_dir) : null,
+            proposal: {
+              fix: r.fix == null ? null : String(r.fix),
+              reply: r.reply == null ? null : String(r.reply),
+              replyDir: r.reply_dir ? String(r.reply_dir) : null,
+            },
+          },
+        });
+        if (ok) updated++;
+      }
+      return json(res, { ok: true, updated });
+    }
+    // The "explain it" button on a low-signal item: force a run for one that
+    // the signal gate skipped.
+    if (parts[3] === 'inbox' && parts[4] === 'enrich-now' && m === 'POST') {
+      try {
+        return json(res, (claude as any).enrichInbox(id, { force: true }));
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return badRequest(res, error.message);
+      }
+    }
+    if (parts[3] === 'inbox' && parts[4] === 'submit' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const note = body?.note ? String(body.note) : '';
+      const decided = state.settleInbox(id, note);
+      if (!decided.length && !note.trim()) return badRequest(res, 'nothing decided to submit');
+      try {
+        claude.sendMessage(id, formatInboxSubmit(decided, note));
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        return json(res, { error: error.message }, 500);
+      }
+      return json(res, { ok: true, submitted: decided.length });
+    }
+    if (parts[3] === 'inbox' && parts[4] === 'clear' && m === 'POST') {
+      return json(res, { ok: !!state.clearInbox(id) });
+    }
+    // Record a decision, an edited reply, or a note to the agent. Deliberately
+    // a whitelist: the body, the source and the context are what a PERSON
+    // wrote, and nothing the cockpit does may rewrite them.
+    if (parts[3] === 'inbox' && parts[4] && m === 'PATCH') {
+      const body = (await readBody(req)) as any;
+      const patch: Record<string, unknown> = {};
+      const DECISIONS = ['fix', 'reply', 'both', 'discuss', 'dismiss'];
+      if ('decision' in body)
+        patch.decision = body.decision === null || DECISIONS.includes(body.decision)
+          ? body.decision
+          : undefined;
+      if (patch.decision === undefined && 'decision' in body)
+        return badRequest(res, `decision must be null or one of ${DECISIONS.join(', ')}`);
+      for (const k of ['replyOverride', 'noteToAgent'] as const)
+        if (k in body) patch[k] = body[k] === null ? null : String(body[k]);
+      if (!Object.keys(patch).length) return badRequest(res, 'nothing to patch');
+      const next = state.patchInboxItem(id, parts[4], patch);
+      return next ? json(res, next) : notFound(res, `no such inbox item: ${parts[4]}`);
     }
     if (parts[3] === 'review') {
       if (parts[4] === 'comment' && !parts[5] && m === 'POST') {

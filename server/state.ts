@@ -144,6 +144,82 @@ interface ReviewComment {
   replies?: ReviewReply[];
 }
 
+
+// ---- inbox: things PEOPLE said to us, from any platform ---------------------
+//
+// One normalized shape for a GitHub review comment, a Linear comment, a Slack
+// message. Only `context` varies per provider, so adding a provider is one
+// adapter that fills this in — nothing else moves. Ported from legacy-host,
+// where it has been in daily use.
+//
+// Items are PENDING BY DESIGN. A decision is recorded per item and NOTHING
+// leaves this machine until the operator submits the batch (the same shape as
+// the Changes tab's review flow). That gate is not a UI nicety: it is the
+// enforcement of "never contact anyone on my behalf" — see formatInboxSubmit()
+// in api.ts, which is the only place an outgoing reply is ever authorized.
+
+/** The object a message refers to, carried so it can be read in place. */
+export type InboxContext =
+  // GitHub review comments carry `diff_hunk` for free — a few lines, not a
+  // file diff, which is why this renders as a hunk and not through DiffView.
+  | { kind: 'code'; path: string; lines?: string; hunk: string }
+  | { kind: 'thread'; title?: string; messages: { author: string; ts?: string; text: string; focus?: boolean }[] }
+  | { kind: 'text'; title?: string; body: string; dir?: string | null }
+  | { kind: 'none' };
+
+/**
+ * What the agent proposes doing about it.
+ *
+ * `replyDir` is separate from the explanation's direction on purpose: the model
+ * picks a language per item, so a Hebrew explanation and an English reply sit
+ * in one card and each is laid out correctly.
+ */
+export interface InboxProposal {
+  fix?: string | null; // what to change in the code, in prose
+  reply?: string | null; // the exact text that would be sent
+  replyDir?: string | null;
+}
+
+export type InboxDecision = 'fix' | 'reply' | 'both' | 'discuss' | 'dismiss';
+
+export interface InboxItem {
+  id: string;
+  createdAt: string;
+  source: {
+    provider: string; // 'github' | 'linear' | 'slack' | …
+    kind: string; // 'review-comment' | 'issue-comment' | 'review' | …
+    ref: string; // stable provider id — the dedup key across polls
+    url?: string;
+    author?: string;
+    at?: string;
+    title?: string; // human label, e.g. 'app#123'
+  };
+  body: string; // the original text, verbatim — never rewritten
+  dir?: string | null;
+  context: InboxContext;
+  /** Worth spending a model run on? CI notices and "LGTM" render raw instead. */
+  signal: boolean;
+  enriching?: boolean;
+  enrichment?: { explanation: string; explanationDir?: string | null; proposal: InboxProposal } | null;
+  /** The operator's pending decision. Null until they touch it; cleared on submit. */
+  decision?: InboxDecision | null;
+  /** An edited reply overrides the proposed one on submit. */
+  replyOverride?: string | null;
+  /**
+   * Free text for the AGENT, never for the person. `decision: 'fix'` says what
+   * to do and not how — "do it, but don't touch the stories file" had nowhere
+   * to live. Kept apart from replyOverride so an internal instruction can never
+   * be the thing that goes out.
+   */
+  noteToAgent?: string | null;
+  /** Set once submitted, so the item stays as a record. */
+  settled?: { at: string; decision: string; note?: string } | null;
+}
+
+interface InboxState {
+  items: InboxItem[];
+}
+
 interface ReviewDraft {
   comments: ReviewComment[];
 }
@@ -264,6 +340,7 @@ export interface Session {
   changesExplanations?: Record<string, ChangesExplanation>;
   autoReviewing?: 'pr' | 'uncommitted' | 'work' | null;
   review?: ReviewDraft;
+  inbox?: InboxState;
   statusSummary?: StatusSummary | null;
   summarizing?: boolean; // a summary generation run is in flight (transient)
 }
@@ -957,6 +1034,84 @@ export function setAutoReviewing(id: string, mode?: string): Session | null {
       ? (mode as 'pr' | 'uncommitted' | 'work')
       : null;
   broadcast({ type: 'session-updated', session: toWireSession(s) });
+  return s;
+}
+
+// ---- inbox ------------------------------------------------------------------
+
+const inboxOf = (s: Session): InboxItem[] => s.inbox?.items || [];
+
+function putInbox(s: Session, items: InboxItem[]): void {
+  s.inbox = { items };
+  touch(s);
+  broadcast({ type: 'session-updated', session: s });
+}
+
+export function listInbox(id: string): InboxItem[] {
+  const s = getSession(id);
+  return s ? inboxOf(s) : [];
+}
+
+/**
+ * Append items, skipping any provider ref we already hold.
+ *
+ * Pollers are at-least-once by design — a listener's watermark only advances
+ * after delivery, so the same comment legitimately arrives twice. Dedup lives
+ * here rather than in every adapter, which means a new provider cannot forget
+ * to do it.
+ */
+export function addInboxItems(
+  id: string,
+  list: Omit<InboxItem, 'id' | 'createdAt'>[]
+): InboxItem[] | null {
+  const s = getSession(id);
+  if (!s) return null;
+  const seen = new Set(inboxOf(s).map((i) => i.source?.ref).filter(Boolean));
+  const add = (Array.isArray(list) ? list : [])
+    .filter((i) => i?.source?.ref && !seen.has(i.source.ref))
+    .map((item) => ({ id: 'ib_' + nano(), createdAt: new Date().toISOString(), ...item }));
+  if (!add.length) return [];
+  putInbox(s, [...inboxOf(s), ...add]);
+  return add;
+}
+
+export function patchInboxItem(id: string, itemId: string, patch: Partial<InboxItem>): InboxItem | null {
+  const s = getSession(id);
+  if (!s) return null;
+  const items = inboxOf(s);
+  const i = items.findIndex((x) => x.id === itemId);
+  if (i < 0) return null;
+  const next = { ...items[i], ...patch };
+  putInbox(s, items.map((x, k) => (k === i ? next : x)));
+  return next;
+}
+
+/**
+ * Mark every decided item settled and clear the decisions; returns what was
+ * settled so the caller can compose the one submit prompt from it.
+ */
+export function settleInbox(id: string, note?: string): InboxItem[] {
+  const s = getSession(id);
+  if (!s) return [];
+  const items = inboxOf(s);
+  const decided = items.filter((i) => i.decision && !i.settled);
+  if (!decided.length) return [];
+  const at = new Date().toISOString();
+  putInbox(
+    s,
+    items.map((i) =>
+      i.decision && !i.settled
+        ? { ...i, settled: { at, decision: i.decision, ...(note ? { note } : {}) }, decision: null }
+        : i
+    )
+  );
+  return decided;
+}
+
+export function clearInbox(id: string): Session | null {
+  const s = getSession(id);
+  if (!s) return null;
+  putInbox(s, []);
   return s;
 }
 

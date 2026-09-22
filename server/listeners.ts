@@ -493,7 +493,7 @@ async function pollExtension(l: Listener): Promise<PollOutcome | null> {
   const reg = registry.get(l.type);
   if (!reg) return null;
   const ext = await import('./extensions.js');
-  const outcome = await registry.pollProvider(l.type, (signal) => ext.listenerCtx(reg.ext, signal, l.id), providerView(l));
+  const outcome = await registry.pollProvider(l.type, (signal) => ext.listenerCtx(reg.ext, signal, l.id, l.sessionId), providerView(l));
   return outcome ? mapOutcome(outcome) : null;
 }
 
@@ -575,7 +575,7 @@ export async function deliverExtWebhook(
   const ext = await import('./extensions.js');
   let fired = 0;
   for (const l of listListeners().filter((x) => x.type === type && x.status === 'watching')) {
-    const raw = await registry.webhookProvider(type, (signal) => ext.listenerCtx(reg.ext, signal, l.id), providerView(l), event);
+    const raw = await registry.webhookProvider(type, (signal) => ext.listenerCtx(reg.ext, signal, l.id, l.sessionId), providerView(l), event);
     if (!raw) continue;
     const outcome = mapOutcome(raw);
     if (outcome.kind !== 'ok') {

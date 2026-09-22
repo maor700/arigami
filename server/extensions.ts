@@ -1174,7 +1174,7 @@ function hostHas(feature: string): boolean {
 }
 
 /** The ctx a listener provider gets (a subset of HookCtx + the deadline signal). */
-export function listenerCtx(ext: string | undefined, signal: AbortSignal, listenerId?: string): ListenerCtx {
+export function listenerCtx(ext: string | undefined, signal: AbortSignal, listenerId?: string, sessionId?: string): ListenerCtx {
   const name = ext || 'core';
   const e = ext ? extensions.get(ext) : undefined;
   const st = readState();
@@ -1190,6 +1190,31 @@ export function listenerCtx(ext: string | undefined, signal: AbortSignal, listen
     signal,
     extDir: e?.dir || EXT_DIR,
     apiVersion: EXT_API_VERSION,
+    inbox: {
+      // Scoped to THIS listener's session and to one operation. A provider has
+      // no other route to the host on purpose, and this keeps it that way:
+      // appending to one inbox is not a REST client.
+      add(items) {
+        if (!sessionId) return 0;
+        // require() and not a top-level import: state.ts imports its way back
+        // here through the extension loader.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const st = require('./state.js');
+        const added = st.addInboxItems(sessionId, Array.isArray(items) ? items : []);
+        if (!added?.length) return 0;
+        // Same reason as the REST route: the core kicks the drafting run, so a
+        // provider only has to describe what arrived.
+        if (added.some((i: { signal?: boolean }) => i.signal)) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            require('./claude.js').enrichInbox(sessionId);
+          } catch (err) {
+            extLog(name, `inbox enrich failed: ${(err as Error)?.message}`);
+          }
+        }
+        return added.length;
+      },
+    },
   };
 }
 
