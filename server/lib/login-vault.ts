@@ -300,7 +300,7 @@ export async function transfer(sessionId: string, input: string, dir = VAULT_DIR
     const moved = await importSite(cdp, state);
     let check: TransferResult['check'] = null;
     if (site.checkUrl) {
-      const l = await landing(cdp, site.checkUrl).catch(() => null);
+      const l = await landing(cdp, site.checkUrl, site.loggedOut).catch(() => null);
       if (l) {
         check = { url: l.url, loggedIn: !l.loggedOut };
         if (l.loggedOut) sites.learn(site.id, 'never', `a copied login landed on ${l.url} — the site did not accept it`);
@@ -333,7 +333,7 @@ async function dbNames(cdp: Cdp, origins: string[]): Promise<string[]> {
 export async function vaultStillLoggedIn(input: string, dir = VAULT_DIR): Promise<boolean | null> {
   const site = sites.resolve(input);
   if (!site.checkUrl) return null;
-  const l = await withVault((cdp) => landing(cdp, site.checkUrl!), dir).catch(() => null);
+  const l = await withVault((cdp) => landing(cdp, site.checkUrl!, site.loggedOut), dir).catch(() => null);
   if (!l) return null;
   if (l.loggedOut) sites.learn(site.id, 'never', 'copying this login logged the original out — the site allows one session');
   return !l.loggedOut;

@@ -302,13 +302,23 @@ export async function importSite(cdp: Cdp, st: SiteState): Promise<{ cookies: nu
  * Load `url` and report where it settled. A login wall is recognized by the
  * final URL — the one signal that works the same for every site.
  */
-export async function landing(cdp: Cdp, url: string): Promise<{ url: string; loggedOut: boolean }> {
+export async function landing(cdp: Cdp, url: string, siteLoggedOut?: RegExp): Promise<{ url: string; loggedOut: boolean }> {
   return withPage(cdp, url, async (sid) => {
-    await new Promise((r) => setTimeout(r, 2500)); // let client-side redirects run
+    await new Promise((r) => setTimeout(r, 4000)); // let client-side redirects run
     const r = await cdp.send('Runtime.evaluate', { expression: 'location.href', returnByValue: true }, sid);
     const final = String(r?.result?.value || url);
-    return { url: final, loggedOut: LOGIN_WALL.test(final) };
+    return { url: final, loggedOut: isLoggedOutUrl(final, siteLoggedOut) };
   });
 }
 
-export const LOGIN_WALL = /(\/login|\/signin|\/sign-in|\/sign_in|\/auth\/|\/accounts\/login|accounts\.google\.com\/(v3\/)?signin|ServiceLogin|\/checkpoint\/|[?&](next|continue|redirect)=)/i;
+export const LOGIN_WALL = /(\/login|\/signin|\/sign-in|\/sign_in|\/auth\/|\/accounts\/login|accountchooser|ServiceLogin|\/checkpoint\/|[?&](next|continue|redirect)=)/i;
+
+/**
+ * Did a check land on a signed-out page? The generic login-wall shapes, plus a
+ * site's own signed-out page when it has one that looks like nothing of the
+ * kind (Google's is /account/about — a marketing page, which the generic match
+ * missed, so a copy that had signed the owner out went unreported).
+ */
+export function isLoggedOutUrl(url: string, siteLoggedOut?: RegExp): boolean {
+  return LOGIN_WALL.test(url) || !!siteLoggedOut?.test(url);
+}

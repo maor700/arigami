@@ -40,6 +40,24 @@ test('cookieBelongs matches the site and its subdomains, not look-alikes', () =>
   expect(sites.cookieBelongs('google.com.evil.io', g)).toBe(false);
 });
 
+test("Google is never copied: a copy signs the owner out too", () => {
+  const d = sites.decide(sites.resolve('google'));
+  expect(d.policy).toBe('never');
+  expect(d.reason).toMatch(/signs YOU out/);
+});
+
+test('signed-out pages are recognized, including ones that look like marketing pages', async () => {
+  const { isLoggedOutUrl } = await import('../server/lib/site-state.ts');
+  const g = sites.resolve('google');
+  // what the experiment on a real host actually landed on
+  expect(isLoggedOutUrl('https://www.google.com/account/about/?hl=en-US', g.loggedOut)).toBe(true);
+  expect(isLoggedOutUrl('https://accounts.google.com/v3/signin/accountchooser?continue=https://mail.google.com/mail/u/0/', g.loggedOut)).toBe(true);
+  expect(isLoggedOutUrl('https://github.com/login?return_to=%2Fsettings%2Fprofile')).toBe(true);
+  // a logged-in page is not a wall
+  expect(isLoggedOutUrl('https://myaccount.google.com/', g.loggedOut)).toBe(false);
+  expect(isLoggedOutUrl('https://github.com/settings/profile')).toBe(false);
+});
+
 test('decide: a linked-device site is never copied, whatever it stores', () => {
   const d = sites.decide(sites.resolve('web.whatsapp.com'), ['wawc']);
   expect(d.policy).toBe('never');

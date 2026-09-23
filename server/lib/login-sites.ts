@@ -44,6 +44,8 @@ export interface SiteDef {
   authDbs?: string[];
   /** A page that shows a logged-in view, used to check a copy actually worked. */
   checkUrl?: string;
+  /** Where this site sends a signed-out visitor, when the generic login-wall match misses it. */
+  loggedOut?: RegExp;
   /** Why a site is `never`, for the agent and the approval card. */
   note?: string;
   /** True for the built-in list; false for a site derived on the fly. */
@@ -53,7 +55,10 @@ export interface SiteDef {
 const B = (d: Omit<SiteDef, 'known'>): SiteDef => ({ ...d, known: true });
 
 export const BUILTIN: SiteDef[] = [
-  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'cookies', checkUrl: 'https://myaccount.google.com/' }),
+  // Measured: copying a Google session into a second browser got the ORIGINAL
+  // signed out too — Google revokes a session it sees in two browsers. So a
+  // copy costs the owner their own login; never offer it.
+  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'never', checkUrl: 'https://myaccount.google.com/', loggedOut: /google\.[a-z.]+\/account\/about|accounts\.google\.com\/.*(signin|accountchooser)/i, note: 'Google revokes a session it sees in two browsers — copying it signs YOU out as well. Sign in fresh in the session.' }),
   B({ id: 'facebook.com', label: 'Facebook', domains: ['.facebook.com'], policy: 'cookies', checkUrl: 'https://www.facebook.com/me' }),
   B({ id: 'instagram.com', label: 'Instagram', domains: ['.instagram.com'], policy: 'cookies', checkUrl: 'https://www.instagram.com/accounts/edit/' }),
   B({ id: 'github.com', label: 'GitHub', domains: ['.github.com', 'github.com'], policy: 'cookies', checkUrl: 'https://github.com/settings/profile' }),
