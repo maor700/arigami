@@ -303,7 +303,11 @@ const prepare: ToolDef<{ pr: string; mode?: string }> = {
     // on the second run git refuses with "refusing to fetch into branch …
     // checked out at <worktree>", which is the common case (reviewing the same
     // PR again, or the PR got new commits). No branch, no conflict.
-    const fh = await git(['fetch', 'origin', `pull/${ref.number}/head`, '--force']);
+    // Also kept as refs/remotes/origin/pr/<n>: a remote-tracking ref is what
+    // tells the host's reaper (server/lib/worktree-reap.ts) that the commits
+    // here exist on the server. Left only in FETCH_HEAD, every review worktree
+    // read as "unpushed work" and was never removed.
+    const fh = await git(['fetch', 'origin', `pull/${ref.number}/head:refs/remotes/origin/pr/${ref.number}`, '--force']);
     if (!fh.ok) return { error: fh.err.trim() || `could not fetch PR #${ref.number}` };
     const head = await git(['rev-parse', 'FETCH_HEAD']);
     const sha = head.out.trim();

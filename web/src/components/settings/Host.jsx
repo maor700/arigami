@@ -11,6 +11,7 @@
 // `host` bus events (store.js → state.hostEvent).
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { MachinePanel } from '../Machine.jsx';
 import { useStore, loadConfig } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { confirmDialog } from '../../lib/confirm.js';
@@ -462,6 +463,9 @@ export default function Host({ section = '' }) {
         )}
       </Section>
 
+      <Section id="resources" title={t('machine.title')}>
+        <MachinePanel />
+      </Section>
       <Machines />
       <BackupField disabled={busy || phase === 'draining' || phase === 'exiting' || upgRunning} onRestarting={() => { restarting.current = true; }} reload={load} memory={memory} force={force} />
       <WhoAmI />

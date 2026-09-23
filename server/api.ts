@@ -26,6 +26,7 @@ import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 import * as desktops from './lib/desktops.js';
 import { pickDriver } from './lib/screen-driver.js';
 import * as chrome from './lib/chrome.js';
+import * as reap from './reap.js';
 import * as browserActions from './lib/browser-actions.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
@@ -180,12 +181,6 @@ interface CleanupPlanResult {
   cmds: string[];
   worktree: string | null;
   branch: string | null;
-}
-
-interface CleanupResult {
-  cmd: string;
-  code: number;
-  output: string;
 }
 
 const pendingPermissions = new Map<string, PendingPermission>();
@@ -2223,36 +2218,40 @@ export async function cleanupPlan(s: any): Promise<CleanupPlanResult> {
   };
 }
 
-async function runCleanup(s: any): Promise<CleanupResult[]> {
-  const cmds = (await cleanupPlan(s)).cmds;
-  const results: CleanupResult[] = [];
-  if (!cmds.length) return results;
-  const cwd = path.dirname(
-    (untildify(s.cwd) as string | null) || HOME || '.'
-  );
-  for (const cmd of cmds) {
-    try {
-      const proc = Bun.spawn(shellArgs(String(cmd)), {
-        cwd,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
-      const [out, err, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-      results.push({
-        cmd,
-        code: code as number,
-        output: (out + err).trim().slice(0, 4000),
-      });
-    } catch (e) {
-      const error = e instanceof Error ? e : new Error(String(e));
-      results.push({ cmd, code: -1, output: error.message });
-    }
-  }
-  return results;
+// Remove the worktree a session owns — decided by the host from git state, not
+// by running the shell commands in metadata.cleanup. Those were written by the
+// agent that provisioned the session, and whether anything got removed used to
+// depend on it having written them right (see reap.ts). They are still shown
+// in the dialogs as a record of what was provisioned; they are no longer run.
+async function runCleanup(s: any): Promise<reap.ReapReport> {
+  return reap.reapSession(s, { worktree: true });
+}
+
+/**
+ * Permanently delete a session: the one teardown every delete path uses (the
+ * DELETE route, folder purge). Host-side and fixed — no agent input decides
+ * what is removed.
+ */
+export async function destroySession(id: string): Promise<reap.ReapReport | null> {
+  const s = state.getSession(id);
+  if (!s) return null;
+  claude.kill(id);
+  expirePendingSetupRequests(id, 'session deleted');
+  chrome.closeChrome(id);
+  // Fold this session's logins back into chrome-base on every close
+  // (T8 §4) — independent of whether the profile copy itself survives.
+  await chrome.syncProfileToBase(id).catch(() => {});
+  if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
+  pickDriver().release(id);
+  // Processes (incl. detached dev servers), the owned worktree, scratch dir and
+  // transcript — in that order, see reap.ts.
+  const report = await reap.reapSession(s, reap.ALL);
+  artifacts.removeSession(id); // published snapshots die with the session
+  // A codex session's per-session $CODEX_HOME (config + thread history)
+  // dies with it too. Dynamically imported: codex.ts imports this module.
+  import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
+  state.deleteSession(id);
+  return report;
 }
 
 /**
@@ -2529,8 +2528,9 @@ function allocatePort(): number | null {
 // F7: host-made worktree for a child (dispatch worker OR full child). Forks
 // off `base` (default: the master's current branch) inside the master's repo
 // and returns the metadata the host stamps: worktree/branch/base/cleanup —
-// cleanup removes the worktree and the branch, so delete-with-run_cleanup
-// tears it all down. Throws when git refuses (the spawn fails loudly).
+// metadata.worktree is what makes the reaper (reap.ts) treat it as this
+// child's own, so a delete removes worktree and branch. Throws when git
+// refuses (the spawn fails loudly).
 async function hostWorktree(
   master: any,
   o: { subtask: string; branch?: string | null; dir?: string | null; base?: string | null; prefix?: string | null; parentDir?: string | null }
@@ -3318,6 +3318,12 @@ export async function handle(
     // signed-in caller (and to agents through the host_resources tool) because
     // the whole point is that a session can ask before it starts something
     // expensive — see server/lib/resources.ts.
+    if (p === '/__api/host/kept-worktrees' && m === 'GET') {
+      return json(res, reap.keptWorktrees());
+    }
+    if (p === '/__api/host/sweep' && m === 'POST') {
+      return json(res, await reap.sweep());
+    }
     if (p === '/__api/host/resources' && m === 'GET') {
       const r = await import('./lib/resources.js');
       const top = Number(new URL(req.url || '/', 'http://localhost').searchParams.get('top'));
@@ -4918,19 +4924,15 @@ export async function handle(
               ...children.filter((s: any) => s.id !== ctl),
               ...children.filter((s: any) => s.id === ctl),
             ];
+            // Same teardown as a single delete. The read-only-worker guard
+            // (never remove the master's shared checkout) lives in
+            // reap.ownedWorktree, so it holds here too.
             for (const child of ordered) {
               try {
-                claude.kill(child.id);
-              } catch {}
-              const md: any = child.metadata || {};
-              const ownsWorktree =
-                md.kind === 'mutating' || (md.worktree && md.kind !== 'readonly');
-              if (ownsWorktree) {
-                try {
-                  await runCleanup(child);
-                } catch {}
+                await destroySession(child.id);
+              } catch (e) {
+                console.error(`[folders] purge of ${child.id} failed:`, (e as Error).message);
               }
-              state.deleteSession(child.id);
             }
           }
           state.deleteFolder(fm[1]);
@@ -5105,33 +5107,24 @@ export async function handle(
           pickDriver().release(id);
           triggerMemoryEpisode(id, 'archive');
 
-          if (u.searchParams.get('runCleanup') === 'true') {
-            const cleanup = await runCleanup(s);
-            return json(res, { ...state.getSession(id), cleanup });
-          }
+          // The session's processes stop with it — including dev servers the
+          // agent detached, which killing the agent alone never reached. Files
+          // stay unless the operator asked for the worktree to go.
+          const cleanup = await reap.reapSession(s, {
+            processes: true,
+            worktree: u.searchParams.get('runCleanup') === 'true',
+          });
+          return json(res, { ...state.getSession(id), cleanup });
         }
         if (body.archived === false && wasArchived) spawnSafe(id);
         return json(res, updated);
       }
       if (m === 'DELETE') {
-        claude.kill(id);
-        expirePendingSetupRequests(id, 'session deleted');
-        chrome.closeChrome(id);
-        // Fold this session's logins back into chrome-base on every close
-        // (T8 §4) — independent of whether the profile copy itself survives.
-        await chrome.syncProfileToBase(id).catch(() => {});
-        if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
-        pickDriver().release(id);
-        const cleanup =
-          u.searchParams.get('runCleanup') === 'true'
-            ? await runCleanup(s)
-            : undefined;
-        artifacts.removeSession(id); // published snapshots die with the session
-        // A codex session's per-session $CODEX_HOME (config + thread history)
-        // dies with it too. Dynamically imported: codex.ts imports this module.
-        import('./codex.js').then((m) => m.removeCodexSession(id)).catch(() => {});
-        state.deleteSession(id);
-        return json(res, { ok: true, ...(cleanup ? { cleanup } : {}) });
+        // Always the full teardown. `?runCleanup=true` is still accepted from
+        // older clients and ignored: whether a worktree goes is the host's call
+        // from git state, not a flag the caller has to remember.
+        const cleanup = await destroySession(id);
+        return json(res, { ok: true, cleanup });
       }
       return notFound(res);
     }
@@ -6013,7 +6006,9 @@ export async function handle(
       return json(res, clip ? (claude as any).clipEvents(evs, clip) : evs);
     }
     if (sub === 'cleanup' && m === 'GET') {
-      return json(res, await cleanupPlan(s));
+      // `preview` is what a delete will actually do; the rest is the legacy
+      // plan shape older clients read.
+      return json(res, { ...(await cleanupPlan(s)), preview: await reap.preview(s) });
     }
     // Dispatcher: a worker reports up to its master. Atomic persist-then-wake —
     // write the capped result to the worker's own metadata.result FIRST, then

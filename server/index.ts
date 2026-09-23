@@ -366,6 +366,12 @@ try {
   console.error('[host] orphan sweep failed:', (e as Error)?.message);
 }
 
+// The recurring half of teardown: whatever a deleted session left behind —
+// processes still carrying its marker, its scratch dir, browser profile and
+// transcript — is removed on a timer by the host, never by an agent deciding
+// what counts as leftovers (see reap.ts).
+(await import('./reap.js')).startSweeper((m) => console.log(m));
+
 // A bind failure is the single most confusing way for the host to die — say what
 // it actually means, including the "owner is already dead" case.
 server.on('error', (e: NodeJS.ErrnoException) => {

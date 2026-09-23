@@ -326,15 +326,17 @@ const TOOLS = [
   {
     name: 'delete_session',
     description:
-      'Delete a session — removes it from the rail and kills its agent process. ' +
-      'Pass run_cleanup:true to also run the session metadata.cleanup commands (e.g. kill dev servers, remove the worktree). ' +
+      'Delete a session permanently. The HOST tears it down, the same way every time: it stops every process the session started ' +
+      '(including detached dev servers and Storybooks), removes the worktree it owns — unless that worktree has uncommitted or unpushed work, ' +
+      'in which case it is kept and reported — and deletes its scratch dir ($TMPDIR), browser profile and transcript. ' +
+      'Do not clean up yourself first (no rm -rf, no git worktree remove, no kill): the host does it, and a hand-rolled cleanup is how leftovers happened. ' +
       'Idempotent: succeeds even if the session is already gone. ' +
       'NOTE: deleting the CURRENT session (no session_id, or your own) ends it immediately — call it last, only after a human confirmed (e.g. via request_action).',
-    inputSchema: obj({ run_cleanup: { type: 'boolean' }, ...SID_PROP }),
+    inputSchema: obj({ ...SID_PROP }),
     run: async (a) => {
       const id = sid(a);
       try {
-        return await api('DELETE', `/__api/sessions/${id}${a.run_cleanup ? '?runCleanup=true' : ''}`);
+        return await api('DELETE', `/__api/sessions/${id}`);
       } catch (e) {
         if (/no such session|unknown session/i.test(e.message)) return { ok: true, alreadyGone: true };
         throw e;
@@ -1100,7 +1102,15 @@ const TOOLS = [
   },
 ];
 
-const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} } });
+// Server instructions ride in the MCP initialize result, so every session gets
+// them without a skill. Kept to the two rules that decide what a deleted
+// session leaves behind (server/reap.ts).
+const INSTRUCTIONS = [
+  'Temporary files go under $TMPDIR — it is this session\'s own scratch directory and the host deletes it with the session. Do not write to /tmp directly: nothing owns files there, so they outlive you.',
+  'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
+].join('\n');
+
+const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
 
 // A3: a session born from an agent with a tools allowlist sees only the host
 // tools the policy allows (GET /__api/sessions/:id/policy?names=…); a call to a

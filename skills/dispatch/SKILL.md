@@ -127,8 +127,8 @@ context thin is the whole point.
      - On spawn: set the node `state:"running"`, `worker:<id>`, `attempts++`.
    - **Handle terminal results:**
      - `done` → mark the node `done`.
-     - `error`/dead → if `attempts < maxAttempts`, kill-with-cleanup
-       (`delete_session({run_cleanup:true})`) and relaunch; else mark `blocked`
+     - `error`/dead → if `attempts < maxAttempts`, `delete_session` (the host
+       tears it down) and relaunch; else mark `blocked`
        and escalate.
      - `blocked` → **decide or escalate** (`request_action` to the human). Never
        auto-retry a block.
@@ -218,8 +218,8 @@ The human may be on a phone, another machine or a tailnet — a
   session that didn't ask up front can call `allocate_port` later.
 - `create_session` returns a host-**relative** `url` (`/__host/?session=<id>`);
   show it as-is (`url_internal` is the loopback form, host-box only).
-- Teardown: `delete_session({ run_cleanup:true })` runs the worker's `metadata.cleanup`
-  (removes its worktree, deletes its branch).
+- Teardown: `delete_session` — the host stops the worker's processes and removes
+  its worktree and branch, unless they hold work that exists nowhere else.
 - The cockpit shows the tree (Rail "Tree" mode) and a per-master **Orchestration
   tab** (`GET /sessions/:id/orchestration`) — both render from `metadata` + the
   plan, never from chat.

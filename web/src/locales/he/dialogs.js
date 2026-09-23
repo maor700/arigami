@@ -22,8 +22,11 @@ export const strings = {
   // archive
   'dialogs.archiveTitle': 'להעביר סשן זה לארכיון?',
   'dialogs.archiveBody': 'עובר לארכיון. הענף וה-PR נשארים ב-GitHub — אפשר לשחזר בכל עת.',
+  'dialogs.teardown.procs': 'עוצר {n} תהליכים שהסשן הפעיל, כולל שרתי פיתוח',
+  'dialogs.teardown.wtRemove': 'מוחק את ה-worktree והענף שלו — כל מה שבו נדחף',
+  'dialogs.teardown.wtKeep': 'משאיר את ה-worktree — {why}',
+  'dialogs.teardown.scratch': 'מוחק את הקבצים הזמניים של הסשן',
   'dialogs.alsoRemoveWorktree': 'הסר גם את ה-git worktree',
-  'dialogs.worktreeFreesDisk': 'משחרר שטח דיסק ועוצר את שרת הפיתוח. שינויים שלא בוצע להם commit יאבדו.',
   'dialogs.archiving': 'מעביר לארכיון…',
   'dialogs.archive': 'העבר לארכיון',
 

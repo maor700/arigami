@@ -32,10 +32,63 @@ export function Overlay({ onClose, children }) {
   );
 }
 
+// What a delete/archive will actually do, as the host computed it (GET
+// /sessions/:id/cleanup → preview, server/reap.ts). This used to list the
+// shell commands the AGENT had written into metadata.cleanup; those are no
+// longer what runs, so showing them would be showing the wrong thing.
+function useTeardown(session) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    api
+      .get(`/sessions/${session.id}/cleanup`)
+      .then((r) => !dead && setPreview(r?.preview || null))
+      .catch(() => !dead && setPreview(null));
+    return () => {
+      dead = true;
+    };
+  }, [session.id]);
+  return preview;
+}
+
+const hasWorktree = (p) => p?.worktree && (p.worktree.action === 'remove' || p.worktree.action === 'keep');
+
+function TeardownLines({ preview, worktree = true, scratch = true, tone = 'text-fgdim' }) {
+  const t = useT();
+  if (!preview) return null;
+  const lines = [];
+  const n = preview.processes?.length || 0;
+  if (n) lines.push({ k: 'p', text: t('dialogs.teardown.procs', { n }) });
+  if (worktree && hasWorktree(preview)) {
+    const w = preview.worktree;
+    lines.push(
+      w.action === 'remove'
+        ? { k: 'w', text: t('dialogs.teardown.wtRemove'), dir: w.dir }
+        : { k: 'w', text: t('dialogs.teardown.wtKeep', { why: (w.reasons || []).join(', ') }), dir: w.dir, warn: true }
+    );
+  }
+  if (scratch && preview.scratch) lines.push({ k: 's', text: t('dialogs.teardown.scratch') });
+  if (!lines.length) return null;
+  return (
+    <ul className={`flex flex-col gap-1 text-[0.71875rem] leading-snug ${tone}`}>
+      {lines.map((l) => (
+        <li key={l.k} style={l.warn ? { color: '#CE8324' } : undefined}>
+          {l.text}
+          {l.dir && (
+            <span className="block break-all font-mono text-[0.65625rem] opacity-80" dir="ltr">
+              {l.dir}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ArchiveDialog({ session, onClose }) {
   const t = useT();
-  const cleanup = session.metadata?.cleanup;
-  const hasCleanup = Array.isArray(cleanup) && cleanup.length > 0;
+  const preview = useTeardown(session);
+  const hasCleanup = hasWorktree(preview);
   const [removeWorktree, setRemoveWorktree] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -79,20 +132,8 @@ export function ArchiveDialog({ session, onClose }) {
               <span className="block text-[12.5px] font-bold text-fg">
                 {t('dialogs.alsoRemoveWorktree')}
               </span>
-              {session.metadata?.worktree && (
-                <span className="mt-0.5 block font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-                  {session.metadata.worktree}
-                </span>
-              )}
-              <span className="mt-1 block font-mono text-[11.5px] md:text-[10px] leading-relaxed text-fgdim">
-                {cleanup.map((c, i) => (
-                  <span key={i} className="block truncate">
-                    {c}
-                  </span>
-                ))}
-              </span>
-              <span className="mt-1 block text-[11px] leading-snug text-fgdim">
-                {t('dialogs.worktreeFreesDisk')}
+              <span className="mt-1 block">
+                <TeardownLines preview={preview} scratch={false} />
               </span>
             </span>
           </div>
@@ -460,8 +501,7 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
 
 export function DeleteDialog({ session, onClose, onDeleted }) {
   const t = useT();
-  const cleanup = session.metadata?.cleanup;
-  const hasCleanup = Array.isArray(cleanup) && cleanup.length > 0;
+  const preview = useTeardown(session);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -469,7 +509,8 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
     setBusy(true);
     setError(null);
     try {
-      await api.del(`/sessions/${session.id}${hasCleanup ? '?runCleanup=true' : ''}`);
+      // The host always does the full teardown (server/reap.ts); nothing to opt into.
+      await api.del(`/sessions/${session.id}`);
       onDeleted?.(session.id);
       onClose();
     } catch (e) {
@@ -491,15 +532,11 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
             {t('dialogs.deleteBodyAfter')}
           </p>
         </div>
-        {hasCleanup && (
-          <div className="mx-[18px] mt-3.5 rounded-[9px] border-[1.5px] border-danger/30 bg-danger/10 p-[10px_12px] font-mono text-[11.5px] md:text-[10.5px] leading-[1.8] text-danger">
-            {cleanup.map((c, i) => (
-              <div key={i} className="truncate">
-                {c}
-              </div>
-            ))}
+        {preview && (preview.processes?.length || hasWorktree(preview) || preview.scratch) ? (
+          <div className="mx-[18px] mt-3.5 rounded-[9px] border-[1.5px] border-danger/30 bg-danger/10 p-[10px_12px]">
+            <TeardownLines preview={preview} tone="text-danger" />
           </div>
-        )}
+        ) : null}
         {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
         <div className="flex justify-end gap-[9px] p-[16px_18px]">
           <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>

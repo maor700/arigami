@@ -12,6 +12,8 @@ import { resourceRoot } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
+import { HOST_MARK } from './lib/session-procs.js';
+import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
 import { expirePendingPermissions, expirePendingScreenRequests, detachPendingSetupRequests } from './api.js';
@@ -599,6 +601,10 @@ function buildClaudeSpawn(s, { resume, sessionId }) {
     ...baseEnv(),
     ...accountEnv(s),
     ARIGAMI_SESSION_ID: s.id,
+    // Ownership markers (session-procs.ts): every process this session starts
+    // inherits them, detached or not, so deleting the session can find it.
+    ARIGAMI_HOST_ID: HOST_MARK,
+    ...scratch.envFor(s.id), // TMPDIR → ~/.arigami/scratch/<id>, removed with the session
     // ARIGAMI_URL is INTERNAL: the loopback base the agent's MCP/curl calls use
     // to reach THIS host. It is never a link for a human — the host hands out
     // relative paths (ARIGAMI_PUBLIC_PATH) that resolve on any origin. See
@@ -2365,6 +2371,10 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
   const engine = sessionEngine(s);
   const env = {
     ARIGAMI_SESSION_ID: s.id, // MCP tools target THIS session's Changes tab
+    // Ownership markers (session-procs.ts): every process this session starts
+    // inherits them, detached or not, so deleting the session can find it.
+    ARIGAMI_HOST_ID: HOST_MARK,
+    ...scratch.envFor(s.id), // TMPDIR → ~/.arigami/scratch/<id>, removed with the session
     ARIGAMI_URL: cfg.hostBase, // internal host→self base only
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),

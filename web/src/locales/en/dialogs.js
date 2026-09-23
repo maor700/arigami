@@ -22,8 +22,11 @@ export const strings = {
   // archive
   'dialogs.archiveTitle': 'Archive this session?',
   'dialogs.archiveBody': 'moves to Archived. The branch and PR stay on GitHub — you can restore it anytime.',
+  'dialogs.teardown.procs': 'Stops {n} process(es) this session started — dev servers included',
+  'dialogs.teardown.wtRemove': 'Removes the worktree and its branch — everything in it is pushed',
+  'dialogs.teardown.wtKeep': 'Keeps the worktree — {why}',
+  'dialogs.teardown.scratch': 'Deletes the session\'s scratch files',
   'dialogs.alsoRemoveWorktree': 'Also remove the git worktree',
-  'dialogs.worktreeFreesDisk': 'Frees disk and stops the dev server. Uncommitted changes are lost.',
   'dialogs.archiving': 'Archiving…',
   'dialogs.archive': 'Archive',
 

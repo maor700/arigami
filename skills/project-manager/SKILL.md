@@ -98,9 +98,10 @@ pointers to branches/files — never pasted file contents.
    - Blocked child → decide if YOU can unblock it with information/sequencing;
      anything requiring judgment about the product or code goes to the human
      via `request_action`.
-   - Kill only what is truly finished-and-abandoned (`delete_session`), and
-     never with `run_cleanup` on a session whose cwd you don't recognize as its
-     own worktree. When in doubt, archive nothing — ask the human.
+   - Kill only what is truly finished-and-abandoned (`delete_session`). The
+     host does the whole teardown — processes, the worktree the session owns
+     (kept if it has unpushed work), scratch files — so never clean up by hand
+     first. When in doubt, archive nothing — ask the human.
 4. **Idle between wakes.** You are event-driven: reports, adoptions and removals
    wake you. Don't poll in a busy loop.
 
@@ -140,8 +141,8 @@ The human may be on a phone, another machine or a tailnet — a
 5. **After `merge_session` succeeds, run the gates on the base — `tsc`, tests,
    build — then push.** The merge itself runs no gates (the response says so in
    `hint`). A red gate after a merge is yours to route back to the child.
-6. `delete_branch:true` (or `delete_session({run_cleanup:true})` later) removes
-   the child's worktree + branch once merged.
+6. `delete_branch:true` (or `delete_session` later) removes the child's
+   worktree + branch once merged.
 
 ## What you never do
 

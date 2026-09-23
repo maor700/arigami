@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ARIGAMI_DIR } from './instance.js';
+import * as procs from './session-procs.js';
 
 export type Pressure = 'ok' | 'busy' | 'critical';
 
@@ -276,20 +277,33 @@ function run(cmd: string, args: string[], timeoutMs: number): string | null {
   }
 }
 
-/** pid → `session:<id>` tag, from the supervised-children record. */
+/**
+ * pid → `session:<id>` tag. Two sources, the marker first:
+ *   - the ARIGAMI_SESSION_ID every session process inherits (session-procs.ts).
+ *     This is the one that sees a dev server the agent detached — which is
+ *     most of the memory on a busy box, and was invisible before.
+ *   - the supervised-children record, for Windows, where another process's
+ *     environment can't be read. (This used to read run/children.json, a file
+ *     nothing writes — children.ts keeps it at the instance root — so every
+ *     process came back with session: null.)
+ */
 function tagsByPid(): Map<number, string> {
   const out = new Map<number, string>();
+  for (const m of procs.list() || []) {
+    if (m.host === null || m.host === procs.HOST_MARK) out.set(m.pid, `session:${m.session}`);
+  }
   try {
-    const file = path.join(ARIGAMI_DIR, 'run', 'children.json');
+    const file = path.join(ARIGAMI_DIR, 'children.json');
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (Array.isArray(raw)) for (const r of raw) if (r && Number.isFinite(r.pid)) out.set(r.pid, String(r.tag || ''));
+    if (Array.isArray(raw))
+      for (const r of raw) if (r && Number.isFinite(r.pid) && !out.has(r.pid)) out.set(r.pid, String(r.tag || ''));
   } catch {
     /* no records yet */
   }
   return out;
 }
 
-function processes(limit: number): ProcRow[] {
+function processes(): ProcRow[] {
   const tags = tagsByPid();
   const rows: ProcRow[] = [];
 
@@ -324,7 +338,7 @@ function processes(limit: number): ProcRow[] {
   // Heaviest by memory: it is the resource that actually stops work on these
   // boxes (an OOM kill), where CPU only slows it down.
   rows.sort((a, b) => (b.rssMb ?? 0) - (a.rssMb ?? 0));
-  return rows.slice(0, limit);
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,10 +410,14 @@ export function sample({ topProcesses = 12 }: { topProcesses?: number } = {}): S
   const avail = availableMemory();
   const memUsedPct = avail.mb != null && totalMb > 0 ? Math.round(((totalMb - avail.mb) / totalMb) * 100) : null;
   const d = disk();
-  const procs = processes(topProcesses);
+  // Roll up over EVERY process, then trim for display: a session's cost is its
+  // Chrome renderers and MCP servers too, and most of those are small enough
+  // to fall outside any top-N.
+  const all = processes();
+  const top = all.slice(0, topProcesses);
 
   const bySession = new Map<string, { session: string; cpuPct: number; rssMb: number; procs: number }>();
-  for (const p of procs) {
+  for (const p of all) {
     if (!p.session) continue;
     const e = bySession.get(p.session) || { session: p.session, cpuPct: 0, rssMb: 0, procs: 0 };
     e.cpuPct += p.cpuPct ?? 0;
@@ -421,7 +439,7 @@ export function sample({ topProcesses = 12 }: { topProcesses?: number } = {}): S
     memory: { totalMb, availableMb: avail.mb, usedPct: memUsedPct, source: avail.source },
     swap: swap(),
     disk: d,
-    processes: procs,
+    processes: top,
     sessions: [...bySession.values()].sort((a, b) => b.rssMb - a.rssMb),
     ...v,
   };

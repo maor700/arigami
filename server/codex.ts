@@ -58,6 +58,8 @@ import { HOME } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
 import { cfg, getSession, setClaude, untildify } from './state.js';
 import { auth } from './auth.js';
+import { HOST_MARK } from './lib/session-procs.js';
+import * as scratch from './lib/scratch.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { registerEngine } from './lib/engine-driver.js';
 import type { EngineDriver } from './lib/engine-driver.js';
@@ -315,6 +317,10 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
 
   const env: Record<string, string> = {
     ARIGAMI_SESSION_ID: s.id,
+    // Ownership markers (session-procs.ts): every process this session starts
+    // inherits them, detached or not, so deleting the session can find it.
+    ARIGAMI_HOST_ID: HOST_MARK,
+    ...scratch.envFor(s.id), // TMPDIR → ~/.arigami/scratch/<id>, removed with the session
     ARIGAMI_URL: cfg.hostBase!,
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ARIGAMI_TOKEN: auth.tokenForSession(s.id),
@@ -481,6 +487,10 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     ...rest,
     CODEX_HOME: codexHomeFor(s.id),
     ARIGAMI_SESSION_ID: s.id,
+    // Ownership markers (session-procs.ts): every process this session starts
+    // inherits them, detached or not, so deleting the session can find it.
+    ARIGAMI_HOST_ID: HOST_MARK,
+    ...scratch.envFor(s.id), // TMPDIR → ~/.arigami/scratch/<id>, removed with the session
     ARIGAMI_URL: cfg.hostBase,
     ARIGAMI_PUBLIC_PATH: '/__host/',
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
