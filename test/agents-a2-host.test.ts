@@ -205,7 +205,7 @@ test('cron: created from an agent session defaults to the agent; explicit "" = n
   expect((await api('GET', '/__api/agents/bot/routine')).json.cron.map((t: any) => t.name)).toEqual(['from plain']);
 });
 
-test('save_browser_logins from an agent session → the agent profile; shared:true → chrome-base too', async () => {
+test('save_browser_logins from an agent session → the agent profile only; shared:true and plain sessions are refused', async () => {
   const prof = path.join(dir, 'chrome-sessions', botSession, 'Default');
   fs.mkdirSync(prof, { recursive: true });
   fs.writeFileSync(path.join(prof, 'Cookies'), 'bot-cookies');
@@ -214,13 +214,15 @@ test('save_browser_logins from an agent session → the agent profile; shared:tr
   expect(fs.readFileSync(path.join(dir, 'agents', 'bot', 'browser', 'Default', 'Cookies'), 'utf8')).toBe('bot-cookies');
   expect(fs.existsSync(path.join(dir, 'chrome-base', 'Default', 'Cookies'))).toBe(false);
   expect((await api('GET', '/__api/agents/bot/connections')).json.browserProfile).toBe(true);
-  const r2 = (await api('POST', `/__api/sessions/${botSession}/browser/sync-logins`, { shared: true })).json;
-  expect(r2.targets).toEqual(['agent:bot', 'global']);
-  expect(fs.readFileSync(path.join(dir, 'chrome-base', 'Default', 'Cookies'), 'utf8')).toBe('bot-cookies');
-  // a plain session's sync stays global-only (unchanged behaviour)
+  // nothing reaches the owner's own profile this way any more — that is
+  // save_login, one site, with the owner's approval
+  const r2 = await api('POST', `/__api/sessions/${botSession}/browser/sync-logins`, { shared: true });
+  expect(r2.status).toBe(409);
+  expect(fs.existsSync(path.join(dir, 'chrome-base', 'Default', 'Cookies'))).toBe(false);
   const pprof = path.join(dir, 'chrome-sessions', plainSession, 'Default');
   fs.mkdirSync(pprof, { recursive: true });
   fs.writeFileSync(path.join(pprof, 'Cookies'), 'plain-cookies');
-  expect((await api('POST', `/__api/sessions/${plainSession}/browser/sync-logins`, {})).json.targets).toEqual(['global']);
+  expect((await api('POST', `/__api/sessions/${plainSession}/browser/sync-logins`, {})).status).toBe(409);
+  expect(fs.existsSync(path.join(dir, 'chrome-base', 'Default', 'Cookies'))).toBe(false);
   expect(fs.readFileSync(path.join(dir, 'agents', 'bot', 'browser', 'Default', 'Cookies'), 'utf8')).toBe('bot-cookies');
 });

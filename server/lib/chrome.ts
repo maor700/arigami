@@ -68,7 +68,8 @@ export function ensureSessionProfile(sessionId: string): string {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(CHROME_SESSIONS_DIR, { recursive: true });
     const seed = profileSeedFor(sessionId);
-    if (seed.owner !== 'global' && fs.existsSync(seed.dir)) {
+    if (seed.owner !== 'global') {
+      ensureBase(seed.dir); // an agent's first-ever profile starts empty and is created here
       // Caches are what makes a profile hundreds of MB; they are not identity.
       fs.cpSync(seed.dir, dir, { recursive: true, filter: (src) => !CACHE_DIRS.has(path.basename(src)) });
     } else {
@@ -283,19 +284,21 @@ function copySyncPaths(src: string, target: string, sessionId: string): string[]
 }
 
 /**
- * Copy cookies/saved logins/local storage from this session's profile copy back
- * to its seed — chrome-base for a plain session, the AGENT's browser/ for a
- * session born from an agent (A2). `shared:true` additionally syncs an agent
- * session into chrome-base (only when asked — an agent's logins stay its own
- * by default). Last-writer-wins under a per-target lock. No-op if the session
- * never opened a browser.
+ * Copy cookies/saved logins/local storage from an AGENT session's profile back
+ * into the agent's own browser/ (A2) — the agent's identity. Last-writer-wins
+ * under a per-target lock. No-op if the session never opened a browser.
+ *
+ * It never writes chrome-base, the owner's own profile: that used to be the
+ * default for plain sessions and an opt-in (`shared`) for agents, and it is how
+ * logins overwrote each other. A login reaches the owner's browser only through
+ * login-vault.ts's saveToVault — one site, after the owner approved it.
  */
-export async function syncProfileToBase(sessionId: string, opts: { shared?: boolean } = {}): Promise<{ ok: boolean; synced: string[]; targets: string[] }> {
+export async function syncProfileToBase(sessionId: string): Promise<{ ok: boolean; synced: string[]; targets: string[] }> {
   const src = chromeSessionDir(sessionId);
   if (!fs.existsSync(src)) return { ok: false, synced: [], targets: [] };
   const seed = profileSeedFor(sessionId);
+  if (seed.owner === 'global') return { ok: false, synced: [], targets: [] };
   const targets = [seed];
-  if (opts.shared && seed.owner !== 'global') targets.push({ dir: CHROME_BASE_DIR, owner: 'global' });
   let synced: string[] = [];
   for (const t of targets) synced = await withLock(t.dir, () => copySyncPaths(src, t.dir, sessionId));
   return { ok: true, synced, targets: targets.map((t) => t.owner) };

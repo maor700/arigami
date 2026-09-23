@@ -18,7 +18,8 @@
 // predictable CDP port to expose, and no relaunch is needed to get one: the
 // SAME running Chrome (the one the human may be signing in to Google on) is
 // what these tools talk to over chrome-cdp.ts.
-import { openChrome, closeChrome as closeChromeProcess, isChromeRunning, touch } from './chrome.js';
+import fs from 'node:fs';
+import { openChrome, closeChrome as closeChromeProcess, isChromeRunning, touch, chromeSessionDir } from './chrome.js';
 import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
 import * as screens from '../screenshots.js';
 
@@ -92,6 +93,10 @@ async function shot(sessionId: string, caption: string): Promise<{ url: string; 
 async function ready(sessionId: string): Promise<void> {
   touch(sessionId);
   if (isChromeRunning(sessionId)) return;
+  // Only a browser this session HAD (its profile exists — the idle closer
+  // stopped it) comes back on its own. A session that never opened one gets
+  // the same answer as before: browser_open first.
+  if (!fs.existsSync(chromeSessionDir(sessionId))) return;
   await openChrome(sessionId);
   for (let i = 0; i < 40 && !(await frontPage(sessionId).catch(() => null)); i++) await new Promise((r) => setTimeout(r, 250));
 }
@@ -122,6 +127,7 @@ export interface NavigateResult { ok: true; url: string; title: string }
 
 export async function navigate(sessionId: string, url: string): Promise<NavigateResult> {
   await ready(sessionId);
+  if (!isChromeRunning(sessionId)) await openChrome(sessionId, url);
   const r = await pageNavigate(sessionId, url);
   return { ok: true, ...r };
 }

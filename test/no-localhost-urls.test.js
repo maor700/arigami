@@ -17,6 +17,9 @@ const ALLOW = [
   ['server/claude.js', 'ARIGAMI_URL: cfg.hostBase ||'], // internal env for the agent
   ['server/claude.js', 'pass http://localhost:$PORT'], // guidance: give it to open_tab, not the human
   ['server/lib/chrome-cdp.ts', '/json/list'], // F8: loopback DevTools port of the session Chrome — host-internal
+  ['server/lib/chrome.ts', '/json/version'], // idle close: Browser.close over the session Chrome's loopback DevTools port
+  ['server/lib/login-vault.ts', '/json/version'], // the vault Chrome's loopback DevTools port — host-internal
+  ['server/lib/site-state.ts', '/json/version'], // browser-level DevTools socket for the login hand-over — host-internal
   ['server/index.ts', '[host] arigami up on'], // boot log line
   ['server/linear-mcp.ts', 'fallbackOrigin = ()'], // OAuth redirect_uri must be absolute
   ['server/proxy.ts', 'req.headers.host ||'], // request-URL parsing base

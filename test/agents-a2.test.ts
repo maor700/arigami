@@ -100,7 +100,7 @@ test('audit: entries carry owner (global omitted), readAudit filters by owner', 
   expect(r.out[0].glob).toEqual(['identity', 'git']);
 });
 
-test('chrome: agent session seeded from agents/<slug>/browser (empty, not chrome-base); sync lands in the agent profile; shared:true also in chrome-base; googleAccountEmail never falls back to chrome-base for an agent', () => {
+test('chrome: agent session seeded from agents/<slug>/browser (empty, not chrome-base); sync lands in the agent profile and never in chrome-base; a plain session starts empty; googleAccountEmail never falls back to chrome-base for an agent', () => {
   const dir = fresh();
   // A pre-existing shared login in chrome-base that an agent must NOT inherit.
   fs.mkdirSync(path.join(dir, 'chrome-base', 'Default'), { recursive: true });
@@ -116,8 +116,9 @@ test('chrome: agent session seeded from agents/<slug>/browser (empty, not chrome
       "fs.mkdirSync(path.join(bd,'Default'),{recursive:true});fs.writeFileSync(path.join(bd,'Default','Cookies'),'bot-cookies');fs.writeFileSync(path.join(bd,'Default','Preferences'),JSON.stringify({account_info:[{email:'bot@example.com'}]}));" +
       'const r1=await ch.syncProfileToBase(bot.id);' +
       "emit({r1,agentCookies:fs.readFileSync(path.join(ch.agentBrowserDir('bot'),'Default','Cookies'),'utf8'),baseCookies:fs.readFileSync(path.join(ch.CHROME_BASE_DIR,'Default','Cookies'),'utf8'),email:ch.googleAccountEmail(bot.id)});" +
-      'const r2=await ch.syncProfileToBase(bot.id,{shared:true});' +
-      "emit({r2,baseCookies:fs.readFileSync(path.join(ch.CHROME_BASE_DIR,'Default','Cookies'),'utf8')});" +
+      // `shared` is gone: a stray option must not reach the owner's profile
+      'const r2=await ch.syncProfileToBase(bot.id,{shared:true});const r3=await ch.syncProfileToBase(plain.id);' +
+      "emit({r2,r3,baseCookies:fs.readFileSync(path.join(ch.CHROME_BASE_DIR,'Default','Cookies'),'utf8')});" +
       // a SECOND session of the bot now inherits the bot's profile
       "const bot2=st.createSession({title:'b2',cwd:process.env.ARIGAMI_DIR,metadata:{agent:'bot'}});const bd2=ch.ensureSessionProfile(bot2.id);" +
       "emit({bot2Cookies:fs.readFileSync(path.join(bd2,'Default','Cookies'),'utf8'),none:await ch.syncProfileToBase('sess_never')});",
@@ -129,7 +130,7 @@ test('chrome: agent session seeded from agents/<slug>/browser (empty, not chrome
   expect(o1.seedPlain.dir).toBe(path.join(dir, 'chrome-base'));
   expect(o1.seedBot).toEqual({ dir: path.join(dir, 'agents', 'bot', 'browser'), owner: 'agent:bot' });
   expect(o1.agentOf).toEqual([null, 'bot']);
-  expect(o2.plainHasShared).toBe(true);
+  expect(o2.plainHasShared).toBe(false); // logins now arrive per site, on approval (login-vault.ts)
   expect(o2.botHasShared).toBe(false);
   expect(o2.agentDirCreated).toBe(true);
   expect(o2.email).toEqual(['host@example.com', null]); // the bot does NOT see the host's Google account
@@ -137,8 +138,9 @@ test('chrome: agent session seeded from agents/<slug>/browser (empty, not chrome
   expect(o3.agentCookies).toBe('bot-cookies');
   expect(o3.baseCookies).toBe('shared-cookies');
   expect(o3.email).toBe('bot@example.com');
-  expect(o4.r2.targets).toEqual(['agent:bot', 'global']);
-  expect(o4.baseCookies).toBe('bot-cookies');
+  expect(o4.r2.targets).toEqual(['agent:bot']);
+  expect(o4.r3).toEqual({ ok: false, synced: [], targets: [] }); // a plain session writes nowhere
+  expect(o4.baseCookies).toBe('shared-cookies'); // the owner's profile untouched
   expect(o5.bot2Cookies).toBe('bot-cookies');
   expect(o5.none).toEqual({ ok: false, synced: [], targets: [] });
 });
