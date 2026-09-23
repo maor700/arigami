@@ -40,10 +40,10 @@ test('cookieBelongs matches the site and its subdomains, not look-alikes', () =>
   expect(sites.cookieBelongs('google.com.evil.io', g)).toBe(false);
 });
 
-test("Google is never copied: a copy signs the owner out too", () => {
+test('Google is never copied: it does not reliably accept its session in a second browser', () => {
   const d = sites.decide(sites.resolve('google'));
   expect(d.policy).toBe('never');
-  expect(d.reason).toMatch(/signs YOU out/);
+  expect(d.reason).toMatch(/second browser/);
 });
 
 test('signed-out pages are recognized, including ones that look like marketing pages', async () => {

@@ -99,6 +99,7 @@ export interface CdpCookie {
   priority?: string;
   sameParty?: boolean;
   sourceScheme?: string;
+  sourcePort?: number;
   partitionKey?: unknown;
 }
 
@@ -282,6 +283,14 @@ export async function importSite(cdp: Cdp, st: SiteState): Promise<{ cookies: nu
       ...(c.session || !(c.expires > 0) ? {} : { expires: c.expires }),
       ...(c.priority ? { priority: c.priority } : {}),
       ...(c.sourceScheme ? { sourceScheme: c.sourceScheme } : {}),
+      // Chrome binds a cookie to the port it came from. A cookie whose source
+      // port was never recorded (-1, the legacy value) is re-set by CDP with a
+      // port Chrome guesses from the scheme: 80 for a non-Secure cookie, and a
+      // cookie bound to port 80 is not sent to https on 443. Measured by diffing
+      // the stored rows: Google's SID came back with port 80. Logins are https,
+      // so an unrecorded port becomes 443. (That alone did not make Google
+      // accept a copied session — see login-sites.ts.)
+      sourcePort: typeof c.sourcePort === 'number' && c.sourcePort > 0 ? c.sourcePort : 443,
       ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
     }));
     await cdp.send('Storage.setCookies', { cookies: params });
