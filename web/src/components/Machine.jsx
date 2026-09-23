@@ -222,13 +222,22 @@ export function MachinePanel() {
 
       <div>
         <div className="mb-1.5 font-mono text-[0.625rem] tracking-[0.06em] text-fgdim uppercase">{t('machine.topProcs')}</div>
-        <table className="w-full text-[0.75rem]" dir="ltr">
+        {/* table-fixed + explicit widths: under auto layout the two truncating
+            columns (name, session) collapse to zero width. */}
+        <table className="w-full table-fixed text-[0.75rem]" dir="ltr">
+          <colgroup>
+            <col className="w-[4.5rem]" />
+            <col className="w-[30%]" />
+            <col />
+            <col className="w-[5rem]" />
+            <col className="w-[3.5rem]" />
+          </colgroup>
           <tbody>
             {(snap.processes || []).map((p) => (
               <tr key={p.pid} className="border-t border-hair">
                 <td className="py-1 font-mono text-fgdim tabular-nums">{p.pid}</td>
-                <td className="max-w-0 truncate py-1 font-mono">{p.name}</td>
-                <td className="max-w-0 truncate py-1 text-fgdim">{p.session ? title(p.session) : ''}</td>
+                <td className="truncate py-1 font-mono" title={p.name}>{p.name}</td>
+                <td className="truncate py-1 ps-2 text-fgdim">{p.session ? title(p.session) : ''}</td>
                 <td className="py-1 text-end font-mono tabular-nums">{fmtMb(p.rssMb)}</td>
                 <td className="py-1 text-end font-mono tabular-nums text-fgdim">{p.cpuPct == null ? '' : `${Math.round(p.cpuPct)}%`}</td>
               </tr>
