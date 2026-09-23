@@ -35,6 +35,8 @@ export interface SiteDef {
   label: string;
   /** Cookie host suffixes that belong to the login (".google.com" matches accounts.google.com). */
   domains: string[];
+  /** Hosts matched by pattern — Google signs you in on every country domain too. */
+  patterns?: RegExp[];
   policy: LoginPolicy;
   /** Origins whose IndexedDB/localStorage move under `copy`. Default: https://<each domain>. */
   origins?: string[];
@@ -51,7 +53,7 @@ export interface SiteDef {
 const B = (d: Omit<SiteDef, 'known'>): SiteDef => ({ ...d, known: true });
 
 export const BUILTIN: SiteDef[] = [
-  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], policy: 'cookies', checkUrl: 'https://myaccount.google.com/' }),
+  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'cookies', checkUrl: 'https://myaccount.google.com/' }),
   B({ id: 'facebook.com', label: 'Facebook', domains: ['.facebook.com'], policy: 'cookies', checkUrl: 'https://www.facebook.com/me' }),
   B({ id: 'instagram.com', label: 'Instagram', domains: ['.instagram.com'], policy: 'cookies', checkUrl: 'https://www.instagram.com/accounts/edit/' }),
   B({ id: 'github.com', label: 'GitHub', domains: ['.github.com', 'github.com'], policy: 'cookies', checkUrl: 'https://github.com/settings/profile' }),
@@ -66,6 +68,18 @@ export const BUILTIN: SiteDef[] = [
   B({ id: 'telegram.org', label: 'Telegram Web', domains: ['.telegram.org'], policy: 'never', note: 'Telegram Web is a linked session: copying it can end the original. Sign in fresh.' }),
   B({ id: 'paypal.com', label: 'PayPal', domains: ['.paypal.com'], policy: 'never', note: 'A payment account: a copied session reads as theft and can lock the account. Sign in fresh.' }),
 ];
+
+/**
+ * Ad and analytics hosts. They set the same httpOnly+secure cookies a login
+ * does, so without this list they show up as "sites you are signed in to".
+ */
+export const TRACKERS = new Set([
+  'doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com', 'googleadservices.com',
+  'clarity.ms', 'rubiconproject.com', 'company-target.com', 'adnxs.com', 'criteo.com', 'criteo.net',
+  'hotjar.com', 'hs-analytics.net', 'facebook.net', 'ads-twitter.com', 'adsrvr.org', 'casalemedia.com',
+  'pubmatic.com', 'openx.net', 'taboola.com', 'outbrain.com', 'quantserve.com', 'scorecardresearch.com', 'demdex.net',
+  'everesttech.net', 'bidswitch.net', 'agkn.com', 'mathtag.com', '3lift.com', 'sharethrough.com',
+]);
 
 /**
  * IndexedDB databases that are a login by themselves, whoever the site is.
@@ -104,6 +118,7 @@ export function hostOf(input: string): string {
 /** Does a cookie host (".x.com", "x.com", "sub.x.com") belong to this site? */
 export function cookieBelongs(cookieHost: string, site: SiteDef): boolean {
   const h = String(cookieHost || '').toLowerCase().replace(/^\./, '');
+  if (site.patterns?.some((re) => re.test(h))) return true;
   return site.domains.some((d) => {
     const dd = d.toLowerCase().replace(/^\./, '');
     return h === dd || h.endsWith('.' + dd);

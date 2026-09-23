@@ -32,6 +32,9 @@ test('resolve maps names, hosts and urls to the same site', () => {
 test('cookieBelongs matches the site and its subdomains, not look-alikes', () => {
   const g = sites.resolve('google');
   expect(sites.cookieBelongs('.google.com', g)).toBe(true);
+  expect(sites.cookieBelongs('.google.co.il', g)).toBe(true); // country domains are the same account
+  expect(sites.resolve('www.google.co.il').id).toBe('google.com');
+  expect(sites.cookieBelongs('google.co.il.evil.io', g)).toBe(false);
   expect(sites.cookieBelongs('accounts.google.com', g)).toBe(true);
   expect(sites.cookieBelongs('notgoogle.com', g)).toBe(false);
   expect(sites.cookieBelongs('google.com.evil.io', g)).toBe(false);

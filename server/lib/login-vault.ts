@@ -116,6 +116,7 @@ export function list(dir = VAULT_DIR): { id: string; label: string; known: boole
   const seen = new Map<string, sites.SiteDef>();
   for (const h of hosts) {
     const s = sites.resolve(h.replace(/^\./, ''));
+    if (!s.known && sites.TRACKERS.has(s.id)) continue;
     if (!seen.has(s.id)) seen.set(s.id, s);
   }
   return [...seen.values()]
