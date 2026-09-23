@@ -54,20 +54,31 @@ function ensureBase(dir = CHROME_BASE_DIR): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-// First open only — an existing copy is left alone so a session's own
+// First open only — an existing profile is left alone so a session's own
 // in-progress browsing (open tabs, a login mid-flow) survives a restart.
-// An agent's first-ever profile starts EMPTY (its own identity — it does not
-// inherit the shared base logins); later sessions of the agent inherit its own.
+//
+// A plain session's browser starts EMPTY. It used to start as a full copy of
+// chrome-base, which handed every agent every login the owner had, with no
+// say in it; logins now arrive one site at a time, only when the owner
+// approves (login-vault.ts, request_login). A session born from an AGENT still
+// starts from that agent's own profile — that is the agent's identity, which
+// the owner set up for it deliberately.
 export function ensureSessionProfile(sessionId: string): string {
   const dir = chromeSessionDir(sessionId);
   if (!fs.existsSync(dir)) {
-    const seed = profileSeedFor(sessionId).dir;
-    ensureBase(seed);
     fs.mkdirSync(CHROME_SESSIONS_DIR, { recursive: true });
-    fs.cpSync(seed, dir, { recursive: true });
+    const seed = profileSeedFor(sessionId);
+    if (seed.owner !== 'global' && fs.existsSync(seed.dir)) {
+      // Caches are what makes a profile hundreds of MB; they are not identity.
+      fs.cpSync(seed.dir, dir, { recursive: true, filter: (src) => !CACHE_DIRS.has(path.basename(src)) });
+    } else {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
   return dir;
 }
+
+const CACHE_DIRS = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'GrShaderCache', 'ShaderCache', 'Service Worker', 'blob_storage', 'Crashpad']);
 
 const running = new Map<string, ChildProcess>();
 
@@ -123,6 +134,10 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     // F8: loopback DevTools port (Chrome writes it to <profile>/DevToolsActivePort)
     // so the host can read the take-over browser's tabs / type into it — see chrome-cdp.ts.
     '--remote-debugging-port=0',
+    // Reopened after an idle close (below) with the tabs it had.
+    '--restore-last-session',
+    // A long-lived session profile otherwise grows its cache without bound.
+    '--disk-cache-size=52428800',
     ...(url ? [url] : []),
   ];
   const { env, extraArgs } = await driver.browserLaunch(sessionId);
@@ -133,7 +148,78 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
   supervise(child, `browser:${sessionId}`);
   child.on('exit', () => { if (running.get(sessionId) === child) running.delete(sessionId); });
   running.set(sessionId, child);
+  touch(sessionId);
   return { display, pid: child.pid!, alreadyRunning: false };
+}
+
+// ---- idle close -----------------------------------------------------------------
+//
+// A session's Chrome costs 650 MB-1.1 GB and mostly sits idle between the
+// agent's browser steps. Close it after IDLE_MS without use; the next browser
+// step reopens it (browser-actions.ts) with the same profile and its tabs, so
+// logins and open pages survive. Never while a human may be looking at it: an
+// open take-over request, or a take-over that ended recently, keeps it up.
+
+const lastUse = new Map<string, number>();
+export const IDLE_MS = Number(process.env.ARIGAMI_BROWSER_IDLE_MS) || 10 * 60_000;
+
+/** Record that this session's browser was just used (every browser_* step calls it). */
+export function touch(sessionId: string): void {
+  lastUse.set(sessionId, Date.now());
+}
+
+/**
+ * Stop Chrome cleanly: Browser.close over DevTools lets it flush cookies and
+ * storage and write its session (for --restore-last-session); SIGTERM/SIGKILL
+ * only if it does not go.
+ */
+export async function closeChromeGracefully(sessionId: string, port: number | null): Promise<void> {
+  const child = running.get(sessionId);
+  if (!child) return;
+  if (port) {
+    try {
+      const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) })).json()) as any;
+      const ws = new WebSocket(v.webSocketDebuggerUrl);
+      await new Promise<void>((res) => {
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ id: 1, method: 'Browser.close' }));
+          setTimeout(res, 200);
+        };
+        ws.onerror = () => res();
+      });
+      const t0 = Date.now();
+      while (child.exitCode === null && Date.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 100));
+    } catch {
+      /* fall through to the signal */
+    }
+  }
+  if (child.exitCode === null) killTree(child.pid);
+  running.delete(sessionId);
+}
+
+/** Sessions whose browser should close now. Pure — the caller supplies what a human is doing. */
+export function idleCandidates(now: number, humanBusy: (sessionId: string) => boolean): string[] {
+  const out: string[] = [];
+  for (const id of running.keys()) {
+    if (!isChromeRunning(id)) continue;
+    const last = lastUse.get(id) ?? 0;
+    if (now - last < IDLE_MS) continue;
+    if (humanBusy(id)) continue;
+    out.push(id);
+  }
+  return out;
+}
+
+export function startIdleCloser(humanBusy: (sessionId: string) => boolean, portOf: (sessionId: string) => number | null, log: (m: string) => void = console.log): () => void {
+  const tick = async () => {
+    for (const id of idleCandidates(Date.now(), humanBusy)) {
+      await closeChromeGracefully(id, portOf(id)).catch(() => {});
+      log(`[chrome] closed the idle browser of ${id} (unused for ${Math.round(IDLE_MS / 60000)} min; it reopens on the next browser step)`);
+    }
+  };
+  const t = setInterval(() => void tick(), 60_000);
+  t.unref?.();
+  return () => clearInterval(t);
 }
 
 /** Kill THIS session's Chrome, if running — never touches any other process. */

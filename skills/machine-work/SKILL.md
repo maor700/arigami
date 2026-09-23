@@ -25,7 +25,9 @@ over**, complete it, click **Done**, and you continue.
 | `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
 | `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
-| `save_browser_logins()` | sync this session's Chrome cookies/logins back to the shared base profile — usually automatic (see "Your own machine" below), call directly if you want it sooner |
+| `browser_logins()` | which sites the human is signed in to in THEIR browser — names only. Check before signing in anywhere |
+| `request_login({site, reason})` | ask for the human's login to ONE site; they approve on a card and it lands in your browser. Stop and wait for the `[host]` message |
+| `save_login({site, reason})` | after a fresh sign-in, offer to save that one site to the human's browser — only on their approval |
 | `set_status_summary` / `set_progress` | running status — do NOT use request_action for status |
 
 `capture_screen` and `browser_*` are provided by the host MCP (`arigami`) under the `desktop` and
@@ -66,9 +68,12 @@ The human may be on a phone, another machine or a tailnet — a
 
 Each session gets its own desktop (its own `Xvfb`+VNC, not the shared one)
 and its own Chrome profile, allocated the first time you touch any of this —
-`request_screen`, `capture_screen`, or opening a browser. Logins carry over
-between sessions (a shared base profile each session's Chrome clones from and
-syncs back to), but the *desktop* and the open windows on it are yours alone.
+`request_screen`, `capture_screen`, or opening a browser. The profile starts
+with **no logins**. The human signs in to sites once, in their own browser
+("My browser" in the cockpit); when you need a site, `request_login` asks them
+for that one site. Never ask for a password in the chat — a fresh sign-in is
+`request_screen`, with the human typing. Your browser closes itself after ~10
+minutes unused and reopens, with its tabs, on your next browser step.
 
 **Opening a browser:** use the helper, never launch `google-chrome` yourself:
 ```

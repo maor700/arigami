@@ -372,6 +372,15 @@ try {
 // what counts as leftovers (see reap.ts).
 (await import('./reap.js')).startSweeper((m) => console.log(m));
 
+// A session's idle Chrome closes after ARIGAMI_BROWSER_IDLE_MS (10 min) and
+// reopens on its next browser step — unless a human may be looking at it.
+{
+  const chromeMod = await import('./lib/chrome.js');
+  const cdpMod = await import('./lib/chrome-cdp.js');
+  const apiMod = await import('./api.js');
+  chromeMod.startIdleCloser((id) => apiMod.hasOpenScreenRequest(id), (id) => cdpMod.cdpPort(id), (m) => console.log(m));
+}
+
 // A bind failure is the single most confusing way for the host to die — say what
 // it actually means, including the "owner is already dead" case.
 server.on('error', (e: NodeJS.ErrnoException) => {

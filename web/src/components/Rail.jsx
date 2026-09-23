@@ -42,6 +42,7 @@ import {
   faFolderPlus,
   faFolderTree,
   faGear,
+  faGlobe,
   faRightFromBracket,
   faGripVertical,
   faListCheck,
@@ -1295,6 +1296,17 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
   const t = useT();
   const { auth } = useStore();
   const canLogout = !!auth && auth.authMode !== 'off';
+  // "My browser": the owner's own profile. Sign in to a site here once; an agent
+  // can then ASK for that one site (request_login) and you approve per site.
+  // On Linux it opens on the shared desktop, so the global screen view shows it.
+  const openMyBrowser = async () => {
+    try {
+      const r = await api.post('/browser/vault/open', {});
+      if (r?.display) setScreenModal(true);
+    } catch (e) {
+      toastError(t('rail.myBrowserFailed', { error: e.message || e }));
+    }
+  };
   const logout = async () => {
     await api.post('/auth/logout').catch(() => {});
     signOut();
@@ -1360,6 +1372,7 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
           <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
           <Item icon={faBrain} onClick={act(onOpenBrain)}>{t('rail.brain')}</Item>
           <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
+          <Item icon={faGlobe} onClick={act(openMyBrowser)}>{t('rail.myBrowser')}</Item>
           <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
           {canLogout && (
             <div className="mt-1 border-t border-hair pt-1">

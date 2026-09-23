@@ -186,6 +186,12 @@ interface CleanupPlanResult {
 const pendingPermissions = new Map<string, PendingPermission>();
 const pendingScreenRequests = new Map<string, PendingScreenRequest>();
 
+/** Is a human (possibly) looking at this session's desktop right now? The idle browser closer asks. */
+export function hasOpenScreenRequest(sessionId: string): boolean {
+  for (const e of pendingScreenRequests.values()) if (e.sessionId === sessionId) return true;
+  return false;
+}
+
 // ---- CHAT1: long-poll legs for the endpoints that block on a human ----------
 // One HTTP request held open until the human clicks died after ~5 minutes
 // (the MCP process's fetch idle timeout): the tool returned "arigami
@@ -891,7 +897,12 @@ function answerScreenRequest(
   // (T8 §4) so the NEXT session starts already logged in. Fire-and-forget:
   // never block the answer on it.
   if (takenOver) {
-    chrome.syncProfileToBase(sessionId).catch(() => {});
+    // An AGENT session folds the take-over back into the agent's own profile
+    // (its identity). A plain session no longer copies its whole profile into
+    // the owner's: a login reaches "my browser" one site at a time, and only
+    // when the owner approves it (save_login, login-vault.ts).
+    if (chrome.profileSeedFor(sessionId).owner !== 'global') chrome.syncProfileToBase(sessionId).catch(() => {});
+    chrome.touch(sessionId); // a human just used it — restart the idle clock
     // F6: an identity card waiting on this take-over resolves as done, never skipped.
     try { resolveIdentityAfterTakeover(sessionId); } catch {}
   }
@@ -1118,6 +1129,10 @@ const sessionAgent = (s: { metadata?: Record<string, unknown> } | null | undefin
  *           mints the link only when the human approves it (see action/answer).
  */
 const SHARE_KIND = 'share';
+// Login cards (login-vault.ts): answered only by a person, and acted on by the
+// host — the agent never touches the owner's browser itself.
+const LOGIN_KIND = 'login';
+const LOGIN_SAVE_KIND = 'login-save';
 function shareGate(s: unknown, me?: unknown): { mode: 'allow' | 'ask' | 'deny'; agent: agents.AgentView | null } {
   // A logged-in human clicking "mint a link" in the artifact card IS the approval.
   if ((me as any)?.kind === 'user') return { mode: 'allow', agent: null };
@@ -2240,7 +2255,8 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   chrome.closeChrome(id);
   // Fold this session's logins back into chrome-base on every close
   // (T8 §4) — independent of whether the profile copy itself survives.
-  await chrome.syncProfileToBase(id).catch(() => {});
+  // Only an agent session writes back — into the agent's own profile.
+  if (chrome.profileSeedFor(id).owner !== 'global') await chrome.syncProfileToBase(id).catch(() => {});
   if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
   pickDriver().release(id);
   // Processes (incl. detached dev servers), the owned worktree, scratch dir and
@@ -3318,6 +3334,30 @@ export async function handle(
     // signed-in caller (and to agents through the host_resources tool) because
     // the whole point is that a session can ask before it starts something
     // expensive — see server/lib/resources.ts.
+    // "My browser": the owner's own profile, where they sign in once. Opening it
+    // and listing it are a person's actions, never a session's.
+    if (p === '/__api/browser/vault' && m === 'GET') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const lv = await import('./lib/login-vault.js');
+      return json(res, { open: lv.isVisibleOpen(), logins: lv.list(), grants: Object.keys(lv.grants()) });
+    }
+    if (p === '/__api/browser/vault/open' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      const lv = await import('./lib/login-vault.js');
+      // Linux: on the shared desktop the cockpit's global screen view shows.
+      // Elsewhere: a normal window on this machine's own screen.
+      const display = process.platform === 'linux' ? cfg.screen?.display || ':99' : null;
+      const env = display ? { ...process.env, DISPLAY: display } : process.env;
+      try {
+        const r = await lv.openVisible(env, body?.url ? String(body.url) : undefined);
+        return json(res, { ok: true, ...r, display });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 503);
+      }
+    }
     if (p === '/__api/host/kept-worktrees' && m === 'GET') {
       return json(res, reap.keptWorktrees());
     }
@@ -5488,6 +5528,68 @@ export async function handle(
       const removed = state.removePendingPrompt(id, parts[4]);
       return removed ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
     }
+    // ---- logins: one site at a time, only with the owner's approval ----------
+    // (login-vault.ts). The agent learns WHICH sites have a login — never a value.
+    if (sub === 'logins' && m === 'GET') {
+      const lv = await import('./lib/login-vault.js');
+      return json(res, { sites: lv.list() });
+    }
+    if ((sub === 'login-request' || sub === 'login-save') && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const raw = String(body?.site || '').trim();
+      if (!raw) return badRequest(res, 'site required');
+      const reason = String(body?.reason || '').slice(0, 200);
+      const lv = await import('./lib/login-vault.js');
+      const ls = await import('./lib/login-sites.js');
+      if (sub === 'login-request') {
+        const d = lv.detect(raw);
+        const dec = ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []);
+        if (dec.policy === 'never')
+          return json(res, { available: false, site: d.site.id, policy: 'never', reason: dec.reason, next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+        if (!d.present)
+          return json(res, { available: false, site: d.site.id, reason: "there is no login for this site in the owner's browser", next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+        if (lv.grants()[d.site.id]) {
+          const r = await lv.transfer(id, raw);
+          return json(res, { available: true, autoApproved: true, ...r, ...(r.ok ? {} : { next: 'sign in fresh with request_screen' }) });
+        }
+        const unknown = dec.source === 'default' || dec.source === 'storage';
+        const action = {
+          id: 'act_' + nano(),
+          at: new Date().toISOString(),
+          kind: LOGIN_KIND,
+          login: { site: d.site.id, label: d.site.label },
+          prompt:
+            `Use your ${d.site.label} login in this session?` +
+            (reason ? ` — ${reason}` : '') +
+            (unknown ? ` (${d.site.label} is not a site Arigami knows: the first try may ask you to sign in again in your own browser.)` : ''),
+          buttons: [
+            { label: `Use my ${d.site.label} login`, value: 'use', style: 'primary' },
+            { label: `Always for ${d.site.label}`, value: 'always' },
+            { label: 'Sign in fresh', value: 'fresh' },
+            { label: 'No', value: 'deny', style: 'danger' },
+          ],
+        };
+        state.patchSession(id, { action });
+        pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+        return json(res, { available: true, pending: true, site: d.site.id, note: 'Stop and wait: the host messages you the outcome after the human answers. Do not sign in yourself meanwhile.' }, 202);
+      }
+      const site = ls.resolve(raw);
+      if (ls.decide(site).policy === 'never') return json(res, { ok: false, site: site.id, reason: 'this site must not be copied' }, 409);
+      const action = {
+        id: 'act_' + nano(),
+        at: new Date().toISOString(),
+        kind: LOGIN_SAVE_KIND,
+        login: { site: site.id, label: site.label },
+        prompt: `Save this session's ${site.label} login to your own browser, so future sessions can ask for it?` + (reason ? ` — ${reason}` : ''),
+        buttons: [
+          { label: 'Save to my browser', value: 'save', style: 'primary' },
+          { label: 'No', value: 'deny' },
+        ],
+      };
+      state.patchSession(id, { action });
+      pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+      return json(res, { pending: true, site: site.id, note: 'Wait: the host messages you after the human answers.' }, 202);
+    }
     if (sub === 'action' && m === 'POST') {
       const { prompt, buttons, kind: rawKind } = (await readBody(req)) as any;
       if (!prompt || !Array.isArray(buttons))
@@ -5529,6 +5631,11 @@ export async function handle(
           if (a) agents.updateAgent(agSlug, { autoApprove: [...new Set([...(a.autoApprove || []), cur.kind])] });
         }
       }
+      // A login or share card is approved by a PERSON. A session's own token must
+      // not be able to answer it — that would be the agent approving itself.
+      const cardKind = (cur as any)?.kind;
+      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND || cardKind === SHARE_KIND) && (req as any).auth?.kind === 'session')
+        return json(res, { error: 'only a person can answer this card' }, 403);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // the hold is gone; if no turn starts below, the queue resumes
       try { emitLocal('action.answered', { sessionId: id, actionId: (cur as any)?.id || null, kind: cur?.kind || null, value: String(value) }); } catch {}
@@ -5536,6 +5643,46 @@ export async function handle(
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       // A5 (#2): the share card is the ONLY place an agent's public link is minted
       // — the answer carries the link (or the refusal) back into the session.
+      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND) && (cur as any).login?.site) {
+        const { site, label } = (cur as any).login as { site: string; label: string };
+        const lv = await import('./lib/login-vault.js');
+        let line: string;
+        const v = String(value);
+        if (cardKind === LOGIN_SAVE_KIND) {
+          if (v === 'save') {
+            const r = await lv.saveToVault(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+            line = r.ok
+              ? `[host] The human SAVED this session's ${label} login to their own browser. Future sessions can ask for it with request_login.`
+              : `[host] Saving the ${label} login failed: ${r.error}`;
+          } else line = `[host] The human chose NOT to save the ${label} login. It stays in this session only.`;
+        } else if (v === 'use' || v === 'always') {
+          if (v === 'always') lv.grantAlways(site);
+          const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+          line = r.ok
+            ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
+            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: open the login page, then request_screen so the human types the credentials themselves.`;
+          // Some sites allow one session only: check the owner kept theirs.
+          if (r.ok)
+            setTimeout(() => {
+              lv.vaultStillLoggedIn(site)
+                .then((kept) => {
+                  if (kept === false)
+                    claude.appendChat(id, { kind: 'system', text: `⚠ Copying the ${label} login logged YOUR browser out — ${label} allows one session. Arigami will not offer to copy it again; sign in again in your own browser.` });
+                })
+                .catch(() => {});
+            }, 120_000).unref?.();
+        } else if (v === 'fresh') {
+          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. Open the site's login page, then call request_screen so the human types the credentials themselves — do not ask for a password in the chat.`;
+        } else {
+          line = `[host] The human REFUSED the ${label} login. Do not sign in to ${label} and do not ask again in this turn.`;
+        }
+        try {
+          claude.sendMessage(id, line);
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 500);
+        }
+        return json(res, { ok: true });
+      }
       if (cur?.kind === SHARE_KIND && cur.share) {
         let line: string;
         if (String(value) === 'approve') {
@@ -5725,9 +5872,13 @@ export async function handle(
     // Storage back to chrome-base on demand (T8 §4) — same op the takeover
     // and delete flows trigger automatically.
     if (sub === 'browser/sync-logins' && m === 'POST') {
-      // A2: an agent session syncs into the AGENT's profile; `{shared:true}` also into chrome-base.
+      // A2: an agent session syncs into the AGENT's own profile. Nothing reaches
+      // the owner's browser this way any more — not a plain session's logins and
+      // not `shared:true`: that is save_login, one site, with the owner's OK.
       const body = (await readBody(req).catch(() => ({}))) as any;
-      const r = await chrome.syncProfileToBase(id, { shared: body?.shared === true });
+      if (chrome.profileSeedFor(id).owner === 'global' || body?.shared === true)
+        return json(res, { ok: false, error: "logins reach the owner's browser only one site at a time, with their approval — call save_login({ site })" }, 409);
+      const r = await chrome.syncProfileToBase(id);
       return json(res, r);
     }
     // F8: the take-over modal's "type into the desktop" field — the human's

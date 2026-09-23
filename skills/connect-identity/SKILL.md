@@ -62,11 +62,11 @@ shot / click / key / type / api / report) and `skills/_lib/chrome.sh`.
    `wait-url 'myaccount\.google\.com' 30`, `shot verify` and confirm the signed-in
    state. Not signed in → one more `request_screen` with a more specific hint
    (rule 4), then give up.
-6. Persist the login for future sessions: `save_browser_logins()` (the host also
-   syncs automatically after a take-over, calling it is harmless). When you run
-   as an AGENT (ARIGAMI_AGENT is set) this syncs into the agent's own profile
-   (`agents/<slug>/browser`) — pass `shared:true` only if the human asked to
-   share this Google login with every session.
+6. Offer to keep the login for future sessions: `save_login({ site: "google.com",
+   reason: "so other sessions can ask for it" })`. The human sees a card and
+   nothing is saved unless they approve; only Google moves, nothing else in your
+   browser. When you run as an AGENT (ARIGAMI_AGENT is set), `save_browser_logins()`
+   instead keeps it in the agent's own profile (`agents/<slug>/browser`).
 7. Register the identity with the host. The email is what the account page shows
    (top-right avatar → the address). Read it from the screenshot; if `$ARGUMENTS`
    gave an expected email and it differs, stop and `request_action` (wrong account

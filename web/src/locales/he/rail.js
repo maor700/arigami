@@ -98,6 +98,8 @@ export const strings = {
   'rail.brain': 'מוח',
   'rail.skills': 'מיומנויות',
   'rail.setup': 'התקנה',
+  'rail.myBrowser': 'הדפדפן שלי',
+  'rail.myBrowserFailed': 'לא הצלחתי לפתוח את הדפדפן שלך: {error}',
   'rail.settings': 'הגדרות',
   'rail.voiceControl': 'שליטה קולית',
 

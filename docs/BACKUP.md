@@ -21,7 +21,7 @@ Everything under `$ARIGAMI_DIR` **except** the host-bound or regenerable bits:
 | excluded | why |
 |---|---|
 | `run/` | pid + lock of the *running* process |
-| `chrome-sessions/`, `chrome-base/` | browser profiles (GBs); logins are re-saved with `save_browser_logins` |
+| `chrome-sessions/`, `chrome-base/` | browser profiles (GBs); `chrome-base` is the owner's "my browser" — sign in there again after a restore |
 | `logs/`, `tmp/`, `backups/` | logs, export scratch space, previous in-place restores |
 | `*-logs.txt` at the root (`mcp-logs.txt`, `wa-logs.txt`) | integration logs that don't live under `logs/` (root level only — an upload named `x-logs.txt` is kept) |
 | `user-plugin/` | a symlink shim regenerated at boot (F2) |

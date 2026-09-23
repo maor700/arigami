@@ -854,14 +854,47 @@ const TOOLS = [
     },
   },
   {
+    name: 'browser_logins',
+    description:
+      "Which sites the owner is signed in to in their OWN browser (\"my browser\") — site names only, never a cookie or token. " +
+      'Check this before signing in anywhere: if the site is listed, call request_login for it instead of asking for credentials.',
+    inputSchema: obj({ ...SID_PROP }),
+    run: (a) => api('GET', `/__api/sessions/${sid(a)}/logins`),
+  },
+  {
+    name: 'request_login',
+    description:
+      "Ask to use the owner's login for ONE site (e.g. 'facebook', 'github.com', a url) in this session's browser. " +
+      'Your browser starts with no logins; this is the only way one gets in. The owner sees a card and chooses: use their login, always for this site, sign in fresh, or no. ' +
+      'Returns {available:false, next} when there is nothing to hand over or the site must never be copied (WhatsApp Web, banks) — then do what `next` says. ' +
+      'Returns {pending:true} when a card is up: STOP and wait — the host messages you "[host] …" with the outcome, and on approval the login is already in your browser. ' +
+      "Never ask the owner to type a password into the chat: for a fresh sign-in, open the login page and call request_screen so they type it on the machine.",
+    inputSchema: obj({
+      site: { type: 'string', description: "The site: a name ('google'), a domain ('linear.app') or a url" },
+      reason: { type: 'string', description: 'One short line shown on the card: what you need the login for' },
+      ...SID_PROP,
+    }, ['site']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/login-request`, { site: a.site, reason: a.reason }),
+  },
+  {
+    name: 'save_login',
+    description:
+      "After a fresh sign-in in this session, offer to save THAT site's login to the owner's own browser so future sessions can request it. " +
+      'Shows the owner a card; nothing is saved unless they approve. One site only — nothing else in your browser moves.',
+    inputSchema: obj({
+      site: { type: 'string' },
+      reason: { type: 'string' },
+      ...SID_PROP,
+    }, ['site']),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/login-save`, { site: a.site, reason: a.reason }),
+  },
+  {
     name: 'save_browser_logins',
     description:
-      'Sync this session\'s Chrome profile (cookies, saved logins, local storage — not passwords/autofill) back to its base profile, so future sessions\' browsers start already logged in. ' +
-      'When you run as an AGENT the base is the agent\'s own persistent profile ($ARIGAMI_DIR/agents/<slug>/browser) — the shared chrome-base is only touched when you pass shared:true (do that only if the human asked to share the login with everyone). ' +
-      'Happens automatically after a request_screen resolves with the human taking over, and at session end — call this yourself only if you want it synced sooner (e.g. right after completing a login flow without a takeover). ' +
-      'Safe to call anytime; a no-op if this session never opened a browser (see the machine-work skill\'s Chrome helper).',
-    inputSchema: obj({ shared: { type: 'boolean', description: 'Agent sessions only: ALSO sync into the shared chrome-base (default false)' }, ...SID_PROP }),
-    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, { shared: a.shared === true }),
+      "AGENT sessions only: sync this session's Chrome profile back into the agent's OWN persistent profile ($ARIGAMI_DIR/agents/<slug>/browser), so the agent's next sessions start with its identity. " +
+      "Never reaches the owner's browser — for that use save_login (one site, with the owner's approval). A plain session gets an error pointing there.",
+    inputSchema: obj({ ...SID_PROP }),
+    run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/sync-logins`, {}),
   },
   // BROWSE1: the `browser` family — actually DRIVE the session's own Chrome
   // (own desktop, own profile, per-A2 agent identity), not just view it.
@@ -1107,6 +1140,7 @@ const TOOLS = [
 // session leaves behind (server/reap.ts).
 const INSTRUCTIONS = [
   'Temporary files go under $TMPDIR — it is this session\'s own scratch directory and the host deletes it with the session. Do not write to /tmp directly: nothing owns files there, so they outlive you.',
+  'Your browser starts with no logins. Before signing in to any site, call browser_logins / request_login: the owner may already be signed in and can hand that one site over. Never ask for a password in the chat — a fresh sign-in is request_screen, with the owner typing.',
   'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
 ].join('\n');
 

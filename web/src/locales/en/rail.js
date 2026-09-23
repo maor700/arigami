@@ -101,6 +101,8 @@ export const strings = {
   'rail.brain': 'Brain',
   'rail.skills': 'Skills',
   'rail.setup': 'Setup',
+  'rail.myBrowser': 'My browser',
+  'rail.myBrowserFailed': 'Could not open your browser: {error}',
   'rail.settings': 'Settings',
   'rail.voiceControl': 'Voice control',
 

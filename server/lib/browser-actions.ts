@@ -18,7 +18,7 @@
 // predictable CDP port to expose, and no relaunch is needed to get one: the
 // SAME running Chrome (the one the human may be signing in to Google on) is
 // what these tools talk to over chrome-cdp.ts.
-import { openChrome, closeChrome as closeChromeProcess, isChromeRunning } from './chrome.js';
+import { openChrome, closeChrome as closeChromeProcess, isChromeRunning, touch } from './chrome.js';
 import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
 import * as screens from '../screenshots.js';
 
@@ -83,6 +83,19 @@ async function shot(sessionId: string, caption: string): Promise<{ url: string; 
   }
 }
 
+/**
+ * Every browser step goes through here: it marks the browser as in use (the
+ * idle closer in chrome.ts counts from the last step) and, when the idle closer
+ * already stopped it, reopens it with the same profile and its restored tabs —
+ * so an agent never sees "no open page" just because it paused.
+ */
+async function ready(sessionId: string): Promise<void> {
+  touch(sessionId);
+  if (isChromeRunning(sessionId)) return;
+  await openChrome(sessionId);
+  for (let i = 0; i < 40 && !(await frontPage(sessionId).catch(() => null)); i++) await new Promise((r) => setTimeout(r, 250));
+}
+
 async function currentPage(sessionId: string): Promise<{ url: string; title: string }> {
   const page = await frontPage(sessionId);
   return { url: page.url, title: page.title };
@@ -92,6 +105,7 @@ export interface OpenResult { ok: true; url: string; title: string; screenshot: 
 
 /** Ensure the session has a desktop + Chrome (its own profile, agent-seeded per A2), optionally navigate, screenshot. */
 export async function open(sessionId: string, url?: string): Promise<OpenResult> {
+  touch(sessionId);
   const wasRunning = isChromeRunning(sessionId);
   await openChrome(sessionId, wasRunning ? undefined : url);
   if (wasRunning && url) await pageNavigate(sessionId, url);
@@ -107,7 +121,7 @@ export async function open(sessionId: string, url?: string): Promise<OpenResult>
 export interface NavigateResult { ok: true; url: string; title: string }
 
 export async function navigate(sessionId: string, url: string): Promise<NavigateResult> {
-  if (!isChromeRunning(sessionId)) await openChrome(sessionId, url);
+  await ready(sessionId);
   const r = await pageNavigate(sessionId, url);
   return { ok: true, ...r };
 }
@@ -115,6 +129,7 @@ export async function navigate(sessionId: string, url: string): Promise<Navigate
 export interface SnapshotResult extends HumanGate { ok: true; url: string; title: string; text: string; screenshot: { url: string; ts: number } | null }
 
 export async function snapshot(sessionId: string, caption = 'Snapshot'): Promise<SnapshotResult> {
+  await ready(sessionId);
   const page = await currentPage(sessionId);
   const text = ((await pageEvaluate(sessionId, 'document.body ? document.body.innerText.slice(0, 8000) : ""').catch(() => '')) as string) || '';
   const gate = await humanGate(sessionId);
@@ -124,6 +139,7 @@ export async function snapshot(sessionId: string, caption = 'Snapshot'): Promise
 export interface ClickResult { ok: true; x: number; y: number }
 
 export async function click(sessionId: string, opts: { x?: number; y?: number; text?: string }): Promise<ClickResult> {
+  await ready(sessionId);
   let { x, y } = opts;
   if ((x === undefined || y === undefined) && opts.text) {
     const found = (await pageEvaluate(sessionId, findClickableJs(opts.text))) as { x: number; y: number } | null;
@@ -139,6 +155,7 @@ export interface TypeResult { ok: true; via: 'cdp' | 'xinput' }
 export interface TypeBlocked { ok: false; needsHuman: true; reason?: string; hint?: string }
 
 export async function type(sessionId: string, text: string, submit?: boolean): Promise<TypeResult | TypeBlocked> {
+  await ready(sessionId);
   const gate = await humanGate(sessionId);
   if (gate.needsHuman) return { ok: false, needsHuman: true, reason: gate.reason, hint: gate.hint };
   const r = await typeIntoDesktop(sessionId, text, submit ? 'Enter' : undefined);
@@ -148,6 +165,7 @@ export async function type(sessionId: string, text: string, submit?: boolean): P
 export interface ScrollResult { ok: true }
 
 export async function scroll(sessionId: string, opts: { x?: number; y?: number; dx?: number; dy?: number }): Promise<ScrollResult> {
+  await ready(sessionId);
   const x = opts.x ?? 640;
   const y = opts.y ?? 400;
   await pageScroll(sessionId, x, y, opts.dx ?? 0, opts.dy ?? 600);
@@ -161,5 +179,6 @@ export function close(sessionId: string): { ok: true } {
 
 /** PNG bytes of the front tab (CDP `Page.captureScreenshot`) — the `connect.sh shot` / evidence-screenshot path. */
 export async function screenshot(sessionId: string): Promise<Buffer> {
+  await ready(sessionId);
   return pageScreenshot(sessionId);
 }
