@@ -172,6 +172,7 @@ function connect(c, sessionId) {
       ? new ScreencastConnection(c.host, url)
       : new RFB(c.host, url, { wsProtocols: ['binary'] });
     c.rfb = r;
+    attachClipboard(c, sessionId, t.transport);
     c.connecting = false;
     r.scaleViewport = true;
     r.viewOnly = true;
@@ -208,6 +209,106 @@ function disconnect(c) {
   c.host = null;
   c.ownerId = null;
   setStatus(c, 'idle');
+}
+
+// ---- copy / paste across machines ----------------------------------------------
+//
+// The owner's clipboard does not cross either transport on its own, so the
+// viewer does it through the host (server/lib/desktop-clipboard.ts):
+//
+//   Cmd/Ctrl+V  read the local clipboard, insert the text at the remote cursor
+//   Cmd/Ctrl+C  read what is selected in the remote page, put it on the local
+//               clipboard (Cmd/Ctrl+X does the same, then cuts remotely)
+//
+// Caught in the CAPTURE phase on the host div: noVNC preventDefault()s every
+// keydown it forwards, which would kill the browser's own paste event. On a
+// Mac, Cmd+A / Cmd+Z are sent as Ctrl+A / Ctrl+Z — the remote is Linux, where
+// Cmd reaches the page as a Super key nobody listens to. The screencast
+// transport already inserts on a native paste event, so V is left to it there.
+
+const XK = { Control_L: 0xffe3, a: 0x61, x: 0x78, z: 0x7a };
+
+function sendCtrl(rfb, key, code) {
+  if (typeof rfb.sendKey !== 'function') return;
+  rfb.sendKey(XK.Control_L, 'ControlLeft', true);
+  rfb.sendKey(XK[key], code, true);
+  rfb.sendKey(XK[key], code, false);
+  rfb.sendKey(XK.Control_L, 'ControlLeft', false);
+}
+
+// Loaded on first use, not at import: i18n pulls in prefs, which touches the DOM
+// at module load — and this module is imported by DOM-less tests.
+function reportError(key, err) {
+  void Promise.all([import('./toast.js'), import('./i18n.js')]).then(([toast, i18n]) =>
+    toast.toastError(i18n.t(key, { error: err?.message || err }))
+  );
+}
+
+/** Put text on the local clipboard; the promise form keeps Safari's user-activation. */
+function writeLocal(textPromise) {
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    const blob = textPromise.then((txt) => new Blob([txt], { type: 'text/plain' }));
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+  }
+  return textPromise.then((txt) => navigator.clipboard.writeText(txt));
+}
+
+/**
+ * What a keydown on the live screen means for the clipboard bridge. Pure, so
+ * the mapping is testable without a VNC server:
+ *   'copy' | 'cut' | 'paste' | 'ctrl-a' | 'ctrl-z' | null (not ours — pass it on)
+ */
+export function clipboardKey(e, transport) {
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod || e.altKey) return null;
+  const k = String(e.key || '').toLowerCase();
+  if (k === 'c') return 'copy';
+  if (k === 'x') return 'cut';
+  // screencast inserts on the browser's own paste event; only VNC needs us
+  if (k === 'v') return transport === 'rfb' ? 'paste' : null;
+  if (transport === 'rfb' && e.metaKey && !e.ctrlKey && (k === 'a' || k === 'z')) return k === 'a' ? 'ctrl-a' : 'ctrl-z';
+  return null;
+}
+
+function attachClipboard(c, sessionId, transport) {
+  const base = sessionId ? `/sessions/${encodeURIComponent(sessionId)}/desktop` : '/desktop';
+  c.host.addEventListener(
+    'keydown',
+    (e) => {
+      if (!c.rfb || c.rfb.viewOnly) return;
+      const what = clipboardKey(e, transport);
+      if (!what) return;
+      if (what === 'copy' || what === 'cut') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const text = api.post(`${base}/selection`, {}).then((r) => {
+          if (!r?.ok) throw new Error(r?.error || 'nothing selected');
+          return String(r.text || '');
+        });
+        writeLocal(text).catch((err) => reportError('screen.copyFailed', err));
+        if (what === 'cut' && transport === 'rfb') text.then(() => sendCtrl(c.rfb, 'x', 'KeyX')).catch(() => {});
+        return;
+      }
+      if (what === 'paste') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const read = navigator.clipboard?.readText ? navigator.clipboard.readText() : Promise.reject(new Error('clipboard unavailable'));
+        read
+          .then((txt) => (txt ? api.post(`${base}/type`, { text: txt }) : null))
+          .then((r) => {
+            if (r && r.ok === false) throw new Error(r.error || 'paste failed');
+          })
+          .catch((err) => reportError('screen.pasteFailed', err));
+        return;
+      }
+      // Mac Cmd shortcuts the Linux page understands only as Ctrl.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (what === 'ctrl-a') sendCtrl(c.rfb, 'a', 'KeyA');
+      else sendCtrl(c.rfb, 'z', 'KeyZ');
+    },
+    true
+  );
 }
 
 function rfbCanvas(c) {

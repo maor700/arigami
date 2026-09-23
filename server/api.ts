@@ -3358,6 +3358,21 @@ export async function handle(
         return json(res, { ok: false, error: (e as Error).message }, 503);
       }
     }
+    // Copy/paste for the shared screen ("my browser"): the same two halves as a
+    // session's desktop/type + desktop/selection, aimed at the vault Chrome.
+    if ((p === '/__api/desktop/type' || p === '/__api/desktop/selection') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const dc = await import('./lib/desktop-clipboard.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        if (p === '/__api/desktop/selection') return json(res, { ok: true, text: await dc.selectionAt(dc.portFor(null)) });
+        await dc.insertAt(dc.portFor(null), String(body?.text || ''));
+        return json(res, { ok: true });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
+      }
+    }
     if (p === '/__api/host/kept-worktrees' && m === 'GET') {
       return json(res, reap.keptWorktrees());
     }
@@ -5891,6 +5906,16 @@ export async function handle(
         return json(res, await cdp.typeIntoDesktop(id, String(body?.text || ''), body?.enter ? 'Enter' : undefined));
       } catch (e) {
         return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    // Copy from the remote screen: what is selected in the session's focused
+    // page, for the viewer to put on the owner's clipboard (desktop-clipboard.ts).
+    if (sub === 'desktop/selection' && m === 'POST') {
+      const dc = await import('./lib/desktop-clipboard.js');
+      try {
+        return json(res, { ok: true, text: await dc.selectionAt(dc.portFor(id)) });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
       }
     }
     // F8: the session's real browser tabs (urls only) — what the PKCE reader sees.
