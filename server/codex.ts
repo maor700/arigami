@@ -59,6 +59,7 @@ import { bunExec } from './lib/bun-exec.js';
 import { cfg, getSession, setClaude, untildify } from './state.js';
 import { auth } from './auth.js';
 import { HOST_MARK } from './lib/session-procs.js';
+import { gatewayEnabled, codexEntry } from './lib/mcp-gateway.js';
 import * as scratch from './lib/scratch.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { registerEngine } from './lib/engine-driver.js';
@@ -272,10 +273,14 @@ function linkSkills(codexHome: string): void {
  * `[mcpServers.arigami]` produced no warning and no tools at all.
  */
 function mcpTables(s: Session, st: CodexSessionState): string[] {
-  const servers: Record<string, any> = { arigami: bunExec('host') };
+  // The MCP gateway (lib/mcp-gateway.ts): arigami + extensions are the host's
+  // own HTTP endpoints, authenticated by $ARIGAMI_TOKEN — no process per session.
+  const gw = gatewayEnabled();
+  const servers: Record<string, any> = { arigami: gw ? codexEntry('arigami') : bunExec('host') };
   const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
   try {
-    Object.assign(servers, extensions.extServersFor(slug ? `agent:${slug}` : 'global'));
+    const ext = extensions.extServersFor(slug ? `agent:${slug}` : 'global');
+    for (const name of Object.keys(ext)) servers[name] = gw ? codexEntry(name) : ext[name];
   } catch {
     /* a broken extension must never stop a session from starting */
   }
@@ -332,7 +337,14 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   for (const [name, sv] of Object.entries(servers)) {
     const header = `[mcp_servers.${tkey(name)}]`;
     if (sv && typeof sv === 'object' && typeof (sv as any).url === 'string') {
-      out.push(header, `url = ${tstr((sv as any).url)}`, `tool_timeout_sec = ${TOOL_TIMEOUT_SEC}`, '');
+      out.push(
+        header,
+        `url = ${tstr((sv as any).url)}`,
+        // a gateway server: codex reads the session token from this env var
+        ...((sv as any).bearerEnv ? [`bearer_token_env_var = ${tstr((sv as any).bearerEnv)}`] : []),
+        `tool_timeout_sec = ${TOOL_TIMEOUT_SEC}`,
+        ''
+      );
       continue;
     }
     if (!sv || typeof (sv as any).command !== 'string') continue;

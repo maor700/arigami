@@ -494,7 +494,7 @@ test('codexModels(): the engine\'s model/list for the ACTIVE login, its models_c
 
 // ---- prepare(): the generated $CODEX_HOME ----------------------------------
 
-function prepared(create = "{title:'codex',engine:'codex',cwd:'/tmp'}", pre = '') {
+function prepared(create = "{title:'codex',engine:'codex',cwd:'/tmp'}", pre = '', extraEnv: Record<string, string> = {}) {
   const r = runInChild(
     "const st=await import('./server/state.ts');" +
       "const cx=await import('./server/codex.ts');" +
@@ -511,34 +511,46 @@ function prepared(create = "{title:'codex',engine:'codex',cwd:'/tmp'}", pre = ''
       '  skillRoots:fs.readdirSync(skills).sort(),' +
       '  arigamiSkills:fs.readlinkSync(path.join(skills,"arigami")),' +
       '});',
-    env()
+    { ...env(), ...extraEnv }
   );
   if (!r.ok) throw new Error(r.error);
   return r.out[0];
 }
 
-test('config.toml wires the host MCP server under the snake_case key codex actually reads', () => {
+test('config.toml wires the host MCP server under the snake_case key codex actually reads — via the gateway', () => {
   const { toml } = prepared();
   // Verified live: `[mcpServers.arigami]` — the spelling every other tool uses —
   // produces no error, no warning, and no tools at all.
   expect(toml).toContain('[mcp_servers.arigami]');
   expect(toml).not.toContain('mcpServers');
-  expect(toml).toContain('[mcp_servers.arigami.env]');
-  expect(toml).toContain('host-mcp.js');
-  expect(toml).toMatch(/ARIGAMI_SESSION_ID = "sess_/);
-  expect(toml).toContain('ARIGAMI_ENGINE = "codex"');
+  // The MCP gateway (lib/mcp-gateway.ts): an HTTP endpoint of the host, the
+  // session token read from the env var codex already has — no process, and
+  // no token written into the file.
+  expect(toml).toMatch(/url = "http:\/\/[^"]+\/__mcp\/s\/arigami"/);
+  expect(toml).toContain('bearer_token_env_var = "ARIGAMI_TOKEN"');
+  expect(toml).not.toContain('host-mcp.js');
+  expect(toml).not.toMatch(/ARIGAMI_TOKEN = "/);
   // The session's cwd is pre-trusted so codex never stops to ask about it.
   expect(toml).toContain('[projects."/tmp"]');
   expect(toml).toContain('trust_level = "trusted"');
 });
 
+test('with the gateway off, the host MCP server is the stdio process it used to be', () => {
+  const { toml } = prepared(undefined, '', { ARIGAMI_MCP_GATEWAY: '0' });
+  expect(toml).toContain('[mcp_servers.arigami.env]');
+  expect(toml).toContain('host-mcp.js');
+  expect(toml).toMatch(/ARIGAMI_SESSION_ID = "sess_/);
+  expect(toml).toContain('ARIGAMI_ENGINE = "codex"');
+  expect(toml).toContain('startup_timeout_sec = 20');
+});
+
 test('tool_timeout_sec is pinned high enough for a card a human has to click', () => {
-  const { toml } = prepared();
   // Measured: at 15s a request_screen died after exactly 15.1s; at 180s a real
   // human answered at 38.35s and it went through. 1800 = the host's own
   // SCREEN_REQUEST_TIMEOUT_MS, so the engine never gives up before the card does.
-  expect(toml).toContain('tool_timeout_sec = 1800');
-  expect(toml).toContain('startup_timeout_sec = 20');
+  // It applies to a gateway (url) server exactly as to a stdio one.
+  expect(prepared().toml).toContain('tool_timeout_sec = 1800');
+  expect(prepared(undefined, '', { ARIGAMI_MCP_GATEWAY: '0' }).toml).toContain('tool_timeout_sec = 1800');
 });
 
 test('skills are handed over verbatim, as a symlink named `arigami`', () => {

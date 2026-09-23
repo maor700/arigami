@@ -3162,6 +3162,14 @@ export async function handle(
   const p = u.pathname;
   const m = req.method;
   try {
+    // The MCP gateway (lib/mcp-gateway.ts): a session's arigami + extension MCP
+    // servers over HTTP, authenticated by the session's own token. It reads the
+    // request body itself, so it must come before anything that consumes it.
+    if (p.startsWith('/__mcp/s/')) {
+      const gw = await import('./lib/mcp-gateway.js');
+      await gw.handle(req, res, decodeURIComponent(p.slice(gw.GATEWAY_PREFIX.length)), (req as any).auth);
+      return;
+    }
     if (p === '/__mcp/permission' && m === 'POST') {
       return await handlePermissionRequest(res, await readBody(req));
     }

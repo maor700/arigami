@@ -331,6 +331,15 @@ export function createAuth(opts: AuthOptions) {
     const m = /^Bearer\s+(.+)$/i.exec(h);
     return m ? m[1].trim() : '';
   }
+  /**
+   * The session a request's bearer token belongs to, whatever the auth mode —
+   * with auth OFF every request is principal 'off', which says nothing about
+   * WHICH session is calling. The MCP gateway needs exactly that.
+   */
+  function sessionFromBearer(req: IncomingMessage): string | null {
+    const p = principalFromBearer(bearerOf(req));
+    return p?.kind === 'session' ? p.sessionId : null;
+  }
   function principalFromBearer(tok: string): Principal | null {
     if (!tok) return null;
     if (safeEq(tok, hostToken)) return { kind: 'host', user: null };
@@ -552,7 +561,7 @@ export function createAuth(opts: AuthOptions) {
     // pairing
     announcePairing, issuePairingCode, readPairingCode, pair, pairingFile,
     // internal tokens
-    hostToken, tokenForSession, revokeSessionToken, setSessionExists, setShareGate, setExtGate,
+    hostToken, tokenForSession, revokeSessionToken, sessionFromBearer, setSessionExists, setShareGate, setExtGate,
     // api tokens
     createApiToken, deleteApiToken, listApiTokens,
     // gate

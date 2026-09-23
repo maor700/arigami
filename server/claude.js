@@ -13,6 +13,7 @@ import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
 import { HOST_MARK } from './lib/session-procs.js';
+import { gatewayEnabled, claudeEntry, codexEntry } from './lib/mcp-gateway.js';
 import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
@@ -116,8 +117,17 @@ function accountEnv(s) {
 }
 
 const ROOT = resourceRoot();
-const HOST_SERVERS = { 'arigami': bunExec('host') };
-const MCP_CONFIG = JSON.stringify({ mcpServers: HOST_SERVERS });
+// The host's own servers. With the MCP gateway on (the default), `arigami` and
+// every extension server are HTTP endpoints of the host itself
+// (lib/mcp-gateway.ts) — no process per session; ARIGAMI_MCP_GATEWAY=0 puts
+// back the stdio processes.
+const hostServers = () => ({ arigami: gatewayEnabled() ? claudeEntry('arigami') : bunExec('host') });
+const viaGateway = (servers) => {
+  if (!gatewayEnabled()) return servers;
+  const out = {};
+  for (const name of Object.keys(servers)) out[name] = claudeEntry(name);
+  return out;
+};
 
 // M1 — the `--mcp-config` payload for one session. Always the host MCP; for a
 // session born from an agent, ALSO that agent's native remote-MCP grants.
@@ -153,8 +163,7 @@ export function mcpConfigFor(s) {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  if (!Object.keys(ext).length && !Object.keys(own).length) return MCP_CONFIG;
-  return JSON.stringify({ mcpServers: { ...HOST_SERVERS, ...ext, ...own } });
+  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...own } });
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).
@@ -2390,7 +2399,9 @@ function runHeadless(s, prompt, onExit, { effort } = {}) {
     effort,
     env,
     // ONLY the arigami MCP — skip the user's global servers (fast, focused); codex MCP children need the identity explicitly
-    mcpServers: engine === 'codex' ? { arigami: { ...HOST_SERVERS.arigami, env } } : HOST_SERVERS,
+    mcpServers: engine === 'codex'
+      ? { arigami: gatewayEnabled() ? codexEntry('arigami') : { ...bunExec('host'), env } }
+      : hostServers(),
     pluginDirs: [ROOT, userPluginDir()], // host skill pack + user/bundle skills
   }).then(
     () => { try { onExit?.(0); } catch {} },

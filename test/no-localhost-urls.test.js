@@ -31,7 +31,8 @@ const ALLOW = [
   ['server/remote.js', 'tailscale'], // hands the loopback to `tailscale serve`
   ['server/remote.js', "'serve', '--bg'"],
   ['server/voice.js', '"open localhost:3000"'], // prose example in the voice router prompt
-  ['mcp/host-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // internal fetch base
+  ['mcp/host-mcp.js', "const HOST = env.ARIGAMI_URL"], // internal fetch base (per-session env since the gateway)
+  ['server/lib/mcp-gateway.ts', 'base = cfg.hostBase ||'], // gateway endpoint for the engines — host-internal
   ['mcp/policy-hook.js', "const HOST = process.env.ARIGAMI_URL"], // A3 hook: internal fetch base
   ['mcp/ext-mcp.js', "const HOST = process.env.ARIGAMI_URL"], // EXT tool wrapper: internal fetch base
   ['server/codex-account.ts', "const LOOPBACK = 'http://127.0.0.1:1455/auth/callback'"], // Codex's own OAuth callback — host-internal loopback

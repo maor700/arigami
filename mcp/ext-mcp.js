@@ -42,6 +42,11 @@ const TOKEN = process.env.ARIGAMI_TOKEN || '';
 // A host call (EXT_HOST_CALL, after that approval) runs normally.
 const SESSION_ID = process.env.ARIGAMI_SESSION_ID || '';
 const HOST_CALL = process.env.EXT_HOST_CALL === '1';
+// SHARED: one process per extension, owned by the host's MCP gateway and used by
+// every session (server/lib/mcp-gateway.ts). The calling session then arrives
+// with each call, in _meta, instead of in this process's env. Honoured ONLY in
+// that mode: this process's stdin is the host there, never an agent.
+const SHARED = process.env.EXT_SHARED === '1';
 let DECLARED_OUTBOUND = [];
 try { DECLARED_OUTBOUND = JSON.parse(process.env.EXT_OUTBOUND || '[]'); } catch { DECLARED_OUTBOUND = []; }
 const OUTBOUND_RE = /(^|_)(send|post|reply|comment|publish|tweet|email|dm|notify)(_|$)/i; // same rule as server/lib/outbound.ts
@@ -53,7 +58,7 @@ try { settings = JSON.parse(process.env.EXT_SETTINGS || '{}'); } catch { setting
 // Secrets reach a tool module as env (the loader puts extensions.json
 // secrets[<ext>] there). They are NOT enumerated into ctx — read the ones you
 // declared by name, e.g. process.env.MY_API_KEY.
-const ctx = {
+const makeCtx = (token) => ({
   extDir: EXT_DIR,
   extName: EXT_NAME,
   settings,
@@ -63,7 +68,7 @@ const ctx = {
     async api(method, apiPath, body) {
       const res = await fetch(HOST + apiPath, {
         method,
-        headers: { 'content-type': 'application/json', ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const text = await res.text();
@@ -73,7 +78,8 @@ const ctx = {
       return json;
     },
   },
-};
+});
+const ctx = makeCtx(TOKEN);
 
 function pickTools(mod) {
   const t = mod?.tools ?? mod?.default ?? null;
@@ -107,9 +113,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool)
     return { content: [{ type: 'text', text: loadError || `unknown tool: ${req.params.name}` }], isError: true };
-  if (SESSION_ID && !HOST_CALL && isOutbound(tool.name)) {
+  // Who is calling: in shared mode the host names the session per call.
+  const meta = SHARED ? req.params._meta || {} : {};
+  const callSession = SHARED ? String(meta['arigami/session'] || '') : SESSION_ID;
+  const callCtx = SHARED ? makeCtx(String(meta['arigami/token'] || '')) : ctx;
+  if (callSession && !HOST_CALL && isOutbound(tool.name)) {
     try {
-      const r = await ctx.host.api('POST', `/__api/sessions/${SESSION_ID}/outbound`, {
+      const r = await callCtx.host.api('POST', `/__api/sessions/${callSession}/outbound`, {
         via: 'ext',
         ext: EXT_NAME,
         tool: tool.name,
@@ -121,7 +131,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
   try {
-    const result = await tool.run(req.params.arguments || {}, ctx);
+    const result = await tool.run(req.params.arguments || {}, callCtx);
     return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result ?? { ok: true }) }] };
   } catch (e) {
     return { content: [{ type: 'text', text: `error: ${e?.message || e}` }], isError: true };
