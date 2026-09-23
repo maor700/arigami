@@ -37,6 +37,16 @@ const EXT_NAME = process.env.EXT_NAME || path.basename(EXT_DIR);
 const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
 const TOKEN = process.env.ARIGAMI_TOKEN || '';
 
+// Senders (server/lib/outbound.ts): when an AGENT calls one, it does not run —
+// the host shows the owner the exact message and runs it only on their Send.
+// A host call (EXT_HOST_CALL, after that approval) runs normally.
+const SESSION_ID = process.env.ARIGAMI_SESSION_ID || '';
+const HOST_CALL = process.env.EXT_HOST_CALL === '1';
+let DECLARED_OUTBOUND = [];
+try { DECLARED_OUTBOUND = JSON.parse(process.env.EXT_OUTBOUND || '[]'); } catch { DECLARED_OUTBOUND = []; }
+const OUTBOUND_RE = /(^|_)(send|post|reply|comment|publish|tweet|email|dm|notify)(_|$)/i; // same rule as server/lib/outbound.ts
+const isOutbound = (name) => DECLARED_OUTBOUND.includes(name) || OUTBOUND_RE.test(name);
+
 let settings = {};
 try { settings = JSON.parse(process.env.EXT_SETTINGS || '{}'); } catch { settings = {}; }
 
@@ -97,6 +107,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const tool = TOOLS.find((t) => t.name === req.params.name);
   if (!tool)
     return { content: [{ type: 'text', text: loadError || `unknown tool: ${req.params.name}` }], isError: true };
+  if (SESSION_ID && !HOST_CALL && isOutbound(tool.name)) {
+    try {
+      const r = await ctx.host.api('POST', `/__api/sessions/${SESSION_ID}/outbound`, {
+        via: 'ext',
+        ext: EXT_NAME,
+        tool: tool.name,
+        args: req.params.arguments || {},
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `not sent — could not ask the owner: ${e?.message || e}` }], isError: true };
+    }
+  }
   try {
     const result = await tool.run(req.params.arguments || {}, ctx);
     return { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result ?? { ok: true }) }] };

@@ -242,3 +242,38 @@ test("a plain session's browser profile starts empty; an agent's starts from the
   expect(r.out[0].agentCookies).toBe('AGENT IDENTITY');
   expect(r.out[0].agentCache).toBe(false); // caches are not identity
 });
+
+// ---- messages to people (server/lib/outbound.ts) ----------------------------
+
+test("an agent's WhatsApp send becomes a card with the exact text — nothing is sent", async () => {
+  const r = await call('POST', '/__api/whatsapp/tool', 'session', { tool: 'send_message', args: { recipient: '+15550001', message: 'Running late —\nten minutes.' }, why: 'tell Dana' });
+  expect(r.status).toBe(202);
+  expect(r.json.pending).toBe(true);
+  expect(r.json.sent).toBe(false);
+  const s = await call('GET', `/__api/sessions/${sid}`, 'person');
+  expect(s.json.action.kind).toBe('outbound');
+  expect(s.json.action.prompt).toContain('Send on WhatsApp to +15550001?');
+  expect(s.json.action.prompt).toContain('Running late —\nten minutes.');
+  expect(s.json.action.buttons.map((b: any) => b.value)).toEqual(['send', 'deny']);
+});
+
+test('reading WhatsApp is not held — only sending is', async () => {
+  const r = await call('POST', '/__api/whatsapp/tool', 'session', { tool: 'list_chats', args: {} });
+  expect(r.json.pending).toBeUndefined();
+});
+
+test('the agent cannot press Send on its own message', async () => {
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { value: 'send' });
+  expect(r.status).toBe(403);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action?.kind).toBe('outbound');
+});
+
+test("the owner's Don't send reaches the agent, and nothing went out", async () => {
+  const r = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { value: 'deny' });
+  expect(r.status).toBe(200);
+  await until(async () => {
+    const c = (await call('GET', `/__api/sessions/${sid}/chat`, 'person')).json as any[];
+    return c.some((e) => JSON.stringify(e).includes('chose NOT to send the WhatsApp message to +15550001')) ? c : null;
+  });
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action ?? null).toBe(null);
+});

@@ -1133,6 +1133,32 @@ const SHARE_KIND = 'share';
 // host — the agent never touches the owner's browser itself.
 const LOGIN_KIND = 'login';
 const LOGIN_SAVE_KIND = 'login-save';
+// Outbound cards (lib/outbound.ts): a message to a PERSON, shown verbatim; the
+// host sends it only on a person's Send.
+const OUTBOUND_KIND = 'outbound';
+
+/** Put an outbound request up as a card on `sessionId`. The agent is told to wait. */
+async function fileOutbound(sessionId: string, exec: import('./lib/outbound.js').OutboundExec, why?: string) {
+  const ob = await import('./lib/outbound.js');
+  const action = {
+    id: 'act_' + nano(),
+    at: new Date().toISOString(),
+    kind: OUTBOUND_KIND,
+    outbound: exec,
+    prompt: ob.cardPrompt(exec, why),
+    buttons: [
+      { label: 'Send', value: 'send', style: 'primary' },
+      { label: "Don't send", value: 'deny', style: 'danger' },
+    ],
+  };
+  state.patchSession(sessionId, { action });
+  pushIntervention(sessionId, 'action', `Send a message? ${ob.describe(exec).to || ''}`.trim(), 'waiting for your answer');
+  return {
+    pending: true,
+    sent: false,
+    note: 'NOT sent. The owner sees the exact message on a card; the host sends it, unchanged, only if they press Send, and messages you "[host] …" with the outcome. Stop and wait — do not try another way to send it.',
+  };
+}
 function shareGate(s: unknown, me?: unknown): { mode: 'allow' | 'ask' | 'deny'; agent: agents.AgentView | null } {
   // A logged-in human clicking "mint a link" in the artifact card IS the approval.
   if ((me as any)?.kind === 'user') return { mode: 'allow', agent: null };
@@ -3977,6 +4003,14 @@ export async function handle(
       const ext = await import('./extensions.js');
       if (!ext.toolPermitted(extName, toolName))
         return json(res, { error: `extension "${extName}" does not declare permission tools:${toolName}` }, 403);
+      // This route runs a tool with the HOST's authority, so a session must not
+      // be able to reach a sender through it and skip the owner's approval.
+      if (((req as any).auth as any)?.kind === 'session') {
+        const ob = await import('./lib/outbound.js');
+        const declared = ((ext.getExtension(extName)?.manifest as any)?.outbound || []) as string[];
+        if (ob.isOutbound(toolName, declared))
+          return json(res, { error: `${toolName} sends to a person — call it as a tool; the owner approves the exact message first` }, 403);
+      }
       const body = (await readBody(req)) as any;
       const r = await ext.callExtTool(extName, toolName, body?.args && typeof body.args === 'object' ? body.args : {});
       return json(res, r, r.ok ? 200 : 400);
@@ -4567,6 +4601,12 @@ export async function handle(
     if (p === '/__api/whatsapp/tool' && m === 'POST') {
       const wp = await import('./whatsapp-proxy.js');
       const body = (await readBody(req)) as any;
+      // An agent's send goes to the owner first (lib/outbound.ts).
+      const who = (req as any).auth as import('./auth.js').Principal | null;
+      if (String(body?.tool || '') === 'send_message' && who?.kind === 'session') {
+        const args = body?.args && typeof body.args === 'object' ? body.args : {};
+        return json(res, await fileOutbound(who.sessionId, { via: 'whatsapp', tool: 'send_message', args }, body?.why ? String(body.why) : undefined), 202);
+      }
       return json(res, await wp.callWhatsapp(String(body?.tool || ''), body?.args && typeof body.args === 'object' ? body.args : {}, body?.why ? String(body.why) : undefined));
     }
     if (p === '/__api/whatsapp/status' && m === 'GET') {
@@ -5605,6 +5645,16 @@ export async function handle(
       pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
       return json(res, { pending: true, site: site.id, note: 'Wait: the host messages you after the human answers.' }, 202);
     }
+    // A sender asked to send (ext-mcp, or any caller holding this session's
+    // token): the owner decides on a card; nothing is sent here.
+    if (sub === 'outbound' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const via = body?.via === 'whatsapp' ? 'whatsapp' : body?.via === 'ext' ? 'ext' : null;
+      if (!via || !body?.tool) return badRequest(res, 'via and tool required');
+      if (via === 'ext' && !/^[a-z0-9][a-z0-9-]*$/.test(String(body.ext || ''))) return badRequest(res, 'ext required');
+      const exec = { via, ...(via === 'ext' ? { ext: String(body.ext) } : {}), tool: String(body.tool), args: body.args && typeof body.args === 'object' ? body.args : {} } as import('./lib/outbound.js').OutboundExec;
+      return json(res, await fileOutbound(id, exec, body?.why ? String(body.why) : undefined), 202);
+    }
     if (sub === 'action' && m === 'POST') {
       const { prompt, buttons, kind: rawKind } = (await readBody(req)) as any;
       if (!prompt || !Array.isArray(buttons))
@@ -5649,7 +5699,7 @@ export async function handle(
       // A login or share card is approved by a PERSON. A session's own token must
       // not be able to answer it — that would be the agent approving itself.
       const cardKind = (cur as any)?.kind;
-      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND || cardKind === SHARE_KIND) && (req as any).auth?.kind === 'session')
+      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND || cardKind === SHARE_KIND || cardKind === OUTBOUND_KIND) && (req as any).auth?.kind === 'session')
         return json(res, { error: 'only a person can answer this card' }, 403);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // the hold is gone; if no turn starts below, the queue resumes
@@ -5658,6 +5708,38 @@ export async function handle(
       if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       // A5 (#2): the share card is the ONLY place an agent's public link is minted
       // — the answer carries the link (or the refusal) back into the session.
+      if (cardKind === OUTBOUND_KIND && (cur as any).outbound) {
+        const exec = (cur as any).outbound as import('./lib/outbound.js').OutboundExec;
+        const ob = await import('./lib/outbound.js');
+        const d = ob.describe(exec);
+        let line: string;
+        if (String(value) === 'send') {
+          // Exactly what the card showed — the stored arguments, nothing re-read.
+          let r: any;
+          try {
+            if (exec.via === 'whatsapp') {
+              const wp = await import('./whatsapp-proxy.js');
+              r = await wp.callWhatsapp('send_message', exec.args);
+            } else {
+              const ext = await import('./extensions.js');
+              r = await ext.callExtTool(String(exec.ext), exec.tool, exec.args);
+            }
+          } catch (e) {
+            r = { ok: false, error: (e as Error).message };
+          }
+          line = r?.ok
+            ? `[host] SENT on ${d.channel}${d.to ? ` to ${d.to}` : ''}, exactly as the owner approved it.`
+            : `[host] The owner approved, but sending on ${d.channel} failed: ${r?.error || 'unknown error'}. Tell them; do not retry on your own.`;
+        } else {
+          line = `[host] The owner chose NOT to send the ${d.channel} message${d.to ? ` to ${d.to}` : ''}. Nothing was sent. Do not send it another way.`;
+        }
+        try {
+          claude.sendMessage(id, line);
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 500);
+        }
+        return json(res, { ok: true });
+      }
       if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND) && (cur as any).login?.site) {
         const { site, label } = (cur as any).login as { site: string; label: string };
         const lv = await import('./lib/login-vault.js');

@@ -997,6 +997,11 @@ function serversFor(e: ExtEntry, hostAuth = false): Record<string, { command: st
       // extension tool to full host scope. Only callExtTool — the tab path,
       // where there is no session to be scoped to — adds it.
       ...(hostAuth ? { ARIGAMI_TOKEN: hostApiToken() } : {}),
+      // Senders (lib/outbound.ts): ext-mcp holds these for the owner's approval
+      // when an agent calls them. A host call (hostAuth: after that approval,
+      // or a tab the owner is using) runs them.
+      EXT_OUTBOUND: JSON.stringify(Array.isArray((m as any).outbound) ? (m as any).outbound.map(String) : []),
+      ...(hostAuth ? { EXT_HOST_CALL: '1' } : {}),
     };
     for (const [k, v] of Object.entries(t.env || {})) env[k] = String(v).replaceAll('${EXT_DIR}', e.dir);
     // Secrets ride as env and are NEVER logged or returned by the REST view.
@@ -1511,7 +1516,10 @@ export async function callExtTool(ext: string, tool: string, args: Record<string
     let lastErr = '';
     for (const key of keys) {
       const s = servers[key];
-      const transport = new StdioClientTransport({ command: s.command, args: s.args, cwd: s.cwd, env: { ...(process.env as Record<string, string>), ...s.env } });
+      // Never let a host call pass for a session call (the host process may itself
+      // have been started from a session's shell and carry its marker).
+      const { ARIGAMI_SESSION_ID: _sid, ...hostEnv } = process.env as Record<string, string>;
+      const transport = new StdioClientTransport({ command: s.command, args: s.args, cwd: s.cwd, env: { ...hostEnv, ...s.env } });
       const client = new Client({ name: 'arigami-ext-caller', version: '0.1.0' }, { capabilities: {} });
       try {
         await client.connect(transport);

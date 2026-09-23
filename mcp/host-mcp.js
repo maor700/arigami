@@ -824,6 +824,7 @@ const TOOLS = [
       'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | send_message; ' +
       'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; send_message {recipient, message}). ' +
       'If WhatsApp is not connected yet the result is {needs_setup:"whatsapp", why, hint} — do NOT say you have no access: call request_setup({capability:"whatsapp", why}) so the human gets the QR card in the chat, then retry. ' +
+      'send_message is NOT sent by this call: the owner gets a card with the recipient and your exact text, and the host sends it only if they press Send — you get {pending:true}; stop and wait for the "[host] …" message. Write the message exactly as it should go out. ' +
       'Returns {ok:true, result} (the MCP content blocks) or {ok:false, error}.',
     inputSchema: obj({ tool: { type: 'string' }, args: { type: 'object', additionalProperties: true }, why: { type: 'string', description: 'What you need it for — shown on the setup card' }, ...SID_PROP }, ['tool']),
     run: (a) => api('POST', '/__api/whatsapp/tool', { tool: a.tool, args: a.args || {}, why: a.why }),
@@ -1141,6 +1142,7 @@ const TOOLS = [
 const INSTRUCTIONS = [
   'Temporary files go under $TMPDIR — it is this session\'s own scratch directory and the host deletes it with the session. Do not write to /tmp directly: nothing owns files there, so they outlive you.',
   'Your browser starts with no logins. Before signing in to any site, call browser_logins / request_login: the owner may already be signed in and can hand that one site over. Never ask for a password in the chat — a fresh sign-in is request_screen, with the owner typing.',
+  'Nothing you send to a person leaves on your call: WhatsApp messages, Slack messages, emails and comments through Arigami\'s tools become a card with your exact text, and the host sends them only when the owner presses Send. Write the final text, then stop and wait for the "[host] …" outcome. Never look for another way to send.',
   'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
 ].join('\n');
 

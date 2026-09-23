@@ -135,6 +135,15 @@ export interface Manifest {
   webhooks?: ManifestWebhook[];
   /** e.g. "session:message", "session:tabs", "tools:featdb", "notify", "events:merge.*" */
   permissions?: string[];
+  /**
+   * Tools that send to a PERSON (a message, an email, a comment). Called by an
+   * agent, such a tool does not run: the owner gets a card with the recipient
+   * and the exact text, and the host runs the tool with those arguments only
+   * after they press Send. A tool whose name reads as sending
+   * (send / post / reply / comment / publish / email / dm / notify) is treated
+   * this way whether it is listed or not.
+   */
+  outbound?: string[];
   settings?: { schema?: Record<string, { type?: string; default?: unknown; title?: string; description?: string }> };
   /** parsed but NOT run in wave 1 */
   daemons?: ManifestDaemon[];

@@ -168,6 +168,26 @@ inputSchema, run}]`. The host wraps it with `mcp/ext-mcp.js` — a real MCP stdi
 server — so you never touch the protocol. `kind:'mcp'` is the escape hatch: your
 own server, any language, `{command, args, env}` (with `${EXT_DIR}` expanded).
 
+### Tools that send to a person
+
+A tool that sends something to a PERSON — a message, an email, a comment —
+does not run when an agent calls it. The owner gets a card with the recipient
+and the exact text; only when they press **Send** does the host run the tool,
+with exactly those arguments. The agent gets `{pending:true}` at once and a
+`[host] …` message with the outcome.
+
+List such tools in the manifest:
+
+```json
+{ "outbound": ["slack_send_message"] }
+```
+
+A tool whose name reads as sending (`send`, `post`, `reply`, `comment`,
+`publish`, `email`, `dm`, `notify`) is held whether it is listed or not, so a
+sender that forgets to declare itself does not get a free pass. A call the host
+makes itself — after the owner's Send, or from a tab the owner is using — runs
+the tool normally. This closes the tool path; it is not a sandbox.
+
 ### Listeners for free
 
 A provider answers two questions — "what is the baseline?" (`register`) and
