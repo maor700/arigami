@@ -3,7 +3,7 @@
 // What these pin, in order of how bad the failure would be:
 //   - a worktree holding work that exists nowhere else is NEVER removed
 //   - a detached process started by a session dies with it — the leak that
-//     left 4.5 GB of Storybooks running on the cloud host
+//     left 4.5 GB of Storybooks running on a shared host
 //   - another host's processes are never touched
 //   - the whole chain works end to end: spawn env → marker → delete → gone
 import { test, expect, beforeAll } from 'bun:test';
@@ -107,8 +107,8 @@ test('an untracked file counts as work too', () => {
   expect(wt.reap(dir).outcome).toBe('kept');
 });
 
-test('a committed-but-never-pushed branch is kept — the real case on the cloud host', () => {
-  // abc-19666 had upstream origin/main: it was never pushed at all.
+test('a committed-but-never-pushed branch is kept — the case seen in practice', () => {
+  // a feature branch whose upstream was still origin/main: never pushed at all.
   const { root, main } = repo();
   const dir = path.join(root, 'wt-local');
   sh(main, `git worktree add -q -b local ${dir} && cd ${dir} && echo c > c.txt && git add c.txt && git commit -qm c`);

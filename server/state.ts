@@ -149,8 +149,7 @@ interface ReviewComment {
 //
 // One normalized shape for a GitHub review comment, a Linear comment, a Slack
 // message. Only `context` varies per provider, so adding a provider is one
-// adapter that fills this in — nothing else moves. Ported from legacy-host,
-// where it has been in daily use.
+// adapter that fills this in — nothing else moves.
 //
 // Items are PENDING BY DESIGN. A decision is recorded per item and NOTHING
 // leaves this machine until the operator submits the batch (the same shape as
@@ -192,7 +191,7 @@ export interface InboxItem {
     url?: string;
     author?: string;
     at?: string;
-    title?: string; // human label, e.g. 'app#123'
+    title?: string; // human label, e.g. 'acme/app#123'
   };
   body: string; // the original text, verbatim — never rewritten
   dir?: string | null;

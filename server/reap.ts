@@ -4,9 +4,9 @@
 // host's control: whether the agent had written `metadata.cleanup` (shell
 // commands it composed for itself while provisioning), whether it had written
 // them correctly, and whether whoever deleted the session passed
-// `run_cleanup`. On the cloud host that left detached Storybooks and vites
+// `run_cleanup`. On a busy shared host that left detached Storybooks and vites
 // running for sessions long gone, worktrees from the pr-review launcher that
-// nothing had ever recorded, and 37 ticket-named entries in /tmp.
+// nothing had ever recorded, and dozens of stray entries in /tmp.
 //
 // Now: `reapSession()` is the only teardown, it takes no instructions from
 // the agent, and it always runs in this order —

@@ -19,7 +19,7 @@ function sandbox() {
 }
 
 const ITEM = (ref: string, over = '') => `{
-  source: { provider: 'github', kind: 'review-comment', ref: '${ref}', author: 'reviewer', title: 'app#123' },
+  source: { provider: 'github', kind: 'review-comment', ref: '${ref}', author: 'reviewer', title: 'acme/app#123' },
   body: 'Use useSafeContext instead.',
   context: { kind: 'code', path: 'a/b.ts', lines: 'L23', hunk: '@@ -1 +1 @@' },
   signal: true${over}

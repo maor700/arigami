@@ -4,7 +4,7 @@
 // THE BUG THIS FIXES. Killing a session used to mean killing its agent's
 // process tree. Agents start dev servers and Storybook as `cmd & sleep 2`, and
 // the backgrounded process is reparented to init the moment its shell exits —
-// it is no longer in anybody's tree. Measured on the cloud host: three
+// it is no longer in anybody's tree. Measured on a busy shared host: three
 // Storybooks (4.5 GB between them) and a vite were children of PID 1, and two
 // of the Storybooks belonged to sessions that were still open but had started
 // them twice. Nothing could reach them, so nothing ever stopped them.
@@ -135,8 +135,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /**
  * SIGTERM everything, wait for it to exit, SIGKILL what is left. Waiting is the
  * point: a worktree removed while its dev server or typecheck is still running
- * gets written back into — that is how an empty `abc-21033/` holding only a
- * fresh tsconfig.tsbuildinfo outlived its session.
+ * gets written back into — that is how an otherwise empty worktree directory,
+ * holding only a freshly written tsconfig.tsbuildinfo, outlived its session.
  */
 export async function stop(pids: number[], graceMs = 4000): Promise<{ stopped: number[]; survived: number[] }> {
   const targets = [...new Set(pids)].filter((p) => p > 1 && p !== process.pid);

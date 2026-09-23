@@ -1,8 +1,8 @@
 // Per-session scratch space: the session's TMPDIR, deleted with the session.
 //
-// On the cloud host 37 entries in /tmp belonged to sessions — screenshots,
-// probe scripts, logs, patches, a private Node install, whole ad-hoc worktrees
-// — named after the ticket and owned by nobody, so no deletion could find
+// On a busy shared host, dozens of entries in /tmp turned out to belong to
+// sessions — screenshots, probe scripts, logs, patches, a private Node
+// install, whole ad-hoc worktrees — owned by nobody, so no deletion could find
 // them. Giving each session its own TMPDIR makes "what did this session leave
 // behind" a single directory: everything that honours TMPDIR (mktemp, Bun,
 // Node's os.tmpdir(), Playwright, most tools) lands here and goes when the

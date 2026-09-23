@@ -173,7 +173,7 @@ test('merge: merged / conflict records and the approved-session merge panel rend
   expect(html).toContain('53ba82c');
   expect(html).toContain('data-merge-event="conflict"');
   expect(html).toContain('server/api.ts, web/src/App.jsx');
-  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session: { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'alex' } } } } }));
+  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session: { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'reviewer' } } } } }));
   expect(panel).toContain('data-merge-panel');
   expect(panel).toContain('child/x');
   // not approved / already merged → nothing

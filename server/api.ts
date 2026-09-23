@@ -6271,9 +6271,8 @@ export async function handle(
       if (bad) return badRequest(res, 'each item needs source.ref and a string body');
       const added = state.addInboxItems(id, list);
       if (added === null) return notFound(res, `no such session: ${id}`);
-      // Enrichment is triggered HERE and not by the adapter. In legacy-host the
-      // adapter was core code and could remember; here an adapter is an
-      // extension, and "every provider must also kick the enrichment" is a rule
+      // Enrichment is triggered HERE and not by the adapter. If the adapter
+      // were core code it could remember; but an adapter is an extension, and "every provider must also kick the enrichment" is a rule
       // that the third one will forget. Fire-and-forget: a failed draft must
       // never fail the ingest, or a poller retries forever.
       if (added.some((i) => i.signal)) {

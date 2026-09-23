@@ -15,9 +15,9 @@
 //     checked out here. Merged into local master counts as safe; pushed counts
 //     as safe; committed-and-forgotten does not.
 // Otherwise it is kept and reported, with the reason. Losing a day of
-// unpushed work is worse than 2 GB of disk. (Seen on the cloud host: a ticket
-// branch whose upstream was origin/main — it had never been pushed — with a
-// real edit in chart.tsx.)
+// unpushed work is worse than 2 GB of disk. (Seen in practice: a feature
+// branch whose upstream was still origin/main — it had never been pushed — with
+// a real uncommitted edit in it.)
 import fs from 'node:fs';
 import path from 'node:path';
 
