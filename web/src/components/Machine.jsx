@@ -81,6 +81,21 @@ function swapPct(snap) {
   return s && s.totalMb > 0 ? Math.round((s.usedMb / s.totalMb) * 100) : null;
 }
 
+/** One metric's value in the mini strip: label, percent, coloured by pressure. */
+function MiniStat({ label, pct, detail }) {
+  return (
+    <span className="flex items-baseline gap-1" title={detail || undefined}>
+      <span className="text-fgdim">{label}</span>
+      <span className="font-bold tabular-nums" style={{ color: tone(pct) || undefined }}>
+        {pct == null ? '—' : `${Math.round(pct)}%`}
+      </span>
+    </span>
+  );
+}
+
+// One row, not the full panel's stacked sliders — the rail has no room for
+// three 2-line bars, especially on mobile where this sits above the usage
+// strip and footer.
 export function MachineMini() {
   const t = useT();
   const { snap } = useResources(15_000, 1);
@@ -93,20 +108,18 @@ export function MachineMini() {
         location.hash = '#/settings/host/resources';
       }}
       title={snap.why}
-      className="flex w-full cursor-pointer flex-col gap-2 border-t border-hair px-[0.8125rem] py-2.5 text-start hover:bg-chip/40"
+      className="flex w-full cursor-pointer items-center gap-2 border-t border-hair px-[0.8125rem] py-2 text-start hover:bg-chip/40"
     >
-      <span className="flex items-center gap-1.5 font-mono text-[0.71875rem] md:text-[0.5625rem] tracking-[0.08em] text-fgdim uppercase">
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
-        <span className="flex-1">{t('machine.title')}</span>
-        <span className="normal-case tracking-normal">{t(`machine.pressure.${snap.pressure}`)}</span>
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
+      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.02em]">
+        <MiniStat label={t('machine.cpu')} pct={snap.cpu?.pct} />
+        <MiniStat
+          label={t('machine.memory')}
+          pct={snap.memory?.usedPct}
+          detail={t('machine.memoryDetail', { avail: fmtMb(snap.memory?.availableMb), total: fmtMb(snap.memory?.totalMb) })}
+        />
+        {sp != null && sp > 0 && <MiniStat label={t('machine.swap')} pct={sp} detail={fmtMb(snap.swap.usedMb)} />}
       </span>
-      <Bar label={t('machine.cpu')} pct={snap.cpu?.pct} />
-      <Bar
-        label={t('machine.memory')}
-        pct={snap.memory?.usedPct}
-        detail={t('machine.memoryDetail', { avail: fmtMb(snap.memory?.availableMb), total: fmtMb(snap.memory?.totalMb) })}
-      />
-      {sp != null && sp > 0 && <Bar label={t('machine.swap')} pct={sp} detail={fmtMb(snap.swap.usedMb)} />}
     </button>
   );
 }
