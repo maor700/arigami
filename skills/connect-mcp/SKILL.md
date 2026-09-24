@@ -8,6 +8,15 @@ argument-hint: <service slug, e.g. linear>
 
 # connect-mcp — the vendor's own OAuth, no broker in between
 
+> **With the MCP gateway on (the default) you do not run this playbook.** Call
+> `request_setup({capability:"mcp:<service>"})` and stop: the human presses
+> Connect on the card, and the HOST walks the vendor's consent itself
+> (`server/lib/consent-runner.ts`, in the browser where the owner is signed in),
+> asking the human only where a vendor wants a person. When it lands, your
+> request returns, this session reconnects by itself as soon as your turn ends,
+> and the host tells you to continue. The steps below are the fallback for a
+> host with the gateway off (`ARIGAMI_MCP_GATEWAY=0`).
+
 Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
 `$ARGUMENTS` (or the `needs_setup` value after `mcp:`) is the service slug.
 Server side: `server/mcp-catalog.ts` (the catalog), `server/lib/mcp-grants.ts`

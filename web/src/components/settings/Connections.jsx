@@ -97,6 +97,65 @@ function ConnectedRow({ row, busy, onDisconnect }) {
   );
 }
 
+// Grants an engine holds by itself (`claude mcp login` from before) reach only
+// that engine. One press moves them all to the host: each runs through the
+// host's consent runner in turn; a service that needs you says so on its row.
+function MoveToHost({ caps, onDone }) {
+  const t = useT();
+  const [state, setState] = useState(null); // id → 'running' | 'done' | {needs, url}
+  const move = async () => {
+    const next = {};
+    for (const c of caps) next[c.id] = 'running';
+    setState({ ...next });
+    for (const c of caps) {
+      try {
+        const r = await setupApi.connect(c.id, { action: 'start' });
+        if (r?.ok || r?.state === 'done') { next[c.id] = 'done'; setState({ ...next }); continue; }
+        // wait for the host's attempt at this one (it runs them one at a time)
+        for (let i = 0; i < 60; i++) {
+          await new Promise((res) => setTimeout(res, 2000));
+          const p = await setupApi.connect(c.id, { action: 'poll' });
+          if (p?.ok || p?.state === 'done') { next[c.id] = 'done'; break; }
+          if (p?.auto?.status === 'needs-person' || p?.auto?.status === 'failed') { next[c.id] = { needs: p.auto.reason || '', url: r?.url }; break; }
+        }
+      } catch (e) {
+        next[c.id] = { needs: e.message };
+      }
+      setState({ ...next });
+    }
+    onDone?.();
+  };
+  const names = caps.map((c) => c.title || c.id).join(', ');
+  return (
+    <div data-move-to-host className="mb-2 rounded-lg border border-[#e7d3a8] bg-[#FBF3E0] px-3 py-2 text-[11.5px] text-[#5b4a17]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex-1"><b>{t('mcp.move.title', { n: caps.length })}</b> {t('mcp.move.body', { names })}</span>
+        {!state && <button type="button" className={BTN_SM} onClick={move}>{t('mcp.move.go')}</button>}
+      </div>
+      {state && (
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {caps.map((c) => {
+            const st = state[c.id];
+            return (
+              <li key={c.id} className="flex items-center gap-2">
+                <span className="font-semibold">{c.title || c.id}</span>
+                {st === 'running' && <span>{t('mcp.move.running')}</span>}
+                {st === 'done' && <span className="text-[#2f7d4f]">✓ {t('mcp.move.done')}</span>}
+                {st && typeof st === 'object' && (
+                  <span>
+                    {t('setup.connect.needsYou', { name: c.title || c.id })} {st.needs}
+                    {st.url && <a className="ms-1 underline" href={st.url} target="_blank" rel="noreferrer">{t('setup.connect.open', { name: c.title || c.id })}</a>}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Connections({ initialAdd = false, section = '' }) {
   const t = useT();
   const { setupTick, agents, auth } = useStore();
@@ -217,6 +276,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
 
       <Section id="connected" title={t('settings.connections.connected')} onRefresh={load}>
         <div className="mb-2 text-[11px] text-fgdim">{t('settings.connections.connected.hint')}</div>
+        {mcpCaps.some((c) => c.ok && c.data?.heldBy === 'engine') && <MoveToHost caps={mcpCaps.filter((c) => c.ok && c.data?.heldBy === 'engine')} onDone={load} />}
         {composio?.error && composio.hasKey && <ErrorLine>{composio.error}</ErrorLine>}
         <div data-connected-list className="rounded-lg border border-hair px-3 py-1">
           {rows.length === 0 && <div className="py-2 text-[11px] text-fgdim">{t('settings.connections.none')}</div>}

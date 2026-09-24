@@ -20,6 +20,7 @@ import * as setupApi from '../../lib/setup-api.js';
 import { stepFor } from './index.js';
 import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
 import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
+import ConnectStep from './ConnectStep.jsx';
 import { Pill, ErrorBox } from './shared.jsx';
 import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../../openui/define.js';
@@ -214,7 +215,18 @@ function SetupCardView({ props: { sessionId, event } }) {
         </div>
       )}
 
-      {(phase === 'pending' || phase === 'failed') && (
+      {(phase === 'pending' || phase === 'failed') && capFamily(capability) === 'mcp' && (
+        // One way to connect a service: the host tries by itself, asks only where it must.
+        <div className="mt-2.5 flex flex-col gap-2.5">
+          <div className="rounded-[8px] border border-border bg-panel px-3 py-2.5 text-fg">
+            <ConnectStep capability={capability} owner={event.owner} sessionId={sessionId} title={title} onDone={manualDone} />
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Btn variant="secondary" disabled={busy} onClick={notNow}>{t('setup.notNow')}</Btn>
+          </div>
+        </div>
+      )}
+      {(phase === 'pending' || phase === 'failed') && capFamily(capability) !== 'mcp' && (
         <div className="mt-2.5 flex flex-col gap-2.5">
           {autoCapable && (
             <ModeSwitch mode={mode} onChange={changeMode} autoAllowed={autoAllowed} identity={identity} />

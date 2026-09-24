@@ -1490,7 +1490,10 @@ async function handleSetupRequest(res: ServerResponse, body: Record<string, unkn
     const r: SetupResult = { state: 'done', id: '', capability, detail: check.detail, mode: 'manual', already: true, owner: check.owner || caps.GLOBAL_OWNER } as SetupResult;
     return json(res, r);
   }
-  const requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
+  let requested = body.mode === 'auto' || body.mode === 'manual' || body.mode === 'ask' ? (body.mode as SetupMode) : undefined;
+  // A remote service the host holds is connected by the HOST (its consent
+  // runner, after one press on the card) — never by an agent's own playbook.
+  if (capability.startsWith('mcp:') && (await import('./lib/mcp-gateway.js')).gatewayEnabled()) requested = 'manual';
   const entry = openSetupCard(sessionId!, cap, why, requested, check.detail);
   if (entry.state === 'auto') {
     // The human already consented (start clicked); the agent runs the playbook
@@ -1904,7 +1907,7 @@ async function hostMcpLogin(name: string, action: 'start' | 'poll', req: Incomin
   const owner = (agent ? `agent:${agent}` : caps.GLOBAL_OWNER) as caps.Owner;
   try {
     const r = await applyHostMcpSetup(spec, { action }, owner, name, spec.url, browserOrigin(req));
-    return { name, state: r.state === 'done' ? 'done' : r.state || 'awaiting', url: (r.url as string) || null, error: (r.error as string) || null };
+    return { name, state: r.state === 'done' ? 'done' : r.state || 'awaiting', url: (r.url as string) || null, error: (r.error as string) || null, auto: (r as any).auto || null };
   } catch (e) {
     return { name, state: 'error', url: null, error: (e as Error).message };
   }
@@ -1975,6 +1978,124 @@ export async function sweepCliTwins(): Promise<void> {
   for (const g of grants.listGrants()) if (grants.isLive(g.name)) await retireCliTwins(g.name, g.owner as caps.Owner).catch(() => []);
 }
 
+/** The consent runner needs a Chrome on this host (headless is enough). */
+function autoConsentAvailable(): boolean {
+  if (process.env.ARIGAMI_CONSENT_AUTO === '0') return false; // tests of the person's path; an operator who wants no automation
+  try {
+    const bin = chrome.chromeBin();
+    return !!bin && (bin.includes('/') ? fs.existsSync(bin) : true);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Walk the vendor's consent in the owner's browser (lib/consent-runner.ts) and
+ * record how it went on the open sign-in, so every surface polling it (the
+ * card, the dialog, the /mcp panel) shows the same thing. On success the
+ * connection is recorded here too — nobody has to be polling.
+ */
+async function runAutoConsent(spec: mcpCat.McpServerSpec, owner: caps.Owner, name: string, url: string, authorizeUrl: string, redirect: string): Promise<void> {
+  const grants = await import('./lib/mcp-grants.js');
+  const { runConsent } = await import('./lib/consent-runner.js');
+  grants.setAuto(name, { status: 'running' });
+  const slug = caps.ownerSlug(owner);
+  try {
+    const r = await runConsent({
+      name,
+      authorizeUrl,
+      redirect,
+      domains: spec.domains,
+      hints: spec.consent,
+      profileDir: slug ? chrome.agentBrowserDir(slug) : undefined,
+      identityEmail: (caps.readIdentity(owner) || caps.readIdentity(caps.GLOBAL_OWNER))?.email ?? null,
+      onCode: (state, code) => grants.finishLogin(state, code),
+    });
+    grants.setAuto(name, { status: r.status, reason: r.reason, at: r.at, workspace: r.workspace ?? null });
+    caps.appendAudit({ sessionId: 'host', capability: `mcp:${spec.slug}`, mode: 'auto', result: r.status === 'approved' ? 'ok' : r.status, evidence: r.evidence[r.evidence.length - 1] || null, human: false, detail: r.reason + (r.workspace ? ` · workspace ${r.workspace}` : ''), owner } as any);
+    if (r.status === 'approved' && grants.isLive(name)) {
+      recordMcpConnection(owner, spec, name, url);
+      await retireCliTwins(name, owner).catch(() => []);
+      try { broadcast({ type: 'setup.changed', capability: `mcp:${spec.slug}`, owner }); } catch {}
+      refreshSessionsFor(name, owner);
+      settleMcpCards(spec.slug, owner, false);
+    }
+  } catch (e) {
+    grants.setAuto(name, { status: 'needs-person', reason: `automatic connect did not run: ${(e as Error).message}` });
+  }
+}
+
+// ---- sessions pick up a new connection by themselves --------------------------
+// A session's engine loads its MCP servers when it starts. When a connection
+// arrives later, the session that could use it restarts in place (resumed, the
+// conversation intact) the moment it is idle — never in the middle of a turn.
+const mcpRefreshPending = new Map<string, { name: string; resume: boolean }>(); // sessionId → what arrived, and whether it was waiting for it
+export function refreshSessionsFor(name: string, owner: string): void {
+  for (const s of state.listSessions({} as any) as any[]) {
+    if (s.archived || !claude.isRunning(s.id)) continue;
+    const agent = typeof s.metadata?.agent === 'string' && s.metadata.agent ? `agent:${s.metadata.agent}` : caps.GLOBAL_OWNER;
+    if (owner !== caps.GLOBAL_OWNER && owner !== agent) continue;
+    const loaded = s.claude?.mcpLoaded?.servers || [];
+    if (loaded.some((l: any) => l.name === name && l.via === 'gateway')) continue;
+    // The session that asked for it (an open setup card) is told to carry on once it has it.
+    const asked = String(s.claude?.setupRequest?.capability || '') === `mcp:${mcpCat.parseGrantName(name).slug}`;
+    mcpRefreshPending.set(s.id, { name, resume: asked || !!mcpRefreshPending.get(s.id)?.resume });
+  }
+  tickMcpRefresh();
+}
+
+/** Close the open setup cards for a service the host now holds, telling each agent what happens next. */
+function settleMcpCards(slug: string, owner: caps.Owner, human: boolean): void {
+  resolveSetupsFor(`mcp:${slug}`, 'connected via Arigami for every session. Its tools load when this session reconnects, which the host does as soon as this turn ends — finish the turn with a one-line status; you will be resumed.', human, owner);
+}
+function tickMcpRefresh(): void {
+  for (const [id, { name, resume }] of mcpRefreshPending) {
+    const s = state.getSession(id) as any;
+    if (!s || s.archived || !claude.isRunning(id)) {
+      mcpRefreshPending.delete(id);
+      continue;
+    }
+    if (s.claude?.state !== 'idle') continue; // mid-turn: next tick
+    mcpRefreshPending.delete(id);
+    try {
+      claude.restart(id, { silent: true });
+      claude.appendChat(id, { kind: 'system', text: `⤷ ${name} is connected now — reconnected this session so it can use it.` });
+      if (resume) setTimeout(() => { try { claude.sendMessage(id, `[host] ${name} is connected and loaded in this session now. Continue the task you were on.`); } catch {} }, 1500);
+    } catch {
+      /* an archived / gone session */
+    }
+  }
+}
+setInterval(tickMcpRefresh, 3000).unref?.();
+
+// ---- a grant the vendor stopped honouring: sign in again, quietly ------------
+const reconsentAt = new Map<string, number>();
+void import('./lib/mcp-grants.js').then((grants) =>
+  grants.onNeedsLogin((name) => {
+    if (Date.now() - (reconsentAt.get(name) || 0) < 60 * 60_000) return; // once an hour at most
+    reconsentAt.set(name, Date.now());
+    void silentReconsent(name);
+  })
+);
+async function silentReconsent(name: string): Promise<void> {
+  const grants = await import('./lib/mcp-grants.js');
+  const g = grants.getGrant(name);
+  const spec = g ? mcpCat.mcpSpec(g.slug) : null;
+  if (!g || !spec || !g.redirect || spec.auth !== 'oauth' || !autoConsentAvailable()) return;
+  const st = await grants.startLogin({ name, slug: g.slug, owner: g.owner, url: g.url }, g.redirect).catch(() => null);
+  if (!st?.url) return;
+  await runAutoConsent(spec, g.owner as caps.Owner, name, g.url, st.url, g.redirect);
+  if (grants.isLive(name)) return;
+  // It needs a person after all: say so once, early — not via an agent failing mid-task.
+  const why = grants.loginStatus(name).auto?.reason || 'sign in again';
+  try {
+    const { notify } = await import('./notify.js');
+    await notify({ title: `${spec.title} needs you to sign in again`, body: `${why}. Settings › Connections › ${spec.title}.`, url: publicUrl('/__host/#/settings/connections') as string, tag: `mcp-reconsent-${name}` });
+  } catch {
+    /* no channel configured */
+  }
+}
+
 /** applyMcpSetup for a host-held grant: {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
 async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: caps.Owner, name: string, url: string, origin: string): Promise<Record<string, unknown>> {
   const grants = await import('./lib/mcp-grants.js');
@@ -1984,6 +2105,8 @@ async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: c
     const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
     grants.cancelLogin(name);
     const replaced = await retireCliTwins(name, owner).catch(() => []);
+    refreshSessionsFor(name, owner);
+    settleMcpCards(spec.slug, owner, true);
     return { ok: true, state: 'done', name, owner, connection, heldBy: 'host', ...(replaced.length ? { replacedCli: replaced } : {}), ...(toolsAdded ? { toolsAdded } : {}) };
   };
   if (spec.auth === 'bearer') {
@@ -2000,7 +2123,7 @@ async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: c
   if (action === 'poll' || action === 'status') {
     const st = grants.loginStatus(name);
     if (st.status === 'done' && grants.isLive(name)) return done();
-    return { ok: false, name, owner, state: st.status === 'none' ? 'idle' : st.status, url: st.url, error: st.error };
+    return { ok: false, name, owner, state: st.status === 'none' ? 'idle' : st.status, url: st.url, error: st.error, auto: st.auto || null };
   }
   if (action === 'code' || action === 'paste' || body?.code || body?.url) {
     const r = await grants.finishFromPaste(name, String(body?.code || body?.url || ''));
@@ -2010,10 +2133,14 @@ async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: c
   const st = await grants.startLogin(g, origin + MCP_OAUTH_CALLBACK);
   if (st.status === 'done') return done();
   if (st.status === 'error' || !st.url) throw new Error(`${spec.title}: ${st.error || 'the sign-in did not produce an authorize URL'}`);
+  // First the host tries on its own, in the browser where the owner is signed
+  // in (lib/consent-runner.ts); the person is asked only where it stops.
+  const auto = body?.auto !== false && autoConsentAvailable();
+  if (auto) void runAutoConsent(spec, owner, name, url, st.url, origin + MCP_OAUTH_CALLBACK);
   let callbackHost = '';
   try { callbackHost = new URL(origin).hostname; } catch {}
   // The vendor sends the browser back to the host's own callback page, so its host is on the allowlist too.
-  return { ok: false, state: 'awaiting', id: name, name, url: st.url, owner, domains: [...new Set([...spec.domains, ...(callbackHost ? [callbackHost] : [])])], docs: spec.docs, heldBy: 'host' };
+  return { ok: false, state: 'awaiting', id: name, name, url: st.url, owner, domains: [...new Set([...spec.domains, ...(callbackHost ? [callbackHost] : [])])], docs: spec.docs, heldBy: 'host', auto: auto ? { status: 'running' } : null };
 }
 
 /** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
@@ -4640,6 +4767,7 @@ export async function handle(
         if (g && spec) {
           recordMcpConnection(g.owner as caps.Owner, spec, g.name, g.url);
           await retireCliTwins(g.name, g.owner as caps.Owner).catch(() => []);
+          refreshSessionsFor(g.name, g.owner);
         }
         if (g) try { broadcast({ type: 'setup.changed', capability: `mcp:${g.slug}`, owner: g.owner }); } catch {}
       }

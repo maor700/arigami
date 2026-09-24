@@ -39,6 +39,12 @@ export interface McpServerSpec {
   headerPrefix?: string;
   /** Short, factual caveat shown on the card (plan gating, preview status…). */
   note?: string;
+  /**
+   * The consent runner's per-vendor hints (lib/consent-runner.ts): the button
+   * that approves and a box that must be ticked first, as regex sources. Without
+   * them the generic Approve / Allow / Authorize buttons apply.
+   */
+  consent?: { approve?: string; check?: string };
 }
 
 /** No `--` in a slug: it is the separator between service and owning agent. */
@@ -53,6 +59,7 @@ export const MCP_CATALOG: McpServerSpec[] = [
     auth: 'oauth',
     domains: ['linear.app', 'mcp.linear.app'],
     docs: 'https://linear.app/docs/mcp',
+    consent: { approve: '^approve$' }, // "Arigami is requesting access" · Cancel / Approve (measured 2026-09-24)
   },
   {
     slug: 'notion',
@@ -61,6 +68,9 @@ export const MCP_CATALOG: McpServerSpec[] = [
     auth: 'oauth',
     domains: ['notion.com', 'notion.so', 'mcp.notion.com'],
     docs: 'https://developers.notion.com/docs/mcp',
+    // login via "Google" (a popup), then "Connect with Notion MCP": workspace preselected,
+    // "I recognize and trust this URL" must be ticked, then Continue (measured 2026-09-24)
+    consent: { approve: '^continue$', check: 'trust this url' },
   },
   {
     slug: 'sentry',

@@ -133,6 +133,21 @@ interface Flow {
   url: string | null;
   error: string | null;
   at: number;
+  /** the consent runner's attempt at this sign-in (lib/consent-runner.ts) */
+  auto?: AutoState;
+}
+
+export interface AutoState {
+  status: 'running' | 'approved' | 'needs-person' | 'failed';
+  reason?: string;
+  at?: string;
+  workspace?: string | null;
+}
+
+/** Record how the automatic attempt at `name`'s open sign-in is going. */
+export function setAuto(name: string, auto: AutoState): void {
+  const f = flowOf(name);
+  if (f) f.auto = auto;
 }
 const flows = new Map<string, Flow>(); // by state
 const FLOW_MS = 15 * 60_000;
@@ -184,9 +199,16 @@ class HostProvider {
   }
   redirectToAuthorization(url: URL) {
     if (this.flow) this.flow.url = url.toString();
-    // Outside a sign-in (a live client whose refresh was refused) this means a
-    // person has to sign in again; the call fails and says so.
-    else patch(this.name, (g) => ({ ...g, needsLogin: true }));
+    // Outside a sign-in (a live client whose refresh was refused) the grant is
+    // gone: mark it, and let the host try to sign in again by itself.
+    else {
+      patch(this.name, (g) => ({ ...g, needsLogin: true }));
+      try {
+        needsLoginHook?.(this.name);
+      } catch {
+        /* the hook must never break a tool call */
+      }
+    }
   }
   saveCodeVerifier(v: string) {
     patch(this.name, (g) => ({ ...g, verifier: v }));
@@ -212,6 +234,12 @@ class HostProvider {
       return n;
     });
   }
+}
+
+let needsLoginHook: ((name: string) => void) | null = null;
+/** api.ts: called when a grant's refresh was refused (a silent re-consent starts there). */
+export function onNeedsLogin(fn: (name: string) => void): void {
+  needsLoginHook = fn;
 }
 
 export type FetchFn = (url: string | URL, init?: RequestInit) => Promise<Response>;
@@ -297,10 +325,13 @@ export async function finishFromPaste(name: string, pasted: string, opts: { fetc
   return r.ok ? { ok: true } : { ok: false, error: r.error };
 }
 
-export function loginStatus(name: string): { status: Flow['status'] | 'none'; url: string | null; error: string | null } {
-  if (isLive(name) && (!flowOf(name) || flowOf(name)!.status !== 'error')) return { status: 'done', url: null, error: null };
+export function loginStatus(name: string): { status: Flow['status'] | 'none'; url: string | null; error: string | null; auto?: AutoState } {
   const f = flowOf(name);
-  return f ? { status: f.status, url: f.url, error: f.error } : { status: 'none', url: null, error: null };
+  // An open sign-in that has not finished yet is what the caller is waiting on,
+  // even when an older grant of the same name is still live underneath it.
+  if (f && f.status === 'awaiting') return { status: 'awaiting', url: f.url, error: null, ...(f.auto ? { auto: f.auto } : {}) };
+  if (isLive(name) && (!f || f.status !== 'error')) return { status: 'done', url: null, error: null, ...(f?.auto ? { auto: f.auto } : {}) };
+  return f ? { status: f.status, url: f.url, error: f.error, ...(f.auto ? { auto: f.auto } : {}) } : { status: 'none', url: null, error: null };
 }
 
 export function cancelLogin(name: string): void {
