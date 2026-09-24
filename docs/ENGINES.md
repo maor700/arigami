@@ -77,7 +77,14 @@ is `Bash` for its shell, `mcp__<server>__<tool>` for MCP; exit 2 blocks). `codex
 restricted built-ins are hook-denied, not hidden; extension servers the allowlist never touches are
 left out of `config.toml`. Codex's snake_case built-ins are aliased onto claude names in `agent-policy.ts`.
 
-### 4. Remote MCP grants are per engine
+### 4. Remote MCP grants are held by the host
+
+With the MCP gateway on (the default), connecting a remote MCP server (Settings › Connections, a setup card, the connect-mcp playbook, or the /mcp panel's Login for a catalog server) runs the OAuth in the host itself (`server/lib/mcp-grants.ts`: discovery, dynamic client registration, PKCE, refresh via the MCP SDK). The grant lives in `$ARIGAMI_DIR/mcp-grants.json` (0600, machine-local), the vendor redirects to the host's `/__api/mcp-oauth/callback` (public, accepted only with the one-time `state` of a sign-in the host started), and every session of either engine reaches the vendor through `/__mcp/s/<grant>` under the grant's own name. A `--mcp-config` server replaces a CLI-configured one of the same name (measured on Claude Code: the dynamic entry wins and the other is never contacted), so allowlists (`mcp__linear__*`) are unchanged. Tools that send to a person (comments, reviews, messages) file an outbound card.
+Grants made earlier with `claude mcp login` keep working as before until the service is connected again through the host.
+
+With the gateway off (`ARIGAMI_MCP_GATEWAY=0`) the engine-held path below applies.
+
+#### 4a. Engine-held grants (gateway off)
 
 Claude's grants (`claude mcp login`) can't be used by codex. A codex session loads a `url` server only when codex holds its own grant: `codex mcp login <name>` under one host-wide `$ARIGAMI_DIR/codex-mcp` home (`mcp_oauth_credentials_store="file"`, server url passed as `-c`), written to `.credentials.json` keyed `<name>|<hash>` like Claude's, and linked into every session's `$CODEX_HOME`. Ownership stays in the same `connections.json` records (`agent:<slug>` / global). Verified on this VPS 2026-09-15 (codex-cli 0.153.4): the login prints the authorize URL headless, Linear consent on the session Chrome landed on the loopback, and a codex turn called `linear.list_teams` through the linked file.
 Claude-only grants get one chat note per session. Bearer rows (GitHub) are not wired for codex. A token refresh that replaces the linked file is copied back to the shared file on the next spawn.

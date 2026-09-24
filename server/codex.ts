@@ -61,6 +61,7 @@ import { auth } from './auth.js';
 import { HOST_MARK } from './lib/session-procs.js';
 import { gatewayEnabled, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
 import { composioKey } from './lib/composio-mcp.js';
+import * as hostGrants from './lib/mcp-grants.js';
 import * as scratch from './lib/scratch.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { registerEngine } from './lib/engine-driver.js';
@@ -287,6 +288,8 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   }
   // Composio over the gateway once the host holds a key; it replaces a hand-installed stdio composio-mcp below.
   if (gw && composioKey()) servers[COMPOSIO_SERVER] = codexEntry(COMPOSIO_SERVER);
+  // Remote grants the host holds (lib/mcp-grants.ts): the same login claude uses, through the gateway.
+  if (gw) for (const g of hostGrants.grantsFor(slug ? `agent:${slug}` : GLOBAL)) servers[g.name] = codexEntry(g.name);
   // Host-managed external servers (composio-mcp) — claude gets them from ~/.claude.json.
   const external = new Set<string>();
   try {

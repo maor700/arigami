@@ -15,6 +15,7 @@ import { supervise, killTree, killByTag } from './lib/children.js';
 import { HOST_MARK } from './lib/session-procs.js';
 import { gatewayEnabled, claudeEntry, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
 import { composioKey } from './lib/composio-mcp.js';
+import * as hostGrants from './lib/mcp-grants.js';
 import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
@@ -137,6 +138,19 @@ const composioServer = (slug) => {
   if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, COMPOSIO_SERVER)) return {};
   return { [COMPOSIO_SERVER]: claudeEntry(COMPOSIO_SERVER) };
 };
+// Remote grants the HOST holds (lib/mcp-grants.ts) for this owner — through the
+// gateway under the grant's own name, which replaces a CLI-configured server of
+// the same name. An allowlist that never reaches a server does not get it.
+const hostGrantServers = (slug) => {
+  if (!gatewayEnabled()) return {};
+  const policy = policyFor(slug);
+  const out = {};
+  for (const g of hostGrants.grantsFor(slug ? `agent:${slug}` : 'global')) {
+    if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, g.name)) continue;
+    out[g.name] = claudeEntry(g.name);
+  }
+  return out;
+};
 
 // M1 — the `--mcp-config` payload for one session. Always the host MCP; for a
 // session born from an agent, ALSO that agent's native remote-MCP grants.
@@ -172,7 +186,7 @@ export function mcpConfigFor(s) {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own } });
+  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own, ...hostGrantServers(slug) } });
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).

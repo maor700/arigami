@@ -1659,10 +1659,15 @@ async function disconnectCapability(capability: string, owner: caps.Owner = caps
     const spec = mcpCat.mcpSpec(slug);
     const rec = mcpConn.findConnection(owner, capability);
     const name = rec?.name || mcpCat.grantName(slug, owner);
+    // The host's own grant (lib/mcp-grants.ts): forget its tokens and client.
+    // Also clear any CLI grant of the same name below, so nothing is left behind.
+    const hostGrants = await import('./lib/mcp-grants.js');
+    hostGrants.remove(name);
     const { scope, cwd } = mcpScope(owner);
-    if ((rec?.auth || spec?.auth) !== 'bearer') await mcpAuth.logout(name, cwd);
+    const cli = mcpConn.readMcpState();
+    if ((rec?.auth || spec?.auth) !== 'bearer' && cli.grants.has(name)) await mcpAuth.logout(name, cwd);
     if (mcpConn.readCodexMcpGrants().has(name)) await mcpAuth.codexLogout(name, rec?.url || spec?.url);
-    await mcpAuth.removeServer(name, { scope, cwd });
+    if (cli.configured.has(name)) await mcpAuth.removeServer(name, { scope, cwd });
     mcpAuth.cancelLogin(name);
     mcpAuth.cancelLogin(name, 'codex');
     return { ok: true, removed: mcpConn.removeConnection(owner, capability), name, owner };
@@ -1828,13 +1833,17 @@ function setupEngine(body: any, req: IncomingMessage): mcpConn.McpEngine {
 }
 
 /** POST /__api/setup/mcp:<service> — {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
-async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine: mcpConn.McpEngine = 'claude'): Promise<Record<string, unknown>> {
+async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine: mcpConn.McpEngine = 'claude', origin?: string): Promise<Record<string, unknown>> {
   const spec = mcpCat.mcpSpec(slug);
   if (!spec) throw new Error(`${slug} is not in the native MCP catalog`);
   if (spec.auth === 'oauth-byo-client') throw new Error(`${spec.title} needs an OAuth client of your own (no dynamic registration) — not connectable from here yet`);
   const action = String(body?.action || '');
   const name = mcpCat.grantName(spec.slug, owner);
   const url = body?.readonly && spec.readonlyUrl ? spec.readonlyUrl : spec.url;
+  // With the MCP gateway on, the HOST holds the grant (lib/mcp-grants.ts): one
+  // login for every engine and account, same request/response contract.
+  const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
+  if (gatewayEnabled()) return applyHostMcpSetup(spec, body, owner, name, url, origin || browserOriginFallback());
   if (engine === 'codex') return applyCodexMcpSetup(spec, body, owner, name, url);
   const { scope, cwd } = mcpScope(owner);
 
@@ -1876,6 +1885,69 @@ async function applyMcpSetup(slug: string, body: any, owner: caps.Owner, engine:
   if (st.state === 'error') throw new Error(st.error || 'could not start the MCP login');
   if (!st.url) throw new Error(`${spec.title}: the sign-in did not print an authorize URL — is Claude Code >= 2.1.191 on this host?`);
   return { ...st, ok: false, id: name, name, url: st.url, owner, domains: spec.domains, docs: spec.docs };
+}
+
+const browserOriginFallback = (): string => (cfg.publicUrl ? String(cfg.publicUrl).replace(/\/+$/, '') : `http://localhost:${cfg.port}`);
+export const MCP_OAUTH_CALLBACK = '/__api/mcp-oauth/callback';
+
+/**
+ * The /mcp panel's Login for a catalog server (`linear`, `linear--<agent>`):
+ * with the gateway on it is the host's sign-in, not `claude mcp login`, so the
+ * grant serves every engine. null = not a catalog name → the CLI path as before.
+ */
+async function hostMcpLogin(name: string, action: 'start' | 'poll', req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
+  if (!gatewayEnabled() || !name) return null;
+  const { slug, agent } = mcpCat.parseGrantName(name);
+  const spec = mcpCat.mcpSpec(slug);
+  if (!spec || spec.auth !== 'oauth' || mcpCat.grantName(slug, agent ? `agent:${agent}` : caps.GLOBAL_OWNER) !== name) return null;
+  const owner = (agent ? `agent:${agent}` : caps.GLOBAL_OWNER) as caps.Owner;
+  try {
+    const r = await applyHostMcpSetup(spec, { action }, owner, name, spec.url, browserOrigin(req));
+    return { name, state: r.state === 'done' ? 'done' : r.state || 'awaiting', url: (r.url as string) || null, error: (r.error as string) || null };
+  } catch (e) {
+    return { name, state: 'error', url: null, error: (e as Error).message };
+  }
+}
+
+/** applyMcpSetup for a host-held grant: {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
+async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: caps.Owner, name: string, url: string, origin: string): Promise<Record<string, unknown>> {
+  const grants = await import('./lib/mcp-grants.js');
+  const action = String(body?.action || '');
+  const g = { name, slug: spec.slug, owner, url };
+  const done = () => {
+    const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
+    grants.cancelLogin(name);
+    return { ok: true, state: 'done', name, owner, connection, heldBy: 'host', ...(toolsAdded ? { toolsAdded } : {}) };
+  };
+  if (spec.auth === 'bearer') {
+    if (action === 'poll') return { ok: grants.isLive(name), name, owner };
+    const token = String(body?.token || '').trim() || (spec.tokenFrom === 'gh' ? ghAuthToken() : '');
+    if (!token) throw new Error(spec.tokenFrom === 'gh' ? 'no GitHub token on this host — sign in with gh first, or paste a token' : `paste a ${spec.title} token`);
+    grants.saveBearer(g, { name: spec.headerName || 'Authorization', value: `${spec.headerPrefix ?? 'Bearer '}${token}` });
+    return done();
+  }
+  if (action === 'cancel') {
+    grants.cancelLogin(name);
+    return { ok: true, name, state: 'idle' };
+  }
+  if (action === 'poll' || action === 'status') {
+    const st = grants.loginStatus(name);
+    if (st.status === 'done' && grants.isLive(name)) return done();
+    return { ok: false, name, owner, state: st.status === 'none' ? 'idle' : st.status, url: st.url, error: st.error };
+  }
+  if (action === 'code' || action === 'paste' || body?.code || body?.url) {
+    const r = await grants.finishFromPaste(name, String(body?.code || body?.url || ''));
+    if (!r.ok) throw new Error(r.error || 'could not finish the sign-in');
+    return done();
+  }
+  const st = await grants.startLogin(g, origin + MCP_OAUTH_CALLBACK);
+  if (st.status === 'done') return done();
+  if (st.status === 'error' || !st.url) throw new Error(`${spec.title}: ${st.error || 'the sign-in did not produce an authorize URL'}`);
+  let callbackHost = '';
+  try { callbackHost = new URL(origin).hostname; } catch {}
+  // The vendor sends the browser back to the host's own callback page, so its host is on the allowlist too.
+  return { ok: false, state: 'awaiting', id: name, name, url: st.url, owner, domains: [...new Set([...spec.domains, ...(callbackHost ? [callbackHost] : [])])], docs: spec.docs, heldBy: 'host' };
 }
 
 /** The manual payload routes (POST /__api/setup/:capability) — each delegates to the existing implementation. */
@@ -1959,7 +2031,7 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
       return { ok: false, url: lj.redirect_url, redirectUrl: lj.redirect_url, id: lj.connected_account_id, connectionId: lj.connected_account_id, owner };
     }
   } else if (capability.startsWith('mcp:')) {
-    return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req));
+    return await applyMcpSetup(capability.slice(4), body, owner, setupEngine(body, req), browserOrigin(req));
   } else if (capability === 'identity') {
     // {action:'verify', email?} — the take-over already happened on the desktop; record who signed in.
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
@@ -4482,13 +4554,35 @@ export async function handle(
       const mcp = await import('./mcp-auth.js');
       return json(res, await (mcp as any).listServers(u.searchParams.get('force') === '1', u.searchParams.get('cwd') || ''));
     }
+    if (p === MCP_OAUTH_CALLBACK && m === 'GET') {
+      const grants = await import('./lib/mcp-grants.js');
+      const err = u.searchParams.get('error');
+      const r = err
+        ? { ok: false, name: null, error: `${err}${u.searchParams.get('error_description') ? `: ${u.searchParams.get('error_description')}` : ''}` }
+        : await grants.finishLogin(u.searchParams.get('state') || '', u.searchParams.get('code') || '');
+      if (r.ok && r.name) {
+        const g = grants.getGrant(r.name);
+        const spec = g ? mcpCat.mcpSpec(g.slug) : null;
+        if (g && spec) recordMcpConnection(g.owner as caps.Owner, spec, g.name, g.url);
+        if (g) try { broadcast({ type: 'setup.changed', capability: `mcp:${g.slug}`, owner: g.owner }); } catch {}
+      }
+      const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+      const msg = r.ok ? 'Connected. You can close this tab.' : `Not connected: ${esc(String(r.error || 'unknown error'))}`;
+      res.writeHead(r.ok ? 200 : 400, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(`<!doctype html><meta charset="utf-8"><title>Arigami</title><body style="font:15px system-ui;padding:2rem">${msg}</body>`);
+      return;
+    }
     if (p === '/__api/mcp/login' && m === 'POST') {
       const mcp = await import('./mcp-auth.js');
       const body = (await readBody(req)) as any;
+      const viaHost = await hostMcpLogin(String(body?.name || ''), 'start', req);
+      if (viaHost) return json(res, viaHost);
       return json(res, (mcp as any).startLogin(body?.name, body?.cwd));
     }
     if (p === '/__api/mcp/login/status' && m === 'GET') {
       const mcp = await import('./mcp-auth.js');
+      const viaHost = await hostMcpLogin(u.searchParams.get('name') || '', 'poll', req);
+      if (viaHost) return json(res, viaHost);
       return json(res, (mcp as any).loginStatus(u.searchParams.get('name') || ''));
     }
     if (p === '/__api/mcp/logout' && m === 'POST') {
@@ -5729,6 +5823,10 @@ export async function handle(
             if (exec.via === 'whatsapp') {
               const wp = await import('./whatsapp-proxy.js');
               r = await wp.callWhatsapp('send_message', exec.args);
+            } else if (exec.via === 'mcp') {
+              const gr = await import('./lib/mcp-grants.js');
+              const out: any = await gr.callTool(String(exec.server || ''), exec.tool, exec.args);
+              r = out?.isError ? { ok: false, error: String((out.content || []).map((c: any) => c.text || '').join('\n') || 'tool error') } : { ok: true, result: out };
             } else if (exec.via === 'composio') {
               const cm = await import('./lib/composio-mcp.js');
               r = await cm.execute(exec.tool, exec.args, { id: String(exec.account || ''), userId: String(exec.user || 'default') });

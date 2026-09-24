@@ -21,6 +21,7 @@ import path from 'node:path';
 import { HOME } from './lib/platform.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { grantName, mcpSpec, type McpAuth } from './mcp-catalog.js';
+import * as hostGrants from './lib/mcp-grants.js';
 
 export interface McpConnection {
   /** capability id — `mcp:<slug>` */
@@ -136,6 +137,7 @@ export function readMcpState(dir: string = claudeConfigDir()): McpState {
 
 /** Is this grant usable right now? OAuth → a stored token; bearer → the server is configured. */
 export function grantLive(name: string, auth: McpAuth, state: McpState = readMcpState()): boolean {
+  if (hostGrants.isHostHeld(name)) return hostGrants.isLive(name); // the host's own grant (lib/mcp-grants.ts) is the only truth for it
   return auth === 'bearer' ? state.configured.has(name) : state.grants.get(name) === true;
 }
 
@@ -160,6 +162,7 @@ export function injectedServersFor(owner: string, state: McpState = readMcpState
   if (!slugOfOwner(owner)) return out; // the host's own grants are user-scoped — every session already sees them
   for (const c of readConnections(owner)) {
     const spec = mcpSpec(c.slug);
+    if (hostGrants.isHostHeld(c.name)) continue; // served by the gateway instead (claude.js)
     if (!spec || (c.auth || spec.auth) === 'bearer') continue; // bearer grants carry a header we deliberately do not store
     if (!grantLive(c.name, c.auth || spec.auth, state)) continue;
     out[c.name] = { type: 'http', url: c.url };
@@ -191,6 +194,7 @@ export function readCodexMcpGrants(dir: string = codexMcpHome()): Map<string, bo
 /** Which engines hold a usable grant for this name. Bearer servers are claude-only (codex bearer is not wired). */
 export function grantEngines(name: string, auth: McpAuth, state: McpState = readMcpState(), codex: Map<string, boolean> = readCodexMcpGrants()): McpEngine[] {
   const out: McpEngine[] = [];
+  if (hostGrants.isHostHeld(name)) return hostGrants.isLive(name) ? ['claude', 'codex'] : []; // one grant, every engine
   if (grantLive(name, auth, state)) out.push('claude');
   if (auth !== 'bearer' && codex.get(name) === true) out.push('codex');
   return out;
@@ -206,6 +210,7 @@ export function codexServersFor(owner: string, codex: Map<string, boolean> = rea
       const spec = mcpSpec(c.slug);
       const auth = c.auth || spec?.auth || 'oauth';
       if (granted[c.name] || claudeOnly.includes(c.name)) continue;
+      if (hostGrants.isHostHeld(c.name)) continue; // the gateway serves it (codex.ts)
       const engines = grantEngines(c.name, auth, state, codex);
       if (engines.includes('codex')) granted[c.name] = { url: c.url };
       else if (engines.includes('claude')) claudeOnly.push(c.name);

@@ -22,6 +22,7 @@ const ALLOW = [
   ['server/lib/site-state.ts', '/json/version'], // browser-level DevTools socket for the login hand-over — host-internal
   ['server/index.ts', '[host] arigami up on'], // boot log line
   ['server/linear-mcp.ts', 'fallbackOrigin = ()'], // OAuth redirect_uri must be absolute
+  ['server/api.ts', 'const browserOriginFallback = ()'], // host-held MCP grant: OAuth redirect_uri must be absolute
   ['server/proxy.ts', 'req.headers.host ||'], // request-URL parsing base
   ['server/pages.js', 'req.headers.host ||'], // request-URL parsing base
   ['server/api.ts', 'req.headers.host ||'], // request-URL parsing base

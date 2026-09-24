@@ -415,6 +415,10 @@ export function createAuth(opts: AuthOptions) {
     // HMAC / custom HMAC). The admin routes under /__api/webhooks/* (token,
     // config, events) are NOT matched here and need a normal principal.
     if (isInboundWebhookPath(pathname)) return true;
+    // The vendor's OAuth redirect for a host-held MCP grant: it carries no
+    // credential of ours, and is accepted only with the one-time `state` of a
+    // sign-in the host itself started (lib/mcp-grants.ts finishLogin).
+    if (pathname === '/__api/mcp-oauth/callback') return true;
     // Pre-C3 phone webhook, unauthenticated for ONE more release (deprecation
     // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
     if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;

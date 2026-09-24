@@ -12,6 +12,10 @@
 //      enforcement doesn't hide what was just connected;
 //   4. the bearer path (GitHub) needs no browser and refuses without a token;
 //   5. an unknown service is a 400, not a half-registered server.
+//
+// This is the ENGINE-held path (`claude mcp login`), which the host takes with
+// the MCP gateway off. With it on (the default) the host holds the grant
+// itself — test/mcp-grants-host.test.ts.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -81,6 +85,7 @@ beforeAll(async () => {
   host = spawn('bun', ['server/index.ts'], {
     cwd: ROOT,
     env: {
+      ARIGAMI_MCP_GATEWAY: '0',
       ...process.env,
       HOME: home,
       ARIGAMI_DIR: dir,

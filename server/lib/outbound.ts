@@ -16,8 +16,8 @@
 // What this is not: a sandbox. An agent with a shell can still call a provider
 // API itself. This closes the TOOL path, which is how agents actually send.
 
-/** send_message, slack_send_message, post_reply, create_comment, email_send, GMAIL_FORWARD_MESSAGE, … */
-export const OUTBOUND_RE = /(^|_)(sends?|post|reply|comment|publish|tweet|email|dm|notify|forward|share|invite)(_|$)/i;
+/** send_message, slack_send_message, post_reply, save_comment, notion-create-comment, create_pull_request_review, GMAIL_FORWARD_MESSAGE, … */
+export const OUTBOUND_RE = /(^|[_-])(sends?|post|reply|comment|review|publish|tweet|email|dm|notify|forward|share|invite)([_-]|$)/i;
 
 export function isOutbound(tool: string, declared: string[] = []): boolean {
   return declared.includes(tool) || OUTBOUND_RE.test(tool);
@@ -25,8 +25,10 @@ export function isOutbound(tool: string, declared: string[] = []): boolean {
 
 export interface OutboundExec {
   /** How the host performs the send once approved. */
-  via: 'whatsapp' | 'ext' | 'composio';
+  via: 'whatsapp' | 'ext' | 'composio' | 'mcp';
   ext?: string;
+  /** mcp: the host-held grant (lib/mcp-grants.ts) it runs through. */
+  server?: string;
   /** composio: the connected account it runs under, and that account's user id. */
   account?: string;
   user?: string;
@@ -41,8 +43,8 @@ const pick = (a: Record<string, unknown>, keys: string[]): string | null => {
 
 /** Recipient and text as a person reads them, whatever the tool calls its fields. */
 export function describe(x: OutboundExec): { channel: string; to: string | null; text: string | null; rest: Record<string, unknown> } {
-  const channel = x.via === 'whatsapp' ? 'WhatsApp' : x.via === 'composio' ? `Composio · ${x.tool}` : `${x.ext} · ${x.tool}`;
-  const toKeys = ['recipient', 'recipient_email', 'to', 'target', 'channel', 'chat_jid', 'user', 'email', 'phone', 'attendees'];
+  const channel = x.via === 'whatsapp' ? 'WhatsApp' : x.via === 'composio' ? `Composio · ${x.tool}` : x.via === 'mcp' ? `${x.server} · ${x.tool}` : `${x.ext} · ${x.tool}`;
+  const toKeys = ['recipient', 'recipient_email', 'to', 'target', 'channel', 'chat_jid', 'user', 'email', 'phone', 'attendees', 'issueId', 'issue_id', 'pullNumber', 'issue_number'];
   const textKeys = ['message', 'text', 'markdown_text', 'body', 'content', 'comment'];
   const to = pick(x.args, toKeys);
   const text = pick(x.args, textKeys);

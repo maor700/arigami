@@ -9,6 +9,9 @@
 //                           each call's _meta (mcp/ext-mcp.js SHARED mode)
 //   /__mcp/s/composio-mcp   Composio, in-process, with the host's key and the
 //                           session owner's connected accounts (composio-mcp.ts)
+//   /__mcp/s/<grant>        a vendor's remote MCP server (Linear, Notion…) through
+//                           the host's own grant (mcp-grants.ts) — one login for
+//                           every engine and account
 //
 // Names stay what they were (mcp__arigami__*, mcp__ext-<name>__*), so agent
 // allowlists and skills do not change.
@@ -32,7 +35,7 @@ import * as extensions from '../extensions.js';
 
 export const GATEWAY_PREFIX = '/__mcp/s/';
 export const COMPOSIO_SERVER = 'composio-mcp';
-const NAME_RE = /^(arigami|composio-mcp|ext-[a-z0-9][a-z0-9-]*)$/;
+const NAME_RE = /^[a-z0-9][a-z0-9-]{0,80}$/;
 
 // How a sender's call becomes a card. api.ts owns cards and registers this at
 // load; the gateway only needs it for in-process servers (Composio).
@@ -131,6 +134,34 @@ async function extProxy(name: string, session: any, token: string) {
   return server;
 }
 
+/** A host-held remote grant, for a session whose owner may use it. */
+async function remoteProxy(name: string, session: any) {
+  const grants = await import('./mcp-grants.js');
+  const g = grants.getGrant(name);
+  if (!g || (g.owner !== 'global' && g.owner !== ownerOf(session))) return null;
+  const { isOutbound } = await import('./outbound.js');
+  const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
+  const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+  const server = new Server({ name, version: '0.1.0' }, { capabilities: { tools: {} } });
+  const fail = (e: unknown) => ({ content: [{ type: 'text', text: `${name}: ${(e as Error).message}` }], isError: true });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: (((await (await grants.clientFor(name)).listTools()) as any).tools || []) }));
+  server.setRequestHandler(CallToolRequestSchema, async (req: any) => {
+    const tool = String(req.params?.name || '');
+    const args = req.params?.arguments && typeof req.params.arguments === 'object' ? req.params.arguments : {};
+    if (isOutbound(tool)) {
+      if (!fileOutbound) return fail(new Error('outbound cards are not wired'));
+      const r = await fileOutbound(session.id, { via: 'mcp', server: name, tool, args });
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    }
+    try {
+      return (await grants.callTool(name, tool, args)) as any;
+    } catch (e) {
+      return fail(e);
+    }
+  });
+  return server;
+}
+
 async function arigamiServer(session: any, token: string) {
   const { createArigamiServer } = (await import('../../mcp/host-mcp.js')) as any;
   const md = session.metadata || {};
@@ -166,7 +197,8 @@ export async function handle(req: IncomingMessage, res: ServerResponse, name: st
       if (!fileOutbound) throw new Error('outbound cards are not wired');
       const { createComposioServer } = await import('./composio-mcp.js');
       server = await createComposioServer(session, ownerOf(session), fileOutbound);
-    } else server = await extProxy(name, session, token);
+    } else if (name.startsWith('ext-')) server = await extProxy(name, session, token);
+    else server = await remoteProxy(name, session);
   } catch (e) {
     return deny(res, 502, `could not start ${name}: ${(e as Error).message}`);
   }
