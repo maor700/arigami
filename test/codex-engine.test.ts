@@ -535,6 +535,13 @@ test('config.toml wires the host MCP server under the snake_case key codex actua
   expect(toml).toContain('trust_level = "trusted"');
 });
 
+test('with a Composio key, composio-mcp comes over the gateway too; without one it is absent', () => {
+  const on = prepared(undefined, '', { COMPOSIO_API_KEY: 'k' }).toml;
+  expect(on).toContain('[mcp_servers.composio-mcp]');
+  expect(on).toMatch(/\[mcp_servers\.composio-mcp\][^[]*url = "[^"]*\/__mcp\/s\/composio-mcp"/);
+  expect(prepared(undefined, '', { COMPOSIO_API_KEY: '' }).toml).not.toContain('composio-mcp');
+});
+
 test('with the gateway off, the host MCP server is the stdio process it used to be', () => {
   const { toml } = prepared(undefined, '', { ARIGAMI_MCP_GATEWAY: '0' });
   expect(toml).toContain('[mcp_servers.arigami.env]');

@@ -7,6 +7,8 @@
 //   /__mcp/s/ext-<name>     an extension's tools — ONE process per extension,
 //                           shared by every session; the caller rides along in
 //                           each call's _meta (mcp/ext-mcp.js SHARED mode)
+//   /__mcp/s/composio-mcp   Composio, in-process, with the host's key and the
+//                           session owner's connected accounts (composio-mcp.ts)
 //
 // Names stay what they were (mcp__arigami__*, mcp__ext-<name>__*), so agent
 // allowlists and skills do not change.
@@ -29,7 +31,16 @@ import { auth } from '../auth.js';
 import * as extensions from '../extensions.js';
 
 export const GATEWAY_PREFIX = '/__mcp/s/';
-const NAME_RE = /^(arigami|ext-[a-z0-9][a-z0-9-]*)$/;
+export const COMPOSIO_SERVER = 'composio-mcp';
+const NAME_RE = /^(arigami|composio-mcp|ext-[a-z0-9][a-z0-9-]*)$/;
+
+// How a sender's call becomes a card. api.ts owns cards and registers this at
+// load; the gateway only needs it for in-process servers (Composio).
+type FileOutbound = import('./composio-mcp.js').FileOutbound;
+let fileOutbound: FileOutbound | null = null;
+export function setOutboundFiler(f: FileOutbound): void {
+  fileOutbound = f;
+}
 
 /** On unless ARIGAMI_MCP_GATEWAY=0 — the switch back to stdio servers. */
 export function gatewayEnabled(): boolean {
@@ -150,7 +161,12 @@ export async function handle(req: IncomingMessage, res: ServerResponse, name: st
   const token = auth.tokenForSession(session.id);
   let server: any;
   try {
-    server = name === 'arigami' ? await arigamiServer(session, token) : await extProxy(name, session, token);
+    if (name === 'arigami') server = await arigamiServer(session, token);
+    else if (name === COMPOSIO_SERVER) {
+      if (!fileOutbound) throw new Error('outbound cards are not wired');
+      const { createComposioServer } = await import('./composio-mcp.js');
+      server = await createComposioServer(session, ownerOf(session), fileOutbound);
+    } else server = await extProxy(name, session, token);
   } catch (e) {
     return deny(res, 502, `could not start ${name}: ${(e as Error).message}`);
   }

@@ -3167,6 +3167,7 @@ export async function handle(
     // request body itself, so it must come before anything that consumes it.
     if (p.startsWith('/__mcp/s/')) {
       const gw = await import('./lib/mcp-gateway.js');
+      gw.setOutboundFiler(fileOutbound);
       await gw.handle(req, res, decodeURIComponent(p.slice(gw.GATEWAY_PREFIX.length)), (req as any).auth);
       return;
     }
@@ -5728,6 +5729,9 @@ export async function handle(
             if (exec.via === 'whatsapp') {
               const wp = await import('./whatsapp-proxy.js');
               r = await wp.callWhatsapp('send_message', exec.args);
+            } else if (exec.via === 'composio') {
+              const cm = await import('./lib/composio-mcp.js');
+              r = await cm.execute(exec.tool, exec.args, { id: String(exec.account || ''), userId: String(exec.user || 'default') });
             } else {
               const ext = await import('./extensions.js');
               r = await ext.callExtTool(String(exec.ext), exec.tool, exec.args);

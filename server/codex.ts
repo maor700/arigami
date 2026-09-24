@@ -59,7 +59,8 @@ import { bunExec } from './lib/bun-exec.js';
 import { cfg, getSession, setClaude, untildify } from './state.js';
 import { auth } from './auth.js';
 import { HOST_MARK } from './lib/session-procs.js';
-import { gatewayEnabled, codexEntry } from './lib/mcp-gateway.js';
+import { gatewayEnabled, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
+import { composioKey } from './lib/composio-mcp.js';
 import * as scratch from './lib/scratch.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { registerEngine } from './lib/engine-driver.js';
@@ -284,6 +285,8 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
   } catch {
     /* a broken extension must never stop a session from starting */
   }
+  // Composio over the gateway once the host holds a key; it replaces a hand-installed stdio composio-mcp below.
+  if (gw && composioKey()) servers[COMPOSIO_SERVER] = codexEntry(COMPOSIO_SERVER);
   // Host-managed external servers (composio-mcp) — claude gets them from ~/.claude.json.
   const external = new Set<string>();
   try {

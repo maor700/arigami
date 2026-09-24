@@ -13,7 +13,8 @@ import { bunExec, bunExecShell } from './lib/bun-exec.js';
 import { claudeBin, EXTRA_BINS } from './lib/claude-bin.js';
 import { supervise, killTree, killByTag } from './lib/children.js';
 import { HOST_MARK } from './lib/session-procs.js';
-import { gatewayEnabled, claudeEntry, codexEntry } from './lib/mcp-gateway.js';
+import { gatewayEnabled, claudeEntry, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
+import { composioKey } from './lib/composio-mcp.js';
 import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
@@ -22,7 +23,7 @@ import { tokenForSession, quarantine, nextAvailable, getActiveId, getAccount, se
 import { refreshOne } from './oauth-login.js';
 import { getMemoryBootstrap } from './memory.js';
 import { personaBlock, getAgent } from './agents.js';
-import { policyFor, isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor } from './agent-policy.js';
+import { policyFor, isRestrictive, disallowedToolsFor, hookSettings, strictMcpFor, serverTouched } from './agent-policy.js';
 import { appendActivity, budgetState, localDay, budgetRefusal, turnBlocked } from './agent-ledger.js';
 import { auth } from './auth.js';
 import { ensureUserPlugin, USER_SKILLS_DIR } from './skills.js';
@@ -128,6 +129,14 @@ const viaGateway = (servers) => {
   for (const name of Object.keys(servers)) out[name] = claudeEntry(name);
   return out;
 };
+// Composio over the gateway (lib/composio-mcp.ts), once the host holds a key —
+// unless the agent's allowlist never reaches into it.
+const composioServer = (slug) => {
+  if (!gatewayEnabled() || !composioKey()) return {};
+  const policy = policyFor(slug);
+  if (isRestrictive(policy) && policy.tools !== null && !serverTouched(policy, COMPOSIO_SERVER)) return {};
+  return { [COMPOSIO_SERVER]: claudeEntry(COMPOSIO_SERVER) };
+};
 
 // M1 — the `--mcp-config` payload for one session. Always the host MCP; for a
 // session born from an agent, ALSO that agent's native remote-MCP grants.
@@ -163,7 +172,7 @@ export function mcpConfigFor(s) {
       own = {}; // a missing/foreign connections.json must never stop a session
     }
   }
-  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...own } });
+  return JSON.stringify({ mcpServers: { ...hostServers(), ...viaGateway(ext), ...composioServer(slug), ...own } });
 }
 
 // engine-driver.ts's EngineDriver members for claude, pulled out of spawnProc()'s old inline argv (same flags/order).

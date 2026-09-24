@@ -84,7 +84,8 @@ Claude-only grants get one chat note per session. Bearer rows (GitHub) are not w
 
 ### 4b. External MCP servers: composio-mcp yes, claude.ai connectors no
 
-Host-managed stdio servers (`composio-mcp`) live in `$ARIGAMI_DIR/mcp-servers.json` (`server/lib/mcp-servers.ts`), seeded once from `~/.claude.json`; codex gets them as `[mcp_servers.<name>]`, claude keeps reading `~/.claude.json`, and a Composio key change updates both.
+Composio is served by the host over the MCP gateway (`/__mcp/s/composio-mcp`, `server/lib/composio-mcp.ts`) as soon as the host holds a Composio key: both engines get the same server, with the tools of the toolkits connected for the session's owner (the agent's own connected account first, else the shared one; another agent's account never). Tool names stay `mcp__composio-mcp__<SLUG>`. A tool that sends to a person (`GMAIL_SEND_EMAIL`, a calendar invite, a Drive share) files an outbound card and runs only after the owner's Send.
+A hand-installed stdio `composio-mcp` (`$ARIGAMI_DIR/mcp-servers.json`, `server/lib/mcp-servers.ts`) is still honored for codex when the gateway is off (`ARIGAMI_MCP_GATEWAY=0`) or no key is set; with the gateway on, the gateway entry replaces it.
 Codex's `enabled_tools` takes exact names, so A3 drops an untouched server whole and the policy hook gates partial families (`gmail` → `GMAIL_*`).
 claude.ai connectors (`mcp__claude_ai_*`) are claude.ai-account features with no codex equivalent — a codex session never has them.
 

@@ -16,8 +16,8 @@
 // What this is not: a sandbox. An agent with a shell can still call a provider
 // API itself. This closes the TOOL path, which is how agents actually send.
 
-/** send_message, slack_send_message, post_reply, create_comment, email_send, … */
-export const OUTBOUND_RE = /(^|_)(send|post|reply|comment|publish|tweet|email|dm|notify)(_|$)/i;
+/** send_message, slack_send_message, post_reply, create_comment, email_send, GMAIL_FORWARD_MESSAGE, … */
+export const OUTBOUND_RE = /(^|_)(sends?|post|reply|comment|publish|tweet|email|dm|notify|forward|share|invite)(_|$)/i;
 
 export function isOutbound(tool: string, declared: string[] = []): boolean {
   return declared.includes(tool) || OUTBOUND_RE.test(tool);
@@ -25,8 +25,11 @@ export function isOutbound(tool: string, declared: string[] = []): boolean {
 
 export interface OutboundExec {
   /** How the host performs the send once approved. */
-  via: 'whatsapp' | 'ext';
+  via: 'whatsapp' | 'ext' | 'composio';
   ext?: string;
+  /** composio: the connected account it runs under, and that account's user id. */
+  account?: string;
+  user?: string;
   tool: string;
   args: Record<string, unknown>;
 }
@@ -38,9 +41,9 @@ const pick = (a: Record<string, unknown>, keys: string[]): string | null => {
 
 /** Recipient and text as a person reads them, whatever the tool calls its fields. */
 export function describe(x: OutboundExec): { channel: string; to: string | null; text: string | null; rest: Record<string, unknown> } {
-  const channel = x.via === 'whatsapp' ? 'WhatsApp' : `${x.ext} · ${x.tool}`;
-  const toKeys = ['recipient', 'to', 'target', 'channel', 'chat_jid', 'user', 'email', 'phone'];
-  const textKeys = ['message', 'text', 'body', 'content', 'comment'];
+  const channel = x.via === 'whatsapp' ? 'WhatsApp' : x.via === 'composio' ? `Composio · ${x.tool}` : `${x.ext} · ${x.tool}`;
+  const toKeys = ['recipient', 'recipient_email', 'to', 'target', 'channel', 'chat_jid', 'user', 'email', 'phone', 'attendees'];
+  const textKeys = ['message', 'text', 'markdown_text', 'body', 'content', 'comment'];
   const to = pick(x.args, toKeys);
   const text = pick(x.args, textKeys);
   const rest: Record<string, unknown> = {};
