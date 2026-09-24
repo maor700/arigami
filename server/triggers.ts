@@ -79,6 +79,7 @@ export interface CronTrigger {
   schedule: Schedule;
   prompt: string;
   sessionMode: string; // 'isolated' | 'existing:<sessionId>'
+  delivery?: 'auto' | 'interrupt'; // existing-session fires only: 'auto' (default) queues into a busy session like task_session; 'interrupt' aborts the running turn (claude.interrupt) and delivers immediately
   deliver: CronDeliver;
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
@@ -765,6 +766,16 @@ async function fireCron(
     state.patchSession(targetId, {
       metadata: { cronTriggerId: t.id, cronTriggerName: t.name, cronDeliver: t.deliver },
     });
+    // 'interrupt' delivery: abort the target's running turn (same primitive as
+    // the human Stop button) so this cron's prompt lands immediately instead of
+    // sitting in the pending-prompt queue behind whatever the session was doing.
+    // A real feature, not the default — aborting a live turn can drop in-progress
+    // work, so it only fires when the trigger explicitly opted in.
+    if (t.delivery === 'interrupt' && target.claude?.state !== 'idle') {
+      const claude = await import('./claude.js');
+      claude.interrupt(targetId);
+      tlog(t.id, 'fire', `interrupted busy session ${targetId} for immediate delivery`);
+    }
     const delivered = api.deliverToSession(targetId, `[Cron: ${t.name}]\n\n${t.prompt}`);
     recordCronRun(t, { at, sessionId: targetId, state: 'started', summary: `delivered (${delivered.delivered})` });
     tlog(t.id, 'fire', `delivered to existing session ${targetId} (${delivered.delivered}${opts.manual ? ', run now' : ''})`);
@@ -787,6 +798,7 @@ export async function createCronTrigger(input: {
   prompt?: string;
   schedule?: { kind?: string; value?: string };
   sessionMode?: string;
+  delivery?: string;
   deliver?: CronDeliver;
   autonomous?: boolean;
   bundleKey?: string;
@@ -839,6 +851,7 @@ export async function createCronTrigger(input: {
     schedule,
     prompt,
     sessionMode,
+    delivery: input.delivery === 'interrupt' ? 'interrupt' : 'auto',
     deliver: {
       push: input.deliver?.push !== false, // decision: push is the default delivery channel
       whatsapp: input.deliver?.whatsapp || undefined,

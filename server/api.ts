@@ -2220,6 +2220,7 @@ export function startTicketSession(opts: {
   cwd?: string;
   autonomous?: boolean;
   injectPrompt?: string;
+  folderId?: string | null;
 }): { id: string } {
   const id = opts.ticket;
   let prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt, ticket: id })!;
@@ -2235,6 +2236,7 @@ export function startTicketSession(opts: {
     model: opts.model,
     effort: opts.effort,
     engine: opts.engine,
+    folderId: opts.folderId,
   });
   spawnSafe(s.id);
   try {
@@ -2291,6 +2293,7 @@ export function startEmptySession(opts: {
   engine?: string; // 'claude' (default) | 'codex' — see Session.engine
   agent?: string | null; // A2: born from an agent (cron runs) — see applyAgentToSession
   metadata?: Record<string, unknown>;
+  folderId?: string | null;
 }): { id: string } {
   const prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt });
   const o = applyAgentToSession(opts.agent, opts);
@@ -2303,6 +2306,7 @@ export function startEmptySession(opts: {
     engine: o.engine,
     metadata: o.metadata || {},
     color: o.color,
+    folderId: opts.folderId,
   });
   spawnSafe(s.id);
   if (prompt && prompt.trim()) {
@@ -4276,6 +4280,7 @@ export async function handle(
             prompt: body.prompt,
             schedule: body.schedule,
             sessionMode: body.sessionMode,
+            delivery: body.delivery,
             deliver: body.deliver,
             autonomous: body.autonomous,
             agent: body.agent,
@@ -5295,6 +5300,12 @@ export async function handle(
         effort: body.effort,
         color: agentColor,
         engine: body.engine,
+        // Generic project-folder assignment, honored regardless of which
+        // creation path sent it (web launcher, create_session tool, cron
+        // isolated runs, ticket sessions). The dispatch path below still wins
+        // when both are given — spawning a master/kind child always lands it
+        // in that master's project folder.
+        folderId: body.folderId,
       });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into

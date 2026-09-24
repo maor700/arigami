@@ -119,6 +119,7 @@ export async function createArigamiServer(env = process.env) {
         needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
         needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
         agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s engine and default model (unless `engine` / `model` are given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
+        folder_id: { type: 'string', description: 'Project-folder rail id to place the new session in at creation time (same effect as dragging it into that folder afterward). Works regardless of which other fields are set — an unknown id is silently ignored (session lands at root). Not needed for `kind` dispatch: that already places the child in your own project folder.' },
       }),
       run: async (a) => {
         const body = {
@@ -126,6 +127,7 @@ export async function createArigamiServer(env = process.env) {
           ...(a.engine ? { engine: a.engine } : {}),
           permissionMode: a.permission_mode, metadata: a.metadata,
           ...(a.agent ? { agent: a.agent } : {}),
+          ...(a.folder_id ? { folderId: a.folder_id } : {}),
         };
         if (a.needs_screen) body.needsScreen = true;
         // Dispatch: forward the caller as the worker's master + the worker spec.
@@ -252,6 +254,7 @@ export async function createArigamiServer(env = process.env) {
         'memory bootstrap, and closes/archives it once it calls report_to_master — set autonomous:true so it runs ' +
         'unattended (bypassPermissions, no pausing for questions/review). session_mode "existing" delivers the prompt into ' +
         'target_session_id instead (like task_session: now if idle, queued if busy) — nothing is auto-archived for that mode. ' +
+        'delivery (existing only): "auto" (default, never interrupts) or "interrupt" (aborts the target\'s running turn for immediate delivery — can drop in-progress work, so opt in deliberately). ' +
         'deliver controls what happens with the result of an isolated run: deliver_push (default true) sends a web-push to ' +
         'the human\'s phone; deliver_master wakes another session with a thin pointer (like report_to_master); ' +
         'deliver_whatsapp is accepted but not yet wired to an outbound channel in this version — do not rely on it. ' +
@@ -269,6 +272,7 @@ export async function createArigamiServer(env = process.env) {
         schedule_value: { type: 'string', description: 'create: e.g. "0 9 * * 1-5" (cron), "30m" (interval), or an ISO timestamp (at). Required.' },
         session_mode: { type: 'string', enum: ['isolated', 'existing'], description: 'create: default "isolated"' },
         target_session_id: { type: 'string', description: 'create: required when session_mode is "existing"' },
+        delivery: { type: 'string', enum: ['auto', 'interrupt'], description: 'create: session_mode "existing" only. "auto" (default) never interrupts — idle delivers now, busy queues like task_session. "interrupt" aborts the target\'s running turn (same as the human Stop button) so this fires immediately even mid-turn — use only when the prompt is time-critical, since an aborted turn can drop in-progress work.' },
         deliver_push: { type: 'boolean', description: 'create: default true' },
         deliver_whatsapp: { type: 'string', description: 'create: JID — accepted but not yet sent in this version' },
         deliver_master: { type: 'string', description: 'create: session id to wake with the result' },
@@ -289,6 +293,7 @@ export async function createArigamiServer(env = process.env) {
             prompt: a.prompt,
             schedule: { kind: a.schedule_kind, value: a.schedule_value },
             sessionMode,
+            ...(a.delivery ? { delivery: a.delivery } : {}),
             deliver: { push: a.deliver_push, whatsapp: a.deliver_whatsapp, master: a.deliver_master },
             autonomous: a.autonomous,
             ...(a.agent !== undefined ? { agent: a.agent } : {}),
@@ -302,7 +307,7 @@ export async function createArigamiServer(env = process.env) {
             .filter((t) => t.type === 'cron')
             .map((t) => ({
               id: t.id, name: t.name, enabled: t.enabled, schedule: t.schedule, prompt: t.prompt,
-              sessionMode: t.sessionMode, deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null, engine: t.engine || null,
+              sessionMode: t.sessionMode, delivery: t.delivery || 'auto', deliver: t.deliver, autonomous: t.autonomous, agent: t.agent || null, engine: t.engine || null,
               lastRun: t.lastRun, nextRunAt: t.nextRunAt, recentRuns: (t.runs || []).slice(-5),
             }));
         }

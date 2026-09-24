@@ -625,6 +625,7 @@ export function createSession({
   effort,
   color,
   engine,
+  folderId,
 }: {
   title?: string;
   cwd?: string;
@@ -634,6 +635,7 @@ export function createSession({
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
   engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
+  folderId?: string | null; // generic creation-time project-folder assignment (any caller) — same field the make-project/dispatch paths patch in after the fact
 } = {}): Session {
   const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
   funnel.firstTime('session.first'); // K5 funnel — once per instance
@@ -656,6 +658,10 @@ export function createSession({
     color: color || cfg.palette[db.colorIndex++ % cfg.palette.length],
     status: 'In Progress',
     cwd: cwd || cfg.defaultCwd,
+    // Generic creation-time project-folder assignment — same validation the
+    // move-to-folder path uses (an unknown id is silently dropped to root
+    // rather than failing the whole session creation over a bad folder ref).
+    folderId: folderId && db.folders.has(folderId) ? folderId : null,
     archived: false,
     createdAt: now,
     updatedAt: now,
