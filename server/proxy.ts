@@ -87,6 +87,35 @@ export const decompressBody = (buf: Buffer, enc: string): Buffer => {
   return buf;
 };
 
+// Dev servers (Vite) answer uncompressed: fine on loopback, fatal over a
+// remote link — a large app's cold load can be thousands of modules and tens of
+// MB of JS with inline source maps, which at a few hundred KB/s reads as an
+// endless loading loop. Text bodies gzip ~4-5x, so compress them on the way out.
+const COMPRESSIBLE = /^(text\/|application\/(javascript|json|xml|wasm|manifest\+json)|image\/svg\+xml)/i;
+
+export const shouldGzip = (
+  method: string | undefined,
+  status: number,
+  acceptEncoding: HeaderValue,
+  out: Record<string, HeaderValue>
+): boolean => {
+  if (method === 'HEAD' || status === 204 || status === 304 || status < 200) return false;
+  if (out['content-encoding']) return false;
+  if (!COMPRESSIBLE.test(String(out['content-type'] || ''))) return false;
+  const len = Number(out['content-length']);
+  if (Number.isFinite(len) && len > 0 && len < 1024) return false;
+  return /\bgzip\b/i.test(String(acceptEncoding || ''));
+};
+
+const markGzipped = (out: Record<string, HeaderValue>): void => {
+  out['content-encoding'] = 'gzip';
+  delete out['content-length'];
+  const vary = String(out.vary || '');
+  if (!/accept-encoding/i.test(vary)) out.vary = vary ? `${vary}, Accept-Encoding` : 'Accept-Encoding';
+  // The bytes differ from the upstream's, so a strong validator no longer holds.
+  if (typeof out.etag === 'string' && !out.etag.startsWith('W/')) out.etag = 'W/' + out.etag;
+};
+
 export const injectSnippet = (html: string, tag: string): string => {
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + tag);
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, tag + '</body>');
@@ -99,6 +128,7 @@ export const swSnippet = (target: string): string => {
   return (
     `<script>(function(){` +
     `if(navigator.serviceWorker){var __c=navigator.serviceWorker.controller;` +
+    `if(__c){try{sessionStorage.removeItem('arigami_boot')}catch(e){}}` +
     `if(__c&&__c.scriptURL.indexOf('?v=')>-1&&!sessionStorage.getItem('poc_heal')){sessionStorage.setItem('poc_heal','1');` +
     `navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))})` +
     `.then(function(){return self.caches?caches.keys().then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k)}))}):0})` +
@@ -118,6 +148,23 @@ export const swSnippet = (target: string): string => {
 
 export const getTarget = (req: IncomingMessage): TargetOrigin =>
   targetOrigin(req.headers['x-poc-target'] as string | undefined);
+
+// Last resort, for a page that runs without the worker (BOOTSTRAP_HTML gave
+// up): a nested module import's Referer is the importing module, not the
+// document, so it carries no `?__target`. The injected document set this
+// cookie. It is shared by every tab, which is why it only ever comes last.
+export const cookieTarget = (req: IncomingMessage): TargetOrigin => {
+  const m = /(?:^|;\s*)poc_target=([^;]+)/.exec(String(req.headers.cookie || ''));
+  if (!m) return null;
+  // A malformed percent-encoding (e.g. `poc_target=%zz`) makes
+  // decodeURIComponent throw; in the 'upgrade' handler an uncaught throw takes
+  // down the whole process and every session — treat it as absent.
+  try {
+    return targetOrigin(decodeURIComponent(m[1]));
+  } catch {
+    return null;
+  }
+};
 
 export const refererTarget = (req: IncomingMessage): TargetOrigin => {
   try {
@@ -218,7 +265,17 @@ export const BOOTSTRAP_HTML = `<!doctype html><meta charset="utf-8"><title>…</
       await new Promise((res) => { navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }); setTimeout(res, 2500); });
     }
   } catch (e) {}
-  location.reload();
+  // Landing here again means the worker never took the navigation over: it
+  // failed to register (untrusted cert, private window, SW blocked) or DevTools
+  // "Bypass for network" is on. Reloading again would loop forever, so go on
+  // without it — the server routes a worker-less page by its Referer and the
+  // poc_target cookie.
+  let seen = 0;
+  try { seen = Number(sessionStorage.getItem('arigami_boot') || 0); sessionStorage.setItem('arigami_boot', String(seen + 1)); } catch (e) { seen = 1; }
+  if (seen < 1 && navigator.serviceWorker && navigator.serviceWorker.controller) return location.reload();
+  const u = new URL(location.href);
+  u.searchParams.set('__nosw', '1');
+  location.replace(u.pathname + u.search + u.hash);
 })();
 </script></body>`;
 
@@ -403,6 +460,14 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
               ];
             }
 
+            if (shouldGzip(req.method, pres.statusCode || 200, req.headers['accept-encoding'], out)) {
+              const gz = zlib.gzipSync(body, { level: 5 });
+              markGzipped(out);
+              out['content-length'] = String(gz.length);
+              res.writeHead(pres.statusCode || 200, out);
+              res.end(gz);
+              return;
+            }
             res.writeHead(pres.statusCode || 200, out);
             res.end(body);
           });
@@ -410,6 +475,16 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
           return;
         }
 
+        if (shouldGzip(req.method, pres.statusCode || 200, req.headers['accept-encoding'], out)) {
+          markGzipped(out);
+          delete out['transfer-encoding'];
+          res.writeHead(pres.statusCode || 200, out);
+          const gz = zlib.createGzip({ level: 5 });
+          gz.on('error', () => res.destroy());
+          pres.on('error', () => gz.destroy());
+          pres.pipe(gz).pipe(res);
+          return;
+        }
         res.writeHead(pres.statusCode || 200, out);
         pres.pipe(res);
       }
@@ -453,6 +528,7 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
 
     if (
       u.searchParams.get('__target') && // non-empty target only — empty would loop the bootstrap forever
+      !u.searchParams.has('__nosw') && // the bootstrap gave up on the worker (BOOTSTRAP_HTML)
       !req.headers['x-poc-target'] &&
       (req.headers.accept || '').includes('text/html')
     ) {
@@ -476,7 +552,7 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
       landPath = path;
     }
 
-    target = target || getTarget(req) || refererTarget(req);
+    target = target || getTarget(req) || refererTarget(req) || cookieTarget(req);
 
     if (!target) {
       res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
@@ -488,6 +564,7 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
       u.searchParams.delete('__target');
       u.searchParams.delete('__keep');
       u.searchParams.delete('__ticket');
+      u.searchParams.delete('__nosw');
       const rest = u.searchParams.toString();
       const base = landPath || u.pathname;
       req.url =
@@ -496,6 +573,7 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
       u.searchParams.delete('__target');
       u.searchParams.delete('__keep');
       u.searchParams.delete('__ticket');
+      u.searchParams.delete('__nosw');
       const rest = u.searchParams.toString();
       req.url =
         u.pathname + (rest ? '?' + rest : '');
@@ -510,22 +588,7 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
     socket: net.Socket,
     head: Buffer
   ): void {
-    let target: TargetOrigin = refererTarget(req) || getTarget(req);
-
-    if (!target && req.headers.cookie) {
-      const m = /(?:^|;\s*)poc_target=([^;]+)/.exec(req.headers.cookie as string);
-      // A malformed percent-encoding (e.g. `poc_target=%zz`) makes
-      // decodeURIComponent throw. This runs in the server 'upgrade' handler, so
-      // an uncaught throw here takes down the whole process and every session —
-      // swallow it and treat the target as absent.
-      if (m) {
-        try {
-          target = decodeURIComponent(m[1]);
-        } catch {
-          target = null;
-        }
-      }
-    }
+    const target: TargetOrigin = refererTarget(req) || getTarget(req) || cookieTarget(req);
 
     if (!target) {
       console.error(`[WS] no target for ${req.url}`);

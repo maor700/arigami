@@ -235,6 +235,11 @@ describe('live proxy', () => {
         res.end();
         return;
       }
+      if (req.url.startsWith('/big.js')) {
+        res.writeHead(200, { 'content-type': 'text/javascript', 'x-saw-url': req.url });
+        res.end('export const x = ' + JSON.stringify('a'.repeat(8000)) + ';\n');
+        return;
+      }
       if (req.url.startsWith('/data')) {
         const body = zlib.gzipSync(Buffer.from(JSON.stringify({ ok: true })));
         res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip', 'content-length': body.length });
@@ -281,6 +286,43 @@ describe('live proxy', () => {
   test('?__target= html nav without SW stamp serves the bootstrap (installs SW, then reloads)', async () => {
     const r = await get('/?__target=' + encodeURIComponent(upstreamOrigin), { accept: 'text/html' });
     expect(await r.text()).toBe(BOOTSTRAP_HTML);
+  });
+
+  test('the bootstrap gives up on a worker that never takes over instead of reloading forever', () => {
+    expect(BOOTSTRAP_HTML).toContain("sessionStorage.getItem('arigami_boot')");
+    expect(BOOTSTRAP_HTML).toContain("searchParams.set('__nosw', '1')");
+  });
+
+  test('?__nosw=1 skips the bootstrap and proxies worker-less; the upstream never sees the flag', async () => {
+    const r = await get('/?__target=' + encodeURIComponent(upstreamOrigin) + '&__nosw=1', { accept: 'text/html' });
+    const html = await r.text();
+    expect(html).toContain('upstream page');
+    const js = await get('/big.js?__target=' + encodeURIComponent(upstreamOrigin) + '&__nosw=1');
+    expect(js.headers.get('x-saw-url')).toBe('/big.js');
+  });
+
+  test('worker-less nested module (no stamp, Referer without __target) routes by the poc_target cookie', async () => {
+    const r = await get('/big.js', { referer: hostOriginUrl + '/src/main.tsx', cookie: 'poc_target=' + encodeURIComponent(upstreamOrigin) });
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain('export const x');
+    const bad = await get('/big.js', { cookie: 'poc_target=%zz' });
+    expect(bad.status).toBe(400);
+  });
+
+  test('gzips uncompressed text bodies when the client accepts it, and only then', async () => {
+    const gz = await get('/big.js', { 'x-poc-target': upstreamOrigin, 'accept-encoding': 'gzip' });
+    expect(gz.headers.get('content-encoding')).toBe('gzip');
+    expect(gz.headers.get('vary')).toContain('Accept-Encoding');
+    expect(await gz.text()).toContain('export const x');
+    const raw = await new Promise((resolve) => {
+      http.get(hostOriginUrl + '/big.js', { headers: { 'x-poc-target': upstreamOrigin } }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ enc: res.headers['content-encoding'], body: Buffer.concat(chunks).toString() }));
+      });
+    });
+    expect(raw.enc).toBeUndefined();
+    expect(raw.body).toContain('export const x');
   });
 
   test('?__target= request WITH x-poc-target (SW-relayed) proxies directly + injects the shim', async () => {
