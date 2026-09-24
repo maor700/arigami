@@ -4552,7 +4552,15 @@ export async function handle(
     }
     if (p === '/__api/mcp/servers' && m === 'GET') {
       const mcp = await import('./mcp-auth.js');
-      return json(res, await (mcp as any).listServers(u.searchParams.get('force') === '1', u.searchParams.get('cwd') || ''));
+      const listed = (await (mcp as any).listServers(u.searchParams.get('force') === '1', u.searchParams.get('cwd') || '')) as any[];
+      const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
+      if (!gatewayEnabled()) return json(res, listed);
+      // The host's own grants replace a CLI entry of the same name (lib/mcp-grants.ts statusOverlay).
+      const grants = await import('./lib/mcp-grants.js');
+      const overlay = grants.statusOverlay('global');
+      const merged = listed.map((sv) => (overlay[sv.name] ? { ...sv, ...overlay[sv.name] } : sv));
+      for (const [name, o] of Object.entries(overlay)) if (!merged.some((sv) => sv.name === name)) merged.push({ name, endpoint: grants.getGrant(name)?.url || '', ...o });
+      return json(res, merged);
     }
     if (p === MCP_OAUTH_CALLBACK && m === 'GET') {
       const grants = await import('./lib/mcp-grants.js');
@@ -4588,6 +4596,9 @@ export async function handle(
     if (p === '/__api/mcp/logout' && m === 'POST') {
       const mcp = await import('./mcp-auth.js');
       const body = (await readBody(req)) as any;
+      // A host-held grant: Sign out is its disconnect (tokens, record, any CLI twin).
+      const hostGrant = (await import('./lib/mcp-grants.js')).getGrant(String(body?.name || ''));
+      if (hostGrant) return json(res, await disconnectCapability(`mcp:${hostGrant.slug}`, hostGrant.owner as caps.Owner));
       return json(res, await (mcp as any).logout(body?.name, body?.cwd));
     }
     if (p === '/__api/models' && m === 'GET') {

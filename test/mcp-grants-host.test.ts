@@ -176,6 +176,7 @@ beforeAll(async () => {
     claudeStub,
     `#!/usr/bin/env bun
 const fs = require('node:fs');
+if (process.argv[2] === 'mcp') { process.stdout.write('fakevendor: http://x/mcp (HTTP) - ! Needs authentication\\n'); process.exit(0); }
 if (process.env.ARIGAMI_SESSION_ID) {
   const i = process.argv.indexOf('--mcp-config');
   fs.writeFileSync(${JSON.stringify(out)} + '/' + process.env.ARIGAMI_SESSION_ID, JSON.stringify({ token: process.env.ARIGAMI_TOKEN || '', mcp: i > 0 ? process.argv[i + 1] : null }));
@@ -299,9 +300,19 @@ test("a comment becomes a card and reaches the vendor only on a person's Send, u
   expect(toolCalls.map((t) => [t.tool, t.args])).toEqual([['save_comment', { issueId: 'ISSUE-1', body: 'Fixed in the latest build.' }]]);
 });
 
+test("the /mcp panel shows the host's grant as connected, not the CLI's stale twin", async () => {
+  const list = await person('GET', '/__api/mcp/servers?force=1');
+  const row = list.json.find((r: any) => r.name === 'fakevendor');
+  expect(row).toMatchObject({ status: 'connected', source: 'arigami' });
+  const s = await newSession('panel');
+  const probe = await person('POST', `/__api/sessions/${s.id}/mcp/check`, { force: true });
+  expect(probe.json.mcp.servers.fakevendor).toMatchObject({ status: 'connected', source: 'arigami' });
+}, 60000);
+
 test('Disconnect forgets the grant; the gateway stops serving it', async () => {
   const s = await newSession('after');
-  const d = await person('DELETE', '/__api/setup/mcp:fakevendor');
+  // the panel's Sign out is the host disconnect
+  const d = await person('POST', '/__api/mcp/logout', { name: 'fakevendor' });
   expect(d.status).toBe(200);
   const r = await fetch(`${base}/__mcp/s/fakevendor`, {
     method: 'POST',

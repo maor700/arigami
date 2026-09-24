@@ -92,6 +92,22 @@ export function grantsFor(owner: string): Grant[] {
   return [...bySlug.values()];
 }
 
+/**
+ * How the host's own grants read in a server list (the /mcp panel, a session's
+ * health map). `claude mcp list` cannot see them — it reports a CLI grant of the
+ * same name instead, often a stale one — so these entries replace it.
+ */
+export function statusOverlay(owner: string): Record<string, { status: string; statusText: string; source: 'arigami' }> {
+  const out: Record<string, { status: string; statusText: string; source: 'arigami' }> = {};
+  for (const g of listGrants()) {
+    if (g.owner !== 'global' && g.owner !== owner) continue;
+    out[g.name] = isLive(g.name)
+      ? { status: 'connected', statusText: 'connected via Arigami', source: 'arigami' }
+      : { status: 'needs-auth', statusText: 'sign in again (Settings › Connections)', source: 'arigami' };
+  }
+  return out;
+}
+
 export function remove(name: string): boolean {
   const had = !!getGrant(name);
   patch(name, () => null);

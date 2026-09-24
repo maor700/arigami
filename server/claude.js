@@ -927,6 +927,12 @@ export async function checkMcp(id, force = false) {
       for (const sv of parseList(out)) {
         patch[sv.name] = { status: sv.status, statusText: sv.statusText, source: 'probe' };
       }
+      // The host's own grants (lib/mcp-grants.ts) are what this session really
+      // uses under those names; `claude mcp list` only sees the CLI's.
+      if (gatewayEnabled()) {
+        const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+        Object.assign(patch, hostGrants.statusOverlay(slug ? `agent:${slug}` : 'global'));
+      }
       patchMcp(id, patch, { checkedAt: Date.now() });
       return getSession(id)?.claude?.mcp || null;
     } finally {
