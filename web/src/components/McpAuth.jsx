@@ -182,9 +182,12 @@ export default function McpAuth({ session, cwd }) {
                 </button>
               )}
             </div>
-            {active && (flow.state === 'starting' || flow.state === 'awaiting') && (
+            {active && (flow.state === 'starting' || flow.state === 'awaiting') && flow.auto?.status === 'running' && (
+              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">{t('setup.connect.running', { name: s.name })}</div>
+            )}
+            {active && (flow.state === 'starting' || flow.state === 'awaiting') && flow.auto?.status !== 'running' && (
               <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">
-                {t('launcher.mcp.opening')}
+                {flow.auto?.reason ? `${t('setup.connect.needsYou', { name: s.name })} ${flow.auto.reason}. ` : t('launcher.mcp.opening')}
                 {flow.url && (
                   <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-[#2C6BD6] underline">
                     {t('launcher.mcp.openLink')}

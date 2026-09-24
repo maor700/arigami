@@ -22,6 +22,7 @@ export class Cdp {
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private ready: Promise<void>;
+  private listeners = new Set<(method: string, params: any, sessionId?: string) => void>();
 
   constructor(wsUrl: string) {
     this.ws = new WebSocket(wsUrl);
@@ -34,6 +35,16 @@ export class Cdp {
       try {
         msg = JSON.parse(String(ev.data));
       } catch {
+        return;
+      }
+      if (msg.method && msg.id == null) {
+        for (const fn of this.listeners) {
+          try {
+            fn(msg.method, msg.params, msg.sessionId);
+          } catch {
+            /* a listener must not break the socket */
+          }
+        }
         return;
       }
       const p = msg.id != null ? this.pending.get(msg.id) : null;
@@ -75,6 +86,12 @@ export class Cdp {
       });
       this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
+  }
+
+  /** Protocol events (e.g. Fetch.requestPaused, Target.targetCreated). Returns an unsubscribe. */
+  on(fn: (method: string, params: any, sessionId?: string) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
   }
 
   close(): void {

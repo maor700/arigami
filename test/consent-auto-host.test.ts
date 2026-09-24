@@ -1,16 +1,10 @@
-// Remote MCP grants held by the host (server/lib/mcp-grants.ts), end to end, on
-// a running host with auth ON against a fake vendor that does real OAuth 2.1
-// (discovery, dynamic client registration, PKCE, refresh) and serves MCP.
+// The host connects a service BY ITSELF (server/lib/consent-runner.ts) on a
+// running host with auth ON, a real headless Chrome as the owner's browser, and
+// a fake vendor that does real OAuth 2.1 and shows a real consent page.
 //
-//   - Connect (the same setup API every screen uses) returns the vendor's
-//     authorize URL; the vendor's redirect lands on the host and finishes it
-//   - a callback with a state the host never issued is refused
-//   - a session is spawned with the grant over the gateway, under its own name
-//   - a read reaches the vendor with the host's token; an expired token is
-//     refreshed without anyone signing in again
-//   - a comment files an outbound card and reaches the vendor only on a
-//     person's Send, unchanged
-//   - Disconnect forgets the grant; the gateway no longer serves it
+//   - Connect: the host walks the consent page itself; nobody opens anything
+//   - the connection is live and recorded; the automatic attempt says "approved"
+//   - a session that was already running restarts by itself and now has it
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,6 +25,7 @@ let base = '';
 let cookie = '';
 let out = '';
 let ws = '';
+let hostErr = '';
 
 // ---- the fake vendor ---------------------------------------------------------------
 const codes = new Map<string, { challenge: string; redirect: string; client: string }>();
@@ -85,13 +80,16 @@ function startVendor() {
         return Response.json({ ...b, client_id: id }, { status: 201 });
       }
       if (u.pathname === '/authorize') {
-        // The person consents: back to the redirect with a code.
+        // the owner is signed in at the vendor: the consent page, naming the callback
         const code = 'code-' + Math.random().toString(36).slice(2);
         codes.set(code, { challenge: u.searchParams.get('code_challenge') || '', redirect: u.searchParams.get('redirect_uri') || '', client: u.searchParams.get('client_id') || '' });
         const back = new URL(u.searchParams.get('redirect_uri')!);
         back.searchParams.set('code', code);
         back.searchParams.set('state', u.searchParams.get('state') || '');
-        return new Response(null, { status: 302, headers: { location: back.toString() } });
+        return new Response(
+          `<!doctype html><meta charset="utf-8"><h2>Arigami is requesting access</h2><p>Redirect URIs: ${u.searchParams.get('redirect_uri')}</p><button id="ok">Approve</button><button>Cancel</button><script>document.getElementById('ok').onclick = () => { location.href = ${JSON.stringify(back.toString())}; };</script>`,
+          { headers: { 'content-type': 'text/html' } }
+        );
       }
       if (u.pathname === '/token' && req.method === 'POST') {
         const f = new URLSearchParams(await req.text());
@@ -163,7 +161,7 @@ const text = (r: any) => String((r.content || []).map((c: any) => c.text).join('
 
 beforeAll(async () => {
   startVendor();
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-grants-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-consent-auto-'));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');
@@ -186,6 +184,7 @@ if (process.env.ARIGAMI_SESSION_ID) {
 }
 const o=(x)=>process.stdout.write(JSON.stringify(x)+'\\n');
 o({type:'system',subtype:'init',session_id:'s',model:'m',tools:[],mcp_servers:[]});
+o({type:'result',subtype:'success',result:'ok',session_id:'s',is_error:false});
 setInterval(()=>{},1e6);`,
     { mode: 0o755 }
   );
@@ -203,7 +202,6 @@ setInterval(()=>{},1e6);`,
       ARIGAMI_CLAUDE_BIN: claudeStub,
       ARIGAMI_DEFAULT_CWD: ws,
       ARIGAMI_PUBLIC_URL: '',
-      ARIGAMI_CONSENT_AUTO: '0', // this file walks the person's path; lib/consent-runner.ts has its own test
       CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
       COMPOSIO_API_KEY: '',
       GH_TOKEN: '',
@@ -212,7 +210,8 @@ setInterval(()=>{},1e6);`,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
-  host.stderr!.on('data', (d) => (err += d));
+  host.stderr!.on('data', (d) => ((err += d), (hostErr += d)));
+  host.stdout!.on('data', (d) => (hostErr += d));
   await until(async () => {
     try {
       return (await fetch(base + '/__health', { signal: AbortSignal.timeout(2000) })).ok;
@@ -233,113 +232,41 @@ afterAll(() => {
   vendor?.stop(true);
 });
 
-test('Connect returns the vendor authorize URL; the redirect lands on the host and finishes it', async () => {
+const HAVE_CHROME = (() => {
+  try {
+    return !!require('../server/lib/chrome.ts').chromeBin();
+  } catch {
+    return false;
+  }
+})();
+
+test.skipIf(!HAVE_CHROME)('Connect: the host walks the consent itself, and a running session picks it up', async () => {
+  const before = await newSession('already-running');
+  expect(before.mcp.mcpServers.fakevendor).toBeUndefined();
+  const spawnFile = path.join(out, before.id);
+  fs.rmSync(spawnFile); // the next spawn of this session writes it again
+
   const start = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'start' });
-  expect(start.status).toBe(200);
   expect(start.json.state).toBe('awaiting');
-  const authorize = new URL(start.json.url);
-  expect(authorize.origin + authorize.pathname).toBe(`${vbase}/authorize`);
-  expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
-  const redirect = new URL(authorize.searchParams.get('redirect_uri')!);
-  expect(redirect.pathname).toBe('/__api/mcp-oauth/callback');
-  // the person consents at the vendor; the vendor sends the browser back
-  const consent = await fetch(authorize, { redirect: 'manual' });
-  const back = new URL(consent.headers.get('location')!);
-  // the browser that lands there has no Arigami credential at all
-  const landed = await fetch(`${base}${back.pathname}${back.search}`);
-  expect(landed.status).toBe(200);
-  expect(await landed.text()).toContain('Connected');
-  const poll = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
-  expect(poll.json.state).toBe('done');
-  // Claude Code's same-named registration was removed (it would block the host's entry)
-  expect(fs.readFileSync(path.join(dir, 'cli-calls.log'), 'utf8')).toContain('mcp remove fakevendor -s user');
-  const cap = await person('GET', '/__api/setup/capabilities/mcp%3Afakevendor');
-  expect(cap.json.ok ?? cap.json.status?.ok).toBe(true);
-  // nothing secret comes back
-  expect(JSON.stringify([start.json, poll.json, cap.json])).not.toContain(accessToken);
-  expect(fs.statSync(path.join(dir, 'mcp-grants.json')).mode & 0o777).toBe(0o600);
-});
+  expect(start.json.auto).toEqual({ status: 'running' });
+  // nobody opens the vendor's page: the host does
+  const done = await until(async () => {
+    const p = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
+    return p.json.state === 'done' ? p.json : null;
+  }, 60_000);
+  expect(done.heldBy).toBe('host');
+  expect(tokenIssues).toBeGreaterThan(0);
+  // the automatic attempt is on record, with its evidence
+  const audit = await until(async () => {
+    const a = fs.existsSync(path.join(dir, 'connections.log')) ? fs.readFileSync(path.join(dir, 'connections.log'), 'utf8') : '';
+    return a.includes('"mode":"auto"') ? a : null;
+  }, 20_000);
+  expect(audit).toContain('"result":"ok"');
 
-test('starting a new sign-in and abandoning it keeps the grant working', async () => {
-  const again = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'start' });
-  expect(again.json.state).toBe('awaiting'); // a fresh consent is asked for…
-  const poll = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
-  expect(poll.json.state).toBe('awaiting'); // the new sign-in is what is being waited on…
-  const g = JSON.parse(fs.readFileSync(path.join(dir, 'mcp-grants.json'), 'utf8')).grants.fakevendor;
-  expect(!!g.tokens?.access_token).toBe(true); // …but the grant it would replace keeps its tokens
-  await person('POST', '/__api/setup/mcp:fakevendor', { action: 'cancel' });
-  const after = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
-  expect(after.json.state).toBe('done'); // abandoned: still connected
-});
-
-test('a callback with a state the host never issued is refused', async () => {
-  const r = await fetch(`${base}/__api/mcp-oauth/callback?code=x&state=forged`);
-  expect(r.status).toBe(400);
-});
-
-test('a session gets the grant over the gateway under its own name, and reads with the host token', async () => {
-  const s = await newSession('reader');
-  expect(s.mcp.mcpServers.fakevendor).toEqual({ type: 'http', url: `${base}/__mcp/s/fakevendor`, headers: { Authorization: 'Bearer ${ARIGAMI_TOKEN}' } });
-  const c = await mcp('fakevendor', s.token);
-  try {
-    expect(text(await c.callTool({ name: 'list_issues', arguments: {} }))).toBe('ISSUE-1');
-    // the vendor's token expires: the host refreshes it, nobody signs in again
-    accessToken = 'expired-elsewhere';
-    const before = refreshes;
-    // (the vendor now rejects the old token and only the refresh gets a new one)
-    const r = await c.callTool({ name: 'list_issues', arguments: {} });
-    expect(text(r)).toBe('ISSUE-1');
-    expect(refreshes).toBe(before + 1);
-  } finally {
-    await c.close();
-  }
-  expect(toolCalls.every((t) => t.auth === `Bearer at-${t === toolCalls[0] ? 1 : tokenIssues}`)).toBe(true);
-});
-
-test("a comment becomes a card and reaches the vendor only on a person's Send, unchanged", async () => {
-  const s = await newSession('commenter');
-  toolCalls.length = 0;
-  const c = await mcp('fakevendor', s.token);
-  try {
-    const r = JSON.parse(text(await c.callTool({ name: 'save_comment', arguments: { issueId: 'ISSUE-1', body: 'Fixed in the latest build.' } })));
-    expect(r.pending).toBe(true);
-  } finally {
-    await c.close();
-  }
-  expect(toolCalls.length).toBe(0);
-  const card = (await person('GET', `/__api/sessions/${s.id}`)).json.action;
-  expect(card.kind).toBe('outbound');
-  expect(card.prompt).toContain('ISSUE-1');
-  expect(card.prompt).toContain('Fixed in the latest build.');
-  const self = await fetch(`${base}/__api/sessions/${s.id}/action/answer`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${s.token}` }, body: JSON.stringify({ value: 'send' }) });
-  expect(self.status).toBe(403);
-  expect(toolCalls.length).toBe(0);
-  expect((await person('POST', `/__api/sessions/${s.id}/action/answer`, { value: 'send' })).status).toBe(200);
-  expect(toolCalls.map((t) => [t.tool, t.args])).toEqual([['save_comment', { issueId: 'ISSUE-1', body: 'Fixed in the latest build.' }]]);
-});
-
-test("the /mcp panel shows the host's grant as connected, not the CLI's stale twin", async () => {
-  const list = await person('GET', '/__api/mcp/servers?force=1');
-  const row = list.json.find((r: any) => r.name === 'fakevendor');
-  expect(row).toMatchObject({ status: 'connected', source: 'arigami' });
-  // the session panel: the CLI's stale twin says "Needs authentication" in the probe — the row does not
-  const s = await newSession('panel');
-  await person('POST', `/__api/sessions/${s.id}/mcp/check`, { force: true });
-  const rows = (await person('GET', `/__api/sessions/${s.id}/mcp/servers`)).json.servers;
-  expect(rows.filter((r: any) => r.name === 'fakevendor')).toEqual([{ name: 'fakevendor', via: 'gateway', kind: 'grant', status: 'connected', statusText: 'connected via Arigami', logout: 'host' }]);
-  expect(rows.find((r: any) => r.name === 'arigami')).toMatchObject({ via: 'gateway', status: 'connected' });
-}, 60000);
-
-test('Disconnect forgets the grant; the gateway stops serving it', async () => {
-  const s = await newSession('after');
-  // the panel's Sign out is the host disconnect
-  const d = await person('POST', '/__api/mcp/logout', { name: 'fakevendor' });
-  expect(d.status).toBe(200);
-  const r = await fetch(`${base}/__mcp/s/fakevendor`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${s.token}` },
-    body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
-  });
-  expect(r.status).toBe(404);
-  expect(JSON.parse(fs.readFileSync(path.join(dir, 'mcp-grants.json'), 'utf8')).grants.fakevendor).toBeUndefined();
-});
+  // the running session restarted by itself and now carries the service
+  const respawn = await until(async () => (fs.existsSync(spawnFile) ? JSON.parse(fs.readFileSync(spawnFile, 'utf8')) : null), 20_000);
+  expect(JSON.parse(respawn.mcp).mcpServers.fakevendor?.url).toBe(`${base}/__mcp/s/fakevendor`);
+  const chat = (await person('GET', `/__api/sessions/${before.id}/chat`)).json;
+  const events = Array.isArray(chat) ? chat : chat.events || [];
+  expect(events.some((e: any) => e.kind === 'system' && /fakevendor is connected now/.test(e.text || ''))).toBe(true);
+}, 120_000);

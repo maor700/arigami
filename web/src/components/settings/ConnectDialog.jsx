@@ -9,6 +9,7 @@ import { toast, toastError } from '../../lib/toast.js';
 import * as setupApi from '../../lib/setup-api.js';
 import { stepFor } from '../setup/index.js';
 import { capTitle, consentKeys } from '../setup/registry.js';
+import ConnectStep from '../setup/ConnectStep.jsx';
 import { BTN_SM, BTN2_SM } from '../setup/shared.jsx';
 import { faXmark, faWandMagicSparkles, faHand } from '@fortawesome/free-solid-svg-icons';
 
@@ -19,6 +20,8 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
   const [mode, setMode] = useState(autoAllowed ? 'auto' : 'manual');
   const [busy, setBusy] = useState(false);
   const Step = stepFor(cap.manual?.kind);
+  // A remote service (mcp:*) has one way in: the ConnectStep (host tries first).
+  const isService = String(cap.id || '').startsWith('mcp:') && cap.manual?.kind === 'oauth';
   const title = cap.title || capTitle(t, cap.id);
   const auto = async () => {
     setBusy(true);
@@ -41,7 +44,12 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
           <span className="text-[14px] font-bold">{t('setup.connections.connectTitle', { name: title })}</span>
           <button type="button" onClick={onClose} className="ms-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg" aria-label={t('setup.cancel')}><Icon icon={faXmark} /></button>
         </div>
-        {cap.autoCapable && (
+        {isService && (
+          <div className="mt-3">
+            <ConnectStep capability={cap.id} owner={ownerAgent ? owner : undefined} title={title} onDone={() => { onChanged?.(); onClose(); }} onCancel={onClose} />
+          </div>
+        )}
+        {!isService && cap.autoCapable && (
           <div className="mt-3">
             <div role="radiogroup" className="flex gap-1 rounded-[8px] border border-border p-0.5">
               {seg('auto', faWandMagicSparkles, t('setup.mode.auto'))}
@@ -50,7 +58,7 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
             {!autoAllowed && <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{identity ? t('setup.mode.autoUnavailable') : t('setup.mode.needsIdentity')}</div>}
           </div>
         )}
-        <div className="mt-3">
+        {!isService && <div className="mt-3">
           {mode === 'auto' && autoAllowed ? (
             <>
               <ul className="list-disc ps-5 text-[11.5px] leading-relaxed text-fgdim">
@@ -66,7 +74,7 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
           ) : (
             <Step capability={cap.id} manual={cap.manual || {}} enabled={!!cap.ok} detail={cap.detail} have={cap.data?.repos || []} owner={ownerAgent ? owner : undefined} onDone={() => { onChanged?.(); onClose(); }} />
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
