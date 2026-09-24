@@ -489,7 +489,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
           )}
 
           {tab === 'mcp' && (
-            <McpAuth session={session} sessionServers={caps.mcpServers} cwd={session?.metadata?.worktree || session?.cwd} />
+            <McpAuth session={session} cwd={session?.metadata?.worktree || session?.cwd} />
           )}
 
           {tab === 'skills' &&

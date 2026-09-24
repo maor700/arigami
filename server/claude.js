@@ -16,6 +16,7 @@ import { HOST_MARK } from './lib/session-procs.js';
 import { gatewayEnabled, claudeEntry, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
 import { composioKey } from './lib/composio-mcp.js';
 import * as hostGrants from './lib/mcp-grants.js';
+import * as sessionMcp from './lib/session-mcp.js';
 import * as scratch from './lib/scratch.js';
 import { cfg, CHAT_DIR, getSession, patchSession, setClaude, setBg, listSessions, untildify, setChangesExplaining, setAutoReviewing, removePendingPrompt, setSummarizing, autoPlayHold, listInbox, patchInboxItem } from './state.js';
 import { broadcast } from './bus.js';
@@ -195,7 +196,13 @@ function claudeModelArgs({ model, effort } = {}) {
 }
 
 function claudeInjectMcp(s) {
-  return ['--mcp-config', mcpConfigFor(s)];
+  const config = mcpConfigFor(s);
+  // What this proc really loads from us (lib/session-mcp.ts reads it for the /mcp panel).
+  try {
+    const servers = JSON.parse(config).mcpServers || {};
+    sessionMcp.recordSpawn(s.id, Object.entries(servers).map(([name, sv]) => sessionMcp.classify(name, sv)));
+  } catch {}
+  return ['--mcp-config', config];
 }
 
 const claudePermissions = { kind: 'mcp-tool', tool: 'mcp__arigami__permission_prompt' };
@@ -865,6 +872,13 @@ const MCP_DOWN_RE =
 
 // Exported for the codex driver (server/codex.ts): its stream carries the same
 // live-tool-result health signal in a different shape.
+/** codex app-server `mcpServer/startupStatus/updated`: the engine's own word on a server it started. */
+export function noteMcpStartup(id, name, status, error, failureReason) {
+  if (!name) return;
+  const map = { ready: 'connected', starting: 'pending', failed: failureReason === 'reauthenticationRequired' ? 'needs-auth' : 'failed', cancelled: 'failed' };
+  patchMcp(id, { [name]: { status: map[status] || 'unknown', statusText: error ? String(error).slice(0, 160) : String(status || ''), source: 'engine' } });
+}
+
 export function noteMcpResult(id, server, block) {
   const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
   if (!block.is_error) {
@@ -920,18 +934,14 @@ export async function checkMcp(id, force = false) {
   if (mcpProbes.has(id)) return mcpProbes.get(id);
   const p = (async () => {
     try {
+      // Codex loads only its config.toml: Claude's own servers are not its servers.
+      if (s.engine === 'codex') return getSession(id)?.claude?.mcp || null;
       const { runClaude, parseList } = await import('./mcp-auth.js');
       const cwd = untildify(s.metadata?.worktree || s.cwd) || HOME;
       const out = await runClaude(['mcp', 'list'], 25_000, cwd, { ...baseEnv(), ...accountEnv(s) });
       const patch = {};
       for (const sv of parseList(out)) {
         patch[sv.name] = { status: sv.status, statusText: sv.statusText, source: 'probe' };
-      }
-      // The host's own grants (lib/mcp-grants.ts) are what this session really
-      // uses under those names; `claude mcp list` only sees the CLI's.
-      if (gatewayEnabled()) {
-        const slug = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
-        Object.assign(patch, hostGrants.statusOverlay(slug ? `agent:${slug}` : 'global'));
       }
       patchMcp(id, patch, { checkedAt: Date.now() });
       return getSession(id)?.claude?.mcp || null;

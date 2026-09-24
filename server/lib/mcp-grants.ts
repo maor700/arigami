@@ -275,7 +275,11 @@ export async function finishFromPaste(name: string, pasted: string, opts: { fetc
     code = u.searchParams.get('code') || '';
     state = u.searchParams.get('state') || '';
   } catch {
-    return { ok: false, error: 'paste the whole address the browser ended on (it contains ?code=…&state=…)' };
+    // A bare code (what some vendors show on their own page): it belongs to the
+    // latest sign-in this host opened for this name.
+    code = pasted.trim().split('#')[0];
+    state = flowOf(name)?.state || '';
+    if (!/^[\w.~-]{4,}$/.test(code)) return { ok: false, error: 'paste the whole address the browser ended on (it contains ?code=…&state=…)' };
   }
   const flow = flows.get(state);
   if (!code || !flow || flow.name !== name) return { ok: false, error: 'that address does not belong to this sign-in — start it again' };

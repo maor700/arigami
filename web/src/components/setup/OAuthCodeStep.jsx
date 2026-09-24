@@ -36,6 +36,12 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
   const { busy, err, run, setErr } = useAction();
   const pollRef = useRef(null);
   const doneRef = useRef(false);
+  // The parent passes a fresh onDone on every render (and it re-renders on every
+  // live update). As an effect dependency that restarted the poll each time and
+  // dropped the reply already in flight, so a finished sign-in never closed the
+  // dialog. Read it through a ref instead.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   // device/redirect flows: poll the server until it reports the credential.
   // F8: pkce too when the consent runs in a session desktop — the host reads
@@ -51,7 +57,8 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
         if (r?.device?.code && !link.code) setLink((l) => ({ ...l, code: r.device.code, url: r.device.url || l.url }));
         if ((r?.ok || r?.state === 'done' || r?.device?.state === 'done') && !doneRef.current) {
           doneRef.current = true;
-          onDone?.(r);
+          clearInterval(pollRef.current);
+          onDoneRef.current?.(r);
         }
       } catch (e) {
         if (!cancelled) setErr(e.message);
@@ -59,7 +66,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
     };
     pollRef.current = setInterval(tick, POLL_MS);
     return () => { cancelled = true; clearInterval(pollRef.current); };
-  }, [mode, flow, link, capability, onDone, setErr, sessionId]);
+  }, [mode, flow, link, capability, setErr, sessionId]);
 
   const start = () =>
     run(async () => {

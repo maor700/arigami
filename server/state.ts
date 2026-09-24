@@ -52,6 +52,8 @@ interface McpServerHealth {
 }
 
 interface ClaudeState {
+  /** lib/session-mcp.ts: the MCP servers the engine was last spawned with */
+  mcpLoaded?: { at: number; servers: Array<{ name: string; via: string; kind: string }> };
   sessionId: string | null;
   state: string;
   permissionMode: string;

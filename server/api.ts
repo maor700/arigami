@@ -1910,15 +1910,81 @@ async function hostMcpLogin(name: string, action: 'start' | 'poll', req: Incomin
   }
 }
 
+async function sessionMcpRows(s: any) {
+  const sm = await import('./lib/session-mcp.js');
+  const grants = await import('./lib/mcp-grants.js');
+  const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
+  const { composioKey } = await import('./lib/composio-mcp.js');
+  const extensions = await import('./extensions.js');
+  const agent = typeof s.metadata?.agent === 'string' && s.metadata.agent ? s.metadata.agent : null;
+  const owner = agent ? `agent:${agent}` : caps.GLOBAL_OWNER;
+  const codexGrants = mcpConn.readCodexMcpGrants();
+  const snapshot = Array.isArray(s.claude?.capabilities?.mcpServers) ? s.claude.capabilities.mcpServers : [];
+  return sm.rows({
+    engine: s.engine === 'codex' ? 'codex' : 'claude',
+    loaded: s.claude?.mcpLoaded?.servers || null,
+    health: s.claude?.mcp?.servers || {},
+    snapshot: s.engine === 'codex' ? [] : snapshot,
+    hostGrant: (name) => {
+      const g = grants.getGrant(name);
+      return g && (g.owner === 'global' || g.owner === owner) ? { live: grants.isLive(name) } : null;
+    },
+    composioKey: !!composioKey(),
+    extensionLoaded: (name) => extensions.getExtension(name)?.state === 'loaded',
+    codexGrantLive: (name) => codexGrants.get(name) === true,
+    cliTwin: (name) => s.engine !== 'codex' && mcpConn.cliRegistrations(name).length > 0,
+    hostCanLogin: (name) => {
+      if (!gatewayEnabled()) return false;
+      const { slug } = mcpCat.parseGrantName(name);
+      const spec = mcpCat.mcpSpec(slug);
+      return !!spec && spec.auth === 'oauth' && mcpCat.grantName(slug, owner) === name;
+    },
+  });
+}
+
+/**
+ * The host now holds `name`: take Claude Code's own registration of it (and its
+ * token) out of the way — a same-named server in Claude's config keeps the
+ * host's entry from ever connecting (mcp-connections.ts cliRegistrations). An
+ * agent's grant only touches that agent's own directory.
+ */
+export async function retireCliTwins(name: string, owner: caps.Owner): Promise<string[]> {
+  const agentDir = caps.ownerSlug(owner) ? mcpScope(owner).cwd : null;
+  const regs = mcpConn.cliRegistrations(name).filter((r) => (agentDir ? r.scope === 'local' && r.cwd === agentDir : true));
+  if (!regs.length) return [];
+  const done: string[] = [];
+  const hadToken = mcpConn.readMcpState().grants.has(name);
+  for (const r of regs) {
+    try {
+      if (hadToken && !done.length) await mcpAuth.logout(name, r.cwd);
+      await mcpAuth.removeServer(name, { scope: r.scope, cwd: r.cwd });
+      done.push(r.scope === 'user' ? 'user' : `local:${r.cwd}`);
+    } catch {
+      /* best effort; the next connect or boot sweep tries again */
+    }
+  }
+  if (done.length) console.log(`[mcp] ${name} is held by the host now — removed Claude Code's own registration (${done.join(', ')})`);
+  return done;
+}
+
+/** Boot: a grant the host already holds must not have a CLI twin left over from before. */
+export async function sweepCliTwins(): Promise<void> {
+  const { gatewayEnabled } = await import('./lib/mcp-gateway.js');
+  if (!gatewayEnabled()) return;
+  const grants = await import('./lib/mcp-grants.js');
+  for (const g of grants.listGrants()) if (grants.isLive(g.name)) await retireCliTwins(g.name, g.owner as caps.Owner).catch(() => []);
+}
+
 /** applyMcpSetup for a host-held grant: {action:'start'|'poll'|'code'|'cancel'} or a bearer {token}. */
 async function applyHostMcpSetup(spec: mcpCat.McpServerSpec, body: any, owner: caps.Owner, name: string, url: string, origin: string): Promise<Record<string, unknown>> {
   const grants = await import('./lib/mcp-grants.js');
   const action = String(body?.action || '');
   const g = { name, slug: spec.slug, owner, url };
-  const done = () => {
+  const done = async () => {
     const { connection, toolsAdded } = recordMcpConnection(owner, spec, name, url);
     grants.cancelLogin(name);
-    return { ok: true, state: 'done', name, owner, connection, heldBy: 'host', ...(toolsAdded ? { toolsAdded } : {}) };
+    const replaced = await retireCliTwins(name, owner).catch(() => []);
+    return { ok: true, state: 'done', name, owner, connection, heldBy: 'host', ...(replaced.length ? { replacedCli: replaced } : {}), ...(toolsAdded ? { toolsAdded } : {}) };
   };
   if (spec.auth === 'bearer') {
     if (action === 'poll') return { ok: grants.isLive(name), name, owner };
@@ -4571,7 +4637,10 @@ export async function handle(
       if (r.ok && r.name) {
         const g = grants.getGrant(r.name);
         const spec = g ? mcpCat.mcpSpec(g.slug) : null;
-        if (g && spec) recordMcpConnection(g.owner as caps.Owner, spec, g.name, g.url);
+        if (g && spec) {
+          recordMcpConnection(g.owner as caps.Owner, spec, g.name, g.url);
+          await retireCliTwins(g.name, g.owner as caps.Owner).catch(() => []);
+        }
         if (g) try { broadcast({ type: 'setup.changed', capability: `mcp:${g.slug}`, owner: g.owner }); } catch {}
       }
       const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -6288,6 +6357,10 @@ export async function handle(
     // session's cwd under the session's account env, folded into the live
     // claude.mcp health map the /mcp panel renders (updates arrive via the
     // session-updated broadcast). force=true bypasses the short probe cache.
+    // The session's MCP servers as they really are (lib/session-mcp.ts) — what the /mcp panel renders.
+    if (sub === 'mcp/servers' && m === 'GET') {
+      return json(res, { servers: await sessionMcpRows(s) });
+    }
     if (sub === 'mcp/check' && m === 'POST') {
       try {
         const body = (await readBody(req)) as any;

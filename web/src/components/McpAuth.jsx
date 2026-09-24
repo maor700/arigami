@@ -1,13 +1,12 @@
-// MCP server health + auth for the /mcp panel. Status is derived from REAL
-// availability, not the init-time snapshot: the session's live health map
-// (claude.mcp — fed by the init event, live tool results, and per-session
-// `claude mcp list` probes under the session's own account) wins, overlaid on
-// the daemon's `claude mcp list` and the capability snapshot for names. Rows
-// whose server dropped (degraded / needs-reconnect after an account switch)
-// get a Reconnect action that restarts the session's claude proc in place —
-// the same path as restart_session — which re-establishes the connections.
-// Login drives `claude mcp login <name>` server-side (browser OAuth);
-// claude.ai connectors apply on the next session.
+// MCP servers of ONE session for the /mcp panel. The rows come from the host
+// (GET /sessions/:id/mcp/servers, server/lib/session-mcp.ts): exactly the
+// servers this session's engine was started with, each with the status of the
+// thing that really serves it — the host itself (arigami, extensions, Composio,
+// a remote grant the host holds), Claude Code's own config, or a Codex grant.
+// Each row also says what a person can do: sign in / sign out through the host
+// or through the CLI, or Reconnect (restart the session's engine in place, the
+// same path as restart_session) when the session needs a fresh start to pick
+// up a change — e.g. a service just connected through the host.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { confirmDialog } from '../lib/confirm.js';
@@ -30,29 +29,26 @@ const DOT = {
 // Statuses a proc restart actually fixes (vs needs-auth, which needs a login).
 const RECONNECTABLE = new Set(['degraded', 'needs-reconnect', 'failed', 'error']);
 
-export default function McpAuth({ session, sessionServers, cwd }) {
+export default function McpAuth({ session, cwd }) {
   const t = useT();
-  const [fetched, setFetched] = useState(null);
+  const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [err, setErr] = useState('');
   const [flow, setFlow] = useState(null); // active login: { name, state, url, error }
   const restarting = session?.claude?.state === 'restarting';
 
-  const load = useCallback(async (force) => {
+  const load = useCallback(async () => {
+    if (!session?.id) return;
     try {
-      const q = new URLSearchParams();
-      if (force) q.set('force', '1');
-      if (cwd) q.set('cwd', cwd);
-      const qs = q.toString();
-      setFetched(await api.get(`/mcp/servers${qs ? `?${qs}` : ''}`));
+      setRows((await api.get(`/sessions/${session.id}/mcp/servers`)).servers || []);
     } catch (e) {
       setErr(e?.message || String(e));
     }
-  }, [cwd]);
+  }, [session?.id]);
 
-  // Trigger the per-session availability probe; the resulting health map
-  // arrives through the session-updated broadcast (session.claude.mcp).
+  // Trigger the per-session availability probe (Claude's own servers); the
+  // verdicts arrive through the session-updated broadcast and re-render below.
   const check = useCallback(async (force) => {
     if (!session?.id) return;
     setChecking(true);
@@ -62,43 +58,25 @@ export default function McpAuth({ session, sessionServers, cwd }) {
       /* probe failure just leaves the last verdicts in place */
     } finally {
       setChecking(false);
+      load();
     }
-  }, [session?.id]);
+  }, [session?.id, load]);
 
-  useEffect(() => { load(false); check(false); }, [load, check]);
+  useEffect(() => { load(); check(false); }, [load, check]);
+  // Any new verdict (init, probe, a live tool call, a respawn) → re-read the rows.
+  const healthAt = session?.claude?.mcp?.checkedAt;
+  const loadedAt = session?.claude?.mcpLoaded?.at;
+  const healthKey = JSON.stringify(Object.values(session?.claude?.mcp?.servers || {}).map((h) => [h.status, h.at]));
+  useEffect(() => { load(); }, [load, healthAt, loadedAt, healthKey]);
 
-  // A reconnect just finished → re-probe so the rows settle to real verdicts
-  // (the init event only reports again on the session's next turn).
+  // A reconnect just finished → re-probe so the rows settle to real verdicts.
   const prevRestarting = useRef(false);
   useEffect(() => {
     if (prevRestarting.current && !restarting) check(true);
     prevRestarting.current = restarting;
   }, [restarting, check]);
 
-  // Names: union of the live health map, the session capability snapshot (the
-  // complete set — it includes claude.ai connectors the daemon's `claude mcp
-  // list` can't see) and the daemon list. Status precedence: live health (the
-  // only account-aware, re-validated source) → daemon health check → snapshot.
-  const health = session?.claude?.mcp?.servers || {};
-  const daemonByName = Object.fromEntries((fetched || []).map((s) => [s.name, s]));
-  const capsByName = Object.fromEntries((sessionServers || []).map((s) => [s.name, s]));
-  const names = [...new Set([
-    ...(sessionServers || []).map((s) => s.name),
-    ...Object.keys(health),
-    ...(fetched || []).map((s) => s.name),
-  ])];
-  const servers = names.length
-    ? names.map((name) => {
-        const h = health[name];
-        const d = daemonByName[name];
-        const c = capsByName[name];
-        return {
-          name,
-          status: h?.status || d?.status || c?.status || 'unknown',
-          statusText: h?.statusText || d?.statusText || c?.status || '',
-        };
-      })
-    : fetched;
+  const servers = rows;
 
   // Poll an in-progress login until it settles, then refresh the list.
   useEffect(() => {
@@ -110,7 +88,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
         const s = await api.get(`/mcp/login/status?name=${encodeURIComponent(flow.name)}`);
         if (!live) return;
         setFlow(s);
-        if (s.state === 'done') { live = false; load(true); return; }
+        if (s.state === 'done') { live = false; load(); return; }
       } catch { /* keep polling */ }
       if (live) t = setTimeout(poll, 1500);
     };
@@ -142,7 +120,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
     setErr('');
     try {
       await api.post('/mcp/logout', { name, cwd });
-      await load(true);
+      await check(true);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -183,7 +161,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   <Icon icon={faRotateRight} /> {t('launcher.mcp.reconnect')}
                 </button>
               )}
-              {status !== 'connected' && !RECONNECTABLE.has(status) && !restarting && (
+              {s.login && status !== 'connected' && !RECONNECTABLE.has(status) && !restarting && (
                 <button
                   type="button"
                   disabled={busy}
@@ -193,7 +171,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
                   {t('launcher.mcp.authenticate')}
                 </button>
               )}
-              {status === 'connected' && (
+              {s.logout && status === 'connected' && (
                 <button
                   type="button"
                   disabled={busy}
@@ -227,7 +205,7 @@ export default function McpAuth({ session, sessionServers, cwd }) {
         <button
           type="button"
           disabled={checking}
-          onClick={() => { load(true); check(true); }}
+          onClick={() => check(true)}
           className="rounded-md border border-border px-2.5 py-1 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
         >
           <Icon icon={faRotateRight} /> {checking ? t('launcher.mcp.checking') : t('launcher.mcp.checkNow')}

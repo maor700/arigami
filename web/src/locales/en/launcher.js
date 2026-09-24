@@ -426,5 +426,5 @@ export const strings = {
   'launcher.mcp.checking': 'Checking…',
   'launcher.mcp.checkNow': 'Check now',
   'launcher.mcp.statusHint':
-    'Status is re-checked live (per-server health check on this session’s account). Reconnect restarts the session’s {engine} process to re-establish dropped servers.',
+    'The servers this session’s {engine} was started with, each checked where it is really served: by Arigami, by the engine’s own config, or by a live tool call. Reconnect restarts the session’s {engine} process, which also picks up services connected since it started.',
 };

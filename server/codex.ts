@@ -62,6 +62,7 @@ import { HOST_MARK } from './lib/session-procs.js';
 import { gatewayEnabled, codexEntry, COMPOSIO_SERVER } from './lib/mcp-gateway.js';
 import { composioKey } from './lib/composio-mcp.js';
 import * as hostGrants from './lib/mcp-grants.js';
+import * as sessionMcp from './lib/session-mcp.js';
 import * as scratch from './lib/scratch.js';
 import { pickDriver } from './lib/screen-driver.js';
 import { registerEngine } from './lib/engine-driver.js';
@@ -339,6 +340,11 @@ function mcpTables(s: Session, st: CodexSessionState): string[] {
     ...(cfg.publicUrl ? { ARIGAMI_PUBLIC_URL: cfg.publicUrl } : {}),
   };
 
+  // What this codex really loads (lib/session-mcp.ts reads it for the /mcp panel).
+  sessionMcp.recordSpawn(
+    s.id,
+    Object.entries(servers).map(([name, sv]) => (remote.granted[name] === sv ? { name, via: 'codex-grant' as const, kind: 'grant' as const } : sessionMcp.classify(name, sv)))
+  );
   const out: string[] = [];
   for (const [name, sv] of Object.entries(servers)) {
     const header = `[mcp_servers.${tkey(name)}]`;

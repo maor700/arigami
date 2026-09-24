@@ -16,6 +16,7 @@ import { which, HOME } from './lib/platform.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { mcpCatalog, connectableMcp, mcpSpec, grantName, grantToolPattern } from './mcp-catalog.js';
 import * as mcpConn from './mcp-connections.js';
+import * as hostGrants from './lib/mcp-grants.js';
 import { cfg } from './lib/config.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import * as ob from './onboarding.js';
@@ -56,6 +57,9 @@ export interface ManualSpec {
   start?: string;
   // Free-form instructions shown on the card.
   help?: string;
+  // oauth: which sign-in the UI runs (web/src/components/setup/OAuthCodeStep.jsx) —
+  // 'mcp' polls until the grant is live, the paste-back is only the fallback.
+  flow?: 'pkce' | 'mcp' | 'codex' | 'device' | 'redirect';
 }
 
 export interface Capability {
@@ -718,11 +722,14 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
           if (engines.length && !heldElsewhere.length) heldElsewhere = engines;
           continue;
         }
+        // Who holds it matters to a person: the host's grant serves every engine;
+        // an engine's own (`claude mcp login`) serves only that engine.
+        const heldBy = hostGrants.isHostHeld(conn.name) ? 'host' : 'engine';
         return {
           ok: true,
           owner: from,
-          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''} · ${engines.join(', ')}`,
-          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, engines, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
+          detail: `connected as ${conn.name}${from !== owner ? ' (shared)' : ''} · ${heldBy === 'host' ? 'via Arigami, every engine' : `${engines.join(', ')} only`}`,
+          data: { name: conn.name, url: conn.url, auth: conn.auth || spec.auth, owner: from, engines, heldBy, tools: grantToolPattern(conn.name), docs: spec.docs, ...(spec.note ? { note: spec.note } : {}) },
         };
       }
       if (engine && heldElsewhere.length)
@@ -750,6 +757,9 @@ function mcpCapability(slug: string, p: CapabilityProbes, owner: Owner = GLOBAL_
           }
         : {
             kind: 'oauth',
+            // 'mcp': start → the vendor's page → poll until the grant is live (the
+            // redirect lands on the host by itself); pasting the final URL is the fallback.
+            flow: 'mcp' as const,
             help: `Opens ${title}'s own consent screen. The token is stored on this host — no third party in between.`,
           },
     autoCapable: spec?.auth === 'oauth',

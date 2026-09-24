@@ -22,6 +22,7 @@ import { HOME } from './lib/platform.js';
 import { ARIGAMI_DIR } from './lib/instance.js';
 import { grantName, mcpSpec, type McpAuth } from './mcp-catalog.js';
 import * as hostGrants from './lib/mcp-grants.js';
+import { claudeJsonPath } from './lib/mcp-servers.js';
 
 export interface McpConnection {
   /** capability id — `mcp:<slug>` */
@@ -217,6 +218,22 @@ export function codexServersFor(owner: string, codex: Map<string, boolean> = rea
     }
   }
   return { granted, claudeOnly };
+}
+
+/**
+ * Where Claude Code itself registers `name` (user scope, or local scope in a
+ * project dir). A host-held grant must not have such a twin: measured on
+ * Claude Code, a same-named OAuth server in its own config makes it report the
+ * host's --mcp-config entry as "needs auth" too and never connect it.
+ */
+export function cliRegistrations(name: string): Array<{ scope: 'user' | 'local'; cwd?: string }> {
+  const cfg = readJson<any>(claudeJsonPath(), null);
+  const out: Array<{ scope: 'user' | 'local'; cwd?: string }> = [];
+  if (cfg?.mcpServers && Object.prototype.hasOwnProperty.call(cfg.mcpServers, name)) out.push({ scope: 'user' });
+  for (const [dir, proj] of Object.entries((cfg?.projects || {}) as Record<string, any>)) {
+    if (proj?.mcpServers && Object.prototype.hasOwnProperty.call(proj.mcpServers, name)) out.push({ scope: 'local', cwd: dir });
+  }
+  return out;
 }
 
 export { grantName };

@@ -28,7 +28,7 @@ import {
   onLimitText,
   onTurnEnd,
 } from './codex.js';
-import { appendChat, describeAttachment, noteMcpResult, updateUsage, noteTurnUsage, recordTurn, ensureRunning } from './claude.js';
+import { appendChat, describeAttachment, noteMcpResult, noteMcpStartup, updateUsage, noteTurnUsage, recordTurn, ensureRunning } from './claude.js';
 
 /** Approval cards wait as long as a screen request (api.ts SCREEN_REQUEST_TIMEOUT_MS), then answer `cancel`. */
 export const APPROVAL_TIMEOUT_MS = Number(process.env.ARIGAMI_CODEX_APPROVAL_TIMEOUT_MS) || 30 * 60 * 1000;
@@ -688,6 +688,9 @@ function appHandleEvent(id: string, raw: unknown): void {
       break;
     case 'thread/tokenUsage/updated':
       onUsage(id, st, p.tokenUsage);
+      break;
+    case 'mcpServer/startupStatus/updated':
+      noteMcpStartup(id, p.name, p.status, p.error, p.failureReason);
       break;
     case 'thread/settings/updated': {
       const model = p.threadSettings?.model;

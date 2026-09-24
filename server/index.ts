@@ -371,6 +371,9 @@ try {
 // transcript — is removed on a timer by the host, never by an agent deciding
 // what counts as leftovers (see reap.ts).
 (await import('./reap.js')).startSweeper((m) => console.log(m));
+// A grant the host holds must not keep a same-named twin in Claude Code's own
+// config (it stops the host's entry from connecting) — clear any left over.
+setTimeout(() => void import('./api.js').then((a: any) => a.sweepCliTwins()).catch(() => {}), 5_000).unref?.();
 
 // A session's idle Chrome closes after ARIGAMI_BROWSER_IDLE_MS (10 min) and
 // reopens on its next browser step — unless a human may be looking at it.

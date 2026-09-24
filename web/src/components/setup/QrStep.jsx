@@ -2,7 +2,7 @@
 // returns (a data: URL or host-relative image), poll until linked. The QR is
 // scanned from the phone's WhatsApp, so this step is often viewed on a
 // laptop while the phone does the scanning — or on a second phone.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n.js';
 import * as setupApi from '../../lib/setup-api.js';
 import { BTN2, ErrorBox, OkLine, Spinner, useAction } from './shared.jsx';
@@ -17,6 +17,10 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
   // Poll while the bridge is starting / waiting for a scan.
   const stateNow = typeof st?.status === 'string' ? st.status : st?.status?.data?.status;
   const active = stateNow === 'qr' || stateNow === 'starting';
+  // Through a ref: a fresh onDone per parent render must not restart the poll
+  // and drop the reply in flight (see OAuthCodeStep).
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
     if (!active) return undefined;
     let cancelled = false;
@@ -26,14 +30,14 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
         if (cancelled) return;
         setSt(r);
         const rs = typeof r?.status === 'string' ? r.status : r?.status?.data?.status;
-        if (rs === 'connected') onDone?.(r);
+        if (rs === 'connected') onDoneRef.current?.(r);
       } catch (e) {
         if (!cancelled) setErr(e.message);
       }
     };
     const id = setInterval(tick, POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, [active, capability, onDone, setErr]);
+  }, [active, capability, setErr]);
 
   const connect = () => run(async () => setSt(await setupApi.connect(capability, { action: 'connect' })));
   const qr = st?.qr || st?.qrUrl || st?.status?.data?.qr;

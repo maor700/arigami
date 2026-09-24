@@ -170,13 +170,16 @@ beforeAll(async () => {
   ws = path.join(dir, 'ws');
   out = path.join(dir, 'spawned');
   for (const d of [home, ws, out, path.join(dir, 'user')]) fs.mkdirSync(d, { recursive: true });
+  // Claude Code's own config already registers the same name (the stale twin)
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', '.claude.json'), JSON.stringify({ mcpServers: { fakevendor: { type: 'http', url: `${vbase}/mcp` } } }));
   fs.writeFileSync(path.join(dir, 'user', 'mcp-catalog.json'), JSON.stringify([{ slug: 'fakevendor', title: 'Fake Vendor', url: `${vbase}/mcp`, auth: 'oauth', domains: ['127.0.0.1'] }]));
   const claudeStub = path.join(dir, 'claude-stub.js');
   fs.writeFileSync(
     claudeStub,
     `#!/usr/bin/env bun
 const fs = require('node:fs');
-if (process.argv[2] === 'mcp') { process.stdout.write('fakevendor: http://x/mcp (HTTP) - ! Needs authentication\\n'); process.exit(0); }
+if (process.argv[2] === 'mcp') { fs.appendFileSync(${JSON.stringify(dir)} + '/cli-calls.log', process.argv.slice(2).join(' ') + '\\n'); if (process.argv[3] === 'list') process.stdout.write('fakevendor: http://x/mcp (HTTP) - ! Needs authentication\\n'); process.exit(0); }
 if (process.env.ARIGAMI_SESSION_ID) {
   const i = process.argv.indexOf('--mcp-config');
   fs.writeFileSync(${JSON.stringify(out)} + '/' + process.env.ARIGAMI_SESSION_ID, JSON.stringify({ token: process.env.ARIGAMI_TOKEN || '', mcp: i > 0 ? process.argv[i + 1] : null }));
@@ -247,6 +250,8 @@ test('Connect returns the vendor authorize URL; the redirect lands on the host a
   expect(await landed.text()).toContain('Connected');
   const poll = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
   expect(poll.json.state).toBe('done');
+  // Claude Code's same-named registration was removed (it would block the host's entry)
+  expect(fs.readFileSync(path.join(dir, 'cli-calls.log'), 'utf8')).toContain('mcp remove fakevendor -s user');
   const cap = await person('GET', '/__api/setup/capabilities/mcp%3Afakevendor');
   expect(cap.json.ok ?? cap.json.status?.ok).toBe(true);
   // nothing secret comes back
@@ -304,9 +309,12 @@ test("the /mcp panel shows the host's grant as connected, not the CLI's stale tw
   const list = await person('GET', '/__api/mcp/servers?force=1');
   const row = list.json.find((r: any) => r.name === 'fakevendor');
   expect(row).toMatchObject({ status: 'connected', source: 'arigami' });
+  // the session panel: the CLI's stale twin says "Needs authentication" in the probe — the row does not
   const s = await newSession('panel');
-  const probe = await person('POST', `/__api/sessions/${s.id}/mcp/check`, { force: true });
-  expect(probe.json.mcp.servers.fakevendor).toMatchObject({ status: 'connected', source: 'arigami' });
+  await person('POST', `/__api/sessions/${s.id}/mcp/check`, { force: true });
+  const rows = (await person('GET', `/__api/sessions/${s.id}/mcp/servers`)).json.servers;
+  expect(rows.filter((r: any) => r.name === 'fakevendor')).toEqual([{ name: 'fakevendor', via: 'gateway', kind: 'grant', status: 'connected', statusText: 'connected via Arigami', logout: 'host' }]);
+  expect(rows.find((r: any) => r.name === 'arigami')).toMatchObject({ via: 'gateway', status: 'connected' });
 }, 60000);
 
 test('Disconnect forgets the grant; the gateway stops serving it', async () => {
