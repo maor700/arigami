@@ -174,6 +174,9 @@ class HostProvider {
     patch(this.name, (g) => ({ ...g, client: info, redirect: this.redirect }));
   }
   tokens() {
+    // During a sign-in the vendor must be asked afresh; the grant's current
+    // tokens stay in place (and keep working) until the new ones arrive.
+    if (this.flow) return undefined;
     return getGrant(this.name)?.tokens as any;
   }
   saveTokens(tokens: any) {
@@ -225,11 +228,18 @@ export async function startLogin(
   sweepFlows();
   const all = readAll();
   const prev = all[g.name];
-  // A new sign-in starts from no tokens; a client registered for this same
-  // redirect is kept (re-registering on every login would litter the vendor).
-  all[g.name] = { ...g, auth: 'oauth', at: new Date().toISOString(), ...(prev?.redirect === redirect && prev?.client ? { client: prev.client, redirect } : {}) };
+  // A sign-in that is started but never finished must not cost the grant it
+  // replaces: the current tokens stay until finishLogin saves new ones. A client
+  // registered for this same redirect is kept (re-registering every time would
+  // litter the vendor); a different redirect means a new registration.
+  const keepClient = prev?.redirect === redirect && prev?.client;
+  all[g.name] = {
+    ...(prev || {}),
+    ...g,
+    auth: 'oauth',
+    ...(keepClient ? { client: prev!.client, redirect } : { client: undefined, redirect }),
+  };
   writeAll(all);
-  dropClient(g.name);
   for (const [k, f] of flows) if (f.name === g.name) flows.delete(k);
   const flow: Flow = { name: g.name, state: randomBytes(24).toString('hex'), status: 'awaiting', url: null, error: null, at: Date.now() };
   flows.set(flow.state, flow);

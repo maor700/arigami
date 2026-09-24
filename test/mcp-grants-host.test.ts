@@ -259,6 +259,16 @@ test('Connect returns the vendor authorize URL; the redirect lands on the host a
   expect(fs.statSync(path.join(dir, 'mcp-grants.json')).mode & 0o777).toBe(0o600);
 });
 
+test('starting a new sign-in and abandoning it keeps the grant working', async () => {
+  const again = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'start' });
+  expect(again.json.state).toBe('awaiting'); // a fresh consent is asked for…
+  const poll = await person('POST', '/__api/setup/mcp:fakevendor', { action: 'poll' });
+  expect(poll.json.state).toBe('done'); // …but the grant it would replace is still live
+  const g = JSON.parse(fs.readFileSync(path.join(dir, 'mcp-grants.json'), 'utf8')).grants.fakevendor;
+  expect(!!g.tokens?.access_token).toBe(true);
+  await person('POST', '/__api/setup/mcp:fakevendor', { action: 'cancel' });
+});
+
 test('a callback with a state the host never issued is refused', async () => {
   const r = await fetch(`${base}/__api/mcp-oauth/callback?code=x&state=forged`);
   expect(r.status).toBe(400);
