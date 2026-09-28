@@ -27,6 +27,8 @@ beforeAll(() => {
      let ws = null;
      for (let i = 0; i < 50 && !ws; i++) { const tabs = await listTabs('', port); ws = tabs.find(t => t.type === 'page' && t.url.startsWith('data:'))?.webSocketDebuggerUrl; if (!ws) await new Promise(r => setTimeout(r, 100)); }
      const ev = (e) => cdpCall(ws, 'Runtime.evaluate', { expression: e, returnByValue: true }).then(r => r.result.value);
+     // the target is listed before the document is parsed on a slow runner — wait for the field to exist
+     for (let i = 0; i < 100; i++) { if (await ev("document.readyState === 'complete' && !!document.getElementById('t')").catch(() => false)) break; await new Promise(r => setTimeout(r, 100)); }
      // paste: cursor after "hello"
      await ev("const t = document.getElementById('t'); t.focus(); t.setSelectionRange(5, 5); true");
      await dc.insertAt(port, ' big');
