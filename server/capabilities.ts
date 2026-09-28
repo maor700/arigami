@@ -877,9 +877,14 @@ export async function formatDoctor(probes: Partial<CapabilityProbes> = {}): Prom
   return lines.join('\n');
 }
 
+// Not a real top-level await: `bun build --compile` (the desktop sidecar) refuses
+// any require() whose transitive dependency awaits at module scope, and
+// claude.js reaches this file through one. Same shape as the CLI block in
+// extensions.ts — a fire-and-forget IIFE that the event loop still runs to
+// completion before a `bun server/capabilities.ts doctor` process exits.
 if (import.meta.main && process.argv[2] === 'doctor') {
   process.env.ARIGAMI_FUNNEL_QUIET = '1';
-  console.log(await formatDoctor());
+  void (async () => { console.log(await formatDoctor()); })();
 }
 
 // Keep the path helper visible for tests/tools.
