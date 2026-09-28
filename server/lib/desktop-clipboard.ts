@@ -43,6 +43,11 @@ export async function selectionAt(port: number | null): Promise<string> {
 
 export async function insertAt(port: number | null, text: string): Promise<void> {
   const ws = await frontWs(port);
+  // Input.insertText goes to the focused editable of a page that HAS focus. A
+  // Chrome under Xvfb (or headless) is never the OS-focused window, so without
+  // this the text is dropped on the floor and the field stays as it was —
+  // measured in test/desktop-clipboard.test.ts before this line existed.
+  await cdpCall(ws, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
   await cdpCall(ws, 'Input.insertText', { text });
 }
 
