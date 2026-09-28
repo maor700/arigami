@@ -43,11 +43,17 @@ export async function selectionAt(port: number | null): Promise<string> {
 
 export async function insertAt(port: number | null, text: string): Promise<void> {
   const ws = await frontWs(port);
-  // Input.insertText goes to the focused editable of a page that HAS focus. A
-  // Chrome under Xvfb (or headless) is never the OS-focused window, so without
-  // this the text is dropped on the floor and the field stays as it was —
-  // measured in test/desktop-clipboard.test.ts before this line existed.
-  await cdpCall(ws, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+  // Insert at the DOM level first: execCommand('insertText') edits the focused
+  // field or contenteditable at its cursor, fires the input events, and does not
+  // care whether the window has OS focus — a Chrome under Xvfb (or headless)
+  // never does, and Input.insertText silently drops the text there (measured in
+  // test/desktop-clipboard.test.ts). Input.insertText stays as the fallback for
+  // pages where nothing editable has focus.
+  const r = await cdpCall(ws, 'Runtime.evaluate', {
+    expression: `(() => { const a = document.activeElement; const editable = a && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.isContentEditable); return editable ? document.execCommand('insertText', false, ${JSON.stringify(text)}) : false; })()`,
+    returnByValue: true,
+  }).catch(() => null);
+  if (r?.result?.value === true) return;
   await cdpCall(ws, 'Input.insertText', { text });
 }
 
