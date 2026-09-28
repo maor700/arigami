@@ -1,6 +1,6 @@
 [package]
 name = "arigami-desktop"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Arigami desktop shell (Tauri v2) — window, tray, splash and lifecycle around the arigami-host sidecar binary"
 license = "Apache-2.0"
