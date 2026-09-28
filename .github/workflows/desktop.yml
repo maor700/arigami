@@ -4,6 +4,9 @@
 #
 # How a run starts:
 #   git push --follow-tags  → on.push.tags, the whole matrix, files land on the
+#                             (GitHub lists a workflow only after a push to the
+#                             default branch touches its file — a repo created
+#                             from an existing tree needs one such push first)
 #                             Release for that tag.
 #   Run workflow            → any ref; `targets` picks the matrix lines (default
 #                             all). Without a tag the files are run artifacts
