@@ -294,6 +294,7 @@ function pollWorker(l: Listener, now: number): void {
       claudeState: worker.claude?.state,
       updatedAt: worker.updatedAt,
       result: (worker.metadata?.result as { state?: string; reportedAt?: string }) || null,
+      status: worker.status,
     },
     watermark: (l.watermark as unknown as WorkerWatermark) || { lastState: null, lastStallActivity: 0 },
     stallMs: (cfg.dispatcher?.stallTimeoutSec || 600) * 1000,

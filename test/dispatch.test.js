@@ -83,6 +83,18 @@ test('watchdog: retires when the worker reports a terminal result', () => {
   expect(ev({ claudeState: 'working', updatedAt: ago(5), result: { state: 'milestone' } }).action).toBe('none');
 });
 
+test('watchdog: retires on status "In Review" even with no report_to_master result', () => {
+  // request_review sets status directly and is a valid "told a human" signal on
+  // its own — a worker that only called it (no report_to_master) must not be
+  // treated as hung/stalled.
+  const d = ev({ claudeState: 'idle', updatedAt: ago(5), result: null, status: 'In Review' });
+  expect(d.action).toBe('retire');
+  expect(d.reason).toBe('in-review');
+  // an old idle "In Review" worker must not fall through to a stall either
+  const old = ev({ claudeState: 'idle', updatedAt: ago(9000), result: null, status: 'In Review' });
+  expect(old.action).toBe('retire');
+});
+
 test('watchdog: fires crash once on transition to dead, then de-dupes', () => {
   const first = ev({ claudeState: 'dead', updatedAt: ago(5) }, wm({ lastState: 'working' }));
   expect(first.action).toBe('crash');
