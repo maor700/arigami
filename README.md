@@ -4,6 +4,10 @@
 Codex) that runs on real desktops, hands you the wheel when it needs you, and learns your business only
 with your approval.**
 
+**Website:** [arigami-site.vercel.app](https://arigami-site.vercel.app) · **Film (42 s):** click the poster
+
+[![Arigami in 42 seconds: one workspace for Claude Code and Codex](docs/media/film-poster.jpg)](https://github.com/maor700/arigami/releases/download/v0.5.1/arigami-film.mp4)
+
 ![Arigami hands you the wheel: a child agent hits 2FA on its own desktop, pushes to your phone, you type the code, it continues](docs/media/hands-you-the-wheel.gif)
 
 ## Install in 60s
