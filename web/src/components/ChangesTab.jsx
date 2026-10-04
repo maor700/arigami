@@ -300,6 +300,13 @@ export default function ChangesTab({ session, active }) {
   const [listOpen, setListOpen] = useState(false); // mobile: file/feature list sheet
   const [fullscreen, setFullscreen] = useState(false); // mobile: file diff as a full-screen overlay
   const [changesMode, setChangesMode] = useState(() => defaultChangesMode(session)); // 'work' | 'uncommitted' | 'pr'
+  // A review session queued from a PR learns it is one a moment after it starts (its first
+  // act is to stamp metadata.pr): follow that ONCE, unless the human already picked a mode.
+  const modeTouchedRef = useRef(false);
+  const isPrSession = !!(session.metadata?.prNumber || session.metadata?.pr);
+  useEffect(() => {
+    if (isPrSession && !modeTouchedRef.current) setChangesMode('pr');
+  }, [isPrSession]);
   const [refs, setRefs] = useState(null);
   // Comparison base for pr/work: '' = server default (origin/<default branch>).
   const [defaultBase, setDefaultBase] = useState(() => loadDefaultBase());
@@ -369,6 +376,7 @@ export default function ChangesTab({ session, active }) {
   useEffect(() => { if (switchOffer?.mode === changesMode) setSwitchOffer(null); }, [changesMode, switchOffer]);
   const acceptSwitchOffer = () => {
     if (!switchOffer) return;
+    modeTouchedRef.current = true;
     setChangesMode(switchOffer.mode);
     setFeatureIdx(null);
     setSwitchOffer(null);
@@ -599,7 +607,7 @@ export default function ChangesTab({ session, active }) {
             <button
               key={m}
               type="button"
-              onClick={() => { setChangesMode(m); setFeatureIdx(null); setSelected(null); resetHistory(); }}
+              onClick={() => { modeTouchedRef.current = true; setChangesMode(m); setFeatureIdx(null); setSelected(null); resetHistory(); }}
               disabled={m === 'pr' && !prAvailable}
               title={
                 m === 'pr' && !prAvailable

@@ -288,7 +288,10 @@ const prepare: ToolDef<{ pr: string; mode?: string }> = {
       if (!c.ok) return { error: c.err.trim() || `could not clone ${ref.slug}` };
     }
 
-    const f = await gh(['api', `repos/${ref.slug}`, '--jq', '.default_branch'], 20_000);
+    // The branch the PR TARGETS (not the repo's default: a PR into a release branch must
+    // be diffed against that), falling back to the default branch.
+    const pb = await gh(['pr', 'view', String(ref.number), '--repo', ref.slug, '--json', 'baseRefName', '--jq', '.baseRefName'], 20_000);
+    const f = pb.ok && pb.out.trim() ? pb : await gh(['api', `repos/${ref.slug}`, '--jq', '.default_branch'], 20_000);
     const base = f.ok ? f.out.trim() || 'main' : 'main';
     const git = async (a: string[], t = 180_000) => {
       const p = Bun.spawn(['git', '-C', clone, ...a], { stdout: 'pipe', stderr: 'pipe' });

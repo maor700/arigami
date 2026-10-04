@@ -284,7 +284,8 @@ async function isRemoteRef(cwd: string, ref: string): Promise<boolean> {
 
 async function resolveBaseRef(
   cwd: string,
-  override?: string | null
+  override?: string | null,
+  preferredDefault?: string | null
 ): Promise<{
   defaultBranch: string | null;
   baseRef: string | null;
@@ -298,6 +299,17 @@ async function resolveBaseRef(
     'refs/remotes/origin/HEAD',
   ]);
   if (oh.code === 0) def = oh.out.trim().replace(/^origin\//, '');
+  // A PR review session knows the branch its PR targets (metadata.prBase) — that, not
+  // the repo's default branch, is what the diff must be taken against.
+  const pref = typeof preferredDefault === 'string' ? preferredDefault.trim() : '';
+  if (pref && /^[A-Za-z0-9._\/-]+$/.test(pref) && !pref.startsWith('-') && !pref.includes('..')) {
+    for (const cand of [`origin/${pref}`, pref]) {
+      if ((await git(cwd, ['rev-parse', '--verify', '--quiet', `${cand}^{commit}`])).code === 0) {
+        def = pref;
+        break;
+      }
+    }
+  }
   if (!def) {
     for (const cand of ['main', 'master']) {
       if (
@@ -352,7 +364,7 @@ export async function listBaseRefs(
   const remote = (await list('refs/remotes')).filter(
     (r) => r !== 'origin' && !r.endsWith('/HEAD')
   );
-  const d = await resolveBaseRef(cwd);
+  const d = await resolveBaseRef(cwd, null, (s.metadata?.prBase as string) || null);
   return { local, remote, defaultRef: d.baseRef };
 }
 
@@ -372,7 +384,7 @@ async function resolveWorkBase(
   baseSource: 'metadata' | 'default' | 'override';
 }> {
   if (await validBaseOverride(cwd, override)) {
-    const d = await resolveBaseRef(cwd, override);
+    const d = await resolveBaseRef(cwd, override, (s.metadata?.prBase as string) || null);
     return { ...d, baseSource: 'override' };
   }
   const metaBase = s.metadata?.base ? String(s.metadata.base) : null;
@@ -389,7 +401,7 @@ async function resolveWorkBase(
       return { baseRef: remote, defaultBranch: metaBase, baseIsRemote: true, baseSource: 'metadata' };
     }
   }
-  const d = await resolveBaseRef(cwd);
+  const d = await resolveBaseRef(cwd, null, (s.metadata?.prBase as string) || null);
   return { baseRef: d.baseRef, defaultBranch: d.defaultBranch, baseIsRemote: d.baseIsRemote, baseSource: 'default' };
 }
 
@@ -412,7 +424,7 @@ export async function prStatus(
     const branch =
       (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim() ||
       null;
-    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd, baseOverride);
+    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd, baseOverride, (s.metadata?.prBase as string) || null);
     if (!baseRef)
       return { available: false, branch, defaultBranch, reason: 'no base branch' };
     const mergeBase = (await git(cwd, ['merge-base', baseRef, 'HEAD'])).out.trim();

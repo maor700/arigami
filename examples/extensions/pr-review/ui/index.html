@@ -263,11 +263,13 @@
           // repository" — no diff, and nowhere for an imported comment to hang.
           // A first clone is slow, so say what is happening.
           let cwd = null;
+          let prBase = null;
           if ($('mode').value !== 'nocheckout') {
             $('start').textContent = 'Checking the PR out…';
             const p = await callTool('pr_prepare', { pr: ref.url, mode: $('mode').value });
             if (p.error) throw new Error(p.error);
             cwd = p.cwd || null;
+            prBase = p.base || null;
           }
           $('start').textContent = 'Starting…';
 
@@ -281,7 +283,7 @@
             // prNumber is the key the host already reads: it is what makes the
             // published review land on THIS PR instead of "the open PR for the
             // current branch".
-            metadata: { pr: ref.url, prNumber: ref.number, repo: ref.slug, reviewMode: $('mode').value },
+            metadata: { pr: ref.url, prNumber: ref.number, repo: ref.slug, reviewMode: $('mode').value, ...(prBase ? { prBase } : {}) },
           });
           // The cockpit closes the launcher and opens the session from here.
         } catch (e) {

@@ -22,6 +22,12 @@ test('defaultChangesMode: "work" only for a session with both metadata.base and 
   expect(defaultChangesMode(null)).toBe('uncommitted');
 });
 
+test('defaultChangesMode: a session created from a PR opens on "pr" (wins over work)', () => {
+  expect(defaultChangesMode({ metadata: { pr: 'https://github.com/o/r/pull/7', prNumber: 7 } })).toBe('pr');
+  expect(defaultChangesMode({ metadata: { prNumber: 7, base: 'master', worktree: '/x' } })).toBe('pr');
+  expect(defaultChangesMode({ metadata: { pr: 'https://github.com/o/r/pull/7' } })).toBe('pr');
+});
+
 // ---- explanationSwitchOffer: never auto-switches ----------------------------
 
 const at = (iso, mode) => ({ generatedAt: iso, mode });

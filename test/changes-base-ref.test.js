@@ -59,3 +59,18 @@ test('listBaseRefs lists local and remote branches and the default ref', async (
   expect(refs.remote).not.toContain('origin/HEAD');
   expect(refs.defaultRef).toBe('origin/main');
 });
+
+test('a PR session\'s metadata.prBase is the default base — not the repo default branch', async () => {
+  const { cwd } = fixture();
+  // a release branch that the PR targets, 1 commit ahead of origin/main
+  run(cwd, 'git checkout -q -b release origin/main && echo r > r.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm R && git push -q origin release && git checkout -q feat');
+  const s = { cwd, metadata: { prBase: 'release' } };
+  const r = await changesFor(s, 'pr');
+  expect(r.baseRef).toBe('origin/release');
+  // feat is branched off origin/main, so against release it shows c.txt AND the release-only r.txt (reverse diff)
+  const plain = await changesFor({ cwd, metadata: {} }, 'pr');
+  expect(plain.baseRef).toBe('origin/main');
+  expect((await listBaseRefs(s)).defaultRef).toBe('origin/release');
+  // an unknown prBase falls back to the normal default
+  expect((await changesFor({ cwd, metadata: { prBase: 'nope' } }, 'pr')).baseRef).toBe('origin/main');
+});

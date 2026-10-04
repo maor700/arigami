@@ -5,8 +5,11 @@
 // The mode a session's Changes tab should open on when nothing was chosen yet.
 // A host-managed child worktree (F7: metadata.base + metadata.worktree) has a
 // canonical "this session's work" view (base..HEAD + working tree) — anything
-// else is a plain session and keeps today's default.
+// else is a plain session and keeps today's default. A PR review session opens on 'pr'.
 export function defaultChangesMode(session) {
+  // A review session created from a PR (metadata.pr / prNumber): the changes that matter
+  // are the PR's — head vs the branch it targets.
+  if (session?.metadata?.prNumber || session?.metadata?.pr) return 'pr';
   return session?.metadata?.base && session?.metadata?.worktree ? 'work' : 'uncommitted';
 }
 
