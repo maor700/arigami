@@ -36,6 +36,24 @@
         "title": "Review agent",
         "description": "Slug of the agent a review session is born from (list_agents). Empty = a plain session. The agent is what makes this mode thin: it already carries the persona, the skills and the model."
       },
+      "engine": {
+        "type": "string",
+        "default": "claude",
+        "title": "Engine",
+        "description": "claude or codex — the CLI the review session runs on."
+      },
+      "model": {
+        "type": "string",
+        "default": "",
+        "title": "Model",
+        "description": "Model for that engine (e.g. a claude alias, or gpt-5.6-terra for codex). Empty = the engine's default."
+      },
+      "effort": {
+        "type": "string",
+        "default": "",
+        "title": "Reasoning effort",
+        "description": "low | medium | high | xhigh | max (codex also: ultra). Empty = the model's default."
+      },
       "reviewMode": {
         "type": "string",
         "default": "worktree",
