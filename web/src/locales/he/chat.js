@@ -118,6 +118,8 @@ export const strings = {
   'chat.localBranches': 'ענפים מקומיים',
   'chat.setBaseDefault': 'הגדר כברירת מחדל',
   'chat.setBaseDefaultTitle': 'השתמש בבסיס הזה כברירת מחדל בלשונית השינויים',
+  'chat.baseSearch': 'חיפוש ענפים…',
+  'chat.baseNoMatch': 'אין ענפים תואמים',
   'chat.explanationReadyFor': 'הסבר {mode} חדש מוכן',
   'chat.showIt': 'הצג',
   'chat.committedMarker': 'קומט',

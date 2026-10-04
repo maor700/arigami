@@ -65,3 +65,9 @@ export function changesQuery(mode, base) {
   const q = `mode=${encodeURIComponent(mode)}`;
   return base && mode !== 'uncommitted' ? `${q}&base=${encodeURIComponent(base)}` : q;
 }
+
+// Case-insensitive substring filter for the base picker's search box.
+export function filterBaseRefs(refs, query) {
+  const q = String(query || '').trim().toLowerCase();
+  return q ? (refs || []).filter((r) => r.toLowerCase().includes(q)) : refs || [];
+}

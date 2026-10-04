@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
-import { defaultChangesMode, explanationSwitchOffer, newestExplanation, changesQuery, loadDefaultBase, saveDefaultBase } from '../lib/changesMode.js';
+import { defaultChangesMode, explanationSwitchOffer, newestExplanation, changesQuery, loadDefaultBase, saveDefaultBase, filterBaseRefs } from '../lib/changesMode.js';
 import { Truncate } from './Truncate.jsx';
 import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
@@ -214,6 +214,71 @@ function ChangesMenu({ noWorktree, expl, hasReview, explaining, reviewing, mode,
           <span className="block h-px bg-hair" />
           {filesCount > 0 && <Row label={t('chat.diffView')} value={mode === 'split' ? t('chat.split') : t('chat.inline')} keepOpen onClick={() => setMode(mode === 'split' ? 'inline' : 'split')} />}
           <Row label={loading ? t('chat.refreshingMenu') : <><Icon icon={faRotateRight} /> {t('chat.refreshCap')}</>} disabled={loading} onClick={onRefresh} />
+        </div>
+      )}
+    </span>
+  );
+}
+
+// Searchable branch picker for the comparison base. '' = server default.
+function BasePicker({ value, onChange, refs, defaultLabel, title }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open]);
+  const remote = filterBaseRefs(refs.remote, q);
+  const local = filterBaseRefs(refs.local, q);
+  const showDefault = !q.trim() || defaultLabel.toLowerCase().includes(q.trim().toLowerCase());
+  const pick = (v) => { onChange(v); setOpen(false); setQ(''); };
+  const Item = ({ v, label }) => (
+    <button
+      type="button"
+      onClick={() => pick(v)}
+      className={`block w-full truncate px-3 py-1.5 text-left font-mono text-[11px] hover:bg-chip ${v === value ? 'font-bold text-fg' : 'text-fgdim'}`}
+    >
+      {label || v}
+    </button>
+  );
+  return (
+    <span ref={ref} className="relative flex items-center">
+      <button
+        type="button"
+        title={title}
+        onClick={() => setOpen((v) => !v)}
+        className="max-w-[170px] truncate rounded-md border border-border bg-panel px-1.5 py-0.5 font-mono text-[10px] text-fg hover:border-ink"
+      >
+        {value || defaultLabel} ▾
+      </button>
+      {open && (
+        <div className="absolute top-[26px] left-0 z-30 w-[240px] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              const first = remote[0] || local[0];
+              if (first) pick(first);
+            }}
+            placeholder={t('chat.baseSearch')}
+            className="w-full border-b border-hair bg-transparent px-3 py-2 font-mono text-[11px] text-fg outline-none"
+          />
+          <div className="max-h-[260px] overflow-y-auto">
+            {showDefault && <Item v="" label={defaultLabel} />}
+            {remote.length > 0 && <div className="px-3 pt-1.5 text-[9.5px] uppercase text-fgdim">{t('chat.remoteBranches')}</div>}
+            {remote.map((r) => <Item key={`r:${r}`} v={r} />)}
+            {local.length > 0 && <div className="px-3 pt-1.5 text-[9.5px] uppercase text-fgdim">{t('chat.localBranches')}</div>}
+            {local.map((r) => <Item key={`l:${r}`} v={r} />)}
+            {!showDefault && !remote.length && !local.length && <div className="px-3 py-2 text-[11px] text-fgdim">{t('chat.baseNoMatch')}</div>}
+          </div>
         </div>
       )}
     </span>
@@ -558,16 +623,13 @@ export default function ChangesTab({ session, active }) {
         {(changesMode === 'work' || changesMode === 'pr') && refs && (
           <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim">
             {t('chat.compareAgainst')}
-            <select
+            <BasePicker
               value={baseSel}
-              onChange={(e) => setBaseSel(e.target.value)}
-              title={data?.baseIsRemote ? t('chat.comparedAgainstTitle', { base: data.baseRef }) : t('chat.comparedAgainstTitle', { base: data?.baseRef || '' })}
-              className="max-w-[170px] rounded-md border border-border bg-panel px-1.5 py-0.5 font-mono text-[10px] text-fg"
-            >
-              <option value="">{t('chat.baseDefault', { base: refs.defaultRef || data?.baseRef || '…' })}</option>
-              {refs.remote?.length > 0 && <optgroup label={t('chat.remoteBranches')}>{refs.remote.map((r) => <option key={`r:${r}`} value={r}>{r}</option>)}</optgroup>}
-              {refs.local?.length > 0 && <optgroup label={t('chat.localBranches')}>{refs.local.map((r) => <option key={`l:${r}`} value={r}>{r}</option>)}</optgroup>}
-            </select>
+              onChange={setBaseSel}
+              refs={refs}
+              defaultLabel={t('chat.baseDefault', { base: refs.defaultRef || data?.baseRef || '…' })}
+              title={t('chat.comparedAgainstTitle', { base: data?.baseRef || '' })}
+            />
             {baseSel !== defaultBase && (
               <button
                 type="button"

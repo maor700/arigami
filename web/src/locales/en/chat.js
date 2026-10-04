@@ -118,6 +118,8 @@ export const strings = {
   'chat.localBranches': 'Local branches',
   'chat.setBaseDefault': 'Set as default',
   'chat.setBaseDefaultTitle': 'Use this base as your default for the Changes tab',
+  'chat.baseSearch': 'Search branches…',
+  'chat.baseNoMatch': 'No matching branches',
   'chat.explanationReadyFor': 'A new {mode} explanation is ready',
   'chat.showIt': 'Show',
   'chat.committedMarker': 'Committed',

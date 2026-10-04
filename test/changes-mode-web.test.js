@@ -88,3 +88,13 @@ test('default base round-trips through storage; empty clears it', () => {
   saveDefaultBase('', storage);
   expect(loadDefaultBase(storage)).toBe('');
 });
+
+const { filterBaseRefs } = await import(path.join(ROOT, 'web/src/lib/changesMode.js'));
+
+test('filterBaseRefs: case-insensitive substring match; empty query returns everything', () => {
+  const refs = ['origin/main', 'origin/Release/1.0', 'feat/picker'];
+  expect(filterBaseRefs(refs, '')).toEqual(refs);
+  expect(filterBaseRefs(refs, '  REL ')).toEqual(['origin/Release/1.0']);
+  expect(filterBaseRefs(refs, 'zzz')).toEqual([]);
+  expect(filterBaseRefs(undefined, 'a')).toEqual([]);
+});
