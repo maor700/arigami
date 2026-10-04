@@ -35,3 +35,33 @@ export function explanationSwitchOffer(explanations, current, lastSeenAt) {
   if (newest.mode === current) return null; // already viewing it — no offer needed
   return { mode: newest.mode, generatedAt: g };
 }
+
+// ---- base picker -----------------------------------------------------------
+// Which ref the pr/work diff is compared against. '' = "server default", which
+// is origin/<default branch> (never a possibly-stale local branch). A user can
+// pin their own default (kept in localStorage); a per-tab pick overrides it.
+export const CHANGES_BASE_KEY = 'arigami-changes-base';
+
+export function loadDefaultBase(storage = globalThis.localStorage) {
+  try {
+    return String(storage?.getItem(CHANGES_BASE_KEY) || '');
+  } catch {
+    return '';
+  }
+}
+
+export function saveDefaultBase(base, storage = globalThis.localStorage) {
+  try {
+    if (base) storage?.setItem(CHANGES_BASE_KEY, base);
+    else storage?.removeItem(CHANGES_BASE_KEY);
+  } catch {
+    /* private mode / quota — the pick still applies for this tab */
+  }
+}
+
+// Query string for /changes, /changes/diff and /changes/refs. The base only
+// applies to the pr/work comparisons — 'uncommitted' is always vs HEAD.
+export function changesQuery(mode, base) {
+  const q = `mode=${encodeURIComponent(mode)}`;
+  return base && mode !== 'uncommitted' ? `${q}&base=${encodeURIComponent(base)}` : q;
+}

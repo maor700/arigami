@@ -5,8 +5,8 @@
 // stale merge-base once local master has moved on without a push, showing
 // everything merged into master since — not the child's own work. This file
 // covers the fix: a 'work' mode (metadata.base..HEAD + working tree, LOCAL
-// ref only) and honest base resolution (local preferred, origin only as a
-// last resort, and said so) for 'pr' too.
+// ref only) and honest base resolution (origin/<default> preferred for 'pr',
+// local only as a fallback or explicit user pick) for 'pr' too.
 import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,10 +160,10 @@ test('work mode identity changes when the committed range changes, and separatel
 
 // ---- the case that broke: a local base that's ahead of (newer than) origin -
 
-test('honest base resolution: prefers the LOCAL default branch even when origin is behind it, and says nothing is remote', async () => {
-  // main's local master gets commits that are never pushed — origin/master is
-  // now stale. A plain session (no metadata.base) in `main` asking for 'pr'
-  // must compare against local master, not the stale origin/master.
+test('base resolution: PR mode defaults to origin/<default> (never a stale/diverged local), and an explicit base override still selects the local branch', async () => {
+  // main's local master gets commits that are never pushed. The default must
+  // be origin/<default> — GitHub compares against the remote — and the user
+  // can still pick the local branch explicitly.
   commit(main, 'unrelated-1.txt', '1\n', 'unrelated landed on local master');
   commit(main, 'unrelated-2.txt', '2\n', 'more unrelated');
   expect(sh(main, 'rev-parse', 'master')).not.toBe(sh(main, 'rev-parse', 'origin/master'));
@@ -173,14 +173,13 @@ test('honest base resolution: prefers the LOCAL default branch even when origin 
   const s = sessionFor(r.dir, r.base);
 
   const st = await prStatus(s);
-  expect(st.baseRef).toBe('master'); // local, not origin/master
-  expect(st.baseIsRemote).toBe(false);
+  expect(st.baseRef).toBe('origin/master');
+  expect(st.baseIsRemote).toBe(true);
 
-  const pr = await changesFor(s, 'pr');
-  // only the child's own commit — none of the "unrelated" commits landed on
-  // local master after the fork show up, because merge-base(local master, HEAD)
-  // already includes them.
-  expect(pr.files.map((f) => f.path)).toEqual(['child.txt']);
+  const viaLocal = await changesFor(s, 'pr', 'master');
+  expect(viaLocal.baseRef).toBe('master');
+  expect(viaLocal.baseIsRemote).toBe(false);
+  expect(viaLocal.files.map((f) => f.path)).toEqual(['child.txt']);
 
   await removeWorktree(main, r.dir);
 });

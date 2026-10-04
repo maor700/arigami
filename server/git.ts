@@ -59,7 +59,7 @@ interface ChangesForResult {
   baseIsRemote?: boolean;
   // 'work' mode only: whether baseRef came from the session's stamped
   // metadata.base or the repo's ordinary default-branch resolution.
-  baseSource?: 'metadata' | 'default';
+  baseSource?: 'metadata' | 'default' | 'override';
   defaultBranch?: string | null;
   mergeBase?: string;
   headSha?: string;
@@ -262,7 +262,30 @@ function djb2(str: string): string {
   return (h >>> 0).toString(36);
 }
 
-async function resolveBaseRef(cwd: string): Promise<{
+// A user-chosen base ref must look like a ref name (no option injection, no
+// revision expressions) and actually resolve in this repo.
+export async function validBaseOverride(
+  cwd: string,
+  override: string | null | undefined
+): Promise<string | null> {
+  const o = typeof override === 'string' ? override.trim() : '';
+  if (!o || o.startsWith('-') || !/^[A-Za-z0-9._\/-]+$/.test(o) || o.includes('..'))
+    return null;
+  const ok = await git(cwd, ['rev-parse', '--verify', '--quiet', `${o}^{commit}`]);
+  return ok.code === 0 ? o : null;
+}
+
+async function isRemoteRef(cwd: string, ref: string): Promise<boolean> {
+  return (
+    (await git(cwd, ['rev-parse', '--verify', '--quiet', `refs/remotes/${ref}`]))
+      .code === 0
+  );
+}
+
+async function resolveBaseRef(
+  cwd: string,
+  override?: string | null
+): Promise<{
   defaultBranch: string | null;
   baseRef: string | null;
   baseIsRemote: boolean;
@@ -279,30 +302,58 @@ async function resolveBaseRef(cwd: string): Promise<{
     for (const cand of ['main', 'master']) {
       if (
         (await git(cwd, ['rev-parse', '--verify', '--quiet', cand])).code ===
-        0
+          0 ||
+        (await git(cwd, ['rev-parse', '--verify', '--quiet', `origin/${cand}`]))
+          .code === 0
       ) {
         def = cand;
         break;
       }
     }
   }
+  // An explicit user choice wins over the default.
+  const chosen = await validBaseOverride(cwd, override);
+  if (chosen)
+    return {
+      defaultBranch: def,
+      baseRef: chosen,
+      baseIsRemote: await isRemoteRef(cwd, chosen),
+    };
   if (!def) return { defaultBranch: null, baseRef: null, baseIsRemote: false };
-  // Prefer the LOCAL branch — even when it's ahead of origin, it's the truth
-  // on this host. Fall back to origin/<def> only when no local ref of that
-  // name exists, and say so (baseIsRemote) so a stale remote base is never
-  // silently trusted as if it were current.
-  if (
-    (await git(cwd, ['rev-parse', '--verify', '--quiet', def])).code === 0
-  ) {
-    return { defaultBranch: def, baseRef: def, baseIsRemote: false };
-  }
+  // Prefer origin/<def>: a local <def> on a host is routinely stale or diverged
+  // (a PR review once showed 225 files vs GitHub's 14). Fall back to the local
+  // branch only when there is no such remote-tracking ref.
   if (
     (await git(cwd, ['rev-parse', '--verify', '--quiet', `origin/${def}`]))
       .code === 0
   ) {
     return { defaultBranch: def, baseRef: `origin/${def}`, baseIsRemote: true };
   }
+  if (
+    (await git(cwd, ['rev-parse', '--verify', '--quiet', def])).code === 0
+  ) {
+    return { defaultBranch: def, baseRef: def, baseIsRemote: false };
+  }
   return { defaultBranch: def, baseRef: null, baseIsRemote: false };
+}
+
+// Branches/remote-tracking refs a user can pick as the comparison base.
+export async function listBaseRefs(
+  s: Session
+): Promise<{ local: string[]; remote: string[]; defaultRef: string | null }> {
+  const cwd = untildify((s.metadata?.worktree as string) || s.cwd);
+  if (!cwd) return { local: [], remote: [], defaultRef: null };
+  const list = async (ns: string) =>
+    (await git(cwd, ['for-each-ref', '--format=%(refname:short)', '--sort=-committerdate', ns]))
+      .out.split('\n')
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const local = await list('refs/heads');
+  const remote = (await list('refs/remotes')).filter(
+    (r) => r !== 'origin' && !r.endsWith('/HEAD')
+  );
+  const d = await resolveBaseRef(cwd);
+  return { local, remote, defaultRef: d.baseRef };
 }
 
 // 'work' mode's base: prefer the session's stamped metadata.base (a LOCAL ref
@@ -312,13 +363,18 @@ async function resolveBaseRef(cwd: string): Promise<{
 // metadata.base itself resolves nowhere (e.g. its branch was deleted).
 async function resolveWorkBase(
   s: Session,
-  cwd: string
+  cwd: string,
+  override?: string | null
 ): Promise<{
   baseRef: string | null;
   defaultBranch: string | null;
   baseIsRemote: boolean;
-  baseSource: 'metadata' | 'default';
+  baseSource: 'metadata' | 'default' | 'override';
 }> {
+  if (await validBaseOverride(cwd, override)) {
+    const d = await resolveBaseRef(cwd, override);
+    return { ...d, baseSource: 'override' };
+  }
   const metaBase = s.metadata?.base ? String(s.metadata.base) : null;
   if (metaBase) {
     if (
@@ -339,7 +395,10 @@ async function resolveWorkBase(
 
 // ---- PR & Changes ----
 
-export async function prStatus(s: Session): Promise<PRStatusResult> {
+export async function prStatus(
+  s: Session,
+  baseOverride?: string | null
+): Promise<PRStatusResult> {
   const cwd = untildify(
     (s.metadata?.worktree as string) || s.cwd
   );
@@ -353,7 +412,7 @@ export async function prStatus(s: Session): Promise<PRStatusResult> {
     const branch =
       (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim() ||
       null;
-    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd);
+    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd, baseOverride);
     if (!baseRef)
       return { available: false, branch, defaultBranch, reason: 'no base branch' };
     const mergeBase = (await git(cwd, ['merge-base', baseRef, 'HEAD'])).out.trim();
@@ -478,7 +537,8 @@ function sumOrNull(a: number | null, b: number | null): number | null {
 
 export async function changesFor(
   s: Session,
-  mode: string | null | undefined
+  mode: string | null | undefined,
+  baseOverride?: string | null
 ): Promise<ChangesForResult> {
   const m = safeMode(mode, s);
   const cwd = untildify(
@@ -515,7 +575,7 @@ export async function changesFor(
     if (m === 'pr') {
       if (!hasCommits)
         return { worktree: cwd, branch, mode: 'pr', files: [], emptyReason: 'unborn' };
-      const st = await prStatus(s);
+      const st = await prStatus(s, baseOverride);
       if (!st.available) {
         return {
           worktree: cwd,
@@ -549,7 +609,7 @@ export async function changesFor(
     if (m === 'work') {
       if (!hasCommits)
         return { worktree: cwd, branch, mode: 'work', files: [], emptyReason: 'unborn' };
-      const wb = await resolveWorkBase(s, cwd);
+      const wb = await resolveWorkBase(s, cwd, baseOverride);
       if (!wb.baseRef)
         return {
           worktree: cwd,
@@ -641,15 +701,17 @@ export async function changesFor(
 
 export async function changeIdentity(
   s: Session,
-  mode: string | null | undefined
+  mode: string | null | undefined,
+  baseOverride?: string | null
 ): Promise<string | null> {
-  return (await changesFor(s, mode)).identity || null;
+  return (await changesFor(s, mode, baseOverride)).identity || null;
 }
 
 export async function changeDiff(
   s: Session,
   relPath: string | null | undefined,
-  mode: string | null | undefined
+  mode: string | null | undefined,
+  baseOverride?: string | null
 ): Promise<ChangeDiffResult> {
   const m = safeMode(mode, s);
   const cwd = untildify(
@@ -660,7 +722,7 @@ export async function changeDiff(
   if (!safe) return { error: 'invalid path' };
   try {
     if (m === 'pr') {
-      const st = await prStatus(s);
+      const st = await prStatus(s, baseOverride);
       if (!st.available)
         return {
           path: safe,
@@ -678,7 +740,7 @@ export async function changeDiff(
       return { path: safe, mode: 'pr', diff: out };
     }
     if (m === 'work') {
-      const wb = await resolveWorkBase(s, cwd);
+      const wb = await resolveWorkBase(s, cwd, baseOverride);
       if (!wb.baseRef) return { path: safe, mode: 'work', error: 'no base branch' };
       const mergeBase = (await git(cwd, ['merge-base', wb.baseRef, 'HEAD'])).out.trim();
       if (!mergeBase) return { path: safe, mode: 'work', error: 'no common history' };

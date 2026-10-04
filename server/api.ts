@@ -40,6 +40,7 @@ import {
   changeDiff,
   changeIdentity,
   prStatus,
+  listBaseRefs,
   worktreeInfo,
   provisionChildWorktree,
 } from './git.js';
@@ -6718,7 +6719,7 @@ export async function handle(
       }
     }
     if (sub === 'changes' && m === 'GET') {
-      return json(res, await changesFor(s, u.searchParams.get('mode')));
+      return json(res, await changesFor(s, u.searchParams.get('mode'), u.searchParams.get('base')));
     }
     if (sub === 'changes/diff' && m === 'GET') {
       return json(
@@ -6726,12 +6727,16 @@ export async function handle(
         await changeDiff(
           s,
           u.searchParams.get('path'),
-          u.searchParams.get('mode')
+          u.searchParams.get('mode'),
+          u.searchParams.get('base')
         )
       );
     }
     if (sub === 'changes/refs' && m === 'GET') {
-      return json(res, await prStatus(s));
+      return json(res, {
+        ...(await prStatus(s, u.searchParams.get('base'))),
+        ...(await listBaseRefs(s)),
+      });
     }
     // ---- F7: merge after approval (executed by the host) ----
     if (sub === 'merge/status' && m === 'GET') {
@@ -6837,7 +6842,7 @@ export async function handle(
           : !body.base || body.base === 'HEAD'
             ? 'uncommitted'
             : 'pr';
-      const identity = await changeIdentity(s, mode);
+      const identity = await changeIdentity(s, mode, typeof body.baseRef === 'string' ? body.baseRef : null);
       state.setChangesExplanation(id, mode, {
         language: typeof body.language === 'string' ? body.language : null,
         generatedAt: new Date().toISOString(),
