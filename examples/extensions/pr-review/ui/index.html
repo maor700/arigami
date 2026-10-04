@@ -160,6 +160,11 @@
           mode === 'nocheckout'
             ? 'The branch is NOT checked out — this session runs outside the repo. Read the diff with `gh pr diff` and review from that alone.'
             : 'The PR is already checked out into its own worktree, and this session starts in it: read the code around each change, not only the diff.';
+        // A template from Settings › Extensions wins over the built-in prompt.
+        const tpl = String((ctx && ctx.settings && ctx.settings.promptTemplate) || '');
+        if (tpl.trim()) {
+          return tpl.replace(/\{\{\s*(prUrl|checkout)\s*\}\}/g, (_m, k) => (k === 'prUrl' ? url : checkout));
+        }
         return [
           `Review the pull request ${url}.`,
           '',

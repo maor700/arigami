@@ -299,19 +299,26 @@ function SettingsForm({ ext }) {
     <div className="mt-2 border-t border-hair pt-2">
       <div className="mb-1 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('ext.settings')}</div>
       {fields.map((f) => (
-        <div key={f.key} className="flex items-center gap-3 border-b border-hair py-2 last:border-b-0">
+        <div key={f.key} className={`flex gap-3 border-b border-hair py-2 last:border-b-0 ${f.multiline ? 'flex-col' : 'items-center'}`}>
           <div className="min-w-0 flex-1">
             <div className="text-[11.5px] font-bold text-fg">{f.title}</div>
             {f.description && <div className="mt-0.5 text-[11.5px] md:text-[10.5px] text-fgdim">{f.description}</div>}
-            {f.fallback !== undefined && f.type !== 'boolean' && (
+            {f.fallback !== undefined && f.type !== 'boolean' && !f.multiline && (
               <div className="mt-0.5 font-mono text-[11px] md:text-[9.5px] text-fgdim" dir="ltr">
                 {t('ext.settings.default', { v: String(f.fallback) })}
               </div>
             )}
           </div>
-          <div className="shrink-0">
+          <div className={f.multiline ? 'w-full' : 'shrink-0'}>
             {f.type === 'boolean' ? (
               <Toggle on={form[f.key] === true} onChange={(v) => setForm((s) => ({ ...s, [f.key]: v }))} />
+            ) : f.multiline ? (
+              <textarea
+                value={form[f.key] ?? ''}
+                rows={8}
+                onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))}
+                className={`${INPUT} w-full resize-y font-mono`}
+              />
             ) : (
               <input
                 value={form[f.key] ?? ''}

@@ -673,3 +673,12 @@ test('composer: a manifest slash opens the tab; skills still win the name', () =
 test('TabBar still exports its default component with the extension rows compiled in', () => {
   expect(typeof TabBarMod.default).toBe('function');
 });
+
+test('settingsFields: multiline is only set on string fields that ask for it', () => {
+  const f = ext.settingsFields({
+    tpl: { type: 'string', multiline: true },
+    plain: { type: 'string' },
+    n: { type: 'number', multiline: true },
+  });
+  expect(f.map((x) => x.multiline)).toEqual([true, false, false]);
+});

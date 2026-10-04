@@ -42,6 +42,13 @@
         "title": "Default checkout",
         "description": "worktree = check the PR out and review the code on disk. nocheckout = review from the diff alone, touching nothing."
       },
+      "promptTemplate": {
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "title": "First-message template",
+        "description": "The first message of a review session. Placeholders: {{prUrl}} (the pull request URL) and {{checkout}} (a line saying whether the branch is checked out). Empty = the built-in prompt. You can still edit the message per review in the From PR tab."
+      },
       "repos": {
         "type": "string",
         "default": "",

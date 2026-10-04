@@ -58,12 +58,24 @@ export function parsePrRef(input: string): { slug: string; number: number } | nu
   return null;
 }
 
+/**
+ * Fill a user-configured first-message template (settings.promptTemplate).
+ * {{prUrl}} and {{checkout}} are substituted; unknown placeholders are left as
+ * written. A blank template means "use the built-in prompt" (returns null).
+ */
+export function fillPromptTemplate(template: string, vars: { prUrl: string; checkout: string }): string | null {
+  if (!String(template || '').trim()) return null;
+  return String(template).replace(/\{\{\s*(prUrl|checkout)\s*\}\}/g, (_m, k: 'prUrl' | 'checkout') => vars[k]);
+}
+
 /** The first message of a review session. */
-export function reviewPrompt(prUrl: string, reviewMode: string): string {
+export function reviewPrompt(prUrl: string, reviewMode: string, template?: string): string {
   const checkout =
     reviewMode === 'nocheckout'
       ? 'The branch is NOT checked out — this session runs outside the repo. Read the diff with `gh pr diff` and review from that alone.'
       : 'The PR is already checked out into its own worktree (pr_prepare did it before this session was created), and this session starts in it: read the code around each change, not only the diff.';
+  const custom = fillPromptTemplate(template || '', { prUrl, checkout });
+  if (custom !== null) return custom;
   return [
     `Review the pull request ${prUrl}.`,
     '',

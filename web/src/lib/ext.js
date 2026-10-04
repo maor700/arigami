@@ -141,6 +141,8 @@ export function settingsFields(schema) {
       type,
       title: typeof def.title === 'string' && def.title ? def.title : key,
       description: typeof def.description === 'string' ? def.description : '',
+      // `multiline: true` on a string field → a textarea (e.g. a prompt template).
+      multiline: type === 'string' && def.multiline === true,
       fallback: def.default,
     };
   });
