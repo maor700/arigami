@@ -39,19 +39,19 @@
       "engine": {
         "type": "string",
         "default": "claude",
-        "title": "Engine",
-        "description": "claude or codex — the CLI the review session runs on."
+        "title": "Default engine",
+        "description": "claude or codex — what the launcher's Session options panel starts on for this mode (changeable per launch)."
       },
       "model": {
         "type": "string",
         "default": "",
-        "title": "Model",
+        "title": "Default model",
         "description": "Model for that engine (e.g. a claude alias, or gpt-5.6-terra for codex). Empty = the engine's default."
       },
       "effort": {
         "type": "string",
         "default": "",
-        "title": "Reasoning effort",
+        "title": "Default reasoning effort",
         "description": "low | medium | high | xhigh | max (codex also: ultra). Empty = the model's default."
       },
       "reviewMode": {

@@ -277,11 +277,7 @@
             permissionMode: $('perm').value,
             ...(cwd ? { cwd } : {}),
             ...(agent ? { agent } : {}),
-            // Engine / model / effort come from the extension's settings (default
-            // engine: claude); an agent, when set, still brings its own.
-            ...(!agent ? { engine: String((ctx.settings && ctx.settings.engine) || 'claude') } : {}),
-            ...((ctx.settings && ctx.settings.model) ? { model: String(ctx.settings.model) } : {}),
-            ...((ctx.settings && ctx.settings.effort) ? { effort: String(ctx.settings.effort) } : {}),
+            // Engine / model / effort are the launcher's side panel's, not ours.
             // prNumber is the key the host already reads: it is what makes the
             // published review land on THIS PR instead of "the open PR for the
             // current branch".

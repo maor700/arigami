@@ -20,7 +20,7 @@ import { createExtBridge } from '../lib/ext-bridge.js';
 import { currentLang, useT } from '../lib/i18n.js';
 import { currentTheme, usePrefs } from '../lib/prefs.js';
 
-export default function ExtLauncherPane({ item, onCreated }) {
+export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) {
   const t = useT();
   const { extensions } = useStore();
   const [reloadKey, setReloadKey] = useState(0);
@@ -35,7 +35,7 @@ export default function ExtLauncherPane({ item, onCreated }) {
   // Read live so a settings edit or a reload lands without tearing the bridge
   // (and the page's own state) down.
   const liveRef = useRef(null);
-  liveRef.current = { ext: extRecord };
+  liveRef.current = { ext: extRecord, getSessionOptions };
 
   useEffect(() => {
     const bridge = createExtBridge({
@@ -61,6 +61,7 @@ export default function ExtLauncherPane({ item, onCreated }) {
         };
       },
       onCreated: (session) => onCreated?.(session),
+      getSessionOptions: () => liveRef.current?.getSessionOptions?.() || null,
       // targetOrigin '*' is forced: a sandboxed page has an opaque origin and
       // cannot be named. Inbound messages are authenticated the other way
       // round, by contentWindow identity.

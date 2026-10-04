@@ -245,6 +245,7 @@ export const strings = {
   'launcher.header.fromTrigger': 'מטריגר',
   'launcher.ext.gone': 'ההרחבה הזאת כבר לא מותקנת',
   'launcher.ext.reload': 'רענון',
+  'launcher.ext.sessionOptions': 'אפשרויות הסשן',
   'launcher.header.closeTitle': 'סגירת המשגר (esc)',
 
   // first run

@@ -28,7 +28,7 @@ import {
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
-import { extLauncherItems } from '../lib/ext.js';
+import { extLauncherItems, findExtension } from '../lib/ext.js';
 import ExtLauncherPane from './ExtLauncherPane.jsx';
 import { EngineToggle } from './EngineToggle.jsx';
 // Re-exported so the tests that always imported it from here keep working.
@@ -503,7 +503,7 @@ function defaultSessionOptions(prefs, mode) {
 // chosen engine would reject.
 //
 // Exported for tests.
-export function SessionOptionsPicker({ options, onChange }) {
+export function SessionOptionsPicker({ options, onChange, hideSkill = false }) {
   const t = useT();
   const [skills, setSkills] = useState([]);
   useEffect(() => {
@@ -517,17 +517,19 @@ export function SessionOptionsPicker({ options, onChange }) {
   const setAndCoerce = (patch) => onChange(coerceSessionOptions({ ...options, ...patch }, claudeModels));
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2">
-      <select
-        value={options.skill || ''}
-        onChange={(e) => set({ skill: e.target.value })}
-        className={selCls}
-        title={skills.find((s) => s.name === options.skill)?.description || ''}
-      >
-        <option value="">{t('launcher.options.noSkill')}</option>
-        {skills.map((s) => (
-          <option key={s.name} value={s.name}>{s.name}</option>
-        ))}
-      </select>
+      {!hideSkill && (
+        <select
+          value={options.skill || ''}
+          onChange={(e) => set({ skill: e.target.value })}
+          className={selCls}
+          title={skills.find((s) => s.name === options.skill)?.description || ''}
+        >
+          <option value="">{t('launcher.options.noSkill')}</option>
+          {skills.map((s) => (
+            <option key={s.name} value={s.name}>{s.name}</option>
+          ))}
+        </select>
+      )}
       <select
         value={options.model || 'default'}
         onChange={(e) => setAndCoerce({ model: e.target.value === 'default' ? '' : e.target.value })}
@@ -2112,6 +2114,23 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
   const { extensions } = useStore();
   const extModes = useMemo(() => extLauncherItems(extensions), [extensions]);
   const extMode = extModes.find((x) => x.mode === mode) || null;
+  // Engine / model / effort for a session started from an extension's tab: the human's
+  // call, made in the panel beside the tab (like the ticket tab's). Seeded from the extension's
+  // own settings (or their schema defaults) when its mode opens, then editable per launch.
+  const [extOptions, setExtOptions] = useState(() => defaultSessionOptions(prefs, 'ext'));
+  const extOptionsRef = useRef(extOptions);
+  extOptionsRef.current = extOptions;
+  const extKey = extMode?.ext || '';
+  useEffect(() => {
+    if (!extKey) return;
+    const rec = findExtension(extensions, extKey);
+    const saved = rec?.settings || {};
+    const schema = rec?.settingsSchema || {};
+    const base = defaultSessionOptions(prefs, 'ext');
+    const pick = (k) => saved[k] || schema[k]?.default || base[k] || '';
+    setExtOptions({ ...base, engine: pick('engine'), model: pick('model'), effort: pick('effort') });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extKey]);
   // An extension that was disabled or uninstalled while its mode was open must
   // not leave the launcher on a blank body. Same treatment `linear` gets.
   useEffect(() => {
@@ -2317,7 +2336,16 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {extMode ? (
-          <ExtLauncherPane item={extMode} onCreated={onCreated} />
+          <>
+            <ExtLauncherPane item={extMode} onCreated={onCreated} getSessionOptions={() => extOptionsRef.current} />
+            <div className="shrink-0 border-t border-hair bg-panel px-[18px] py-3 md:w-[260px] md:border-t-0 md:border-l">
+              <div className="mb-2 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+                {t('launcher.ext.sessionOptions')}
+              </div>
+              <EngineToggle options={extOptions} onChange={setExtOptions} className="pb-2" />
+              <SessionOptionsPicker options={extOptions} onChange={setExtOptions} hideSkill />
+            </div>
+          </>
         ) : mode === 'ticket' ? (
           <>
             <TicketPicker selected={selected} onPick={setSelected} sessions={sessions} />

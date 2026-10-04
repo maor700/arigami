@@ -245,6 +245,7 @@ export const strings = {
   'launcher.header.fromTrigger': 'From trigger',
   'launcher.ext.gone': 'This extension is no longer installed',
   'launcher.ext.reload': 'Reload',
+  'launcher.ext.sessionOptions': 'Session options',
   'launcher.header.closeTitle': 'Close launcher (esc)',
 
   // first run
