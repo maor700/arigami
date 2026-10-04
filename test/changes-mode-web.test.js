@@ -67,3 +67,24 @@ test('newestExplanation picks the latest generatedAt across modes, or null when 
   const explanations = { uncommitted: at('2026-08-31T09:00:00Z', 'uncommitted'), pr: at('2026-08-31T11:00:00Z', 'pr') };
   expect(newestExplanation(explanations)).toEqual({ generatedAt: '2026-08-31T11:00:00Z', mode: 'pr' });
 });
+
+// ---- base picker ------------------------------------------------------------
+
+const { changesQuery, loadDefaultBase, saveDefaultBase } = await import(path.join(ROOT, 'web/src/lib/changesMode.js'));
+
+test('changesQuery adds base only for pr/work, never for uncommitted', () => {
+  expect(changesQuery('pr', '')).toBe('mode=pr');
+  expect(changesQuery('pr', 'origin/main')).toBe('mode=pr&base=origin%2Fmain');
+  expect(changesQuery('work', 'release/1.0')).toBe('mode=work&base=release%2F1.0');
+  expect(changesQuery('uncommitted', 'origin/main')).toBe('mode=uncommitted');
+});
+
+test('default base round-trips through storage; empty clears it', () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  expect(loadDefaultBase(storage)).toBe('');
+  saveDefaultBase('origin/develop', storage);
+  expect(loadDefaultBase(storage)).toBe('origin/develop');
+  saveDefaultBase('', storage);
+  expect(loadDefaultBase(storage)).toBe('');
+});

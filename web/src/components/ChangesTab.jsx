@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
-import { defaultChangesMode, explanationSwitchOffer, newestExplanation } from '../lib/changesMode.js';
+import { defaultChangesMode, explanationSwitchOffer, newestExplanation, changesQuery, loadDefaultBase, saveDefaultBase } from '../lib/changesMode.js';
 import { Truncate } from './Truncate.jsx';
 import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
@@ -236,6 +236,9 @@ export default function ChangesTab({ session, active }) {
   const [fullscreen, setFullscreen] = useState(false); // mobile: file diff as a full-screen overlay
   const [changesMode, setChangesMode] = useState(() => defaultChangesMode(session)); // 'work' | 'uncommitted' | 'pr'
   const [refs, setRefs] = useState(null);
+  // Comparison base for pr/work: '' = server default (origin/<default branch>).
+  const [defaultBase, setDefaultBase] = useState(() => loadDefaultBase());
+  const [baseSel, setBaseSel] = useState(() => loadDefaultBase());
   const [switchOffer, setSwitchOffer] = useState(null); // {mode, generatedAt} | null — an arrived explanation offered, never applied
 
   // ---- view navigation history (Back / Forward) --------------------------
@@ -309,8 +312,8 @@ export default function ChangesTab({ session, active }) {
   // available refs for the base picker
   useEffect(() => {
     if (!active) return;
-    api.get(`/sessions/${session.id}/changes/refs`).then(setRefs).catch(() => setRefs(null));
-  }, [active, session.id]);
+    api.get(`/sessions/${session.id}/changes/refs${baseSel ? `?base=${encodeURIComponent(baseSel)}` : ''}`).then(setRefs).catch(() => setRefs(null));
+  }, [active, session.id, baseSel]);
 
   // review comments (live via session-updated)
   const comments = session.review?.comments || [];
@@ -381,7 +384,7 @@ export default function ChangesTab({ session, active }) {
   // Always explicit — the server's default-mode guess (session has a
   // worktree+base → 'work') only applies when `mode` is omitted entirely, and
   // the client's own default (defaultChangesMode) must be what's actually shown.
-  const modeQ = `mode=${encodeURIComponent(changesMode)}`;
+  const modeQ = changesQuery(changesMode, baseSel);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -552,14 +555,29 @@ export default function ChangesTab({ session, active }) {
             they're redundant (file count lives in the Files sheet) so we hide
             them to keep the header clean; the outdated warning always shows. */}
         {desktop && data?.branch && <Truncate text={data.branch} className="max-w-[140px] font-mono text-[10.5px] text-fgdim" />}
-        {desktop && (changesMode === 'work' || changesMode === 'pr') && data?.baseRef && (
-          <span
-            title={data.baseIsRemote ? t('chat.remoteBaseTitle', { base: data.baseRef }) : t('chat.comparedAgainstTitle', { base: data.baseRef })}
-            className={`flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9.5px] ${
-              data.baseIsRemote ? 'border-[#d98078] bg-danger/10 font-bold text-danger' : 'border-border bg-panel text-fgdim'
-            }`}
-          >
-            {data.baseIsRemote && <Icon icon={faTriangleExclamation} />} vs {data.baseRef}
+        {(changesMode === 'work' || changesMode === 'pr') && refs && (
+          <span className="flex shrink-0 items-center gap-1 text-[10px] text-fgdim">
+            {t('chat.compareAgainst')}
+            <select
+              value={baseSel}
+              onChange={(e) => setBaseSel(e.target.value)}
+              title={data?.baseIsRemote ? t('chat.comparedAgainstTitle', { base: data.baseRef }) : t('chat.comparedAgainstTitle', { base: data?.baseRef || '' })}
+              className="max-w-[170px] rounded-md border border-border bg-panel px-1.5 py-0.5 font-mono text-[10px] text-fg"
+            >
+              <option value="">{t('chat.baseDefault', { base: refs.defaultRef || data?.baseRef || '…' })}</option>
+              {refs.remote?.length > 0 && <optgroup label={t('chat.remoteBranches')}>{refs.remote.map((r) => <option key={`r:${r}`} value={r}>{r}</option>)}</optgroup>}
+              {refs.local?.length > 0 && <optgroup label={t('chat.localBranches')}>{refs.local.map((r) => <option key={`l:${r}`} value={r}>{r}</option>)}</optgroup>}
+            </select>
+            {baseSel !== defaultBase && (
+              <button
+                type="button"
+                title={t('chat.setBaseDefaultTitle')}
+                onClick={() => { saveDefaultBase(baseSel); setDefaultBase(baseSel); }}
+                className="rounded-md border border-border bg-panel px-1.5 py-0.5 text-[10px] hover:text-fg"
+              >
+                {t('chat.setBaseDefault')}
+              </button>
+            )}
           </span>
         )}
         <MergePill session={session} compact={!desktop} />
