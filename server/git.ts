@@ -249,6 +249,7 @@ export function safeMode(
   s?: Session
 ): 'pr' | 'uncommitted' | 'work' {
   if (mode === 'pr' || mode === 'uncommitted' || mode === 'work') return mode;
+  if (s?.metadata?.prNumber || s?.metadata?.pr) return 'pr';
   if (s?.metadata?.base && s?.metadata?.worktree) return 'work';
   return 'uncommitted';
 }
@@ -302,13 +303,16 @@ async function resolveBaseRef(
   // A PR review session knows the branch its PR targets (metadata.prBase) — that, not
   // the repo's default branch, is what the diff must be taken against.
   const pref = typeof preferredDefault === 'string' ? preferredDefault.trim() : '';
-  if (pref && /^[A-Za-z0-9._\/-]+$/.test(pref) && !pref.startsWith('-') && !pref.includes('..')) {
+  if (pref) {
+    const chosen = await validBaseOverride(cwd, override);
+    if (chosen) return { defaultBranch: pref, baseRef: chosen, baseIsRemote: await isRemoteRef(cwd, chosen) };
     for (const cand of [`origin/${pref}`, pref]) {
-      if ((await git(cwd, ['rev-parse', '--verify', '--quiet', `${cand}^{commit}`])).code === 0) {
-        def = pref;
-        break;
+      if (await validBaseOverride(cwd, cand)) {
+        return { defaultBranch: pref, baseRef: cand, baseIsRemote: await isRemoteRef(cwd, cand) };
       }
     }
+    // A missing recorded target is not permission to compare another branch.
+    return { defaultBranch: pref, baseRef: null, baseIsRemote: false };
   }
   if (!def) {
     for (const cand of ['main', 'master']) {
@@ -364,16 +368,16 @@ export async function listBaseRefs(
   const remote = (await list('refs/remotes')).filter(
     (r) => r !== 'origin' && !r.endsWith('/HEAD')
   );
-  const d = await resolveBaseRef(cwd, null, (s.metadata?.prBase as string) || null);
+  const d = await resolveSessionBase(s, cwd);
   return { local, remote, defaultRef: d.baseRef };
 }
 
-// 'work' mode's base: prefer the session's stamped metadata.base (a LOCAL ref
-// name — F7's hostWorktree records exactly what it branched off) over the
+// Shared comparison base for PR, work, and the picker: PR target first, then
+// the session's stamped metadata.base (F7 records what it branched off), then the
 // repo's ordinary default-branch resolution. Only fall back to origin/<base>
 // when the local ref is gone, and only fall back to the repo default when
-// metadata.base itself resolves nowhere (e.g. its branch was deleted).
-async function resolveWorkBase(
+// no base was recorded. A missing recorded branch is reported as unavailable.
+async function resolveSessionBase(
   s: Session,
   cwd: string,
   override?: string | null
@@ -387,21 +391,24 @@ async function resolveWorkBase(
     const d = await resolveBaseRef(cwd, override, (s.metadata?.prBase as string) || null);
     return { ...d, baseSource: 'override' };
   }
+  // The PR target is authoritative in both views; otherwise retain the
+  // local parent recorded when a child worktree was created.
+  if (s.metadata?.prBase) {
+    const d = await resolveBaseRef(cwd, null, String(s.metadata.prBase));
+    return { ...d, baseSource: 'metadata' };
+  }
   const metaBase = s.metadata?.base ? String(s.metadata.base) : null;
   if (metaBase) {
-    if (
-      (await git(cwd, ['rev-parse', '--verify', '--quiet', metaBase])).code === 0
-    ) {
-      return { baseRef: metaBase, defaultBranch: metaBase, baseIsRemote: false, baseSource: 'metadata' };
+    if (await validBaseOverride(cwd, metaBase)) {
+      return { baseRef: metaBase, defaultBranch: metaBase, baseIsRemote: await isRemoteRef(cwd, metaBase), baseSource: 'metadata' };
     }
     const remote = `origin/${metaBase}`;
-    if (
-      (await git(cwd, ['rev-parse', '--verify', '--quiet', remote])).code === 0
-    ) {
+    if (await validBaseOverride(cwd, remote)) {
       return { baseRef: remote, defaultBranch: metaBase, baseIsRemote: true, baseSource: 'metadata' };
     }
+    return { baseRef: null, defaultBranch: metaBase, baseIsRemote: false, baseSource: 'metadata' };
   }
-  const d = await resolveBaseRef(cwd, null, (s.metadata?.prBase as string) || null);
+  const d = await resolveBaseRef(cwd);
   return { baseRef: d.baseRef, defaultBranch: d.defaultBranch, baseIsRemote: d.baseIsRemote, baseSource: 'default' };
 }
 
@@ -424,7 +431,7 @@ export async function prStatus(
     const branch =
       (await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).out.trim() ||
       null;
-    const { defaultBranch, baseRef, baseIsRemote } = await resolveBaseRef(cwd, baseOverride, (s.metadata?.prBase as string) || null);
+    const { defaultBranch, baseRef, baseIsRemote } = await resolveSessionBase(s, cwd, baseOverride);
     if (!baseRef)
       return { available: false, branch, defaultBranch, reason: 'no base branch' };
     const mergeBase = (await git(cwd, ['merge-base', baseRef, 'HEAD'])).out.trim();
@@ -621,7 +628,7 @@ export async function changesFor(
     if (m === 'work') {
       if (!hasCommits)
         return { worktree: cwd, branch, mode: 'work', files: [], emptyReason: 'unborn' };
-      const wb = await resolveWorkBase(s, cwd, baseOverride);
+      const wb = await resolveSessionBase(s, cwd, baseOverride);
       if (!wb.baseRef)
         return {
           worktree: cwd,
@@ -752,7 +759,7 @@ export async function changeDiff(
       return { path: safe, mode: 'pr', diff: out };
     }
     if (m === 'work') {
-      const wb = await resolveWorkBase(s, cwd, baseOverride);
+      const wb = await resolveSessionBase(s, cwd, baseOverride);
       if (!wb.baseRef) return { path: safe, mode: 'work', error: 'no base branch' };
       const mergeBase = (await git(cwd, ['merge-base', wb.baseRef, 'HEAD'])).out.trim();
       if (!mergeBase) return { path: safe, mode: 'work', error: 'no common history' };

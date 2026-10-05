@@ -41,22 +41,24 @@ export function explanationSwitchOffer(explanations, current, lastSeenAt) {
 
 // ---- base picker -----------------------------------------------------------
 // Which ref the pr/work diff is compared against. '' = "server default", which
-// is origin/<default branch> (never a possibly-stale local branch). A user can
-// pin their own default (kept in localStorage); a per-tab pick overrides it.
+// follows the session's PR target or original parent. Saved choices belong to
+// one session; the old browser-wide choice must not leak into other sessions.
 export const CHANGES_BASE_KEY = 'arigami-changes-base';
 
-export function loadDefaultBase(storage = globalThis.localStorage) {
+export function loadDefaultBase(storage = globalThis.localStorage, sessionId) {
   try {
-    return String(storage?.getItem(CHANGES_BASE_KEY) || '');
+    return sessionId ? String(storage?.getItem(`${CHANGES_BASE_KEY}:${sessionId}`) || '') : '';
   } catch {
     return '';
   }
 }
 
-export function saveDefaultBase(base, storage = globalThis.localStorage) {
+export function saveDefaultBase(base, storage = globalThis.localStorage, sessionId) {
   try {
-    if (base) storage?.setItem(CHANGES_BASE_KEY, base);
-    else storage?.removeItem(CHANGES_BASE_KEY);
+    if (!sessionId) return;
+    const key = `${CHANGES_BASE_KEY}:${sessionId}`;
+    if (base) storage?.setItem(key, base);
+    else storage?.removeItem(key);
   } catch {
     /* private mode / quota — the pick still applies for this tab */
   }

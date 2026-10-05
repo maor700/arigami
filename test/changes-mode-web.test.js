@@ -88,11 +88,11 @@ test('changesQuery adds base only for pr/work, never for uncommitted', () => {
 test('default base round-trips through storage; empty clears it', () => {
   const mem = new Map();
   const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
-  expect(loadDefaultBase(storage)).toBe('');
-  saveDefaultBase('origin/develop', storage);
-  expect(loadDefaultBase(storage)).toBe('origin/develop');
-  saveDefaultBase('', storage);
-  expect(loadDefaultBase(storage)).toBe('');
+  expect(loadDefaultBase(storage, 'one')).toBe('');
+  saveDefaultBase('origin/develop', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('origin/develop');
+  saveDefaultBase('', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('');
 });
 
 const { filterBaseRefs } = await import(path.join(ROOT, 'web/src/lib/changesMode.js'));
@@ -103,4 +103,13 @@ test('filterBaseRefs: case-insensitive substring match; empty query returns ever
   expect(filterBaseRefs(refs, '  REL ')).toEqual(['origin/Release/1.0']);
   expect(filterBaseRefs(refs, 'zzz')).toEqual([]);
   expect(filterBaseRefs(undefined, 'a')).toEqual([]);
+});
+
+test('saved base never leaks across sessions or from the legacy global preference', () => {
+  const mem = new Map([['arigami-changes-base', 'origin/stale']]);
+  const storage = { getItem: k => mem.get(k), setItem: (k, v) => mem.set(k, v) };
+  expect(loadDefaultBase(storage, 'one')).toBe('');
+  saveDefaultBase('release', storage, 'one');
+  expect(loadDefaultBase(storage, 'one')).toBe('release');
+  expect(loadDefaultBase(storage, 'two')).toBe('');
 });

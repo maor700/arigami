@@ -1849,7 +1849,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                   {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
                 </>
               ) : tab.type === 'changes' ? (
-                <ChangesTab session={session} active={active} />
+                <ChangesTab key={session.id} session={session} active={active} />
               ) : tab.type === 'orchestration' ? (
                 <OrchestrationTab session={session} active={active} />
               ) : tab.type === 'url' ? (

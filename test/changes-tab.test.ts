@@ -62,6 +62,7 @@ const sessionFor = (worktree: string, base?: string) => ({
 
 test('safeMode: an explicit mode always wins; the default is "work" only for a session with base+worktree', () => {
   expect(safeMode('pr')).toBe('pr');
+  expect(safeMode(null, { metadata: { prNumber: 7, base: 'master', worktree: '/x' } } as any)).toBe('pr');
   expect(safeMode('uncommitted')).toBe('uncommitted');
   expect(safeMode('work')).toBe('work');
   expect(safeMode(null, sessionFor('/x', 'master') as any)).toBe('work');
@@ -160,10 +161,9 @@ test('work mode identity changes when the committed range changes, and separatel
 
 // ---- the case that broke: a local base that's ahead of (newer than) origin -
 
-test('base resolution: PR mode defaults to origin/<default> (never a stale/diverged local), and an explicit base override still selects the local branch', async () => {
-  // main's local master gets commits that are never pushed. The default must
-  // be origin/<default> — GitHub compares against the remote — and the user
-  // can still pick the local branch explicitly.
+test('base resolution: child PR mode keeps the recorded local parent despite stale origin', async () => {
+  // Child provenance wins over the repo default: local master has unpushed
+  // commits that predate the child and must not be included in its diff.
   commit(main, 'unrelated-1.txt', '1\n', 'unrelated landed on local master');
   commit(main, 'unrelated-2.txt', '2\n', 'more unrelated');
   expect(sh(main, 'rev-parse', 'master')).not.toBe(sh(main, 'rev-parse', 'origin/master'));
@@ -173,8 +173,8 @@ test('base resolution: PR mode defaults to origin/<default> (never a stale/diver
   const s = sessionFor(r.dir, r.base);
 
   const st = await prStatus(s);
-  expect(st.baseRef).toBe('origin/master');
-  expect(st.baseIsRemote).toBe(true);
+  expect(st.baseRef).toBe('master');
+  expect(st.baseIsRemote).toBe(false);
 
   const viaLocal = await changesFor(s, 'pr', 'master');
   expect(viaLocal.baseRef).toBe('master');
