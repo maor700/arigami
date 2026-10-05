@@ -27,12 +27,12 @@ function ActionCardView({ props: { sessionId, action } }) {
   // unreachable) is shown on the card — never a click that silently does nothing.
   const [err, setErr] = useState(null);
   if (!action || !Array.isArray(action.buttons)) return null;
-  const canAuto = !!(action.agent && action.kind);
+  const canAuto = !!(action.agent && action.kind && action.kind !== 'review');
   const answer = async (value) => {
     setBusy(true);
     setErr(null);
     try {
-      await api.post(`/sessions/${sessionId}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) });
+      await api.post(`/sessions/${sessionId}/action/answer`, { actionId: action.id, value, ...(canAuto && auto ? { autoApprove: true } : {}) });
     } catch (e) {
       setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
       setBusy(false);
@@ -43,7 +43,11 @@ function ActionCardView({ props: { sessionId, action } }) {
   // doesn't leave the model waiting.
   const dismiss = async () => {
     setBusy(true);
-    try { await api.post(`/sessions/${sessionId}/action/dismiss`, {}); } catch { setBusy(false); }
+    setErr(null);
+    try { await api.post(`/sessions/${sessionId}/action/dismiss`, { actionId: action.id }); } catch (e) {
+      setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));
+      setBusy(false);
+    }
   };
   const variant = (style) => (style === 'primary' ? 'primary' : style === 'danger' ? 'danger' : 'option');
   return (
@@ -142,12 +146,12 @@ export function ActionBar({ session }) {
   const [auto, setAuto] = useState(false); // A3: auto-approve this kind from now on
   const [err, setErr] = useState(null); // CHAT1: a refused answer is shown, not swallowed
   if (!action || !Array.isArray(action.buttons)) return null;
-  const canAuto = !!(action.agent && action.kind);
+  const canAuto = !!(action.agent && action.kind && action.kind !== 'review');
   const answer = async (value) => {
     setBusy(true);
     setErr(null);
     try {
-      await api.post(`/sessions/${session.id}/action/answer`, { value, ...(canAuto && auto ? { autoApprove: true } : {}) });
+      await api.post(`/sessions/${session.id}/action/answer`, { actionId: action.id, value, ...(canAuto && auto ? { autoApprove: true } : {}) });
       /* bar clears via WS echo on success */
     } catch (e) {
       setErr(String(e?.message || e).replace(/^HTTP \d+ — /, ''));

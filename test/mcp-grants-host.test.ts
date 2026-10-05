@@ -311,10 +311,10 @@ test("a comment becomes a card and reaches the vendor only on a person's Send, u
   expect(card.kind).toBe('outbound');
   expect(card.prompt).toContain('ISSUE-1');
   expect(card.prompt).toContain('Fixed in the latest build.');
-  const self = await fetch(`${base}/__api/sessions/${s.id}/action/answer`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${s.token}` }, body: JSON.stringify({ value: 'send' }) });
+  const self = await fetch(`${base}/__api/sessions/${s.id}/action/answer`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${s.token}` }, body: JSON.stringify({ actionId: card.id, value: 'send' }) });
   expect(self.status).toBe(403);
   expect(toolCalls.length).toBe(0);
-  expect((await person('POST', `/__api/sessions/${s.id}/action/answer`, { value: 'send' })).status).toBe(200);
+  expect((await person('POST', `/__api/sessions/${s.id}/action/answer`, { actionId: card.id, value: 'send' })).status).toBe(200);
   expect(toolCalls.map((t) => [t.tool, t.args])).toEqual([['save_comment', { issueId: 'ISSUE-1', body: 'Fixed in the latest build.' }]]);
 });
 

@@ -409,13 +409,14 @@ function load(): void {
   // Forward-migrate before the first read. A file already at the current
   // version is not touched; anything older is backed up next to itself first.
   try {
-    migrateFile(stateFile(), STATE_SCHEMA);
+    const result = migrateFile(stateFile(), STATE_SCHEMA);
+    if (result.status === 'unreadable') throw new Error(result.error);
   } catch (e) {
     if (e instanceof SchemaVersionError) {
       refusedTooNew = true;
       console.error(`[state] ${e.message}`);
     }
-    throw e; // fatal: better to stop than to boot with an empty session list
+    throw new Error(`[state] Cannot load ${stateFile()}: ${(e as Error).message}. Recover from ${stateFile()}.bak before restarting`); // fatal: better to stop than to boot with an empty session list
   }
   try {
     const j = JSON.parse(fs.readFileSync(stateFile(), 'utf8')) as {
@@ -446,7 +447,10 @@ function load(): void {
         db.listeners.set(l.id, l);
       }
     }
-  } catch {}
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw new Error(`[state] Cannot load ${stateFile()}: ${(e as Error).message}. Recover from ${stateFile()}.bak before restarting`);
+  }
 }
 load();
 
@@ -484,8 +488,23 @@ export function flushState(): void {
   if (refusedTooNew || dirSwapped) return;
   try {
     fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
+    const file = stateFile();
+    const tmp = `${file}.tmp`;
+    // Preserve the previous complete database before atomically replacing it.
+    // Never promote unreadable bytes to the last-good backup.
+    let previous: string | undefined;
+    try {
+      previous = fs.readFileSync(file, 'utf8');
+      JSON.parse(previous);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    if (previous !== undefined) {
+      fs.writeFileSync(`${file}.bak.tmp`, previous, { mode: 0o600 });
+      fs.renameSync(`${file}.bak.tmp`, `${file}.bak`);
+    }
     fs.writeFileSync(
-      stateFile(),
+      tmp,
       JSON.stringify(
         stamp({
           colorIndex: db.colorIndex,
@@ -495,8 +514,10 @@ export function flushState(): void {
         }, STATE_SCHEMA),
         null,
         2
-      )
+      ),
+      { mode: 0o600 }
     );
+    fs.renameSync(tmp, file);
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
     console.error('[state] persist failed:', error.message);

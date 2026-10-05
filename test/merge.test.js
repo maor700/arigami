@@ -146,11 +146,13 @@ test('mergeBranch conflict: aborted, base clean, conflicting files listed', asyn
 
 // ---- approval stamp (state) ----------------------------------------------
 
-test('markApproved stamps metadata.review only on sessions that own a branch ≠ base', () => {
+test('markApproved stamps the reviewed SHA and repository only on sessions that own a real branch ≠ base', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'approve', reposDir: repos, suffix: 'a1' });
+  commit(wt.dir, 'approved.txt', 'reviewed', 'reviewed');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-state-'));
   const r = runInChild(
     "const st=await import('./server/state.ts');const api=await import('./server/api.js');" +
-      "const a=st.createSession({title:'a',metadata:{branch:'child/x-1',base:'master'}});" +
+      `const a=st.createSession({title:"a",cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:"master"}});` +
       "const b=st.createSession({title:'b'});" +
       "const c=st.createSession({title:'c',metadata:{branch:'master',base:'master'}});" +
       "const d=st.createSession({title:'d',metadata:{branch:'child/y',merged:{sha:'abc'}}});" +
@@ -164,6 +166,9 @@ test('markApproved stamps metadata.review only on sessions that own a branch ≠
   expect(o.c).toBe(false);
   expect(o.d).toBe(false);
   expect(o.ra.state).toBe('approved');
+  expect(o.ra.sha).toBe(sh(wt.dir, 'git', 'rev-parse', 'HEAD'));
+  expect(o.ra.repo).toBe(fs.realpathSync(path.join(repo, '.git')));
+  await removeWorktree(repo, wt.dir);
   expect(o.ra.by).toBe('human@x');
   expect(typeof o.ra.at).toBe('string');
   expect(o.rb).toBeNull();
@@ -182,4 +187,92 @@ test('mayMerge: admin, the master, or the folder controller — never the child 
   );
   if (!r.ok) throw new Error(r.error);
   expect(r.out[0]).toEqual({ admin: true, off: true, host: true, master: true, ctl: true, self: false, stranger: false, member: false, none: false });
+});
+
+test('mergeBranch refuses a changed tip and merges only the approved SHA for both strategies', async () => {
+  for (const strategy of ['no-ff', 'squash']) {
+    const wt = await provisionChildWorktree({ parentDir: repo, subtask: `pinned-${strategy}`, reposDir: repos });
+    commit(wt.dir, `pinned-${strategy}.txt`, 'reviewed', 'reviewed');
+    const approvedSha = sh(wt.dir, 'git', 'rev-parse', 'HEAD');
+    const before = sh(repo, 'git', 'rev-parse', 'HEAD');
+    commit(wt.dir, `pinned-${strategy}.txt`, 'unreviewed', 'later commit');
+    const refused = await mergeBranch({ repoRoot: repo, branch: wt.branch, base: 'master', approvedSha, strategy, message: 'reviewed only' });
+    expect(refused).toMatchObject({ ok: false, reason: 'approval-stale' });
+    expect(sh(repo, 'git', 'rev-parse', 'HEAD')).toBe(before);
+    sh(wt.dir, 'git', 'reset', '--hard', approvedSha);
+    const merged = await mergeBranch({ repoRoot: repo, branch: wt.branch, base: 'master', approvedSha, strategy, message: 'reviewed only' });
+    expect(merged.ok).toBe(true);
+    expect(fs.readFileSync(path.join(repo, `pinned-${strategy}.txt`), 'utf8')).toBe('reviewed');
+    await removeWorktree(repo, wt.dir);
+  }
+});
+
+test('mergeSession rejects a changed commit even with force; legacy approval needs a new review', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'stale-review', reposDir: repos });
+  commit(wt.dir, 'stale.txt', 'reviewed', 'reviewed');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-stale-'));
+  const before = sh(repo, 'git', 'rev-parse', 'HEAD');
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
+    const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
+    const approved=api.markApproved(s.id,'human');
+    Bun.spawnSync(['git','-C',s.cwd,'commit','--allow-empty','-m','unreviewed']);
+    const status=await api.mergeStatus(st.getSession(s.id));
+    const refused=await api.mergeSession(st.getSession(s.id),{force:true},'human');
+    st.patchSession(s.id,{metadata:{review:{state:'approved',at:new Date().toISOString(),by:'legacy'}}});
+    const legacy=await api.mergeStatus(st.getSession(s.id));
+    emit({approved,status,refused,legacy}); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  expect(r.ok).toBe(true);
+  expect(r.out[0].approved).toBe(true);
+  expect(r.out[0].status).toMatchObject({ approved: false, canMerge: false, reason: 'approval-stale' });
+  expect(r.out[0].refused).toMatchObject({ status: 409, reason: 'approval-stale' });
+  expect(r.out[0].legacy.canMerge).toBe(false);
+  expect(sh(repo, 'git', 'rev-parse', 'HEAD')).toBe(before);
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a commit added during a merge gate is refused; gates receive the approved SHA', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'gate-change', reposDir: repos });
+  commit(wt.dir, 'gate.txt', 'reviewed', 'reviewed');
+  const approvedSha = sh(wt.dir, 'git', 'rev-parse', 'HEAD');
+  const before = sh(repo, 'git', 'rev-parse', 'HEAD');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-gate-'));
+  const extension = path.join(dir, 'fixture');
+  fs.mkdirSync(extension);
+  fs.writeFileSync(path.join(extension, 'manifest.json'), JSON.stringify({ name: 'gate-test', version: '0.1.0', apiVersion: 1, title: 'Gate test', hooks: { module: 'hooks.ts', gates: ['merge.before'] } }));
+  fs.writeFileSync(path.join(extension, 'hooks.ts'), `export const hooks={gates:{'merge.before':async(ev)=>{globalThis.gateSha=ev.sha;Bun.spawnSync(['git','-C',${JSON.stringify(wt.dir)},'commit','--allow-empty','-m','during gate']);return {ok:true}}}};`);
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
+    const ext=await import('./server/extensions.ts'); await ext.addExtension(${JSON.stringify(extension)}); await ext.reload();
+    const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
+    api.markApproved(s.id,'human');
+    const result=await api.mergeSession(st.getSession(s.id),{},'human');
+    emit({result,sha:globalThis.gateSha}); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  expect(r.ok).toBe(true);
+  expect(r.out[0].sha).toBe(approvedSha);
+  expect(r.out[0].result).toMatchObject({ status: 409, reason: 'approval-stale' });
+  expect(sh(repo, 'git', 'rev-parse', 'HEAD')).toBe(before);
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('concurrent merge requests recheck metadata inside the repository lock', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'locked', reposDir: repos });
+  commit(wt.dir, 'locked.txt', 'reviewed', 'reviewed');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-lock-'));
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
+    const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
+    api.markApproved(s.id,'human');
+    emit(await Promise.all([api.mergeSession(st.getSession(s.id),{},'human'),api.mergeSession(st.getSession(s.id),{},'human')])); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  expect(r.ok).toBe(true);
+  expect(r.out[0].filter(x => x.ok)).toHaveLength(1);
+  expect(r.out[0].find(x => !x.ok)).toMatchObject({ status: 409 });
+  expect(r.out[0].find(x => !x.ok).error).toContain('already merged');
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

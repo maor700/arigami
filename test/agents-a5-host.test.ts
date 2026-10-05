@@ -186,7 +186,7 @@ test('#2 publish: a restricted agent is refused (403); an agent that may publish
   expect(act.agent.slug).toBe('nili');
   expect(act.prompt).toMatch(/PUBLIC link/);
   // approving mints the link and hands it back to the session
-  expect((await api('POST', `/__api/sessions/${niliSession}/action/answer`, { value: 'approve' })).status).toBe(200);
+  expect((await api('POST', `/__api/sessions/${niliSession}/action/answer`, { actionId: act.id, value: 'approve' })).status).toBe(200);
   const tokens = (await api('GET', `/__api/sessions/${niliSession}/artifacts/${artId}/share`)).json.tokens;
   expect(tokens.length).toBe(1);
   const evs = await chat(niliSession);
@@ -196,7 +196,7 @@ test('#2 publish: a restricted agent is refused (403); an agent that may publish
   const again = await api('POST', `/__api/sessions/${niliSession}/artifacts/${artId}/share`, { days: 3 });
   expect(again.status).toBe(202);
   expect(again.json.pending).toBe(true);
-  expect((await api('POST', `/__api/sessions/${niliSession}/action/answer`, { value: 'no' })).status).toBe(200);
+  expect((await api('POST', `/__api/sessions/${niliSession}/action/answer`, { actionId: (await api('GET', `/__api/sessions/${niliSession}`)).json.action.id, value: 'no' })).status).toBe(200);
   expect((await api('GET', `/__api/sessions/${niliSession}/artifacts/${artId}/share`)).json.tokens.length).toBe(1); // no second token
   expect((await chat(niliSession)).some((e) => e.kind === 'user' && /REFUSED a public link/.test(e.text || ''))).toBe(true);
 

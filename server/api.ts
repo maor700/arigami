@@ -3013,7 +3013,7 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
 // ---- F7: approval + host-executed merge ----
 // The child never merges. A human approval (local review verdict `approve`, or
 // the ✓ Verified button of request_review) on a session that owns a branch
-// stamps metadata.review = {state:'approved', at, by}; from there the merge is
+// stamps metadata.review with the repository, branch, and reviewed SHA; from there the merge is
 // one click (web) or one tool call (merge_session) — executed by the HOST.
 function principalLabel(me: any): string {
   if (!me) return 'unknown';
@@ -3022,14 +3022,29 @@ function principalLabel(me: any): string {
   return me.kind;
 }
 
-export function markApproved(id: string, by: string): boolean {
+// Both the immutable commit and canonical git directory identify what was reviewed.
+function reviewedCommit(s: any): { sha: string; repo: string; branch: string } | null {
+  const cwd = untildify(s.metadata?.worktree || s.cwd) as string;
+  const branch = s.metadata?.branch;
+  if (!cwd || !branch) return null;
+  const sha = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--verify', `refs/heads/${branch}^{commit}`]);
+  const common = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--git-common-dir']);
+  if (sha.exitCode || common.exitCode) return null;
+  try {
+    return { sha: Buffer.from(sha.stdout).toString().trim(), repo: fs.realpathSync(path.resolve(cwd, Buffer.from(common.stdout).toString().trim())), branch };
+  } catch { return null; }
+}
+
+export function markApproved(id: string, by: string, expected?: { sha: string; repo: string; branch: string }): boolean {
   const s = state.getSession(id);
   if (!s) return false;
   const md: any = s.metadata || {};
   if (!md.branch || md.merged) return false;
   if (md.base && md.branch === md.base) return false;
+  const commit = reviewedCommit(s);
+  if (!commit || (expected && (commit.sha !== expected.sha || commit.repo !== expected.repo || commit.branch !== expected.branch))) return false;
   state.patchSession(id, {
-    metadata: { review: { state: 'approved', at: new Date().toISOString(), by }, mergeConflict: null },
+    metadata: { review: { state: 'approved', at: new Date().toISOString(), by, ...commit }, mergeConflict: null },
   });
   // EXT domain event (the WS only ever carried this as a session-updated).
   try { emitLocal('review.approved', { sessionId: id, by, branch: md.branch }); } catch {}
@@ -3083,13 +3098,16 @@ export async function mergeStatus(s: any) {
   const md: any = s.metadata || {};
   const root = await baseRepoRootFor(s);
   const base = md.base ? String(md.base) : root ? await defaultBaseFor(root) : 'main';
-  const approved = md.review?.state === 'approved';
+  const commit = reviewedCommit(s);
+  const destination = root ? reviewedCommit({ cwd: root, metadata: { branch: md.branch } }) : null;
+  const approved = md.review?.state === 'approved' && !!commit && md.review.sha === commit.sha && md.review.repo === commit.repo && md.review.branch === commit.branch && destination?.repo === commit.repo;
   const merged = md.merged || null;
   const out: any = {
     branch: md.branch || null,
     base,
     repoRoot: root,
     approved,
+    approvedSha: approved ? commit!.sha : null,
     review: md.review || null,
     merged,
     conflict: md.mergeConflict || null,
@@ -3107,12 +3125,34 @@ export async function mergeStatus(s: any) {
   else if (!st.checkedOut) out.reason = 'base-not-checked-out';
   else if (st.dirty) out.reason = 'dirty';
   else if (st.ahead === 0) out.reason = 'nothing-to-merge';
-  else if (!approved) out.reason = 'not-approved';
+  else if (!approved) out.reason = md.review?.state === 'approved' ? 'approval-stale' : 'not-approved';
   out.canMerge = out.reason === null;
   return out;
 }
 
+const mergeLocks = new Map<string, Promise<void>>();
+
 export async function mergeSession(
+  s: any,
+  o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
+  by: string
+): Promise<any> {
+  const root = await baseRepoRootFor(s);
+  if (!root) return { error: 'could not resolve the base repository', status: 400 };
+  const key = fs.realpathSync(root);
+  const previous = mergeLocks.get(key) || Promise.resolve();
+  let release!: () => void;
+  const lock = new Promise<void>((resolve) => { release = resolve; });
+  mergeLocks.set(key, lock);
+  await previous;
+  try { return await mergeSessionLocked(state.getSession(s.id) || s, o, by); }
+  finally {
+    release();
+    if (mergeLocks.get(key) === lock) mergeLocks.delete(key);
+  }
+}
+
+async function mergeSessionLocked(
   s: any,
   o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
   by: string
@@ -3127,6 +3167,8 @@ export async function mergeSession(
     return { error: 'not approved — the human approves first (review verdict approve / ✓ Verified)', status: 409, reason: 'not-approved' };
   if (st.reason && st.reason !== 'not-approved')
     return { error: st.reason === 'dirty' ? `base worktree is dirty (${(st.dirtyFiles || []).join(', ')})` : st.reason, status: 409, reason: st.reason, files: st.dirtyFiles };
+  const approvedSha = st.approvedSha || (o.force ? reviewedCommit(s)?.sha : null);
+  if (!approvedSha) return { error: 'no reviewed commit', status: 409 };
   const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
   // EXT: `merge.before` gates. This is the hook the code used to say did not
   // exist (see HINT above) — an extension can run typecheck/tests/CI here and
@@ -3136,7 +3178,7 @@ export async function mergeSession(
   try {
     const ext = await import('./extensions.js');
     if (ext.hasGates('merge.before')) {
-      const g = await ext.runGates('merge.before', { sessionId: s.id, branch: st.branch, base: st.base, repoRoot: st.repoRoot, title: s.title || '' });
+      const g = await ext.runGates('merge.before', { sessionId: s.id, branch: st.branch, base: st.base, repoRoot: st.repoRoot, sha: approvedSha, title: s.title || '' });
       if (!g.ok) {
         const line = `merge blocked by the "${g.ext}" extension: ${g.reason}`;
         claude.appendChat(s.id, { kind: 'merge', state: 'blocked', branch: st.branch, base: st.base, gate: g.ext, text: line });
@@ -3148,7 +3190,7 @@ export async function mergeSession(
     console.error('[ext] merge gates skipped:', (e as Error).message);
   }
   const message = mergeMessage({ branch: st.branch, base: st.base, title: s.title, subtask: md.subtask, sessionId: s.id, strategy });
-  const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, base: st.base, strategy, message });
+  const r = await mergeBranch({ repoRoot: st.repoRoot, branch: st.branch, approvedSha, base: st.base, strategy, message });
   const masterId = md.master ? String(md.master) : null;
   if (!r.ok) {
     if ('conflict' in r && r.conflict) {
@@ -6004,8 +6046,9 @@ export async function handle(
       if (kind && !agents.ACTION_KIND_RE.test(kind)) return badRequest(res, `invalid kind: ${kind} — lowercase letters, digits, :._- (max 40)`);
       const ag = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
       const action: Record<string, unknown> = { id: 'act_' + nano(), at: new Date().toISOString(), prompt, buttons, ...(kind ? { kind } : {}) };
+      if (kind === 'review') action.reviewCommit = reviewedCommit(s);
       if (ag) action.agent = { slug: ag.slug, name: ag.name, emoji: ag.emoji, color: ag.color };
-      if (ag && kind && (ag.autoApprove || []).includes(kind)) {
+      if (ag && kind !== 'review' && kind && (ag.autoApprove || []).includes(kind)) {
         const pick = buttons.find((b: any) => b?.style === 'primary') || buttons[0];
         const value = String(pick?.value ?? '');
         ledger.appendActivity(ag.slug, { kind: 'action', sessionId: id, detail: String(prompt).slice(0, 200), actionKind: kind, value, auto: true });
@@ -6022,29 +6065,31 @@ export async function handle(
       return json(res, action, 201);
     }
     if (sub === 'action/answer' && m === 'POST') {
-      const { value, autoApprove } = (await readBody(req)) as any;
+      const { actionId, value, autoApprove } = (await readBody(req)) as any;
       if (value === undefined) return badRequest(res, 'value required');
       // A3: the human's answer goes to the agent's ledger; "auto-approve this
       // kind from now on" adds the kind to agent.json autoApprove.
-      const cur = (s as any).action as { kind?: string; prompt?: string; agent?: { slug: string }; share?: { artifactId: string; title?: string; days?: number } } | null;
+      const cur = state.getSession(id)?.action as any;
+      if (!cur || !actionId || cur.id !== actionId)
+        return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
+      if (!cur.buttons?.some((b: any) => b.value === value)) return badRequest(res, 'value is not a current action option');
+      const cardKind = cur.kind;
+      if ([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session')
+        return json(res, { error: 'only a person can answer this card' }, 403);
+      if (cardKind === 'review' && value === 'verified' && (cur.reviewCommit || state.getSession(id)?.metadata?.branch) &&
+          (!cur.reviewCommit || !markApproved(id, principalLabel((req as any).auth), cur.reviewCommit)))
+        return json(res, { error: 'The reviewed commit has changed. Request a new review.' }, 409);
       const agSlug = sessionAgent(s);
       if (agSlug && cur) {
         ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: cur.kind || null, value: String(value), auto: false, by: principalLabel((req as any).auth) });
-        if (autoApprove === true && cur.kind) {
+        if (autoApprove === true && cur.kind && cur.kind !== 'review') {
           const a = agents.getAgent(agSlug);
           if (a) agents.updateAgent(agSlug, { autoApprove: [...new Set([...(a.autoApprove || []), cur.kind])] });
         }
       }
-      // A login or share card is approved by a PERSON. A session's own token must
-      // not be able to answer it — that would be the agent approving itself.
-      const cardKind = (cur as any)?.kind;
-      if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND || cardKind === SHARE_KIND || cardKind === OUTBOUND_KIND) && (req as any).auth?.kind === 'session')
-        return json(res, { error: 'only a person can answer this card' }, 403);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // the hold is gone; if no turn starts below, the queue resumes
       try { emitLocal('action.answered', { sessionId: id, actionId: (cur as any)?.id || null, kind: cur?.kind || null, value: String(value) }); } catch {}
-      // F7: request_review's ✓ Verified is a human approval of the branch.
-      if (value === 'verified') markApproved(id, principalLabel((req as any).auth));
       // A5 (#2): the share card is the ONLY place an agent's public link is minted
       // — the answer carries the link (or the refusal) back into the session.
       if (cardKind === OUTBOUND_KIND && (cur as any).outbound) {
@@ -6157,6 +6202,9 @@ export async function handle(
     // the options and just wants it gone. The request_action tool_use already
     // returned, so the model isn't blocked; clearing the state is enough.
     if (sub === 'action/dismiss' && m === 'POST') {
+      const { actionId } = (await readBody(req)) as any;
+      if (!actionId || (state.getSession(id)?.action as any)?.id !== actionId)
+        return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
       state.patchSession(id, { action: null });
       claude.kickAutoPlay(id); // dismissing the card releases a held queue
       return json(res, { ok: true });

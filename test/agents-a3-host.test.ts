@@ -216,7 +216,7 @@ test('request_action: the card carries the agent + kind; answering with autoAppr
   expect(a1.json.kind).toBe('send-email');
   expect(a1.json.autoApproved).toBeUndefined();
   expect((await api('GET', `/__api/sessions/${botSession}`)).json.action.agent.slug).toBe('bot');
-  expect((await api('POST', `/__api/sessions/${botSession}/action/answer`, { value: 'send', autoApprove: true })).status).toBe(200);
+  expect((await api('POST', `/__api/sessions/${botSession}/action/answer`, { actionId: a1.json.id, value: 'send', autoApprove: true })).status).toBe(200);
   expect((await api('GET', '/__api/agents/bot')).json.autoApprove).toEqual(['send-email']);
   const human = ledger('bot').find((e) => e.kind === 'action' && e.auto === false);
   expect(human).toMatchObject({ actionKind: 'send-email', value: 'send', sessionId: botSession });
@@ -233,7 +233,7 @@ test('request_action: the card carries the agent + kind; answering with autoAppr
   // a different kind still asks; an invalid kind is a 400; a plain session's action has no agent
   const a3 = await api('POST', `/__api/sessions/${botSession}/action`, { prompt: 'Merge?', kind: 'merge', buttons: [{ label: 'Yes', value: 'yes' }] });
   expect(a3.json.autoApproved).toBeUndefined();
-  await api('POST', `/__api/sessions/${botSession}/action/dismiss`, {});
+  await api('POST', `/__api/sessions/${botSession}/action/dismiss`, { actionId: a3.json.id });
   expect((await api('POST', `/__api/sessions/${botSession}/action`, { prompt: 'x', kind: 'Bad Kind', buttons: [{ label: 'a', value: 'a' }] })).status).toBe(400);
   const plain = (await api('POST', '/__api/sessions', { title: 'plain2', cwd: ws })).json.id;
   const pa = await api('POST', `/__api/sessions/${plain}/action`, { prompt: 'x', kind: 'send-email', buttons: [{ label: 'a', value: 'a' }] });

@@ -202,10 +202,10 @@ test('a send becomes a card, and reaches Composio only on a person’s Send, unc
   expect(s.json.action.prompt).toContain('dana@example.test');
   expect(s.json.action.prompt).toContain('Running late, 10 min.');
   // the session itself may not press Send
-  const self = await fetch(`${base}/__api/sessions/${sid}/action/answer`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ value: 'send' }) });
+  const self = await fetch(`${base}/__api/sessions/${sid}/action/answer`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ actionId: s.json.action.id, value: 'send' }) });
   expect(self.status).toBe(403);
   expect(executed.length).toBe(0);
-  const a = await person('POST', `/__api/sessions/${sid}/action/answer`, { value: 'send' });
+  const a = await person('POST', `/__api/sessions/${sid}/action/answer`, { actionId: s.json.action.id, value: 'send' });
   expect(a.status).toBe(200);
   expect(executed).toEqual([{ tool: 'GMAIL_SEND_EMAIL', body: { connected_account_id: 'ca_gmail_shared', user_id: 'default', arguments: { recipient_email: 'dana@example.test', body: 'Running late, 10 min.' } } }]);
 });

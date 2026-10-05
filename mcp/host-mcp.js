@@ -677,6 +677,7 @@ export async function createArigamiServer(env = process.env) {
         await api('PATCH', `/__api/sessions/${id}`, { status: 'In Review' });
         return api('POST', `/__api/sessions/${id}/action`, {
           prompt: a.summary || 'The agent finished — review the changes',
+          kind: 'review',
           buttons: [
             { label: 'Request changes', value: 'request-changes' },
             { label: '✓ Verified', value: 'verified', style: 'primary' },
