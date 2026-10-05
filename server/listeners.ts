@@ -72,7 +72,7 @@ import * as slack from './slack.js';
 // extension's provider is dispatched through the registry with a deadline and
 // then rejoins this file's watermark/backoff/wake machinery unchanged.
 import * as registry from './listeners-registry.js';
-import { emitLocal } from './bus.js';
+import { emitLocal, subscribe as subscribeBus } from './bus.js';
 
 const execFileP = promisify(execFile);
 
@@ -784,8 +784,32 @@ async function pollOne(l: Listener): Promise<void> {
   }
 }
 
+// ---- slack webhook push (fast-path wake) ------------------------------------
+// webhooks.ts emits 'webhook.received' for every inbound Slack event once its
+// signature verifies. Match it to any armed slack listener watching that
+// channel/thread and bring its nextPollAt forward to now, so the next tick
+// (≤TICK_MS away) picks it up instead of waiting out its normal intervalSec —
+// turns the poll-based slack listener into an effectively-pushed one without
+// duplicating pollSlack's own fetch/diff logic.
+function onSlackWebhook(msg: { type: string; kind?: string; body?: unknown }): void {
+  if (msg.type !== 'webhook.received' || msg.kind !== 'slack') return;
+  const event = (msg.body as any)?.event;
+  const channelId = event?.channel;
+  if (!channelId) return;
+  const threadTs = event?.thread_ts || event?.ts;
+  const now = Date.now();
+  for (const l of listListeners()) {
+    if (l.type !== 'slack' || l.status !== 'watching') continue;
+    const p = l.params as { channelId: string; threadTs?: string };
+    if (p.channelId !== channelId) continue;
+    if (p.threadTs && threadTs && p.threadTs !== threadTs) continue;
+    patchListener(l.id, { nextPollAt: now });
+  }
+}
+
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
+let unsubSlackWebhook: (() => void) | null = null;
 
 async function tick(): Promise<void> {
   if (ticking) return;
@@ -816,6 +840,7 @@ export function startListenerScheduler(): void {
   tick();
   timer = setInterval(tick, TICK_MS);
   if (timer.unref) timer.unref();
+  if (!unsubSlackWebhook) unsubSlackWebhook = subscribeBus(onSlackWebhook);
 
   // Auto-start bridge if a WhatsApp listener is already registered
   const waListeners = listListeners().filter((l) => l.type === 'whatsapp' && l.status === 'watching');
