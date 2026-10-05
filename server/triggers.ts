@@ -290,12 +290,18 @@ function liveTicketSession(ticket: string): boolean {
   );
 }
 
-// Live sessions started FROM the queue (auto or manual Play) — the maxConcurrent
-// budget. Direct launcher ticket sessions don't count.
+// A session started FROM the queue (auto or manual Play) that is RUNNING a turn — what the
+// maxConcurrent budget limits. One that is idle (a review waiting on its PR, a question for
+// the human, a finished run kept open) is waiting, not working, and must not hold a slot
+// forever: that would starve both autoplay and the scheduled cron jobs that share the cap.
+export function isRunningQueueSession(s: any): boolean {
+  const st = s?.claude?.state;
+  return !!s?.metadata?.fromQueue && st !== 'dead' && st !== 'idle';
+}
+
+// Direct launcher ticket sessions don't count.
 function countQueueSessions(): number {
-  return state
-    .listSessions()
-    .filter((s: any) => s.metadata?.fromQueue && s.claude?.state !== 'dead').length;
+  return state.listSessions().filter(isRunningQueueSession).length;
 }
 
 async function fetchMatches(filters: Record<string, unknown>): Promise<any[]> {

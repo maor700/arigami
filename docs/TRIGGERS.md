@@ -84,9 +84,10 @@ pending = { id, ticket, title, triggerId, triggerName, addedAt }
 - Single **▶/⏸ toggle** on the Pending section header — persisted. ▶ = autoplay
   on (queue self-drains top-down), ⏸ = off (items start only via per-item Play).
   *No separate enable checkbox.*
-- Global **`maxConcurrent` (default 3)** next to the toggle. Counts **live,
-  non-archived sessions started from the queue** (auto or manual Play). Autoplay
-  holds when live count = `maxConcurrent`; resumes as slots free.
+- Global **`maxConcurrent` (default 3)** next to the toggle. Counts **non-archived sessions
+  started from the queue (auto or manual Play) that are running a turn** — an idle one (a review
+  waiting on its PR, a question waiting on the human, a finished run kept open) is waiting, not
+  working, and takes no slot. Autoplay holds when that count = `maxConcurrent`; resumes as slots free.
 - **Execution order = the queue's D&D order**, initialized to arrival order, then
   freely reorderable. Autoplay drains top-down in that order.
 

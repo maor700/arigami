@@ -235,3 +235,24 @@ test('nextRunFor: interval trigger has a next run; an already-fired one-shot "at
   expect(beforeFire).toBe(Date.parse('2030-01-01T00:00:00Z'));
   expect(afterFire).toBeNull();
 });
+
+test('isRunningQueueSession: only a queue-started session that is running a turn takes a budget slot', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(
+    `
+    const t = await import('./server/triggers.js');
+    const q = (state, fromQueue = true) => ({ metadata: fromQueue ? { fromQueue: true } : {}, claude: { state } });
+    emit({
+      running: t.isRunningQueueSession(q('running')),
+      starting: t.isRunningQueueSession(q('starting')),
+      idle: t.isRunningQueueSession(q('idle')),      // waiting on a PR / the human: not working
+      dead: t.isRunningQueueSession(q('dead')),
+      notQueue: t.isRunningQueueSession(q('running', false)), // direct launcher session
+      bare: t.isRunningQueueSession({}),
+    });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0]).toEqual({ running: true, starting: true, idle: false, dead: false, notQueue: false, bare: false });
+});
