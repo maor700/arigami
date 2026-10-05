@@ -616,6 +616,9 @@ export async function createTrigger(input: {
 export function patchTrigger(id: string, patch: Record<string, unknown>): Trigger | null {
   const t = db.triggers.get(id);
   if (!t) return null;
+  // Validate the target before mutating any part of the record.
+  if (t.type === 'cron' && (typeof patch.sessionMode === 'string' || patch.enabled === true))
+    validateCronTarget(typeof patch.sessionMode === 'string' ? patch.sessionMode : t.sessionMode);
   if (typeof patch.name === 'string' && patch.name.trim()) t.name = patch.name.trim();
   if (typeof patch.enabled === 'boolean') t.enabled = patch.enabled;
   if (typeof patch.autonomous === 'boolean') t.autonomous = patch.autonomous;
@@ -748,8 +751,11 @@ async function fireCron(
       tlog(t.id, 'warn', `held — maxConcurrent (${db.settings.maxConcurrent}) reached; will retry next poll`);
       return { ok: false, reason: 'at-capacity' };
     }
-    t.lastRun = Date.now();
-    const at = new Date(t.lastRun).toISOString();
+    const attemptedAt = Date.now();
+    // Recurring schedules retain their cadence on failure; a one-shot is
+    // consumed only once its prompt was accepted for delivery.
+    if (t.schedule.kind !== 'at') t.lastRun = attemptedAt;
+    const at = new Date(attemptedAt).toISOString();
     const api = await import('./api.js');
 
     if (t.sessionMode === 'isolated') {
@@ -776,6 +782,8 @@ async function fireCron(
           cronDeliver: t.deliver,
         },
       });
+      t.lastRun = attemptedAt;
+      t.lastError = null;
       recordCronRun(t, { at, sessionId, state: 'started' });
       tlog(t.id, 'fire', `started isolated session ${sessionId}${opts.manual ? ' (run now)' : ''}`);
       return { ok: true, sessionId };
@@ -785,7 +793,9 @@ async function fireCron(
     const targetId = t.sessionMode.slice('existing:'.length);
     const target = state.getSession(targetId);
     if (!target) {
-      recordCronRun(t, { at, sessionId: null, state: 'error', summary: `target session ${targetId} not found` });
+      t.lastError = `target session ${targetId} not found`;
+      if (t.schedule.kind === 'at') t.enabled = false; // repair and retry explicitly; avoid repeated failure notifications
+      recordCronRun(t, { at, sessionId: null, state: 'error', summary: t.lastError });
       tlog(t.id, 'error', `target session ${targetId} not found`);
       await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: `target session ${targetId} not found` });
       return { ok: false, reason: 'target-not-found' };
@@ -809,11 +819,15 @@ async function fireCron(
       tlog(t.id, 'fire', `interrupted busy session ${targetId} for immediate delivery`);
     }
     const delivered = api.deliverToSession(targetId, `[Cron: ${t.name}]\n\n${t.prompt}`);
+    t.lastRun = attemptedAt;
+    t.lastError = null;
     recordCronRun(t, { at, sessionId: targetId, state: 'started', summary: `delivered (${delivered.delivered})` });
     tlog(t.id, 'fire', `delivered to existing session ${targetId} (${delivered.delivered}${opts.manual ? ', run now' : ''})`);
     return { ok: true, sessionId: targetId };
   } catch (e) {
     const msg = (e as Error).message;
+    t.lastError = msg;
+    if (t.schedule.kind === 'at') t.enabled = false;
     recordCronRun(t, { at: new Date().toISOString(), sessionId: null, state: 'error', summary: msg });
     tlog(t.id, 'error', `fire failed: ${msg}`);
     await deliverCronResult(t.name, t.id, t.deliver, { state: 'error', summary: msg });
@@ -823,6 +837,14 @@ async function fireCron(
     persist();
     emitTriggers();
   }
+}
+
+function validateCronTarget(sessionMode: string): void {
+  if (sessionMode === 'isolated') return;
+  if (!sessionMode.startsWith('existing:') || sessionMode.length === 'existing:'.length)
+    throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  const targetId = sessionMode.slice('existing:'.length);
+  if (!state.getSession(targetId)) throw new Error(`target session ${targetId} not found`);
 }
 
 export async function createCronTrigger(input: {
@@ -855,8 +877,7 @@ export async function createCronTrigger(input: {
     throw new Error(`invalid schedule.kind: "${kind}" (expected "cron" | "interval" | "at")`);
   const schedule: Schedule = { kind, value: String(input.schedule?.value ?? '') };
   const sessionMode = String(input.sessionMode || 'isolated');
-  if (sessionMode !== 'isolated' && !(sessionMode.startsWith('existing:') && sessionMode.length > 'existing:'.length))
-    throw new Error(`invalid sessionMode: "${sessionMode}" (expected "isolated" or "existing:<sessionId>")`);
+  validateCronTarget(sessionMode);
   // A2: the agent the runs are born from. Explicit `agent` wins; a cron job
   // created FROM an agent's session defaults to that agent (its routine); an
   // unknown slug is refused. `agent: ''` = explicitly none.

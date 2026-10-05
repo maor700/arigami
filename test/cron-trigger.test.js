@@ -174,29 +174,62 @@ test('cron triggers survive a restart (persisted fields round-trip through flush
   expect(reloaded.runs).toEqual([]);
 });
 
-test("runCronNow on 'existing' mode reports+records failure when the target session is gone", () => {
+test('existing targets are validated on create and patch before any mutation', () => {
   const { env } = isolatedEnv();
-  const r = runInChild(
-    `
+  const r = runInChild(`
     const t = await import('./server/triggers.js');
+    const state = await import('./server/state.js');
     t.load();
-    const created = await t.createCronTrigger({
-      name: 'Nudge PM', prompt: 'status update please',
-      schedule: { kind: 'interval', value: '1h' }, sessionMode: 'existing:sess_does_not_exist',
-    });
-    const result = await t.runCronNow(created.id);
-    const after = t.listTriggers().find((x) => x.id === created.id);
-    emit({ result, runs: after.runs, log: t.getTriggerLog(created.id) });
-    `,
-    env
-  );
+    const input = { prompt: 'p', schedule: { kind: 'interval', value: '1h' } };
+    let createError, patchError;
+    try { await t.createCronTrigger({ ...input, sessionMode: 'existing:missing' }); } catch (e) { createError = e.message; }
+    const target = state.createSession({ title: 'valid target' });
+    const created = await t.createCronTrigger({ ...input, sessionMode: 'existing:' + target.id });
+    try { t.patchTrigger(created.id, { name: 'must not change', enabled: false, sessionMode: 'existing:missing' }); } catch (e) { patchError = e.message; }
+    emit({ createError, patchError, created, count: t.listTriggers().length });
+  `, env);
   expect(r.ok).toBe(true);
-  const { result, runs, log } = r.out[0];
-  expect(result.ok).toBe(false);
-  expect(result.reason).toBe('target-not-found');
-  expect(runs.length).toBe(1);
-  expect(runs[0].state).toBe('error');
-  expect(log.some((l) => l.level === 'error')).toBe(true);
+  const { createError, patchError, created, count } = r.out[0];
+  expect(createError).toContain('not found');
+  expect(patchError).toContain('not found');
+  expect(created.name).not.toBe('must not change');
+  expect(created.enabled).toBe(true);
+  expect(count).toBe(1);
+});
+
+test('deleted targets pause failed one-shots without consuming them; retargeting permits retry', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(`
+    const t = await import('./server/triggers.js');
+    const state = await import('./server/state.js');
+    t.load();
+    const target = state.createSession({ title: 'delete before delivery' });
+    const created = await t.createCronTrigger({
+      prompt: 'status update', schedule: { kind: 'at', value: '2030-01-01T00:00:00Z' },
+      sessionMode: 'existing:' + target.id, deliver: { push: false },
+    });
+    state.deleteSession(target.id);
+    const result = await t.runCronNow(created.id);
+    emit({ result, lastRun: created.lastRun, enabled: created.enabled, next: t.nextRunFor(created), runs: created.runs, log: t.getTriggerLog(created.id), lastError: created.lastError });
+    let enableError;
+    try { t.patchTrigger(created.id, { enabled: true }); } catch (e) { enableError = e.message; }
+    const replacement = state.createSession({ title: 'replacement' });
+    t.patchTrigger(created.id, { sessionMode: 'existing:' + replacement.id, enabled: true });
+    emit({ enableError, enabled: created.enabled, mode: created.sessionMode, lastRun: created.lastRun });
+  `, env);
+  expect(r.ok).toBe(true);
+  const [failed, repaired] = r.out;
+  expect(failed.result).toEqual({ ok: false, reason: 'target-not-found' });
+  expect(failed.lastRun).toBeNull();
+  expect(failed.next).toBe(Date.parse('2030-01-01T00:00:00Z'));
+  expect(failed.enabled).toBe(false);
+  expect(failed.runs[0].state).toBe('error');
+  expect(failed.lastError).toContain('not found');
+  expect(failed.log.some((l) => l.level === 'error')).toBe(true);
+  expect(repaired.enableError).toContain('not found');
+  expect(repaired.enabled).toBe(true);
+  expect(repaired.mode).toMatch(/^existing:sess_/);
+  expect(repaired.lastRun).toBeNull();
 });
 
 test('runCronNow on an unknown trigger id fails cleanly', () => {

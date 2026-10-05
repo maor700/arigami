@@ -1,4 +1,17 @@
 export const strings = {
+  'launcher.cron.scheduled': "scheduled",
+  'launcher.cron.scheduleLabel': "schedule:",
+  'launcher.cron.targetLabel': "target:",
+  'launcher.cron.runCount': "history: {n} entries",
+  'launcher.cron.deleted': "This trigger was deleted.",
+  'launcher.cron.lastLoaded': "Last updated: {time}",
+  'launcher.cron.selectTarget': "Select a session",
+  'launcher.cron.stepHelp': "Five cron fields; 5/15 means minutes 5, 20, 35, 50.",
+  'launcher.cron.atHelp': "ISO date and time; without an offset, server time applies. Past dates run at the next poll.",
+  'launcher.cron.repairRetry': "Paused after failed delivery. Repair the target and use Run now to retry.",
+  'launcher.cron.missingTarget': "Target session missing — select a replacement",
+  'launcher.cron.pending': "Sending…",
+
   // ticket state / priority filters
   'launcher.options.folder': 'Project folder (optional)',
   'launcher.options.folderHint': 'Existing folder name or a new name to create on launch',
