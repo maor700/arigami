@@ -164,7 +164,12 @@ context thin is the whole point.
    already your cwd) on **your branch** (`metadata.branch`). If `readonly`, do not
    edit — search/analyze and write findings.
 3. Write any large output to an **artifact file** (e.g. `REPORT.md` in your cwd)
-   rather than stuffing it all into the result.
+   rather than stuffing it all into the result. To publish a report from the host
+   workspace, stage only intended public output under
+   `$ARIGAMI_DIR/workspace/public-artifacts/<session-id>/` (default
+   `~/.arigami/workspace/public-artifacts/<session-id>/`) and call
+   `publish_artifact` on that file or directory. The rest of the host workspace
+   and state remain blocked; never stage credentials or private state.
 4. **`report_to_master`** with a capped result — `state`, a one-line `note`, a
    `summary`, and `artifacts` pointers. For code, point at your `branch`/`diff`.
 5. **On error or block, STILL report** (`state:"error"` / `"blocked"`). Never hang

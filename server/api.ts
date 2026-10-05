@@ -5377,6 +5377,26 @@ export async function handle(
     }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
+      // A1: born from an agent — inherit its model (unless overridden), its
+      // rail color, stamp metadata.agent; the persona + agent memory go into the
+      // first turn in claude.js. An unknown agent is refused, never ignored.
+      let agentColor: string | undefined;
+      // P2-5: a child's engine = explicit → its agent's → its master's → cfg.defaultEngine.
+      if (body.master) body.engine = agents.engineForSpawn(body.engine, body.agent ? agents.getAgent(String(body.agent)) : null, state.getSession(String(body.master))) || undefined;
+      try {
+        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
+        body.title = o.title;
+        body.model = o.model;
+        body.engine = o.engine;
+        body.metadata = o.metadata;
+        agentColor = o.color;
+      } catch (e) {
+        const err = e as Error & { status?: number; budget?: unknown };
+        // A5 (#11): the 429 carries the structured budget so the UI localises it.
+        return err.status
+          ? json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status)
+          : notFound(res, err.message);
+      }
       // Dispatch path: a master spawning a child. `mutating`/`readonly` = thin
       // dispatch workers (host does ALL wiring: parent, role, worktree, branch,
       // cleanup, caps). `full` = a regular session under a project controller —
@@ -5411,26 +5431,6 @@ export async function handle(
       if (body.metadata && typeof body.metadata === 'object' && 'agentHome' in body.metadata) {
         const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
         body.metadata = rest;
-      }
-      // A1: born from an agent — inherit its model (unless overridden), its
-      // rail color, stamp metadata.agent; the persona + agent memory go into the
-      // first turn in claude.js. An unknown agent is refused, never ignored.
-      let agentColor: string | undefined;
-      // P2-5: a child's engine = explicit → its agent's → its master's → cfg.defaultEngine.
-      if (body.master) body.engine = agents.engineForSpawn(body.engine, body.agent ? agents.getAgent(String(body.agent)) : null, state.getSession(String(body.master))) || undefined;
-      try {
-        const o = applyAgentToSession(body.agent, { title: body.title, model: body.model, engine: body.engine, metadata: body.metadata });
-        body.title = o.title;
-        body.model = o.model;
-        body.engine = o.engine;
-        body.metadata = o.metadata;
-        agentColor = o.color;
-      } catch (e) {
-        const err = e as Error & { status?: number; budget?: unknown };
-        // A5 (#11): the 429 carries the structured budget so the UI localises it.
-        return err.status
-          ? json(res, { error: err.message, ...(err.budget ? { budget: err.budget } : {}) }, err.status)
-          : notFound(res, err.message);
       }
       const s = state.createSession({
         title: body.title,
