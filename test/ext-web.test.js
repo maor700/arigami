@@ -704,3 +704,16 @@ test('launcher tab: an empty panel field (engine default) leaves the tab\'s valu
   expect(b.model).toBeUndefined(); // panel says "model: default"
   expect(b.effort).toBeUndefined();
 });
+
+test('launcher tab folder settings reach creation and the human folder overrides a tab id', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ folderName: 'Reviews' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'Review', folderId: 'old', folderName: 'Other' } }));
+  expect(t.calls[0][2].folderName).toBe('Reviews');
+  expect(t.calls[0][2].folderId).toBeUndefined();
+});
+
+test('launcher tab can provide a folder when the human has not chosen one', async () => {
+  const t = launcherHarness({ getSessionOptions: () => ({ folderName: '' }) });
+  await t.send(callMsg('createSession', { spec: { title: 'Review', folderName: 'Reviews' } }));
+  expect(t.calls[0][2].folderName).toBe('Reviews');
+});

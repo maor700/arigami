@@ -326,3 +326,25 @@ Reused as-is: `POST /sessions`, create-from-ticket, the `/__ticket/<id>` page,
 the Linear OAuth client, `report_to_master` (cron's own completion channel),
 `push.ts`, `listeners.enqueueWake`.
 ```
+
+### Project folders at launch
+
+Session creation, pending items and trigger definitions accept `folderName` (REST)
+/ `folder_name` (`create_session` and `cronjob` MCP). Names are trimmed and matched
+exactly, case-sensitively; a missing folder is created when the session launches.
+Blank names leave sessions at root. Concurrent launches reuse the same folder.
+`folderId` / `folder_id` takes precedence, including the existing behavior that an
+unknown id leaves the session at root. Dispatch children still inherit their
+master's folder. Folder membership does not create a project controller.
+
+The launcher exposes the name in session options (also saved in presets), Linear
+trigger options and isolated cron options. Deferred items retain it; tickets
+produced by a trigger use its current settings when started. Trigger PATCH accepts
+`folderName: null` or `""` to clear the choice. Cron delivery to an existing session
+does not move it. Profile-bundle cron entries also accept `folderName`.
+
+Listeners wake their existing session rather than create one. Listener registration
+accepts `folderName` / `folderId` in REST (`folder_name` / `folder_id` in MCP) to
+place that session in the chosen folder after successful registration; omitting
+them keeps its current membership. Extension launcher tabs can pass `folderName`
+or `folderId` in `createSession`; a human-entered folder name takes precedence.

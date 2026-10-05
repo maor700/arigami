@@ -119,6 +119,7 @@ export async function createArigamiServer(env = process.env) {
         needs_server: { type: 'boolean', description: 'Worker needs a dev server — host allocates a free port from the pool into metadata.port and passes it to the worker as $PORT' },
         needs_screen: { type: 'boolean', description: 'Session will drive a browser/machine — host allocates a per-session desktop (Xvfb+VNC) up front instead of lazily on the first request_screen/capture_screen/browser open' },
         agent: { type: 'string', description: 'Slug of an agent (see list_agents) the session is born from: it inherits the agent\'s engine and default model (unless `engine` / `model` are given), persona (system prompt), referenced skills, memory namespace and rail emoji/color, and carries metadata.agent. Unknown slug → error.' },
+        folder_name: { type: 'string', description: 'Project folder name (trimmed, exact match); creates it if missing. folder_id takes precedence. Dispatch children inherit their master folder.' },
         folder_id: { type: 'string', description: 'Project-folder rail id to place the new session in at creation time (same effect as dragging it into that folder afterward). Works regardless of which other fields are set — an unknown id is silently ignored (session lands at root). Not needed for `kind` dispatch: that already places the child in your own project folder.' },
       }),
       run: async (a) => {
@@ -128,6 +129,7 @@ export async function createArigamiServer(env = process.env) {
           permissionMode: a.permission_mode, metadata: a.metadata,
           ...(a.agent ? { agent: a.agent } : {}),
           ...(a.folder_id ? { folderId: a.folder_id } : {}),
+          ...(a.folder_name ? { folderName: a.folder_name } : {}),
         };
         if (a.needs_screen) body.needsScreen = true;
         // Dispatch: forward the caller as the worker's master + the worker spec.
@@ -268,6 +270,8 @@ export async function createArigamiServer(env = process.env) {
         id: { type: 'string', description: 'Cron job id — required for pause/resume/run/remove' },
         name: { type: 'string', description: 'create: short label shown in the Triggers UI' },
         prompt: { type: 'string', description: 'create: the message the job sends (first message for isolated, task text for existing)' },
+        folder_name: { type: 'string', description: 'Project folder name for isolated runs (trimmed, exact match); creates it on launch if missing. folder_id takes precedence. Existing-session delivery keeps its folder.' },
+        folder_id: { type: 'string', description: 'Project folder id for isolated runs; takes precedence over folder_name.' },
         schedule_kind: { type: 'string', enum: ['cron', 'interval', 'at'], description: 'create: required' },
         schedule_value: { type: 'string', description: 'create: e.g. "0 9 * * 1-5" (cron), "30m" (interval), or an ISO timestamp (at). Required.' },
         session_mode: { type: 'string', enum: ['isolated', 'existing'], description: 'create: default "isolated"' },
@@ -298,6 +302,8 @@ export async function createArigamiServer(env = process.env) {
             autonomous: a.autonomous,
             ...(a.agent !== undefined ? { agent: a.agent } : {}),
             ...(a.engine ? { engine: a.engine } : {}),
+            folderId: a.folder_id,
+            folderName: a.folder_name,
             createdBySessionId: sid(a),
           });
         }
@@ -726,13 +732,15 @@ export async function createArigamiServer(env = process.env) {
         from_filter: { type: 'string', description: 'SMS sender filter — partial match on phone number (for type sms)' },
         ttl_days: { type: 'number', description: 'Auto-stop after this many days (default 7)' },
         interval_sec: { type: 'number', description: 'Poll interval seconds (default 10 for whatsapp, 30 for others)' },
+        folder_name: { type: 'string', description: 'Place the session this listener wakes in this project folder, creating it if missing. Listeners wake their existing session; they do not spawn one.' },
+        folder_id: { type: 'string', description: 'Place the listener session in this project folder id; wins over folder_name.' },
         ...SID_PROP,
       }),
       // Extension types take their own arguments (declared in the provider's
       // schema), so anything the caller passed that isn't a core field rides along.
       run: (a) => {
         const { session_id, ...rest } = a || {};
-        return api('POST', `/__api/sessions/${sid(a)}/listeners`, { ...rest, type: a.type || 'github-pr' });
+        return api('POST', `/__api/sessions/${sid(a)}/listeners`, { ...rest, folderId: a.folder_id, folderName: a.folder_name, type: a.type || 'github-pr' });
       },
     },
     {

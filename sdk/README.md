@@ -289,7 +289,9 @@ mode at all — a mode that can list and pick but not start is worse than an
 absent one, because the human only finds out at the last click.
 
 `createSession` accepts `title`, `cwd`, `prompt`, `skill`, `agent`, `engine`,
-`model`, `effort`, `permissionMode` and `metadata`. It is an allowlist, not a
+`model`, `effort`, `folderName`, `folderId`, `permissionMode` and `metadata`.
+A folder name is matched exactly after trimming and created if missing; an explicit
+folder id takes precedence. It is an allowlist, not a
 pass-through: the orchestration fields `POST /__api/sessions` also understands
 (`master`, `kind`, `subtask`, `worktree`…) are dropped, so a tab cannot graft
 its session into somebody else's dispatch tree.

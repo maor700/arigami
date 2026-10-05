@@ -277,3 +277,12 @@ test('Settings › Host carries the default-engine toggle', () => {
   expect(src).toContain("api.post('/config/default-engine', { engine })");
   expect(src).toContain('<DefaultEngineField />');
 });
+
+test('launcher folder setting renders, reaches ticket payloads and survives presets', () => {
+  const options = { folderName: 'Frontend', engine: '', skill: '', model: '', effort: '' };
+  const html = render(h(Launcher.SessionOptionsPicker, { options, onChange() {} }));
+  expect(html).toContain('value="Frontend"');
+  expect(Launcher.buildTicketPayload({ id: 'ENG-1' }, {}, [], '', '', options).folderName).toBe('Frontend');
+  prefs.saveSessionPreset('folder work', options);
+  expect(prefs.getPrefs().sessionPresets.at(-1).folderName).toBe('Frontend');
+});

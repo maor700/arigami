@@ -43,6 +43,8 @@ export interface LinearFilterTrigger {
   skill?: string; // skill dir name to run (e.g. 'onboarding'); '' = plain ticket prompt
   model?: string; // engine model value; '' = engine default
   effort?: string; // reasoning-effort value; '' = engine default
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' | 'codex' | '' (= cfg.defaultEngine) — which CLI its sessions run on
   filters: Record<string, unknown>; // FilterBar facet shape (assignee/state/labels/labelOp/…)
   seen: string[]; // high-water mark; dismissed items stay here
@@ -84,6 +86,8 @@ export interface CronTrigger {
   autonomous: boolean; // isolated runs only: bypassPermissions + no-questions directive
   bundleKey?: string; // "<bundle>/<slug>" when registered from a Profile Bundle — re-applying the bundle updates this trigger instead of adding another (F4 #2)
   agent?: string | null; // A2: isolated runs are born from this agent (create_session({agent}) path) — the agent's routine
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' | 'codex' | '' (= the agent's engine, else cfg.defaultEngine) — isolated runs only
   createdAt: string;
   createdBySessionId?: string | null; // provenance; also what the create-guard checks upstream
@@ -108,6 +112,8 @@ export interface PendingItem {
   skill?: string; // skill dir name to run; '' = plain prompt
   model?: string; // engine model value; '' = engine default
   effort?: string; // reasoning-effort value; '' = engine default
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string; // 'claude' (default) | 'codex' — which CLI the started session runs on
 }
 
@@ -366,7 +372,7 @@ export function deferTicket(
   ticket: string,
   title?: string,
   prompt?: string,
-  opts?: { skill?: string; model?: string; effort?: string; engine?: string }
+  opts?: { skill?: string; model?: string; effort?: string; engine?: string; folderId?: string | null; folderName?: string | null }
 ): PendingItem | null {
   const up = String(ticket || '').toUpperCase();
   if (!up) return null;
@@ -382,6 +388,8 @@ export function deferTicket(
     model: opts?.model,
     effort: opts?.effort,
     engine: opts?.engine,
+    folderId: opts?.folderId,
+    folderName: opts?.folderName,
   });
   persist();
   emitPending();
@@ -398,6 +406,8 @@ export function deferEmpty(opts: {
   skill?: string;
   model?: string;
   effort?: string;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
 }): PendingItem {
   enqueue({
@@ -410,6 +420,8 @@ export function deferEmpty(opts: {
     model: opts.model,
     effort: opts.effort,
     engine: opts.engine,
+    folderId: opts.folderId,
+    folderName: opts.folderName,
     triggerId: null,
     triggerName: 'Manual',
   });
@@ -438,6 +450,8 @@ export async function startPending(
       model: item.model,
       effort: item.effort,
       engine: item.engine,
+      folderId: item.folderId,
+      folderName: item.folderName,
       metadata: { fromQueue: true },
     });
     db.pending = db.pending.filter((p) => p.id !== id);
@@ -465,6 +479,7 @@ export async function startPending(
     return { held: true, reason: 'workspace-not-ready' };
   }
 
+  const folder = item.folderId !== undefined || item.folderName !== undefined ? item : t;
   const { id: sessionId } = api.startTicketSession({
     ticket,
     title: item.title,
@@ -473,6 +488,8 @@ export async function startPending(
     model: item.model ?? t?.model,
     effort: item.effort ?? t?.effort,
     engine: item.engine ?? t?.engine,
+    folderId: folder?.folderId,
+    folderName: folder?.folderName,
     metadata: {
       fromQueue: true,
       ...(item.triggerId
@@ -545,6 +562,8 @@ export async function createTrigger(input: {
   skill?: string;
   model?: string;
   effort?: string;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
 }): Promise<LinearFilterTrigger> {
   const t: LinearFilterTrigger = {
@@ -558,6 +577,8 @@ export async function createTrigger(input: {
     model: typeof input.model === 'string' ? input.model : '',
     effort: typeof input.effort === 'string' ? input.effort : '',
     engine: triggerEngine(input.engine) ?? '',
+    folderId: input.folderId,
+    folderName: input.folderName,
     filters: input.filters && typeof input.filters === 'object' ? input.filters : {},
     seen: [],
     primed: false,
@@ -601,6 +622,9 @@ export function patchTrigger(id: string, patch: Record<string, unknown>): Trigge
   // Create falls back to the default on junk; PATCH ignores it so a typo never moves a live trigger to another CLI.
   const pe = triggerEngine(patch.engine);
   if (pe !== undefined) t.engine = pe;
+  for (const key of ['folderId', 'folderName'] as const) {
+    if (patch[key] === null || typeof patch[key] === 'string') t[key] = patch[key] as string | null;
+  }
   if (t.type === 'linear-filter') {
     if (typeof patch.injectPrompt === 'string') t.injectPrompt = patch.injectPrompt;
     if (typeof patch.skill === 'string') t.skill = patch.skill;
@@ -742,6 +766,8 @@ async function fireCron(
         permissionMode: t.autonomous ? 'bypassPermissions' : undefined,
         agent: t.agent || null, // A2: same path as create_session({agent}) — persona, memory, model, color
         engine: t.engine || undefined,
+        folderId: t.folderId,
+        folderName: t.folderName,
         metadata: {
           fromQueue: true,
           fromCronTrigger: t.id, // guard: sessions spawned by cron can't create more cron jobs
@@ -809,6 +835,8 @@ export async function createCronTrigger(input: {
   autonomous?: boolean;
   bundleKey?: string;
   agent?: string | null;
+  folderId?: string | null;
+  folderName?: string | null;
   engine?: string;
   createdBySessionId?: string;
 }): Promise<CronTrigger> {
@@ -867,6 +895,8 @@ export async function createCronTrigger(input: {
     ...(input.bundleKey ? { bundleKey: String(input.bundleKey) } : {}),
     ...(agent ? { agent } : {}),
     engine: triggerEngine(input.engine) ?? '',
+    folderId: input.folderId,
+    folderName: input.folderName,
     createdAt,
     createdBySessionId: input.createdBySessionId || null,
     lastRun: null,
