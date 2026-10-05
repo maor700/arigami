@@ -308,9 +308,9 @@ export default function ChangesTab({ session, active }) {
     if (isPrSession && !modeTouchedRef.current) setChangesMode('pr');
   }, [isPrSession]);
   const [refs, setRefs] = useState(null);
-  // Comparison base for pr/work: '' = server default (origin/<default branch>).
-  const [defaultBase, setDefaultBase] = useState(() => loadDefaultBase());
-  const [baseSel, setBaseSel] = useState(() => loadDefaultBase());
+  // Comparison base for pr/work: '' = the session's original comparison base.
+  const [defaultBase, setDefaultBase] = useState(() => loadDefaultBase(undefined, session.id));
+  const [baseSel, setBaseSel] = useState(() => loadDefaultBase(undefined, session.id));
   const [switchOffer, setSwitchOffer] = useState(null); // {mode, generatedAt} | null — an arrived explanation offered, never applied
 
   // ---- view navigation history (Back / Forward) --------------------------
@@ -386,7 +386,7 @@ export default function ChangesTab({ session, active }) {
   useEffect(() => {
     if (!active) return;
     api.get(`/sessions/${session.id}/changes/refs${baseSel ? `?base=${encodeURIComponent(baseSel)}` : ''}`).then(setRefs).catch(() => setRefs(null));
-  }, [active, session.id, baseSel]);
+  }, [active, session.id, baseSel, session.metadata?.base, session.metadata?.prBase, session.metadata?.worktree]);
 
   // review comments (live via session-updated)
   const comments = session.review?.comments || [];
@@ -469,7 +469,7 @@ export default function ChangesTab({ session, active }) {
       setFailed(true);
     }
     setLoading(false);
-  }, [session.id, modeQ]);
+  }, [session.id, modeQ, session.metadata?.base, session.metadata?.prBase, session.metadata?.worktree]);
 
   useEffect(() => { if (active) load(); }, [active, load]);
   // P3-3: codex app-server's turn/diff/updated — reload while the tab is open.
@@ -642,7 +642,7 @@ export default function ChangesTab({ session, active }) {
               <button
                 type="button"
                 title={t('chat.setBaseDefaultTitle')}
-                onClick={() => { saveDefaultBase(baseSel); setDefaultBase(baseSel); }}
+                onClick={() => { saveDefaultBase(baseSel, undefined, session.id); setDefaultBase(baseSel); }}
                 className="rounded-md border border-border bg-panel px-1.5 py-0.5 text-[10px] hover:text-fg"
               >
                 {t('chat.setBaseDefault')}

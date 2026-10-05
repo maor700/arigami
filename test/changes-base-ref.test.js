@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { changesFor, listBaseRefs, prStatus } = await import(path.join(ROOT, 'server/git.ts'));
+const { changesFor, changeDiff, listBaseRefs, prStatus } = await import(path.join(ROOT, 'server/git.ts'));
 
 const run = (cwd, cmd) => {
   const r = Bun.spawnSync(['bash', '-c', cmd], { cwd });
@@ -67,10 +67,47 @@ test('a PR session\'s metadata.prBase is the default base — not the repo defau
   const s = { cwd, metadata: { prBase: 'release' } };
   const r = await changesFor(s, 'pr');
   expect(r.baseRef).toBe('origin/release');
-  // feat is branched off origin/main, so against release it shows c.txt AND the release-only r.txt (reverse diff)
+  // Compare with the merge-base: release-only changes must not appear as deletions.
+  expect(r.files.map(f => f.path)).toEqual(['c.txt']);
   const plain = await changesFor({ cwd, metadata: {} }, 'pr');
   expect(plain.baseRef).toBe('origin/main');
   expect((await listBaseRefs(s)).defaultRef).toBe('origin/release');
-  // an unknown prBase falls back to the normal default
-  expect((await changesFor({ cwd, metadata: { prBase: 'nope' } }, 'pr')).baseRef).toBe('origin/main');
+  // An unavailable recorded target must not silently become main.
+  expect((await changesFor({ cwd, metadata: { prBase: 'nope' } }, 'pr')).baseRef).toBeNull();
+});
+
+test('child PR and work views share the original local parent, even when origin is stale', async () => {
+  const { cwd } = fixture();
+  run(cwd, 'git branch parent && git worktree add -q -b child ../child parent');
+  const child = path.join(cwd, '../child');
+  run(child, 'echo child > child.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm child');
+  const s = { cwd, metadata: { worktree: child, base: 'parent' } };
+  for (const mode of ['pr', 'work']) {
+    const result = await changesFor(s, mode);
+    expect(result.baseRef).toBe('parent');
+    expect(result.files.map(f => f.path)).toEqual(['child.txt']);
+    expect((await changeDiff(s, 'child.txt', mode)).diff).toContain('+child');
+  }
+  expect((await listBaseRefs(s)).defaultRef).toBe('parent');
+});
+
+test('PR target wins over child base in both modes and excludes target-only commits', async () => {
+  const { cwd } = fixture();
+  run(cwd, 'git branch parent main && git checkout -q -b release origin/main && echo r > r.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm R && git push -q origin release && git checkout -q feat');
+  const s = { cwd, metadata: { worktree: cwd, base: 'parent', prBase: 'release' } };
+  for (const mode of ['pr', 'work']) {
+    const result = await changesFor(s, mode);
+    expect(result.baseRef).toBe('origin/release');
+    expect(result.files.map(f => f.path)).toEqual(['c.txt']);
+  }
+});
+
+test('missing recorded child base is unavailable, while an explicit override still works', async () => {
+  const { cwd } = fixture();
+  const s = { cwd, metadata: { base: 'deleted-parent', worktree: cwd } };
+  for (const mode of ['pr', 'work']) {
+    expect((await changesFor(s, mode)).error).toBe('no base branch');
+    expect((await changesFor(s, mode, 'origin/main')).files.map(f => f.path)).toEqual(['c.txt']);
+  }
+  expect((await listBaseRefs(s)).defaultRef).toBeNull();
 });
