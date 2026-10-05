@@ -112,3 +112,24 @@ describe('validateSchedule', () => {
 function createdAtFixture() {
   return Date.parse('2026-08-28T00:00:00Z');
 }
+
+// Scanner regressions #1 and #6. Local Dates keep these independent of host TZ.
+test('numeric-start steps advance to the field maximum like explicit ranges', () => {
+  const after = new Date(2026, 9, 5, 10, 5);
+  const next = nextCronRun('5/15 * * * *', after);
+  expect(next.getHours()).toBe(10);
+  expect(next.getMinutes()).toBe(20);
+  expect(next.getTime()).toBe(nextCronRun('5-59/15 * * * *', after).getTime());
+  expect(nextCronRun('5/15 * * * *', new Date(2026, 9, 5, 10, 50)).getMinutes()).toBe(5);
+  expect(nextCronRun('0 5/6 * * *', new Date(2026, 9, 5, 5, 0)).getHours()).toBe(11);
+  expect(() => nextCronRun('5/0 * * * *', after)).toThrow();
+});
+
+test('one-shot dates require ISO date-time, reject impossible calendar dates and retain intentional past dates', () => {
+  for (const value of ['0 9 * * *', '01/02/2026', '2026-10-05', '2026-02-30T10:00:00Z', '2026-10-05T24:00:00Z']) {
+    expect(() => validateSchedule({ kind: 'at', value })).toThrow();
+  }
+  for (const value of ['2000-09-01T00:00:00Z', '2030-01-01T12:00', '2030-01-01T12:00:00.123+02:00']) {
+    expect(validateSchedule({ kind: 'at', value })).toBe(Date.parse(value));
+  }
+});

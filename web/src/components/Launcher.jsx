@@ -1441,18 +1441,32 @@ const fmtAgo = (ts) => {
 
 // Service modal for a trigger — polls GET /__api/triggers/:id every 1.5s for the
 // live detail + activity log (mirrors the listener details modal).
-function TriggerLogModal({ triggerId, onClose }) {
+export function TriggerLogModal({ triggerId, onClose }) {
   const t = useT();
   const [detail, setDetail] = useState(null);
   const logRef = useRef(null);
+  const [loadError, setLoadError] = useState(null);
+  const [lastLoaded, setLastLoaded] = useState(null);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let stop = false;
+    let terminal = false;
+    let pending = false;
     const tick = async () => {
+      if (stop || terminal || pending) return;
+      pending = true;
       try {
         const d = await api.get(`/triggers/${triggerId}`);
-        if (!stop) setDetail(d);
-      } catch {
-        /* trigger may have been deleted */
+        if (!stop) {
+          setDetail(d);
+          setLoadError(null);
+          setLastLoaded(Date.now());
+        }
+      } catch (e) {
+        terminal = e.status === 404;
+        if (!stop) setLoadError({ message: String(e.message || e), terminal });
+      } finally {
+        pending = false;
       }
     };
     tick();
@@ -1461,7 +1475,7 @@ function TriggerLogModal({ triggerId, onClose }) {
       stop = true;
       clearInterval(iv);
     };
-  }, [triggerId]);
+  }, [triggerId, retry]);
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -1483,7 +1497,7 @@ function TriggerLogModal({ triggerId, onClose }) {
           <span className="text-[13px] leading-none"><Icon icon={faBolt} /></span>
           <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || t('launcher.trigger.defaultName')}</span>
           <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-            {detail?.enabled ? t('launcher.trigger.polling') : t('launcher.trigger.disabled')}
+            {detail?.enabled ? t(detail.type === 'cron' ? 'launcher.cron.scheduled' : 'launcher.trigger.polling') : t('launcher.trigger.disabled')}
           </span>
           <button
             type="button"
@@ -1493,17 +1507,34 @@ function TriggerLogModal({ triggerId, onClose }) {
             <Icon icon={faXmark} />
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-b border-hair px-4 py-2.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+        <div className="grid max-h-[35vh] shrink-0 grid-cols-2 gap-x-4 gap-y-1 overflow-y-auto border-b border-hair px-4 py-2.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+          {detail?.type === 'cron' ? <>
+            <span>{t('launcher.cron.scheduleLabel')} {scheduleSummary(detail.schedule, t)}</span>
+            <span>{t('launcher.cron.targetLabel')} {detail.sessionMode}</span>
+            <span>{t('launcher.cron.metaLastRun')} {fmtAgo(detail.lastRun)}</span>
+            <span>{t('launcher.cron.metaNextRun')} {detail.nextRunAt ? fmtDateTime(detail.nextRunAt) : '—'}</span>
+            <span>{t('launcher.cron.runCount', { n: detail.runs?.length || 0 })}</span>
+            {detail.runs?.map((run, i) => <span key={i} className="col-span-2">
+              {fmtDateTime(run.at)} · {run.state} {run.summary}
+              {run.sessionId && <a className="underline" onClick={onClose} href={`#/session/${encodeURIComponent(run.sessionId)}`}> {run.sessionId}</a>}
+            </span>)}
+          </> : detail ? <>
           <span>{t('launcher.trigger.metaFilter')} <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
           <span>{t('launcher.trigger.metaPoll')} <span className="text-fg">{t('launcher.trigger.every60s')}</span></span>
           <span>{t('launcher.trigger.metaLastPoll')} <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
           <span>{t('launcher.trigger.metaSpawned')} <span className="text-fg">{detail?.createdSessions?.length || 0}</span></span>
           <span>{t('launcher.trigger.metaSeen')} <span className="text-fg">{t('launcher.trigger.ticketsSeen', { n: detail?.seen?.length || 0 })}</span></span>
           <span>{t('launcher.trigger.metaPrimed')} <span className="text-fg">{detail?.primed ? t('launcher.common.yes') : t('launcher.common.no')}</span></span>
+          </> : null}
           {detail?.lastError && (
             <span className="col-span-2 text-danger">{t('launcher.trigger.metaLastError')} {detail.lastError}</span>
           )}
         </div>
+        {loadError && <div role="alert" className="border-b border-hair px-4 py-2 text-xs text-danger">
+          {loadError.terminal ? t('launcher.cron.deleted') : loadError.message}
+          {lastLoaded && <span> {t('launcher.cron.lastLoaded', { time: fmtDateTime(lastLoaded) })}</span>}
+          {!loadError.terminal && <button type="button" className="ml-2 underline" onClick={() => setRetry((n) => n + 1)}>{t('launcher.picker.retry')}</button>}
+        </div>}
         <div className="border-b border-hair px-4 py-1.5 font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">
           {t('launcher.trigger.activity')}
         </div>
@@ -1513,7 +1544,7 @@ function TriggerLogModal({ triggerId, onClose }) {
           className="thin-scroll min-h-0 flex-1 overflow-auto bg-term px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
         >
           {detail == null ? (
-            <span className="text-[#888]">{t('launcher.trigger.loadingLog')}</span>
+            <span className="text-[#888]">{loadError ? loadError.message : t('launcher.trigger.loadingLog')}</span>
           ) : log.length === 0 ? (
             <span className="text-[#888]">{t('launcher.trigger.noActivity')}</span>
           ) : (
@@ -1610,13 +1641,14 @@ function scheduleSummary(schedule, t) {
 // (SPEC-ARIGAMI-BRAIN.md M4.1).
 export function CronSubPanel() {
   const t = useT();
-  const { triggers } = useStore();
+  const { triggers, sessions } = useStore();
   const cronJobs = triggers.filter((x) => x.type === 'cron');
   const [logId, setLogId] = useState(null);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [scheduleKind, setScheduleKind] = useState('cron');
-  const [scheduleValue, setScheduleValue] = useState('0 9 * * *');
+  const [scheduleValues, setScheduleValues] = useState({ cron: '0 9 * * *', interval: '30m', at: '' });
+  const scheduleValue = scheduleValues[scheduleKind];
   const [sessionMode, setSessionMode] = useState('isolated');
   const [targetSessionId, setTargetSessionId] = useState('');
   const [deliverPush, setDeliverPush] = useState(true);
@@ -1629,6 +1661,23 @@ export function CronSubPanel() {
   const prefs = usePrefs();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  const [operations, setOperations] = useState({});
+  const inFlight = useRef(new Set());
+  const operate = async (id, action) => {
+    if (inFlight.current.has(id)) return;
+    inFlight.current.add(id);
+    setOperations((all) => ({ ...all, [id]: { pending: true } }));
+    try {
+      const result = await action();
+      if (result?.ok === false) throw new Error(result.reason || 'Operation failed');
+      setOperations((all) => ({ ...all, [id]: {} }));
+    } catch (e) {
+      setOperations((all) => ({ ...all, [id]: { error: String(e.message || e), retry: action } }));
+    } finally {
+      inFlight.current.delete(id);
+    }
+  };
 
   const onToggleAutonomous = (checked) => {
     if (!checked) return setAutonomous(false);
@@ -1694,12 +1743,16 @@ export function CronSubPanel() {
           </select>
           <input
             value={scheduleValue}
-            onChange={(e) => setScheduleValue(e.target.value)}
+            onChange={(e) => setScheduleValues({ ...scheduleValues, [scheduleKind]: e.target.value })}
             placeholder={
               scheduleKind === 'cron' ? '0 9 * * 1-5' : scheduleKind === 'interval' ? '30m' : '2026-09-01T09:00:00'
             }
             className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
           />
+        </div>
+        <div className="mb-2 text-[11px] text-fgdim">
+          {scheduleKind === 'cron' && t('launcher.cron.stepHelp')}
+          {scheduleKind === 'at' && t('launcher.cron.atHelp')}
         </div>
         {sessionMode === 'isolated' && <FolderPicker value={folderName} onChange={setFolderName} />}
         {sessionMode === 'isolated' && <EngineToggle options={{ engine }} onChange={(o) => setEngine(o.engine || '')} className="mb-2" />}
@@ -1713,12 +1766,10 @@ export function CronSubPanel() {
             <option value="existing">{t('launcher.cron.modeExisting')}</option>
           </select>
           {sessionMode === 'existing' && (
-            <input
-              value={targetSessionId}
-              onChange={(e) => setTargetSessionId(e.target.value)}
-              placeholder={t('launcher.cron.targetSessionPlaceholder')}
-              className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
-            />
+            <select value={targetSessionId} onChange={(e) => setTargetSessionId(e.target.value)} className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 text-[11px]">
+              <option value="">{t('launcher.cron.selectTarget')}</option>
+              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
+            </select>
           )}
         </div>
         <div className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border p-2">
@@ -1772,6 +1823,21 @@ export function CronSubPanel() {
           const lastRunState = cj.runs?.length ? cj.runs[cj.runs.length - 1].state : null;
           return (
             <div key={cj.id} className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border px-3 py-2">
+              {cj.lastError && <div role="alert" className="text-xs text-danger">{cj.lastError} {cj.schedule.kind === 'at' && !cj.enabled && t('launcher.cron.repairRetry')}</div>}
+              {cj.sessionMode.startsWith('existing:') && <select
+                aria-label={t('launcher.cron.targetLabel')}
+                value={cj.sessionMode.slice('existing:'.length)}
+                disabled={operations[cj.id]?.pending}
+                onChange={(e) => { const sessionMode = `existing:${e.target.value}`; operate(cj.id, () => api.patch(`/triggers/${cj.id}`, { sessionMode })); }}
+                className="rounded border border-border bg-panel text-xs"
+              >
+                {!sessions.some((session) => cj.sessionMode === `existing:${session.id}`) && <option value={cj.sessionMode.slice('existing:'.length)}>{t('launcher.cron.missingTarget')}</option>}
+                {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
+              </select>}
+              {operations[cj.id]?.pending && <div role="status" className="text-xs">{t('launcher.cron.pending')}</div>}
+              {operations[cj.id]?.error && <div role="alert" className="text-xs text-danger">
+                {operations[cj.id].error} <button type="button" className="underline" onClick={() => operate(cj.id, operations[cj.id].retry)}>{t('launcher.picker.retry')}</button>
+              </div>}
               <div className="flex items-center gap-2">
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
@@ -1804,7 +1870,8 @@ export function CronSubPanel() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => api.post(`/triggers/${cj.id}/run`).catch(() => {})}
+                  disabled={operations[cj.id]?.pending}
+                  onClick={() => operate(cj.id, () => api.post(`/triggers/${cj.id}/run`))}
                   title={t('launcher.cron.runNowTitle')}
                   className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
                 >
@@ -1820,7 +1887,8 @@ export function CronSubPanel() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }).catch(() => {})}
+                  disabled={operations[cj.id]?.pending}
+                  onClick={() => operate(cj.id, () => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }))}
                   title={cj.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
                   className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
                 >
@@ -1828,7 +1896,8 @@ export function CronSubPanel() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => api.del(`/triggers/${cj.id}`).catch(() => {})}
+                  disabled={operations[cj.id]?.pending}
+                  onClick={() => operate(cj.id, () => api.del(`/triggers/${cj.id}`))}
                   title={t('launcher.trigger.deleteTitle')}
                   className="ml-auto shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
                 >

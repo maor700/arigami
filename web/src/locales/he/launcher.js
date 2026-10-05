@@ -1,4 +1,17 @@
 export const strings = {
+  'launcher.cron.scheduled': "מתוזמן",
+  'launcher.cron.scheduleLabel': "תזמון:",
+  'launcher.cron.targetLabel': "יעד:",
+  'launcher.cron.runCount': "היסטוריה: {n} רשומות",
+  'launcher.cron.deleted': "הטריגר הזה נמחק.",
+  'launcher.cron.lastLoaded': "עודכן לאחרונה: {time}",
+  'launcher.cron.selectTarget': "בחר סשן",
+  'launcher.cron.stepHelp': "חמישה שדות cron; הערך 5/15 פירושו דקות 5, 20, 35, 50.",
+  'launcher.cron.atHelp': "תאריך ושעה בתקן ISO; ללא אזור זמן חל זמן השרת. תאריך בעבר ירוץ בבדיקה הבאה.",
+  'launcher.cron.repairRetry': "מושהה לאחר כשל במסירה. תקן את היעד ולחץ על הרצה כעת כדי לנסות שוב.",
+  'launcher.cron.missingTarget': "סשן היעד חסר — בחר חלופה",
+  'launcher.cron.pending': "שולח…",
+
   // ticket state / priority filters
   'launcher.options.folder': 'תיקיית פרויקט (אופציונלי)',
   'launcher.options.folderHint': 'שם תיקייה קיימת או שם חדש ליצירה בפתיחת הסשן',
