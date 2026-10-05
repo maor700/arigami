@@ -98,6 +98,7 @@ export function buildTicketPayload(ticket, config, sessions, permissionMode, pro
     ...(permissionMode ? { permissionMode } : {}),
     ...(promptOverride && promptOverride.trim() ? { prompt: promptOverride.trim() } : {}),
     engine: sessionOpts?.engine || undefined,
+    folderName: sessionOpts?.folderName || undefined,
     skill: sessionOpts?.skill || undefined,
     model: sessionOpts?.model || undefined,
     effort: sessionOpts?.effort || undefined,
@@ -479,6 +480,7 @@ function PresetBar({ presets, defaultId, current, onApply }) {
 
 function sessionOptionsEqual(a, b) {
   return (
+    (a?.folderName || '') === (b?.folderName || '') &&
     (a?.engine || '') === (b?.engine || '') &&
     (a?.skill || '') === (b?.skill || '') &&
     (a?.model || '') === (b?.model || '') &&
@@ -492,9 +494,22 @@ function sessionOptionsEqual(a, b) {
 function defaultSessionOptions(prefs, mode) {
   const id = prefs.sessionDefaultPresetByMode[mode] || prefs.sessionDefaultPresetId;
   const d = prefs.sessionPresets.find((p) => p.id === id);
-  return { engine: d?.engine || '', skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
+  return { folderName: d?.folderName || '', engine: d?.engine || '', skill: d?.skill || '', model: d?.model || '', effort: d?.effort || '' };
 }
 
+
+export function FolderPicker({ value, onChange }) {
+  const t = useT();
+  return <input
+    type="text"
+    value={value || ''}
+    onChange={(e) => onChange(e.target.value)}
+    className={selCls}
+    aria-label={t('launcher.options.folder')}
+    placeholder={t('launcher.options.folder')}
+    title={t('launcher.options.folderHint')}
+  />;
+}
 
 // Which skill (from GET /skills — whatever's actually bundled, no fixed
 // default), which model, which effort a new session starts with. The model and
@@ -517,6 +532,7 @@ export function SessionOptionsPicker({ options, onChange, hideSkill = false }) {
   const setAndCoerce = (patch) => onChange(coerceSessionOptions({ ...options, ...patch }, claudeModels));
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-2">
+      <FolderPicker value={options.folderName} onChange={(folderName) => set({ folderName })} />
       {!hideSkill && (
         <select
           value={options.skill || ''}
@@ -1252,6 +1268,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
         engine: options.engine || undefined,
+        folderName: options.folderName || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -1283,6 +1300,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         permissionMode: mode,
         ...(prompt.trim() ? { prompt } : {}),
         engine: options.engine || undefined,
+        folderName: options.folderName || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -1606,6 +1624,7 @@ export function CronSubPanel() {
   const [deliverWhatsapp, setDeliverWhatsapp] = useState('');
   const [autonomous, setAutonomous] = useState(false);
   const [engine, setEngine] = useState('');
+  const [folderName, setFolderName] = useState('');
   const [warnOpen, setWarnOpen] = useState(false);
   const prefs = usePrefs();
   const [busy, setBusy] = useState(false);
@@ -1630,6 +1649,7 @@ export function CronSubPanel() {
         deliver: { push: deliverPush, master: deliverMaster.trim() || undefined, whatsapp: deliverWhatsapp.trim() || undefined },
         autonomous,
         engine: engine || undefined,
+        folderName: folderName || undefined,
       });
       setName('');
       setPrompt('');
@@ -1681,6 +1701,7 @@ export function CronSubPanel() {
             className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
           />
         </div>
+        {sessionMode === 'isolated' && <FolderPicker value={folderName} onChange={setFolderName} />}
         {sessionMode === 'isolated' && <EngineToggle options={{ engine }} onChange={(o) => setEngine(o.engine || '')} className="mb-2" />}
         <div className="mb-2 flex items-center gap-2">
           <select
@@ -1907,6 +1928,7 @@ function TriggerTab() {
         autonomous,
         injectPrompt,
         engine: options.engine || undefined,
+        folderName: options.folderName || undefined,
         skill: options.skill || undefined,
         model: options.model || undefined,
         effort: options.effort || undefined,
@@ -2128,7 +2150,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     const schema = rec?.settingsSchema || {};
     const base = defaultSessionOptions(prefs, 'ext');
     const pick = (k) => saved[k] || schema[k]?.default || base[k] || '';
-    setExtOptions({ ...base, engine: pick('engine'), model: pick('model'), effort: pick('effort') });
+    setExtOptions({ ...base, engine: pick('engine'), model: pick('model'), effort: pick('effort'), folderName: pick('folderName') });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extKey]);
   // An extension that was disabled or uninstalled while its mode was open must
@@ -2226,6 +2248,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         title: selected.title || selected.id,
         ...(ticketPrompt.trim() ? { prompt: ticketPrompt } : {}),
         engine: sessionOpts.engine || undefined,
+        folderName: sessionOpts.folderName || undefined,
         skill: sessionOpts.skill || undefined,
         model: sessionOpts.model || undefined,
         effort: sessionOpts.effort || undefined,

@@ -1,5 +1,7 @@
 export const strings = {
   // ticket state / priority filters
+  'launcher.options.folder': 'תיקיית פרויקט (אופציונלי)',
+  'launcher.options.folderHint': 'שם תיקייה קיימת או שם חדש ליצירה בפתיחת הסשן',
   'launcher.state.any': 'כל הסטטוסים',
   'launcher.state.triage': 'מיון',
   'launcher.state.backlog': 'Backlog',

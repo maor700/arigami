@@ -396,6 +396,9 @@ export interface ArigamiSdk {
    * (`prNumber`, `repo`, `branch`, `agent`) where it has behaviour for them.
    */
   createSession(spec: {
+    folderId?: string;
+    /** Exact project folder name; create if missing. folderId takes precedence. */
+    folderName?: string;
     title?: string;
     cwd?: string;
     prompt?: string;

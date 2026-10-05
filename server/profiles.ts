@@ -88,6 +88,7 @@ export interface BundleCron {
   enabled?: boolean;
   autonomous?: boolean;
   sessionMode?: string;
+  folderName?: string;
   deliver?: { push?: boolean; whatsapp?: string; master?: string };
   /** A4: slug of a bundle/host agent the runs are born from (A2 cronjob({agent})); dropped when absent on the host */
   agent?: string;
@@ -684,6 +685,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
         claimed.add(found.id);
         try {
           const patch: Record<string, unknown> = { bundleKey: key };
+          if (typeof c.folderName === 'string') patch.folderName = c.folderName;
           if (String(found.prompt).trim() !== String(c.prompt).trim()) patch.prompt = c.prompt;
           if (agentFor(c) && found.agent !== agentFor(c)) patch.agent = agentFor(c);
           if (found.schedule?.kind !== c.schedule.kind || String(found.schedule?.value ?? '') !== String(c.schedule.value)) patch.schedule = { kind: c.schedule.kind, value: String(c.schedule.value) };
@@ -701,6 +703,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
           prompt: c.prompt,
           schedule: { kind: c.schedule.kind, value: String(c.schedule.value) },
           sessionMode: c.sessionMode,
+          folderName: c.folderName,
           deliver: c.deliver,
           autonomous: !!c.autonomous && b.trusted,
           bundleKey: key,

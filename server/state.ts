@@ -626,6 +626,7 @@ export function createSession({
   color,
   engine,
   folderId,
+  folderName,
 }: {
   title?: string;
   cwd?: string;
@@ -635,6 +636,7 @@ export function createSession({
   effort?: string | null;
   color?: string | null; // A1: a session born from an agent takes the agent's color
   engine?: string | null; // 'claude' | 'codex'; unset/unknown = cfg.defaultEngine — see Session.engine
+  folderName?: string | null; // trimmed exact name; create if missing
   folderId?: string | null; // generic creation-time project-folder assignment (any caller) — same field the make-project/dispatch paths patch in after the fact
 } = {}): Session {
   const eng = engine === 'codex' || engine === 'claude' ? engine : defaultEngine();
@@ -661,7 +663,7 @@ export function createSession({
     // Generic creation-time project-folder assignment — same validation the
     // move-to-folder path uses (an unknown id is silently dropped to root
     // rather than failing the whole session creation over a bad folder ref).
-    folderId: folderId && db.folders.has(folderId) ? folderId : null,
+    folderId: resolveSessionFolder({ folderId, folderName }),
     archived: false,
     createdAt: now,
     updatedAt: now,
@@ -1178,6 +1180,18 @@ export function folderChildren(id: string, { archived = false } = {}): Session[]
   return [...db.sessions.values()]
     .filter((s) => s.folderId === id && (archived || !s.archived))
     .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
+}
+
+// Synchronous lookup/create keeps concurrent launches from duplicating a name.
+// An explicit id wins (including the legacy unknown-id → root behavior).
+export function resolveSessionFolder({ folderId, folderName }: {
+  folderId?: string | null;
+  folderName?: string | null;
+} = {}): string | null {
+  if (folderId) return db.folders.has(folderId) ? folderId : null;
+  const name = typeof folderName === 'string' ? folderName.trim() : '';
+  if (!name) return null;
+  return [...db.folders.values()].find((f) => f.name === name)?.id ?? createFolder({ name }).id;
 }
 
 export function createFolder({

@@ -2349,6 +2349,7 @@ export function startTicketSession(opts: {
   autonomous?: boolean;
   injectPrompt?: string;
   folderId?: string | null;
+  folderName?: string | null;
 }): { id: string } {
   const id = opts.ticket;
   let prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt, ticket: id })!;
@@ -2365,6 +2366,7 @@ export function startTicketSession(opts: {
     effort: opts.effort,
     engine: opts.engine,
     folderId: opts.folderId,
+    folderName: opts.folderName,
   });
   spawnSafe(s.id);
   try {
@@ -2422,6 +2424,7 @@ export function startEmptySession(opts: {
   agent?: string | null; // A2: born from an agent (cron runs) — see applyAgentToSession
   metadata?: Record<string, unknown>;
   folderId?: string | null;
+  folderName?: string | null;
 }): { id: string } {
   const prompt = buildFirstPrompt({ skill: opts.skill, prompt: opts.prompt });
   const o = applyAgentToSession(opts.agent, opts);
@@ -2435,6 +2438,7 @@ export function startEmptySession(opts: {
     metadata: o.metadata || {},
     color: o.color,
     folderId: opts.folderId,
+    folderName: opts.folderName,
   });
   spawnSafe(s.id);
   if (prompt && prompt.trim()) {
@@ -4413,6 +4417,8 @@ export async function handle(
             autonomous: body.autonomous,
             agent: body.agent,
             engine: body.engine,
+            folderId: body.folderId,
+            folderName: body.folderName,
             createdBySessionId: body.createdBySessionId,
           });
           return json(res, trigger, 201);
@@ -4426,6 +4432,8 @@ export async function handle(
           model: body.model,
           effort: body.effort,
           engine: body.engine,
+          folderId: body.folderId,
+          folderName: body.folderName,
         });
         return json(res, trigger, 201);
       } catch (e) {
@@ -4482,6 +4490,8 @@ export async function handle(
           model: body.model,
           effort: body.effort,
           engine: body.engine,
+          folderId: body.folderId,
+          folderName: body.folderName,
         });
         return json(res, item, 201);
       }
@@ -4491,6 +4501,8 @@ export async function handle(
         model: body.model,
         effort: body.effort,
         engine: body.engine,
+        folderId: body.folderId,
+        folderName: body.folderName,
       });
       return item ? json(res, item, 201) : badRequest(res, 'already queued or has a live session');
     }
@@ -5435,6 +5447,7 @@ export async function handle(
         // when both are given — spawning a master/kind child always lands it
         // in that master's project folder.
         folderId: body.folderId,
+        folderName: body.master && kind ? undefined : body.folderName,
       });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into
@@ -5621,7 +5634,9 @@ export async function handle(
         if (!reg.has(type)) return badRequest(res, `unsupported listener type: ${type}`);
         try {
           const listeners = await import('./listeners.js');
-          return json(res, await listeners.registerExtListener(id, type, body), 201);
+          const l = await listeners.registerExtListener(id, type, body);
+          if (body.folderId || (typeof body.folderName === 'string' && body.folderName.trim())) state.patchSession(id, { folderId: state.resolveSessionFolder(body) });
+          return json(res, l, 201);
         } catch (e) {
           return badRequest(res, e instanceof Error ? e.message : String(e));
         }
@@ -5648,6 +5663,7 @@ export async function handle(
                   : type === 'host-load'
                     ? listeners.registerHostLoadListener(id, body)
                     : await listeners.registerGithubPrListener(id, body);
+        if (body.folderId || (typeof body.folderName === 'string' && body.folderName.trim())) state.patchSession(id, { folderId: state.resolveSessionFolder(body) });
         return json(res, l, 201);
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));

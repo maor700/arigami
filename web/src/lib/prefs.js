@@ -97,6 +97,7 @@ function sanitizeSessionOptions(o) {
     skill: typeof p.skill === 'string' ? p.skill : '',
     model: typeof p.model === 'string' ? p.model : '',
     effort: typeof p.effort === 'string' ? p.effort : '',
+    ...(typeof p.folderName === 'string' && p.folderName.trim() ? { folderName: p.folderName.trim() } : {}),
   };
 }
 

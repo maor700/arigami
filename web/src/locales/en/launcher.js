@@ -1,5 +1,7 @@
 export const strings = {
   // ticket state / priority filters
+  'launcher.options.folder': 'Project folder (optional)',
+  'launcher.options.folderHint': 'Existing folder name or a new name to create on launch',
   'launcher.state.any': 'Any state',
   'launcher.state.triage': 'Triage',
   'launcher.state.backlog': 'Backlog',
