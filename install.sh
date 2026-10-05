@@ -399,7 +399,8 @@ install_service() {
   can_root || [ "$DRY_RUN" = 1 ] || { warn "no root/sudo — install the unit later:  $INSTALL_DIR/bin/host render-unit | sudo tee /etc/systemd/system/arigami.service; sudo systemctl enable --now arigami"; return 0; }
   if [ "$DRY_RUN" = 1 ]; then
     plan "bin/host render-unit → /etc/systemd/system/arigami.service (User=$TARGET_USER, ARIGAMI_DIR=$ARIGAMI_DIR)"
-    plan "systemctl daemon-reload && systemctl enable --now arigami"; return 0
+    plan "systemctl daemon-reload && systemctl enable --now arigami"
+    plan "bin/host render-unit arigami-healthcheck.{service,timer} → /etc/systemd/system; systemctl enable --now arigami-healthcheck.timer"; return 0
   fi
   # Render from deploy/systemd with the TARGET user's paths (bin/host render-unit
   # substitutes __USER__/__HOME__/__BUN_DIR__ from its own environment).
@@ -413,6 +414,17 @@ install_service() {
   as_root systemctl daemon-reload
   as_root systemctl enable --now arigami
   ok "systemd unit arigami.service enabled + started"
+  # The health watchdog (deploy/systemd/arigami-healthcheck): systemd restarts the
+  # host on a crash only; this also restarts it when it is up but not answering.
+  local u
+  for u in arigami-healthcheck.service arigami-healthcheck.timer; do
+    tmp="$(mktemp)"
+    as_user "$INSTALL_DIR/bin/host" render-unit "$u" >"$tmp"
+    [ "$ARIGAMI_DIR" != "$TARGET_HOME/.arigami" ] && { sed -i.bak -e "s#^EnvironmentFile=.*#EnvironmentFile=-$ENV_FILE#" "$tmp"; rm -f "$tmp.bak"; }
+    as_root install -m 0644 "$tmp" "/etc/systemd/system/$u"; rm -f "$tmp"
+  done
+  as_root systemctl daemon-reload
+  as_root systemctl enable --now arigami-healthcheck.timer && ok "health watchdog enabled (restarts the host if it stops answering for ~3 min)"
 }
 
 wait_healthy() {

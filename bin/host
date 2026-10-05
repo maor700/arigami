@@ -52,6 +52,9 @@ launchd_loaded() { launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; }
 UNIT_NAME="arigami"
 UNIT_SRC="$ROOT/deploy/systemd/arigami.service"
 UNIT_DST="/etc/systemd/system/$UNIT_NAME.service"
+# The watchdog next to it: restarts the host when it is alive but not answering
+# (deploy/systemd/arigami-healthcheck — systemd alone only acts on a crash).
+HC_UNITS="arigami-healthcheck.service arigami-healthcheck.timer"
 BUN_DIR="$(dirname "$(command -v bun 2>/dev/null || echo /usr/local/bin/bun)")"
 have_systemd() { [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; }
 systemd_managed() { have_systemd && systemctl cat "$UNIT_NAME" >/dev/null 2>&1; }
@@ -330,10 +333,24 @@ install_systemd() {
   as_root systemctl daemon-reload
   as_root systemctl enable --now "$UNIT_NAME" || { rl "systemctl enable --now failed — see: journalctl -u $UNIT_NAME"; return 1; }
   gl "✓ installed systemd unit $UNIT_DST (host :$PORT)"
+  install_healthcheck
   dl "  restarts on crash and on POST /__api/host/restart; logs: journalctl -u $UNIT_NAME -f"
 }
 
+install_healthcheck() {
+  for u in $HC_UNITS; do
+    tmp="$(mktemp)"
+    render_unit "$ROOT/deploy/systemd/$u" >"$tmp"
+    as_root install -m 0644 "$tmp" "/etc/systemd/system/$u" || { rm -f "$tmp"; yl "could not install $u — the host runs without the health watchdog"; return 1; }
+    rm -f "$tmp"
+  done
+  as_root systemctl daemon-reload
+  as_root systemctl enable --now arigami-healthcheck.timer && dl "  health watchdog: restarts it if /__health stops answering for ~3 min (journalctl -t arigami-healthcheck)"
+}
+
 uninstall_systemd() {
+  as_root systemctl disable --now arigami-healthcheck.timer 2>/dev/null || true
+  for u in $HC_UNITS; do as_root rm -f "/etc/systemd/system/$u"; done
   as_root systemctl disable --now "$UNIT_NAME" 2>/dev/null || true
   as_root rm -f "$UNIT_DST" && as_root systemctl daemon-reload
   gl "✓ removed systemd unit $UNIT_NAME"
@@ -720,7 +737,10 @@ case "${1:-status}" in
     sleep 0.4
     start
     ;;
-  render-unit) render_unit "${UNIT_SRC}" ;;
+  render-unit) # render-unit [unit file in deploy/systemd, default arigami.service]
+    shift; u="${1:-arigami.service}"
+    [ -f "$ROOT/deploy/systemd/$u" ] || { rl "no deploy/systemd/$u"; exit 1; }
+    render_unit "$ROOT/deploy/systemd/$u" ;;
   status) status ;;
   logs) shift; logs "${1:-}" ;;
   doctor) doctor ;;
@@ -734,7 +754,7 @@ case "${1:-status}" in
   uninstall) uninstall ;;
   upgrade) shift; upgrade_cmd "$@" ;;
   *)
-    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|upgrade [--check]|user list|user remove <id|email>|profile list|apply <src>|ext list|add <src>|remove <name>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit>"
+    echo "usage: host <launch|start|stop|restart|status|logs [-f]|doctor|pair|upgrade [--check]|user list|user remove <id|email>|profile list|apply <src>|ext list|add <src>|remove <name>|export --full|--bundle [out] [--no-memory]|import <file.tgz>|install|uninstall|render-unit [unit]>"
     exit 1
     ;;
 esac

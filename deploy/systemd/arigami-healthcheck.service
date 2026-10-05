@@ -1,0 +1,13 @@
+# Restart the host when it is alive but not answering — see arigami-healthcheck.
+# Started every minute by arigami-healthcheck.timer; runs as root (it restarts a unit).
+[Unit]
+Description=Arigami health check (restart when alive but not answering)
+Documentation=file:__ROOT__/deploy/systemd/README.md
+After=arigami.service
+
+[Service]
+Type=oneshot
+Environment=ARIGAMI_UNIT=arigami
+# the same env file as the host, so a custom ARIGAMI_PORT is checked on the right port
+EnvironmentFile=-__HOME__/.arigami/env
+ExecStart=__ROOT__/deploy/systemd/arigami-healthcheck
