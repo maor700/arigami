@@ -43,6 +43,7 @@ import {
   type SlackSnapshot,
   type SlackWatermark,
   type SlackDiff,
+  type SlackMessage,
 } from './listeners-slack.js';
 import {
   fetchWhatsappMessages,
@@ -769,28 +770,48 @@ async function pollOne(l: Listener): Promise<void> {
   }
 
   // ok
-  const diff = outcome.diff!;
+  applyDiffOutcome(l, outcome.diff!, now);
+}
+
+// Shared by pollOne's "ok" path and any push-wake path that computed an
+// equivalent diff directly from a webhook payload (see onSlackWebhook) — same
+// fire/advance-watermark/reschedule semantics either way; only how the diff
+// was produced differs.
+function applyDiffOutcome(
+  l: Listener,
+  diff: { terminal: unknown; shouldFire: boolean; summary: string; nextWatermark: unknown },
+  now: number
+): void {
+  const nextWatermark = diff.nextWatermark as Record<string, unknown>;
+  const reschedule = (extra: Partial<Listener> = {}) =>
+    patchListener(l.id, {
+      lastPolledAt: now,
+      nextPollAt: now + l.intervalSec * 1000,
+      backoffLevel: 0,
+      ...extra,
+    });
   if (diff.terminal || diff.shouldFire) {
     // Don't advance the watermark here — that happens on delivery (at-least-once).
     llog(l.id, 'fire', diff.summary.split('\n')[0].replace(/^🔔 Listener: /, ''));
-    enqueue(l, diff.summary, diff.nextWatermark as Record<string, unknown>, !!diff.terminal);
+    enqueue(l, diff.summary, nextWatermark, !!diff.terminal);
     reschedule({ authFails: 0, lastError: null });
   } else {
     // New-but-non-firing events (e.g. our own comments): advance the watermark
     // now so we don't re-evaluate them, but don't wake anyone.
-    if (wmChanged(diff.nextWatermark, l.watermark))
+    if (wmChanged(nextWatermark, l.watermark))
       llog(l.id, 'info', 'new activity from a filtered author — watermark advanced, no wake');
-    reschedule({ watermark: diff.nextWatermark as Record<string, unknown>, authFails: 0, lastError: null });
+    reschedule({ watermark: nextWatermark, authFails: 0, lastError: null });
   }
 }
 
 // ---- slack webhook push (fast-path wake) ------------------------------------
 // webhooks.ts emits 'webhook.received' for every inbound Slack event once its
-// signature verifies. Match it to any armed slack listener watching that
-// channel/thread and bring its nextPollAt forward to now, so the next tick
-// (≤TICK_MS away) picks it up instead of waiting out its normal intervalSec —
-// turns the poll-based slack listener into an effectively-pushed one without
-// duplicating pollSlack's own fetch/diff logic.
+// signature verifies. A plain message event already carries everything
+// diffSlack needs, so feed it straight in as a one-message snapshot and skip
+// the Slack API round-trip pollSlack would otherwise make to refetch what we
+// already have — the webhook IS the data, not just a wake-up bell. Anything
+// that isn't a message (reactions, etc.) just nudges nextPollAt so the next
+// regular poll picks it up.
 function onSlackWebhook(msg: { type: string; kind?: string; body?: unknown }): void {
   if (msg.type !== 'webhook.received' || msg.kind !== 'slack') return;
   const event = (msg.body as any)?.event;
@@ -798,11 +819,48 @@ function onSlackWebhook(msg: { type: string; kind?: string; body?: unknown }): v
   if (!channelId) return;
   const threadTs = event?.thread_ts || event?.ts;
   const now = Date.now();
+  const isMessage = typeof event?.type === 'string' && event.type.startsWith('message');
+  const webhookMsg: SlackMessage | null = isMessage
+    ? { ts: event.ts, user: event.user, text: event.text, thread_ts: event.thread_ts, subtype: event.subtype }
+    : null;
   for (const l of listListeners()) {
     if (l.type !== 'slack' || l.status !== 'watching') continue;
-    const p = l.params as { channelId: string; threadTs?: string };
+    const p = l.params as { channelId: string; threadTs?: string; viewerId?: string; channelName?: string; isDm?: boolean };
     if (p.channelId !== channelId) continue;
     if (p.threadTs && threadTs && p.threadTs !== threadTs) continue;
+    if (!webhookMsg) { patchListener(l.id, { nextPollAt: now }); continue; }
+    const snap: SlackSnapshot = { channelId, channelName: p.channelName, isDm: p.isDm, messages: [webhookMsg] };
+    const diff = diffSlack(snap, l.watermark as SlackWatermark, { fireOn: l.fireOn, ignoreUserId: p.viewerId });
+    applyDiffOutcome(l, diff, now);
+  }
+}
+
+// ---- github webhook push (fast-path wake) -----------------------------------
+// webhooks.ts has verified+recorded inbound GitHub events since before this
+// file existed, but nothing ever consumed them for github-pr listeners — they
+// were pure interval polls the whole time. Unlike Slack's single-message diff,
+// reconstructing a PR's full review/CI state from one webhook payload isn't
+// worth it across the many event shapes (review, comment, check_run, status,
+// …) involved, so this just brings nextPollAt forward like the Slack path
+// used to: a wake-up bell, not the data itself. pollGithubPr still does the
+// real fetch, just promptly instead of on the next scheduled tick.
+function onGithubWebhook(msg: { type: string; kind?: string; body?: unknown }): void {
+  if (msg.type !== 'webhook.received' || msg.kind !== 'github') return;
+  const body = (msg.body ?? {}) as any;
+  const owner = body?.repository?.owner?.login;
+  const repo = body?.repository?.name;
+  if (!owner || !repo) return;
+  // pull_request* events carry pull_request.number; issue_comment on a PR
+  // carries issue.number (GitHub models a PR as an issue for comment events).
+  // check_run/check_suite/status events carry neither — those wake every PR
+  // listener on the repo, which is a few extra no-op polls, not a wrong fire.
+  const number: number | undefined = body?.pull_request?.number ?? body?.issue?.number;
+  const now = Date.now();
+  for (const l of listListeners()) {
+    if (l.type !== 'github-pr' || l.status !== 'watching') continue;
+    const p = l.params as { owner: string; repo: string; number: number };
+    if (p.owner !== owner || p.repo !== repo) continue;
+    if (number != null && p.number !== number) continue;
     patchListener(l.id, { nextPollAt: now });
   }
 }
@@ -810,6 +868,7 @@ function onSlackWebhook(msg: { type: string; kind?: string; body?: unknown }): v
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
 let unsubSlackWebhook: (() => void) | null = null;
+let unsubGithubWebhook: (() => void) | null = null;
 
 async function tick(): Promise<void> {
   if (ticking) return;
@@ -841,6 +900,7 @@ export function startListenerScheduler(): void {
   timer = setInterval(tick, TICK_MS);
   if (timer.unref) timer.unref();
   if (!unsubSlackWebhook) unsubSlackWebhook = subscribeBus(onSlackWebhook);
+  if (!unsubGithubWebhook) unsubGithubWebhook = subscribeBus(onGithubWebhook);
 
   // Auto-start bridge if a WhatsApp listener is already registered
   const waListeners = listListeners().filter((l) => l.type === 'whatsapp' && l.status === 'watching');
