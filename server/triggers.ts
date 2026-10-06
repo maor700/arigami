@@ -333,6 +333,25 @@ function removePendingByTicket(ticket: string): void {
   db.pending = db.pending.filter((p) => p.ticket?.toUpperCase() !== up);
 }
 
+// Edit a queued item before it starts. Only fields the item can start with; a ticket item keeps its
+// ticket id (it IS the identity), an empty item can also change its title / cwd / permissions.
+const PENDING_TEXT_FIELDS = ['prompt', 'skill', 'model', 'effort', 'folderName'] as const;
+const PENDING_EMPTY_FIELDS = ['title', 'cwd', 'permissionMode'] as const;
+export function patchPending(id: string, patch: Record<string, unknown>): PendingItem | null {
+  const item = db.pending.find((p) => p.id === id);
+  if (!item) return null;
+  const rec = item as unknown as Record<string, unknown>;
+  for (const k of PENDING_TEXT_FIELDS) if (typeof patch[k] === 'string') rec[k] = (patch[k] as string).trim() === '' && k !== 'prompt' ? '' : patch[k];
+  if (item.kind === 'empty') for (const k of PENDING_EMPTY_FIELDS) if (typeof patch[k] === 'string' && (k !== 'title' || (patch[k] as string).trim())) rec[k] = patch[k];
+  const eng = triggerEngine(patch.engine);
+  if (eng !== undefined) item.engine = eng;
+  // A folder is chosen by NAME in the UI; an explicit name replaces any id the item carried.
+  if (typeof patch.folderName === 'string') delete (item as { folderId?: unknown }).folderId;
+  persist();
+  emitPending();
+  return item;
+}
+
 export function dismissPending(id: string): boolean {
   const item = db.pending.find((p) => p.id === id);
   if (!item) return false;

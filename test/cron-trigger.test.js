@@ -289,3 +289,28 @@ test('isRunningQueueSession: only a queue-started session that is running a turn
   expect(r.ok).toBe(true);
   expect(r.out[0]).toEqual({ running: true, starting: true, idle: false, dead: false, notQueue: false, bare: false });
 });
+
+test('patchPending edits what a queued item starts with; a ticket keeps its identity; junk engines are ignored', () => {
+  const { env } = isolatedEnv();
+  const r = runInChild(
+    `
+    const t = await import('./server/triggers.js');
+    t.load();
+    const e = t.deferEmpty({ title: 'Review x', cwd: '/tmp/a', prompt: 'p1', engine: 'claude' });
+    const a = t.patchPending(e.id, { title: 'Review y', prompt: 'p2', cwd: '/tmp/b', engine: 'codex', model: 'm', effort: 'high', folderName: 'CR', permissionMode: 'plan', junk: 1 });
+    const bad = t.patchPending(e.id, { engine: 'gpt', title: '   ' });
+    const tk = t.deferTicket('ENG-9', 'tk', 'tp');
+    const c = t.patchPending(tk.id, { ticket: 'OTHER-1', title: 'nope', cwd: '/x', prompt: 'p3', model: 'opus' });
+    emit({ a: [a.title, a.prompt, a.cwd, a.engine, a.model, a.effort, a.folderName, a.permissionMode, a.junk],
+           bad: [bad.engine, bad.title],
+           c: [c.ticket, c.title, c.cwd, c.prompt, c.model],
+           none: t.patchPending('pend_nope', { prompt: 'x' }) });
+    `,
+    env
+  );
+  expect(r.ok).toBe(true);
+  expect(r.out[0].a).toEqual(['Review y', 'p2', '/tmp/b', 'codex', 'm', 'high', 'CR', 'plan', null]); // (undefined serializes as null)
+  expect(r.out[0].bad).toEqual(['codex', 'Review y']); // a non-engine value and a blank title change nothing
+  expect(r.out[0].c).toEqual(['ENG-9', 'tk', null, 'p3', 'opus']); // ticket id/title/cwd are not editable
+  expect(r.out[0].none).toBeNull();
+});

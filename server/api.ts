@@ -4566,6 +4566,10 @@ export async function handle(
         const r = await t.startPending(pid);
         return r ? json(res, r) : notFound(res, `no such pending item: ${pid}`);
       }
+      if (m === 'PATCH') {
+        const item = t.patchPending(rest, ((await readBody(req)) as any) || {});
+        return item ? json(res, item) : notFound(res, `no such pending item: ${rest}`);
+      }
       if (m === 'DELETE') return json(res, { ok: t.dismissPending(rest) });
       return notFound(res);
     }

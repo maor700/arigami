@@ -27,7 +27,7 @@ import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
 import ScreenSidePanel from './components/ScreenSidePanel.jsx';
 import ScreenModal from './components/ScreenModal.jsx';
-import Launcher, { buildTicketPayload } from './components/Launcher.jsx';
+import Launcher, { buildTicketPayload, EngineToggle, SessionOptionsPicker } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
 import Settings from './components/Settings.jsx';
 import { parseHash, parseLocation, routeFromState, sessionFromSearch } from './lib/route.js';
@@ -93,11 +93,155 @@ function isTyping(e) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable || isVncInputTarget(el);
 }
 
-// Full-pane preview of a pending (not-yet-a-session) ticket — the same
-// /__ticket/<id> host page a ticket session opens as a tab, shown standalone
-// since there's no session yet. "Start session" promotes it via the queue.
-function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
+// ---- editing a queued item ----------------------------------------------------------------------
+// What a pending item starts with, editable before it starts. A Linear ticket keeps its identity (title,
+// ticket id, cwd come from the ticket); a plain item (a queued PR review, a deferred session) can change
+// everything, including its title, working dir, permissions and prompt.
+const FIELD = 'w-full rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[12px] text-fg';
+const draftOf = (item) => ({
+  title: item?.title || '',
+  prompt: item?.prompt || '',
+  cwd: item?.cwd || '',
+  permissionMode: item?.permissionMode || '',
+  engine: item?.engine || '',
+  skill: item?.skill || '',
+  model: item?.model || '',
+  effort: item?.effort || '',
+  folderName: item?.folderName || '',
+});
+
+function usePendingDraft(item) {
+  const [draft, setDraft] = useState(() => draftOf(item));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { setDraft(draftOf(item)); setError(null); }, [item?.id]);
+  const base = draftOf(item);
+  const dirty = !!item && Object.keys(base).some((k) => (draft[k] || '') !== (base[k] || ''));
+  // Persist the edits, then run `then` (start) — an unsaved edit must never be silently dropped.
+  const save = async () => {
+    if (!item || !dirty) return true;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = { ...draft };
+      if (item.kind !== 'empty') { delete body.title; delete body.cwd; delete body.permissionMode; }
+      await api.patch(`/pending/${item.id}`, body);
+      setSaving(false);
+      return true;
+    } catch (e) {
+      setError(String(e?.message || e));
+      setSaving(false);
+      return false;
+    }
+  };
+  return { draft, setDraft, dirty, saving, error, save };
+}
+
+function PendingOptionsForm({ item, draft, setDraft }) {
   const t = useT();
+  const plain = item.kind === 'empty';
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  return (
+    <div className="flex flex-col gap-3 text-[12px]" data-pending-form>
+      {plain && (
+        <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.titleField')}</span>
+          <input value={draft.title} onChange={(e) => set({ title: e.target.value })} className={FIELD} /></label>
+      )}
+      <div className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.engine')}</span>
+        <EngineToggle options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
+      <div className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.runWith')}</span>
+        <SessionOptionsPicker options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
+      {plain && (
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.cwd')}</span>
+            <input value={draft.cwd} onChange={(e) => set({ cwd: e.target.value })} className={FIELD} /></label>
+          <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.permissions')}</span>
+            <select value={draft.permissionMode} onChange={(e) => set({ permissionMode: e.target.value })} className={FIELD}>
+              <option value="">—</option>
+              <option value="bypassPermissions">Bypass</option>
+              <option value="acceptEdits">Accept edits</option>
+              <option value="plan">Plan</option>
+              <option value="default">Ask</option>
+            </select></label>
+        </div>
+      )}
+      <label className="flex flex-col gap-1"><span className="text-fgdim">{plain ? t('chrome.pending.prompt') : t('chrome.pending.extraPrompt')}</span>
+        <textarea value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={plain ? 12 : 5} className={`${FIELD} leading-relaxed`} placeholder={t('chrome.pending.noPrompt')} /></label>
+    </div>
+  );
+}
+
+// Header shared by both previews. Wraps on a phone: the title and × on top, the actions on their own full-width row.
+function PendingHeader({ title, chip, dirty, saving, onSave, onStart, onDismiss, onClose, extra }) {
+  const t = useT();
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair px-4 py-2" data-pending-header>
+      <span className="min-w-0 flex-1 basis-[10rem] truncate font-mono text-[12.5px] font-bold">{title}</span>
+      <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">{chip}</span>
+      <button type="button" onClick={onClose} title={t('chrome.ticket.closePreview')} className="order-2 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg md:order-last">×</button>
+      <div className="order-last flex w-full items-center gap-2 md:order-none md:ml-auto md:w-auto">
+        {extra}
+        {dirty && (
+          <button type="button" onClick={onSave} disabled={saving} data-pending-save className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] font-bold text-fg disabled:opacity-50 md:py-1">
+            {saving ? t('chrome.pending.saving') : t('chrome.pending.save')}
+          </button>
+        )}
+        {onDismiss && (
+          <button type="button" onClick={onDismiss} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:text-danger md:py-1">{t('chrome.pending.dismiss')}</button>
+        )}
+        <button type="button" onClick={onStart} disabled={saving} data-pending-start className="min-w-0 flex-1 cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12.5px] font-bold text-ink disabled:opacity-50 md:flex-none md:py-1 md:text-[11.5px]">
+          {t('chrome.ticket.startSession')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Full-pane details of a pending item that is NOT a Linear ticket (a PR review queued by a trigger, a
+// deferred plain session): where it came from, and everything it starts with — all of it editable.
+function PendingPreview({ item, onClose, onStart, onDismiss }) {
+  const t = useT();
+  const { draft, setDraft, dirty, saving, error, save } = usePendingDraft(item);
+  if (!item)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-bg text-fg">
+        <div className="text-[13px] text-fgdim">{t('chrome.pending.gone')}</div>
+        <button type="button" onClick={onClose} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px]">{t('chrome.pending.close')}</button>
+      </div>
+    );
+  const pr = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(draft.prompt || item.prompt || '')?.[0] || null;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
+      <PendingHeader
+        title={draft.title || item.title}
+        chip={t('chrome.ticket.pending')}
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onStart={async () => { if (await save()) onStart(); }}
+        onDismiss={onDismiss}
+        onClose={onClose}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5" data-pending-preview>
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-fgdim">
+          <span>{t('chrome.pending.source')}: <span className="font-mono text-fg">{item.triggerName || t('chrome.pending.manual')}</span></span>
+          <span>{t('chrome.pending.queued')}: <span className="font-mono text-fg">{item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'}</span></span>
+          {pr && <a href={pr} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline">{pr} ↗</a>}
+        </div>
+        {error && <div className="mb-3 rounded-[7px] border border-[#d98078] bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
+      </div>
+    </div>
+  );
+}
+
+// Full-pane preview of a pending (not-yet-a-session) Linear ticket — the same /__ticket/<id> host page a
+// ticket session opens as a tab, shown standalone since there's no session yet. "Options" edits what the
+// session starts with (engine, model, effort, skill, folder, extra instructions) before Start promotes it.
+function TicketPreview({ ticket, item, fallbackTitle, onClose, onStart, onDismiss }) {
+  const t = useT();
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const { draft, setDraft, dirty, saving, error, save } = usePendingDraft(item);
   // The pending item already carries a title from trigger time — pass it
   // through so the card can show *something* if the live Linear fetch fails
   // (e.g. no API key configured, or the ticket was never cached) instead of
@@ -107,81 +251,32 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
     : `/__ticket/${ticket}`;
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
-      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
-        <span className="font-mono text-[12.5px] font-bold">{ticket}</span>
-        <span className="rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">
-          {t('chrome.ticket.pending')}
-        </span>
-        <button
-          type="button"
-          onClick={onStart}
-          className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"
-        >
-          {t('chrome.ticket.startSession')}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          title={t('chrome.ticket.closePreview')}
-          className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
-        >
-          ×
-        </button>
-      </div>
+      <PendingHeader
+        title={ticket}
+        chip={t('chrome.ticket.pending')}
+        dirty={dirty}
+        saving={saving}
+        onSave={save}
+        onStart={async () => { if (await save()) onStart(); }}
+        onDismiss={item ? onDismiss : null}
+        onClose={onClose}
+        extra={item ? (
+          <button type="button" onClick={() => setOptionsOpen((v) => !v)} data-pending-options className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:text-fg md:py-1">
+            {t('chrome.pending.options')} {optionsOpen ? '▴' : '▾'}
+          </button>
+        ) : null}
+      />
+      {item && optionsOpen && (
+        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-hair bg-panel px-4 py-3" data-pending-preview>
+          {error && <div className="mb-3 rounded-[7px] border border-[#d98078] bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+          <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
+        </div>
+      )}
       <iframe
         title={t('chrome.ticket.iframeTitle', { id: ticket })}
         src={src}
         className="min-h-0 flex-1 border-0"
       />
-    </div>
-  );
-}
-
-// Full-pane details of a pending item that is NOT a Linear ticket (a PR review queued by a trigger, a
-// deferred plain session): what it is, where it came from, how it will run, and the prompt it starts with.
-function PendingPreview({ item, onClose, onStart, onDismiss }) {
-  const t = useT();
-  const { folders } = useStore();
-  if (!item)
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-bg text-fg">
-        <div className="text-[13px] text-fgdim">{t('chrome.pending.gone')}</div>
-        <button type="button" onClick={onClose} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px]">{t('chrome.pending.close')}</button>
-      </div>
-    );
-  const pr = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(item.prompt || '')?.[0] || null;
-  const folder = item.folderId ? (folders || []).find((f) => f.id === item.folderId)?.name : item.folderName;
-  const rows = [
-    [t('chrome.pending.source'), item.triggerName || t('chrome.pending.manual')],
-    [t('chrome.pending.engine'), item.engine || '—'],
-    [t('chrome.pending.model'), item.model || '—'],
-    [t('chrome.pending.effort'), item.effort || '—'],
-    [t('chrome.pending.folder'), folder || '—'],
-    [t('chrome.pending.cwd'), item.cwd || '—'],
-    [t('chrome.pending.permissions'), item.permissionMode || '—'],
-    [t('chrome.pending.queued'), item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'],
-  ];
-  return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
-      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
-        <span className="min-w-0 truncate font-mono text-[12.5px] font-bold">{item.title}</span>
-        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">{t('chrome.ticket.pending')}</span>
-        <button type="button" onClick={onStart} className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg">{t('chrome.ticket.startSession')}</button>
-        <button type="button" onClick={onDismiss} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px] text-fgdim hover:text-danger">{t('chrome.pending.dismiss')}</button>
-        <button type="button" onClick={onClose} title={t('chrome.ticket.closePreview')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">×</button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5" data-pending-preview>
-        {pr && (
-          <a href={pr} target="_blank" rel="noreferrer" className="mb-4 inline-block font-mono text-[12px] text-brand hover:underline">{pr} ↗</a>
-        )}
-        <dl className="mb-5 grid max-w-[640px] grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-          {rows.map(([k, v]) => (
-            <div key={k} className="contents"><dt className="text-fgdim">{k}</dt><dd className="min-w-0 break-words font-mono">{v}</dd></div>
-          ))}
-        </dl>
-        <div className="mb-1 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('chrome.pending.prompt')}</div>
-        <pre className="max-w-[760px] whitespace-pre-wrap rounded-[8px] border border-hair bg-panel p-3 font-mono text-[11.5px] leading-relaxed">{item.prompt || t('chrome.pending.noPrompt')}</pre>
-      </div>
     </div>
   );
 }
@@ -853,7 +948,9 @@ function Cockpit() {
     main = (
       <TicketPreview
         ticket={previewTicket}
+        item={previewItem || null}
         fallbackTitle={previewItem?.title}
+        onDismiss={() => { if (previewItem) api.del(`/pending/${previewItem.id}`).catch(() => {}); setPreviewTicket(null); }}
         onClose={() => setPreviewTicket(null)}
         onStart={() => {
           const item = (pending || []).find(
