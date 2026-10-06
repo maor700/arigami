@@ -697,7 +697,7 @@ export async function createArigamiServer(env = process.env) {
         'Linear fire_on (default ["new_comment"]): any of new_comment | status_changed | assignee_changed. Comments authored by this session\'s own Linear user are ignored. ' +
         'type "slack" — watches a Slack channel/DM (or a single thread) and wakes this session on new messages. ' +
         'Slack target: pass channel_id (a channel/DM id like C0123ABCD / D0123ABCD), optionally thread_ts to watch one thread, or a Slack message url. Requires a Slack user token connected in the host settings. ' +
-        'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored. ' +
+        'Slack fire_on (default ["new_message"]): any of new_message | mention (a message that @-mentions you) | reply (a threaded reply). Messages authored by your own Slack user are ignored — pass ignore_user_id to self-filter a DIFFERENT identity instead (e.g. when a separate bot token does the actual posting and the connected user token is a human\'s, so "your own Slack user" would otherwise wrongly mean that human). ' +
         'type "host-load" — watches THIS MACHINE and wakes this session when it calms down. This is how you PAUSE instead of making a loaded box worse: call host_resources, see "critical", register this, and stop. '
         + 'until: "ok" (default, comfortable) | "not-critical" (just out of the red); for_sec: how long it must HOLD before waking you (default 60 — load is spiky and a one-sample dip is not a free machine); interval_sec: min 15. '
         + 'The wake-up carries the heaviest processes, so you can see what had been eating it. No target required. '
@@ -724,6 +724,7 @@ export async function createArigamiServer(env = process.env) {
         issue_id: { type: 'string', description: 'Linear issue identifier (ENG-1234) or UUID — for type linear-issue' },
         channel_id: { type: 'string', description: 'Slack channel/DM id (C…/D…/G…) — for type slack' },
         thread_ts: { type: 'string', description: 'Slack thread ts to watch a single thread — for type slack' },
+        ignore_user_id: { type: 'string', description: 'Slack user id to self-filter instead of the connected token\'s own user — for type slack. Use when a different identity (e.g. a bot token) does the actual posting.' },
         fire_on: { type: 'array', items: { type: 'string', enum: ['new_review', 'approved', 'changes_requested', 'new_comment', 'ci_failed', 'ci_passed', 'conflicts', 'status_changed', 'assignee_changed', 'new_message', 'mention', 'reply', 'new_sms', 'host_clear'] } },
         until: { type: 'string', enum: ['ok', 'not-critical'], description: 'host-load: how calm is calm enough (default "ok")' },
         for_sec: { type: 'number', description: 'host-load: how long the bar must hold before waking you (default 60)' },

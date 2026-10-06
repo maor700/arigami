@@ -1013,6 +1013,7 @@ export async function registerSlackListener(
     fire_on?: string[];
     ttl_days?: number;
     interval_sec?: number;
+    ignore_user_id?: string;
   }
 ): Promise<Listener> {
   const s = getSession(sessionId);
@@ -1044,7 +1045,13 @@ export async function registerSlackListener(
     );
   }
 
-  const viewerId = (await slack.viewerId().catch(() => null)) || undefined;
+  // The self-filter normally ignores the CONNECTED token's own user — right when
+  // that token also does the posting. When the connected user token belongs to a
+  // human (read access) while a separate bot token does the actual posting (this
+  // pipeline's setup), that default silently swallows the human's real replies
+  // instead of the bot's. ignore_user_id lets a caller that knows which identity
+  // is actually posting (e.g. the bot's user id) override it.
+  const viewerId = args.ignore_user_id || (await slack.viewerId().catch(() => null)) || undefined;
   const baseline = diffSlack(snap!, {}, { fireOn });
   const now = Date.now();
   const intervalSec = Number(args.interval_sec) > 0 ? Number(args.interval_sec) : DEFAULT_INTERVAL_SEC;
