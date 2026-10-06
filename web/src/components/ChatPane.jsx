@@ -564,6 +564,11 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   const simple = mode === 'simple';
   // F7: the merge panel keys off metadata.review/merged (wire form is enough).
   const session = useStore().sessions.find((s) => s.id === sessionId) || null;
+  // The merge offer applies while the review is approved, unmerged, and not dismissed (the dismissal is
+  // remembered per approval: a later re-approval offers again).
+  const mdReview = session?.metadata?.review;
+  const mergeOfferLive = mdReview?.state === 'approved' && !!session?.metadata?.branch && !session?.metadata?.merged && session?.metadata?.mergeOfferDismissedAt !== mdReview?.at;
+  const dismissMergeOffer = () => { api.patch(`/sessions/${sessionId}`, { metadata: { mergeOfferDismissedAt: mdReview?.at || 'x' } }).catch(() => {}); };
   const scrollRef = useRef(null);
   const stickRef = useRef(true);
   // Scrolled away from the bottom → show the floating "jump to latest" button.
@@ -784,6 +789,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
             isCapUse(e) || (e.kind === 'tool-result' && capIds.has(e.toolUseId) && !(e.isError ?? e.is_error));
           const out = [];
           let actionRendered = false;
+          let mergeOfferRendered = false;
           const visible = events.slice(hiddenCount);
           // SIMPLE1: in Simple mode each turn's folded events collect into one
           // group, rendered as a BehindScenes slot where the first of them was.
@@ -838,19 +844,36 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               );
               continue;
             }
+            if (e.kind === 'merge-offer') {
+              // After approval the merge is one click — recorded in the transcript where the human
+              // approved, live while it still applies, and dismissable.
+              const rv = session?.metadata?.review;
+              const liveOffer = mergeOfferLive && rv?.at === e.approvedAt;
+              if (liveOffer) mergeOfferRendered = true;
+              out.push(
+                <div key={keys[i]} data-event-id={e.id || keys[i]}>
+                  {liveOffer ? (
+                    <HostCard name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />
+                  ) : (
+                    <div data-merge-offer-record className="my-1.5 font-mono text-[11px] text-[var(--term-dim)]">
+                      ↳ {t('chat.mergeOfferRecord')}
+                    </div>
+                  )}
+                </div>
+              );
+              continue;
+            }
             const live = !!awaiting && i === lastBlockIdx;
             out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} /></div>);
           }
           // A current action with no record in the visible transcript (raised before cards were
           // recorded, or scrolled out of the window) still has to be answerable: show it last.
           if (action && !actionRendered) out.push(<HostCard key="action-fallback" name="ActionCard" props={{ sessionId, action }} />);
+          // An approval with no record in the visible transcript (approved before offers were recorded,
+          // or scrolled out of the window) still offers the merge — last, and dismissable.
+          if (mergeOfferLive && !mergeOfferRendered) out.push(<HostCard key="merge-fallback" name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />);
           return out;
         })()}
-        {/* F7: after the human approved, the merge is one click — here, at the
-            end of the transcript, until it's merged. */}
-        {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (
-          <HostCard name="MergePanel" props={{ session, dark: true }} />
-        )}
         {working && (
           <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">
             <span className="host-spinner h-3 w-3" />

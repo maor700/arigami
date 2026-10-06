@@ -3043,9 +3043,13 @@ export function markApproved(id: string, by: string, expected?: { sha: string; r
   if (md.base && md.branch === md.base) return false;
   const commit = reviewedCommit(s);
   if (!commit || (expected && (commit.sha !== expected.sha || commit.repo !== expected.repo || commit.branch !== expected.branch))) return false;
+  const approvedAt = new Date().toISOString();
   state.patchSession(id, {
-    metadata: { review: { state: 'approved', at: new Date().toISOString(), by, ...commit }, mergeConflict: null },
+    metadata: { review: { state: 'approved', at: approvedAt, by, ...commit }, mergeConflict: null },
   });
+  // The merge offer is part of the conversation: recorded where the human approved, so it
+  // scrolls up with the chat (and can be dismissed) instead of being pinned at the bottom.
+  try { claude.appendChat(id, { kind: 'merge-offer', approvedAt, branch: md.branch }); } catch {}
   // EXT domain event (the WS only ever carried this as a session-updated).
   try { emitLocal('review.approved', { sessionId: id, by, branch: md.branch }); } catch {}
   return true;

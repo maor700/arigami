@@ -317,6 +317,8 @@ export const strings = {
   'chat.mergeReason.merged': 'already merged',
   'chat.mergeReason.conflict': 'last merge attempt conflicted',
   'chat.mergeRefresh': 'Re-check',
+  'chat.mergeDismiss': 'Dismiss — merge from the Changes tab instead',
+  'chat.mergeOfferRecord': 'Approved — merge offer closed',
   'chat.mergeCardTitle': 'Merge',
   'chat.mergeChild': 'child',
   // ---- ChatPane.jsx: Simple mode (SIMPLE1) ----

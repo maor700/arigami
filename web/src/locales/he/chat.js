@@ -317,6 +317,8 @@ export const strings = {
   'chat.mergeReason.merged': 'כבר מוזג',
   'chat.mergeReason.conflict': 'ניסיון המיזוג האחרון הסתיים בקונפליקט',
   'chat.mergeRefresh': 'בדוק שוב',
+  'chat.mergeDismiss': 'סגור — אפשר למזג מטאב השינויים',
+  'chat.mergeOfferRecord': 'אושר — הצעת המיזוג נסגרה',
   'chat.mergeCardTitle': 'מיזוג',
   'chat.mergeChild': 'ילד',
   // ---- ChatPane.jsx: Simple mode (SIMPLE1) ----

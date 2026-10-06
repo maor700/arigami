@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
-import { faCheck, faTriangleExclamation, faRotateRight } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faTriangleExclamation, faRotateRight, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { useT } from '../lib/i18n.js';
 import { toastSuccess, toastError } from '../lib/toast.js';
 import { fmtDateTime } from '../lib/time.js';
@@ -64,7 +64,7 @@ function useMergeStatus(sessionId, enabled) {
 // `dark` = render on the terminal (chat) surface with the term accent vars.
 // OPENUI phase 2: a host library component; in the chat (dark) it sits on the
 // shared CardFrame, in the Changes/Orchestration tabs it keeps its panel look.
-function MergePanelView({ props: { session, sessionId, onMerged, dense, dark } }) {
+function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dense, dark } }) {
   const t = useT();
   const id = sessionId || session?.id;
   const md = session?.metadata || {};
@@ -145,6 +145,11 @@ function MergePanelView({ props: { session, sessionId, onMerged, dense, dark } }
         <button type="button" onClick={refresh} disabled={busy} title={t('chat.mergeRefresh')} aria-label={t('chat.mergeRefresh')} className={`cursor-pointer rounded px-1 ${dim} hover:opacity-100 disabled:opacity-40`}>
           <Icon icon={faRotateRight} />
         </button>
+        {onDismiss && (
+          <button type="button" data-merge-dismiss onClick={onDismiss} disabled={busy} title={t('chat.mergeDismiss')} aria-label={t('chat.mergeDismiss')} className={`cursor-pointer rounded px-1 ${dim} hover:opacity-100 disabled:opacity-40`}>
+            <Icon icon={faXmark} />
+          </button>
+        )}
       </span>
       {!canMerge && reasonText && !busy && (
         <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{reasonText}</span>
@@ -159,11 +164,11 @@ function MergePanelView({ props: { session, sessionId, onMerged, dense, dark } }
 export const MergePanelDef = defineHostComponent({
   name: 'MergePanel',
   description: 'Host: approved → merge control (strategy, delete branch) — the host runs the merge',
-  props: loose({ session: any, sessionId: str, onMerged: any, dense: bool, dark: bool }),
+  props: loose({ session: any, sessionId: str, onMerged: any, onDismiss: any, dense: bool, dark: bool }),
   component: MergePanelView,
 });
-export function MergePanel({ session, sessionId, onMerged, dense, dark }) {
-  return <MergePanelView props={{ session, sessionId, onMerged, dense, dark }} />;
+export function MergePanel({ session, sessionId, onMerged, onDismiss, dense, dark }) {
+  return <MergePanelView props={{ session, sessionId, onMerged, onDismiss, dense, dark }} />;
 }
 
 // A `{kind:'merge'}` chat event — the durable record in the child and the master.

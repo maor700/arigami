@@ -222,3 +222,41 @@ test('action card: a current action with no record in the transcript is still an
   expect(html).toContain('Ship it?');
   expect(html.indexOf('Ship it?')).toBeGreaterThan(html.indexOf('hello'));
 });
+
+// ---- the merge offer is part of the conversation too, and dismissable --------------------------
+
+const APPROVED = { id: 'sess_t', metadata: { chatMode: 'full', branch: 'feat/x', base: 'main', review: { state: 'approved', at: 'T1', by: 'me' } }, claude: { state: 'idle' } };
+const mergePane = (events) => render(h(ChatPane, { sessionId: 'sess_t', events, chatLoaded: true }));
+const offer = { id: 'mo1', kind: 'merge-offer', approvedAt: 'T1', branch: 'feat/x', ts: 2 };
+
+test('merge offer: live inline with a dismiss button while approved; a one-line record once dismissed or merged', async () => {
+  const store = await import(web('lib/store.js'));
+  const seed = (md) => { store.getState().sessions = [{ ...APPROVED, metadata: { ...APPROVED.metadata, ...md } }]; };
+  const sess = () => store.getState().sessions[0];
+
+  seed({});
+  let html = mergePane([user('u1', 'MSG-BEFORE', 1), offer, user('u2', 'MSG-AFTER', 3)]);
+  expect(html).toContain('data-merge-panel');
+  expect(html).toContain('data-merge-dismiss');
+  expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('MSG-BEFORE'));
+  expect(html.indexOf('data-merge-panel')).toBeLessThan(html.indexOf('MSG-AFTER')); // not pinned below the later message
+  expect(html.split('data-merge-panel').length - 1).toBe(1); // once
+
+  seed({ mergeOfferDismissedAt: 'T1' });
+  html = mergePane([user('u1', 'MSG-BEFORE', 1), offer]);
+  expect(html).not.toContain('data-merge-panel');
+  expect(html).toContain('data-merge-offer-record');
+
+  seed({ merged: { sha: 'abc1234', base: 'main', at: 'T2' } });
+  html = mergePane([offer]);
+  expect(html).not.toContain('data-merge-panel');
+  expect(html).toContain('data-merge-offer-record');
+
+  // approved before offers were recorded: still offered (last), still dismissable
+  seed({});
+  html = mergePane([user('u1', 'old chat', 1)]);
+  expect(html).toContain('data-merge-panel');
+  expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('old chat'));
+  seed({ mergeOfferDismissedAt: 'T1' });
+  expect(mergePane([user('u1', 'old chat', 1)])).not.toContain('data-merge-panel');
+});
