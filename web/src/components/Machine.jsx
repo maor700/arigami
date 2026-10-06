@@ -2,7 +2,7 @@
 // through host_resources (server/lib/resources.ts), which until now had no
 // view at all.
 //
-//   MachineMini   the rail strip: CPU · memory · swap, coloured by pressure;
+//   MachineMini   the rail strip: CPU · memory · swap · disk, coloured by pressure;
 //                 click → Settings › Host › Machine resources
 //   MachinePanel  that section: the verdict and why, what each SESSION costs
 //                 (its agent, MCP servers, Chrome and every dev server it
@@ -119,6 +119,9 @@ export function MachineMini() {
           detail={t('machine.memoryDetail', { avail: fmtMb(snap.memory?.availableMb), total: fmtMb(snap.memory?.totalMb) })}
         />
         {sp != null && sp > 0 && <MiniStat label={t('machine.swap')} pct={sp} detail={fmtMb(snap.swap.usedMb)} />}
+        {snap.disk && (
+          <MiniStat label={t('machine.disk')} pct={snap.disk.usedPct} detail={t('machine.diskFree', { free: fmtMb(snap.disk.freeMb) })} />
+        )}
       </span>
     </button>
   );
