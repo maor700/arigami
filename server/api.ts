@@ -2559,6 +2559,7 @@ export async function destroySession(id: string): Promise<reap.ReapReport | null
   if (chrome.profileSeedFor(id).owner !== 'global') await chrome.syncProfileToBase(id).catch(() => {});
   if (!cfg.screen?.keepProfiles) chrome.removeSessionProfile(id); // T8 §6
   pickDriver().release(id);
+  import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
   // Processes (incl. detached dev servers), the owned worktree, scratch dir and
   // transcript — in that order, see reap.ts.
   const report = await reap.reapSession(s, reap.ALL);
@@ -5593,6 +5594,7 @@ export async function handle(
           // it left off.
           chrome.closeChrome(id);
           pickDriver().release(id);
+          import('./lib/desktop-control.js').then((m) => m.desktopRelease(id)).catch(() => {});
           triggerMemoryEpisode(id, 'archive');
 
           // The session's processes stop with it — including dev servers the
@@ -6263,6 +6265,33 @@ export async function handle(
       return json(res, { ok: true, mode, tracking: screens.setAutoSnapshotMode(String(body.requestId), mode) });
     }
     // capture_screen: one frame of the shared desktop → screenshot chat event.
+    // DESKTOP CONTROL (engine-neutral; MCP tools desktop_* call these): a fresh screenshot returned as data,
+    // and pointer/keyboard actions on the session's OWN desktop. Linux/x11 today.
+    if (sub.startsWith('desktop/') && m === 'POST') {
+      if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'control the desktop') });
+      const op = sub.slice('desktop/'.length);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const dc = await import('./lib/desktop-control.js');
+      try {
+        if (op === 'screenshot') {
+          const r = await dc.desktopScreenshot(id);
+          return json(res, { ok: true, png_base64: r.png.toString('base64'), width: r.width, height: r.height, ts: r.ts, file: r.file });
+        }
+        if (op === 'act') {
+          const r = await dc.desktopAct(id, body);
+          console.log(`[desktop] ${id} ${String(body?.action)} ${r.ok ? 'ok' : 'failed: ' + (r as any).error}`);
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        if (op === 'launch') return json(res, { ok: true, ...(await dc.desktopLaunch(id, String(body?.command || ''), Array.isArray(body?.args) ? body.args : [])) });
+        if (op === 'quit') {
+          const r = dc.desktopQuit(id, Number(body?.pid));
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        return badRequest(res, `unknown desktop op: ${op}`);
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
     if (sub === 'screenshot' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const caption = body.caption ? String(body.caption).slice(0, 300) : undefined;

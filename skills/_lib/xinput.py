@@ -9,6 +9,8 @@
 #   xinput.py move X Y
 #   xinput.py click X Y [button]      # button 1=left (default) 2=middle 3=right
 #   xinput.py dblclick X Y
+#   xinput.py drag X1 Y1 X2 Y2        # press at 1, move in steps, release at 2
+#   xinput.py scroll X Y DY           # wheel at X,Y: DY>0 scrolls down, DY<0 up (|DY| ticks)
 #   xinput.py key  NAME[+NAME...]     # e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4
 #   xinput.py type TEXT               # printable ASCII only (URLs, one-time device
 #                                     # codes). NEVER passwords / 2FA / OTP — those are
@@ -98,6 +100,27 @@ class Driver:
             self.X.XFlush(self.d)
             time.sleep(0.08)
 
+    def drag(self, x1, y1, x2, y2, steps=12):
+        self.move(x1, y1)
+        time.sleep(0.05)
+        self.T.XTestFakeButtonEvent(self.d, 1, 1, 0)
+        self.X.XFlush(self.d)
+        for i in range(1, steps + 1):
+            self.move(int(x1) + (int(x2) - int(x1)) * i / steps, int(y1) + (int(y2) - int(y1)) * i / steps)
+            time.sleep(0.02)
+        self.T.XTestFakeButtonEvent(self.d, 1, 0, 0)
+        self.X.XFlush(self.d)
+
+    def scroll(self, x, y, dy):
+        self.move(x, y)
+        time.sleep(0.05)
+        button = 5 if int(dy) > 0 else 4
+        for _ in range(min(abs(int(dy)), 50)):
+            self.T.XTestFakeButtonEvent(self.d, button, 1, 0)
+            self.T.XTestFakeButtonEvent(self.d, button, 0, 0)
+            self.X.XFlush(self.d)
+            time.sleep(0.02)
+
     def _keycode(self, keysym):
         kc = self.X.XKeysymToKeycode(self.d, keysym)
         if not kc:
@@ -163,7 +186,7 @@ class Driver:
 
 def main(argv):
     if len(argv) < 2:
-        die(__doc__ or 'usage: xinput.py <move|click|dblclick|key|type|size> ...')
+        die(__doc__ or 'usage: xinput.py <move|click|dblclick|drag|scroll|key|type|size> ...')
     cmd, args = argv[1], argv[2:]
     drv = Driver()
     try:
@@ -175,6 +198,10 @@ def main(argv):
             drv.click(args[0], args[1], int(args[2]) if len(args) == 3 else 1)
         elif cmd == 'dblclick' and len(args) == 2:
             drv.click(args[0], args[1], 1, times=2)
+        elif cmd == 'drag' and len(args) == 4:
+            drv.drag(*args)
+        elif cmd == 'scroll' and len(args) == 3:
+            drv.scroll(*args)
         elif cmd == 'key' and len(args) == 1:
             drv.key(args[0])
         elif cmd == 'type' and len(args) == 1:

@@ -19,6 +19,21 @@ import path from 'node:path';
  * the same tools, the same calls back to the REST API with the same session
  * token, without a process per session.
  */
+/**
+ * A tool result becomes MCP content. A result carrying `__image` ({data: base64, mimeType}) is returned as a
+ * real IMAGE block (the model sees it) followed by the rest as JSON text; anything else is JSON text as before.
+ */
+export function toMcpContent(result) {
+  if (result && typeof result === 'object' && result.__image?.data) {
+    const { __image, ...rest } = result;
+    return [
+      { type: 'image', data: __image.data, mimeType: __image.mimeType || 'image/png' },
+      { type: 'text', text: JSON.stringify(rest) },
+    ];
+  }
+  return [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }];
+}
+
 export async function createArigamiServer(env = process.env) {
   // INTERNAL base for host→self fetches only. NEVER put HOST into a value the
   // agent might echo to a human — results carry host-relative paths instead
@@ -880,6 +895,74 @@ export async function createArigamiServer(env = process.env) {
         }
       },
     },
+    // ---- DESKTOP CONTROL — engine-neutral: any session, Claude or Codex, drives its OWN desktop ----------------
+    {
+      name: 'desktop_screenshot',
+      description:
+        'Take a FRESH screenshot of this session\'s own desktop right now and get it back as an IMAGE you can look at (also saved as a file: `file`). ' +
+        'Coordinates in the image are screen pixels — exactly what desktop_pointer takes; `width`/`height` are the screen size. ' +
+        'Look at the screen before every action that depends on it, and again after it: this tool never returns a cached frame. ' +
+        'For anything inside a browser page prefer the browser_* tools (precise, cheap); use the desktop tools for what is outside the page — other windows, menus, installers, apps. ' +
+        'Never use them to type passwords, 2FA or other secrets: that is request_screen, the human types.',
+      inputSchema: obj({ ...SID_PROP }),
+      run: async (a) => {
+        const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, {});
+        return {
+          __image: { data: r.png_base64, mimeType: 'image/png' },
+          ok: true, width: r.width, height: r.height, ts: r.ts, file: r.file,
+          coordinates: 'screen pixels, origin top-left',
+        };
+      },
+    },
+    {
+      name: 'desktop_pointer',
+      description:
+        'Move or click the mouse on this session\'s own desktop. action: move | click | double_click | right_click | middle_click | drag (from x,y to x2,y2) | scroll (at x,y by dy wheel ticks: >0 down, <0 up). ' +
+        'x/y are screen pixels from desktop_screenshot. After acting, take another desktop_screenshot to confirm it did what you meant.',
+      inputSchema: obj({
+        action: { type: 'string', enum: ['move', 'click', 'double_click', 'right_click', 'middle_click', 'drag', 'scroll'] },
+        x: { type: 'number' }, y: { type: 'number' },
+        x2: { type: 'number', description: 'drag: end x' }, y2: { type: 'number', description: 'drag: end y' },
+        dy: { type: 'number', description: 'scroll: wheel ticks, >0 down, <0 up' },
+        ...SID_PROP,
+      }, ['action', 'x', 'y']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/act`, { action: a.action, x: a.x, y: a.y, x2: a.x2, y2: a.y2, dy: a.dy }),
+    },
+    {
+      name: 'desktop_keyboard',
+      description:
+        'Type text (printable ASCII; `text`) or press a key / combo (`key`, e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4) on this session\'s own desktop, into whatever has focus. ' +
+        'Click the target first. NEVER type passwords, 2FA or OTP codes — hand the screen to the human with request_screen.',
+      inputSchema: obj({
+        text: { type: 'string', description: 'Printable ASCII to type' },
+        key: { type: 'string', description: 'A key or combo like ctrl+l' },
+        ...SID_PROP,
+      }),
+      run: (a) => {
+        if (a.text !== undefined && a.key !== undefined) throw new Error('pass either text or key, not both');
+        if (a.text === undefined && a.key === undefined) throw new Error('pass text or key');
+        return api('POST', `/__api/sessions/${sid(a)}/desktop/act`, a.text !== undefined ? { action: 'type', text: a.text } : { action: 'key', key: a.key });
+      },
+    },
+    {
+      name: 'desktop_launch',
+      description:
+        'Start a program on this session\'s own desktop, detached so it keeps running after the call (a plain background shell command dies with its shell). ' +
+        '`command` is one program name or path, its arguments go in `args`. Returns the pid; stop it with desktop_quit. ' +
+        'To open a browser with a persistent profile and NO automation port: command "google-chrome", args ["--user-data-dir=<dir>", "--password-store=basic", "--no-first-run", "<url>"].',
+      inputSchema: obj({
+        command: { type: 'string' },
+        args: { type: 'array', items: { type: 'string' } },
+        ...SID_PROP,
+      }, ['command']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/launch`, { command: a.command, args: a.args || [] }),
+    },
+    {
+      name: 'desktop_quit',
+      description: 'Stop a program you started with desktop_launch (by pid).',
+      inputSchema: obj({ pid: { type: 'number' }, ...SID_PROP }, ['pid']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/desktop/quit`, { pid: a.pid }),
+    },
     {
       name: 'browser_logins',
       description:
@@ -1237,7 +1320,7 @@ export async function createArigamiServer(env = process.env) {
       return { content: [{ type: 'text', text: `error: tool "${tool.name}" is not in this agent's allowlist (ask the human with request_action)` }], isError: true };
     try {
       const result = await tool.run(req.params.arguments || {});
-      return { content: [{ type: 'text', text: JSON.stringify(result ?? { ok: true }) }] };
+      return { content: toMcpContent(result) };
     } catch (e) {
       if (tool.name === 'permission_prompt') {
         // never error the permission channel — deny instead
