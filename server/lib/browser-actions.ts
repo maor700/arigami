@@ -19,8 +19,8 @@
 // SAME running Chrome (the one the human may be signing in to Google on) is
 // what these tools talk to over chrome-cdp.ts.
 import fs from 'node:fs';
-import { openChrome, closeChrome as closeChromeProcess, isChromeRunning, touch, chromeSessionDir } from './chrome.js';
-import { frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
+import { openChrome, closeChromeGracefully, isChromeRunning, touch, chromeSessionDir } from './chrome.js';
+import { cdpPort, frontPage, pageNavigate, pageEvaluate, pageClick, pageScroll, pageScreenshot, typeIntoDesktop, type ChromeTab } from './chrome-cdp.js';
 import * as screens from '../screenshots.js';
 
 export interface HumanGate {
@@ -178,8 +178,9 @@ export async function scroll(sessionId: string, opts: { x?: number; y?: number; 
   return { ok: true };
 }
 
-export function close(sessionId: string): { ok: true } {
-  closeChromeProcess(sessionId);
+/** Graceful (Browser.close over CDP) so the last cookies/storage reach disk — a SIGTERM loses a fresh login. */
+export async function close(sessionId: string): Promise<{ ok: true }> {
+  await closeChromeGracefully(sessionId, cdpPort(sessionId));
   return { ok: true };
 }
 

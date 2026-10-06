@@ -6382,7 +6382,7 @@ export async function handle(
       }
     }
     if (sub === 'browser/close' && m === 'POST') {
-      return json(res, browserActions.close(id));
+      return json(res, await browserActions.close(id));
     }
     // screen-agnostic connect-*: a screenshot of the front TAB only (CDP
     // Page.captureScreenshot), not the desktop/root window — what
