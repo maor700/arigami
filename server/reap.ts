@@ -216,6 +216,8 @@ export interface SweepReport {
   scratch: number;
   chrome: number;
   transcripts: number;
+  /** Kept worktrees of deleted sessions that are clean now and were removed. */
+  worktrees: number;
 }
 
 /**
@@ -225,7 +227,7 @@ export interface SweepReport {
  */
 export async function sweep(): Promise<SweepReport> {
   const live = new Set(state.listSessions({ archived: true }).map((s) => s.id));
-  const out: SweepReport = { processes: 0, scratch: 0, chrome: 0, transcripts: 0 };
+  const out: SweepReport = { processes: 0, scratch: 0, chrome: 0, transcripts: 0, worktrees: 0 };
 
   const rows = procs.list();
   if (rows) {
@@ -252,6 +254,19 @@ export async function sweep(): Promise<SweepReport> {
   } catch {
     /* no chat dir */
   }
+  // A worktree a delete refused to remove may have become safe since (committed
+  // and pushed, or its stray edit dropped): ask the same conservative rule again.
+  const rows2 = readKept();
+  if (rows2.length) {
+    const left = rows2.filter((r) => {
+      if (live.has(r.sessionId)) return true;
+      const res = wt.reap(r.dir);
+      if (res.outcome === 'kept' || res.outcome === 'failed') return true;
+      if (res.outcome === 'removed') out.worktrees++;
+      return false;
+    });
+    if (left.length !== rows2.length) writeKept(left);
+  }
   return out;
 }
 
@@ -265,11 +280,11 @@ export function startSweeper(log: (m: string) => void = console.log): () => void
     busy = true;
     try {
       const r = await sweep();
-      const n = r.processes + r.scratch + r.chrome + r.transcripts;
+      const n = r.processes + r.scratch + r.chrome + r.transcripts + r.worktrees;
       if (n)
         log(
           `[reap] swept leftovers of deleted sessions: ${r.processes} processes, ${r.scratch} scratch dirs, ` +
-            `${r.chrome} browser profiles, ${r.transcripts} transcripts`
+            `${r.chrome} browser profiles, ${r.transcripts} transcripts, ${r.worktrees} worktrees`
         );
     } catch (e) {
       log(`[reap] sweep failed: ${(e as Error).message}`);

@@ -281,7 +281,7 @@ export function MachinePanel() {
         </div>
         {swept && (
           <div className="mb-1.5 text-[0.75rem] text-fgdim">
-            {t('machine.swept', { p: swept.processes, s: swept.scratch, c: swept.chrome, x: swept.transcripts })}
+            {t('machine.swept', { p: swept.processes, s: swept.scratch, c: swept.chrome, x: swept.transcripts, w: swept.worktrees ?? 0 })}
           </div>
         )}
         {kept?.length ? (

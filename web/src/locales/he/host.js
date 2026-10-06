@@ -25,7 +25,7 @@ export const strings = {
   'machine.noKept': 'אין — כל worktree של סשן שנמחק היה נקי והוסר.',
   'machine.sweep': 'נקה שאריות עכשיו',
   'machine.sweeping': 'מנקה…',
-  'machine.swept': 'הוסרו {p} תהליכים, {s} תיקיות scratch, {c} פרופילי דפדפן, {x} תמלולים.',
+  'machine.swept': 'הוסרו {p} תהליכים, {s} תיקיות scratch, {c} פרופילי דפדפן, {x} תמלולים, {w} worktrees.',
   'host.machines': 'מכונות',
   'host.machines.linked': 'מכונות מקושרות',
   'host.machines.hint': 'אפליקציית שולחן העבודה יכולה להצביע על יותר מ-Arigami אחד — המחשב הזה, או שרת מרוחק דרך Tailscale. אחרי שיש יותר מאחת, מחליפים ביניהן מהצ\'יפ שליד הלוגו.',

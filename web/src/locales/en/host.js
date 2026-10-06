@@ -25,7 +25,7 @@ export const strings = {
   'machine.noKept': 'None — every deleted session\'s worktree was clean and removed.',
   'machine.sweep': 'Sweep leftovers now',
   'machine.sweeping': 'Sweeping…',
-  'machine.swept': 'Removed {p} processes, {s} scratch dirs, {c} browser profiles, {x} transcripts.',
+  'machine.swept': 'Removed {p} processes, {s} scratch dirs, {c} browser profiles, {x} transcripts, {w} worktrees.',
   'host.machines': 'Machines',
   'host.machines.linked': 'Linked machines',
   'host.machines.hint': 'The desktop app can point at more than one Arigami — this computer, or a remote host over Tailscale. Once there is more than one, the chip next to the logo switches between them.',

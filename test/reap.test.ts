@@ -284,3 +284,25 @@ test.skipIf(isWin)('sweep removes leftovers of deleted sessions and nothing else
   expect(o.liveChrome).toBe(true);
   expect(o.out.processes).toBe(1);
 }, 60_000);
+
+test.skipIf(isWin)('sweep retries kept worktrees: removes the one that became clean, keeps the dirty one', () => {
+  const { main } = repo();
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-kept-'));
+  const clean = path.join(path.dirname(main), 'wt-clean');
+  const dirty = path.join(path.dirname(main), 'wt-dirty');
+  sh(main, `git worktree add -q -b b-clean ${clean} main && git worktree add -q -b b-dirty ${dirty} main`);
+  fs.writeFileSync(path.join(dirty, 'wip.txt'), 'unsaved');
+  const row = (dir: string, sessionId: string) => ({ dir, sessionId, title: 't', reasons: ['1 uncommitted change'], at: new Date().toISOString() });
+  fs.writeFileSync(path.join(sandbox, 'kept-worktrees.json'), JSON.stringify([row(clean, 'sess_gone1'), row(dirty, 'sess_gone2')]));
+  const r = runInChild(
+    `const reap = await import('./server/reap.js');
+     const out = await reap.sweep();
+     emit({ out, kept: reap.keptWorktrees().map((k) => k.dir) });`,
+    { ARIGAMI_DIR: sandbox, ARIGAMI_STATE_FILE: path.join(sandbox, 'state.json') }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].out.worktrees).toBe(1);
+  expect(fs.existsSync(clean)).toBe(false);
+  expect(fs.existsSync(dirty)).toBe(true);
+  expect(r.out[0].kept).toEqual([dirty]);
+}, 60_000);
