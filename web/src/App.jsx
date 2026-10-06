@@ -137,6 +137,55 @@ function TicketPreview({ ticket, fallbackTitle, onClose, onStart }) {
   );
 }
 
+// Full-pane details of a pending item that is NOT a Linear ticket (a PR review queued by a trigger, a
+// deferred plain session): what it is, where it came from, how it will run, and the prompt it starts with.
+function PendingPreview({ item, onClose, onStart, onDismiss }) {
+  const t = useT();
+  const { folders } = useStore();
+  if (!item)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-bg text-fg">
+        <div className="text-[13px] text-fgdim">{t('chrome.pending.gone')}</div>
+        <button type="button" onClick={onClose} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px]">{t('chrome.pending.close')}</button>
+      </div>
+    );
+  const pr = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(item.prompt || '')?.[0] || null;
+  const folder = item.folderId ? (folders || []).find((f) => f.id === item.folderId)?.name : item.folderName;
+  const rows = [
+    [t('chrome.pending.source'), item.triggerName || t('chrome.pending.manual')],
+    [t('chrome.pending.engine'), item.engine || '—'],
+    [t('chrome.pending.model'), item.model || '—'],
+    [t('chrome.pending.effort'), item.effort || '—'],
+    [t('chrome.pending.folder'), folder || '—'],
+    [t('chrome.pending.cwd'), item.cwd || '—'],
+    [t('chrome.pending.permissions'), item.permissionMode || '—'],
+    [t('chrome.pending.queued'), item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'],
+  ];
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-bg text-fg">
+      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hair px-4">
+        <span className="min-w-0 truncate font-mono text-[12.5px] font-bold">{item.title}</span>
+        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">{t('chrome.ticket.pending')}</span>
+        <button type="button" onClick={onStart} className="ml-auto cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg">{t('chrome.ticket.startSession')}</button>
+        <button type="button" onClick={onDismiss} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px] text-fgdim hover:text-danger">{t('chrome.pending.dismiss')}</button>
+        <button type="button" onClick={onClose} title={t('chrome.ticket.closePreview')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">×</button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5" data-pending-preview>
+        {pr && (
+          <a href={pr} target="_blank" rel="noreferrer" className="mb-4 inline-block font-mono text-[12px] text-brand hover:underline">{pr} ↗</a>
+        )}
+        <dl className="mb-5 grid max-w-[640px] grid-cols-[120px_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents"><dt className="text-fgdim">{k}</dt><dd className="min-w-0 break-words font-mono">{v}</dd></div>
+          ))}
+        </dl>
+        <div className="mb-1 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('chrome.pending.prompt')}</div>
+        <pre className="max-w-[760px] whitespace-pre-wrap rounded-[8px] border border-hair bg-panel p-3 font-mono text-[11.5px] leading-relaxed">{item.prompt || t('chrome.pending.noPrompt')}</pre>
+      </div>
+    </div>
+  );
+}
+
 // C1: signed out → the Login page replaces the whole cockpit (the store
 // doesn't boot / connect until afterLogin()). undefined = still checking.
 // The switch lives in its own component so the cockpit's hooks never change
@@ -784,6 +833,17 @@ function Cockpit() {
         onClose={sessions.length > 0 ? () => setLauncher(null) : null}
         onCreated={onCreated}
         onNeedsSetup={() => { setLauncher(null); setSetupOpen(true); }}
+      />
+    );
+  } else if (previewTicket && previewTicket.startsWith('pending:')) {
+    const pid = previewTicket.slice('pending:'.length);
+    const item = (pending || []).find((p) => p.id === pid) || null;
+    main = (
+      <PendingPreview
+        item={item}
+        onClose={() => setPreviewTicket(null)}
+        onStart={() => { if (item) api.post(`/pending/${item.id}/start`).catch(() => {}); setPreviewTicket(null); }}
+        onDismiss={() => { if (item) api.del(`/pending/${item.id}`).catch(() => {}); setPreviewTicket(null); }}
       />
     );
   } else if (previewTicket) {

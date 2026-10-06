@@ -73,6 +73,7 @@ export const strings = {
   'rail.couldntDismiss': 'הדחייה נכשלה: {msg}',
   'rail.emptySessionPlay': 'סשן ריק — הפעילו כדי להתחיל',
   'rail.clickPreviewTicket': 'לחצו לתצוגה מקדימה של הכרטיס',
+  'rail.clickPreviewItem': 'לחצו לפרטים',
   'rail.dragToReorder': 'גררו כדי לסדר מחדש',
   'rail.fromX': 'מאת: {x}',
   'rail.startNow': 'התחל עכשיו',

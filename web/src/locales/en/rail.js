@@ -76,6 +76,7 @@ export const strings = {
   'rail.couldntDismiss': "Couldn't dismiss: {msg}",
   'rail.emptySessionPlay': 'Empty session — Play to start',
   'rail.clickPreviewTicket': 'Click to preview the ticket',
+  'rail.clickPreviewItem': 'Click for details',
   'rail.dragToReorder': 'Drag to reorder',
   'rail.fromX': 'From: {x}',
   'rail.startNow': 'Start now',

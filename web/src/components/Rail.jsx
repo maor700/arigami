@@ -1079,11 +1079,9 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
       onDragEnd={onDragEnd}
       onDragOver={(e) => onDragOver(e, item.id)}
       onDrop={(e) => onDrop(e, item.id)}
-      onClick={() => !isEmpty && onPreview(item.ticket)}
-      title={isEmpty ? t('rail.emptySessionPlay') : t('rail.clickPreviewTicket')}
-      className={`group relative mb-0.5 flex items-center gap-1.5 rounded-[7px] border border-dashed border-border px-2 py-1.5 ${
-        isEmpty ? '' : 'cursor-pointer hover:bg-chip'
-      }`}
+      onClick={() => onPreview(isEmpty ? `pending:${item.id}` : item.ticket)}
+      title={isEmpty ? t('rail.clickPreviewItem') : t('rail.clickPreviewTicket')}
+      className="group relative mb-0.5 flex cursor-pointer items-center gap-1.5 rounded-[7px] border border-dashed border-border px-2 py-1.5 hover:bg-chip"
     >
       {over && <DropLine pos={over} />}
       <span className="shrink-0 cursor-grab text-[0.6875rem] md:text-[0.625rem] leading-none text-fgdim" title={t('rail.dragToReorder')}>
