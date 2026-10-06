@@ -16,6 +16,7 @@ export const strings = {
   'chat.skipped': 'דולג',
   'chat.skipThisQuestion': 'דלג על שאלה זו',
   'chat.answerFailed': 'התשובה לא הגיעה לסשן — נסה שוב.',
+  'chat.actionRecord': 'שאלה',
   'chat.answerSentAsMessage': 'נשלח כהודעה — הסוכן יקרא אותה בתור הבא.',
   'chat.questionClosed': 'השאלה הזו נסגרה — נענתה במקום אחר, פג תוקפה או שהשיחה המשיכה הלאה. אי אפשר לענות עליה כאן.',
   'chat.screenDoneFailed': 'לא ניתן היה למסור "סיימתי" — הבקשה כבר לא פתוחה.',

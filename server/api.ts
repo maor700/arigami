@@ -6061,6 +6061,10 @@ export async function handle(
         return json(res, { ...action, autoApproved: true, value }, 201);
       }
       state.patchSession(id, { action });
+      // The card is part of the conversation: it sits in the transcript where it was raised,
+      // so it scrolls up with the chat once the human keeps talking (the live card renders
+      // inline while this action is still the current one; afterwards a one-line record).
+      claude.appendChat(id, { kind: 'action-request', actionId: action.id, prompt: String(prompt), actionKind: kind, ...(action.agent ? { agent: action.agent } : {}) });
       pushIntervention(id, 'action', String(prompt), 'waiting for your answer');
       return json(res, action, 201);
     }

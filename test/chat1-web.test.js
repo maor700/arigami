@@ -191,3 +191,34 @@ test('action card: a refused answer is shown on the card', async () => {
   expect(yes.disabled).toBe(false);
   await act(async () => root.unmount());
 });
+
+// ---- the action card is part of the conversation, not a pinned bar ----------------------------
+
+const ACT = { id: 'act_7', prompt: 'Ship it?', buttons: [{ label: 'Go', value: 'go', style: 'primary' }, { label: 'Wait', value: 'wait' }] };
+const actPane = (events, action) =>
+  render(h(ChatPane, { session: { id: 'sess_t', metadata: { chatMode: 'full' }, claude: { state: 'idle' } }, events, action, chatLoaded: true }));
+const user = (id, text, ts) => ({ id, kind: 'user', text, ts });
+
+test('action card: renders where it was raised, so it scrolls up with the conversation', () => {
+  const html = actPane(
+    [user('u1', 'MSG-BEFORE', 1), { id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }, user('u2', 'MSG-AFTER', 3)],
+    ACT
+  );
+  const card = html.indexOf('Ship it?');
+  expect(card).toBeGreaterThan(html.indexOf('MSG-BEFORE'));
+  expect(card).toBeLessThan(html.indexOf('MSG-AFTER')); // not pinned below the later message
+  expect(html.split('Ship it?').length - 1).toBe(1); // once, not inline AND pinned
+});
+
+test('action card: once it is no longer the current action it collapses to a one-line record', () => {
+  const html = actPane([{ id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }], null);
+  expect(html).toContain('data-action-record');
+  expect(html).toContain('Ship it?');
+  expect(html).not.toContain('>Go<'); // no live buttons
+});
+
+test('action card: a current action with no record in the transcript is still answerable (shown last)', () => {
+  const html = actPane([user('u1', 'hello', 1)], ACT);
+  expect(html).toContain('Ship it?');
+  expect(html.indexOf('Ship it?')).toBeGreaterThan(html.indexOf('hello'));
+});

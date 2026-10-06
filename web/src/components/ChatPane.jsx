@@ -783,6 +783,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           const isCapRow = (e) =>
             isCapUse(e) || (e.kind === 'tool-result' && capIds.has(e.toolUseId) && !(e.isError ?? e.is_error));
           const out = [];
+          let actionRendered = false;
           const visible = events.slice(hiddenCount);
           // SIMPLE1: in Simple mode each turn's folded events collect into one
           // group, rendered as a BehindScenes slot where the first of them was.
@@ -819,12 +820,32 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={ev} /></div>);
               continue;
             }
+            if (e.kind === 'action-request') {
+              // The action card lives in the transcript, where it was raised — it scrolls
+              // up with the conversation. Live only while it is still the current action.
+              const liveAction = action && action.id === e.actionId ? action : null;
+              if (liveAction) actionRendered = true;
+              out.push(
+                <div key={keys[i]} data-event-id={e.id || keys[i]}>
+                  {liveAction ? (
+                    <HostCard name="ActionCard" props={{ sessionId, action: liveAction }} />
+                  ) : (
+                    <div data-action-record className="my-1.5 font-mono text-[11px] text-[var(--term-dim)]">
+                      ↳ {t('chat.actionRecord')}: {e.prompt}
+                    </div>
+                  )}
+                </div>
+              );
+              continue;
+            }
             const live = !!awaiting && i === lastBlockIdx;
             out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} /></div>);
           }
+          // A current action with no record in the visible transcript (raised before cards were
+          // recorded, or scrolled out of the window) still has to be answerable: show it last.
+          if (action && !actionRendered) out.push(<HostCard key="action-fallback" name="ActionCard" props={{ sessionId, action }} />);
           return out;
         })()}
-        {action && <HostCard name="ActionCard" props={{ sessionId, action }} />}
         {/* F7: after the human approved, the merge is one click — here, at the
             end of the transcript, until it's merged. */}
         {session?.metadata?.review?.state === 'approved' && !session?.metadata?.merged && (

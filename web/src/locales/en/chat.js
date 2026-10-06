@@ -16,6 +16,7 @@ export const strings = {
   'chat.skipped': 'skipped',
   'chat.skipThisQuestion': 'skip this question',
   'chat.answerFailed': 'The answer did not reach the session — try again.',
+  'chat.actionRecord': 'Question',
   'chat.answerSentAsMessage': 'Sent as a message — the agent reads it on its next turn.',
   'chat.questionClosed': 'This question is closed — it was answered elsewhere, timed out, or the session moved on. No answer can be given here.',
   'chat.screenDoneFailed': 'Could not deliver "Done" — the request is no longer open.',
