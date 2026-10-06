@@ -165,6 +165,7 @@ export const strings = {
   'dialogs.spentPct': '{title}: נוצלו {pct}%',
   'dialogs.subscriptionUsageTitle': 'ניצול המנוי (סשן / שבוע)',
   'dialogs.usageSpent': 'ניצול המנוי',
+  'dialogs.usageShort': 'שימוש',
   'dialogs.sessionWindow5h': 'סשן (5 שעות)',
   'dialogs.weekWindow7d': 'שבוע (7 ימים)',
   'dialogs.checkingUsage': 'בודק ניצול…',

@@ -165,6 +165,7 @@ export const strings = {
   'dialogs.spentPct': '{title}: {pct}% spent',
   'dialogs.subscriptionUsageTitle': 'Subscription usage (session / week)',
   'dialogs.usageSpent': 'Usage spent',
+  'dialogs.usageShort': 'Usage',
   'dialogs.sessionWindow5h': 'Session (5h)',
   'dialogs.weekWindow7d': 'Week (7d)',
   'dialogs.checkingUsage': 'checking usage…',

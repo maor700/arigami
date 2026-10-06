@@ -260,3 +260,28 @@ test('merge offer: live inline with a dismiss button while approved; a one-line 
   seed({ mergeOfferDismissedAt: 'T1' });
   expect(mergePane([user('u1', 'old chat', 1)])).not.toContain('data-merge-panel');
 });
+
+// ---- usage in the rail: one line on a phone, with the engine's name ---------------------------
+
+test('usage mini: on a phone it is ONE row (engine, title, bar, %, expander); the week opens only when expanded', async () => {
+  const { UsageMini } = await import(web('components/Usage.jsx'));
+  const usage = { available: true, session: { pct: 42, resetsAt: Date.now() + 3600_000 }, week: { pct: 10, resetsAt: Date.now() + 86400_000 } };
+  const phone = render(h(UsageMini, { usage, provider: 'codex' }));
+  expect(phone).toContain('data-usage-mini-phone');
+  expect(phone).toContain('Codex');
+  expect(phone).toContain('42%');
+  expect(phone.split('<button').length - 1).toBe(1); // title + bar + expander share one button/row
+  expect(phone).not.toContain('10%'); // the week bar is collapsed away
+  expect(render(h(UsageMini, { usage, provider: 'claude' }))).toContain('Claude');
+
+  // desktop keeps the two-part panel
+  const was = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  try {
+    const desk = render(h(UsageMini, { usage, provider: 'claude' }));
+    expect(desk).not.toContain('data-usage-mini-phone');
+    expect(desk).toContain('Usage spent');
+  } finally {
+    globalThis.matchMedia = was;
+  }
+});

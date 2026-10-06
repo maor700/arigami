@@ -2212,9 +2212,9 @@ export default function Rail({
       {/* usage charts (session / week) — compact, above the footer. Reflects the
           active account (see activeUsage above). F8: hidden until the first
           session exists — a percentage without context on the first screen. */}
-      {/* what the machine is doing — the snapshot sessions read via host_resources */}
-      <MachineMini />
       {serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} />}
+      {/* what the machine is doing — the snapshot sessions read via host_resources — under the usage */}
+      <MachineMini />
 
       {/* footer */}
       <div className="flex items-center gap-1.5 border-t border-hair px-[0.8125rem] py-2.5 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim">
