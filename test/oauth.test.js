@@ -45,3 +45,26 @@ test('submitCode with an empty code is rejected', async () => {
   expect(res.ok).toBe(false);
   expect(res.error).toMatch(/no code/i);
 });
+
+test('refreshOne is single-flight: concurrent callers share ONE token exchange (a reused refresh token revokes the grant)', async () => {
+  const accounts = await import('../server/accounts.js');
+  const acc = accounts.addTokenAccount({ label: 'sf', token: 'sk-ant-oat01-old', trusted: true, refreshToken: 'rt-old', expiresAt: new Date(Date.now() - 1000).toISOString() });
+  const id = acc.id ?? acc;
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    await new Promise((r) => setTimeout(r, 40));
+    return { ok: true, status: 200, json: async () => ({ access_token: 'sk-ant-oat01-new', refresh_token: 'rt-new', expires_in: 28800 }) };
+  };
+  try {
+    const results = await Promise.all([1, 2, 3, 4, 5].map(() => oauth.refreshOne(id)));
+    expect(results).toEqual([true, true, true, true, true]);
+    expect(calls).toBe(1);
+    // right after a success, a late caller reuses it instead of spending the rotated token again
+    expect(await oauth.refreshOne(id)).toBe(true);
+    expect(calls).toBe(1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

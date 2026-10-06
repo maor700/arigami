@@ -233,7 +233,35 @@ export function cancelLogin(id) {
 
 // ---- token refresh ----------------------------------------------------------
 // Renew one oauth-login account's access token from its refresh token.
-export async function refreshOne(id) {
+//
+// SINGLE-FLIGHT per account. A refresh token is single-use: the moment one refresh succeeds the
+// old pair is dead, and a SECOND refresh presenting the same (old) refresh token is treated as
+// token reuse — the whole grant is revoked ("OAuth token revoked", for every session at once).
+// Many sessions hit an expired token at the same time (they all baked the same access token at
+// spawn), each calls this, and the periodic refresher fires too — so concurrent callers must
+// share ONE exchange, and a caller arriving right after a success reuses its result instead of
+// spending the (already rotated) token again.
+const inflightRefresh = new Map(); // account id → Promise<boolean>
+const lastRefreshOk = new Map(); // account id → ms epoch of the last successful exchange
+const REFRESH_REUSE_MS = 30_000;
+
+export function refreshOne(id) {
+  const running = inflightRefresh.get(id);
+  if (running) return running;
+  const done = lastRefreshOk.get(id);
+  if (done && Date.now() - done < REUSE_WINDOW()) return Promise.resolve(true);
+  const p = doRefresh(id)
+    .then((ok) => {
+      if (ok) lastRefreshOk.set(id, Date.now());
+      return ok;
+    })
+    .finally(() => inflightRefresh.delete(id));
+  inflightRefresh.set(id, p);
+  return p;
+}
+const REUSE_WINDOW = () => REFRESH_REUSE_MS;
+
+async function doRefresh(id) {
   const refresh = resolveRefreshToken(id);
   if (!refresh) return false;
   try {
