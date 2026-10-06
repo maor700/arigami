@@ -9,7 +9,7 @@ function sandbox() {
   return { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_CLAUDE_BIN: '/bin/true' };
 }
 
-test('session folder names create once, trim, match exactly and preserve id precedence', () => {
+test('session folder names create once, trim, match case-insensitively and preserve id precedence', () => {
   const r = runInChild(`
     const s = await import('./server/state.js');
     const first = s.createSession({ folderName: '  Work  ' });
@@ -18,11 +18,11 @@ test('session folder names create once, trim, match exactly and preserve id prec
     const byId = s.createSession({ folderId: first.folderId, folderName: 'Unused' });
     const invalid = s.createSession({ folderId: 'missing', folderName: 'Unused' });
     const blank = s.createSession({ folderName: '   ' });
-    emit({ same: first.folderId === same.folderId, different: first.folderId !== different.folderId,
+    emit({ same: first.folderId === same.folderId, different: first.folderId === different.folderId,
       byId: byId.folderId === first.folderId, invalid: invalid.folderId, blank: blank.folderId,
       names: s.listFolders().map(f => f.name).sort() });
   `, sandbox());
-  expect(r).toEqual({ ok: true, out: [{ same: true, different: true, byId: true, invalid: null, blank: null, names: ['Work', 'work'] }] });
+  expect(r).toEqual({ ok: true, out: [{ same: true, different: true, byId: true, invalid: null, blank: null, names: ['Work'] }] });
 });
 
 test('empty, ticket, deferred and cron launches resolve their configured folder names', () => {

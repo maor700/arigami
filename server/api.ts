@@ -3231,7 +3231,7 @@ function ensureProjectFolder(masterId: string) {
     .find((f) => f.controllerSessionId === masterId);
   if (existing) return existing;
   const folder = state.createFolder({
-    name: master.title || masterId,
+    name: state.uniqueFolderName(master.title || masterId),
     ...(master.sortOrder != null ? { sortOrder: master.sortOrder } : {}),
   });
   state.patchFolder(folder.id, { controllerSessionId: masterId });
@@ -5276,11 +5276,12 @@ export async function handle(
     if (p === '/__api/folders' && m === 'GET') return json(res, state.listFolders());
     if (p === '/__api/folders' && m === 'POST') {
       const body = (await readBody(req)) as any;
-      return json(
-        res,
-        state.createFolder({ name: body?.name, sortOrder: body?.sortOrder }),
-        201
-      );
+      try {
+        return json(res, state.createFolder({ name: body?.name, sortOrder: body?.sortOrder }), 201);
+      } catch (e) {
+        if (e instanceof state.FolderNameTakenError) return json(res, { error: e.message, existingId: e.existingId }, 409);
+        throw e;
+      }
     }
     // Atomic drop application (membership + root order + in-folder order) — one
     // broadcast burst, no half-applied drops. Must precede the folder-id matcher.
@@ -5373,8 +5374,14 @@ export async function handle(
         if (!folder) return notFound(res, `no such folder: ${fm[1]}`);
         if (m === 'GET')
           return json(res, { ...folder, children: state.folderChildren(fm[1]) });
-        if (m === 'PATCH')
-          return json(res, state.patchFolder(fm[1], (await readBody(req)) as any));
+        if (m === 'PATCH') {
+          try {
+            return json(res, state.patchFolder(fm[1], (await readBody(req)) as any));
+          } catch (e) {
+            if (e instanceof state.FolderNameTakenError) return json(res, { error: e.message, existingId: e.existingId }, 409);
+            throw e;
+          }
+        }
         if (m === 'DELETE') {
           // api.del sends no body — the mode rides the query string.
           const mode = u.searchParams.get('mode') === 'purge' ? 'purge' : 'ungroup';

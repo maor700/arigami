@@ -1212,7 +1212,36 @@ export function resolveSessionFolder({ folderId, folderName }: {
   if (folderId) return db.folders.has(folderId) ? folderId : null;
   const name = typeof folderName === 'string' ? folderName.trim() : '';
   if (!name) return null;
-  return [...db.folders.values()].find((f) => f.name === name)?.id ?? createFolder({ name }).id;
+  return findFolderByName(name)?.id ?? createFolder({ name }).id;
+}
+
+// Folder (= project) names are unique — compared trimmed, whitespace-collapsed and
+// case-insensitively, so "CR", " cr " and "Cr" are the same folder.
+export const folderNameKey = (name: string): string => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export function findFolderByName(name: string, exceptId?: string | null): Folder | null {
+  const key = folderNameKey(name);
+  if (!key) return null;
+  return [...db.folders.values()].find((f) => f.id !== exceptId && folderNameKey(f.name) === key) ?? null;
+}
+
+export class FolderNameTakenError extends Error {
+  existingId: string;
+  constructor(name: string, existingId: string) {
+    super(`A folder named "${name}" already exists`);
+    this.name = 'FolderNameTakenError';
+    this.existingId = existingId;
+  }
+}
+
+// For names the host makes up itself (a project controller's folder): never collide — "X", "X (2)", …
+export function uniqueFolderName(base: string): string {
+  const b = String(base || '').trim() || 'New folder';
+  if (!findFolderByName(b)) return b;
+  for (let n = 2; ; n++) {
+    const cand = `${b} (${n})`;
+    if (!findFolderByName(cand)) return cand;
+  }
 }
 
 export function createFolder({
@@ -1220,9 +1249,12 @@ export function createFolder({
   sortOrder,
 }: { name?: string; sortOrder?: number } = {}): Folder {
   const now = new Date().toISOString();
+  const wanted = (name || '').trim() || 'New folder';
+  const clash = findFolderByName(wanted);
+  if (clash) throw new FolderNameTakenError(wanted, clash.id);
   const folder: Folder = {
     id: 'fld_' + nano(),
-    name: (name || '').trim() || 'New folder',
+    name: wanted,
     collapsed: false,
     ...(sortOrder != null ? { sortOrder } : {}),
     controllerSessionId: null,
@@ -1243,6 +1275,10 @@ export function patchFolder(
 ): Folder | null {
   const f = db.folders.get(id);
   if (!f) return null;
+  if (typeof patch.name === 'string' && patch.name.trim()) {
+    const clash = findFolderByName(patch.name, id);
+    if (clash) throw new FolderNameTakenError(patch.name.trim(), clash.id);
+  }
   for (const [k, v] of Object.entries(patch)) {
     if (FOLDER_PATCHABLE.has(k)) (f as any)[k] = v;
   }

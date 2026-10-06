@@ -498,17 +498,52 @@ function defaultSessionOptions(prefs, mode) {
 }
 
 
+// Folder names are unique (case/space-insensitive), so a session is filed by PICKING one
+// from the list. "New folder…" reveals a text box; a name that matches an existing folder
+// just files the session there (the host resolves names the same way).
+const folderKey = (n) => String(n || '').trim().replace(/\s+/g, ' ').toLowerCase();
 export function FolderPicker({ value, onChange }) {
   const t = useT();
-  return <input
-    type="text"
-    value={value || ''}
-    onChange={(e) => onChange(e.target.value)}
-    className={selCls}
-    aria-label={t('launcher.options.folder')}
-    placeholder={t('launcher.options.folder')}
-    title={t('launcher.options.folderHint')}
-  />;
+  const { folders } = useStore();
+  const names = useMemo(
+    () => [...new Set((folders || []).map((f) => f.name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [folders]
+  );
+  const [creating, setCreating] = useState(false);
+  const match = value ? names.find((n) => folderKey(n) === folderKey(value)) : '';
+  const isNew = creating || (!!value && !match);
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <select
+        value={isNew ? '__new' : match || ''}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '__new') { setCreating(true); onChange(''); return; }
+          setCreating(false);
+          onChange(v);
+        }}
+        className={selCls}
+        aria-label={t('launcher.options.folder')}
+        title={t('launcher.options.folderHint')}
+      >
+        <option value="">{t('launcher.options.noFolder')}</option>
+        {names.map((n) => <option key={n} value={n}>{n}</option>)}
+        <option value="__new">{t('launcher.options.newFolder')}</option>
+      </select>
+      {isNew && (
+        <input
+          type="text"
+          autoFocus={creating}
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          className={selCls}
+          placeholder={t('launcher.options.folder')}
+          aria-label={t('launcher.options.folder')}
+        />
+      )}
+      {isNew && value && match && <span data-folder-exists className="text-[10px] text-fgdim">{t('launcher.options.folderExists')}</span>}
+    </span>
+  );
 }
 
 // Which skill (from GET /skills — whatever's actually bundled, no fixed

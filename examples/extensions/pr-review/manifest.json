@@ -54,6 +54,12 @@
         "title": "Default reasoning effort",
         "description": "low | medium | high | xhigh | max (codex also: ultra). Empty = the model's default."
       },
+      "folderName": {
+        "type": "string",
+        "default": "",
+        "title": "Default project folder",
+        "description": "Folder the launcher's Session options panel starts on for this mode (changeable per launch). Empty = no folder."
+      },
       "reviewMode": {
         "type": "string",
         "default": "worktree",
