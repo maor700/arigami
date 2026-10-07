@@ -2192,9 +2192,10 @@ export default function Rail({
             </button>
             {archivedOpen &&
               archived.map((s) => (
-                // opacity makes this wrapper its own stacking context, which would sink the
-                // row's ⋯ menu under the NEXT row (unclickable) — lift the one with an open menu.
-                <div key={s.id} className="opacity-70 has-[[data-row-menu]]:relative has-[[data-row-menu]]:z-30 has-[[data-row-menu]]:opacity-100">
+                // Dim the row's content, never the wrapper: an opacity on the wrapper would
+                // fade the ⋯ menu with it and make it a stacking context that sinks the
+                // menu under the next row.
+                <div key={s.id} className="[&>div>*:not([data-row-menu])]:opacity-70">
                   <Row {...rowProps(s)} />
                 </div>
               ))}
