@@ -68,3 +68,17 @@ test('refreshOne is single-flight: concurrent callers share ONE token exchange (
     globalThis.fetch = realFetch;
   }
 });
+
+test('a failing child holding an older token is restarted, not refreshed (a refresh revokes everyone else)', async () => {
+  const { storedTokenIsNewer } = await import('../server/claude.js');
+  const { createHash } = await import('node:crypto');
+  const sig = (t) => createHash('sha256').update(t).digest('hex').slice(0, 12);
+  const soon = new Date(Date.now() + 3 * 3600_000).toISOString();
+  expect(storedTokenIsNewer({ childSig: sig('old'), storedToken: 'new', expiresAt: soon })).toBe(true);
+  // it already holds the stored token → it really is expired/revoked → refresh
+  expect(storedTokenIsNewer({ childSig: sig('same'), storedToken: 'same', expiresAt: soon })).toBe(false);
+  // stored token about to die → refresh instead
+  expect(storedTokenIsNewer({ childSig: sig('old'), storedToken: 'new', expiresAt: new Date(Date.now() + 60_000).toISOString() })).toBe(false);
+  // unknown child token (spawned before any account) → keep the old path
+  expect(storedTokenIsNewer({ childSig: null, storedToken: 'new', expiresAt: soon })).toBe(false);
+});

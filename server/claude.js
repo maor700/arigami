@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { isWin, pidAlive, HOME } from './lib/platform.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { bunExec, bunExecShell } from './lib/bun-exec.js';
@@ -713,6 +713,7 @@ function spawnProc(s, resume) {
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
     capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global', s.engine || 'claude'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
+    tokenSig: tokenSig(built.env.CLAUDE_CODE_OAUTH_TOKEN), // which access token this child holds (see tryAuthRecover)
     hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
     agent: typeof s.metadata?.agent === 'string' ? s.metadata.agent : null, // A1: born from an agent → persona + agent memory in the first turn
     child,
@@ -1617,6 +1618,14 @@ function tryAutoSwitch(id, text) {
 // run /login in the cockpit; the answer is a `claude` Setup card.
 export const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again|not logged in|please run \/login/i;
 const authRecovering = new Set(); // guards against re-entrant recovery per session
+/** A short fingerprint of an access token — enough to tell two tokens apart, useless as a secret. */
+const tokenSig = (t) => (t ? createHash('sha256').update(String(t)).digest('hex').slice(0, 12) : null);
+/** True when a failing child only needs a restart: the stored token is newer than the one it holds and has life left. */
+export function storedTokenIsNewer({ childSig, storedToken, expiresAt, now = Date.now() }) {
+  if (!childSig || !storedToken) return false;
+  const stillGood = !expiresAt || Date.parse(expiresAt) - now > 5 * 60_000;
+  return stillGood && tokenSig(storedToken) !== childSig;
+}
 
 async function openClaudeSetupCard(id, why) {
   const [api, caps] = await Promise.all([import('./api.js'), import('./capabilities.js')]);
@@ -1665,6 +1674,21 @@ async function tryAuthRecover(id, text) {
   authRecovering.add(id);
   const lastMsg = [...(record(id)?.sent || [])].pop();
   try {
+    // A refresh ROTATES the token: it revokes the one every other running child
+    // still holds. So refreshing once per failing session is a storm — each
+    // refresh knocks over the sessions that had just picked up the previous
+    // token (19 refreshes in one hour in the logs). When the stored token is
+    // already newer than the one THIS child holds and still has life in it, the
+    // child just needs a restart; refresh only when it already holds the current one.
+    const cur = tokenForSession(accountId);
+    if (storedTokenIsNewer({ childSig: p?.tokenSig, storedToken: cur?.token, expiresAt: cur?.account?.expiresAt })) {
+      appendChat(id, { kind: 'system', text: '⟳ authentication expired — restarted the session with the current token' });
+      recordIncident(id, 'refresh-auth', { accountId }, 'ok', 'newer token already stored — no refresh');
+      restart(id, { silent: true });
+      const t0 = setTimeout(() => { try { if (lastMsg) sendMessage(id, lastMsg); } catch {} }, 900);
+      if (t0.unref) t0.unref();
+      return;
+    }
     const ok = await refreshOne(accountId);
     if (!ok) {
       appendChat(id, { kind: 'error', text: 'Authentication error — token refresh failed. Please re-authenticate this account.' });
