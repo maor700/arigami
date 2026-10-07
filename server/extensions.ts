@@ -30,6 +30,8 @@ import { EXTENSIONS_SCHEMA } from './lib/state-schemas.js';
 import { resourceRoot } from './lib/resource-root.js';
 import { linkDir } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
+import { gitEnvFor } from './lib/git-auth.js';
+import { createHash } from 'node:crypto';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
 import * as registry from './listeners-registry.js';
@@ -138,8 +140,13 @@ function exists(p: string): boolean {
   try { fs.lstatSync(p); return true; } catch { return false; }
 }
 
-function git(args: string[], cwd: string, timeout = 60_000) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout });
+function git(args: string[], cwd: string, timeout = 60_000, remoteUrl?: string) {
+  return spawnSync('git', args, { cwd, encoding: 'utf8', env: remoteUrl ? gitEnvFor(remoteUrl) : { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout });
+}
+/** The URL a checkout fetches from — what the read-only token must be scoped to. */
+function originOf(dir: string): string | undefined {
+  const r = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', timeout: 10_000 });
+  return r.status === 0 ? (r.stdout || '').trim() : undefined;
 }
 
 /**
@@ -1385,7 +1392,7 @@ export interface AddResult {
  * that named the consequence to the human. Without it a `trusted` manifest still
  * installs, sandboxed, and says so.
  */
-export async function addExtension(source: string, opts: { trust?: boolean } = {}): Promise<AddResult> {
+export async function addExtension(source: string, opts: { trust?: boolean; ref?: string } = {}): Promise<AddResult> {
   const src = String(source || '').trim();
   if (!src) return { ok: false, errors: ['source required (a directory or a git URL)'], warnings: [] };
   ensureUserRepo();
@@ -1397,10 +1404,17 @@ export async function addExtension(source: string, opts: { trust?: boolean } = {
     if (!EXT_NAME_RE.test(name)) return { ok: false, errors: [`cannot derive an extension name from ${src}`], warnings: [] };
     dir = path.join(EXT_DIR, name);
     if (exists(dir)) return { ok: false, errors: [`extension "${name}" already exists — use update, or remove it first`], warnings: [] };
-    const r = spawnSync('git', ['clone', '--depth', '1', '--quiet', src, dir], { encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout: 120_000 });
+    const r = spawnSync('git', ['clone', '--depth', '1', '--quiet', src, dir], { encoding: 'utf8', env: gitEnvFor(src), timeout: 120_000 });
     if (r.status !== 0) {
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
       return { ok: false, errors: [`git clone failed: ${(r.stderr || r.stdout || '').trim().split('\n').pop() || 'unknown error'}`], warnings: [] };
+    }
+    if (opts.ref) {
+      const c = checkoutRef(dir, opts.ref, src);
+      if (!c.ok) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+        return { ok: false, errors: [c.error || `could not check out ${opts.ref}`], warnings: [] };
+      }
     }
   } else {
     const from = path.resolve(src.startsWith('~') ? src.replace(/^~/, process.env.HOME || '~') : src);
@@ -1438,6 +1452,101 @@ export async function addExtension(source: string, opts: { trust?: boolean } = {
   return { ok: v.ok, name, dir, manifest: v.manifest, permissions: v.manifest?.permissions || [], trustRequested, trusted, errors: v.errors, warnings: v.warnings };
 }
 
+
+/** Pin a fresh shallow clone to `ref` (a tag, branch or commit). */
+function checkoutRef(dir: string, ref: string, remoteUrl: string): { ok: boolean; error?: string } {
+  if (!/^[A-Za-z0-9._\/-]{1,100}$/.test(ref) || ref.startsWith('-')) return { ok: false, error: `invalid ref: ${ref}` };
+  const f = git(['fetch', '--depth', '1', '--quiet', 'origin', ref], dir, 120_000, remoteUrl);
+  if (f.status !== 0) return { ok: false, error: `git fetch ${ref} failed: ${(f.stderr || f.stdout || '').trim().split('\n').pop() || 'unknown error'}` };
+  const c = git(['checkout', '--quiet', 'FETCH_HEAD'], dir, 60_000);
+  return c.status === 0 ? { ok: true } : { ok: false, error: `git checkout ${ref} failed: ${(c.stderr || '').trim().split('\n').pop() || 'unknown error'}` };
+}
+
+const HASH_SKIP = /(^|[\\/])(node_modules|\.git)$/;
+/** A content hash of a directory tree (names + bytes), ignoring node_modules and .git. */
+export function dirHash(dir: string): string {
+  const h = createHash('sha256');
+  const walk = (d: string, rel: string) => {
+    for (const n of fs.readdirSync(d).sort()) {
+      if (HASH_SKIP.test(n)) continue;
+      const full = path.join(d, n);
+      const st = fs.lstatSync(full);
+      if (st.isDirectory()) walk(full, rel + n + '/');
+      else if (st.isFile()) { h.update(rel + n + '\0'); h.update(fs.readFileSync(full)); h.update('\0'); }
+    }
+  };
+  walk(dir, '');
+  return h.digest('hex');
+}
+
+export interface BundleExtensionSpec {
+  name: string;
+  /** a directory inside the profile bundle (the extension travels WITH the org profile) */
+  dir?: string | null;
+  /** …or a git URL, pinned by `ref` */
+  source?: string;
+  ref?: string;
+}
+export interface InstallOrUpdateResult {
+  ok: boolean;
+  status?: 'installed' | 'updated' | 'unchanged';
+  sha?: string;
+  error?: string;
+}
+
+/**
+ * Bring ONE extension to the state a profile bundle describes — install it when absent, update it when the
+ * bundle's copy (or pinned ref) differs, leave it alone when it already matches. The caller decides whether the
+ * bundle is trusted enough to run code from; this function does not install anything on its own.
+ *
+ * A bundle directory is copied over the installed one (node_modules and the user's settings are kept — settings
+ * live in extensions.json, not in the directory). A git source is cloned at `ref`, or fetched + checked out.
+ */
+export async function installOrUpdateExtension(spec: BundleExtensionSpec, opts: { trust?: boolean } = {}): Promise<InstallOrUpdateResult> {
+  const name = String(spec.name || '');
+  if (!EXT_NAME_RE.test(name)) return { ok: false, error: `invalid extension name: ${name}` };
+  ensureUserRepo();
+  const target = path.join(EXT_DIR, name);
+
+  if (spec.dir) {
+    const from = path.resolve(spec.dir);
+    if (!fs.existsSync(path.join(from, 'manifest.json'))) return { ok: false, error: `${from} is not an extension directory (no manifest.json)` };
+    if (!isDir(target)) {
+      const r = await addExtension(from, opts);
+      return r.ok ? { ok: true, status: 'installed' } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') };
+    }
+    if (dirHash(from) === dirHash(target)) return { ok: true, status: 'unchanged' };
+    for (const n of fs.readdirSync(target)) if (!HASH_SKIP.test(n)) fs.rmSync(path.join(target, n), { recursive: true, force: true });
+    fs.cpSync(from, target, { recursive: true, filter: (x) => !HASH_SKIP.test(x) });
+    hostLog(`updated "${name}" from the profile bundle`);
+    await reload({ only: [name], reason: `bundle update ${name}` });
+    autoCommit(`update extension ${name} from profile`);
+    return { ok: true, status: 'updated' };
+  }
+
+  const src = String(spec.source || '').trim();
+  if (!src || !isGitUrl(src)) return { ok: false, error: `extension "${name}" needs a bundled directory or a git source` };
+  if (!isDir(target)) {
+    const r = await addExtension(src, { trust: opts.trust, ref: spec.ref });
+    return r.ok ? { ok: true, status: 'installed', sha: shaOf(r.dir || target) } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') };
+  }
+  if (!isDir(path.join(target, '.git'))) return { ok: false, error: `"${name}" is installed from a directory, not git — remove it before switching to a git source` };
+  const before = shaOf(target);
+  const url = originOf(target) || src;
+  if (spec.ref) {
+    const c = checkoutRef(target, spec.ref, url);
+    if (!c.ok) return { ok: false, error: c.error };
+  } else {
+    const r = git(['pull', '--ff-only', '--quiet'], target, 120_000, url);
+    if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || 'git pull failed').trim().slice(0, 300) };
+  }
+  const after = shaOf(target);
+  if (after === before) return { ok: true, status: 'unchanged', sha: after };
+  await reload({ only: [name], reason: `bundle update ${name}` });
+  autoCommit(`update extension ${name} from profile`);
+  return { ok: true, status: 'updated', sha: after };
+}
+
 /** Remove the directory. The extensions.json entry is KEPT (settings history). */
 export async function removeExtension(name: string): Promise<{ ok: boolean; error?: string }> {
   if (!EXT_NAME_RE.test(name)) return { ok: false, error: `invalid extension name: ${name}` };
@@ -1459,7 +1568,7 @@ export async function updateExtension(name: string): Promise<{ ok: boolean; outp
   const dir = path.join(EXT_DIR, name);
   if (!isDir(dir)) return { ok: false, error: `no such extension: ${name}` };
   if (!isDir(path.join(dir, '.git'))) return { ok: false, error: `"${name}" is not a git checkout — nothing to pull` };
-  const r = git(['pull', '--ff-only'], dir, 120_000);
+  const r = git(['pull', '--ff-only'], dir, 120_000, originOf(dir));
   if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || 'git pull failed').trim().slice(0, 400) };
   await reload({ only: [name], reason: `update ${name}` });
   const sha = shaOf(dir);

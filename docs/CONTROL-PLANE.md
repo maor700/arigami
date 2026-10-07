@@ -303,6 +303,7 @@ All read once at boot (`src/config.ts`):
 | `CP_IMAGE_REPOSITORY` | `ghcr.io/maor700/arigami` | what image every new tenant gets |
 | `CP_IMAGE_TAG` | `latest` | a real deployment should pin a digest/release tag, not `latest` (same advice as `values-real.yaml`) |
 | `CP_ARIGAMI_BUNDLE` | — | git URL applied to every tenant on first boot (`server/profiles.ts` `applyBundleEnv`) — this is what makes the harness "already configured for the company" |
+| `CP_ARIGAMI_GIT_TOKEN` | — | read-only token for the org's **private** profile repo (and the extensions in it), handed to each tenant as `secretEnv.ARIGAMI_GIT_TOKEN`; the user never signs in to GitHub for it. Sent only to `ARIGAMI_GIT_TOKEN_HOSTS` (default `github.com`) as an HTTP header — see `profiles/README.md`. Same Helm-release-Secret trade-off as the handoff secret. |
 | `CP_ARIGAMI_BUNDLE_REF` | — | **accepted, not wired to anything yet** — same gap `docs/K8S.md` documented for the chart itself: `applyBundleEnv`'s `gitClone` always clones the default branch. A future wave adding ref-pinning needs to plumb this through the chart's `env.ARIGAMI_BUNDLE_REF` (chart change) as well as here. |
 | `CP_HELM_CHART_PATH` | `../deploy/helm/arigami-tenant` | which chart to render |
 | `CP_RELEASE_PREFIX` | `u-` | release/namespace name prefix |

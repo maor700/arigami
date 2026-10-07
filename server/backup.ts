@@ -790,6 +790,8 @@ export interface BundleExportResult {
   memorySeed: string[];
   /** A4: agents/<slug>/ (agent.json without homeSessionId, persona.md, assets/) */
   agents: string[];
+  /** extensions/<name>/ vendored or referenced in profile.json */
+  extensions: string[];
   /** true when memory-seed/ carries USER.md/MEMORY.md — personal profile, review before sharing */
   memoryWarning: boolean;
 }
@@ -833,6 +835,26 @@ export function portableSettings(cfg: Record<string, any> | null): Record<string
   const out: Record<string, unknown> = {};
   for (const k of ['defaultModel', 'defaultEngine', 'voiceLang', 'sttModel', 'palette', 'devServerPorts', 'dispatcher', 'brain']) if (cfg[k] != null) out[k] = cfg[k];
   return out;
+}
+
+/** The `origin` URL of a git checkout, or null when it is not one / has no remote. A token embedded in the URL is stripped. */
+function gitRemote(dir: string): string | null {
+  if (!fs.existsSync(path.join(dir, '.git'))) return null;
+  const r = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', timeout: 5000 });
+  const url = r.status === 0 ? r.stdout.trim() : '';
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+function gitHead(dir: string): string | null {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8', timeout: 5000 });
+  return r.status === 0 ? r.stdout.trim() : null;
 }
 
 function copyDir(from: string, to: string): void {
@@ -909,6 +931,40 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
     }
   }
 
+  // Extensions the instance runs. One that came from a git remote is exported as a pinned reference (the tenant
+  // fetches it, and an update is a new `ref`); one with no remote is vendored under extensions/<name>/ so the org
+  // profile repo carries it. Settings go along when they hold no secret-looking key; secrets and node_modules never do.
+  const extensions: Record<string, unknown>[] = [];
+  const extNames: string[] = [];
+  const extRoot = path.join(dir, 'user', 'extensions');
+  const extState = readJson<any>(path.join(dir, 'extensions.json')) || {};
+  if (fs.existsSync(extRoot)) {
+    for (const n of fs.readdirSync(extRoot).sort()) {
+      const from = path.join(extRoot, n);
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(n) || !fs.existsSync(path.join(from, 'manifest.json'))) continue;
+      const entry: Record<string, unknown> = { name: n };
+      const origin = gitRemote(from);
+      if (origin) {
+        entry.source = origin;
+        const sha = gitHead(from);
+        if (sha) entry.ref = sha;
+      } else {
+        copyDir(from, path.join(out, 'extensions', n));
+      }
+      const st = extState.settings?.[n];
+      if (st && typeof st === 'object' && !Array.isArray(st)) {
+        const safe = Object.fromEntries(Object.entries(st).filter(([k]) => !/token|secret|password|api[_-]?key/i.test(k)));
+        if (Object.keys(safe).length) entry.settings = safe;
+      }
+      extensions.push(entry);
+      extNames.push(n);
+    }
+  }
+  if (extensions.length) {
+    (manifest as any).extensions = extensions;
+    fs.writeFileSync(path.join(out, 'profile.json'), JSON.stringify(manifest, null, 2) + '\n');
+  }
+
   const triggers = opts.cron ?? (readJson<any>(path.join(dir, 'triggers.json'))?.triggers ?? readJson<any[]>(path.join(dir, 'triggers.json')) ?? []);
   const cron = (Array.isArray(triggers) ? triggers : []).filter((t) => t && t.type === 'cron' && t.prompt).map((t) => bundleCronFromTrigger(t, name));
   fs.writeFileSync(path.join(out, 'cron.json'), JSON.stringify(cron, null, 2) + '\n');
@@ -922,10 +978,11 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
       `| \`skills/\` | ${skills.length ? skills.join(', ') : '—'} |\n` +
       `| \`memory-seed/\` | ${memorySeed.length ? memorySeed.join(', ') + ' — the exporting user\'s own profile/notes; review before sharing (export with \`--no-memory\` to leave them out)' : '—'} |\n` +
       `| \`cron.json\` | ${cron.length} job(s) (registered disabled on apply unless the bundle is shipped) |\n` +
+      `| \`extensions/\` | ${extNames.length ? extNames.join(', ') + ' — installed from a trusted bundle only (they run code); a git-sourced one is a pinned ref' : '—'} |\n` +
       `| \`agents/\` | ${agents.length ? agents.join(', ') + ' — created on apply when absent; an existing agent is left alone unless `--force`' : '—'} |\n\n` +
       `Not included, by design: accounts, API keys, users/pairing, chat history, sessions, uploads. Use a full backup (\`bin/host export --full\`) for those.\n`,
   );
-  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, agents, memoryWarning: memorySeed.length > 0 };
+  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, agents, extensions: extNames, memoryWarning: memorySeed.length > 0 };
 }
 
 /** tar.gz stream of a bundle dir (the export UI download). */

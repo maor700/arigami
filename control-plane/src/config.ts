@@ -40,6 +40,8 @@ export interface Config {
   imageTag: string; // a digest (sha256:...) or a tag — whichever the org pins
   arigamiBundle: string; // git URL (or empty = no bundle)
   arigamiBundleRef: string; // documented-not-implemented, see docs/CONTROL-PLANE.md
+  /** read-only token for the org's private profile repo (and the extensions in it); handed to each tenant as ARIGAMI_GIT_TOKEN. Empty = public repo. */
+  arigamiGitToken: string;
 
   // Provisioner
   helmChartPath: string;
@@ -81,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     imageTag: env.CP_IMAGE_TAG || 'latest',
     arigamiBundle: env.CP_ARIGAMI_BUNDLE || '',
     arigamiBundleRef: env.CP_ARIGAMI_BUNDLE_REF || '',
+    arigamiGitToken: env.CP_ARIGAMI_GIT_TOKEN || '',
 
     helmChartPath: env.CP_HELM_CHART_PATH || path.join(process.cwd(), '..', 'deploy', 'helm', 'arigami-tenant'),
     helmReleasePrefix: env.CP_RELEASE_PREFIX || 'u-',

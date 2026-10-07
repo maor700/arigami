@@ -36,6 +36,7 @@ import { ARIGAMI_DIR } from './lib/instance.js';
 import { CRON_TAG_RE, cronBundleKey } from './lib/cron-key.js';
 import { tilde } from './lib/platform.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { gitEnvFor } from './lib/git-auth.js';
 
 const REPO_ROOT = resourceRoot();
 export const SHIPPED_BUNDLES_DIR = path.join(REPO_ROOT, 'profiles', 'bundles');
@@ -47,6 +48,8 @@ export const BUNDLE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 // Same shape as agents.ts SLUG_RE (kept local: validate() must not load the host modules).
 const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+// Same shape as extensions.ts EXT_NAME_RE (kept local for the same reason).
+const EXT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 const AGENT_PERSONA_MAX = 4000;
 const AGENT_ASSET_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_SEED_BYTES = 64 * 1024;
@@ -77,6 +80,26 @@ export interface BundleManifest {
   skills?: string[];
   /** A4: optional allow-list; when present only these agents/ subdirs are loaded. */
   agents?: string[];
+  /**
+   * Extensions the profile installs. An `extensions/<name>/` directory in the bundle travels with it (the org's
+   * profile repo is the only thing a tenant has to reach); an entry here adds a git source pinned by `ref`, and/or
+   * the non-secret `settings` to seed. Only a TRUSTED bundle installs extensions — they run code.
+   */
+  extensions?: BundleExtensionRef[];
+}
+
+export interface BundleExtensionRef {
+  name: string;
+  /** git URL, pinned by `ref`; omit for an extension that ships as `extensions/<name>/` in the bundle */
+  source?: string;
+  ref?: string;
+  /** non-secret settings, seeded only when the host has none stored for this extension */
+  settings?: Record<string, unknown>;
+}
+
+/** An extension as the bundle describes it: a vendored directory and/or a pinned git source. */
+export interface BundleExtension extends BundleExtensionRef {
+  dir?: string | null;
 }
 
 export interface BundleCron {
@@ -90,6 +113,12 @@ export interface BundleCron {
   sessionMode?: string;
   folderName?: string;
   deliver?: { push?: boolean; whatsapp?: string; master?: string };
+  /**
+   * Who runs it. `user` (default): every instance that applies the bundle runs its own copy, for its own owner
+   * (e.g. "PRs waiting for MY review"). `org`: one shared job for the whole organisation — it must run in ONE place,
+   * so an ordinary tenant does not register it; only a host started with ARIGAMI_ORG_HOST=1 does.
+   */
+  scope?: 'user' | 'org';
   /** A4: slug of a bundle/host agent the runs are born from (A2 cronjob({agent})); dropped when absent on the host */
   agent?: string;
 }
@@ -113,6 +142,7 @@ export interface Bundle {
   memorySeed: { user?: string; memory?: string };
   cron: BundleCron[];
   agents: BundleAgent[];
+  extensions: BundleExtension[];
   readme: string;
 }
 
@@ -132,6 +162,10 @@ export interface ApplyReport {
   skills: { name: string; status: 'applied' | 'pending' | 'unchanged' | 'error'; proposalId?: string; error?: string }[];
   memory: { user: number; memory: number };
   cron: { id: string; name: string; enabled: boolean }[];
+  /** `scope: org` jobs this host did not register (it is not the org host) */
+  cronSkipped?: { name: string; reason: string }[];
+  /** extensions the profile installs/updates (only for a trusted bundle) */
+  extensions?: { name: string; status: 'installed' | 'updated' | 'unchanged' | 'skipped' | 'error'; sha?: string; error?: string }[];
   /** A4: agents shipped by the bundle — created when absent, left alone when present (unless force) */
   agents: { slug: string; status: 'created' | 'updated' | 'unchanged' | 'error'; assets?: number; skippedSkills?: string[]; error?: string }[];
   errors: string[];
@@ -212,7 +246,25 @@ export function loadBundle(dir: string, source = dir): Bundle {
       throw new Error(`cron.json is not valid JSON: ${(e as Error).message}`);
     }
   }
-  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, agents: loadAgents(dir, Array.isArray(manifest.agents) ? new Set(manifest.agents) : null), readme: readText(path.join(dir, 'README.md')) };
+  return { dir, source, trusted: isShippedDir(dir), manifest, skills, memorySeed, cron, agents: loadAgents(dir, Array.isArray(manifest.agents) ? new Set(manifest.agents) : null), extensions: loadExtensions(dir, manifest), readme: readText(path.join(dir, 'README.md')) };
+}
+
+/** `extensions/<name>/` directories shipped in the bundle, merged with the manifest's `extensions[]` entries. */
+function loadExtensions(dir: string, manifest: BundleManifest): BundleExtension[] {
+  const out = new Map<string, BundleExtension>();
+  const root = path.join(dir, 'extensions');
+  if (isDir(root)) {
+    for (const name of fs.readdirSync(root).sort()) {
+      const d = path.join(root, name);
+      if (isDir(d) && fs.existsSync(path.join(d, 'manifest.json'))) out.set(name, { name, dir: d });
+    }
+  }
+  const refs = Array.isArray(manifest.extensions) ? manifest.extensions : [];
+  for (const r of refs) {
+    if (!r || typeof r !== 'object' || typeof r.name !== 'string') continue;
+    out.set(r.name, { ...(out.get(r.name) || {}), ...r, dir: out.get(r.name)?.dir ?? null });
+  }
+  return [...out.values()];
 }
 
 /** A4: `agents/<slug>/{agent.json, persona.md, assets/}` — read as shipped; validate() checks the shape. */
@@ -270,6 +322,26 @@ export function validate(b: Bundle): ValidationResult {
       if (mf[k] != null && !(Array.isArray(mf[k]) && mf[k].every((x: unknown) => typeof x === 'string')))
         errors.push(`profile.json: "${k}" must be an array of strings`);
   }
+  for (const x of b.extensions) {
+    const at = `extensions/${x.name}`;
+    if (!EXT_NAME_RE.test(x.name)) { errors.push(`${at}: invalid extension name (lowercase letters, digits, hyphens)`); continue; }
+    if (!x.dir && !(typeof x.source === 'string' && x.source.trim())) errors.push(`${at}: needs an extensions/${x.name}/ directory in the bundle or a "source" git URL`);
+    if (x.dir) {
+      try {
+        const m = JSON.parse(readText(path.join(x.dir, 'manifest.json')));
+        if (m?.name !== x.name) errors.push(`${at}/manifest.json: "name" (${JSON.stringify(m?.name)}) must match the directory name`);
+      } catch {
+        errors.push(`${at}/manifest.json is not valid JSON`);
+      }
+    }
+    if (x.ref != null && (typeof x.ref !== 'string' || !/^[A-Za-z0-9._/-]{1,100}$/.test(x.ref) || x.ref.startsWith('-'))) errors.push(`${at}: "ref" must be a tag, branch or commit`);
+    if (x.source != null && typeof x.source !== 'string') errors.push(`${at}: "source" must be a string`);
+    if (x.settings != null) {
+      if (typeof x.settings !== 'object' || Array.isArray(x.settings)) errors.push(`${at}: "settings" must be an object`);
+      else for (const k of Object.keys(x.settings)) if (/token|secret|password|api[_-]?key/i.test(k)) errors.push(`${at}: settings."${k}" looks like a secret — extension settings in a bundle must not carry secrets`);
+    }
+  }
+  if (b.extensions.length && !b.trusted) warnings.push(`${b.extensions.length} extension(s) from an external bundle will NOT be installed — extensions run code, so only a trusted bundle installs them`);
   for (const s of b.skills) {
     if (!SKILL_NAME_RE.test(s.name)) errors.push(`skills/${s.name}: invalid skill name`);
     if (!s.content.trim()) errors.push(`skills/${s.name}/SKILL.md is empty`);
@@ -285,6 +357,7 @@ export function validate(b: Bundle): ValidationResult {
     if (k !== 'cron' && k !== 'interval' && k !== 'at') errors.push(`cron[${i}].schedule.kind must be cron|interval|at`);
     if (typeof c.schedule?.value !== 'string' && typeof c.schedule?.value !== 'number')
       errors.push(`cron[${i}].schedule.value is required`);
+    if (c.scope != null && c.scope !== 'user' && c.scope !== 'org') errors.push(`cron[${i}].scope must be "user" or "org"`);
     if (c.enabled === true && !b.trusted) warnings.push(`cron[${i}] asks to start enabled — external bundle, will be registered disabled`);
     if (c.agent != null) {
       if (typeof c.agent !== 'string' || !AGENT_SLUG_RE.test(c.agent)) errors.push(`cron[${i}].agent must be an agent slug`);
@@ -354,7 +427,7 @@ function gitClone(url: string, dest: string): void {
   const attempt = (args: string[]) =>
     spawnSync('git', ['clone', ...args, '--quiet', url, dest], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: gitEnvFor(url),
       timeout: 120_000,
     });
   let r = attempt(['--depth', '1']);
@@ -386,7 +459,7 @@ export function resolveSource(source: string): ResolvedSource {
     if (!BUNDLE_NAME_RE.test(name)) throw new Error(`cannot derive a bundle name from ${source}`);
     const dest = path.join(USER_BUNDLES_DIR, name);
     if (isDir(path.join(dest, '.git'))) {
-      spawnSync('git', ['pull', '--ff-only', '--quiet'], { cwd: dest, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
+      spawnSync('git', ['pull', '--ff-only', '--quiet'], { cwd: dest, encoding: 'utf8', env: gitEnvFor(source), timeout: 60_000 });
     } else {
       if (isDir(dest)) throw new Error(`${dest} exists and is not a git checkout — remove it or pass the directory instead`);
       gitClone(source, dest);
@@ -414,6 +487,7 @@ export interface BundleSummary {
   skills: string[];
   cron: number;
   agents: string[];
+  extensions: string[];
   hasMemorySeed: boolean;
   valid: boolean;
   errors: string[];
@@ -431,6 +505,7 @@ export function summarize(b: Bundle): BundleSummary {
     skills: b.skills.map((s) => s.name),
     cron: b.cron.length,
     agents: b.agents.map((a) => a.slug),
+    extensions: b.extensions.map((x) => x.name),
     hasMemorySeed: !!(b.memorySeed.user || b.memorySeed.memory),
     valid: v.ok,
     errors: v.errors,
@@ -520,6 +595,8 @@ export interface ApplyOptions {
   skipRepos?: boolean;
   /** A4: overwrite an EXISTING agent's record/persona/assets with the bundle's (default: leave the user's edits alone). */
   force?: boolean;
+  /** Register `scope: org` cron jobs (this host IS the organisation host). Also ARIGAMI_ORG_HOST=1. */
+  orgHost?: boolean;
   sessionId?: string;
 }
 
@@ -536,6 +613,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     skills: [],
     memory: { user: 0, memory: 0 },
     cron: [],
+    extensions: [],
     agents: [],
     errors: [],
   };
@@ -660,6 +738,32 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     }
   }
 
+  // 3b. extensions → installed / updated from the bundle (a trusted bundle only: they run code)
+  if (b.extensions.length) {
+    const ex = await import('./extensions.js');
+    report.extensions = [];
+    for (const x of b.extensions) {
+      if (!b.trusted) {
+        report.extensions.push({ name: x.name, status: 'skipped', error: 'external bundle — extensions run code and are installed only from a trusted bundle' });
+        continue;
+      }
+      try {
+        const r = await ex.installOrUpdateExtension({ name: x.name, dir: x.dir, source: x.source, ref: x.ref }, { trust: true });
+        if (!r.ok) {
+          report.extensions.push({ name: x.name, status: r.status === 'installed' ? 'installed' : 'error', error: r.error });
+          if (!r.status) report.errors.push(`extension "${x.name}": ${r.error}`);
+        } else {
+          report.extensions.push({ name: x.name, status: r.status!, ...(r.sha ? { sha: r.sha } : {}) });
+        }
+        // seed settings once; a user's own edits are never overwritten
+        if (x.settings && Object.keys(x.settings).length && r.status && ex.readState().settings[x.name] === undefined) await ex.patchExtension(x.name, { settings: x.settings });
+      } catch (e) {
+        report.extensions.push({ name: x.name, status: 'error', error: (e as Error).message });
+        report.errors.push(`extension "${x.name}": ${(e as Error).message}`);
+      }
+    }
+  }
+
   // 4. cron → triggers (disabled unless enabled:true on a trusted bundle).
   // Idempotent (F4 #2): a trigger is identified by its bundleKey ("<bundle>/
   // <slug>", carried through export → import), falling back to the tagged
@@ -673,8 +777,14 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     const agentFor = (c: BundleCron): string | undefined => (c.agent && ag.getAgent(c.agent) ? c.agent : undefined);
     const existing = tr.listTriggers().filter((t: any) => t.type === 'cron') as any[];
     const claimed = new Set<string>();
+    const orgHost = opts.orgHost === true || process.env.ARIGAMI_ORG_HOST === '1';
     for (const c of b.cron) {
       const tag = `[${b.manifest.name}] ${c.name || 'cron'}`;
+      // An org-wide job must run once, not once per tenant: only the designated org host registers it.
+      if (c.scope === 'org' && !orgHost) {
+        (report.cronSkipped ||= []).push({ name: tag, reason: 'scope: org — runs on the organisation host only (ARIGAMI_ORG_HOST=1)' });
+        continue;
+      }
       const key = typeof c.key === 'string' && c.key ? c.key : cronBundleKey(b.manifest.name, c.name || 'cron');
       const plain = String(c.name || 'cron').replace(CRON_TAG_RE, '');
       const found =

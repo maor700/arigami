@@ -93,6 +93,9 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
   // an org that wants the secret to exist in exactly one place should switch
   // the chart to `existingSecret` and create it out-of-band.
   if (t.handoff_secret) args.push('--set-string', `secretEnv.ARIGAMI_HANDOFF_SECRET=${t.handoff_secret}`);
+  // The org's private profile repo: one read-only token for every tenant, so a user never has to sign in to GitHub
+  // for the profile (and the extensions inside it) to install. Same chart `secretEnv` route, same Helm-release trade-off.
+  if (cfg.arigamiGitToken) args.push('--set-string', `secretEnv.ARIGAMI_GIT_TOKEN=${cfg.arigamiGitToken}`);
   if (cfg.helmExtraValuesFile) args.push('-f', cfg.helmExtraValuesFile);
 
   const res = await run(args, { timeoutMs: (cfg.helmTimeoutSec + 30) * 1000 });
