@@ -176,6 +176,10 @@ export default function ScreenSidePanel({ session }) {
         // 16:10-ish box; the view scales the desktop to fit. Always view-only.
         <div className="px-3 pt-2">
           <ScreenView priority={SCREEN_PRIORITY.panel} viewOnly sessionId={session?.id} onStatusChange={onStatusChange} className="aspect-[16/10] w-full rounded-lg" />
+          {/* The shared desktop stays reachable from a session that has its own machine too. */}
+          <button type="button" data-screen-view-shared onClick={() => setScreenModal(true)} className="mt-1.5 cursor-pointer font-mono text-[10px] text-fgdim underline hover:text-fg">
+            {t('screen.viewShared')}
+          </button>
         </div>
       )}
 
