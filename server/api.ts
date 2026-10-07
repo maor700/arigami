@@ -6761,8 +6761,14 @@ export async function handle(
       if (s.metadata?.cronTriggerId) {
         const triggers = await import('./triggers.js');
         const { archive } = await triggers.onCronReport(id, result);
-        if (archive) state.patchSession(id, { archived: true });
-        return json(res, { ok: true, cron: true, archived: archive });
+        // A finished run leaves nothing worth keeping: its result is already
+        // delivered and recorded on the trigger, so the session is deleted (a
+        // few seconds on, once this very reply has gone out) instead of piling
+        // up in the archive. A failed run is only archived — it stays readable.
+        const remove = archive && result.state === 'done';
+        if (remove) setTimeout(() => void destroySession(id).catch(() => {}), 5000).unref?.();
+        else if (archive) state.patchSession(id, { archived: true });
+        return json(res, { ok: true, cron: true, archived: archive && !remove, deleted: remove });
       }
       if (!master)
         return json(res, {

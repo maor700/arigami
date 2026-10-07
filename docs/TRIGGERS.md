@@ -212,7 +212,7 @@ fires this job."
   the create-guard flag (see Guard below). On a terminal
   `report_to_master(state:'done'|'error')`, `server/api.ts`'s `/report`
   handler calls `triggers.onCronReport()` (records the run, delivers the
-  result) and archives the session. `state:'blocked'` delivers but does NOT
+  result) and, for `state:'done'`, **deletes** the session a few seconds later (a finished run leaves nothing to keep; the result is on the trigger's run log) — a failed run (`error`) is archived instead so it stays readable. `state:'blocked'` delivers but does NOT
   archive — a human still needs to look at it (same `pushIntervention`
   'blocked' push as any worker uses).
 - `sessionMode: 'existing:<sessionId>'` — delivers `prompt` into that session

@@ -224,6 +224,7 @@ function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, o
   return (
     <div
       ref={ref}
+      data-row-menu
       className="absolute top-7 right-1.5 z-20 min-w-[10.25rem] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
       onClick={(e) => e.stopPropagation()}
     >
@@ -2191,7 +2192,9 @@ export default function Rail({
             </button>
             {archivedOpen &&
               archived.map((s) => (
-                <div key={s.id} className="opacity-70">
+                // opacity makes this wrapper its own stacking context, which would sink the
+                // row's ⋯ menu under the NEXT row (unclickable) — lift the one with an open menu.
+                <div key={s.id} className="opacity-70 has-[[data-row-menu]]:relative has-[[data-row-menu]]:z-30 has-[[data-row-menu]]:opacity-100">
                   <Row {...rowProps(s)} />
                 </div>
               ))}
