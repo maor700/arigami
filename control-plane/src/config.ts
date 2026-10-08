@@ -18,6 +18,12 @@ export interface Config {
   dbPath: string;
   cookieDays: number;
   trustProxy: boolean;
+  /**
+   * Scope the session cookie to the org domain (Domain=<orgDomain>) so the browser also sends it to
+   * u-<id>.<orgDomain>, where the edge asks GET /auth/verify whether to let the request through (src/gate.ts).
+   * Off by default: a host-only cookie is the smaller blast radius when no edge gate is in use.
+   */
+  cookieParentDomain: boolean;
 
   // OIDC (same library/flow shape as server/auth.ts, reimplemented locally —
   // this is a separately deployable service, not an import of server/).
@@ -63,6 +69,20 @@ export interface Config {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const cfg = readConfig(env);
+  // A browser silently drops a Set-Cookie whose Domain does not cover the host that sent it — every sign-in
+  // would "work" and the gate would still see no session. Refuse to boot instead.
+  if (cfg.cookieParentDomain) {
+    const host = new URL(cfg.publicUrl).hostname.toLowerCase();
+    const org = cfg.orgDomain.toLowerCase();
+    if (host !== org && !host.endsWith(`.${org}`)) {
+      throw new Error(`CP_COOKIE_PARENT_DOMAIN=1 needs CP_PUBLIC_URL (${host}) to be ${org} or a name under it`);
+    }
+  }
+  return cfg;
+}
+
+function readConfig(env: NodeJS.ProcessEnv): Config {
   const port = Number(env.CP_PORT || 8090);
   return {
     port,
@@ -70,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: env.CP_DB_PATH || path.join(process.cwd(), 'data', 'control-plane.db'),
     cookieDays: Number(env.CP_COOKIE_DAYS || 30),
     trustProxy: bool(env.CP_TRUST_PROXY, false),
+    cookieParentDomain: bool(env.CP_COOKIE_PARENT_DOMAIN, false),
 
     oidcIssuer: env.CP_OIDC_ISSUER || '',
     oidcClientId: env.CP_OIDC_CLIENT_ID || '',

@@ -141,6 +141,10 @@ config:
   # Tenants live at u-<id>.<orgDomain> — this needs a wildcard DNS record and
   # a matching wildcard certificate, or per-tenant DNS from external-dns.
   orgDomain: ""
+  # "1" scopes the session cookie to orgDomain so an edge in front of the tenants can ask GET /auth/verify
+  # whether a request may reach that cockpit (owner only; docs/CONTROL-PLANE.md "Org SSO in front of every
+  # cockpit"). Needs ingress.host to be orgDomain or a name under it. Leave "0" without such an edge.
+  cookieParentDomain: "0"
   orgName: ""
   urlScheme: https
 
