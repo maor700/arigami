@@ -96,6 +96,11 @@ try {
   if (!TOOLS.length) loadError = `${modulePath} exports no tools (expected \`export const tools = [{name, description, inputSchema, run}]\`)`;
 } catch (e) {
   loadError = `failed to import ${modulePath}: ${e?.message || e}`;
+  // The loader knows WHY when it is the extension's own package.json that is not
+  // installed — say that, not just "Cannot find package". (A later install gives
+  // this server a new spec, so the gateway starts a fresh process: Bun keeps a
+  // failed import for the life of this one.)
+  if (process.env.EXT_DEPS_ERROR) loadError = `${process.env.EXT_DEPS_ERROR} (${loadError})`;
 }
 if (loadError) console.error(`[ext-mcp:${EXT_NAME}] ${loadError}`);
 

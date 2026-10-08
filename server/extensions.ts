@@ -31,6 +31,7 @@ import { resourceRoot } from './lib/resource-root.js';
 import { linkDir } from './lib/platform.js';
 import { bunExec } from './lib/bun-exec.js';
 import { gitEnvFor } from './lib/git-auth.js';
+import { checkDeps, declaredDeps, installDeps, STAMP_FILE } from './lib/ext-deps.js';
 import { createHash } from 'node:crypto';
 import { appendIncident } from './incidents.js';
 import { broadcast, emitLocal, subscribe } from './bus.js';
@@ -316,14 +317,22 @@ export interface ExtState {
   trusted: Record<string, boolean>;
   /** One-shot migrations the host has already run (id → true). */
   migrated: Record<string, boolean>;
+  /**
+   * May the host run `bun install` for this extension's package.json? Granted
+   * by an admin (install dialog, `ext add --deps`, `ext deps <name>`, PATCH
+   * `installDeps`) or by applying a TRUSTED profile bundle — never by the
+   * extension itself. Without it the extension is listed as "dependencies
+   * missing" and nothing is downloaded.
+   */
+  deps: Record<string, boolean>;
 }
-const EMPTY_STATE: ExtState = { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
+const EMPTY_STATE: ExtState = { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {}, deps: {} };
 
 const objOf = (v: unknown): Record<string, any> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as any) : {});
 
 export function readState(): ExtState {
   ensureExtMigrated();
-  if (extRefused) return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
+  if (extRefused) return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {}, deps: {} };
   try {
     const raw = JSON.parse(fs.readFileSync(EXT_STATE_FILE, 'utf8'));
     return {
@@ -335,9 +344,10 @@ export function readState(): ExtState {
       // is exactly right: nothing is trusted until a human says so.
       trusted: objOf(raw?.trusted),
       migrated: objOf(raw?.migrated),
+      deps: objOf(raw?.deps),
     };
   } catch {
-    return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {} };
+    return { enabled: {}, settings: {}, secrets: {}, sha: {}, trusted: {}, migrated: {}, deps: {} };
   }
 }
 
@@ -367,6 +377,8 @@ export interface ValidateResult {
   errors: string[];
   warnings: string[];
   manifest?: Manifest;
+  /** package.json `dependencies` — what an install would `bun install` (the install dialog asks first) */
+  dependencies?: Record<string, string>;
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -496,7 +508,9 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
     }
   }
 
-  return { ok: errors.length === 0, errors, warnings, manifest: m };
+  let dependencies: Record<string, string> | undefined;
+  try { dependencies = declaredDeps(dir) || undefined; } catch (e) { errors.push(`package.json is not valid JSON: ${(e as Error).message}`); }
+  return { ok: errors.length === 0, errors, warnings, manifest: m, ...(dependencies && Object.keys(dependencies).length ? { dependencies } : {}) };
 }
 
 function pickHooks(mod: any): Hooks & { channels?: Record<string, any> } {
@@ -564,10 +578,10 @@ async function importFresh(full: string): Promise<any> {
     fs.mkdirSync(RELOAD_DIR, { recursive: true });
     fs.cpSync(extRoot, shadow, {
       recursive: true,
-      // node_modules would make this expensive for nothing: resolution walks
-      // up to user/node_modules anyway.
+      // node_modules would make this expensive for nothing — it is linked below.
       filter: (src) => path.basename(src) !== 'node_modules',
     });
+    linkNodeModules(path.join(extRoot, 'node_modules'), path.join(shadow, 'node_modules'));
   } catch (e) {
     hostLog(`could not shadow ${path.basename(extRoot)} for a fresh import (${(e as Error)?.message}) — an edit needs a host restart`);
     return import(pathToFileURL(full).href);
@@ -576,6 +590,25 @@ async function importFresh(full: string): Promise<any> {
     return await import(pathToFileURL(path.join(shadow, rel)).href);
   } finally {
     try { fs.rmSync(shadow, { recursive: true, force: true }); } catch { /* swept next boot */ }
+  }
+}
+
+/**
+ * The extension's OWN dependencies, visible from the shadow copy. Without this
+ * the walk-up from user/.arigami-reload/<copy>/ only ever reaches
+ * user/node_modules, and a listener or hook importing a package the extension
+ * installed would fail. A fresh real directory with one symlink per package —
+ * not one symlink to the whole node_modules — because Bun caches a directory's
+ * listing: a package a re-install added must show up in the next copy, and a
+ * brand-new directory is never in that cache.
+ */
+function linkNodeModules(from: string, to: string): void {
+  let names: string[];
+  try { names = fs.readdirSync(from); } catch { return; }
+  fs.mkdirSync(to, { recursive: true });
+  for (const n of names) {
+    if (n.startsWith('.')) continue; // .bin, .cache, our stamp
+    try { fs.symlinkSync(path.join(from, n), path.join(to, n), 'junction'); } catch { /* one missing link costs one import */ }
   }
 }
 
@@ -622,6 +655,8 @@ export interface ExtEntry {
   sha?: string;
   /** newest mtime across the files a reload watches */
   mtime: number;
+  /** the extension's own npm dependencies (package.json → node_modules) */
+  deps: DepsStatus;
   contributions: { tools: number; listeners: number; docs: number; tabs: number; hooks: number; gates: number; channels: number; webhooks: number };
   // live, not serialised
   unsubs: (() => void)[];
@@ -629,6 +664,24 @@ export interface ExtEntry {
   channels: Record<string, (p: NotifyPayload, ctx: HookCtx) => any>;
   listenerTypes: string[];
 }
+
+export interface DepsStatus {
+  /** package.json declares runtime dependencies */
+  needed: boolean;
+  state: 'none' | 'ok' | 'missing' | 'installing';
+  /** an admin (or a trusted profile) allowed the host to install them */
+  allowed: boolean;
+  /** what the install is pinned to; null = versions are not reproducible */
+  lockfile: string | null;
+  missing: string[];
+  /** "dependencies missing: <why>" — the one line the cockpit and the REST view show */
+  error: string | null;
+  /** changes whenever the installed tree does — part of the tool-server spec, so a shared server restarts */
+  stamp: string;
+  /** the package.json + lockfile hash an install would be FROM (not on the wire) */
+  source: string;
+}
+const NO_DEPS: DepsStatus = { needed: false, state: 'none', allowed: false, lockfile: null, missing: [], error: null, stamp: '', source: '' };
 
 const extensions = new Map<string, ExtEntry>();
 let loaded = false;
@@ -657,8 +710,11 @@ export function listExtensions() {
       tier: e.trusted ? 'trusted' : 'sandboxed',
       trusted: e.trusted,
       trustRequested: e.trustRequested,
-      error: e.error || null,
+      // A dependency problem LEADS the error line: the import error it causes
+      // ("Cannot find package …") is the symptom, this is the cause.
+      error: e.deps.error ? (e.error ? `${e.deps.error} — ${e.error}` : e.deps.error) : e.error || null,
       warnings: e.warnings,
+      deps: { needed: e.deps.needed, state: e.deps.state, allowed: e.deps.allowed, lockfile: e.deps.lockfile, missing: e.deps.missing, error: e.deps.error },
       sha: e.sha || null,
       dir: e.dir,
       apiVersion: e.manifest?.apiVersion ?? null,
@@ -684,7 +740,10 @@ function dirsIn(root: string): string[] {
 }
 
 function watchedFiles(dir: string, m: Manifest | null): string[] {
-  const out = [path.join(dir, 'manifest.json')];
+  // package.json/lockfile: an edit re-checks (and, when allowed, re-installs) the
+  // dependencies. node_modules itself: its mtime moves when a package is added or
+  // removed — a `bun install` someone ran by hand is picked up by the next poll.
+  const out = [path.join(dir, 'manifest.json'), path.join(dir, 'package.json'), path.join(dir, 'bun.lock'), path.join(dir, 'bun.lockb'), path.join(dir, 'node_modules'), path.join(dir, 'node_modules', STAMP_FILE)];
   if (!m) return out;
   for (const l of m.listeners || []) { const f = insideDir(dir, str(l.module)); if (f) out.push(f); }
   if (m.hooks?.module) { const f = insideDir(dir, str(m.hooks.module)); if (f) out.push(f); }
@@ -714,6 +773,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
     trusted: false,
     warnings: [],
     mtime: 0,
+    deps: NO_DEPS,
     contributions: { tools: 0, listeners: 0, docs: 0, tabs: 0, hooks: 0, gates: 0, channels: 0, webhooks: 0 },
     unsubs: [],
     gates: {},
@@ -721,6 +781,7 @@ async function loadOne(name: string, st: ExtState): Promise<ExtEntry> {
     listenerTypes: [],
   };
   sweepReloadAliases(dir);
+  entry.deps = depsStatus(name, dir, st);
   const { manifest, error } = parseManifest(dir);
   entry.manifest = manifest || null;
   entry.mtime = newestMtime(watchedFiles(dir, manifest || null));
@@ -855,6 +916,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
     const st = readState();
     const names = dirsIn(EXT_DIR);
     const only = opts.only?.length ? new Set(opts.only) : null;
+    autoInstall = [];
 
     // gone from disk → forget (state keeps its history)
     for (const [name, e] of [...extensions]) if (!names.includes(name)) { teardown(e); extensions.delete(name); }
@@ -870,6 +932,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
         entry = {
           name, dir: path.join(EXT_DIR, name), manifest: prev?.manifest || null, enabled: st.enabled[name] !== false,
           state: 'error', trustRequested: false, trusted: false, error: (e as Error).message, warnings: [], mtime: newestMtime(watchedFiles(path.join(EXT_DIR, name), prev?.manifest || null)),
+          deps: depsStatus(name, path.join(EXT_DIR, name), st),
           contributions: { tools: 0, listeners: 0, docs: 0, tabs: 0, hooks: 0, gates: 0, channels: 0, webhooks: 0 },
           unsubs: [], gates: {}, channels: {}, listenerTypes: [],
         };
@@ -881,6 +944,7 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
       }
       extensions.set(name, entry);
       if (entry.sha) { st.sha[name] = entry.sha; }
+      if (wantsAutoInstall(entry)) autoInstall.push(name);
     }
 
     writeState(st);
@@ -894,10 +958,121 @@ export async function reload(opts: { only?: string[]; reason?: string } = {}): P
   } finally {
     done();
     reloading = null;
+    // After the lock is released: ensureDeps reloads the extension when it is done.
+    for (const n of autoInstall.splice(0)) void ensureDeps(n);
   }
 }
+let autoInstall: string[] = [];
 
 export const loadAll = reload;
+
+// ---------------------------------------------------------------------------
+// the extension's own dependencies (lib/ext-deps.ts does the work)
+// ---------------------------------------------------------------------------
+// When this runs: right after an install or an update copied/pulled new files
+// (addExtension, installOrUpdateExtension — so every profile apply —,
+// updateExtension), when an admin asks (PATCH installDeps, `ext deps`), and on
+// a reload that finds a changed package.json/lockfile of an extension that is
+// allowed to install. Never for one that is not: the status says so instead.
+// A failure is remembered per package.json+lockfile, so an offline host does
+// not retry on every poll — a new manifest, a profile apply or a click does.
+const depsInflight = new Map<string, Promise<DepsResult>>();
+const depsLast = new Map<string, { source: string; error: string | null }>();
+
+export interface DepsResult {
+  ok: boolean;
+  /** none: nothing declared · ok: already satisfied · installed: just now · missing: not there (see error) · not-allowed: no grant */
+  status: 'none' | 'ok' | 'installed' | 'missing' | 'not-allowed';
+  error?: string;
+  ms?: number;
+}
+
+function depsStatus(name: string, dir: string, st: ExtState): DepsStatus {
+  const allowed = st.deps[name] === true;
+  let c: ReturnType<typeof checkDeps>;
+  try { c = checkDeps(dir); } catch (e) { return { ...NO_DEPS, needed: true, state: 'missing', allowed, error: `dependencies missing: ${(e as Error).message}` }; }
+  const nm = path.join(dir, 'node_modules');
+  const stamp = `${c.stamp}:${c.satisfied ? 1 : 0}:${mtimeOf(nm)}:${mtimeOf(path.join(nm, STAMP_FILE))}`;
+  const base = { needed: c.needed, allowed, lockfile: c.lockfile, stamp, source: c.stamp };
+  if (!c.needed) return { ...base, state: 'none', missing: [], error: null };
+  if (c.satisfied) return { ...base, state: 'ok', missing: [], error: null };
+  const installing = depsInflight.has(name);
+  const list = c.missing.join(', ');
+  const last = depsLast.get(name);
+  const why = c.error
+    ? c.error
+    : installing
+      ? `${list} — installing now`
+      : last && last.source === c.stamp && last.error
+        ? last.error
+        : !allowed
+          ? `${list} — this host has not been allowed to install them (Settings › Extensions › Install dependencies, or \`bin/host ext deps ${name}\`)`
+          : `${list} — not installed yet`;
+  return { ...base, state: installing ? 'installing' : 'missing', missing: c.missing, error: `dependencies missing: ${why}` };
+}
+
+/** Allow (or stop allowing) `bun install` for one extension. Admin-only callers. */
+export function allowDeps(name: string, on: boolean): void {
+  const st = readState();
+  if (on) st.deps[name] = true;
+  else delete st.deps[name];
+  writeState(st);
+}
+
+/**
+ * Make an extension's declared dependencies present — `bun install` in its
+ * directory when they are not, and only when it is allowed to. Never throws;
+ * concurrent callers share one install. `reload:false` is for callers that
+ * reload themselves right after (an install needs the deps BEFORE validating,
+ * since validation imports the listeners).
+ */
+export async function ensureDeps(name: string, opts: { reload?: boolean } = {}): Promise<DepsResult> {
+  if (!EXT_NAME_RE.test(name)) return { ok: false, status: 'missing', error: `invalid extension name: ${name}` };
+  const dir = path.join(EXT_DIR, name);
+  const pending = depsInflight.get(name);
+  if (pending) return pending;
+  let c: ReturnType<typeof checkDeps>;
+  try { c = checkDeps(dir); } catch (e) { return { ok: false, status: 'missing', error: `dependencies missing: ${(e as Error).message}` }; }
+  if (!c.needed) return { ok: true, status: 'none' };
+  if (c.error) return { ok: false, status: 'missing', error: `dependencies missing: ${c.error}` };
+  if (c.satisfied) return { ok: true, status: 'ok' };
+  const st = readState();
+  if (st.deps[name] !== true) return { ok: false, status: 'not-allowed', error: depsStatus(name, dir, st).error || undefined };
+
+  const run = (async (): Promise<DepsResult> => {
+    extLog(name, `installing dependencies: ${c.missing.join(', ')} (${c.lockfile ? `pinned by ${c.lockfile}` : 'no lockfile — versions are not pinned'}, lifecycle scripts ${process.env.ARIGAMI_EXT_DEPS_SCRIPTS === '1' ? "per Bun's trustedDependencies" : 'disabled'})`);
+    const r = await installDeps(dir);
+    const after = checkDeps(dir);
+    const ok = r.ok && after.satisfied;
+    const reason = !r.ok ? r.error || 'bun install failed' : ok ? null : `installed, but still missing ${after.missing.join(', ')}`;
+    depsLast.set(name, { source: c.stamp, error: reason });
+    if (ok) {
+      extLog(name, `dependencies installed in ${r.ms}ms (${r.args.join(' ')})`);
+      hostLog(`"${name}": dependencies installed (${r.ms}ms)`);
+      return { ok: true, status: 'installed', ms: r.ms };
+    }
+    extLog(name, `dependency install failed: ${reason}`);
+    hostLog(`"${name}": dependencies missing — ${reason}`);
+    appendIncident({ sessionId: '', action: `ext:${name}:deps`, health: 'BLOCKED_SYSTEM', reason: String(reason).slice(0, 300), outcome: 'deps-missing' } as any);
+    return { ok: false, status: 'missing', error: `dependencies missing: ${reason}`, ms: r.ms };
+  })();
+  depsInflight.set(name, run);
+  // Show "installing" while it runs — a slow registry should not look like a hang.
+  const e = extensions.get(name);
+  if (e) {
+    e.deps = depsStatus(name, dir, st);
+    try { broadcast({ type: 'extensions-updated', extensions: listExtensions() }); } catch {}
+  }
+  let res: DepsResult;
+  try { res = await run; } finally { depsInflight.delete(name); }
+  if (opts.reload !== false && extensions.has(name)) await reload({ only: [name], reason: `deps ${name}` });
+  return res;
+}
+
+/** A reload found an allowed extension whose package.json/lockfile changed — install, once per change. */
+function wantsAutoInstall(e: ExtEntry): boolean {
+  return e.enabled && e.deps.state === 'missing' && e.deps.allowed && !depsInflight.has(e.name) && depsLast.get(e.name)?.source !== e.deps.source;
+}
 
 // ---- mtime poll -------------------------------------------------------------
 let pollTimer: NodeJS.Timeout | null = null;
@@ -1009,6 +1184,13 @@ function serversFor(e: ExtEntry, hostAuth = false): Record<string, { command: st
       // or a tab the owner is using) runs them.
       EXT_OUTBOUND: JSON.stringify(Array.isArray((m as any).outbound) ? (m as any).outbound.map(String) : []),
       ...(hostAuth ? { EXT_HOST_CALL: '1' } : {}),
+      // The shared server (lib/mcp-gateway.ts) is keyed by this whole spec, and
+      // Bun remembers a failed import for the life of a process — so the state of
+      // node_modules is part of the spec: once an install lands (or someone runs
+      // `bun install` by hand and the mtime poll notices), the next call gets a
+      // fresh process instead of the one that could not import its module.
+      ...(e.deps.needed ? { EXT_DEPS_STAMP: e.deps.stamp } : {}),
+      ...(e.deps.error ? { EXT_DEPS_ERROR: e.deps.error } : {}),
     };
     for (const [k, v] of Object.entries(t.env || {})) env[k] = String(v).replaceAll('${EXT_DIR}', e.dir);
     // Secrets ride as env and are NEVER logged or returned by the REST view.
@@ -1376,6 +1558,8 @@ export interface AddResult {
   trustRequested?: boolean;
   /** …and the caller granted it (`--trust`, or the cockpit's confirmation) */
   trusted?: boolean;
+  /** the extension's npm dependencies, when its package.json declares any */
+  deps?: DepsResult;
   errors: string[];
   warnings: string[];
 }
@@ -1392,7 +1576,7 @@ export interface AddResult {
  * that named the consequence to the human. Without it a `trusted` manifest still
  * installs, sandboxed, and says so.
  */
-export async function addExtension(source: string, opts: { trust?: boolean; ref?: string } = {}): Promise<AddResult> {
+export async function addExtension(source: string, opts: { trust?: boolean; ref?: string; installDeps?: boolean } = {}): Promise<AddResult> {
   const src = String(source || '').trim();
   if (!src) return { ok: false, errors: ['source required (a directory or a git URL)'], warnings: [] };
   ensureUserRepo();
@@ -1429,12 +1613,23 @@ export async function addExtension(source: string, opts: { trust?: boolean; ref?
     fs.cpSync(from, dir, { recursive: true, filter: (s) => !/(^|[\\/])(node_modules|\.git)$/.test(s) });
   }
 
-  const v = await validateExtension(dir);
-  if (v.manifest && v.manifest.name !== name) {
-    // the directory name is the identity — keep them equal
-    const want = path.join(EXT_DIR, v.manifest.name);
-    if (EXT_NAME_RE.test(v.manifest.name) && !exists(want)) { fs.renameSync(dir, want); dir = want; name = v.manifest.name; }
+  // the directory name is the identity — keep them equal
+  const m0 = parseManifest(dir).manifest;
+  if (m0 && m0.name !== name && EXT_NAME_RE.test(str(m0.name)) && !exists(path.join(EXT_DIR, m0.name))) {
+    const want = path.join(EXT_DIR, m0.name);
+    fs.renameSync(dir, want);
+    dir = want;
+    name = m0.name;
   }
+
+  // The dependencies go in BEFORE validation: it imports the listeners and hooks,
+  // and a missing package would read as a broken extension. A failure (offline,
+  // a registry error, no grant) does not stop the install — it is the status.
+  if (opts.installDeps === true) allowDeps(name, true);
+  const deps = await ensureDeps(name, { reload: false });
+
+  const v = await validateExtension(dir);
+  if (deps.error) v.warnings.push(deps.error);
   const trustRequested = v.manifest?.trusted === true;
   const trusted = trustRequested && opts.trust === true;
   if (trusted) {
@@ -1449,7 +1644,7 @@ export async function addExtension(source: string, opts: { trust?: boolean; ref?
   );
   await reload({ only: [name], reason: `add ${name}` });
   autoCommit(`add extension ${name}`);
-  return { ok: v.ok, name, dir, manifest: v.manifest, permissions: v.manifest?.permissions || [], trustRequested, trusted, errors: v.errors, warnings: v.warnings };
+  return { ok: v.ok, name, dir, manifest: v.manifest, permissions: v.manifest?.permissions || [], trustRequested, trusted, ...(deps.status !== 'none' ? { deps } : {}), errors: v.errors, warnings: v.warnings };
 }
 
 
@@ -1492,7 +1687,10 @@ export interface InstallOrUpdateResult {
   status?: 'installed' | 'updated' | 'unchanged';
   sha?: string;
   error?: string;
+  /** the extension's npm dependencies, when it declares any — a failure here is NOT `ok:false` */
+  deps?: DepsResult;
 }
+const withDeps = (r: InstallOrUpdateResult, d: DepsResult | undefined): InstallOrUpdateResult => (d && d.status !== 'none' ? { ...r, deps: d } : r);
 
 /**
  * Bring ONE extension to the state a profile bundle describes — install it when absent, update it when the
@@ -1502,33 +1700,39 @@ export interface InstallOrUpdateResult {
  * A bundle directory is copied over the installed one (node_modules and the user's settings are kept — settings
  * live in extensions.json, not in the directory). A git source is cloned at `ref`, or fetched + checked out.
  */
-export async function installOrUpdateExtension(spec: BundleExtensionSpec, opts: { trust?: boolean } = {}): Promise<InstallOrUpdateResult> {
+export async function installOrUpdateExtension(spec: BundleExtensionSpec, opts: { trust?: boolean; deps?: boolean } = {}): Promise<InstallOrUpdateResult> {
   const name = String(spec.name || '');
   if (!EXT_NAME_RE.test(name)) return { ok: false, error: `invalid extension name: ${name}` };
   ensureUserRepo();
   const target = path.join(EXT_DIR, name);
+  // `deps`: the caller (a TRUSTED profile apply) allows `bun install` for what it ships.
+  if (opts.deps === true) allowDeps(name, true);
 
   if (spec.dir) {
     const from = path.resolve(spec.dir);
     if (!fs.existsSync(path.join(from, 'manifest.json'))) return { ok: false, error: `${from} is not an extension directory (no manifest.json)` };
     if (!isDir(target)) {
-      const r = await addExtension(from, opts);
-      return r.ok ? { ok: true, status: 'installed' } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') };
+      const r = await addExtension(from, { trust: opts.trust });
+      return withDeps(r.ok ? { ok: true, status: 'installed' } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') }, r.deps);
     }
-    if (dirHash(from) === dirHash(target)) return { ok: true, status: 'unchanged' };
+    // Unchanged files can still mean absent dependencies (an earlier apply was
+    // offline) — every apply is a chance to complete them.
+    if (dirHash(from) === dirHash(target)) return withDeps({ ok: true, status: 'unchanged' }, await ensureDeps(name));
     for (const n of fs.readdirSync(target)) if (!HASH_SKIP.test(n)) fs.rmSync(path.join(target, n), { recursive: true, force: true });
     fs.cpSync(from, target, { recursive: true, filter: (x) => !HASH_SKIP.test(x) });
     hostLog(`updated "${name}" from the profile bundle`);
+    // node_modules was kept; the stamp tells ensureDeps whether package.json/lockfile moved under it.
+    const deps = await ensureDeps(name, { reload: false });
     await reload({ only: [name], reason: `bundle update ${name}` });
     autoCommit(`update extension ${name} from profile`);
-    return { ok: true, status: 'updated' };
+    return withDeps({ ok: true, status: 'updated' }, deps);
   }
 
   const src = String(spec.source || '').trim();
   if (!src || !isGitUrl(src)) return { ok: false, error: `extension "${name}" needs a bundled directory or a git source` };
   if (!isDir(target)) {
     const r = await addExtension(src, { trust: opts.trust, ref: spec.ref });
-    return r.ok ? { ok: true, status: 'installed', sha: shaOf(r.dir || target) } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') };
+    return withDeps(r.ok ? { ok: true, status: 'installed', sha: shaOf(r.dir || target) } : { ok: false, status: r.name ? 'installed' : undefined, error: r.errors.join('; ') }, r.deps);
   }
   if (!isDir(path.join(target, '.git'))) return { ok: false, error: `"${name}" is installed from a directory, not git — remove it before switching to a git source` };
   const before = shaOf(target);
@@ -1541,10 +1745,11 @@ export async function installOrUpdateExtension(spec: BundleExtensionSpec, opts: 
     if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || 'git pull failed').trim().slice(0, 300) };
   }
   const after = shaOf(target);
-  if (after === before) return { ok: true, status: 'unchanged', sha: after };
+  if (after === before) return withDeps({ ok: true, status: 'unchanged', sha: after }, await ensureDeps(name));
+  const deps = await ensureDeps(name, { reload: false });
   await reload({ only: [name], reason: `bundle update ${name}` });
   autoCommit(`update extension ${name} from profile`);
-  return { ok: true, status: 'updated', sha: after };
+  return withDeps({ ok: true, status: 'updated', sha: after }, deps);
 }
 
 /** Remove the directory. The extensions.json entry is KEPT (settings history). */
@@ -1563,21 +1768,22 @@ export async function removeExtension(name: string): Promise<{ ok: boolean; erro
 }
 
 /** `git pull --ff-only` inside the extension dir. No auto-update anywhere else. */
-export async function updateExtension(name: string): Promise<{ ok: boolean; output?: string; error?: string; sha?: string }> {
+export async function updateExtension(name: string): Promise<{ ok: boolean; output?: string; error?: string; sha?: string; deps?: DepsResult }> {
   if (!EXT_NAME_RE.test(name)) return { ok: false, error: `invalid extension name: ${name}` };
   const dir = path.join(EXT_DIR, name);
   if (!isDir(dir)) return { ok: false, error: `no such extension: ${name}` };
   if (!isDir(path.join(dir, '.git'))) return { ok: false, error: `"${name}" is not a git checkout — nothing to pull` };
   const r = git(['pull', '--ff-only'], dir, 120_000, originOf(dir));
   if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || 'git pull failed').trim().slice(0, 400) };
+  const deps = await ensureDeps(name, { reload: false });
   await reload({ only: [name], reason: `update ${name}` });
   const sha = shaOf(dir);
   autoCommit(`update extension ${name}`);
-  return { ok: true, output: (r.stdout || '').trim().slice(0, 400), sha };
+  return { ok: true, output: (r.stdout || '').trim().slice(0, 400), sha, ...(deps.status !== 'none' ? { deps } : {}) };
 }
 
 /** PATCH /__api/extensions/:name — enable/disable, settings, and the trusted tier. */
-export async function patchExtension(name: string, patch: { enabled?: boolean; settings?: Record<string, unknown>; secrets?: Record<string, string>; trusted?: boolean }) {
+export async function patchExtension(name: string, patch: { enabled?: boolean; settings?: Record<string, unknown>; secrets?: Record<string, string>; trusted?: boolean; installDeps?: boolean }) {
   if (!EXT_NAME_RE.test(name)) return { error: `invalid extension name: ${name}` };
   const st = readState();
   if (typeof patch.enabled === 'boolean') st.enabled[name] = patch.enabled;
@@ -1589,9 +1795,20 @@ export async function patchExtension(name: string, patch: { enabled?: boolean; s
   }
   if (patch.settings && typeof patch.settings === 'object') st.settings[name] = { ...(st.settings[name] || {}), ...patch.settings };
   if (patch.secrets && typeof patch.secrets === 'object') st.secrets[name] = { ...(st.secrets[name] || {}), ...patch.secrets };
+  // installDeps:true — allow `bun install` for this extension and run it now
+  // (also the retry after an offline failure); false withdraws the permission.
+  if (typeof patch.installDeps === 'boolean') {
+    if (patch.installDeps) st.deps[name] = true;
+    else delete st.deps[name];
+  }
   writeState(st);
+  let deps: DepsResult | undefined;
+  if (patch.installDeps === true) {
+    depsLast.delete(name);
+    deps = await ensureDeps(name, { reload: false });
+  }
   await reload({ only: [name], reason: `patch ${name}` });
-  return { ok: true, extension: listExtensions().find((e) => e.name === name) || null };
+  return { ok: true, extension: listExtensions().find((e) => e.name === name) || null, ...(deps ? { deps } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1633,9 +1850,14 @@ export async function callExtTool(ext: string, tool: string, args: Record<string
       try {
         await client.connect(transport);
         const list = (await client.listTools()) as { tools?: { name: string }[] };
-        if (!(list.tools || []).some((t) => t.name === tool)) { lastErr = `no tool "${tool}" on ${key}`; continue; }
+        // An EMPTY list usually means the module could not be imported — ask anyway,
+        // so the server's own reason ("dependencies missing: …") reaches the caller.
+        const empty = !(list.tools || []).length;
+        if (!empty && !(list.tools || []).some((t) => t.name === tool)) { lastErr = `no tool "${tool}" on ${key}`; continue; }
         const r = (await client.callTool({ name: tool, arguments: args || {} })) as any;
-        if (r?.isError) return { ok: false, error: String((r.content || []).map((c: any) => c.text || '').join('\n') || 'tool error') };
+        const text = String((r?.content || []).map((c: any) => c.text || '').join('\n'));
+        if (r?.isError && empty) { lastErr = text || `no tool "${tool}" on ${key}`; continue; }
+        if (r?.isError) return { ok: false, error: text || 'tool error' };
         return { ok: true, result: r?.structuredContent ?? r?.content ?? r };
       } finally {
         try { await client.close(); } catch {}
@@ -1684,7 +1906,7 @@ export function emitDomain(name: string, payload: Record<string, unknown>): void
 // Used when the host is DOWN (or no admin token is exported): the same
 // functions, in-process, against $ARIGAMI_DIR. With the host up, bin/host goes
 // through REST instead so the LIVE process reloads.
-// bun server/extensions.ts list|validate <dir>|add <src> [--trust]|trust <name>|untrust <name>|
+// bun server/extensions.ts list|validate <dir>|add <src> [--trust] [--deps]|deps <name>|trust <name>|untrust <name>|
 //   remove <name>|update [name]|reload|enable <name>|disable <name>|wants-trust <dir>
 if (import.meta.main) {
   // Wrapped in an async IIFE (not a real top-level await) so this module has
@@ -1733,8 +1955,14 @@ if (import.meta.main) {
       if (!arg) throw new Error('usage: bun server/extensions.ts wants-trust <dir>');
       const m = localManifest(arg);
       process.exitCode = m?.trusted === true ? 0 : 1;
+    } else if (cmd === 'deps') {
+      // Allow + run `bun install` for one extension (the retry, too).
+      if (!arg) throw new Error('usage: bun server/extensions.ts deps <name>');
+      const r = await patchExtension(arg, { installDeps: true });
+      out(r);
+      process.exitCode = 'deps' in r && r.deps && !r.deps.ok ? 1 : 0;
     } else if (cmd === 'add') {
-      if (!arg) throw new Error('usage: bun server/extensions.ts add <dir|git-url> [--trust]');
+      if (!arg) throw new Error('usage: bun server/extensions.ts add <dir|git-url> [--trust] [--deps]');
       let trust = flag('--trust');
       // A trusted tab is the cockpit's own origin — never grant that silently.
       if (!trust && localManifest(arg)?.trusted === true) {
@@ -1745,7 +1973,8 @@ if (import.meta.main) {
         if (process.stdin.isTTY) trust = await askYes(line);
         else process.stderr.write(line.replace('Grant it? [y/N] ', 'NOT granted (no terminal to ask on) — installing sandboxed; pass --trust to grant.\n'));
       }
-      const r = await addExtension(arg, { trust });
+      const r = await addExtension(arg, { trust, installDeps: flag('--deps') });
+      if (r.deps && !r.deps.ok) process.stderr.write(`"${r.name}": ${r.deps.error}${r.deps.status === 'not-allowed' ? ' — pass --deps to allow it' : ''}\n`);
       // The permissions are what the human is agreeing to — print them loudly.
       if (r.permissions?.length) process.stderr.write(`permissions requested by "${r.name}": ${r.permissions.join(', ')}\n`);
       if (r.trusted) process.stderr.write(`"${r.name}" is installed at the TRUSTED tier — its tab runs unsandboxed.\n`);
@@ -1772,7 +2001,7 @@ if (import.meta.main) {
       if (!arg) throw new Error(`usage: bun server/extensions.ts ${cmd} <name>`);
       out(await patchExtension(arg, { enabled: cmd === 'enable' }));
     } else {
-      process.stderr.write('usage: bun server/extensions.ts list | validate <dir> | add <src> [--trust] | trust <name> | untrust <name> | remove <name> | update [name] | reload | enable <name> | disable <name>\n');
+      process.stderr.write('usage: bun server/extensions.ts list | validate <dir> | add <src> [--trust] [--deps] | deps <name> | trust <name> | untrust <name> | remove <name> | update [name] | reload | enable <name> | disable <name>\n');
       process.exitCode = 2;
     }
     doCommit('extension change');

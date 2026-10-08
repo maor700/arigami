@@ -75,12 +75,16 @@ function TrustNotice({ children }) {
 
 // Deliberately a modal, not an inline panel: an install is a decision with
 // consequences outside this page, and it should interrupt.
-function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfirm, onCancel }) {
+function InstallDialog({ manifest, permissions, errors = [], dependencies = null, mode, busy, onConfirm, onCancel }) {
   const t = useT();
   const name = manifest?.title || manifest?.name || '';
   const review = mode === 'review';
   const wantsTrust = manifest?.trusted === true;
   const [trust, setTrust] = useState(false);
+  // A third decision: `bun install` of the extension's package.json pulls code
+  // from a registry that nobody here has read. Off until ticked, like trust.
+  const depNames = Object.keys(dependencies || {});
+  const [installDeps, setInstallDeps] = useState(false);
   return (
     <div
       className="fixed inset-0 z-[86] flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
@@ -113,6 +117,17 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
             </TrustNotice>
           )}
           {wantsTrust && review && <TrustNotice>{null}</TrustNotice>}
+          {depNames.length > 0 && !review && (
+            <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-[11.5px] leading-relaxed text-fg">
+              <div className="font-bold">{t('ext.deps.title', { n: depNames.length })}</div>
+              <div className="mt-0.5 font-mono text-[11px] text-fgdim" dir="ltr">{depNames.join(', ')}</div>
+              <div className="mt-0.5 text-fgdim">{t('ext.deps.body')}</div>
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={installDeps} onChange={(e) => setInstallDeps(e.target.checked)} className="mt-[3px]" />
+                <span className="min-w-0 font-bold">{t('ext.deps.grant')}</span>
+              </label>
+            </div>
+          )}
           {errors.length > 0 && (
             <ErrorLine>
               <div className="font-bold">{t('ext.confirm.errors')}</div>
@@ -132,7 +147,7 @@ function InstallDialog({ manifest, permissions, errors = [], mode, busy, onConfi
           ) : (
             <>
               <button type="button" disabled={busy} onClick={onCancel} className={BTN_SM}>{t('ext.confirm.cancel')}</button>
-              <button type="button" disabled={busy} onClick={() => onConfirm('install', { trust })} className={BTN_PRIMARY}>
+              <button type="button" disabled={busy} onClick={() => onConfirm('install', { trust, installDeps })} className={BTN_PRIMARY}>
                 {busy ? t('ext.add.installing') : wantsTrust && trust ? t('ext.confirm.installTrusted') : t('ext.confirm.install')}
               </button>
             </>
@@ -152,7 +167,7 @@ function AddExtension({ onDone }) {
   const [source, setSource] = useState('');
   const [phase, setPhase] = useState(''); // '' | 'checking' | 'installing'
   const [error, setError] = useState(null);
-  const [pending, setPending] = useState(null); // {manifest, permissions, errors, mode, name}
+  const [pending, setPending] = useState(null); // {manifest, permissions, errors, dependencies, mode, name}
 
   const busy = phase !== '';
 
@@ -179,6 +194,7 @@ function AddExtension({ onDone }) {
         manifest: v?.manifest || { name: src },
         permissions: v?.manifest?.permissions || [],
         errors: v?.errors || [],
+        dependencies: v?.dependencies || null,
         mode: 'install',
       });
     } catch (e) {
@@ -192,18 +208,20 @@ function AddExtension({ onDone }) {
   // 'review' (git: show the permissions once they exist). `trust` is only ever
   // true on the confirmed path — a git clone's manifest is unread at this point,
   // so the trusted tier there is granted afterwards, from the extension's card.
-  const install = async (src, after, trust = false) => {
+  const install = async (src, after, trust = false, installDeps = false) => {
     setPhase('installing');
     setError(null);
     try {
-      const r = await api.post('/extensions/add', { source: src, trust });
+      const r = await api.post('/extensions/add', { source: src, trust, installDeps });
       setSource('');
       await loadExtensions();
       if (after === 'review') {
         setPending({ manifest: r?.manifest || { name: r?.name }, permissions: r?.permissions || [], errors: r?.errors || [], mode: 'review', name: r?.name });
       } else {
         setPending(null);
-        toast(t('ext.added', { name: r?.name || '' }));
+        // Installed — but a failed dependency install is worth saying out loud.
+        if (r?.deps && !r.deps.ok && r.deps.status !== 'not-allowed') toastError(new Error(r.deps.error));
+        else toast(t('ext.added', { name: r?.name || '' }));
         onDone?.();
       }
     } catch (e) {
@@ -256,9 +274,10 @@ function AddExtension({ onDone }) {
           manifest={pending.manifest}
           permissions={pending.permissions}
           errors={pending.errors}
+          dependencies={pending.dependencies}
           mode={pending.mode}
           busy={busy}
-          onConfirm={(choice, opts) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install', opts?.trust === true))}
+          onConfirm={(choice, opts) => (pending.mode === 'review' ? decide(choice) : install(source.trim(), 'install', opts?.trust === true, opts?.installDeps === true))}
           onCancel={() => setPending(null)}
         />
       )}
@@ -350,7 +369,9 @@ export function ExtensionCard({ ext }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const status = ext.state === 'loaded' ? 'ok' : ext.state === 'error' ? 'error' : 'off';
+  const depsMissing = ext.deps?.state === 'missing' || ext.deps?.state === 'installing';
+  const status = ext.state === 'loaded' ? (depsMissing ? 'todo' : 'ok') : ext.state === 'error' ? 'error' : 'off';
+  const pillLabel = ext.state === 'loaded' && depsMissing ? t('ext.state.depsMissing') : t(`ext.state.${ext.state}`);
   const contributions = CONTRIB_KEYS
     .filter((k) => (ext.contributions?.[k] || 0) > 0)
     .map((k) => t(`ext.c.${k}`, { n: ext.contributions[k] }));
@@ -392,6 +413,28 @@ export function ExtensionCard({ ext }) {
     }
   };
 
+  // Allow + run `bun install` for this extension (also the retry after an offline failure).
+  const installDeps = async () => {
+    const ok = await confirmDialog({
+      title: t('ext.deps.confirm.title', { name: ext.title || ext.name }),
+      body: t('ext.deps.confirm.body', { list: (ext.deps?.missing || []).join(', ') }),
+      confirmLabel: t('ext.deps.confirm.go'),
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.patch(`/extensions/${ext.name}`, { installDeps: true });
+      await loadExtensions();
+      if (r?.deps && !r.deps.ok) setError(new Error(r.deps.error));
+      else toast(t('ext.deps.installed', { name: ext.title || ext.name }));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remove = async () => {
     const ok = await confirmDialog({
       title: t('ext.remove.title', { name: ext.title || ext.name }),
@@ -416,7 +459,7 @@ export function ExtensionCard({ ext }) {
     <SettingCard
       title={ext.title || ext.name}
       hint={ext.description || undefined}
-      pill={<StatusPill status={status} label={t(`ext.state.${ext.state}`)} />}
+      pill={<StatusPill status={status} label={pillLabel} />}
       actions={
         <>
           <button type="button" disabled={busy} onClick={remove} className={BTN_DANGER}>{t('ext.remove')}</button>
@@ -458,6 +501,20 @@ export function ExtensionCard({ ext }) {
         </div>
       )}
 
+      {ext.deps?.needed && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] md:text-[10.5px] text-fgdim">
+          <span className="font-bold">{t('ext.deps.label')}:</span>
+          <span>
+            {t(`ext.deps.state.${ext.deps.state}`)}
+            {ext.deps.lockfile ? ` · ${ext.deps.lockfile}` : ` · ${t('ext.deps.unpinned')}`}
+          </span>
+          {ext.deps.state === 'missing' && (
+            <button type="button" disabled={busy} onClick={installDeps} className={`${BTN_SM} ms-auto`}>
+              {t(ext.deps.allowed ? 'ext.deps.retry' : 'ext.deps.install')}
+            </button>
+          )}
+        </div>
+      )}
       {ext.error && <ErrorLine>{ext.error}</ErrorLine>}
       {(ext.warnings || []).length > 0 && (
         <div className="mt-2 rounded-lg border border-hair bg-chip/50 px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">

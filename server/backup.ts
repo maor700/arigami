@@ -794,6 +794,8 @@ export interface BundleExportResult {
   extensions: string[];
   /** true when memory-seed/ carries USER.md/MEMORY.md — personal profile, review before sharing */
   memoryWarning: boolean;
+  /** things that make the bundle less reproducible than it looks (e.g. an extension's dependencies are not pinned) */
+  warnings: string[];
 }
 
 /**
@@ -855,6 +857,25 @@ function gitRemote(dir: string): string | null {
 function gitHead(dir: string): string | null {
   const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8', timeout: 5000 });
   return r.status === 0 ? r.stdout.trim() : null;
+}
+
+/**
+ * An extension's dependencies never travel (node_modules is rebuilt by `bun install`
+ * on the other side — server/lib/ext-deps.ts), so what makes that install the SAME
+ * install is package.json + the lockfile. A vendored extension carries both (copyDir
+ * keeps everything but node_modules/.git); this says when that is not enough.
+ */
+function extDepsWarnings(name: string, dir: string, fromGit: boolean): string[] {
+  let deps: Record<string, unknown> = {};
+  try { deps = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))?.dependencies || {}; } catch { return []; }
+  if (!deps || typeof deps !== 'object' || !Object.keys(deps).length) return [];
+  const lock = ['bun.lock', 'bun.lockb'].find((f) => fs.existsSync(path.join(dir, f)));
+  if (!lock) return [`extension "${name}": package.json declares dependencies but there is no bun.lock — the other host resolves versions afresh. Run \`bun install\` in ${path.join('user', 'extensions', name)} and commit the lockfile to pin them.`];
+  if (!fromGit) return [];
+  // A git-sourced extension travels as a pinned ref: the other host gets the COMMITTED package.json/lockfile, not these files.
+  const r = spawnSync('git', ['status', '--porcelain', '--', 'package.json', lock], { cwd: dir, encoding: 'utf8', timeout: 5000 });
+  const dirty = r.status === 0 ? r.stdout.trim() : '';
+  return dirty ? [`extension "${name}": package.json/${lock} have uncommitted changes — the bundle pins the commit, so the other host installs the committed versions`] : [];
 }
 
 function copyDir(from: string, to: string): void {
@@ -936,6 +957,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
   // profile repo carries it. Settings go along when they hold no secret-looking key; secrets and node_modules never do.
   const extensions: Record<string, unknown>[] = [];
   const extNames: string[] = [];
+  const warnings: string[] = [];
   const extRoot = path.join(dir, 'user', 'extensions');
   const extState = readJson<any>(path.join(dir, 'extensions.json')) || {};
   if (fs.existsSync(extRoot)) {
@@ -951,6 +973,7 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
       } else {
         copyDir(from, path.join(out, 'extensions', n));
       }
+      warnings.push(...extDepsWarnings(n, from, !!origin));
       const st = extState.settings?.[n];
       if (st && typeof st === 'object' && !Array.isArray(st)) {
         const safe = Object.fromEntries(Object.entries(st).filter(([k]) => !/token|secret|password|api[_-]?key/i.test(k)));
@@ -980,9 +1003,11 @@ export function exportBundle(opts: BundleExportOptions = {}): BundleExportResult
       `| \`cron.json\` | ${cron.length} job(s) (registered disabled on apply unless the bundle is shipped) |\n` +
       `| \`extensions/\` | ${extNames.length ? extNames.join(', ') + ' — installed from a trusted bundle only (they run code); a git-sourced one is a pinned ref' : '—'} |\n` +
       `| \`agents/\` | ${agents.length ? agents.join(', ') + ' — created on apply when absent; an existing agent is left alone unless `--force`' : '—'} |\n\n` +
-      `Not included, by design: accounts, API keys, users/pairing, chat history, sessions, uploads. Use a full backup (\`bin/host export --full\`) for those.\n`,
+      `Not included, by design: accounts, API keys, users/pairing, chat history, sessions, uploads. Use a full backup (\`bin/host export --full\`) for those.\n` +
+      `Extension dependencies (node_modules) are not included either: the applying host runs \`bun install\` from each extension's package.json + lockfile.\n` +
+      (warnings.length ? `\n## Check before sharing\n\n${warnings.map((w) => `- ${w}`).join('\n')}\n` : ''),
   );
-  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, agents, extensions: extNames, memoryWarning: memorySeed.length > 0 };
+  return { dir: out, name, skills, cron: cron.length, repos: repos.length, memorySeed, agents, extensions: extNames, memoryWarning: memorySeed.length > 0, warnings };
 }
 
 /** tar.gz stream of a bundle dir (the export UI download). */

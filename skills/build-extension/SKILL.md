@@ -42,6 +42,11 @@ runs sandboxed and **cannot** call `/__api`; everything goes through `window.ari
   `ctx.secrets` / env. Put a `settings.schema` in the manifest instead of a constant.
 * Extension code runs **in the host process with the host's privileges** — say this to
   the human at the end (step 7), plainly, once.
+* **Need an npm package?** Declare it in the extension's own `package.json`, run
+  `bun install --ignore-scripts` in the extension directory, and keep the `bun.lock` it
+  writes — never `node_modules` (it is not copied, committed or exported). Another host
+  installs from that lockfile once an admin allows it (`bin/host ext deps <name>`); until
+  then `GET /__api/extensions` shows `"dependencies missing: …"`. docs/EXTENSIONS.md §6.1.
 
 ---
 

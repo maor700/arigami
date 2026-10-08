@@ -108,7 +108,8 @@ environment variables for `tools[]`.
 
 A full backup (`bin/host export --full`) carries `user/` — minus
 `user/node_modules` and `user/extensions/*/node_modules`, which `bun install`
-rebuilds — and skips `ext-plugin/`, which is regenerated on every load.
+rebuilds (§6.1: on the next boot for an extension that is allowed to install) —
+and skips `ext-plugin/`, which is regenerated on every load.
 
 ---
 
@@ -270,6 +271,7 @@ to find the work — the agent already knows how to do it.
 | `listener.ts`, `hooks.ts` | on the next reload (mtime poll ≤30s, or `POST /__api/extensions/reload`) |
 | `ui/*` | on the next page load of the tab |
 | `manifest.json` settings, `enabled` | on the next reload |
+| `package.json` / `bun.lock`, or a hand-run `bun install` | on the next reload — dependencies re-checked, and re-installed when allowed (§6.1) |
 | a NEW tool, or a NEW skill | **the next session** (or `restart_session`) |
 | the host itself | never — the loader needs no host restart |
 
@@ -285,7 +287,8 @@ one.
 ```bash
 bin/host ext list
 bin/host ext validate examples/extensions/hello
-bin/host ext add      examples/extensions/hello      # or a git URL; --trust for §7.1
+bin/host ext add      examples/extensions/hello      # or a git URL; --trust for §7.1, --deps for §6.1
+bin/host ext deps    hello        # allow + run `bun install` of its package.json (and the retry)
 bin/host ext enable  hello        # / disable
 bin/host ext trust   hello        # / untrust — the trusted tier (§7.1)
 bin/host ext update  hello        # git pull --ff-only, only for a git checkout
@@ -318,12 +321,92 @@ REST (admin-only, same gate as `/__api/profiles`):
 | `GET /__api/extensions` | the registry view (readable by any signed-in principal) |
 | `POST /__api/extensions/reload` | rescan and reload everything |
 | `POST /__api/extensions/validate {source}` | validate a directory without installing |
-| `POST /__api/extensions/add {source, trust?}` | copy a directory / shallow-clone a git URL; returns the manifest **and its permissions**. `trust:true` also grants the trusted tier (§7.1) — the caller must have named that consequence |
-| `PATCH /__api/extensions/:name` | `{enabled?, settings?, secrets?, trusted?}` (`trusted` = the tier, §7.1) |
+| `POST /__api/extensions/add {source, trust?, installDeps?}` | copy a directory / shallow-clone a git URL; returns the manifest **and its permissions**. `trust:true` also grants the trusted tier (§7.1) — the caller must have named that consequence. `installDeps:true` allows and runs the dependency install (§6.1); the result carries `deps` |
+| `PATCH /__api/extensions/:name` | `{enabled?, settings?, secrets?, trusted?, installDeps?}` (`trusted` = the tier, §7.1; `installDeps:true` = allow + install now, `false` = withdraw, §6.1) |
 | `POST /__api/extensions/:name/update` | `git pull --ff-only` |
 | `DELETE /__api/extensions/:name` | remove the directory |
 | `GET /__api/listener-types` | core + extension listener types (this is what the MCP `register_listener` enum is built from) |
 | `POST /__api/ext/:name/tool/:tool {args}` | one tool call, for the browser SDK's `runTool` |
+
+### 6.1 Dependencies (`package.json`)
+
+An extension may ship a `package.json`. Its `dependencies` are installed **into
+the extension's own directory** (`user/extensions/<name>/node_modules`) — never
+copied: `ext add`, a profile apply and an export all leave `node_modules`
+behind, so on a new host they have to be installed.
+
+```
+user/extensions/sheets/
+  package.json        { "dependencies": { "xlsx": "^0.18.5" } }
+  bun.lock            pins them — commit it; the install is frozen to it
+  node_modules/       built here by the host, never committed, never exported
+  tools/module.ts     import * as XLSX from 'xlsx'
+```
+
+**When the host installs.** Right after an install or an update brought new
+files (`ext add`, `ext update`, every profile apply — including one where the
+files did not change, so an apply that was offline completes on the next one),
+when an admin asks (`bin/host ext deps <name>`, the card's *Install
+dependencies* button, `PATCH {installDeps:true}`), and on a reload that sees a
+changed `package.json`/lockfile or finds them missing (a boot after a restore).
+Only when the dependencies are not already satisfied: every declared package
+present at a version matching its range, and installed from *this*
+`package.json` + lockfile (a stamp, `node_modules/.arigami-deps.json`, records
+which).
+
+**Only when allowed.** The install fetches code from a package registry that
+nobody here read, so it is its own decision — `extensions.json` → `deps[<name>]`,
+like the trusted tier. It is granted by an admin (the checkbox in the install
+dialog, `ext add --deps`, `ext deps <name>`, `installDeps:true` over REST) or
+by applying a **trusted** profile bundle, which is already allowed to install
+the extension's code. An extension cannot grant it to itself. Without it the
+extension is installed, nothing is downloaded, and its status says so.
+
+**How.** `bun install --production` in the extension directory, with
+`--frozen-lockfile` when a `bun.lock`/`bun.lockb` is there (a `package.json`
+that drifted from its lockfile fails instead of resolving afresh) and
+`--no-save` when not (the host never writes a lockfile into your extension —
+the directory keeps matching its source). Bounded by
+`ARIGAMI_EXT_DEPS_TIMEOUT_MS` (default 180s); the whole process group is
+killed at the deadline.
+
+**No lifecycle scripts** (`--ignore-scripts`): neither the extension's own
+`preinstall`/`postinstall` nor any dependency's runs. The install happens on a
+click or on an unattended profile apply, with the host's privileges, and a
+postinstall in some transitive package is code nobody reviewed — the classic
+supply-chain path, which a lockfile alone does not close. The cost: a package
+that needs a native build will not work this way. Run `bun install` by hand in
+the extension directory (the mtime poll picks it up), or set
+`ARIGAMI_EXT_DEPS_SCRIPTS=1` on the host to fall back to Bun's own policy, in
+which only `trustedDependencies` run their scripts.
+
+**When it fails** (offline, a registry error, a frozen lockfile that does not
+match) nothing else does: the extension is still installed, and
+`GET /__api/extensions` carries
+
+```json
+"deps":  { "needed": true, "state": "missing", "allowed": true, "lockfile": "bun.lock",
+           "missing": ["xlsx"], "error": "dependencies missing: <bun's reason>" },
+"error": "dependencies missing: <bun's reason>"
+```
+
+— the same line on the cockpit card, with a *Retry* button. A tool whose module
+cannot import its package answers with that line instead of a bare `Cannot find
+package`. A failure is not retried on every poll; a changed `package.json`, the
+next profile apply or the button retries it. A profile apply reports
+`deps: "ok" | "missing"` (and `depsError`) per extension, and is not failed by it.
+
+**No restart after a fix.** Bun keeps a failed import for the life of a
+process, so the loader never re-imports in place: listeners and hooks are
+imported from a fresh copy whose `node_modules` links to the extension's, and a
+tool server's spec carries the state of `node_modules` — once an install lands
+(or a hand-run one is noticed by the poll), the next call gets a new process.
+
+**Export.** A bundle never carries `node_modules`, and always carries what
+makes the install the same install: `package.json` and the lockfile. An
+extension that declares dependencies but has no lockfile is exported with a
+warning (in the result and the bundle's README); so is a git-sourced one whose
+`package.json`/lockfile has uncommitted changes (the bundle pins the commit).
 
 ---
 
@@ -339,6 +422,9 @@ What the host does to keep that honest:
 
 * **Nothing is ever downloaded on its own.** You install from a directory or a
   git URL you named. There is no registry, no auto-update, no background fetch.
+  An extension's npm dependencies are fetched only once an admin (or a trusted
+  profile) allowed it for that extension, and without running install scripts
+  (§6.1).
 * **The permissions are shown first.** `ext add` prints `manifest.permissions`;
   the cockpit shows them on a confirmation card.
 * **The installed commit is recorded.** `extensions.json` keeps the `sha` of each
