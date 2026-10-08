@@ -107,11 +107,16 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       if (result.role === 'user') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
       const back = safeReturnUrl(cfg, result.returnTo);
-      // Back to the user's OWN workspace while it is not running: the gate would refuse it again, and an edge that
-      // answers that with a fresh sign-in (nginx auth-signin) would loop. /workspace resumes it and shows progress.
+      // Back to the user's OWN workspace: through the handoff while it runs — the gate now lets the browser in, but
+      // the cockpit has no session of its own yet in a fresh browser and would show its pairing screen (the handoff
+      // lands on /__host/, the deeper path is not kept). Not running: the gate would refuse it again, and an edge
+      // that answers that with a fresh sign-in (nginx auth-signin) would loop — /workspace resumes it instead.
       const backNs = back && !back.startsWith('/') ? tenantNsForHost(cfg, new URL(back).host) : null;
       const own = backNs ? store.findTenantByNs(backNs) : null;
-      if (own && own.subject === result.subject && own.state !== 'running') return redirect('/workspace', setCookie);
+      if (own && own.subject === result.subject) {
+        if (own.state !== 'running') return redirect('/workspace', setCookie);
+        return redirect(signInUrl(tenantUrl(cfg, own.ns), own.handoff_secret, own.email), setCookie);
+      }
       return redirect(back || '/', setCookie);
     }
 

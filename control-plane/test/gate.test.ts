@@ -183,18 +183,20 @@ describe('return URL (open-redirect guard)', () => {
     }
   });
 
-  test('/auth/callback sends a user whose own workspace is not running to /workspace, not back to the gate', async () => {
-    const { app, user } = setup();
+  test('/auth/callback back to the own workspace: via the handoff when running, /workspace when not', async () => {
+    const { app, user, store } = setup();
     const dozy = user('dozy', 'user', 'dormant');
     const bob = user('bob');
+    const bobT = store.findTenantBySubject('bob')!;
+    const handoff = bobT.handoff_secret ? `https://${bob.host}/__api/auth/handoff?t=` : `https://${bob.host}`;
     for (const [who, rd, expected] of [
       ['dozy', `https://${dozy.host}/__host/`, '/workspace'], // own, dormant: the gate would refuse it again
-      ['bob', `https://${bob.host}/__host/`, `https://${bob.host}/__host/`], // own, running
+      ['bob', `https://${bob.host}/__host/?x=1`, handoff], // own, running: the cockpit needs its own session
       ['bob', `https://${dozy.host}/__host/`, `https://${dozy.host}/__host/`], // not his: the gate answers 403
     ]) {
       (app.auth as any).oidcCallback = async () => ({ ok: true, subject: who, email: `${who}@example.com`, role: 'user', isNewUser: false, returnTo: rd });
       const res = await app.handle(new Request('https://lab.example.com/auth/callback?code=x&state=y'));
-      expect([who, rd, res.headers.get('location')]).toEqual([who, rd, expected]);
+      expect([who, rd, res.headers.get('location')?.startsWith(expected) && expected]).toEqual([who, rd, expected]);
     }
   });
 });
