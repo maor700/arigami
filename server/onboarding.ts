@@ -360,12 +360,12 @@ export function listProfiles(): Profile[] {
     try {
       files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
     } catch {
-      continue;
+      /* dir absent: still look for bundles below */
     }
     // Profile Bundles (K3, the primary form): <dir>/bundles/<name>/profile.json
     // for the shipped tree, <dir>/<name>/profile.json for installed ones —
     // listed first so a bundle wins over a thin <name>.json of the same name.
-    const bundleRoot = dir === SHIPPED_PROFILES ? path.join(dir, 'bundles') : dir;
+    const bundleRoot = dir === SHIPPED_PROFILES ? (process.env.ARIGAMI_SHIPPED_BUNDLES_DIR || path.join(dir, 'bundles')) : dir;
     let bundles: string[] = [];
     try {
       bundles = fs.readdirSync(bundleRoot).filter((n) => fs.existsSync(path.join(bundleRoot, n, 'profile.json')));

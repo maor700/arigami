@@ -113,7 +113,8 @@ test('skill-proposal apply writes to the user dir (edit of a shipped skill ⇒ o
 test('profile apply (shipped bundle, new skill) lands in the user dir and the repo tree stays clean', () => {
   const dir = tmp();
   const bname = `zz-f2-${Date.now().toString(36)}`;
-  const bdir = path.join(ROOT, 'profiles', 'bundles', bname); // under profiles/bundles ⇒ trusted
+  const shipDir = tmp(); // a private shipped dir (ARIGAMI_SHIPPED_BUNDLES_DIR) ⇒ trusted by location
+  const bdir = path.join(shipDir, bname);
   const skillName = `${bname}-skill`;
   try {
     fs.mkdirSync(path.join(bdir, 'skills', skillName), { recursive: true });
@@ -122,7 +123,7 @@ test('profile apply (shipped bundle, new skill) lands in the user dir and the re
     const r = runInChild(
       "const pf=await import('./server/profiles.ts');" +
         `const b=pf.loadBundle(${JSON.stringify(bdir)});const rep=await pf.applyBundle(b,{skipRepos:true});emit({rep});`,
-      env(dir)
+      { ...env(dir), ARIGAMI_SHIPPED_BUNDLES_DIR: shipDir }
     );
     if (!r.ok) throw new Error(r.error);
     expect(r.out[0].rep.skills[0].status).toBe('applied');
@@ -132,6 +133,6 @@ test('profile apply (shipped bundle, new skill) lands in the user dir and the re
     // and it's visible to the merged list + the session plugin
     expect(fs.existsSync(path.join(dir, 'user-plugin', 'skills', skillName, 'SKILL.md'))).toBe(true);
   } finally {
-    fs.rmSync(bdir, { recursive: true, force: true });
+    fs.rmSync(shipDir, { recursive: true, force: true });
   }
 });

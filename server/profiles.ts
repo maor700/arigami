@@ -11,7 +11,7 @@
 // Sources, in resolution order (see resolveSource):
 //   1. an existing directory path (absolute, ~/…, or relative to cwd)
 //   2. a name under $ARIGAMI_DIR/profiles/<name>/ (installed / previously fetched)
-//   3. a name under <repo>/profiles/bundles/<name>/ (shipped, TRUSTED)
+//   3. a name under the shipped dir ($ARIGAMI_SHIPPED_BUNDLES_DIR, default <repo>/profiles/bundles/<name>/; empty by default, TRUSTED)
 //   4. a git URL → shallow clone into $ARIGAMI_DIR/profiles/<name>/
 //
 // apply() is idempotent and additive: repos are upserted into repos.json
@@ -39,7 +39,9 @@ import { resourceRoot } from './lib/resource-root.js';
 import { gitEnvFor } from './lib/git-auth.js';
 
 const REPO_ROOT = resourceRoot();
-export const SHIPPED_BUNDLES_DIR = path.join(REPO_ROOT, 'profiles', 'bundles');
+// The product ships no example bundles (profiles come from the org profile repo / ~/.arigami/profiles); the dir
+// is kept as a TRUSTED location and is overridable (tests, custom images). Absent/empty is fine.
+export const SHIPPED_BUNDLES_DIR = process.env.ARIGAMI_SHIPPED_BUNDLES_DIR || path.join(REPO_ROOT, 'profiles', 'bundles');
 export const USER_BUNDLES_DIR = path.join(ARIGAMI_DIR, 'profiles');
 export const PROVENANCE_FILE = path.join(ARIGAMI_DIR, 'profile.json');
 export const PENDING_FILE = path.join(ARIGAMI_DIR, 'pending-profile');

@@ -167,7 +167,7 @@ sharing.
 
 The bundle's `name` is always `exported-host` (or `--name` / `?name=`) —
 never the name of the last bundle you *applied*. Cron jobs carry a stable
-`key` (`<bundle>/<slug>`, e.g. `solo-dev/standup`) that survives export →
+`key` (`<bundle>/<slug>`, e.g. `my-profile/standup`) that survives export →
 import hops, so importing an export back into the same instance **updates**
 the existing triggers (prompt/schedule) instead of adding `[exported-host] …`
 twins; a hand-made trigger that matches by name + prompt is adopted the same

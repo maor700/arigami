@@ -82,12 +82,15 @@ test('no internal references or private network identifiers anywhere in the repo
 // sources. Which *specific* org must never appear is not spelled out here —
 // test/no-personal-data.test.js scans profiles/ along with everything else,
 // against the out-of-repo denylist.
+// The product ships none (profiles/bundles/ is absent); the fixtures stand in for them and hold the same bar.
 test('profiles/ ships only generic bundles', () => {
-  const root = path.join(ROOT, 'profiles', 'bundles');
-  const bundles = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  const roots = [path.join(ROOT, 'profiles', 'bundles'), path.join(ROOT, 'test', 'fixtures', 'bundles')];
+  const bundles = roots.flatMap((root) =>
+    fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ name: e.name, root })) : []
+  );
   expect(bundles.length).toBeGreaterThan(0);
   for (const b of bundles) {
-    const f = path.join(root, b.name, 'profile.json');
+    const f = path.join(b.root, b.name, 'profile.json');
     const p = JSON.parse(fs.readFileSync(f, 'utf8'));
     expect(typeof p.name).toBe('string');
     for (const r of p.repos || []) {

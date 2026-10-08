@@ -79,17 +79,11 @@ differs, and what does not work on Codex yet: [docs/ENGINES.md](docs/ENGINES.md)
 
 A profile bundle folds the cockpit to a purpose — repos + skills + memory
 seed + cron, applied additively (new skills land in `$ARIGAMI_DIR/skills`,
-cron jobs start disabled). Shipped in [`profiles/bundles/`](profiles/bundles/):
-
-| bundle | one-liner |
-|---|---|
-| `solo-dev` | one developer, their own repos: a daily standup skill and a weekday cron |
-| `agency-client` | *Arigami folded to a client*: weekly status report as a shareable artifact, intake → ticket → child session, `CLIENT.md` template |
-| `ops` | ops team: signed alert webhook → incident session → decision on your phone; runbooks executed on a real desktop that hands you the wheel at login/2FA; daily digest |
-| `il-whatsapp-business` | Hebrew small business in WhatsApp: inbox triage that drafts replies and asks the owner before sending (never auto-sends), quote/appointment follow-ups, `BUSINESS.md` template |
+cron jobs start disabled). The product ships no example profiles: they come from your
+organisation's profile repo (a git URL) or `~/.arigami/profiles/` — see [profiles/README.md](profiles/README.md).
 
 `install.sh --profile <name>` · `bin/host profile apply <name>` · Setup → Profile.
-Copy a bundle directory to make your own; see [docs/INSTALL.md](docs/INSTALL.md) §3.
+Write your own; see [docs/INSTALL.md](docs/INSTALL.md) §3.
 
 ## Why not …
 

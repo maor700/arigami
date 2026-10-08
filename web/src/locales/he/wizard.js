@@ -71,7 +71,7 @@ export const strings = {
   'wizard.profile.blank': 'התחל ריק',
   'wizard.profile.trusted': 'מובנה',
   'wizard.profile.external': 'חיצוני — סקילים נכנסים כהצעות ממתינות',
-  'wizard.profile.none': 'לא נמצאו חבילות. הוסף תחת ‎$ARIGAMI_DIR/profiles או המשך ריק.',
+  'wizard.profile.none': 'לא הותקנו פרופילים. פרופילים מגיעים ממאגר הפרופילים של הארגון (הדבק כתובת git למטה) או מ‎$ARIGAMI_DIR/profiles — או המשך ריק.',
   'wizard.profile.fromUrl': 'מכתובת git…',
   'wizard.profile.urlPlaceholder': 'https://github.com/org/bundle.git',
 
