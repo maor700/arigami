@@ -101,11 +101,13 @@ export function chromeBin(): string {
 // Inside a container the host runs as an unprivileged user without user
 // namespaces, so Chrome's sandbox cannot start; `--no-sandbox` is the
 // documented answer (compose gives it a 1g /dev/shm instead of SYS_ADMIN).
-// Detected via /.dockerenv (or an explicit CHROME_NO_SANDBOX=1) — never on a
-// native host.
-export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env): string[] {
-  const inDocker = env.CHROME_NO_SANDBOX === '1' || fs.existsSync('/.dockerenv');
-  return inDocker ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
+// Detected via /.dockerenv, a Kubernetes pod (KUBERNETES_SERVICE_HOST — containerd pods have no /.dockerenv, which
+// is how every browser launch in a tenant pod used to die in Chrome's zygote), or an explicit CHROME_NO_SANDBOX=1 —
+// never on a native host. CHROME_NO_SANDBOX=0 forces the sandbox on.
+export function chromeExtraFlags(env: NodeJS.ProcessEnv = process.env, dockerenv: boolean = fs.existsSync('/.dockerenv')): string[] {
+  if (env.CHROME_NO_SANDBOX === '0') return [];
+  const inContainer = env.CHROME_NO_SANDBOX === '1' || dockerenv || !!env.KUBERNETES_SERVICE_HOST;
+  return inContainer ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : [];
 }
 
 export function isChromeRunning(sessionId: string): boolean {

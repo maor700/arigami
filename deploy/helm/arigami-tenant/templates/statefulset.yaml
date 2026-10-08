@@ -66,6 +66,10 @@ spec:
               value: "0.0.0.0"
             - name: ARIGAMI_PUBLIC_URL
               value: {{ include "arigami-tenant.publicUrl" . | quote }}
+            # A pod has no unprivileged user namespaces, so Chrome's sandbox cannot start; containerd pods also lack
+            # /.dockerenv, which older images used to detect "in a container" — be explicit.
+            - name: CHROME_NO_SANDBOX
+              value: "1"
             # The ingress controller is not a loopback peer of this pod (same
             # reasoning as docker-compose.yml's caddy/tls profile) — trusting
             # X-Forwarded-* here would let anyone spoof it. TLS is terminated
