@@ -8,7 +8,7 @@ description: >-
   docs/CONTROL-PLANE.md and docs/DEVOPS-HANDOFF.md.
 type: application
 version: 0.1.0
-appVersion: "0.10.0"
+appVersion: "0.11.0"
 home: https://github.com/maor700/arigami
 sources:
   - https://github.com/maor700/arigami
