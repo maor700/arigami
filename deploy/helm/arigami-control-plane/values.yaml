@@ -152,6 +152,13 @@ config:
   # the clone has no timeout, so an unreachable URL leaves the tenant pod stuck
   # short of Ready with empty logs. Verify reachability FROM A POD, not from a laptop.
   arigamiBundle: ""
+  # Tag / branch / commit of arigamiBundle every tenant converges to. The
+  # reconcile loop resolves it to one commit (git ls-remote) and re-applies the
+  # profile on each running tenant, canary-first, stopping on the first failure
+  # (docs/CONTROL-PLANE.md "Profile rollout"). Empty = the default branch.
+  arigamiBundleRef: ""
+  # "0" turns the profile rollout off (tenants keep what they booted with).
+  profileRollout: "1"
 
   # Ingress class handed to every tenant release. Must match this cluster's
   # controller; before arigami-tenant 0.2.0 this value was read and silently

@@ -98,6 +98,10 @@ spec:
               value: {{ .Values.config.tenantImageTag | quote }}
             - name: CP_ARIGAMI_BUNDLE
               value: {{ .Values.config.arigamiBundle | quote }}
+            - name: CP_ARIGAMI_BUNDLE_REF
+              value: {{ .Values.config.arigamiBundleRef | default "" | quote }}
+            - name: CP_PROFILE_ROLLOUT
+              value: {{ .Values.config.profileRollout | default "1" | quote }}
             - name: CP_INGRESS_CLASS
               value: {{ .Values.config.tenantIngressClass | quote }}
             - name: CP_INGRESS_NAMESPACES

@@ -302,9 +302,9 @@ All read once at boot (`src/config.ts`):
 | `CP_URL_SCHEME` | `https` | `http` only makes sense for a local/k3d proof with no TLS in-cluster |
 | `CP_IMAGE_REPOSITORY` | `ghcr.io/maor700/arigami` | what image every new tenant gets |
 | `CP_IMAGE_TAG` | `latest` | a real deployment should pin a digest/release tag, not `latest` (same advice as `values-real.yaml`) |
-| `CP_ARIGAMI_BUNDLE` | — | git URL applied to every tenant on first boot (`server/profiles.ts` `applyBundleEnv`) — this is what makes the harness "already configured for the company" |
+| `CP_ARIGAMI_BUNDLE` | — | git URL applied to every tenant on first boot (`server/profiles.ts` `applyBundleEnv`) — this is what makes the harness "already configured for the company" — and, after that, kept current by the profile rollout ([below](#profile-rollout)) |
 | `CP_ARIGAMI_GIT_TOKEN` | — | read-only token for the org's **private** profile repo (and the extensions in it), handed to each tenant as `secretEnv.ARIGAMI_GIT_TOKEN`; the user never signs in to GitHub for it. Sent only to `ARIGAMI_GIT_TOKEN_HOSTS` (default `github.com`) as an HTTP header — see `profiles/README.md`. Same Helm-release-Secret trade-off as the handoff secret. |
-| `CP_ARIGAMI_BUNDLE_REF` | — | **accepted, not wired to anything yet** — same gap `docs/K8S.md` documented for the chart itself: `applyBundleEnv`'s `gitClone` always clones the default branch. A future wave adding ref-pinning needs to plumb this through the chart's `env.ARIGAMI_BUNDLE_REF` (chart change) as well as here. |
+| `CP_ARIGAMI_BUNDLE_REF` | — (default branch) | tag / branch / commit of the profile every tenant converges to. Passed to new tenants as the chart's `env.ARIGAMI_BUNDLE_REF` (first boot checks it out) and resolved to one commit on every reconcile tick for the [profile rollout](#profile-rollout). |
 | `CP_HELM_CHART_PATH` | `../deploy/helm/arigami-tenant` | which chart to render |
 | `CP_RELEASE_PREFIX` | `u-` | release/namespace name prefix |
 | `CP_HELM_EXTRA_VALUES` | — | optional extra `-f` layered on every install (used by the test/demo to swap in the stub image's resource/security overrides) |
@@ -441,7 +441,12 @@ The admin page gained a per-tenant image column (`running → desired` with
 the pending arrow), a digest form (records intent; the reconcile loop
 applies it — the form never blocks on helm), backup counts and a "Backup
 now" button. `src/cli.ts` is the scriptable/operator surface:
-`tenants | set-digest | upgrade | backup | backups | restore`.
+`tenants | set-digest | upgrade | backup | backups | restore`, plus the
+profile rollout's `set-ring | profile | profile-retry` ([below](#profile-rollout)).
+
+The admin page also shows a **Profile (applied → desired)** column, a banner
+with the desired ref → commit, and — while a failed apply holds the rollout —
+which tenant failed, why, when it retries, and a "Retry now" button.
 
 ### New env (all optional, defaults in parentheses)
 
@@ -453,6 +458,11 @@ now" button. `src/cli.ts` is the scriptable/operator surface:
 | `CP_BACKUP_INTERVAL_SEC` | `86400` | scheduled backup age threshold; `0` = on-demand only |
 | `CP_BACKUP_KEEP` | `7` | newest N archives kept per tenant |
 | `CP_ORG_NAME` | `your organisation` | shown on the waiting page ("Applying …'s setup") |
+| `CP_PROFILE_ROLLOUT` | `1` | profile rollout on/off (it is only ever on when `CP_ARIGAMI_BUNDLE` is a git source) |
+| `CP_PROFILE_RETRY_BASE_SEC` | `60` | first retry after a failed profile apply; doubles per consecutive failure |
+| `CP_PROFILE_RETRY_MAX_SEC` | `3600` | backoff ceiling |
+| `CP_PROFILE_RECHECK_SEC` | `3600` | re-read a converged tenant's provenance this often, so drift (someone re-applied something else in-tenant) is noticed and corrected; `0` = never |
+| `CP_PROFILE_BATCH` | `0` | max profile applies per tick (`0` = no limit); `1` makes the rollout one tenant per tick |
 
 ### Landing the user IN their workspace (K8S-3 follow-on, 2026-09-02)
 
@@ -663,14 +673,99 @@ production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
 - Multi-node behaviour, real storage classes, TLS — K8S-4 territory
   (docs/K8S-OPERATIONS.md sketches the dedicated-box path).
 
+## Profile rollout
+
+The org ships ONE profile repo (`profile.json` + `skills/` + `agents/` +
+`extensions/` + `cron.json`, see `profiles/README.md`). A tenant applies it
+once, on first boot. Publishing a new version — a push to the branch
+`CP_ARIGAMI_BUNDLE_REF` names, a new tag set as the ref, or a commit sha —
+now reaches every existing tenant through the reconcile loop, mirroring how an
+image digest converges:
+
+```
+tick ─▶ git ls-remote CP_ARIGAMI_BUNDLE  ─▶ desired = ONE commit (a moving branch cannot split the fleet)
+     ─▶ for each running tenant, canary ring first, then oldest first:
+          decideProfile()  converged / backoff / halted ─▶ skip
+            │ needs it
+          GET  /__api/profiles/rollout  (in-pod loopback, operator token)
+            │ already on the commit, no errors ─▶ record it, no apply
+            │ busySessions > 0 ─▶ skip, next tick retries
+          POST /__api/profiles/rollout  {ref, commit as signed claims}
+            │ ok ─▶ record the commit the tenant REPORTS
+            │ failed ─▶ record error + backoff, HALT: stop this pass, and hold
+            │           every other tenant until this one succeeds or a new
+            │           commit is published
+```
+
+**The trusted entry point (tenant side, `server/profile-rollout.ts`).** A
+directory/CLI/cookie apply is untrusted — extensions are `skipped`, new cron
+jobs start disabled — because a user should not be able to grant themselves
+code execution through a bundle. The org operator is different: the rollout
+re-applies the bundle as **trusted** (extensions install/update in place via
+`installOrUpdateExtension`, new skills go live, cron jobs land by `bundleKey`,
+`scope: org` jobs are still skipped unless `ARIGAMI_ORG_HOST=1`; skills, agents
+and memory seed stay additive — an existing skill the profile CHANGES still
+becomes a pending proposal for the user). So it is gated on a credential only
+the operator holds: an operator token (`kind: "operator"`) signed with the
+per-tenant `ARIGAMI_HANDOFF_SECRET` the control-plane already injects
+(`src/handoff.ts mintOperator` / `server/handoff.ts verifyOperator`, the same
+wire format as the sign-in handoff, pinned by `test/handoff-contract.test.ts`).
+
+- A cookie, a session token, an API token — even the tenant admin's — does
+  not open `/__api/profiles/rollout`; neither does a sign-in token (different
+  `kind`), nor a status token on the apply route (the action is a claim).
+- The ref/commit are signed claims; the **source is not** — the tenant only
+  ever applies its own `ARIGAMI_BUNDLE`. A captured token can re-apply the
+  org's own repo at one commit, once: apply tokens are single-use (the jti is
+  spent on disk, like a sign-in) and live ≤ 2 minutes.
+- The token goes into the pod on **stdin** (`kubectl exec -i … curl -H @-`),
+  never in a process argument list.
+- The tenant refuses while a turn is in flight (409) or while another apply
+  runs (409), so the control-plane's busy check is enforced at both ends.
+- The bundle is fetched (`git fetch` of the ref, then the exact commit, token
+  as a header via `server/lib/git-auth.ts`) and **validated before anything is
+  touched**: a profile that fails validation returns 422 and leaves the tenant
+  exactly as it was. Every attempt is recorded in `$ARIGAMI_DIR/profile-rollout.json`;
+  a successful one writes `ref` + `commit` into the provenance (`profile.json`),
+  which is what the control-plane reads back.
+
+**Canary.** `bun src/cli.ts set-ring <tenant> canary` puts a tenant (yours, a
+volunteer's) at the front of every rollout. Applies run one tenant at a time;
+the first failure stops the pass and halts the commit for everyone else, so a
+bad profile reaches exactly one tenant. `CP_PROFILE_BATCH=1` slows the rollout
+to one tenant per tick for a longer soak. The failed tenant is retried with
+exponential backoff (`CP_PROFILE_RETRY_BASE_SEC`, doubling, capped at
+`CP_PROFILE_RETRY_MAX_SEC`); "Retry now" on the admin page (or
+`bun src/cli.ts profile-retry <tenant>`) drops the wait. The halt ends when the
+retry succeeds or a new commit is published — fixing the profile is the normal
+way out.
+
+**Not failures** (nothing recorded, retried next tick): a busy tenant, an
+unreachable one (status unreadable → fail closed, no apply), a tenant whose
+pod has no `ARIGAMI_BUNDLE` (provisioned before the bundle was configured — it
+converges once re-provisioned), a tenant with no handoff secret (pre-K8S-3
+row). If `git ls-remote` fails the tick rolls nothing out and the admin banner
+shows why. One lifecycle action per tenant per tick: an image upgrade, a
+profile apply and a backup never share a tick for the same tenant.
+
+**Tests.** `test/profile-rollout.test.ts` (decision table, canary pass,
+backoff, halt/release, tick integration, admin page) and
+`test/profile-rollout.e2e.test.ts` — two REAL Arigami hosts, a real git repo
+and real reconcile ticks, with only kubectl faked
+(`test/fixtures/fake-kubectl.sh` runs the in-pod `curl` against the local
+host): boot → confirm without re-apply → v2 canary-first with its extension
+installed → a broken v3 fails on the canary, the other tenant is never called,
+both stay healthy, backoff holds → a fixed v4 releases the halt. Tenant side:
+`test/profile-rollout-host.test.ts` in the root suite (auth matrix, trusted
+apply, single-use, broken profile, busy refusal).
+
 ## What's deliberately NOT in here yet (K8S-4/K8S-5)
 
 - ~~Reconcile loop~~ — **landed in K8S-3** (above), including the
   "only upgrade when no session is in flight" gate.
-- **Rings.** The `ring` column exists in the schema (per the PRD's table
-  shape) and defaults to `"stable"`, but nothing reads it to stage a
-  rollout across cohorts — the reconcile loop upgrades every running tenant
-  whose digest differs, in table order.
+- **Rings for images.** The profile rollout reads `ring` (`canary` first,
+  `set-ring` in the CLI); image upgrades still do not — the reconcile loop
+  upgrades every running tenant whose digest differs, in table order.
 - **Dormancy automation** — moved to K8S-5 by explicit user decision
   (SPEC-ARIGAMI-K8S3.md: "right now I want to make this work properly; we'll
   optimize costs later"). `suspendTenant`/`resumeTenant` remain real levers; the

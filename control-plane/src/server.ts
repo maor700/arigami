@@ -7,6 +7,7 @@ import { tenantUrl } from './provisioner.js';
 import * as backupMod from './backup.js';
 import { signInUrl } from './handoff.js';
 import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
+import { rolloutEnabled, haltingTenant, DESIRED_META_KEY, type DesiredRecord } from './profile-rollout.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -152,7 +153,30 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         const list = adminOps.listBackups(cfg, t.ns);
         backups[t.ns] = { count: list.length, newestMs: list[0]?.mtimeMs ?? null };
       }
-      return html(tpl.adminPage(tenants, principal.email, backups));
+      const desired = rolloutEnabled(cfg) ? store.getMeta<DesiredRecord>(DESIRED_META_KEY) : null;
+      const profile: tpl.ProfileView | null = rolloutEnabled(cfg)
+        ? {
+            ref: desired?.ref ?? cfg.arigamiBundleRef,
+            commit: desired?.commit || '',
+            resolvedAt: desired?.resolvedAt || 0,
+            ...(desired?.error ? { error: desired.error } : {}),
+            haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
+          }
+        : null;
+      return html(tpl.adminPage(tenants, principal.email, backups, profile));
+    }
+
+    // Profile rollout: "retry now" for a tenant whose apply failed — drops the
+    // backoff wait, keeps the failure (and so the halt) until the retry passes.
+    const profileRetry = /^\/admin\/tenants\/([^/]+)\/profile-retry$/.exec(url.pathname);
+    if (profileRetry && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const t = store.findTenantBySubject(profileRetry[1]);
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      store.clearProfileBackoff(t.subject);
+      log(`[admin] ${t.ns} profile retry requested by ${principal.email}`);
+      return redirect('/admin');
     }
 
     // K8S-3 §2: set the digest the reconcile loop converges this tenant to.

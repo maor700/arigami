@@ -37,6 +37,27 @@ export function mint(secret: string, email: string, ttlMs = DEFAULT_TTL_MS): str
 }
 
 /**
+ * Profile rollout: a token for an OPERATOR call to the tenant (server/handoff.ts
+ * verifyOperator) — same secret and shape, a different `kind`, so it can never
+ * be redeemed as a sign-in (and a sign-in never opens the rollout routes). The
+ * apply token names the exact ref/commit and is single-use on the tenant.
+ */
+export type OperatorAction = 'profile-status' | 'profile-apply';
+export function mintOperator(secret: string, claims: { action: OperatorAction; ref?: string; commit?: string }, ttlMs = DEFAULT_TTL_MS): string {
+  if (!secret || secret.length < 16) throw new Error('handoff secret is missing or too short');
+  const payload = {
+    kind: 'operator',
+    action: claims.action,
+    ...(claims.ref ? { ref: claims.ref } : {}),
+    ...(claims.commit ? { commit: claims.commit } : {}),
+    exp: Date.now() + ttlMs,
+    jti: crypto.randomBytes(12).toString('base64url'),
+  };
+  const p = b64(JSON.stringify(payload));
+  return `${p}.${b64(crypto.createHmac('sha256', secret).update(p).digest())}`;
+}
+
+/**
  * Where to send the browser so it arrives signed in. Falls back to the plain
  * tenant URL when the tenant has no secret — a tenant provisioned before this
  * feature existed still works, it just shows its pairing screen.

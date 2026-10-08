@@ -49,9 +49,17 @@ extensions/<name>/           an extension that ships WITH the profile (manifest.
   PAT) reaches each tenant as `ARIGAMI_GIT_TOKEN`. `server/lib/git-auth.ts` sends it as an HTTP header, only to https
   URLs on `ARIGAMI_GIT_TOKEN_HOSTS` (default `github.com`) — never inside a URL, so it cannot reach a log or
   `.git/config`. It covers the bundle clone and any git-sourced extension.
+* **Pinning**: `ARIGAMI_BUNDLE_REF` (a tag, branch or commit; empty = the default branch) is what the first boot
+  checks out. The applied `ref` and `commit` are recorded in `$ARIGAMI_DIR/profile.json`.
 * **Updates**: `ARIGAMI_BUNDLE` is applied once, on a fresh data dir (`applyBundleEnv` is a no-op once a provenance
-  exists), so shipping a new profile version to existing tenants needs an explicit re-apply
-  (`POST /__api/profiles/apply`) — the control-plane does not drive that yet.
+  exists). A new version reaches existing tenants through the control-plane's **profile rollout**
+  (`docs/CONTROL-PLANE.md` "Profile rollout"): it resolves `CP_ARIGAMI_BUNDLE_REF` to one commit and calls each
+  tenant's `/__api/profiles/rollout` with an operator token signed by that tenant's handoff secret — canary tenants
+  first, never while a turn is in flight, stopping at the first failure. That re-apply is **trusted** (extensions
+  install/update in place, cron by `bundleKey`, `scope: org` still org-host only); skills, agents and the memory seed
+  stay additive, so a skill the new version CHANGES is a pending proposal for the user, not an overwrite. A profile that
+  does not validate fails the call and changes nothing. A standalone host re-applies with `POST /__api/profiles/apply`
+  (admin) as before — untrusted for anything but a shipped bundle.
 
 **Exported bundles are different.** `bin/host export --bundle` (Settings →
 Host → *Download profile bundle*) snapshots *your* instance, and its

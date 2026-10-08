@@ -17,8 +17,8 @@ export class ProvisionError extends Error {
   }
 }
 
-async function run(cmd: string[], opts: { timeoutMs?: number } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe' });
+async function run(cmd: string[], opts: { timeoutMs?: number; stdin?: string } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', ...(opts.stdin !== undefined ? { stdin: new Blob([opts.stdin]) } : {}) });
   const timeout = opts.timeoutMs
     ? setTimeout(() => {
         try {
@@ -74,6 +74,9 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
     '--set-string', `image.tag=${t.desired_digest}`,
     '--set', `ingress.domain=${cfg.orgDomain}`,
     '--set-string', `env.ARIGAMI_BUNDLE=${cfg.arigamiBundle}`,
+    // First boot checks the bundle out at the ref the rollout converges to; later versions arrive through the
+    // trusted re-apply (src/profile-rollout.ts), never through a pod restart.
+    '--set-string', `env.ARIGAMI_BUNDLE_REF=${cfg.arigamiBundleRef}`,
     '--wait', '--timeout', `${cfg.helmTimeoutSec}s`,
   ];
   // CP_INGRESS_CLASS was read into config and never passed to helm until now,
@@ -148,11 +151,42 @@ export async function execInTenant(
   cfg: Config,
   t: Tenant,
   cmd: string[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; stdin?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  return run(['kubectl', '-n', t.ns, 'exec', tenantPod(t.ns), '--', 'gosu', 'node:node', ...cmd], {
+  // `-i` only when there is something to feed: a credential goes in on stdin, never in argv (visible in `ps`).
+  return run(['kubectl', '-n', t.ns, 'exec', ...(opts.stdin !== undefined ? ['-i'] : []), tenantPod(t.ns), '--', 'gosu', 'node:node', ...cmd], {
     timeoutMs: opts.timeoutMs ?? 30_000,
+    stdin: opts.stdin,
   });
+}
+
+/**
+ * Profile rollout: one operator call to the tenant host over loopback (same
+ * route as the busy probe). The token rides on stdin as a header file
+ * (`curl -H @-`) so it never appears in a process list; it is short-lived and,
+ * for an apply, single-use anyway. Returns the HTTP status and parsed body.
+ */
+export async function tenantOperatorCall(
+  cfg: Config,
+  t: Tenant,
+  method: 'GET' | 'POST',
+  token: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ status: number; body: any }> {
+  const maxSec = Math.ceil((opts.timeoutMs ?? 30_000) / 1000);
+  const res = await execInTenant(
+    cfg,
+    t,
+    ['curl', '-sS', '-m', String(maxSec), '-X', method, '-H', '@-', '-w', '\n%{http_code}', `http://127.0.0.1:${cfg.tenantPort}/__api/profiles/rollout`],
+    { timeoutMs: (maxSec + 15) * 1000, stdin: `x-arigami-operator: ${token}\n` },
+  );
+  if (res.code !== 0) throw new ProvisionError(`profile call to ${t.ns} failed (exit ${res.code})`, res.stderr.slice(0, 500));
+  const nl = res.stdout.lastIndexOf('\n');
+  const status = Number(res.stdout.slice(nl + 1).trim());
+  let body: any = null;
+  try { body = JSON.parse(res.stdout.slice(0, nl)); } catch { body = { error: res.stdout.slice(0, Math.max(0, nl)).slice(0, 300) }; }
+  if (!Number.isFinite(status) || status === 0) throw new ProvisionError(`profile call to ${t.ns} got no HTTP status`, res.stdout.slice(0, 300));
+  return { status, body };
 }
 
 /**
