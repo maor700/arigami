@@ -27,7 +27,10 @@ test('createSession: defaults, scratch naming, first tab is the session tab', ()
   expect(a.activeTabId).toBe(a.tabs[0].id);
   // modelChoice is seeded from cfg.defaultModel (env/config-dependent), so assert
   // the stable fields exactly and modelChoice's presence rather than a pinned value.
-  expect(a.claude).toMatchObject({ sessionId: null, state: 'idle', permissionMode: 'bypassPermissions', accountId: null });
+  // accountId is the host's active account when one exists (another test file in the same process may have created one),
+  // so assert its presence rather than null.
+  expect(a.claude).toMatchObject({ sessionId: null, state: 'idle', permissionMode: 'bypassPermissions' });
+  expect('accountId' in a.claude).toBe(true);
   expect('modelChoice' in a.claude).toBe(true);
   expect(a.cwd).toBe(cfg.defaultCwd);
 
