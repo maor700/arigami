@@ -269,6 +269,10 @@ env:
   # the image under profiles/bundles/<name>) applied once, on this tenant's
   # first boot. Empty = no bundle, tenant starts blank like a fresh install.
   ARIGAMI_BUNDLE: ""
+  # tag / branch / commit of ARIGAMI_BUNDLE checked out on that first boot
+  # (empty = the repo's default branch). Later profile versions are rolled out
+  # by the control-plane's trusted re-apply, not by changing this value.
+  ARIGAMI_BUNDLE_REF: ""
 
 # Extra plain (non-secret) env vars, e.g. ARIGAMI_VOICE_LANG. [{name, value}]
 extraEnv: []

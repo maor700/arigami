@@ -83,6 +83,10 @@ spec:
             - name: ARIGAMI_BUNDLE
               value: {{ .Values.env.ARIGAMI_BUNDLE | quote }}
             {{- end }}
+            {{- if .Values.env.ARIGAMI_BUNDLE_REF }}
+            - name: ARIGAMI_BUNDLE_REF
+              value: {{ .Values.env.ARIGAMI_BUNDLE_REF | quote }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
