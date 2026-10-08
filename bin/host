@@ -520,7 +520,9 @@ ext() {
       trust=false; case " ${*:2} " in *" --trust "*) trust=true ;; esac
       # --deps: allow `bun install` of the extension's package.json (lifecycle scripts stay off).
       deps=false; case " ${*:2} " in *" --deps "*) deps=true ;; esac
-      depsflag=$([ "$deps" = true ] && echo --deps || true)
+      set -- "$src"
+      [ "$trust" = true ] && set -- "$@" --trust
+      [ "$deps" = true ] && set -- "$@" --deps
       if ext_live; then
         # The TRUSTED tier is served WITHOUT the tab sandbox — the page runs with
         # the cockpit's own session. Never granted silently: --trust, or a y/N in
@@ -538,8 +540,7 @@ ext() {
           fi
         fi
         ext_api POST /__api/extensions/add "$(printf '{"source":"%s","trust":%s,"installDeps":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$trust" "$deps")"; echo
-      elif [ "$trust" = true ]; then ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" --trust $depsflag
-      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" $depsflag; fi ;;
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$@"; fi ;;
     deps)
       # Allow + run `bun install` for an extension's own package.json (and the retry after a failure).
       name="${1:?usage: host ext deps <name>}"
