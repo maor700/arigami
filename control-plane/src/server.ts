@@ -97,7 +97,13 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const { setCookie } = auth.login(result.subject, https);
       if (result.role === 'user') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
-      return redirect(safeReturnUrl(cfg, result.returnTo) || '/', setCookie);
+      const back = safeReturnUrl(cfg, result.returnTo);
+      // Back to the user's OWN workspace while it is not running: the gate would refuse it again, and an edge that
+      // answers that with a fresh sign-in (nginx auth-signin) would loop. /workspace resumes it and shows progress.
+      const backNs = back && !back.startsWith('/') ? tenantNsForHost(cfg, new URL(back).host) : null;
+      const own = backNs ? store.findTenantByNs(backNs) : null;
+      if (own && own.subject === result.subject && own.state !== 'running') return redirect('/workspace', setCookie);
+      return redirect(back || '/', setCookie);
     }
 
     if (url.pathname === '/auth/logout') {
@@ -114,8 +120,12 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
       const ns = tenantNsForHost(cfg, host);
       if (!ns) return deny(403, 'not a workspace address');
+      // `?redirect=0`: the edge cannot relay a redirect from here (nginx auth_request treats a 3xx as an error and
+      // answers 500). It gets a 401 instead and sends the browser to /auth/login itself (auth-signin).
+      const noRedirect = url.searchParams.get('redirect') === '0';
       const who = auth.principalFromCookieHeader(cookieHeader);
       if (!who) {
+        if (noRedirect) return deny(401, 'sign in first');
         const rd = safeReturnUrl(cfg, requestedUrl(cfg, host, req.headers.get('x-forwarded-uri')));
         const login = `${cfg.publicUrl}/auth/login` + (rd ? `?rd=${encodeURIComponent(rd)}` : '');
         return new Response(null, { status: 302, headers: { location: login, 'cache-control': 'no-store' } });
@@ -124,6 +134,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       // Same answer for "no such tenant" and "not yours": the gate does not reveal which addresses exist.
       if (!t || t.subject !== who.subject) return deny(403, `this workspace does not belong to ${who.email}`);
       if (t.state !== 'running') {
+        // The sign-in this 401 leads to lands on /workspace for a workspace that is not running (/auth/callback).
+        if (noRedirect) return deny(401, 'this workspace is not running');
         return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}/workspace`, 'cache-control': 'no-store' } });
       }
       return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
