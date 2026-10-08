@@ -419,6 +419,9 @@ export function createAuth(opts: AuthOptions) {
     // credential of ours, and is accepted only with the one-time `state` of a
     // sign-in the host itself started (lib/mcp-grants.ts finishLogin).
     if (pathname === '/__api/mcp-oauth/callback') return true;
+    // The control-plane's profile rollout: verifies its own operator token
+    // (server/handoff.ts verifyOperator) and refuses everything else.
+    if (pathname === '/__api/profiles/rollout') return true;
     // Pre-C3 phone webhook, unauthenticated for ONE more release (deprecation
     // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
     if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;

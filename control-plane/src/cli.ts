@@ -9,6 +9,9 @@
 //   bun src/cli.ts backup      <ns|subject|email>
 //   bun src/cli.ts backups     <ns|subject|email>
 //   bun src/cli.ts restore     <ns|subject|email> <archive.tgz> [--force]
+//   bun src/cli.ts set-ring    <ns|subject|email> canary|stable   # canary tenants get a new profile first
+//   bun src/cli.ts profile                                        # desired profile commit + every tenant's applied one
+//   bun src/cli.ts profile-retry <ns|subject|email>               # drop a failed tenant's backoff (retried next tick)
 //
 // `restore` takes ANY tenant's archive — restoring tenant A's backup into
 // tenant B is the migration path (proved live, docs/CONTROL-PLANE.md K8S-3).
@@ -18,6 +21,7 @@ import * as provisioner from './provisioner.js';
 import { upgradeTenant, UpgradeBlockedError } from './upgrade.js';
 import { realOps } from './reconcile.js';
 import { backupTenant, listBackups, restoreTenant } from './backup.js';
+import { DESIRED_META_KEY, haltingTenant, rolloutEnabled, type DesiredRecord } from './profile-rollout.js';
 
 const cfg = loadConfig();
 const store = createStore(openDb(cfg.dbPath));
@@ -60,8 +64,30 @@ try {
     if (!arg3) throw new Error('usage: restore <tenant> <archive.tgz> [--force]');
     await restoreTenant(cfg, t, arg3, { force });
     out({ ok: true, ns: t.ns, restoredFrom: arg3 });
+  } else if (cmd === 'set-ring') {
+    const t = findTenant(ref);
+    if (arg3 !== 'canary' && arg3 !== 'stable') throw new Error('usage: set-ring <tenant> canary|stable');
+    store.setRing(t.subject, arg3);
+    out({ ok: true, ns: t.ns, ring: arg3 });
+  } else if (cmd === 'profile') {
+    const desired = store.getMeta<DesiredRecord>(DESIRED_META_KEY);
+    const tenants = store.listTenants();
+    out({
+      enabled: rolloutEnabled(cfg),
+      source: cfg.arigamiBundle,
+      desired,
+      haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
+      tenants: tenants.map((t) => ({
+        ns: t.ns, state: t.state, ring: t.ring, applied: t.profile_commit, ref: t.profile_ref,
+        ...(t.profile_failures ? { failedCommit: t.profile_failed_commit, failures: t.profile_failures, nextAt: new Date(t.profile_next_at).toISOString(), error: t.profile_error } : {}),
+      })),
+    });
+  } else if (cmd === 'profile-retry') {
+    const t = findTenant(ref);
+    store.clearProfileBackoff(t.subject);
+    out({ ok: true, ns: t.ns, note: `retried on the next reconcile tick (${cfg.reconcileSec}s) when the tenant is idle` });
   } else {
-    process.stderr.write('usage: bun src/cli.ts tenants | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force]\n');
+    process.stderr.write('usage: bun src/cli.ts tenants | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
     process.exitCode = 2;
   }
 } catch (e) {

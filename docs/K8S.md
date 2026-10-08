@@ -91,11 +91,13 @@ startup probe, not a readiness flap, is what covers the clone). Test:
 "restart" (profile.json already present) is a no-op with no duplicate history
 entry.
 
-**Known gap, documented not fixed**: the PRD also mentions "`+ optional
-ref`" — `resolveSource`'s `gitClone` always clones the default branch, no
-`--branch`/ref pinning. Out of scope for the "smallest change that makes
-`ARIGAMI_BUNDLE` work" this wave asked for; a later wave adding
-`ARIGAMI_BUNDLE_REF` would need one line in `gitClone`.
+**Ref pinning (was a known gap, now wired)**: `ARIGAMI_BUNDLE_REF` (chart
+`env.ARIGAMI_BUNDLE_REF`, set by the control-plane from
+`CP_ARIGAMI_BUNDLE_REF`) checks the bundle out at a tag / branch / commit on
+first boot (`server/profiles.ts checkoutBundleRef`) and records the commit in
+the provenance. Later versions reach existing tenants through the
+control-plane's profile rollout, not a restart — `docs/CONTROL-PLANE.md`
+"Profile rollout".
 
 **K8S-3 updates to this mechanism** (proved live in the pilot run,
 `docs/CONTROL-PLANE.md`):

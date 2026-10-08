@@ -31,8 +31,10 @@ ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.33.4
 ARG HELM_VERSION=v3.18.4
 
+# git: src/profile-rollout.ts resolves CP_ARIGAMI_BUNDLE_REF to a commit with
+# `git ls-remote` (read-only, token as a header — never in the URL).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl tar gzip \
+      ca-certificates curl tar gzip git \
     && rm -rf /var/lib/apt/lists/*
 
 # src/provisioner.ts, src/backup.ts and src/progress.ts shell out to these two

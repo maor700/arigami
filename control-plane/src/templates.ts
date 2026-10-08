@@ -24,6 +24,9 @@ function shell(title: string, body: string, tail = ''): string {
   .state-deleted { background: #f8d7da; }
   form.inline { display: inline; }
   .pending { color: #b26a00; font-weight: 600; }
+  .failed { color: #b3261e; font-weight: 600; }
+  .banner { padding: 8px 12px; border-radius: 6px; background: #f6f6f6; font-size: 13px; }
+  .banner.bad { background: #f8d7da; }
   input { padding: 4px 6px; font-size: 12px; }
   .detail { color: #555; }
   .steps { list-style: none; padding: 0; margin: 24px 0; }
@@ -131,10 +134,48 @@ export function unavailablePage(state: string): string {
   );
 }
 
+/** What the admin page knows about the profile rollout (src/profile-rollout.ts). null = rollout off. */
+export interface ProfileView {
+  ref: string;
+  commit: string;
+  resolvedAt: number;
+  error?: string;
+  /** ns whose failed apply of the desired commit is holding the rollout */
+  haltedBy: string | null;
+}
+
+const shortSha = (c: string) => (c ? c.slice(0, 8) : '—');
+
+/** One tenant's profile cell: applied commit, drift towards the desired one, or the failure that holds it. */
+export function profileCell(t: Tenant, p: ProfileView | null): string {
+  if (!p) return t.profile_commit ? `<code>${esc(shortSha(t.profile_commit))}</code>` : '—';
+  const applied = t.profile_commit ? `<code>${esc(shortSha(t.profile_commit))}</code>` : '—';
+  if (!p.commit || t.state === 'deleted') return applied;
+  if (t.profile_failed_commit === p.commit && t.profile_failures > 0) {
+    const when = t.profile_next_at ? ` — retry ${esc(new Date(t.profile_next_at).toISOString().slice(11, 19))}Z` : '';
+    return `${applied} <span class="failed" title="${esc(t.profile_error)}">✗ ${esc(shortSha(p.commit))} failed ×${t.profile_failures}${when}</span>
+      <br><small class="detail">${esc(t.profile_error.slice(0, 160))}</small>${t.state === 'running' ? profileRetryForm(t.subject) : ''}`;
+  }
+  if (t.profile_commit === p.commit) return `${applied} <small class="detail">✓</small>`;
+  const why = p.haltedBy && p.haltedBy !== t.ns ? ' (halted)' : t.state !== 'running' ? ` (${esc(t.state)})` : '';
+  return `${applied} <span class="pending">→ ${esc(shortSha(p.commit))}${why}</span>`;
+}
+
+function profileBanner(p: ProfileView | null): string {
+  if (!p) return '';
+  const target = `<code>${esc(p.ref || 'default branch')}</code> → <code>${esc(shortSha(p.commit))}</code>`;
+  const err = p.error ? `<br><span class="failed">Cannot resolve the profile ref: ${esc(p.error)}</span> (nothing is rolled out until it resolves)` : '';
+  const halt = p.haltedBy
+    ? `<br><span class="failed">Rollout halted: ${esc(p.haltedBy)} failed to apply ${esc(shortSha(p.commit))}.</span> Fix the profile (a new commit restarts the rollout) or retry that tenant.`
+    : '';
+  return `<p class="banner${p.error || p.haltedBy ? ' bad' : ''}">Org profile: ${target}${err}${halt}</p>`;
+}
+
 export function adminPage(
   tenants: Tenant[],
   adminEmail: string,
   backups: Record<string, { count: number; newestMs: number | null }> = {},
+  profile: ProfileView | null = null,
 ): string {
   const rows = tenants
     .map((t) => {
@@ -149,6 +190,7 @@ export function adminPage(
       <td><span class="state state-${esc(t.state)}">${esc(t.state)}</span></td>
       <td>${esc(t.last_seen_at)}</td>
       <td>${digest}${t.state !== 'deleted' ? digestForm(t.subject) : ''}</td>
+      <td>${profileCell(t, profile)}</td>
       <td>${b ? `${b.count}${b.newestMs ? ` <small>(${esc(new Date(b.newestMs).toISOString().slice(0, 16))}Z)</small>` : ''}` : '0'}
         ${t.state === 'running' ? backupForm(t.subject) : ''}</td>
       <td>
@@ -162,11 +204,12 @@ export function adminPage(
   return shell(
     'Tenants — Arigami admin',
     `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/workspace">Open my workspace</a> · <a href="/auth/logout">Sign out</a></p>
-     <p><small>Image changes converge on the next reconcile tick, and only while the tenant has no
+     <p><small>Image and profile changes converge on the next reconcile tick, and only while the tenant has no
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
+     ${profileBanner(profile)}
      <table>
-       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image (running → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
-       <tbody>${rows || '<tr><td colspan="7">No tenants yet.</td></tr>'}</tbody>
+       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image (running → desired)</th><th>Profile (applied → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
+       <tbody>${rows || '<tr><td colspan="8">No tenants yet.</td></tr>'}</tbody>
      </table>`,
   );
 }
@@ -174,6 +217,9 @@ export function adminPage(
 function digestForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/digest">
     <input name="digest" placeholder="tag or sha256:…" size="14"><button type="submit">Set</button></form>`;
+}
+function profileRetryForm(subject: string): string {
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/profile-retry"><button type="submit">Retry now</button></form>`;
 }
 function backupForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/backup"><button type="submit">Backup now</button></form>`;

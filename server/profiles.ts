@@ -168,11 +168,15 @@ export interface ApplyReport {
   extensions?: { name: string; status: 'installed' | 'updated' | 'unchanged' | 'skipped' | 'error'; sha?: string; error?: string; deps?: 'ok' | 'missing'; depsError?: string }[];
   /** A4: agents shipped by the bundle — created when absent, left alone when present (unless force) */
   agents: { slug: string; status: 'created' | 'updated' | 'unchanged' | 'error'; assets?: number; skippedSkills?: string[]; error?: string }[];
+  /** git ref (tag/branch/sha) the bundle was checked out at, when it came from a git source with a ref */
+  ref?: string;
+  /** the commit the bundle was applied from (git sources) — what the control-plane compares against */
+  commit?: string;
   errors: string[];
 }
 
 export interface Provenance extends ApplyReport {
-  history?: { name: string; version?: string; source: string; appliedAt: string }[];
+  history?: { name: string; version?: string; source: string; appliedAt: string; commit?: string }[];
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -441,6 +445,58 @@ function gitClone(url: string, dest: string): void {
   if (r.status !== 0) throw new Error(`git clone failed: ${(r.stderr || r.stdout || '').trim().split('\n').pop() || 'unknown error'}`);
 }
 
+export const GIT_REF_RE = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
+export const COMMIT_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/** The local checkout a git-URL bundle lives in ($ARIGAMI_DIR/profiles/<name>). */
+export function bundleCheckoutDir(url: string): string {
+  const name = nameFromUrl(url);
+  if (!BUNDLE_NAME_RE.test(name)) throw new Error(`cannot derive a bundle name from ${url}`);
+  return path.join(USER_BUNDLES_DIR, name);
+}
+
+/**
+ * Put the git bundle at `url` on `ref` (tag / branch / sha; empty = the remote's default branch) and, when `commit`
+ * is given, on exactly that commit — the control-plane resolves a moving ref ONCE and rolls the same commit to every
+ * tenant, so a branch that moves mid-rollout cannot hand two tenants two different profiles. Auth is the header from
+ * lib/git-auth.ts (never the URL). Leaves the checkout detached; returns the commit it ended on.
+ */
+export function checkoutBundleRef(url: string, ref = '', commit = ''): { dir: string; commit: string } {
+  if (!isGitUrl(url)) throw new Error('a ref can only be applied to a git bundle source');
+  if (ref && !GIT_REF_RE.test(ref)) throw new Error(`not a valid git ref: ${JSON.stringify(ref)}`);
+  if (commit && !COMMIT_RE.test(commit)) throw new Error(`not a full commit sha: ${JSON.stringify(commit)}`);
+  const dest = bundleCheckoutDir(url);
+  if (!isDir(path.join(dest, '.git'))) {
+    if (isDir(dest)) throw new Error(`${dest} exists and is not a git checkout — remove it or pass the directory instead`);
+    gitClone(url, dest);
+  }
+  const env = gitEnvFor(url);
+  const git = (args: string[], timeout = 120_000) => spawnSync('git', args, { cwd: dest, encoding: 'utf8', env, timeout });
+  const tail = (r: ReturnType<typeof git>) => (r.stderr || r.stdout || '').trim().split('\n').pop() || `exit ${r.status}`;
+  // Fetch by URL (not `origin`) so the checkout always follows the configured source; shallow first, full when the
+  // transport cannot do shallow (a bundle served by a plain static file host — see gitClone).
+  const fetch = (what: string) => {
+    let r = git(['fetch', '--quiet', '--depth', '1', url, what]);
+    if (r.status !== 0 && /shallow|depth/i.test(r.stderr || '')) r = git(['fetch', '--quiet', url, what]);
+    return r;
+  };
+  let target = commit;
+  const f = fetch(ref || 'HEAD');
+  if (f.status !== 0 && !commit) throw new Error(`git fetch ${ref || 'HEAD'} failed: ${tail(f)}`);
+  if (!commit) target = 'FETCH_HEAD';
+  // The ref moved on since the control-plane resolved it (or names nothing fetchable): fetch the commit itself.
+  else if (git(['cat-file', '-e', `${commit}^{commit}`]).status !== 0) {
+    const fc = fetch(commit);
+    if (fc.status !== 0) throw new Error(`git fetch ${commit} failed: ${tail(fc)}`);
+  }
+  const co = git(['checkout', '--quiet', '--force', '--detach', target]);
+  if (co.status !== 0) throw new Error(`git checkout ${ref || commit || 'HEAD'} failed: ${tail(co)}`);
+  git(['clean', '-ffdxq']); // a file the new commit deleted must not linger in the bundle
+  const head = git(['rev-parse', 'HEAD']).stdout.trim();
+  if (commit && head !== commit) throw new Error(`checked out ${head}, expected ${commit}`);
+  return { dir: dest, commit: head };
+}
+
 /**
  * Turn `source` into a local bundle directory. Git URLs are cloned (or
  * `git pull --ff-only`ed when already present) under $ARIGAMI_DIR/profiles/.
@@ -533,7 +589,7 @@ export function listBundles(): BundleSummary[] {
         seen.add(key);
         out.push(summarize(b));
       } catch (e) {
-        out.push({ name: n, dir: d, trusted: false, skills: [], cron: 0, agents: [], hasMemorySeed: false, valid: false, errors: [(e as Error).message] });
+        out.push({ name: n, dir: d, trusted: false, skills: [], cron: 0, agents: [], extensions: [], hasMemorySeed: false, valid: false, errors: [(e as Error).message] });
       }
     }
   }
@@ -598,6 +654,9 @@ export interface ApplyOptions {
   /** Register `scope: org` cron jobs (this host IS the organisation host). Also ARIGAMI_ORG_HOST=1. */
   orgHost?: boolean;
   sessionId?: string;
+  /** git ref/commit the bundle was checked out at — recorded in the provenance (checkoutBundleRef) */
+  ref?: string;
+  commit?: string;
 }
 
 export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<ApplyReport> {
@@ -615,6 +674,8 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     cron: [],
     extensions: [],
     agents: [],
+    ...(opts.ref ? { ref: opts.ref } : {}),
+    ...(opts.commit ? { commit: opts.commit } : {}),
     errors: [],
   };
 
@@ -835,7 +896,7 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
   // 5. provenance
   const prev = readProvenance();
   const history = [...(prev?.history || [])];
-  if (prev) history.push({ name: prev.name, version: prev.version, source: prev.source, appliedAt: prev.appliedAt });
+  if (prev) history.push({ name: prev.name, version: prev.version, source: prev.source, appliedAt: prev.appliedAt, ...(prev.commit ? { commit: prev.commit } : {}) });
   fs.mkdirSync(ARIGAMI_DIR, { recursive: true });
   fs.writeFileSync(PROVENANCE_FILE, JSON.stringify({ ...report, history: history.slice(-20) }, null, 2) + '\n');
   if (getPending() && (getPending() === b.source || getPending() === b.dir)) clearPending();
@@ -870,6 +931,15 @@ export async function applyBundleEnv(): Promise<ApplyReport | null> {
   // what makes an org tenant boot with the company's skills ACTIVE and its
   // cron jobs (marked enabled) actually running, instead of a cockpit full
   // of approval prompts on first sign-in.
+  //
+  // ARIGAMI_BUNDLE_REF (tag/branch/sha) pins the first boot to the profile
+  // version the control-plane is rolling out; later versions arrive through
+  // the trusted re-apply (server/profile-rollout.ts), not through a restart.
+  const ref = String(process.env.ARIGAMI_BUNDLE_REF || '').trim();
+  if (isGitUrl(source)) {
+    const co = checkoutBundleRef(source, ref, COMMIT_RE.test(ref) ? ref : '');
+    return applyBundle({ ...loadBundle(co.dir, source), trusted: true }, { ...(ref ? { ref } : {}), commit: co.commit });
+  }
   const r = resolveSource(source);
   const b = loadBundle(r.dir, r.source);
   return applyBundle({ ...b, trusted: true });

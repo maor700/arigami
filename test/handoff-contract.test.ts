@@ -7,6 +7,9 @@
 // silently and only shows up as "I cannot sign in" in production. This test
 // imports both and pins the contract in both directions.
 import { test, expect } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as host from '../server/handoff.ts';
 import * as cp from '../control-plane/src/handoff.ts';
 
@@ -59,4 +62,23 @@ test('no secret ⇒ signInUrl degrades to the plain tenant URL (pre-K8S-3 tenant
 test("a token minted for one tenant's secret is worthless against another's", () => {
   const other = cp.newSecret();
   expect(host.verify(cp.mint(SECRET, 'a@b.c'), { secret: other }).ok).toBe(false);
+});
+
+// ---- profile rollout operator calls --------------------------------------------
+
+test('a control-plane operator token verifies on the host, claims intact', () => {
+  const commit = 'a'.repeat(40);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-contract-'));
+  const r = host.verifyOperator(cp.mintOperator(SECRET, { action: 'profile-apply', ref: 'v2', commit }), 'profile-apply', { secret: SECRET, dir });
+  expect(r.ok).toBe(true);
+  expect((r as any).payload).toMatchObject({ kind: 'operator', action: 'profile-apply', ref: 'v2', commit });
+  expect(host.verifyOperator(cp.mintOperator(SECRET, { action: 'profile-status' }), 'profile-status', { secret: SECRET }).ok).toBe(true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('operator and sign-in tokens are not interchangeable, and the action is bound', () => {
+  expect(host.verify(cp.mintOperator(SECRET, { action: 'profile-status' }), { secret: SECRET }).ok).toBe(false);
+  expect(host.verifyOperator(cp.mint(SECRET, 'a@b.c'), 'profile-status', { secret: SECRET }).ok).toBe(false);
+  expect(host.verifyOperator(cp.mintOperator(SECRET, { action: 'profile-status' }), 'profile-apply', { secret: SECRET }).ok).toBe(false);
+  expect(host.verifyOperator(cp.mintOperator(cp.newSecret(), { action: 'profile-status' }), 'profile-status', { secret: SECRET }).ok).toBe(false);
 });

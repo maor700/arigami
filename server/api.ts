@@ -3900,6 +3900,21 @@ export async function handle(
     }
     // ---- Auth (C1) ------------------------------------------------------------
     if (p.startsWith('/__api/auth/')) return await handleAuth(req, res, u, p, m || 'GET');
+    // ---- Profile rollout (server/profile-rollout.ts) — the control-plane's
+    // TRUSTED re-apply of the org profile. Public in auth.ts because it carries
+    // its own credential: an operator token signed with ARIGAMI_HANDOFF_SECRET.
+    // A cookie/session/API token — even an admin's — does not open it.
+    if (p === '/__api/profiles/rollout' && (m === 'GET' || m === 'POST')) {
+      const action = m === 'GET' ? 'profile-status' : 'profile-apply';
+      const v = handoff.verifyOperator(String(req.headers['x-arigami-operator'] || ''), action);
+      if (!v.ok) return json(res, { error: v.error }, v.status);
+      const ro = await import('./profile-rollout.js');
+      const { busySessions } = await import('./host-control.js');
+      if (m === 'GET') return json(res, ro.status({ busySessions }));
+      const r = await ro.apply({ ref: v.payload.ref, commit: v.payload.commit }, { busySessions });
+      console.log(`[profiles] rollout apply ${v.payload.ref || '(default)'}@${String(v.payload.commit || '').slice(0, 12)}: ${r.body.ok ? 'ok' : `failed (${r.status})`}`);
+      return json(res, r.body, r.status);
+    }
     // ---- Webhooks (C3) — inbound routes are public (auth.ts allowlist) and
     // authenticate themselves in server/webhooks.ts; admin routes below need
     // the admin role; events are readable by any principal (sessions poll).

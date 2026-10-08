@@ -45,6 +45,20 @@ export interface Tenant {
    * the tenant's own Secret; never rendered in a page.
    */
   handoff_secret: string;
+  /**
+   * Profile rollout (src/profile-rollout.ts). profile_commit/ref: what the
+   * tenant reported it last applied cleanly (read back from the tenant, never
+   * assumed). profile_failed_commit/failures/next_at: an unresolved failed
+   * apply — retried with backoff, and while it exists for the desired commit
+   * the rollout to every OTHER tenant is halted (the canary rule).
+   */
+  profile_commit: string;
+  profile_ref: string;
+  profile_checked_at: number;
+  profile_failed_commit: string;
+  profile_failures: number;
+  profile_next_at: number;
+  profile_error: string;
 }
 
 export interface WebSession {
@@ -85,6 +99,10 @@ export function openDb(dbPath: string): Database {
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       subject TEXT NOT NULL,
@@ -99,6 +117,16 @@ export function openDb(dbPath: string): Database {
   // pairing screen (src/handoff.ts signInUrl).
   const tenantCols = new Set((db.query('PRAGMA table_info(tenants)').all() as { name: string }[]).map((c) => c.name));
   if (!tenantCols.has('handoff_secret')) db.exec("ALTER TABLE tenants ADD COLUMN handoff_secret TEXT NOT NULL DEFAULT ''");
+  for (const [col, ddl] of [
+    ['profile_commit', "TEXT NOT NULL DEFAULT ''"],
+    ['profile_ref', "TEXT NOT NULL DEFAULT ''"],
+    ['profile_checked_at', 'INTEGER NOT NULL DEFAULT 0'],
+    ['profile_failed_commit', "TEXT NOT NULL DEFAULT ''"],
+    ['profile_failures', 'INTEGER NOT NULL DEFAULT 0'],
+    ['profile_next_at', 'INTEGER NOT NULL DEFAULT 0'],
+    ['profile_error', "TEXT NOT NULL DEFAULT ''"],
+  ] as const)
+    if (!tenantCols.has(col)) db.exec(`ALTER TABLE tenants ADD COLUMN ${col} ${ddl}`);
   return db;
 }
 
@@ -150,6 +178,13 @@ export function createStore(db: Database) {
       created_at: now(),
       last_seen_at: now(),
       handoff_secret: opts.handoffSecret ?? newHandoffSecret(),
+      profile_commit: '',
+      profile_ref: '',
+      profile_checked_at: 0,
+      profile_failed_commit: '',
+      profile_failures: 0,
+      profile_next_at: 0,
+      profile_error: '',
     };
     db.query(
       `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret)
@@ -176,6 +211,43 @@ export function createStore(db: Database) {
   function setDesiredDigest(subject: string, digest: string): void {
     db.query('UPDATE tenants SET desired_digest = ? WHERE subject = ?').run(digest, subject);
   }
+  /** Rollout ring: `canary` tenants get a new profile first (src/profile-rollout.ts rolloutOrder). */
+  function setRing(subject: string, ring: string): void {
+    db.query('UPDATE tenants SET ring = ? WHERE subject = ?').run(ring, subject);
+  }
+  // Profile rollout bookkeeping (src/profile-rollout.ts).
+  /** The tenant confirmed `commit` is applied cleanly — clears any failure/backoff. */
+  function setProfileApplied(subject: string, commit: string, ref: string, at = Date.now()): void {
+    db.query(
+      `UPDATE tenants SET profile_commit = ?, profile_ref = ?, profile_checked_at = ?,
+         profile_failed_commit = '', profile_failures = 0, profile_next_at = 0, profile_error = '' WHERE subject = ?`,
+    ).run(commit, ref, at, subject);
+  }
+  /** A failed apply of `commit`; consecutive failures of the same commit count up. */
+  function setProfileFailed(subject: string, commit: string, error: string, nextAt: number): void {
+    const t = findTenantBySubject(subject);
+    const failures = t && t.profile_failed_commit === commit ? t.profile_failures + 1 : 1;
+    db.query('UPDATE tenants SET profile_failed_commit = ?, profile_failures = ?, profile_next_at = ?, profile_error = ? WHERE subject = ?').run(
+      commit, failures, nextAt, error.slice(0, 2000), subject,
+    );
+  }
+  /** Admin "retry now": keep the failure on record (the rollout stays halted) but drop the wait. */
+  function clearProfileBackoff(subject: string): void {
+    db.query('UPDATE tenants SET profile_next_at = 0 WHERE subject = ?').run(subject);
+  }
+  function getMeta<T>(key: string): T | null {
+    const r = db.query('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | null;
+    if (!r) return null;
+    try {
+      return JSON.parse(r.value) as T;
+    } catch {
+      return null;
+    }
+  }
+  function setMeta(key: string, value: unknown): void {
+    db.query('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
+  }
+
   function touchLastSeen(subject: string): void {
     db.query('UPDATE tenants SET last_seen_at = ? WHERE subject = ?').run(now(), subject);
   }
@@ -208,6 +280,7 @@ export function createStore(db: Database) {
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
     findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
+    setRing, setProfileApplied, setProfileFailed, clearProfileBackoff, getMeta, setMeta,
     createSession, findSession, deleteSession,
   };
 }

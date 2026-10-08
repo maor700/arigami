@@ -45,7 +45,7 @@ export interface Config {
   imageRepository: string;
   imageTag: string; // a digest (sha256:...) or a tag — whichever the org pins
   arigamiBundle: string; // git URL (or empty = no bundle)
-  arigamiBundleRef: string; // documented-not-implemented, see docs/CONTROL-PLANE.md
+  arigamiBundleRef: string; // tag / branch / sha the profile rollout converges every tenant to (empty = default branch)
   /** read-only token for the org's private profile repo (and the extensions in it); handed to each tenant as ARIGAMI_GIT_TOKEN. Empty = public repo. */
   arigamiGitToken: string;
 
@@ -66,6 +66,13 @@ export interface Config {
   backupDir: string; // where per-tenant backup archives land on the control-plane's own disk
   backupIntervalSec: number; // 0 = no scheduled backups (on-demand only)
   backupKeep: number; // newest N archives kept per tenant
+
+  // Profile rollout (src/profile-rollout.ts): converge running tenants to CP_ARIGAMI_BUNDLE @ CP_ARIGAMI_BUNDLE_REF
+  profileRollout: boolean; // on by default whenever CP_ARIGAMI_BUNDLE is set; CP_PROFILE_ROLLOUT=0 turns it off
+  profileRetryBaseSec: number; // first retry delay after a failed apply; doubles per failure
+  profileRetryMaxSec: number; // backoff ceiling
+  profileRecheckSec: number; // re-read a converged tenant's provenance this often (drift); 0 = never
+  profileBatch: number; // max applies per tick (0 = no limit) — a slower canary
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -118,5 +125,11 @@ function readConfig(env: NodeJS.ProcessEnv): Config {
     backupDir: env.CP_BACKUP_DIR || path.join(process.cwd(), 'data', 'backups'),
     backupIntervalSec: Number(env.CP_BACKUP_INTERVAL_SEC ?? 86_400),
     backupKeep: Number(env.CP_BACKUP_KEEP || 7),
+
+    profileRollout: bool(env.CP_PROFILE_ROLLOUT, true),
+    profileRetryBaseSec: Number(env.CP_PROFILE_RETRY_BASE_SEC || 60),
+    profileRetryMaxSec: Number(env.CP_PROFILE_RETRY_MAX_SEC || 3600),
+    profileRecheckSec: Number(env.CP_PROFILE_RECHECK_SEC ?? 3600),
+    profileBatch: Number(env.CP_PROFILE_BATCH || 0),
   };
 }
