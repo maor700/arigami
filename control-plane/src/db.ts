@@ -17,6 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { canTransition, IllegalTransitionError, type TenantState } from './state-machine.js';
 import { newSecret as newHandoffSecret } from './handoff.js';
+import { migrateShared, createSharedStore, type TenantKind, type MemberPolicy, type SharedRole } from './shared.js';
 
 export type Role = 'admin' | 'user';
 
@@ -45,6 +46,15 @@ export interface Tenant {
    * the tenant's own Secret; never rendered in a page.
    */
   handoff_secret: string;
+  // Shared org workspaces (src/shared.ts). Always present on a row read from the DB (column defaults); optional
+  // in the type so a hand-built Tenant (tests, fixtures) is still a personal one. Missing kind = 'personal'.
+  kind?: TenantKind;
+  name?: string;
+  member_policy?: MemberPolicy;
+  default_role?: SharedRole;
+  org_host?: number;
+  roster_gen?: number;
+  roster_synced_gen?: number;
 }
 
 export interface WebSession {
@@ -99,6 +109,7 @@ export function openDb(dbPath: string): Database {
   // pairing screen (src/handoff.ts signInUrl).
   const tenantCols = new Set((db.query('PRAGMA table_info(tenants)').all() as { name: string }[]).map((c) => c.name));
   if (!tenantCols.has('handoff_secret')) db.exec("ALTER TABLE tenants ADD COLUMN handoff_secret TEXT NOT NULL DEFAULT ''");
+  migrateShared(db);
   return db;
 }
 
@@ -150,6 +161,14 @@ export function createStore(db: Database) {
       created_at: now(),
       last_seen_at: now(),
       handoff_secret: opts.handoffSecret ?? newHandoffSecret(),
+      // the column defaults (src/shared.ts migrateShared); a shared tenant is turned into one by markShared
+      kind: 'personal',
+      name: '',
+      member_policy: 'explicit',
+      default_role: 'member',
+      org_host: 0,
+      roster_gen: 0,
+      roster_synced_gen: 0,
     };
     db.query(
       `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret)
@@ -209,6 +228,7 @@ export function createStore(db: Database) {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
     findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
     createSession, findSession, deleteSession,
+    ...createSharedStore(db),
   };
 }
 

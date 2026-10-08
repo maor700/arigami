@@ -9,6 +9,7 @@
 //   bun src/cli.ts backup      <ns|subject|email>
 //   bun src/cli.ts backups     <ns|subject|email>
 //   bun src/cli.ts restore     <ns|subject|email> <archive.tgz> [--force]
+//   bun src/cli.ts shared …                                   # shared org workspaces, see src/shared-cli.ts
 //
 // `restore` takes ANY tenant's archive — restoring tenant A's backup into
 // tenant B is the migration path (proved live, docs/CONTROL-PLANE.md K8S-3).
@@ -18,6 +19,7 @@ import * as provisioner from './provisioner.js';
 import { upgradeTenant, UpgradeBlockedError } from './upgrade.js';
 import { realOps } from './reconcile.js';
 import { backupTenant, listBackups, restoreTenant } from './backup.js';
+import { runSharedCli } from './shared-cli.js';
 
 const cfg = loadConfig();
 const store = createStore(openDb(cfg.dbPath));
@@ -32,7 +34,14 @@ function findTenant(r: string): Tenant {
 }
 
 try {
-  if (cmd === 'tenants') {
+  if (cmd === 'shared') {
+    process.exitCode = await runSharedCli(
+      process.argv.slice(3),
+      { cfg, store, provisioner, pushRoster: provisioner.pushRoster, log: (m) => process.stderr.write(m + '\n') },
+      out,
+      (s) => process.stderr.write(s),
+    );
+  } else if (cmd === 'tenants') {
     out(store.listTenants().map(({ subject, email, ns, state, running_digest, desired_digest, last_seen_at }) => ({ subject, email, ns, state, running_digest, desired_digest, last_seen_at })));
   } else if (cmd === 'set-digest') {
     const t = findTenant(ref);
@@ -61,7 +70,7 @@ try {
     await restoreTenant(cfg, t, arg3, { force });
     out({ ok: true, ns: t.ns, restoredFrom: arg3 });
   } else {
-    process.stderr.write('usage: bun src/cli.ts tenants | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force]\n');
+    process.stderr.write('usage: bun src/cli.ts tenants | shared … | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force]\n');
     process.exitCode = 2;
   }
 } catch (e) {

@@ -39,6 +39,9 @@ function shell(title: string, body: string, tail = ''): string {
 </style></head><body>${body}${tail}</body></html>`;
 }
 
+/** The shared shell, for pages rendered outside this file (shared-templates.ts). */
+export const page = (title: string, body: string, tail = ''): string => shell(title, body, tail);
+
 export function loginPage(orgDomain: string): string {
   return shell(
     'Sign in — Arigami',
@@ -135,6 +138,7 @@ export function adminPage(
   tenants: Tenant[],
   adminEmail: string,
   backups: Record<string, { count: number; newestMs: number | null }> = {},
+  extra = '',
 ): string {
   const rows = tenants
     .map((t) => {
@@ -144,7 +148,7 @@ export function adminPage(
           ? `${esc(t.running_digest || '—')} <span class="pending">→ ${esc(t.desired_digest)}</span>`
           : esc(t.running_digest || t.desired_digest || '—');
       return `<tr>
-      <td>${esc(t.email)}</td>
+      <td>${t.kind === 'shared' ? `<em>shared:</em> ${esc(t.name || '')}` : esc(t.email)}</td>
       <td>${esc(t.ns)}</td>
       <td><span class="state state-${esc(t.state)}">${esc(t.state)}</span></td>
       <td>${esc(t.last_seen_at)}</td>
@@ -161,13 +165,13 @@ export function adminPage(
     .join('\n');
   return shell(
     'Tenants — Arigami admin',
-    `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/workspace">Open my workspace</a> · <a href="/auth/logout">Sign out</a></p>
+    `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/workspace">Open my workspace</a> · <a href="/workspaces">Workspaces</a> · <a href="/auth/logout">Sign out</a></p>
      <p><small>Image changes converge on the next reconcile tick, and only while the tenant has no
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
      <table>
        <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image (running → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
        <tbody>${rows || '<tr><td colspan="7">No tenants yet.</td></tr>'}</tbody>
-     </table>`,
+     </table>${extra}`,
   );
 }
 

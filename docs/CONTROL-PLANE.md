@@ -442,7 +442,7 @@ The admin page gained a per-tenant image column (`running → desired` with
 the pending arrow), a digest form (records intent; the reconcile loop
 applies it — the form never blocks on helm), backup counts and a "Backup
 now" button. `src/cli.ts` is the scriptable/operator surface:
-`tenants | set-digest | upgrade | backup | backups | restore`.
+`tenants | set-digest | upgrade | backup | backups | restore | shared …` (shared workspaces, below).
 
 ### New env (all optional, defaults in parentheses)
 
@@ -680,7 +680,8 @@ browser ── https://u-<id>.<orgDomain>/… ──> edge ── forward_auth: 
                                              └─ 5xx/timeout (control plane down)        ─> denied: fail closed
 ```
 
-**Decision: owner only — org-admins included in the 403.** A cockpit drives a machine with its owner's
+**Decision: owner only — org-admins included in the 403.** (A *shared* workspace admits its members instead — see
+"Shared workspaces" below; the reasoning for keeping org-admins out is the same.) A cockpit drives a machine with its owner's
 connected accounts (mail, WhatsApp, cloud tokens). An admin already holds suspend/resume/backup/delete on
 `/admin`; passing the edge would add nothing they need (the tenant's handoff is email-bound to the owner, so
 they'd meet a pairing screen) while making one stolen admin session reach every cockpit. An admin's own
@@ -735,6 +736,146 @@ Not proven: the full browser round-trip through a real IdP on a live lab, and th
 ("the proper way" in `deploy/gke-lab/README.md`): nginx `auth_request` does not relay a 302 from the auth
 endpoint, so it needs `nginx.ingress.kubernetes.io/auth-url` → `/auth/verify` **plus** `auth-signin` →
 `/auth/login?rd=$scheme://$host$request_uri`, and the cookie strip done with a `configuration-snippet`.
+
+## Shared workspaces (one tenant, several org members, 2026-10-08)
+
+Until now every tenant was one person's: `ensureTenant(subject)` made it, the gate let only that subject in, and
+the handoff signed that person in as admin of their own instance. A **shared workspace** is a tenant that several
+org members open: the natural home for the organisation's `scope: org` cron jobs and shared agents
+(`ARIGAMI_ORG_HOST=1`, profiles/README.md "Cron `scope`").
+
+### Data model (`src/shared.ts`, additive migrations in `migrateShared`)
+
+| column / table | meaning |
+|---|---|
+| `tenants.kind` | `personal` (default — every existing row) or `shared` |
+| `tenants.name` | the stable slug of a shared workspace (`[a-z][a-z0-9-]{0,30}[a-z0-9]`), unique among shared rows (partial unique index). `''` for personal |
+| `tenants.subject` | for a shared workspace `shared:<name>`, so the namespace keeps the scheme: `u-<10 hex of sha256(subject)>`. The gate's host regex, the chart and the edge do not change |
+| `tenants.member_policy` | `explicit` (only listed e-mails) or `org` (every signed-in org user) |
+| `tenants.default_role` | the role an unlisted user gets under `org`; an explicit row always wins |
+| `tenants.org_host` | render `orgHost=true` (→ `ARIGAMI_ORG_HOST=1`). At most one live shared workspace may have it |
+| `tenants.roster_gen` / `roster_synced_gen` | bumped on every membership change / set when the pod acknowledged that roster |
+| `tenant_members(ns, email, role, added_by, added_at)` | the explicit list, keyed by e-mail so an admin can add someone who has never signed in |
+
+Every column is `ALTER TABLE … ADD COLUMN … DEFAULT …` guarded by `PRAGMA table_info`, the table/index are
+`IF NOT EXISTS` — a K8S-3 database opens unchanged and re-opening is a no-op (tested on a hand-built old schema).
+The `Tenant` type marks the new fields optional, so hand-built tenants in other tests stay personal.
+
+**Roles.** The control plane speaks `owner | admin | member | viewer`; the tenant host only has its own
+`admin | user | viewer` (`server/auth.ts`), so `owner`/`admin` → tenant `admin`, `member` → `user`, `viewer` →
+`viewer` (new). `owner` grants nothing over `admin` — it names who is accountable for the workspace.
+
+### Creating and managing (org-admin only)
+
+- **Admin page** (`/admin`, section "Shared workspaces"): create (name, policy, default role, org-host checkbox),
+  add / change role, remove, change policy, delete. Plain POSTs under `/admin/shared/…`, so the existing
+  org-admin check and the `Origin` check apply. Creating one does **not** make the admin a member.
+- **CLI** (`src/shared-cli.ts`, via `bun src/cli.ts shared …`): `list [name]`, `create <name> [--policy
+  explicit|org] [--default-role r] [--no-org-host] [--owner email]`, `add-member <name> <email> [--role r]`,
+  `remove-member <name> <email>`, `set-policy <name> explicit|org [--default-role r]`, `delete <name> --yes`,
+  `sync [name]`. Running it requires the control plane's database, i.e. it is org-admin by construction; `--by`
+  names the person in the log. `create` waits for the provision and exits non-zero if it failed.
+- **No forked provisioning.** A shared workspace is `db.createTenant` + `markShared`; `provisioner.provisionTenant`
+  adds `--set sharedWorkspace=true` (and `--set orgHost=true`) from the row (`sharedHelmArgs`), and the reconcile
+  loop upgrades and backs it up in the same pass as every personal tenant — the flags are re-rendered from the row
+  on every upgrade. Suspend / resume / backup / digest work from the existing tenants table, where shared rows show
+  as `shared: <name>`.
+- A deleted name is never reused (the address would come back to life); only one live org host.
+
+### Gate and handoff
+
+`GET /auth/verify` now asks `decideAccess(tenant, who, member)`:
+
+| tenant | who | answer |
+|---|---|---|
+| personal | its owner (subject match) | 200 (302 `/workspace` when not running) |
+| personal | anyone else, org-admins included | 403 |
+| shared | an e-mail on `tenant_members` | 200 with that role (302 `/workspaces/<name>/open` when not running) |
+| shared, policy `org` | any signed-in org user | 200 with `default_role` |
+| shared | anyone else — an org-admin who is not a member, a member of *another* shared workspace, an IdP subject that happens to be `shared:<name>` | 403 |
+| deleted / unknown | anyone | 403 (same message as "not yours": no enumeration) |
+
+Nothing is cached: the decision reads sqlite on every forward_auth request and answers `no-store`, and the edge
+(Caddy `forward_auth`) does not cache — so removing a member denies their **very next request**, including a new
+websocket upgrade. `ensureTenant`, `/api/progress` and the gate use `findPersonalTenant`, which never returns a
+shared row, so a look-alike subject cannot "own" a shared workspace (its `ensureTenant` fails closed instead).
+
+The handoff signs each member in **as themselves**: `/workspaces/<name>/open` re-checks membership and redirects to
+the same `/__api/auth/handoff` with a token naming *their* e-mail and *their* tenant role
+(`{kind:'handoff', email, exp, jti, role}`). The tenant creates or reuses that user row and sets its role, so the
+cockpit's users, audit trail and per-user settings stay per person. There is no shared identity anywhere.
+
+### Revocation: three layers
+
+1. **The edge, at once.** Every request is re-decided (above). This is the real gate.
+2. **The pod, within a push.** On every membership change the control plane mints a *roster* token
+   (`{kind:'roster', exp, jti, roster:{gen, policy, defaultRole, members:{email: role}}}`, HMAC with the tenant's
+   handoff secret, single-use) and posts it over loopback inside the pod (`kubectl exec … curl` →
+   `POST /__api/auth/roster`, `provisioner.pushRoster`, same route as the busy probe). The tenant
+   (`server/org-access.ts applyRoster`) drops every **web session, API token and open socket** (`/__ws`, `/__vnc`,
+   `/__screencast`, proxied websockets) of anyone no longer on it, parks them as `viewer`, moves changed roles in
+   place (closing that user's sockets so a desktop opened as admin does not outlive a downgrade), and records the
+   applied `gen`; an older roster is refused (409), so two pushes that cross cannot resurrect a removed member. The
+   user row stays, so per-user settings survive a remove/re-add. After a roster has been applied, a handoff for an
+   e-mail not on it opens nothing (closes the 2-minute window of a token minted just before removal). A failed
+   push leaves `roster_gen != roster_synced_gen`; `startRosterSync` (30 s, separate from reconcile) retries until it
+   lands, a stopped workspace gets it when it runs again, and `/admin` flags "not yet applied".
+3. **Short sessions.** On a shared host (`ARIGAMI_SHARED_WORKSPACE=1`) handoff sessions live
+   `ARIGAMI_SHARED_SESSION_HOURS` (default 12) instead of `cookieDays` (30). Dumb, but bounds anything the first two
+   missed. A shared host also refuses a handoff token that names no role — it must never hand out an admin by
+   omission.
+
+### Landing
+
+`/` is unchanged: a normal user lands in their personal workspace, an org-admin on `/admin`. **`/workspaces`** is
+the picker: "Open my workspace" plus every shared workspace the user may open (same `decideAccess`), with their
+role, state and **Open**. `/admin` links to it. Open on a dormant workspace wakes it and shows a self-refreshing
+wait page.
+
+### Trust model (read this before creating one)
+
+- **Members share the machine.** A shared workspace is one pod, one disk, one desktop, one set of connected
+  accounts. Anyone who can run a turn (tenant `admin` or `user`) can read every file on it — including secrets
+  other members connected, other members' session transcripts and the org-wide tokens of the org host — and can
+  leave things behind (a cron job, a listener, a modified repo). Only add people you would give a shell on that box.
+  Connect personal accounts in your *personal* workspace, not here.
+- **Removing someone shuts the door, it does not undo what they did.** After removing a member who could run
+  turns, review cron jobs / listeners / agents they created and rotate any secret held in the workspace.
+- **`viewer` cannot run a turn.** Enforced before routing (`auth.gate` → `org-access.refusal`), for cookies and API tokens alike: only
+  `GET`/`HEAD`/`OPTIONS` and `POST /__api/auth/logout`; no `/__mcp/*`; the only websocket is the server→client
+  `/__ws` event stream (no `/__vnc`, `/__screencast` or proxied sockets). Fail closed: an unknown route is treated
+  as a write. A viewer is *read-only*, not *low-trust*: they see what a member sees (sessions, transcripts,
+  non-admin settings).
+- **No member reaches another tenant.** The gate is per namespace and per member; the edge strips the control
+  plane cookie before the pod; each tenant has its own handoff secret, so a token for one cannot open another;
+  NetworkPolicy keeps pods apart. New with shared workspaces: a member's dev server inside a shared workspace serves
+  pages to *other* members' browsers, and every tenant host is same-site with every other — so `SameSite=Lax` would
+  let such a page POST to, or open a websocket on, the viewer's own **personal** tenant with their cookie. Every
+  orchestrated tenant (handoff secret set) now refuses a cookie-authenticated write or upgrade whose `Origin` is not
+  its own (`org-access.crossOriginWrite`). **Roll this image to every tenant before you create the first shared
+  workspace** — personal tenants on an older image are not protected from it.
+- **Org-admins are not members by default.** Same reasoning as the gate's "owner only": admins manage the list and
+  must add themselves (logged) to get in.
+
+### Tests
+
+`control-plane/test/shared.test.ts` (51): migrations on an old schema + idempotence; the `decideAccess` decision
+table (17 rows); `/auth/verify` for members, non-members, org-admins, cross-workspace and cross-tenant attempts,
+`org` policy and switching back, removal denying the next request, not-running/deleted, the look-alike subject;
+picker contents, `/` unchanged, open-as-yourself with mapped roles, uniform 403, dormant wake-up; admin routes incl.
+non-admin and cross-origin refusal and bad input; one org host, no name reuse; roster contents/generations, failed
+push → retry, stopped workspace, monotonic sync; the CLI (in-process and the real `bun src/cli.ts shared list`
+against a DB file); `provisionTenant` args (`sharedWorkspace`/`orgHost` for shared rows only, the rest of the
+command identical) and `pushRoster`'s exec. Tenant side: `test/org-access.test.ts` (viewer policy, origin guard,
+roster application, handoff decisions, session TTL) and `test/shared-workspace-host.test.ts` — a real host booted
+like the chart boots a shared tenant, driven with tokens minted by the control plane's code: role-less token
+refused, members as themselves with short sessions, viewer read-only (POST 403, `/__vnc` 403, `/__ws` 101),
+cross-origin POST/upgrade 403, a roster push closing a live websocket and killing the cookie and the next sign-in,
+in-place downgrade, and replay / stale / wrong-secret / wrong-kind tokens refused.
+
+**Not proven yet:** a live cluster run (the roster push over a real `kubectl exec`, the chart flags on a real
+pod), the cockpit UI's handling of a viewer (it still shows the composer; the server refuses the write), and the
+org-host jobs actually running in a shared workspace end to end.
 
 ## What's deliberately NOT in here yet (K8S-4/K8S-5)
 
