@@ -136,12 +136,18 @@ export async function deleteTenant(cfg: Config, t: Tenant): Promise<void> {
 // busy signal is deliberately loopback-only (server/host-control.ts
 // healthBody: /__health only reports busySessions to 127.0.0.1, so tenant
 // activity is never visible to the open internet through the probe path).
-// `gosu node:node` because kubectl exec lands in the container as root (the
-// entrypoint's chown-then-drop dance, docs/DOCKER.md) — anything that touches
-// $ARIGAMI_DIR must run as the same user as the host process or it leaves
-// root-owned files the host can no longer write.
+// Run as the host's own user (uid 1000, `node`): anything that touches $ARIGAMI_DIR as root leaves files the host
+// can no longer write. Since arigami-tenant 0.2.0 the pod itself runs as uid 1000 (podSecurityContext), so
+// `kubectl exec` already lands there — and gosu, which cannot switch users without root, fails every call with
+// "operation not permitted" (backups, the busy check before an upgrade, post-upgrade health). Only a pod started as
+// root (podSecurityContext: {}) still needs the drop.
 export function tenantPod(ns: string): string {
   return `${fullname(ns)}-0`;
+}
+
+export function tenantExecArgv(ns: string, cmd: string[]): string[] {
+  const asNode = 'if [ "$(id -u)" = 0 ]; then exec gosu node:node "$@"; fi; exec "$@"';
+  return ['kubectl', '-n', ns, 'exec', tenantPod(ns), '--', 'sh', '-c', asNode, 'sh', ...cmd];
 }
 
 export async function execInTenant(
@@ -150,7 +156,7 @@ export async function execInTenant(
   cmd: string[],
   opts: { timeoutMs?: number } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  return run(['kubectl', '-n', t.ns, 'exec', tenantPod(t.ns), '--', 'gosu', 'node:node', ...cmd], {
+  return run(tenantExecArgv(t.ns, cmd), {
     timeoutMs: opts.timeoutMs ?? 30_000,
   });
 }

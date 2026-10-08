@@ -413,8 +413,8 @@ K8S-2's "nothing notices desired != running" gap is closed.
 
 `src/backup.ts` reuses `server/backup.ts` (B4-full) unchanged:
 
-- **Backup** = `kubectl exec … gosu node:node bun server/backup.ts export
-  --full` in-pod, then `kubectl cp` the archive to
+- **Backup** = `kubectl exec … bun server/backup.ts export
+  --full` in-pod (as uid 1000 — through gosu only when the pod runs as root, `tenantExecArgv`), then `kubectl cp` the archive to
   `CP_BACKUP_DIR/<ns>/arigami-backup-<stamp>.tgz` on the control-plane's own
   disk — NOT the tenant's PVC; a backup living on the volume it protects
   dies with it. Pruned to `CP_BACKUP_KEEP` (default 7) per tenant. On-demand
