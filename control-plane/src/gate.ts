@@ -11,6 +11,10 @@
 //   403  someone else's tenant, an unknown host, an org-admin included
 //   503  the gate is misconfigured (cookie not shared)                 -> denied, never a redirect loop
 //
+// An edge that cannot pass a redirect on (ingress-nginx: auth_request answers any 3xx with a 500) asks with
+// `?redirect=0` and gets 401 for both 302 cases; its `auth-signin` then sends the browser to /auth/login?rd=…, and
+// the callback lands a user whose own workspace is not running on /workspace rather than back at the gate.
+//
 // Org-admins are NOT let through to other people's cockpits: a cockpit drives a machine with that person's
 // connected accounts, an admin already has suspend/backup/delete on the admin page, and the tenant's own
 // handoff is email-bound to the owner — passing the edge would grant an admin nothing but a pairing screen,

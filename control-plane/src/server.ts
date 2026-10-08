@@ -66,6 +66,15 @@ async function runProvisioning(cfg: Config, store: Store, provisioner: Provision
   }
 }
 
+// An OIDC `sub` is any string ("auth0|123", "…@…"); the admin page puts it in the path percent-encoded.
+const pathSubject = (raw: string): string => {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
 export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log, adminOps: AdminOps = realAdminOps) {
   const auth = createAuthService(cfg, store);
 
@@ -98,7 +107,18 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const { setCookie } = auth.login(result.subject, https);
       if (result.role === 'user') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
-      return redirect(safeReturnUrl(cfg, result.returnTo) || '/', setCookie);
+      const back = safeReturnUrl(cfg, result.returnTo);
+      // Back to the user's OWN workspace: through the handoff while it runs — the gate now lets the browser in, but
+      // the cockpit has no session of its own yet in a fresh browser and would show its pairing screen (the handoff
+      // lands on /__host/, the deeper path is not kept). Not running: the gate would refuse it again, and an edge
+      // that answers that with a fresh sign-in (nginx auth-signin) would loop — /workspace resumes it instead.
+      const backNs = back && !back.startsWith('/') ? tenantNsForHost(cfg, new URL(back).host) : null;
+      const own = backNs ? store.findTenantByNs(backNs) : null;
+      if (own && own.subject === result.subject) {
+        if (own.state !== 'running') return redirect('/workspace', setCookie);
+        return redirect(signInUrl(tenantUrl(cfg, own.ns), own.handoff_secret, own.email), setCookie);
+      }
+      return redirect(back || '/', setCookie);
     }
 
     if (url.pathname === '/auth/logout') {
@@ -115,8 +135,12 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
       const ns = tenantNsForHost(cfg, host);
       if (!ns) return deny(403, 'not a workspace address');
+      // `?redirect=0`: the edge cannot relay a redirect from here (nginx auth_request treats a 3xx as an error and
+      // answers 500). It gets a 401 instead and sends the browser to /auth/login itself (auth-signin).
+      const noRedirect = url.searchParams.get('redirect') === '0';
       const who = auth.principalFromCookieHeader(cookieHeader);
       if (!who) {
+        if (noRedirect) return deny(401, 'sign in first');
         const rd = safeReturnUrl(cfg, requestedUrl(cfg, host, req.headers.get('x-forwarded-uri')));
         const login = `${cfg.publicUrl}/auth/login` + (rd ? `?rd=${encodeURIComponent(rd)}` : '');
         return new Response(null, { status: 302, headers: { location: login, 'cache-control': 'no-store' } });
@@ -125,6 +149,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       // Same answer for "no such tenant" and "not yours": the gate does not reveal which addresses exist.
       if (!t || t.subject !== who.subject) return deny(403, `this workspace does not belong to ${who.email}`);
       if (t.state !== 'running') {
+        // The sign-in this 401 leads to lands on /workspace for a workspace that is not running (/auth/callback).
+        if (noRedirect) return deny(401, 'this workspace is not running');
         return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}/workspace`, 'cache-control': 'no-store' } });
       }
       return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
@@ -224,7 +250,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (digestAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const subject = digestAction[1];
+      const subject = pathSubject(digestAction[1]);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state === 'deleted') return html(tpl.errorPage(409, 'tenant is deleted'), 409);
@@ -241,7 +267,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (backupAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const t = store.findTenantBySubject(backupAction[1]);
+      const t = store.findTenantBySubject(pathSubject(backupAction[1]));
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state !== 'running') return html(tpl.errorPage(409, `cannot back up a tenant in state ${t.state}`), 409);
       try {
@@ -257,7 +283,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (adminAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const [, subject, action] = adminAction;
+      const [, rawSubject, action] = adminAction;
+      const subject = pathSubject(rawSubject);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       const nextState = action === 'suspend' ? 'dormant' : action === 'resume' ? 'running' : 'deleted';

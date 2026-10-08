@@ -413,8 +413,8 @@ K8S-2's "nothing notices desired != running" gap is closed.
 
 `src/backup.ts` reuses `server/backup.ts` (B4-full) unchanged:
 
-- **Backup** = `kubectl exec … gosu node:node bun server/backup.ts export
-  --full` in-pod, then `kubectl cp` the archive to
+- **Backup** = `kubectl exec … bun server/backup.ts export
+  --full` in-pod (as uid 1000 — through gosu only when the pod runs as root, `tenantExecArgv`), then `kubectl cp` the archive to
   `CP_BACKUP_DIR/<ns>/arigami-backup-<stamp>.tgz` on the control-plane's own
   disk — NOT the tenant's PVC; a backup living on the volume it protects
   dies with it. Pruned to `CP_BACKUP_KEEP` (default 7) per tenant. On-demand
@@ -741,10 +741,14 @@ this app and a fake tenant, gave 200 for the owner (with `arigami_cp_sid` remove
 a websocket echo for the owner and a refused upgrade for anyone else, the webhook path through without a
 session, and **502 with the control plane stopped** (the tenant never saw the request).
 
-Not proven: the full browser round-trip through a real IdP on a live lab, and the ingress-nginx variant
-("the proper way" in `deploy/gke-lab/README.md`): nginx `auth_request` does not relay a 302 from the auth
-endpoint, so it needs `nginx.ingress.kubernetes.io/auth-url` → `/auth/verify` **plus** `auth-signin` →
-`/auth/login?rd=$scheme://$host$request_uri`, and the cookie strip done with a `configuration-snippet`.
+The ingress-nginx variant ("the proper way" in `deploy/gke-lab/README.md`) is proven in-cluster on a local k3s —
+`deploy/local-k3s/` (values, `e2e.sh`, results). nginx `auth_request` answers any 3xx from the auth endpoint with a
+500, so nginx asks `/auth/verify?redirect=0` and gets **401** where Caddy gets a 302 (no session, or the own workspace
+not running); `auth-signin` → `/auth/login` then starts the sign-in, and `/auth/callback` sends a user back into their
+OWN workspace through the handoff (or to `/workspace` when it is not running — no 401 → sign-in → 401 loop).
+`X-Forwarded-Host`/`-Uri` come from an `auth-snippet` (nginx sends the control plane's own Host on the subrequest),
+the cookie strip from a `configuration-snippet`. Not proven: the full browser round-trip through a real IdP on a
+live lab.
 
 ## Profile rollout
 

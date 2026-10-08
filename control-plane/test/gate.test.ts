@@ -37,8 +37,8 @@ function setup(env: Record<string, string> = {}) {
     return { cookie, host: t ? `${t.ns}.lab.example.com` : '' };
   };
   // What Caddy's forward_auth sends: the browser's headers, plus X-Forwarded-Host / -Uri.
-  const verify = (host: string, cookie?: string, uri = '/__host/?session=abc') =>
-    app.handle(new Request('https://lab.example.com/auth/verify', {
+  const verify = (host: string, cookie?: string, uri = '/__host/?session=abc', query = '') =>
+    app.handle(new Request(`https://lab.example.com/auth/verify${query}`, {
       headers: { host, 'x-forwarded-host': host, 'x-forwarded-uri': uri, 'x-forwarded-method': 'GET', ...(cookie ? { cookie } : {}) },
     }));
   return { cfg, store, app, user, verify };
@@ -105,6 +105,22 @@ describe('GET /auth/verify', () => {
     expect(res.headers.get('location')).toBe('https://lab.example.com/workspace');
   });
 
+  test('?redirect=0 (ingress-nginx auth-url): 401 instead of either 302, the other answers unchanged', async () => {
+    const { user, verify } = setup();
+    const bob = user('bob');
+    const eve = user('eve');
+    const dozy = user('dozy', 'user', 'dormant');
+    const q = '?redirect=0';
+    for (const [label, res, status] of [
+      ['no session', await verify(bob.host, undefined, '/', q), 401],
+      ['not running', await verify(dozy.host, dozy.cookie, '/', q), 401],
+      ['own', await verify(bob.host, bob.cookie, '/', q), 200],
+      ['not yours', await verify(bob.host, eve.cookie, '/', q), 403],
+    ] as const) {
+      expect([label, res.status, res.headers.get('location')]).toEqual([label, status, null]);
+    }
+  });
+
   test('a stale host-only cookie next to a valid domain cookie still passes (both values are tried)', async () => {
     const { user, verify } = setup();
     const bob = user('bob');
@@ -164,6 +180,23 @@ describe('return URL (open-redirect guard)', () => {
       const res = await app.handle(new Request('https://lab.example.com/auth/callback?code=x&state=y'));
       expect(res.status).toBe(302);
       expect(res.headers.get('location')).toBe(expected);
+    }
+  });
+
+  test('/auth/callback back to the own workspace: via the handoff when running, /workspace when not', async () => {
+    const { app, user, store } = setup();
+    const dozy = user('dozy', 'user', 'dormant');
+    const bob = user('bob');
+    const bobT = store.findTenantBySubject('bob')!;
+    const handoff = bobT.handoff_secret ? `https://${bob.host}/__api/auth/handoff?t=` : `https://${bob.host}`;
+    for (const [who, rd, expected] of [
+      ['dozy', `https://${dozy.host}/__host/`, '/workspace'], // own, dormant: the gate would refuse it again
+      ['bob', `https://${bob.host}/__host/?x=1`, handoff], // own, running: the cockpit needs its own session
+      ['bob', `https://${dozy.host}/__host/`, `https://${dozy.host}/__host/`], // not his: the gate answers 403
+    ]) {
+      (app.auth as any).oidcCallback = async () => ({ ok: true, subject: who, email: `${who}@example.com`, role: 'user', isNewUser: false, returnTo: rd });
+      const res = await app.handle(new Request('https://lab.example.com/auth/callback?code=x&state=y'));
+      expect([who, rd, res.headers.get('location')?.startsWith(expected) && expected]).toEqual([who, rd, expected]);
     }
   });
 });

@@ -215,22 +215,22 @@ export function adminPage(
 }
 
 function digestForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/digest">
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/digest">
     <input name="digest" placeholder="tag or sha256:…" size="14"><button type="submit">Set</button></form>`;
 }
 function profileRetryForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/profile-retry"><button type="submit">Retry now</button></form>`;
 }
 function backupForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/backup"><button type="submit">Backup now</button></form>`;
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/backup"><button type="submit">Backup now</button></form>`;
 }
 
 function suspendForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/suspend"><button type="submit">Suspend</button></form>`;
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/suspend"><button type="submit">Suspend</button></form>`;
 }
 function resumeForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/resume"><button type="submit">Resume</button></form>`;
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/resume"><button type="submit">Resume</button></form>`;
 }
 function deleteForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/delete" onsubmit="return confirm('Delete this tenant? This deletes the namespace.')"><button type="submit">Delete</button></form>`;
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/delete" onsubmit="return confirm('Delete this tenant? This deletes the namespace.')"><button type="submit">Delete</button></form>`;
 }

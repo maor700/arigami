@@ -46,7 +46,7 @@ Never ask the user for their cookie, and don't lift `users.json`. The
 supported path (proved live in the K8S-3 pilot run):
 
 ```
-kubectl -n u-<id> exec arigami-<id>-0 -- gosu node:node sh -c 'cd /app && bin/host pair'
+kubectl -n u-<id> exec arigami-<id>-0 -- sh -c 'cd /app && bin/host pair'
 #   pairing code: XXXX-XXXX  (one-time)
 kubectl -n u-<id> port-forward arigami-<id>-0 8080:3099
 # browse http://127.0.0.1:8080/__host/ → enter the code → you are a NEW admin user
@@ -57,7 +57,11 @@ possession of the code == possession of the filesystem, so it always yields
 an admin — a NEW user with your email, not the tenant user's session). The
 tenant user's own cookie/session is untouched; your access is visible to
 them in the users list. When done: remove yourself —
-`kubectl … exec … -- gosu node:node sh -c 'cd /app && bin/host user remove support@<org>'`.
+`kubectl … exec … -- sh -c 'cd /app && bin/host user remove support@<org>'`.
+
+Since arigami-tenant 0.2.0 the pod runs as the host's own user (uid 1000), so `kubectl exec` already lands as
+`node`; `gosu node:node` now fails with "operation not permitted". Only a pod started as root
+(`podSecurityContext: {}`) needs it — prefix the command with `gosu node:node` there.
 
 Port-forward (not the ingress) keeps support access off the public URL and
 inside kubectl's audited auth. The same exec/pair path works when the
@@ -127,7 +131,7 @@ doesn't write).
 
 **Do**:
 1. Measure: `kubectl -n u-<id> exec arigami-<id>-0 -- df -h /data` and find
-   the eater: `… exec … -- gosu node:node du -sh /data/.arigami/* /data/repos/* | sort -h | tail`.
+   the eater: `… exec … -- sh -c 'du -sh /data/.arigami/* /data/repos/*' | sort -h | tail`.
 2. Usual suspects, safe to delete in-pod: `/data/.arigami/tmp/*` (export
    scratch), stale `.bak-*` dirs from old restores (each restore leaves one
    — `server/backup.ts` importFull), `/data/.arigami/backups/*` (old local

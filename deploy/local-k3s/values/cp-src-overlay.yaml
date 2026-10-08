@@ -1,0 +1,10 @@
+# CP_SRC_OVERLAY=1 ./up.sh — run this checkout's control-plane/src on top of the published control-plane image
+# (same node_modules, kubectl, helm and baked tenant chart; only src/ differs). For trying a control-plane fix before
+# an image carrying it exists. Never for anything but a scratch cluster: the code is then whatever is on disk.
+extraVolumes:
+  - name: cp-src
+    configMap: {name: control-plane-src-overlay}
+extraVolumeMounts:
+  - name: cp-src
+    mountPath: /app/src
+    readOnly: true

@@ -2,7 +2,7 @@ arigami-control-plane {{ .Chart.Version }} installed as {{ .Release.Name }} in {
 
 Origin:  {{ include "arigami-control-plane.publicUrl" . }}
 Tenants: {{ .Values.config.urlScheme }}://u-<id>.{{ .Values.config.orgDomain }}
-Tenant image: {{ .Values.config.tenantImageRepository }}:{{ .Values.config.tenantImageTag }}
+Tenant image: {{ .Values.config.tenantImageRepository }}{{ if hasPrefix "sha256:" .Values.config.tenantImageTag }}@{{ else }}:{{ end }}{{ .Values.config.tenantImageTag }}
 
 {{ if not .Values.config.oidcIssuer -}}
 WARNING: config.oidcIssuer is empty — /auth/login will fail and nobody can sign in.

@@ -78,10 +78,11 @@ Skip `edge.yaml`, `chisel.yaml`, `tunnel.sh` and `cp-local.sh`: install `ingress
 Encrypt; HTTP-01 needs no DNS permissions), then `deploy/helm/arigami-control-plane` in-cluster with
 `config.orgDomain`, `config.tenantIngressClass=nginx`, `config.tenantIngressNamespaces=ingress-nginx`,
 `ingress.host=<domain>` and `tenantValues` carrying the cert-manager annotation / `ingress.tls.enabled`. The SSO
-gate is the same control-plane endpoint: `config.cookieParentDomain="1"` and, on each tenant Ingress,
-`nginx.ingress.kubernetes.io/auth-url` → `/auth/verify` plus `auth-signin` → `/auth/login?rd=$scheme://$host$request_uri`
-(nginx does not relay a 302 from the auth endpoint, hence the second annotation). **This path is written down, not
-tested.**
+gate is the same control-plane endpoint: `config.cookieParentDomain="1"` and, on each tenant Ingress (via the chart's
+`tenantValues`), `auth-url` → `/auth/verify?redirect=0`, `auth-signin` → `/auth/login` (nginx appends an escaped `rd`
+itself), an `auth-snippet` setting `X-Forwarded-Host`/`-Uri`, and a `configuration-snippet` stripping `arigami_cp_sid`.
+**Tested in-cluster on a local k3s, not on this lab**: [deploy/local-k3s](../local-k3s/README.md) (values, the proof,
+what is not in the published images yet, and the cloud checklist).
 
 ## Not covered / known gaps
 

@@ -1,0 +1,77 @@
+# The OIDC identity provider stand-in: control-plane/test/fixtures/mock-idp.ts run by a stock bun image, the file
+# mounted from a ConfigMap (up.sh creates it from the repo file, so there is exactly one copy of the code).
+# TEST FIXTURE: anyone can sign in as anyone by putting &email= on the authorize URL. The cloud replaces this whole
+# file with a real OIDC client at the org's IdP (README checklist).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-idp
+  namespace: idp
+  labels: {app: mock-idp}
+spec:
+  replicas: 1 # signing keys live in memory: one replica, and a restart invalidates only in-flight sign-ins
+  selector:
+    matchLabels: {app: mock-idp}
+  template:
+    metadata:
+      labels: {app: mock-idp}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: idp
+          image: oven/bun:1.3-alpine
+          args: ["bun", "/idp/mock-idp.ts", "8080"]
+          env:
+            # Must equal CP_OIDC_ISSUER exactly: it is the `iss` of every id_token and the base of every endpoint the
+            # discovery document hands to the browser AND to the control plane.
+            - name: MOCK_IDP_ISSUER
+              value: http://idp.localtest.me
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /.well-known/openid-configuration, port: http}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts: [{name: code, mountPath: /idp, readOnly: true}]
+      volumes:
+        - name: code
+          configMap: {name: mock-idp}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-idp
+  namespace: idp
+spec:
+  selector: {app: mock-idp}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mock-idp
+  namespace: idp
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: idp.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: mock-idp, port: {name: http}}
