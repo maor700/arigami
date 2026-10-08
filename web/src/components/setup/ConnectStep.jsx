@@ -137,7 +137,7 @@ export default function ConnectStep({ capability, owner, sessionId, title, onDon
       {(phase === 'person' || phase === 'manual') && (
         <>
           {phase === 'person' && (
-            <div className="rounded-[8px] border border-[#e7d3a8] bg-[#FBF3E0] px-2.5 py-2 text-[11.5px] leading-snug text-[#8a6d1f]" data-connect-needs-you>
+            <div className="rounded-[8px] border border-warn-line bg-warn-bg px-2.5 py-2 text-[11.5px] leading-snug text-warn" data-connect-needs-you>
               <b>{t('setup.connect.needsYou', { name })}</b>
               {reason ? ` ${reason}.` : ''}
             </div>

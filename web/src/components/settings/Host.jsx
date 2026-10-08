@@ -368,7 +368,7 @@ export default function Host({ section = '' }) {
             {upgRunning && <span className={warn}>{t('host.ver.updating', { step: upg.step || '…' })}</span>}
             {st && !st.allowUpgrade && !st.docker && <span className={warn}>{t('host.upgradeDisabled')}</span>}
             {dirtyList.length > 0 && (
-              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">
+              <div className="w-full max-w-[28rem] rounded-xl border border-err-line bg-err-bg px-3 py-2 text-start text-[11px] text-err">
                 <div className="font-bold">{t('host.ver.dirty.title', { n: dirtyList.length })}</div>
                 <ul dir="ltr" className="my-1 max-h-[140px] overflow-auto font-mono text-[11.5px] md:text-[10.5px] leading-snug">
                   {dirtyList.slice(0, 20).map((f) => <li key={f}>{f}</li>)}
@@ -378,13 +378,13 @@ export default function Host({ section = '' }) {
               </div>
             )}
             {ver?.sharedBase === false && (
-              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">
+              <div className="w-full max-w-[28rem] rounded-xl border border-err-line bg-err-bg px-3 py-2 text-start text-[11px] text-err">
                 <div className="font-bold">{t('host.ver.noBase.title')}</div>
                 <div className="text-fgdim">{t('host.ver.noBase.how')}</div>
               </div>
             )}
             {ver?.sharedBase !== false && ver?.behind > 0 && ver?.ahead > 0 && (
-              <div className="w-full max-w-[28rem] rounded-xl border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-start text-[11px] text-[#9c3b33]">{t('host.ver.notFF', { n: ver.behind })}</div>
+              <div className="w-full max-w-[28rem] rounded-xl border border-err-line bg-err-bg px-3 py-2 text-start text-[11px] text-err">{t('host.ver.notFF', { n: ver.behind })}</div>
             )}
             {readyJob && !readyDismissed && (
               <div className="w-full max-w-[28rem] rounded-xl border-[1.5px] border-ink bg-panel px-3 py-2.5 text-start">
@@ -423,7 +423,7 @@ export default function Host({ section = '' }) {
             <span className="font-mono text-[11.5px] text-fg" dir="ltr">{!cx ? '…' : cx.installed ? t('host.cli.installed', { v: cx.installed }) : t('host.codexCli.missing')}</span>
             {cx?.updateAvailable
               ? <span className="font-mono text-[11px] font-bold text-[#CE8324]" dir="ltr">{t('host.cli.updateAvailable', { v: cx.latest })}</span>
-              : cx?.checkError ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-[#9c3b33]">{t('host.cli.checkError', { error: cx.checkError })}</span>
+              : cx?.checkError ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-err">{t('host.cli.checkError', { error: cx.checkError })}</span>
               : cx?.latest && cx?.installed ? <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('host.cli.upToDate')}</span> : null}
             {cx?.installed && (
               <button type="button" disabled={cxBusy === 'check' || cx?.checking} onClick={cxCheck} className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-fgdim underline disabled:opacity-50">{cxBusy === 'check' || cx?.checking ? t('host.checking') : t('host.check')}</button>
@@ -475,12 +475,12 @@ export default function Host({ section = '' }) {
           <Field label={t('host.cli')} hint={t('host.cli.hint')} wrap>
             <div className="flex flex-col items-end gap-1.5">
               <span className="flex items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-                {cli?.checkError ? <span className="text-[#9c3b33]">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
+                {cli?.checkError ? <span className="text-err">{t('host.cli.checkError', { error: cli.checkError })}</span> : cli?.checkedAt ? t('host.cli.checkedAt', { when: relTime(cli.checkedAt) }) : cli ? t('host.cli.unknown') : ''}
                 <button type="button" disabled={cliBusy === 'check' || cli?.checking} onClick={cliCheck} className="cursor-pointer underline disabled:opacity-50">{cliBusy === 'check' || cli?.checking ? t('host.checking') : t('host.check')}</button>
               </span>
               {cli?.deferred && <span className={warn}>{t('host.cli.deferred', { mb: cli.deferred.availableMb, min: cli.deferred.minFreeMb })}</span>}
               {cli?.lastUpdate && (
-                <span className={`font-mono text-[11.5px] md:text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-[#9c3b33]'}`} dir="ltr">
+                <span className={`font-mono text-[11.5px] md:text-[10.5px] ${cli.lastUpdate.ok ? 'text-fgdim' : 'text-err'}`} dir="ltr">
                   {cli.lastUpdate.ok
                     ? t('host.cli.lastOk', { from: cli.lastUpdate.from || '?', to: cli.lastUpdate.to || '?', when: relTime(cli.lastUpdate.at) })
                     : t('host.cli.lastFailed', { when: relTime(cli.lastUpdate.at), error: cli.lastUpdate.error || '?' })}

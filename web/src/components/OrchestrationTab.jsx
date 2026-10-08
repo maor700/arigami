@@ -109,7 +109,7 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
             type="button"
             onClick={() => jump(worker.id)}
             title={t('chat.jumpToWorker')}
-            className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[#2C6BD6] hover:underline"
+            className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-info hover:underline"
           >
             → {worker.id}
           </button>
@@ -271,7 +271,7 @@ export default function OrchestrationTab({ session, active }) {
       </div>
 
       {data.planError && (
-        <div className="mx-4 mt-3 rounded-[8px] border border-[#e6d27a] bg-chip/60 px-3 py-2 text-[11.5px] text-fgdim">
+        <div className="mx-4 mt-3 rounded-[8px] border border-warn-line bg-chip/60 px-3 py-2 text-[11.5px] text-fgdim">
           {data.planError} {t('chat.showingLiveWorkers')}
         </div>
       )}

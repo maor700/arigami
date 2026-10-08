@@ -111,7 +111,7 @@ function RunRow({ run, open, onToggle, t, onUndo, busy }) {
         <span className="w-[92px] shrink-0 text-[11.5px] text-fgdim">{whenLabel(run.ts, t)}</span>
         <span className="min-w-0 flex-1 text-[12.5px] text-fg">
           {t('memory.run.proposed', { n: run.counts?.proposed ?? 0 })} →{' '}
-          {typeof sum === 'string' ? <span className="text-[#9c3b33]">{sum}</span>
+          {typeof sum === 'string' ? <span className="text-err">{sum}</span>
             : sum.length === 0 ? <span className="text-fgdim">{t('memory.run.nothing')}</span>
               : sum.map((p, i) => (
                 <span key={i}>{i > 0 && ' · '}{p.bold ? <b className="text-brand-ink">{p.text}</b> : p.text}</span>

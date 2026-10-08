@@ -201,7 +201,7 @@ function DetailPane({ name, aiSummary }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="font-mono text-[13px] font-bold text-fg">{name}</span>
         <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">/SKILL.md</span>
@@ -225,7 +225,7 @@ function DetailPane({ name, aiSummary }) {
                 type="button"
                 onClick={save}
                 disabled={saving || !dirty}
-                className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
+                className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
               >
                 {saving ? t('dialogs.saving') : t('dialogs.save')}
               </button>
@@ -243,7 +243,7 @@ function DetailPane({ name, aiSummary }) {
       </div>
 
       {err && (
-        <div className="shrink-0 border-b border-[#e2c4c0] bg-[#FBECEA] px-4 py-2 text-[11px] text-[#9c3b33]">
+        <div className="shrink-0 border-b border-err-line bg-err-bg px-4 py-2 text-[11px] text-err">
           {err}
         </div>
       )}
@@ -254,13 +254,13 @@ function DetailPane({ name, aiSummary }) {
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
           dir="ltr"
-          className="thin-scroll min-h-0 flex-1 resize-none bg-white px-5 py-4 font-mono text-[12px] leading-relaxed text-fg outline-none"
+          className="thin-scroll min-h-0 flex-1 resize-none bg-bg px-5 py-4 font-mono text-[12px] leading-relaxed text-fg outline-none"
         />
       ) : (
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="md-light mx-auto max-w-[820px] px-7 py-6">
             {aiSummary && (
-              <div className="mb-4 rounded-lg border border-[#cdb9ea] bg-[#f3eefc] px-3 py-2 text-[11.5px] text-[#5a3aa6]">
+              <div className="mb-4 rounded-lg border border-violet-line bg-violet-bg px-3 py-2 text-[11.5px] text-violet">
                 <span className="font-bold">{t('dialogs.aiSummaryLabel')}</span>
                 {aiSummary}
               </div>
@@ -373,10 +373,10 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
   const dim = (id) => active && !active.has(id);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="text-[11px] text-fgdim">
-          <span className="mr-1 inline-block h-2 w-4 rounded-sm bg-[#2a2a2a] align-middle" /> {t('dialogs.hostInvokesSkill')}
+          <span className="mr-1 inline-block h-2 w-4 rounded-sm bg-fg align-middle" /> {t('dialogs.hostInvokesSkill')}
           <span className="ml-3 mr-1 inline-block h-0 w-4 border-t-2 border-dashed border-[#7a4fc4] align-middle" /> {t('dialogs.aiSuggested')}
         </span>
         <div className="ml-auto flex items-center gap-2">
@@ -409,7 +409,7 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
                 <path
                   d={edgePath(a, b)}
                   fill="none"
-                  stroke={isAi ? '#7a4fc4' : '#2a2a2a'}
+                  stroke={isAi ? '#7a4fc4' : 'var(--color-fg)'}
                   strokeWidth={isAi ? 1.5 : 1.75}
                   strokeDasharray={isAi ? '4 3' : undefined}
                 />
@@ -425,9 +425,9 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
           {Object.values(nodes).map((n) => {
             const isSel = n.id === `skill:${selected}`;
             const palette =
-              n.kind === 'surface' ? { bg: '#fdf3df', bd: '#caa94e' }
-              : n.kind === 'lib' ? { bg: '#eef0f3', bd: '#9aa3ad' }
-              : { bg: '#eaf4ef', bd: '#2f9c82' };
+              n.kind === 'surface' ? { bg: 'var(--color-warn-bg)', bd: '#caa94e' }
+              : n.kind === 'lib' ? { bg: 'var(--color-panel)', bd: '#9aa3ad' }
+              : { bg: 'var(--color-ok-bg)', bd: '#2f9c82' };
             return (
               <g
                 key={n.id}
@@ -440,8 +440,7 @@ function GraphPane({ data, analysis, selected, onSelectSkill, onAnalyze, analyzi
                   width={n.w}
                   height={n.h}
                   rx={8}
-                  fill={palette.bg}
-                  stroke={isSel ? '#2a2a2a' : palette.bd}
+                  style={{ fill: palette.bg, stroke: isSel ? 'var(--color-fg)' : palette.bd }}
                   strokeWidth={isSel ? 2.5 : 1.5}
                 />
                 <text
@@ -472,7 +471,7 @@ const STATUS_CLS = {
   pending: 'text-[#b8791f]',
   applied: 'text-[#2f9c82]',
   rejected: 'text-fgdim',
-  quarantined: 'text-[#9c3b33]',
+  quarantined: 'text-err',
 };
 
 function ProposalList({ proposals, selectedId, onSelect, className }) {
@@ -499,7 +498,7 @@ function ProposalList({ proposals, selectedId, onSelect, className }) {
             {p.isNew && (
               <span className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
             )}
-            {p.flags.length > 0 && <span className="text-[11px] md:text-[9.5px] text-[#9c3b33]" title={p.flags.join(', ')}>⚠ {p.flags.length}</span>}
+            {p.flags.length > 0 && <span className="text-[11px] md:text-[9.5px] text-err" title={p.flags.join(', ')}>⚠ {p.flags.length}</span>}
           </span>
           <span className={`text-[11px] md:text-[9.5px] font-bold tracking-wide uppercase ${STATUS_CLS[p.status] || 'text-fgdim'}`}>
             {t(`dialogs.proposalStatus.${p.status}`)}
@@ -532,7 +531,7 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
     return () => { dead = true; };
   }, [id]);
 
-  if (loadErr) return <div className="p-6 text-[12px] text-[#9c3b33]">{loadErr}</div>;
+  if (loadErr) return <div className="p-6 text-[12px] text-err">{loadErr}</div>;
   if (!detail) return <div className="p-6 text-[12px] text-fgdim">{t('dialogs.loading')}</div>;
 
   const ACTION_KEYS = {
@@ -565,13 +564,13 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
   const pending = detail.status === 'pending';
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div className="flex min-h-0 flex-1 flex-col bg-bg">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-panel px-4 py-2.5">
         <span className="font-mono text-[13px] font-bold text-fg">{detail.name}</span>
         {detail.isNew && (
           <span className="rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] text-fgdim">{t('dialogs.newSkillBadge')}</span>
         )}
-        <span className="rounded-md border border-[#cdb9ea] bg-[#f3eefc] px-1.5 py-0.5 text-[11px] md:text-[9.5px] font-bold text-[#5a3aa6]">
+        <span className="rounded-md border border-violet-line bg-violet-bg px-1.5 py-0.5 text-[11px] md:text-[9.5px] font-bold text-violet">
           {t('dialogs.aiProposed')}
         </span>
         <span className={`text-[11.5px] md:text-[10.5px] font-bold uppercase ${STATUS_CLS[detail.status] || 'text-fgdim'}`}>
@@ -583,7 +582,7 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
               type="button"
               onClick={() => decide('quarantine')}
               disabled={!!busy}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] font-bold text-fg hover:bg-[#f3e5e3] disabled:cursor-default disabled:opacity-40"
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] font-bold text-fg hover:bg-err-bg disabled:cursor-default disabled:opacity-40"
             >
               {busy === 'quarantine' ? t('dialogs.quarantining') : t('dialogs.quarantine')}
             </button>
@@ -599,7 +598,7 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
               type="button"
               onClick={() => decide('apply')}
               disabled={!!busy}
-              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
+              className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
             >
               {busy === 'apply' ? t('dialogs.applying') : t('dialogs.apply')}
             </button>
@@ -608,10 +607,10 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
       </div>
 
       {err && (
-        <div className="shrink-0 border-b border-[#e2c4c0] bg-[#FBECEA] px-4 py-2 text-[11px] text-[#9c3b33]">{err}</div>
+        <div className="shrink-0 border-b border-err-line bg-err-bg px-4 py-2 text-[11px] text-err">{err}</div>
       )}
       {detail.stale && (
-        <div className="shrink-0 border-b border-[#e6d3a3] bg-[#FCF3DE] px-4 py-2 text-[11px] text-[#8a6116]">
+        <div className="shrink-0 border-b border-warn-line bg-warn-bg px-4 py-2 text-[11px] text-warn">
           {t('dialogs.staleProposalWarning')}
         </div>
       )}
@@ -628,9 +627,9 @@ function ProposalDetailPane({ id, onDecided, desktop }) {
           )}
           {detail.flags.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11.5px] md:text-[10.5px]">
-              <span className="font-bold text-[#9c3b33]">{t('dialogs.flags')}:</span>
+              <span className="font-bold text-err">{t('dialogs.flags')}:</span>
               {detail.flags.map((f) => (
-                <span key={f} className="rounded-md border border-[#e2c4c0] bg-[#FBECEA] px-1.5 py-0.5 text-[#9c3b33]">{f}</span>
+                <span key={f} className="rounded-md border border-err-line bg-err-bg px-1.5 py-0.5 text-err">{f}</span>
               ))}
             </div>
           )}
@@ -680,7 +679,7 @@ export function ProposalsPane({ desktop }) {
   };
   useEffect(() => { load(); }, []);
 
-  if (loadErr) return <div className="flex-1 p-6 text-[12px] text-[#9c3b33]">{loadErr}</div>;
+  if (loadErr) return <div className="flex-1 p-6 text-[12px] text-err">{loadErr}</div>;
   if (!proposals) return <div className="flex flex-1 items-center justify-center text-[12px] text-fgdim">{t('dialogs.loadingProposals')}</div>;
 
   return (
@@ -771,7 +770,7 @@ export default function SkillsView({ session, onClose }) {
   if (loadErr)
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="max-w-md text-[12.5px] text-[#9c3b33]">{loadErr}</div>
+        <div className="max-w-md text-[12.5px] text-err">{loadErr}</div>
         <button
           type="button"
           onClick={onClose}
@@ -800,19 +799,19 @@ export default function SkillsView({ session, onClose }) {
               type="button"
               onClick={() => setMode(mItem)}
               className={`relative cursor-pointer px-3 py-1 text-[11px] font-bold ${
-                mode === mItem ? 'bg-brand text-fg' : 'bg-panel text-fgdim hover:bg-chip'
+                mode === mItem ? 'bg-brand text-[#1a1a1a]' : 'bg-panel text-fgdim hover:bg-chip'
               }`}
             >
               {mItem === 'detail' ? t('dialogs.detailEdit') : mItem === 'graph' ? t('dialogs.graph') : t('dialogs.skillProposals')}
               {mItem === 'proposals' && pendingProposals > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#9c3b33] px-1 text-[11px] md:text-[9px] font-bold text-white">
+                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[11px] md:text-[9px] font-bold text-white">
                   {pendingProposals}
                 </span>
               )}
             </button>
           ))}
         </div>
-        {analyzeErr && <span className="text-[11.5px] md:text-[10.5px] text-[#9c3b33]">{analyzeErr}</span>}
+        {analyzeErr && <span className="text-[11.5px] md:text-[10.5px] text-err">{analyzeErr}</span>}
         <button
           type="button"
           onClick={onClose}

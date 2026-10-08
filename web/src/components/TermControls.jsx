@@ -149,7 +149,7 @@ function PermissionModal({ session, onClose }) {
   // Confirmation step: a turn is in flight and the user picked a different mode.
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-[#4a3f12]">
+      <div className="text-[12.5px] text-fg">
         {t('rail.switchModeWarnBefore', { engine })}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
@@ -221,7 +221,7 @@ function ModelModal({ session, onClose }) {
   // Confirmation step: a turn is in flight and the user picked a different model.
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-[#4a3f12]">
+      <div className="text-[12.5px] text-fg">
         {t('rail.switchModelWarnBefore', { engine })}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">
@@ -269,7 +269,7 @@ function ModelModal({ session, onClose }) {
               href="#/settings/host/host"
               onClick={onClose}
               title={t('rail.cliUpdate.hint', { v: cliUpdate.latest })}
-              className="mt-0.5 rounded-full border border-[#CE8324] bg-[#FFF4E5] px-2 py-0.5 font-mono text-[9.5px] font-bold text-[#8a5210] no-underline hover:bg-[#ffe9c7]"
+              className="mt-0.5 rounded-full border border-[#CE8324] bg-warn-bg px-2 py-0.5 font-mono text-[9.5px] font-bold text-warn no-underline hover:bg-[#CE8324]/20"
               dir="ltr"
             >
               {t('rail.cliUpdate', { v: cliUpdate.latest })}
@@ -322,7 +322,7 @@ function EffortModal({ session, onClose }) {
 
   const confirmFooter = pending && (
     <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-[#4a3f12]">
+      <div className="text-[12.5px] text-fg">
         {t('rail.switchEffortWarnBefore', { engine })}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
       </div>
       <div className="mt-3 flex justify-end gap-2">

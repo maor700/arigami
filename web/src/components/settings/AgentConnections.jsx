@@ -50,7 +50,7 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
                 {c.detail && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}</span>}
               </span>
               {c.ok && c.resolvedFrom === owner && (
-                <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('agent.conn.disconnect')}</button>
+                <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('agent.conn.disconnect')}</button>
               )}
               <button type="button" disabled={busy} className={c.ok && c.resolvedFrom === owner ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onConnect?.(c)}>
                 {c.ok && c.resolvedFrom === owner ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('agent.conn.connect')}
@@ -87,7 +87,7 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
                 <span>{fmtWhen(a.at)}</span>
                 <span className="font-bold text-fg">{a.capability}</span>
                 <span>{a.mode}</span>
-                <span className={a.result === 'done' || a.result === 'already' ? 'text-[#2f7d4f]' : a.result === 'failed' ? 'text-[#9c3b33]' : ''}>{a.result}</span>
+                <span className={a.result === 'done' || a.result === 'already' ? 'text-ok' : a.result === 'failed' ? 'text-err' : ''}>{a.result}</span>
               </div>
             ))}
           </div>

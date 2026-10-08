@@ -441,7 +441,7 @@ export default function BrainView({ onClose }) {
               type="button"
               onClick={() => setMode(mItem)}
               className={`relative cursor-pointer px-3 py-1 text-[11px] font-bold ${
-                mode === mItem ? 'bg-brand text-fg' : 'bg-panel text-fgdim hover:bg-chip'
+                mode === mItem ? 'bg-brand text-[#1a1a1a]' : 'bg-panel text-fgdim hover:bg-chip'
               }`}
             >
               {t(`brain.tab.${mItem}`)}
@@ -456,7 +456,7 @@ export default function BrainView({ onClose }) {
           type="button"
           onClick={askBrain}
           disabled={askBusy}
-          className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-fg disabled:cursor-default disabled:opacity-40"
+          className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
         >
           {askBusy ? t('brain.asking') : t('brain.askBrain')}
         </button>

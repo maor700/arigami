@@ -262,7 +262,7 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
                   type="button"
                   onClick={() => onChange({ labels: selected, labelOp: v })}
                   className={`cursor-pointer px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
-                    op === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+                    op === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
                   }`}
                 >
                   {l}
@@ -338,7 +338,7 @@ function FilterBar({
             disabled={disabled}
             onClick={() => set({ assignee: v })}
             className={`cursor-pointer px-2.5 py-[3px] text-[11px] disabled:opacity-40 ${
-              filters.assignee === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+              filters.assignee === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
             }`}
           >
             {l}
@@ -382,7 +382,7 @@ function FilterBar({
             disabled={disabled}
             onClick={() => set({ orderBy: v })}
             className={`cursor-pointer px-2 py-[3px] text-[11px] disabled:opacity-40 ${
-              filters.orderBy === v ? 'bg-brand font-bold text-fg' : 'bg-panel text-fgdim'
+              filters.orderBy === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
             }`}
           >
             {l}
@@ -700,8 +700,8 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
         <span className="shrink-0 font-mono text-[11.5px] font-bold text-fgdim">{ticket.id}</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-fgdim">{ticket.title}</span>
         <span
-          className="shrink-0 rounded-[5px] px-[7px] py-px text-[11.5px] md:text-[10px] font-bold"
-          style={{ background: tint(color, '2a'), color: '#2a2a2a' }}
+          className="shrink-0 rounded-[5px] px-[7px] py-px text-[11.5px] md:text-[10px] font-bold text-fg"
+          style={{ background: tint(color, '2a') }}
         >
           {t('launcher.ticket.inSession')}
         </span>
@@ -793,7 +793,7 @@ function ConnectLinear({ onConnected }) {
         type="button"
         onClick={connect}
         disabled={busy}
-        className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-fg disabled:opacity-60"
+        className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-60"
       >
         {busy ? t('launcher.connect.waiting') : t('launcher.connect.button')}
       </button>
@@ -1074,7 +1074,7 @@ function TicketDetailsModal({ id, onClose }) {
                   <div className="mb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.details.links')}</div>
                   <div className="flex flex-col gap-1">
                     {data.links.map((a) => (
-                      <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-[#2C6BD6] hover:underline">
+                      <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-info hover:underline">
                         {a.title}
                       </a>
                     ))}
@@ -1382,7 +1382,7 @@ function EmptyForm({ config, sessions, onCreated }) {
             {scratchN}
           </span>
           <span>{t('launcher.empty.renamedBy')}</span>
-          <span className="rounded-[5px] border border-[#ecd9a0] bg-chip px-1.5 py-px font-mono text-[11.5px] md:text-[10px] text-fg">
+          <span className="rounded-[5px] border border-warn-line bg-chip px-1.5 py-px font-mono text-[11.5px] md:text-[10px] text-fg">
             host.set_title()
           </span>
         </div>
@@ -2379,7 +2379,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
                 type="button"
                 disabled={busy}
                 onClick={startChatOnboarding}
-                className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12px] font-bold text-fg disabled:opacity-50"
+                className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12px] font-bold text-[#1a1a1a] disabled:opacity-50"
               >
                 {busy ? t('launcher.gate.starting') : t('launcher.gate.setupChat')}
               </button>

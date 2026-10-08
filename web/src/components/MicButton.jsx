@@ -27,7 +27,7 @@ export default function MicButton({ mode = 'command', className = BOX, title }) 
       onClick={() => toggleRecording({ mode })}
       className={`relative ${className} ${
         rec
-          ? 'border-danger bg-[#fdf6f5] text-danger'
+          ? 'border-danger bg-err-bg text-danger'
           : 'border-border bg-bg text-fgdim hover:border-ink hover:text-fg'
       }`}
     >

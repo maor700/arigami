@@ -1238,7 +1238,7 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           onClick={toggleAutoplay}
           title={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}
           className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[5px] border text-[0.6875rem] leading-none md:h-5 md:w-5 md:text-[0.625rem] ${
-            queue.autoplay ? 'border-ink bg-brand text-fg' : 'border-border bg-panel text-fgdim hover:border-ink'
+            queue.autoplay ? 'border-ink bg-brand text-[#1a1a1a]' : 'border-border bg-panel text-fgdim hover:border-ink'
           }`}
         >
           <Icon icon={queue.autoplay ? faPause : faPlay} />

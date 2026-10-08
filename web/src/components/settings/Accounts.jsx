@@ -331,7 +331,7 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
               <ol className="mt-1.5 ms-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
                 <li>
                   {t('launcher.account.codexStep1')}
-                  {auth.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-[#2C6BD6] underline">{t('launcher.account.openSignIn')}</a></>}
+                  {auth.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-info underline">{t('launcher.account.openSignIn')}</a></>}
                   {t('launcher.account.codexStep1b')}
                 </li>
                 <li>{t('launcher.account.codexStep2')}</li>
@@ -368,7 +368,7 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
           <ol className="mt-1.5 ms-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
             <li>
               {t('launcher.account.step1a')}
-              {auth?.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-[#2C6BD6] underline">{t('launcher.account.openSignIn')}</a></>}
+              {auth?.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-info underline">{t('launcher.account.openSignIn')}</a></>}
               {t('launcher.account.step1b')}
             </li>
             <li>{t('launcher.account.step2')}</li>

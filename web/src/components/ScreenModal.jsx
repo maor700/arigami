@@ -211,13 +211,13 @@ export default function ScreenModal({ context, onClose }) {
               className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1 font-mono text-[11.5px] text-fg outline-none placeholder:font-sans placeholder:text-fgdim"
             />
             <button type="button" disabled={typeBusy || !typed} onClick={() => typeIt(false)} className={btnSecondary}>{t('screen.typeSend')}</button>
-            {typeErr && <span className="text-[11px] text-[#9c3b33]">{typeErr}</span>}
+            {typeErr && <span className="text-[11px] text-err">{typeErr}</span>}
           </div>
         )}
         {setupCtx && (
           <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
             <span dir="auto" className="min-w-0 flex-1 text-[11.5px] text-fgdim">
-              {setupErr ? <span className="text-[#9c3b33]">{setupErr}</span> : t('setup.card.identityHint')}
+              {setupErr ? <span className="text-err">{setupErr}</span> : t('setup.card.identityHint')}
             </span>
             <button type="button" disabled={busy} onClick={setupDone} title={t('setup.card.identityHint')} className={btnPrimary}>
               {busy ? t('setup.takeover.verifying') : t('setup.takeover.modalDone')}
@@ -242,7 +242,7 @@ export default function ScreenModal({ context, onClose }) {
           </div>
         )}
         {req && doneErr && (
-          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-[11px] font-bold text-[#9c3b33]">{doneErr}</div>
+          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-[11px] font-bold text-err">{doneErr}</div>
         )}
       </div>
     </div>,

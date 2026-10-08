@@ -32,7 +32,7 @@ export default function AutoConnect({ sessionId, state = 'auto', lines = [], det
     <div className="flex flex-col gap-2">
       {header && (
         <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[var(--term-accent-fg)]">
-          {running ? <Icon icon={faCircleNotch} spin /> : state === 'done' ? <span className="text-[#2f7d4f]"><Icon icon={faCheck} /></span> : <span className="text-[#9c3b33]"><Icon icon={faXmark} /></span>}
+          {running ? <Icon icon={faCircleNotch} spin /> : state === 'done' ? <span className="text-ok"><Icon icon={faCheck} /></span> : <span className="text-err"><Icon icon={faXmark} /></span>}
           <span>{t(running ? 'setup.auto.running' : state === 'done' ? 'setup.auto.done' : 'setup.auto.failed')}</span>
         </div>
       )}

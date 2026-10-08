@@ -136,7 +136,7 @@ export function actionBtnClass(style) {
     return 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-[7px] text-[12.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]';
   if (style === 'danger')
     return 'cursor-pointer rounded-lg border-[1.5px] border-danger bg-danger px-3.5 py-[7px] text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23]';
-  return 'cursor-pointer rounded-lg border-[1.5px] border-[#cdbb66] bg-white px-3 py-[7px] text-xs text-[#6b5d20] hover:bg-[#fffdf2]';
+  return 'cursor-pointer rounded-lg border-[1.5px] border-suggest-line bg-panel px-3 py-[7px] text-xs text-fg2 hover:bg-suggest';
 }
 
 export function ActionBar({ session }) {
@@ -170,20 +170,20 @@ export function ActionBar({ session }) {
           {action.kind && <span className="font-mono text-[11px] md:text-[9.5px] text-fgdim">· {action.kind}</span>}
         </span>
       )}
-      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-[#4a3f12]">
+      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-fg">
         {action.prompt}{' '}
-        <span className="font-mono text-[11.5px] md:text-[10px] text-[#8a7a2f]">
+        <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">
           {t('rail.revealedBy')}
         </span>
         {err && (
-          <span data-action-error dir="auto" className="block text-[11px] font-bold text-[#9c3b33]">
+          <span data-action-error dir="auto" className="block text-[11px] font-bold text-err">
             {t('chat.answerFailed')} <span className="font-mono font-normal">{err}</span>
           </span>
         )}
       </span>
       <span className="ms-auto flex shrink-0 flex-wrap items-center gap-2">
         {canAuto && (
-          <label data-action-auto className="flex cursor-pointer items-center gap-1 text-[11.5px] md:text-[10.5px] text-[#6b5d20]">
+          <label data-action-auto className="flex cursor-pointer items-center gap-1 text-[11.5px] md:text-[10.5px] text-fg2">
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
             {t('chat.actionAutoApproveShort')}
           </label>
