@@ -174,7 +174,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       right={<Pill status={phase} />}
     >
       {statusLine && (
-        <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold ${phase === 'done' ? 'text-[#2f7d4f]' : 'text-[var(--term-accent-fg)]'}`}>
+        <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold ${phase === 'done' ? 'text-ok' : 'text-[var(--term-accent-fg)]'}`}>
           {waiting && <span className="pulse-yellow inline-block h-[6px] w-[6px] rounded-full bg-brand" />}
           {phase === 'auto' && <Icon icon={faCircleNotch} spin />}
           {phase === 'done' && <Icon icon={faCheck} />}
@@ -189,7 +189,7 @@ function SetupCardView({ props: { sessionId, event } }) {
 
       {terminal && (
         <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-          <span className={phase === 'done' ? 'text-[#2f7d4f]' : phase === 'failed' ? 'text-[#9c3b33]' : ''}>
+          <span className={phase === 'done' ? 'text-ok' : phase === 'failed' ? 'text-err' : ''}>
             <Icon icon={phase === 'done' ? faCheck : faXmark} /> {termLabel}
           </span>
           {event.detail && <span dir="auto">— {event.detail}</span>}
@@ -198,7 +198,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       )}
 
       {phase === 'failed' && event.detail && (
-        <div dir="auto" className="mt-2 rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[11.5px] text-[#9c3b33]">{t('setup.card.failedManual')}</div>
+        <div dir="auto" className="mt-2 rounded-[8px] border border-err-line bg-err-bg px-3 py-2 text-[11.5px] text-err">{t('setup.card.failedManual')}</div>
       )}
 
       {phase === 'auto' && (

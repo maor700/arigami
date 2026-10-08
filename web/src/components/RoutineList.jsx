@@ -126,7 +126,7 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
               </span>
             </span>
             <button type="button" title={t('launcher.cron.runNow')} disabled={busy} onClick={() => onRun?.(c)} className={btn}><Icon icon={faPlay} /></button>
-            <button type="button" title={t('launcher.trigger.deleteTitle')} disabled={busy} onClick={() => onDelete?.(c)} className={`${btn} hover:text-[#9c3b33]`}><Icon icon={faTrash} /></button>
+            <button type="button" title={t('launcher.trigger.deleteTitle')} disabled={busy} onClick={() => onDelete?.(c)} className={`${btn} hover:text-err`}><Icon icon={faTrash} /></button>
           </div>
         ))}
       </div>
@@ -140,7 +140,7 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
               <span dir="auto" className="block truncate font-mono font-bold">{l.label}</span>
               <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{l.type} · {l.status}{l.firedCount ? ` · ×${l.firedCount}` : ''}</span>
             </span>
-            <button type="button" disabled={busy} onClick={() => onCancelListener?.(l)} className={`${btn} hover:text-[#9c3b33]`}>{t('agent.routine.cancelListener')}</button>
+            <button type="button" disabled={busy} onClick={() => onCancelListener?.(l)} className={`${btn} hover:text-err`}>{t('agent.routine.cancelListener')}</button>
           </div>
         ))}
       </div>

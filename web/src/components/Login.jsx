@@ -111,7 +111,7 @@ export default function Login({ info }) {
           {busy ? t('auth.login.busy') : t('auth.login.pair')}
         </button>
       </div>
-      {error && <div className="mt-3 max-w-[22.5rem] text-center text-[0.71875rem] text-[#9c3b33]">{error}</div>}
+      {error && <div className="mt-3 max-w-[22.5rem] text-center text-[0.71875rem] text-err">{error}</div>}
       <div className="mt-6 max-w-[22.5rem] text-center font-mono text-[0.625rem] text-fgdim">{t('auth.login.hint')}</div>
     </div>
   );

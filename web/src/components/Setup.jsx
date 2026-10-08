@@ -13,11 +13,11 @@ import { OAuthCodeStep } from './setup/index.js';
 import * as setupApi from '../lib/setup-api.js';
 
 const PILL = {
-  ok: 'border-[#bfe3cf] bg-[#EAF6EF] text-[#2f7d4f]',
-  missing: 'border-[#e7d3a8] bg-[#FBF3E0] text-[#8a6d1f]',
-  error: 'border-[#e2c4c0] bg-[#FBECEA] text-[#9c3b33]',
+  ok: 'border-ok-line bg-ok-bg text-ok',
+  missing: 'border-warn-line bg-warn-bg text-warn',
+  error: 'border-err-line bg-err-bg text-err',
   blocked: 'border-hair bg-chip text-fgdim',
-  running: 'border-[#bcd4ee] bg-[#EAF1FB] text-[#2C6BD6]',
+  running: 'border-info-line bg-info-bg text-info',
 };
 
 // Steps whose action maps to a real server endpoint get a Fix button.
@@ -64,7 +64,7 @@ function StepRow({ step, onFix, busy }) {
           type="button"
           disabled={busy}
           onClick={() => onFix(name, ep)}
-          className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
+          className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a] disabled:opacity-50"
         >
           {busy ? '…' : t('launcher.setup.fix')}
         </button>
@@ -163,7 +163,7 @@ export function AddRepo({ onAdd, busy }) {
         {[['github', t('launcher.setup.fromGithub')], ['local', t('launcher.setup.fromLocal')]].map(([k, label]) => (
           <button
             key={k} type="button" onClick={() => { setKind(k); setDetect(null); setPicked([]); }}
-            className={`flex-1 cursor-pointer rounded-[6px] px-2 py-1 ${kind === k ? 'bg-brand text-fg' : 'text-fgdim hover:text-fg'}`}
+            className={`flex-1 cursor-pointer rounded-[6px] px-2 py-1 ${kind === k ? 'bg-brand text-[#1a1a1a]' : 'text-fgdim hover:text-fg'}`}
           >
             {label}
           </button>
@@ -229,7 +229,7 @@ export function AddRepo({ onAdd, busy }) {
       <div className="flex items-center gap-2">
         <button
           type="button" disabled={busy} onClick={submit}
-          className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg disabled:opacity-50"
+          className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
         >
           {t('launcher.setup.add')}
         </button>
@@ -253,19 +253,19 @@ function EngineCard({ spec, cap, optional, onRecheck }) {
   const t = useT();
   const cli = cap?.data?.cli !== false;
   return (
-    <div className={`rounded-[9px] border px-3 py-2.5 ${cap?.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]' : optional ? 'border-hair bg-bg' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
+    <div className={`rounded-[9px] border px-3 py-2.5 ${cap?.ok ? 'border-ok-line bg-ok-bg' : optional ? 'border-hair bg-bg' : 'border-warn-line bg-warn-bg'}`}>
       <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
         {cap?.ok && <Icon icon={faCheck} />}
         {t(spec.title)}
         {optional && <span className="text-[11px] font-normal text-fgdim">{t('setup.minimal.optional')}</span>}
       </div>
       {cap?.ok ? (
-        <div className="mt-1 text-[11.5px] text-[#2f7d4f]">{t(spec.connected)}</div>
+        <div className="mt-1 text-[11.5px] text-ok">{t(spec.connected)}</div>
       ) : optional ? null : !cli ? (
         <div className="mt-2">
-          <p className="text-[11px] leading-snug text-[#8a6d1f]">{t(spec.noCli)}</p>
-          <code className="mt-1 block rounded-[6px] border border-[#e7d3a8] bg-[#fff9ec] px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">{spec.install}</code>
-          <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-fg"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
+          <p className="text-[11px] leading-snug text-warn">{t(spec.noCli)}</p>
+          <code className="mt-1 block rounded-[6px] border border-warn-line bg-bg px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">{spec.install}</code>
+          <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a]"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
         </div>
       ) : (
         <div className="mt-2"><OAuthCodeStep capability={spec.id} manual={{ kind: 'oauth', flow: spec.flow, token: true }} onDone={onRecheck} /></div>
@@ -283,7 +283,7 @@ function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
         <div className="text-[15px] font-bold text-fg">{t('setup.minimal.title')}</div>
         <p className="mt-1 text-[12px] leading-relaxed text-fgdim">{t('setup.minimal.body')}</p>
         <ol className="mt-3 flex flex-col gap-3">
-          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-[#bfe3cf] bg-[#EAF6EF]' : 'border-[#e7d3a8] bg-[#FBF3E0]'}`}>
+          <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-ok-line bg-ok-bg' : 'border-warn-line bg-warn-bg'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
               <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{anyOk ? <Icon icon={faCheck} /> : '1'}</span>
               {t('setup.minimal.connectEngine')}
@@ -302,7 +302,7 @@ function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
             <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('setup.minimal.startBody')}</p>
             <button
               type="button" disabled={busy || !anyOk} onClick={onStart}
-              className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-fg disabled:opacity-50"
+              className="mt-2 cursor-pointer rounded-[9px] border-[1.5px] border-ink bg-brand px-5 py-2 text-[13px] font-bold text-[#1a1a1a] disabled:opacity-50"
             >
               {busy ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
             </button>
@@ -467,7 +467,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
             type="button"
             title={t('launcher.setup.runWizardHint')}
             onClick={runWizard}
-            className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg"
+            className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a]"
           >
             {t('launcher.setup.runWizard')}
           </button>
@@ -482,7 +482,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {err && (
-          <div className="mb-4 rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[11.5px] text-[#9c3b33]">
+          <div className="mb-4 rounded-[8px] border border-err-line bg-err-bg px-3 py-2 text-[11.5px] text-err">
             {err}
           </div>
         )}
@@ -527,7 +527,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                       disabled={busy}
                       onClick={() => removeRepo(name)}
                       title={t('launcher.setup.removeTitle')}
-                      className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-[#9c3b33] disabled:opacity-50"
+                      className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-err disabled:opacity-50"
                     >
                       {t('launcher.setup.remove')}
                     </button>
@@ -564,7 +564,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                       disabled={busy}
                       onClick={() => applyProfile(prof.name)}
                       title={t('launcher.setup.profileApplyTitle')}
-                      className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-fg disabled:opacity-50"
+                      className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a] disabled:opacity-50"
                     >
                       {t('launcher.setup.apply')}
                     </button>

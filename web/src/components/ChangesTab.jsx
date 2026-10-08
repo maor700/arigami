@@ -36,7 +36,7 @@ const baseName = (p) => String(p || '').split('/').pop();
 function ExplainCard({ label, title, body, dir = 'auto' }) {
   if (!title && !body) return null;
   return (
-    <div className="m-3 rounded-[10px] border-[1.5px] border-[#e6d27a] bg-chip/60 px-3.5 py-2.5">
+    <div className="m-3 rounded-[10px] border-[1.5px] border-warn-line bg-chip/60 px-3.5 py-2.5">
       <div className="mb-1 flex items-center gap-1.5">
         <span className="text-[11px]"><Icon icon={faWandMagicSparkles} /></span>
         <span className="font-mono text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{label}</span>
@@ -94,7 +94,7 @@ function ReviewBar({ count, onSubmit, mode, desktop }) {
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
           placeholder={t('chat.reviewSummaryPlaceholder')}
-          className="mb-2 w-full resize-none rounded-md border-[1.5px] border-[#d8c870] bg-bg px-2 py-1 text-[11.5px] outline-none placeholder:text-fgdim"
+          className="mb-2 w-full resize-none rounded-md border-[1.5px] border-warn-line bg-bg px-2 py-1 text-[11.5px] outline-none placeholder:text-fgdim"
         />
       )}
       <div className="flex flex-wrap items-center gap-2 gap-y-2">
@@ -655,7 +655,7 @@ export default function ChangesTab({ session, active }) {
         {desktop && expl && (
           <span
             title={(expl.language ? t('chat.explainedInLang', { lang: expl.language }) : t('chat.explained')) + (expl.generatedAt ? ' · ' + fmtDateTime(expl.generatedAt) : '')}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-[#e6d27a] bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] text-fgdim"
+            className="flex shrink-0 items-center gap-1 rounded-full border border-warn-line bg-chip/60 px-2 py-0.5 font-mono text-[9.5px] text-fgdim"
           >
             <Icon icon={faWandMagicSparkles} /> {t('chat.explained')}{expl.language ? ` · ${expl.language}` : ''}
           </span>
@@ -663,7 +663,7 @@ export default function ChangesTab({ session, active }) {
         {desktop && outdated && (
           <span
             title={t('chat.outdatedTitle')}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-[#d98078] bg-danger/10 px-2 py-0.5 font-mono text-[9.5px] font-bold text-danger"
+            className="flex shrink-0 items-center gap-1 rounded-full border border-err-line bg-danger/10 px-2 py-0.5 font-mono text-[9.5px] font-bold text-danger"
           >
             <Icon icon={faTriangleExclamation} /> {t('chat.outdated')}
           </span>
@@ -679,7 +679,7 @@ export default function ChangesTab({ session, active }) {
                 onClick={runExplain}
                 disabled={explaining}
                 title={t('chat.explainTitle')}
-                className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !explaining ? 'border-[#d98078] text-danger' : 'border-border bg-panel text-fgdim'}`}
+                className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !explaining ? 'border-err-line text-danger' : 'border-border bg-panel text-fgdim'}`}
               >
                 {explaining ? <><span className="host-spinner h-3 w-3" /> {t('chat.explaining')}</> : expl ? <><Icon icon={faWandMagicSparkles} /> {t('chat.reExplain')}</> : <><Icon icon={faWandMagicSparkles} /> {t('chat.explain')}</>}
               </button>
@@ -688,7 +688,7 @@ export default function ChangesTab({ session, active }) {
                 onClick={runReview}
                 disabled={reviewing}
                 title={t('chat.reviewTitle')}
-                className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !reviewing ? 'border-[#d98078] text-danger' : 'border-border bg-panel text-fgdim'}`}
+                className={`flex cursor-pointer items-center gap-1 rounded-[6px] border-[1.5px] px-2 py-0.5 font-mono text-[10.5px] hover:border-ink hover:text-fg disabled:cursor-default disabled:opacity-60 ${outdated && !reviewing ? 'border-err-line text-danger' : 'border-border bg-panel text-fgdim'}`}
               >
                 {reviewing ? <><span className="host-spinner h-3 w-3" /> {t('chat.reviewing')}</> : hasReview ? <><Icon icon={faScaleBalanced} /> {t('chat.reReview')}</> : <><Icon icon={faScaleBalanced} /> {t('chat.autoReview')}</>}
               </button>
@@ -904,7 +904,7 @@ export default function ChangesTab({ session, active }) {
                           type="button"
                           onClick={() => go(-1)}
                           title={t('chat.backToFeature', { title: fromFeature.title })}
-                          className="flex shrink-0 cursor-pointer items-center gap-1 rounded-[6px] border border-[#e6d27a] bg-chip/50 px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:text-fg"
+                          className="flex shrink-0 cursor-pointer items-center gap-1 rounded-[6px] border border-warn-line bg-chip/50 px-1.5 py-0.5 font-mono text-[10px] text-fgdim hover:text-fg"
                         >
                           <span>←</span>
                           <Truncate text={fromFeature.title} className="max-w-[120px]" />

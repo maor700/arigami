@@ -92,7 +92,7 @@ function ConnectedRow({ row, busy, onDisconnect }) {
       </span>
       {row.copy && <CopyRow url={row.copy} compact />}
       {row.actions}
-      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>}
+      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('setup.connections.disconnect')}</button>}
     </div>
   );
 }
@@ -127,7 +127,7 @@ function MoveToHost({ caps, onDone }) {
   };
   const names = caps.map((c) => c.title || c.id).join(', ');
   return (
-    <div data-move-to-host className="mb-2 rounded-lg border border-[#e7d3a8] bg-[#FBF3E0] px-3 py-2 text-[11.5px] text-[#5b4a17]">
+    <div data-move-to-host className="mb-2 rounded-lg border border-warn-line bg-warn-bg px-3 py-2 text-[11.5px] text-warn">
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1"><b>{t('mcp.move.title', { n: caps.length })}</b> {t('mcp.move.body', { names })}</span>
         {!state && <button type="button" className={BTN_SM} onClick={move}>{t('mcp.move.go')}</button>}
@@ -140,7 +140,7 @@ function MoveToHost({ caps, onDone }) {
               <li key={c.id} className="flex items-center gap-2">
                 <span className="font-semibold">{c.title || c.id}</span>
                 {st === 'running' && <span>{t('mcp.move.running')}</span>}
-                {st === 'done' && <span className="text-[#2f7d4f]">✓ {t('mcp.move.done')}</span>}
+                {st === 'done' && <span className="text-ok">✓ {t('mcp.move.done')}</span>}
                 {st && typeof st === 'object' && (
                   <span>
                     {t('setup.connect.needsYou', { name: c.title || c.id })} {st.needs}
@@ -339,7 +339,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
                     {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
                   </span>
                   {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
-                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
+                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('setup.connections.disconnect')}</button>
                   )}
                   <button type="button" className={c.ok ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => setDialog(c)}>
                     {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}
@@ -361,7 +361,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
                   <span className="font-bold text-fg">{a.capability}</span>
                   <span data-audit-owner={a.owner || 'global'} dir="auto">{ownerName(a.owner)}</span>
                   <span>{a.mode}</span>
-                  <span className={a.result === 'ok' || a.result === 'done' || a.result === 'already' ? 'text-[#2f7d4f]' : a.result === 'failed' ? 'text-[#9c3b33]' : ''}>{a.result}</span>
+                  <span className={a.result === 'ok' || a.result === 'done' || a.result === 'already' ? 'text-ok' : a.result === 'failed' ? 'text-err' : ''}>{a.result}</span>
                   {a.human ? <span>human</span> : null}
                   {a.evidence && <a href={a.evidence} target="_blank" rel="noopener noreferrer" className="underline">{t('setup.auto.evidence')}</a>}
                 </div>

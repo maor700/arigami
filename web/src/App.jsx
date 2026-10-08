@@ -228,7 +228,7 @@ function PendingPreview({ item, onClose, onStart, onDismiss }) {
           <span>{t('chrome.pending.queued')}: <span className="font-mono text-fg">{item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'}</span></span>
           {pr && <a href={pr} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline">{pr} ↗</a>}
         </div>
-        {error && <div className="mb-3 rounded-[7px] border border-[#d98078] bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        {error && <div className="mb-3 rounded-[7px] border border-err-line bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
         <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
       </div>
     </div>
@@ -268,7 +268,7 @@ function TicketPreview({ ticket, item, fallbackTitle, onClose, onStart, onDismis
       />
       {item && optionsOpen && (
         <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-hair bg-panel px-4 py-3" data-pending-preview>
-          {error && <div className="mb-3 rounded-[7px] border border-[#d98078] bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+          {error && <div className="mb-3 rounded-[7px] border border-err-line bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
           <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
         </div>
       )}
@@ -1059,7 +1059,7 @@ function Cockpit() {
           </div>
         )}
         {conn !== 'open' && (
-          <div className="absolute top-2 right-3 z-40 rounded-full border border-[#e2c4c0] bg-[#FBECEA] px-2.5 py-1 font-mono text-[10px] text-[#9c3b33]">
+          <div className="absolute top-2 right-3 z-40 rounded-full border border-err-line bg-err-bg px-2.5 py-1 font-mono text-[10px] text-err">
             {/* CHATWS: once the link was up, both the retry wait and the attempt read
                 "reconnecting…" — "host offline" is misleading when it is the PHONE
                 that lost its network. */}

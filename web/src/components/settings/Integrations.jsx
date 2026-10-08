@@ -27,7 +27,7 @@ const CHIP = (on) => `shrink-0 cursor-pointer rounded-full border px-2.5 py-0.5 
 function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
   const t = useT();
   return (
-    <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${toolkit.connected ? 'border-[#bfe3cf] bg-[#EAF6EF]/60' : 'border-hair bg-panel'}`}>
+    <div className={`flex flex-col gap-2 rounded-xl border p-2.5 ${toolkit.connected ? 'border-ok-line bg-ok-bg/60' : 'border-hair bg-panel'}`}>
       <div className="flex items-start gap-2">
         {toolkit.logo ? (
           <img src={toolkit.logo} alt="" className="h-8 w-8 shrink-0 rounded-lg border border-hair bg-white object-contain p-0.5" onError={(e) => { e.target.style.display = 'none'; }} />
@@ -188,7 +188,7 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
                 {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
               </span>
               {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
-                <button type="button" disabled={busy} onClick={() => onDisconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-[#9c3b33]">{t('setup.connections.disconnect')}</button>
+                <button type="button" disabled={busy} onClick={() => onDisconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('setup.connections.disconnect')}</button>
               )}
               <button type="button" className={c.ok ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => onOpen(c)}>
                 {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}

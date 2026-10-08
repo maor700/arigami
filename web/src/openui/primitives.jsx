@@ -16,8 +16,8 @@ export const TONES = {
   accent: 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)]',
   panel: 'border-hair bg-panel',
   code: 'border-[var(--term-border)] bg-[var(--term-codebg)]',
-  ok: 'border-[#8fcf9a] bg-[#e8f6ea] text-[#2a6b35]',
-  danger: 'border-[#d98078] bg-danger/10 text-danger',
+  ok: 'border-ok-line bg-ok-bg text-ok',
+  danger: 'border-err-line bg-danger/10 text-danger',
 };
 // text colours on the accent tone
 export const ACCENT = {
@@ -89,7 +89,7 @@ export function ReceiptLine({ className = '', children, ...rest }) {
 /** "Answer failed · <reason>" — red, bold prefix, monospace reason. */
 export function ErrorNote({ label, children, className = '', ...rest }) {
   return (
-    <div dir="auto" className={`mt-2.5 text-[11px] font-bold text-[#9c3b33] ${className}`} {...rest}>
+    <div dir="auto" className={`mt-2.5 text-[11px] font-bold text-err ${className}`} {...rest}>
       {label} <span className="font-mono font-normal">{children}</span>
     </div>
   );

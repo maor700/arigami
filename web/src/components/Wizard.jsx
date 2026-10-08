@@ -51,7 +51,7 @@ function PairStep({ step }) {
     <>
       <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.pair.body')}</p>
       {step.status === 'ok' && (
-        <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]">
+        <div className="mt-3 text-[12.5px] font-semibold text-ok">
           <Icon icon={faCheck} /> {t('wizard.pair.paired', { email: auth?.user?.email || 'admin' })}
         </div>
       )}
@@ -161,7 +161,7 @@ function ProfileStep({ step, refresh, onSkip }) {
   return (
     <>
       <p className="text-[12.5px] leading-relaxed text-fgdim">{t('wizard.profile.body')}</p>
-      {step.status === 'ok' && <div className="mt-3 text-[12.5px] font-semibold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.profile.applied', { name: step.data?.applied })}</div>}
+      {step.status === 'ok' && <div className="mt-3 text-[12.5px] font-semibold text-ok"><Icon icon={faCheck} /> {t('wizard.profile.applied', { name: step.data?.applied })}</div>}
       {bundles === null && <div className="mt-3 text-[12px] text-fgdim">{t('wizard.loading')}</div>}
       {bundles && bundles.length === 0 && <div className="mt-3 text-[12px] text-fgdim">{t('wizard.profile.none')}</div>}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -178,7 +178,7 @@ function ProfileStep({ step, refresh, onSkip }) {
               <div className="flex items-center gap-2">
                 <span className="text-[12.5px] font-bold text-fg">{b.title || b.name}</span>
                 <span className="rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] uppercase text-fgdim">{b.trusted ? t('wizard.profile.trusted') : 'ext'}</span>
-                {isPending && <span className="rounded-full border border-[#e7d3a8] bg-[#FBF3E0] px-1.5 text-[11px] md:text-[9px] uppercase text-[#8a6d1f]">{t('wizard.profile.pending')}</span>}
+                {isPending && <span className="rounded-full border border-warn-line bg-warn-bg px-1.5 text-[11px] md:text-[9px] uppercase text-warn">{t('wizard.profile.pending')}</span>}
               </div>
               {b.description && <div className="mt-0.5 text-[11px] leading-snug text-fgdim">{b.description}</div>}
               <div className="mt-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">{(b.skills || []).length} skills · {b.cron || 0} cron{b.hasMemorySeed ? ' · memory' : ''}</div>
@@ -218,7 +218,7 @@ function IntegrationsStep({ step, refresh }) {
       <p className={BODY}>{t('wizard.integrations.body')}</p>
       <div className="mt-3 flex flex-col gap-3">
         <Row title={t('wizard.integrations.composio')} hint={t('wizard.integrations.composioHint')}>
-          {composioSet ? <div className="text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div> : <TokenStep capability="composio" onDone={refresh} />}
+          {composioSet ? <div className="text-[12px] text-ok"><Icon icon={faCheck} /> {t('wizard.integrations.composioSet')}</div> : <TokenStep capability="composio" onDone={refresh} />}
         </Row>
         <Row title={t('wizard.integrations.whatsapp')} hint={t('wizard.integrations.whatsappHint')}>
           <QrStep capability="whatsapp" onDone={refresh} />
@@ -316,7 +316,7 @@ function HealthStep({ step, refresh, onOpen }) {
               </div>
             </div>
           ))}
-          <div className={`px-3 py-2 text-[11.5px] ${health.ok ? 'text-[#2f7d4f]' : 'text-[#8a6d1f]'}`}>
+          <div className={`px-3 py-2 text-[11.5px] ${health.ok ? 'text-ok' : 'text-warn'}`}>
             {health.ok ? t('wizard.health.allGood') : t('wizard.health.someFailed')}
           </div>
         </div>
@@ -428,7 +428,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
                 onClick={() => setIdx(i)}
                 className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${i === cur ? 'border-ink bg-brand font-bold' : 'border-border bg-panel text-fgdim hover:border-ink'}`}
               >
-                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] md:text-[9px] ${s.status === 'ok' ? 'bg-[#2f7d4f] text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'bg-bg text-fg border border-border'}`}>
+                <span className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] md:text-[9px] ${s.status === 'ok' ? 'bg-ok text-white' : s.status === 'skipped' ? 'bg-chip text-fgdim' : 'bg-bg text-fg border border-border'}`}>
                   {s.status === 'ok' ? <Icon icon={faCheck} /> : i + 1}
                 </span>
                 <span className="hidden sm:inline">{t(STEP_TITLE[s.id])}</span>
@@ -475,7 +475,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
         )}
         {finished && (
           <div className={`${CARD} px-5 py-5 text-center`}>
-            <div className="text-[13px] font-bold text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')}</div>
+            <div className="text-[13px] font-bold text-ok"><Icon icon={faCheck} /> {t('wizard.done')}</div>
             <p className="mt-1 text-[12px] text-fgdim">{t('setup.minimal.startBody')}</p>
             <button type="button" className={`${BTN} mt-3`} disabled={starting || !onStart} onClick={start}>
               {starting ? t('launcher.setup.starting') : t('setup.minimal.startBtn')} <Icon icon={faArrowRight} />
@@ -484,7 +484,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
           </div>
         )}
         {view?.done && !finished && (
-          <div className="mt-3 text-center text-[12px] text-[#2f7d4f]"><Icon icon={faCheck} /> {t('wizard.done')} · <button type="button" onClick={() => setIdx(null)} className="cursor-pointer underline">{t('setup.minimal.startBtn')}</button></div>
+          <div className="mt-3 text-center text-[12px] text-ok"><Icon icon={faCheck} /> {t('wizard.done')} · <button type="button" onClick={() => setIdx(null)} className="cursor-pointer underline">{t('setup.minimal.startBtn')}</button></div>
         )}
       </div>
     </div>

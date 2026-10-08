@@ -20,7 +20,7 @@ function McpCard({ cap, busy, onConnect, onDisconnect, ownerName }) {
   const d = cap.data || {};
   const byo = d.auth === 'oauth-byo-client';
   return (
-    <div data-mcp-card={cap.id} className={`flex flex-col gap-2 rounded-xl border p-2.5 ${cap.ok ? 'border-[#bfe3cf] bg-[#EAF6EF]/60' : 'border-hair bg-panel'}`}>
+    <div data-mcp-card={cap.id} className={`flex flex-col gap-2 rounded-xl border p-2.5 ${cap.ok ? 'border-ok-line bg-ok-bg/60' : 'border-hair bg-panel'}`}>
       <div className="flex items-start gap-2">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hair bg-chip text-[13px] font-bold text-fgdim">
           {(cap.title || '?')[0].toUpperCase()}

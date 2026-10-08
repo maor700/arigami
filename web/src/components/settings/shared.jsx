@@ -11,8 +11,8 @@ import { PILL } from '../setup/shared.jsx';
 export const BTN =
   'shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[0.71875rem] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a] disabled:cursor-default disabled:opacity-50';
 export const BTN_SM = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1 text-[0.6875rem] text-fg hover:bg-brand disabled:opacity-40';
-export const BTN_PRIMARY = 'cursor-pointer rounded-lg border border-ink bg-brand px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] font-bold text-fg hover:opacity-90 disabled:opacity-50';
-export const BTN_DANGER = 'cursor-pointer rounded-lg border border-hair bg-white px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] text-[#9c3b33] hover:bg-[#FBECEA] disabled:opacity-50';
+export const BTN_PRIMARY = 'cursor-pointer rounded-lg border border-ink bg-brand px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] font-bold text-[#1a1a1a] hover:opacity-90 disabled:opacity-50';
+export const BTN_DANGER = 'cursor-pointer rounded-lg border border-hair bg-panel px-2.5 py-1 text-[0.6875rem] md:text-[0.65625rem] text-err hover:bg-err-bg disabled:opacity-50';
 export const INPUT = 'rounded-lg border-[1.5px] border-ink bg-panel px-2 py-1 font-mono text-[0.6875rem] text-fg outline-none disabled:opacity-60';
 export const ROW = 'flex items-center justify-between gap-2 border-b border-hair py-1.5 text-[0.71875rem] last:border-b-0';
 export const LIST = 'mt-2 rounded-lg border border-hair px-3 py-1';
@@ -25,7 +25,7 @@ export function Toggle({ on, onChange, disabled }) {
       aria-checked={on}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative h-[1.375rem] w-[2.5rem] shrink-0 cursor-pointer rounded-full border-[1.5px] border-ink transition-colors disabled:cursor-default disabled:opacity-40 ${on ? 'bg-brand' : 'bg-white'}`}
+      className={`relative h-[1.375rem] w-[2.5rem] shrink-0 cursor-pointer rounded-full border-[1.5px] border-ink transition-colors disabled:cursor-default disabled:opacity-40 ${on ? 'bg-brand' : 'bg-bg'}`}
     >
       <span
         className="absolute top-[0.125rem] h-[0.9375rem] w-[0.9375rem] rounded-full border border-ink bg-white transition-[left]"
@@ -97,7 +97,7 @@ export function Section({ id, title, onRefresh, children, first = false }) {
 // The one card every connection/host block renders in: title + optional
 // pill + actions on the first row, hint under it, body below.
 export function SettingCard({ title, hint, pill, actions, children, tone = 'default' }) {
-  const border = tone === 'danger' ? 'border-[#e2c4c0]' : 'border-hair';
+  const border = tone === 'danger' ? 'border-err-line' : 'border-hair';
   return (
     <div className={`mb-2 rounded-xl border ${border} bg-panel px-3 py-2.5`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +142,7 @@ export function CopyRow({ url, compact = false }) {
 
 export function ErrorLine({ children }) {
   if (!children) return null;
-  return <div className="mt-2 rounded-lg border border-[#e2c4c0] bg-[#FBECEA] px-3 py-2 text-[0.6875rem] text-[#9c3b33]">{children}</div>;
+  return <div className="mt-2 rounded-lg border border-err-line bg-err-bg px-3 py-2 text-[0.6875rem] text-err">{children}</div>;
 }
 
 // Admin-confirmed mutation on /__api/host/* (server/host-control.ts).

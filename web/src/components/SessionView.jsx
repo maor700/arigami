@@ -146,7 +146,7 @@ function ListenersChipCompact({ session }) {
         onClick={() => setOpen(true)}
         title={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
         className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11.5px] md:text-[10px] sm:hidden ${
-          errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-white text-[#555]'
+          errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-bg text-fg2'
         }`}
       >
         <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
@@ -219,7 +219,7 @@ function SummaryChip({ session }) {
         onClick={() => setOpen((v) => !v)}
         title={t('rail.statusSummary')}
         className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-1.5 text-[11.5px] md:px-1.5 md:py-0.5 md:text-[10px] ${
-          on ? 'border-ink bg-chip text-fg' : 'border-hair bg-white text-[#555]'
+          on ? 'border-ink bg-chip text-fg' : 'border-hair bg-bg text-fg2'
         }`}
       >
         {busy ? <span className="host-spinner h-2.5 w-2.5" /> : <Icon icon={faListCheck} />}
@@ -436,7 +436,7 @@ export function ProgressStrip({ progress }) {
             key={i}
             className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-3.5 sm:py-2.5 ${
               i < steps.length - 1 ? 'border-r border-hair' : ''
-            } ${st === 'active' ? 'bg-[#FEFBE8]' : ''}`}
+            } ${st === 'active' ? 'bg-warn-bg' : ''}`}
           >
             {st === 'done' ? (
               <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
@@ -449,13 +449,13 @@ export function ProgressStrip({ progress }) {
                 <Icon icon={faXmark} />
               </span>
             ) : (
-              <span className="h-[14px] w-[14px] shrink-0 rounded-full border-2 border-dashed border-[#cfcfcf] sm:h-[18px] sm:w-[18px]" />
+              <span className="h-[14px] w-[14px] shrink-0 rounded-full border-2 border-dashed border-border sm:h-[18px] sm:w-[18px]" />
             )}
             {/* on phones only the active step keeps its label — the others are
                 just state icons, so five steps never overflow the viewport */}
             <span
               className={`truncate text-xs ${
-                st === 'pending' ? 'text-[#999]' : 'text-[#333]'
+                st === 'pending' ? 'text-fgdim' : 'text-fg2'
               } ${st === 'active' ? 'font-mono' : 'hidden sm:block'}`}
             >
               {step.label || ''}
@@ -514,7 +514,7 @@ export function ListenerChips({ session }) {
   return (
     // Desktop-only: on phones this whole row folds into the header's 👀 chip.
     <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
-      <span className="font-mono text-[11.5px] md:text-[10px] tracking-wide text-[#999] uppercase">{t('rail.watching')}</span>
+      <span className="font-mono text-[11.5px] md:text-[10px] tracking-wide text-fgdim uppercase">{t('rail.watching')}</span>
       {listeners.map((l) => {
         const errored = l.status === 'errored';
         return (
@@ -526,18 +526,18 @@ export function ListenerChips({ session }) {
             className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
               errored
                 ? 'border-danger/40 bg-danger/10 text-danger'
-                : 'border-hair bg-white text-[#555] hover:bg-chip'
+                : 'border-hair bg-bg text-fg2 hover:bg-chip'
             }`}
           >
             <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
             <span className="font-medium">{l.label}</span>
-            {l.firedCount > 0 && !errored && <span className="text-[#999]">{t('rail.firedCount', { n: l.firedCount })}</span>}
+            {l.firedCount > 0 && !errored && <span className="text-fgdim">{t('rail.firedCount', { n: l.firedCount })}</span>}
             <span
               role="button"
               tabIndex={0}
               onClick={(e) => cancel(l.id, e)}
               title={t('rail.cancelListener')}
-              className="ml-0.5 cursor-pointer text-[#bbb] hover:text-danger"
+              className="ml-0.5 cursor-pointer text-fgdim hover:text-danger"
             >
               <Icon icon={faXmark} />
             </span>
@@ -1290,7 +1290,7 @@ function ChatFooter({ session }) {
         <CapabilitiesPanel capabilities={caps} session={session} initialTab={panelTab} onClose={() => setPanelTab(null)} onPickCommand={insertCommand} />
       )}
       {dragging && (
-        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-[10px] border-2 border-dashed border-ink bg-chip/80 font-mono text-[12px] font-bold text-[#4a3f12]">
+        <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-[10px] border-2 border-dashed border-ink bg-chip/80 font-mono text-[12px] font-bold text-fg">
           {dragging === 'session' ? t('rail.dropReferenceSession') : t('rail.dropFilesToAttach')}
         </div>
       )}
@@ -1311,7 +1311,7 @@ function ChatFooter({ session }) {
               <div
                 key={i}
                 title={a.archive?.dir || undefined}
-                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${archiveProblem ? 'border-danger bg-[#fdf6f5]' : 'border-border bg-bg'}`}
+                className={`flex items-center gap-1.5 rounded-md border py-1 pe-1 ps-1.5 ${archiveProblem ? 'border-danger bg-err-bg' : 'border-border bg-bg'}`}
               >
                 {a.type?.startsWith('image/') && a.dataBase64 ? (
                   <img src={`data:${a.type};base64,${a.dataBase64}`} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
@@ -1422,7 +1422,7 @@ function ChatFooter({ session }) {
             type="button"
             title={t('rail.interruptClaude', { engine: engineLabel(session.engine) })}
             onClick={interrupt}
-            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-[#fdf6f5]"
+            className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border-[1.5px] border-danger bg-bg text-[11px] text-danger hover:bg-err-bg"
           >
             <Icon icon={faStop} />
           </button>
@@ -1642,7 +1642,7 @@ function ContentTab({ tab }) {
     );
   }
   return (
-    <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-white">
+    <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-bg">
       <div className="md-light mx-auto max-w-[860px] px-7 py-6">
         <Markdown>{tab.body || ''}</Markdown>
       </div>

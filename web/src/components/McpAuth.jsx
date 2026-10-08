@@ -189,7 +189,7 @@ export default function McpAuth({ session, cwd }) {
               <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">
                 {flow.auto?.reason ? `${t('setup.connect.needsYou', { name: s.name })} ${flow.auto.reason}. ` : t('launcher.mcp.opening')}
                 {flow.url && (
-                  <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-[#2C6BD6] underline">
+                  <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-info underline">
                     {t('launcher.mcp.openLink')}
                   </a>
                 )}

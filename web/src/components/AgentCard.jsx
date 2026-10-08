@@ -42,10 +42,10 @@ function useSkillNames() {
 function Pill({ state }) {
   const t = useT();
   const cls = state === 'created' || state === 'updated'
-    ? 'border-[#8fcf9a] bg-[#e8f6ea] text-[#2a6b35]'
+    ? 'border-ok-line bg-ok-bg text-ok'
     : state === 'cancelled'
       ? 'border-[var(--term-accent-border)] text-[var(--term-accent-dim)]'
-      : 'border-[#e6d27a] bg-chip/60 text-fgdim';
+      : 'border-warn-line bg-chip/60 text-fgdim';
   return <span data-agent-card-state={state} className={`rounded-full border px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold ${cls}`}>{t(`agent.card.${state}`)}</span>;
 }
 
@@ -195,7 +195,7 @@ function AgentCardView({ props: { sessionId, event } }) {
               </div>
             </>
           )}
-          {err && <div dir="auto" className="rounded-[8px] border border-[#e2c4c0] bg-[#FBECEA] px-3 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[#9c3b33] sm:col-span-2">{err}</div>}
+          {err && <div dir="auto" className="rounded-[8px] border border-err-line bg-err-bg px-3 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-err sm:col-span-2">{err}</div>}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <Btn variant="primary" data-agent-confirm onClick={confirm} disabled={busy || !draft.name.trim()}>
               {busy ? t('agent.card.creating') : t('agent.card.confirm')}
@@ -207,7 +207,7 @@ function AgentCardView({ props: { sessionId, event } }) {
 
       {state !== 'pending' && (
         <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
-          <span className={state === 'cancelled' ? '' : 'text-[#2f7d4f]'}>
+          <span className={state === 'cancelled' ? '' : 'text-ok'}>
             <Icon icon={state === 'cancelled' ? faXmark : faCheck} />{' '}
             {state === 'created' && t('agent.card.createdLine', { name: agent?.name || draft.name })}
             {state === 'updated' && t('agent.card.updatedLine', { name: agent?.name || '', fields: (event.patch || []).join(', ') })}
