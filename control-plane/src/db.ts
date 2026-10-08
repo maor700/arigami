@@ -128,6 +128,10 @@ export function createStore(db: Database) {
   function findTenantBySubject(subject: string): Tenant | null {
     return (db.query('SELECT * FROM tenants WHERE subject = ?').get(subject) as Tenant) || null;
   }
+  /** The tenant behind a namespace (= the u-<id> of its hostname) — the edge gate's lookup. */
+  function findTenantByNs(ns: string): Tenant | null {
+    return (db.query('SELECT * FROM tenants WHERE ns = ?').get(ns) as Tenant) || null;
+  }
   function listTenants(): Tenant[] {
     return db.query('SELECT * FROM tenants ORDER BY created_at ASC').all() as Tenant[];
   }
@@ -203,7 +207,7 @@ export function createStore(db: Database) {
 
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
-    findTenantBySubject, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
+    findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
     createSession, findSession, deleteSession,
   };
 }

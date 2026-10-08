@@ -296,6 +296,7 @@ All read once at boot (`src/config.ts`):
 | `CP_DB_PATH` | `./data/control-plane.db` | sqlite file |
 | `CP_COOKIE_DAYS` | `30` | session cookie lifetime |
 | `CP_TRUST_PROXY` | `false` | honour `X-Forwarded-Proto` (only meaningful behind a TLS-terminating proxy) |
+| `CP_COOKIE_PARENT_DOMAIN` | `false` | scope the session cookie to `CP_ORG_DOMAIN` so an edge can gate tenant hosts on `GET /auth/verify` ("Org SSO in front of every cockpit"); boot fails if `CP_PUBLIC_URL` is not under `CP_ORG_DOMAIN` |
 | `CP_OIDC_ISSUER` / `CP_OIDC_CLIENT_ID` / `CP_OIDC_CLIENT_SECRET` | — | the company IdP; OIDC is off (login 500s) until issuer+clientId are set |
 | `ALLOWED_EMAIL_DOMAINS` | — | comma-separated; **empty allows nobody**, not everybody. A literal `*` entry means **open signup** — anyone who authenticates with the configured OIDC provider gets in, any email domain. Meant for a solo operator / demo with no company domain to gate on: point `CP_OIDC_ISSUER` at Google (or GitHub), set `ALLOWED_EMAIL_DOMAINS=*`, and "sign in with Google" is the entire signup flow — still real authentication (Google verified the email), just no domain allow-list on top of it. |
 | `CP_ORG_DOMAIN` | `localtest.me` | tenants live at `u-<id>.<this>` |
@@ -662,6 +663,78 @@ production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
   (helm-template-verified) but the pilot had no registry to pull from.
 - Multi-node behaviour, real storage classes, TLS — K8S-4 territory
   (docs/K8S-OPERATIONS.md sketches the dedicated-box path).
+
+## Org SSO in front of every cockpit (tenant gate, 2026-10-08)
+
+Before this, a request to `u-<id>.<orgDomain>` reached the tenant pod with nothing in front of it; only the
+tenant's own pairing/handoff cookie stood between the internet and a cockpit that can drive a machine. Now the
+edge asks the control plane about every tenant request first, using the sign-in the control plane already has —
+no extra IdP, no oauth2-proxy.
+
+```
+browser ── https://u-<id>.<orgDomain>/… ──> edge ── forward_auth: GET /auth/verify (same headers) ──> control plane
+                                             │        200 ─> proxy to the tenant
+                                             │        302 ─> /auth/login?rd=<that URL>   (no / expired session)
+                                             │        302 ─> /workspace                  (own tenant, not running)
+                                             │        403                                 (anyone else, any bad host)
+                                             └─ 5xx/timeout (control plane down)        ─> denied: fail closed
+```
+
+**Decision: owner only — org-admins included in the 403.** A cockpit drives a machine with its owner's
+connected accounts (mail, WhatsApp, cloud tokens). An admin already holds suspend/resume/backup/delete on
+`/admin`; passing the edge would add nothing they need (the tenant's handoff is email-bound to the owner, so
+they'd meet a pairing screen) while making one stolen admin session reach every cockpit. An admin's own
+workspace (`/workspace`) passes like anyone's. Support access, if ever needed, should be an explicit,
+audited, per-tenant grant — not a role bit.
+
+How it is built (`src/gate.ts`, the `/auth/verify` route in `src/server.ts`):
+
+- **Shared session cookie.** `CP_COOKIE_PARENT_DOMAIN=1` sets `Domain=<orgDomain>` on `arigami_cp_sid` (still
+  `HttpOnly; SameSite=Lax`, `Secure` on https) so the browser sends it to the tenant hosts. Default **off**.
+  The service refuses to boot with the flag on if `CP_PUBLIC_URL` is not `orgDomain` or under it (the browser
+  would silently drop the cookie). Login also expires any old host-only twin; logout clears both scopes; when
+  both are sent, each value is tried. The OIDC state cookie stays host-only.
+- **The tenant never sees it.** The edge strips `arigami_cp_sid` from the `Cookie` header before proxying to
+  the pod, so nothing running in a cockpit can replay its owner's control-plane session.
+- **Host → tenant.** `X-Forwarded-Host` (falling back to `Host`) must be exactly `u-<hex>.<orgDomain>`; the
+  namespace is looked up (`tenants.ns`), and the session's subject must be the tenant's. "No such tenant" and
+  "not yours" are the same 403, so the gate does not enumerate addresses. The edge sets these headers itself
+  (Caddy overwrites client-sent `X-Forwarded-*` unless told to trust a proxy) — and the answer is only ever
+  "this cookie may / may not open this host", so a direct caller learns nothing about anyone else.
+- **Return URL, no open redirect, no loop.** `/auth/login?rd=` and the callback both pass `rd` through
+  `safeReturnUrl`: a path on this service (not `//…`, no backslash), this service's origin, or
+  `<scheme>://u-<hex>.<orgDomain>` on the default port with no credentials. Anything else falls back to `/`.
+  `rd` rides inside the OIDC state cookie, never to the IdP. Loop guards: tenant targets are refused while the
+  cookie is host-only; `/auth/verify` answers **503**, not 302, when the flag is off; `/auth/login` always does
+  the OIDC round-trip (short-circuiting on a session the gate could not see would bounce forever).
+- **Handoff still works.** `/` → `302 u-<id>…/__api/auth/handoff?t=…` → the edge asks `/auth/verify` → the
+  cookie the user just got is there → 200 → the tenant redeems the token. Unchanged code on both sides.
+- **Websockets** pass: forward_auth's subrequest carries the upgrade headers, the control plane answers a
+  plain 200, and the edge then proxies the real upgrade to the pod. A 403/302 refuses the upgrade.
+- **Inbound webhooks skip the gate** — `^/__api/webhooks/(sms|slack|github|custom/<id>)$`, mirrored from
+  `server/webhooks.ts INBOUND_RE`. They come from machines with no session and each verifies its own HMAC/token
+  in the tenant. Everything else, including the legacy unauthenticated `/__api/sms/inbound` and shared-artifact
+  links (`/__artifacts/…?t=`), now needs the owner's session: a share link only opens for its owner.
+- **Admin POSTs check `Origin`.** Every tenant host is same-site with the control plane, so `SameSite=Lax`
+  never stopped a page served from a tenant posting to `/admin/…`; a POST with a foreign `Origin` is now 403.
+
+Tests: `test/gate.test.ts` — own session (200), another user's tenant (403), no / unknown session (302 with
+`rd`), admin (403 on others, 200 on own), bad hosts and look-alikes (403), not-running tenant (302
+`/workspace`), flag off (503), stale host-only cookie next to a valid one, open-redirect attempts (`//`,
+`/\`, look-alike suffix, `@`, credentials, wrong scheme/port, `javascript:`), callback honours only a valid
+`rd`, cookie attributes on/off, logout, boot refusal, cross-origin admin POST.
+
+Proved against a real Caddy 2.10 (not a cluster): `deploy/gke-lab/edge.yaml` rendered with `envsubst` passes
+`caddy validate`; the same Caddyfile with only the listeners and upstreams pointed at localhost, in front of
+this app and a fake tenant, gave 200 for the owner (with `arigami_cp_sid` removed and other cookies intact),
+403 for another user and for an admin, 302 with `rd` for no session, a spoofed `X-Forwarded-Host` overwritten,
+a websocket echo for the owner and a refused upgrade for anyone else, the webhook path through without a
+session, and **502 with the control plane stopped** (the tenant never saw the request).
+
+Not proven: the full browser round-trip through a real IdP on a live lab, and the ingress-nginx variant
+("the proper way" in `deploy/gke-lab/README.md`): nginx `auth_request` does not relay a 302 from the auth
+endpoint, so it needs `nginx.ingress.kubernetes.io/auth-url` → `/auth/verify` **plus** `auth-signin` →
+`/auth/login?rd=$scheme://$host$request_uri`, and the cookie strip done with a `configuration-snippet`.
 
 ## What's deliberately NOT in here yet (K8S-4/K8S-5)
 

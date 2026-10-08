@@ -12,6 +12,7 @@ cd "$(dirname "$0")/../../control-plane"
 export CP_PORT="${CP_PORT:-18090}" CP_PUBLIC_URL="https://${DOMAIN}" CP_TRUST_PROXY=1 CP_DB_PATH="${DB:-$PWD/control-plane.db}"
 export CP_OIDC_ISSUER="${OIDC_ISSUER:-https://accounts.google.com}" CP_OIDC_CLIENT_ID="$OIDC_CLIENT_ID" CP_OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET"
 export ALLOWED_EMAIL_DOMAINS="$ALLOWED_DOMAINS" CP_ORG_DOMAIN="$DOMAIN" CP_URL_SCHEME=https
+export CP_COOKIE_PARENT_DOMAIN=1 # the session cookie reaches u-<id>.$DOMAIN, where edge.yaml's forward_auth checks it
 export CP_INGRESS_NAMESPACES=edge # the tenant NetworkPolicy admits the edge namespace — and nothing else
 export CP_HELM_CHART_PATH="$PWD/../deploy/helm/arigami-tenant" CP_HELM_EXTRA_VALUES="$PWD/../deploy/gke-lab/tenant-values.yaml"
 export CP_IMAGE_REPOSITORY="${TENANT_IMAGE:-ghcr.io/maor700/arigami}" CP_IMAGE_TAG="${TENANT_TAG:-latest}"

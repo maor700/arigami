@@ -2,8 +2,11 @@
 #   internet -> Service type LoadBalancer (the static IP from `terraform output edge_ip`)
 #            -> Caddy, which gets a Let's Encrypt certificate per hostname on first use (HTTP-01, only for names under $DOMAIN)
 #            -> $DOMAIN                 the control plane  (CP_UPSTREAM)
-#            -> u-<id>.$DOMAIN          that tenant's Service  arigami-<id>.u-<id>.svc:3099
+#            -> u-<id>.$DOMAIN          that tenant's Service  arigami-<id>.u-<id>.svc:3099 — but only after the control
+#                                       plane said yes (forward_auth -> GET /auth/verify): org SSO, owner only, fail closed
 # Tenants therefore need no Ingress of their own (values: tenant-values.yaml sets ingress.enabled=false).
+# The gate needs the control plane to share its session cookie with the tenant hosts: run it with
+# CP_COOKIE_PARENT_DOMAIN=1 (cp-local.sh does). Without that flag /auth/verify answers 503 and every tenant is shut.
 #
 #   export DOMAIN=lab.example.com EDGE_IP=203.0.113.10 CP_UPSTREAM=chisel.edge.svc.cluster.local:18090
 #   envsubst '${DOMAIN} ${DOMAIN_RE} ${EDGE_IP} ${CP_UPSTREAM} ${ACME_EMAIL}' < edge.yaml | kubectl apply -f -
@@ -48,10 +51,28 @@ data:
       handle @cp {
         reverse_proxy ${CP_UPSTREAM}
       }
-      # Caddy does not allow placeholders in an upstream that has a scheme — keep it scheme-less.
+      # Org SSO in front of every cockpit: before anything reaches a tenant pod, forward_auth sends a copy of the
+      # request (headers only, websocket upgrades included) to the control plane's GET /auth/verify. 2xx = proxy it;
+      # anything else is returned to the browser as-is — 302 to sign in, 403 someone else's workspace, and a 502/504
+      # when the control plane is down or slow. That last one is the point: no answer means no entry (fail closed).
       @tenant header_regexp t Host ^u-([0-9a-f]+)\.${DOMAIN_RE}$
       handle @tenant {
-        reverse_proxy arigami-{re.t.1}.u-{re.t.1}.svc.cluster.local:3099
+        # Inbound webhooks come from machines (Slack, GitHub, a phone) that have no session; each verifies its own
+        # HMAC/token inside the tenant (server/webhooks.ts INBOUND_RE, mirrored here). The ONLY paths that skip the gate.
+        @gated not path_regexp ^/__api/webhooks/(sms|slack|github|custom/[A-Za-z0-9_.-]{1,64})$
+        forward_auth @gated ${CP_UPSTREAM} {
+          uri /auth/verify
+          transport http {
+            dial_timeout 5s
+            response_header_timeout 10s
+          }
+        }
+        # Caddy does not allow placeholders in an upstream that has a scheme — keep it scheme-less.
+        reverse_proxy arigami-{re.t.1}.u-{re.t.1}.svc.cluster.local:3099 {
+          # The control-plane session cookie is for the gate; the cockpit (and whatever runs in it) never sees it.
+          header_up Cookie "(^|;\s*)arigami_cp_sid=[^;]*" ""
+          header_up Cookie "^;\s*" ""
+        }
       }
       handle {
         respond "not found" 404

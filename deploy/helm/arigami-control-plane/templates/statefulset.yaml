@@ -88,6 +88,8 @@ spec:
               value: {{ .Values.config.allowedEmailDomains | quote }}
             - name: CP_ORG_DOMAIN
               value: {{ required "config.orgDomain is required — tenants are addressed at u-<id>.<orgDomain>" .Values.config.orgDomain | quote }}
+            - name: CP_COOKIE_PARENT_DOMAIN
+              value: {{ .Values.config.cookieParentDomain | default "0" | quote }}
             - name: CP_ORG_NAME
               value: {{ .Values.config.orgName | quote }}
             - name: CP_URL_SCHEME

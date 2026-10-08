@@ -6,6 +6,7 @@ import { canTransition } from './state-machine.js';
 import { tenantUrl } from './provisioner.js';
 import * as backupMod from './backup.js';
 import { signInUrl } from './handoff.js';
+import { tenantNsForHost, safeReturnUrl, requestedUrl } from './gate.js';
 import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
 
 export interface Provisioner {
@@ -35,8 +36,11 @@ export const DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
-const redirect = (location: string, extraHeaders: Record<string, string> = {}): Response =>
-  new Response(null, { status: 302, headers: { location, ...extraHeaders } });
+const redirect = (location: string, setCookies: string[] = []): Response => {
+  const headers = new Headers({ location });
+  for (const c of setCookies) headers.append('set-cookie', c);
+  return new Response(null, { status: 302, headers });
+};
 const json = (obj: unknown, status = 200): Response =>
   new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
 
@@ -80,9 +84,11 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
 
     if (url.pathname === '/__health') return json({ ok: true });
 
+    // Always a full OIDC round-trip, even with a session: the gate only sends people here when it saw NO
+    // session, so short-circuiting on one it cannot see (a host-only cookie) would bounce forever.
     if (url.pathname === '/auth/login') {
-      const { redirectUrl, setCookie } = await auth.oidcStart(https);
-      return redirect(redirectUrl, { 'set-cookie': setCookie });
+      const { redirectUrl, setCookie } = await auth.oidcStart(https, safeReturnUrl(cfg, url.searchParams.get('rd')));
+      return redirect(redirectUrl, [setCookie]);
     }
 
     if (url.pathname === '/auth/callback') {
@@ -91,12 +97,44 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const { setCookie } = auth.login(result.subject, https);
       if (result.role === 'user') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
-      return redirect('/', { 'set-cookie': setCookie });
+      return redirect(safeReturnUrl(cfg, result.returnTo) || '/', setCookie);
     }
 
     if (url.pathname === '/auth/logout') {
       const { setCookie } = auth.logout(cookieHeader, https);
-      return redirect('/', { 'set-cookie': setCookie });
+      return redirect('/', setCookie);
+    }
+
+    // The edge's forward_auth subrequest for every request to a tenant host — src/gate.ts has the contract.
+    if (url.pathname === '/auth/verify') {
+      const deny = (status: number, msg: string): Response =>
+        new Response(msg + '\n', { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+      // Without the shared cookie no browser could ever pass; answering 302 would loop login -> tenant -> login.
+      if (!cfg.cookieParentDomain) return deny(503, 'tenant gate misconfigured: the control plane needs CP_COOKIE_PARENT_DOMAIN=1');
+      const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
+      const ns = tenantNsForHost(cfg, host);
+      if (!ns) return deny(403, 'not a workspace address');
+      const who = auth.principalFromCookieHeader(cookieHeader);
+      if (!who) {
+        const rd = safeReturnUrl(cfg, requestedUrl(cfg, host, req.headers.get('x-forwarded-uri')));
+        const login = `${cfg.publicUrl}/auth/login` + (rd ? `?rd=${encodeURIComponent(rd)}` : '');
+        return new Response(null, { status: 302, headers: { location: login, 'cache-control': 'no-store' } });
+      }
+      const t = store.findTenantByNs(ns);
+      // Same answer for "no such tenant" and "not yours": the gate does not reveal which addresses exist.
+      if (!t || t.subject !== who.subject) return deny(403, `this workspace does not belong to ${who.email}`);
+      if (t.state !== 'running') {
+        return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}/workspace`, 'cache-control': 'no-store' } });
+      }
+      return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
+    }
+
+    // Admin forms are plain POSTs with the session cookie. Every u-<id>.<orgDomain> is same-site with this
+    // service (and, with CP_COOKIE_PARENT_DOMAIN, receives the cookie's scope), so SameSite=Lax alone does not
+    // stop a page served from a tenant from posting here. A browser always sends Origin on a POST.
+    if (req.method === 'POST' && url.pathname.startsWith('/admin/')) {
+      const origin = req.headers.get('origin');
+      if (origin && origin !== new URL(cfg.publicUrl).origin) return html(tpl.errorPage(403, 'cross-origin form post refused'), 403);
     }
 
     const principal = auth.principalFromCookieHeader(cookieHeader);
