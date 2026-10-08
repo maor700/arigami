@@ -17,6 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { canTransition, IllegalTransitionError, type TenantState } from './state-machine.js';
 import { newSecret as newHandoffSecret } from './handoff.js';
+import { migrateShared, createSharedStore, type TenantKind, type MemberPolicy, type SharedRole } from './shared.js';
 
 export type Role = 'admin' | 'user';
 
@@ -59,6 +60,15 @@ export interface Tenant {
   profile_failures: number;
   profile_next_at: number;
   profile_error: string;
+  // Shared org workspaces (src/shared.ts). Always present on a row read from the DB (column defaults); optional
+  // in the type so a hand-built Tenant (tests, fixtures) is still a personal one. Missing kind = 'personal'.
+  kind?: TenantKind;
+  name?: string;
+  member_policy?: MemberPolicy;
+  default_role?: SharedRole;
+  org_host?: number;
+  roster_gen?: number;
+  roster_synced_gen?: number;
 }
 
 export interface WebSession {
@@ -127,6 +137,7 @@ export function openDb(dbPath: string): Database {
     ['profile_error', "TEXT NOT NULL DEFAULT ''"],
   ] as const)
     if (!tenantCols.has(col)) db.exec(`ALTER TABLE tenants ADD COLUMN ${col} ${ddl}`);
+  migrateShared(db);
   return db;
 }
 
@@ -185,6 +196,14 @@ export function createStore(db: Database) {
       profile_failures: 0,
       profile_next_at: 0,
       profile_error: '',
+      // the column defaults (src/shared.ts migrateShared); a shared tenant is turned into one by markShared
+      kind: 'personal',
+      name: '',
+      member_policy: 'explicit',
+      default_role: 'member',
+      org_host: 0,
+      roster_gen: 0,
+      roster_synced_gen: 0,
     };
     db.query(
       `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret)
@@ -282,6 +301,7 @@ export function createStore(db: Database) {
     findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
     setRing, setProfileApplied, setProfileFailed, clearProfileBackoff, getMeta, setMeta,
     createSession, findSession, deleteSession,
+    ...createSharedStore(db),
   };
 }
 

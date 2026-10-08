@@ -87,6 +87,17 @@ spec:
             - name: ARIGAMI_BUNDLE_REF
               value: {{ .Values.env.ARIGAMI_BUNDLE_REF | quote }}
             {{- end }}
+            {{- if .Values.sharedWorkspace }}
+            # Several org members sign in here (control-plane shared workspace): handoffs must name a role and
+            # sessions are short-lived (server/org-access.ts).
+            - name: ARIGAMI_SHARED_WORKSPACE
+              value: "1"
+            {{- end }}
+            {{- if .Values.orgHost }}
+            # The organisation host: registers `scope: org` cron jobs from the profile (profiles/README.md).
+            - name: ARIGAMI_ORG_HOST
+              value: "1"
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}

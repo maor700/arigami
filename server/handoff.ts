@@ -11,7 +11,11 @@
 // email, and redirects the browser to `/__api/auth/handoff?t=…`.
 //
 //   token   = base64url(JSON payload) + '.' + base64url(HMAC-SHA256(secret, payloadB64))
-//   payload = { kind: 'handoff', email, exp (unix ms), jti }
+//   payload = { kind: 'handoff', email, exp (unix ms), jti [, role] }
+//   payload = { kind: 'roster', exp, jti, roster }   (shared workspaces, server/org-access.ts)
+//
+// `role` (admin|user|viewer) is only sent for a shared workspace — see server/org-access.ts. A token without it
+// is the K8S-3 personal-tenant sign-in. A token of one kind never verifies as the other.
 //
 // Deliberately the SAME wire format as K2's share tokens (server/share-token.ts)
 // — one token shape to reason about — but a different module because the trust
@@ -36,15 +40,19 @@ import crypto from 'node:crypto';
 import { ARIGAMI_DIR } from './lib/instance.js';
 
 export const HANDOFF_KIND = 'handoff';
+export const ROSTER_KIND = 'roster';
+const ROLES = ['admin', 'user', 'viewer'];
 /** Hard ceiling on a token's life, whatever `exp` the minter chose. */
 export const MAX_TTL_MS = 10 * 60_000;
 export const USED_FILE = 'handoff-used.json';
 
 export interface HandoffPayload {
-  kind: typeof HANDOFF_KIND;
-  email: string;
+  kind: typeof HANDOFF_KIND | typeof ROSTER_KIND;
+  email: string; // '' on a roster token
   exp: number; // unix ms
   jti: string;
+  role?: 'admin' | 'user' | 'viewer';
+  roster?: unknown; // roster tokens only; validated by org-access.parseRoster
 }
 
 export type VerifyResult =
@@ -73,12 +81,13 @@ function sign(payloadB64: string, secret: string): string {
  * `control-plane/src/handoff.ts` in both directions, so a format drift fails a
  * test instead of a user's login.
  */
-export function mint(secret: string, email: string, ttlMs = 5 * 60_000): string {
+export function mint(secret: string, email: string, ttlMs = 5 * 60_000, role?: HandoffPayload['role']): string {
   const payload: HandoffPayload = {
     kind: HANDOFF_KIND,
     email: String(email || '').trim().toLowerCase(),
     exp: Date.now() + Math.min(ttlMs, MAX_TTL_MS),
     jti: crypto.randomBytes(12).toString('base64url'),
+    ...(role ? { role } : {}),
   };
   const p = b64(JSON.stringify(payload));
   return `${p}.${sign(p, secret)}`;
@@ -91,7 +100,7 @@ function timingSafeEq(a: string, b: string): boolean {
 }
 
 /** Pure signature/claims check — no single-use bookkeeping (see `consume`). */
-export function verify(token: string, opts: { secret?: string; now?: number } = {}): VerifyResult {
+export function verify(token: string, opts: { secret?: string; now?: number; kind?: HandoffPayload['kind'] } = {}): VerifyResult {
   const secret = opts.secret ?? secretFromEnv();
   if (secret.length < 16) return { ok: false, error: 'handoff sign-in is not configured on this host', status: 404 };
   const parts = String(token || '').split('.');
@@ -104,8 +113,12 @@ export function verify(token: string, opts: { secret?: string; now?: number } = 
     return { ok: false, error: 'malformed payload', status: 400 };
   }
   const now = opts.now ?? Date.now();
-  if (payload?.kind !== HANDOFF_KIND) return { ok: false, error: 'not a handoff token', status: 403 };
-  if (!payload.email || !/^[^@\s]+@[^@\s]+$/.test(payload.email)) return { ok: false, error: 'token names no valid email', status: 403 };
+  const kind = opts.kind ?? HANDOFF_KIND;
+  if (payload?.kind !== kind) return { ok: false, error: `not a ${kind} token`, status: 403 };
+  if (kind === HANDOFF_KIND) {
+    if (!payload.email || !/^[^@\s]+@[^@\s]+$/.test(payload.email)) return { ok: false, error: 'token names no valid email', status: 403 };
+    if (payload.role !== undefined && !ROLES.includes(payload.role)) return { ok: false, error: 'token names an unknown role', status: 403 };
+  }
   if (typeof payload.exp !== 'number' || payload.exp <= now) return { ok: false, error: 'token expired — go back and open your workspace again', status: 403 };
   // A minter that asks for a longer life than we allow does not get it: the
   // ceiling is the VERIFIER's, so a compromised/buggy minter cannot issue a
@@ -154,7 +167,7 @@ function spend(jti: string, exp: number, dir: string, now: number, reused: strin
  * across a pod restart. Expired entries are pruned on every write, so the file
  * stays bounded by MAX_TTL_MS worth of sign-ins.
  */
-export function consume(token: string, opts: { secret?: string; now?: number; dir?: string } = {}): VerifyResult {
+export function consume(token: string, opts: { secret?: string; now?: number; dir?: string; kind?: HandoffPayload['kind'] } = {}): VerifyResult {
   const r = verify(token, opts);
   if (!r.ok) return r;
   const err = spend(r.payload.jti, r.payload.exp, opts.dir ?? ARIGAMI_DIR, opts.now ?? Date.now(), 'this sign-in link was already used — go back and open your workspace again');

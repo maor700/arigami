@@ -12,6 +12,7 @@
 //   bun src/cli.ts set-ring    <ns|subject|email> canary|stable   # canary tenants get a new profile first
 //   bun src/cli.ts profile                                        # desired profile commit + every tenant's applied one
 //   bun src/cli.ts profile-retry <ns|subject|email>               # drop a failed tenant's backoff (retried next tick)
+//   bun src/cli.ts shared …                                   # shared org workspaces, see src/shared-cli.ts
 //
 // `restore` takes ANY tenant's archive — restoring tenant A's backup into
 // tenant B is the migration path (proved live, docs/CONTROL-PLANE.md K8S-3).
@@ -22,6 +23,7 @@ import { upgradeTenant, UpgradeBlockedError } from './upgrade.js';
 import { realOps } from './reconcile.js';
 import { backupTenant, listBackups, restoreTenant } from './backup.js';
 import { DESIRED_META_KEY, haltingTenant, rolloutEnabled, type DesiredRecord } from './profile-rollout.js';
+import { runSharedCli } from './shared-cli.js';
 
 const cfg = loadConfig();
 const store = createStore(openDb(cfg.dbPath));
@@ -36,7 +38,14 @@ function findTenant(r: string): Tenant {
 }
 
 try {
-  if (cmd === 'tenants') {
+  if (cmd === 'shared') {
+    process.exitCode = await runSharedCli(
+      process.argv.slice(3),
+      { cfg, store, provisioner, pushRoster: provisioner.pushRoster, log: (m) => process.stderr.write(m + '\n') },
+      out,
+      (s) => process.stderr.write(s),
+    );
+  } else if (cmd === 'tenants') {
     out(store.listTenants().map(({ subject, email, ns, state, running_digest, desired_digest, last_seen_at }) => ({ subject, email, ns, state, running_digest, desired_digest, last_seen_at })));
   } else if (cmd === 'set-digest') {
     const t = findTenant(ref);
@@ -87,7 +96,7 @@ try {
     store.clearProfileBackoff(t.subject);
     out({ ok: true, ns: t.ns, note: `retried on the next reconcile tick (${cfg.reconcileSec}s) when the tenant is idle` });
   } else {
-    process.stderr.write('usage: bun src/cli.ts tenants | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
+    process.stderr.write('usage: bun src/cli.ts tenants | shared … | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
     process.exitCode = 2;
   }
 } catch (e) {

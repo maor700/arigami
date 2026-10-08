@@ -64,6 +64,8 @@ storage class's reclaim policy if that's not what you want).
 | `probes.path` | `/__health` | **not** `/__api/health` — that one requires a session, see docs/K8S.md "Probes: which endpoint" |
 | `probes.startup.*` | 5s × 60 = 5 min budget | covers a slow `ARIGAMI_BUNDLE` git clone on first boot before `server.listen()` |
 | `env.ARIGAMI_BUNDLE` | `""` | git URL (or a name shipped under `profiles/bundles/`) applied once on this tenant's first boot — see docs/K8S.md "ARIGAMI_BUNDLE" |
+| `sharedWorkspace` | `false` | set by the control plane for a **shared org workspace** (several members, docs/CONTROL-PLANE.md "Shared workspaces"): renders `ARIGAMI_SHARED_WORKSPACE=1`, so the tenant refuses a sign-in handoff that names no role and keeps member sessions short |
+| `orgHost` | `false` | renders `ARIGAMI_ORG_HOST=1`: this tenant registers the profile's `scope: org` cron jobs. One org host per organisation, or every org job runs once per org host |
 | `secretEnv` / `existingSecret` | `{}` / `""` | `secretEnv` has the chart create a `Secret` from plain values (fine for a throwaway tenant, avoid for real ones — it goes through `--set`/shell history); `existingSecret` points at one your provisioner/external-secrets already created |
 | `podSecurityContext` | `{}` | left to the image's own entrypoint — `docker/entrypoint.sh` starts as root ON PURPOSE (first-boot PVC chown) then drops to `node` itself via `gosu`. Forcing `runAsNonRoot: true` here breaks that on a fresh PVC. `ci/stub-values.yaml` sets it for the (unprivileged) stub image, since that one has no such constraint |
 

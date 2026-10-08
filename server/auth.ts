@@ -23,8 +23,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { requestIsSecure } from './lib/proxy-headers.js';
 import { cfg as liveCfg, type AuthConfig } from './lib/config.js';
 import { secret } from './lib/secrets.js';
+import * as orgAccess from './org-access.js';
 
-export type Role = 'admin' | 'user';
+// 'viewer' only ever comes from a shared workspace's handoff/roster (server/org-access.ts): it can look, not act.
+export type Role = 'admin' | 'user' | 'viewer';
 
 export interface ApiToken {
   id: string;
@@ -212,13 +214,37 @@ export function createAuth(opts: AuthOptions) {
     return true;
   }
 
+  // Shared workspaces: the control plane's roster/handoff decides roles here, and takes access away again.
+  function setRole(id: string, role: Role): User | undefined {
+    const u = getUser(id);
+    if (!u || u.role === role) return u;
+    u.role = role;
+    saveUsers();
+    return u;
+  }
+  /** Every way this user gets in — web sessions and API tokens — without deleting the user row itself. */
+  function revokeUser(id: string): { sessions: number; tokens: number } {
+    let n = 0;
+    for (const [t, s] of sessions) if (s.userId === id && sessions.delete(t)) n++;
+    if (n) saveSessions();
+    const u = getUser(id);
+    const tokens = (u?.tokens || []).length;
+    if (u && tokens) {
+      u.tokens = [];
+      saveUsers();
+    }
+    return { sessions: n, tokens };
+  }
+
   // ---- web sessions (cookie) -------------------------------------------------
   const cookieDays = () => opts.auth.cookieDays || 30;
-  function createWebSession(userId: string, ua?: string): WebSession {
+  // `ttlMs` caps the life below cookieDays — shared-workspace sign-ins are short (org-access.sharedSessionTtlMs).
+  function createWebSession(userId: string, ua?: string, ttlMs?: number): WebSession {
+    const life = cookieDays() * 86_400_000;
     const s: WebSession = {
       token: crypto.randomBytes(32).toString('base64url'),
       userId,
-      exp: Date.now() + cookieDays() * 86_400_000,
+      exp: Date.now() + (ttlMs && ttlMs > 0 ? Math.min(ttlMs, life) : life),
       createdAt: Date.now(),
       ua: ua ? ua.slice(0, 200) : undefined,
     };
@@ -435,6 +461,12 @@ export function createAuth(opts: AuthOptions) {
     const pathname = (req.url || '/').split('?')[0];
     const p = principal(req);
     (req as any).auth = p;
+    const refused = orgAccess.refusal(req, p, pathname, { publicUrl: opts.publicUrl });
+    if (refused) {
+      res.writeHead(403, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: refused }));
+      return true;
+    }
     if (p || isPublicPath(pathname)) return false;
     // K2: a signed share token opens ONE artifact without a cookie. Only
     // consulted when there is no principal, only on the artifacts route.
@@ -468,9 +500,10 @@ export function createAuth(opts: AuthOptions) {
   function gateUpgrade(req: IncomingMessage, socket: { write: (s: string) => void; destroy: () => void }): boolean {
     const p = principal(req);
     (req as any).auth = p;
-    if (p) return false;
+    const refused = orgAccess.refusal(req, p, (req.url || '').split('?')[0], { publicUrl: opts.publicUrl, upgrade: true });
+    if (p && !refused) return false;
     try {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      socket.write(refused ? 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     } catch {}
     try {
       socket.destroy();
@@ -562,7 +595,7 @@ export function createAuth(opts: AuthOptions) {
 
   return {
     // users
-    listUsers, hasAdmin, getUser, findByEmail, createUser, removeUser,
+    listUsers, hasAdmin, getUser, findByEmail, createUser, removeUser, setRole, revokeUser,
     // web sessions
     createWebSession, sessionFromCookie, setCookie, clearCookie, logout, cookieHeader,
     // pairing

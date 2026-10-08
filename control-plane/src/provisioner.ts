@@ -9,6 +9,7 @@
 // in JS on unproven ground.
 import type { Config } from './config.js';
 import type { Tenant } from './db.js';
+import { sharedHelmArgs } from './shared-ops.js';
 
 export class ProvisionError extends Error {
   constructor(message: string, public readonly stderr: string) {
@@ -99,6 +100,9 @@ export async function provisionTenant(cfg: Config, t: Tenant): Promise<{ url: st
   // The org's private profile repo: one read-only token for every tenant, so a user never has to sign in to GitHub
   // for the profile (and the extensions inside it) to install. Same chart `secretEnv` route, same Helm-release trade-off.
   if (cfg.arigamiGitToken) args.push('--set-string', `secretEnv.ARIGAMI_GIT_TOKEN=${cfg.arigamiGitToken}`);
+  // Shared org workspace (src/shared.ts): the chart's `sharedWorkspace` / `orgHost` values become
+  // ARIGAMI_SHARED_WORKSPACE=1 / ARIGAMI_ORG_HOST=1. Kept in the row, so every later upgrade re-renders them.
+  args.push(...sharedHelmArgs(t));
   if (cfg.helmExtraValuesFile) args.push('-f', cfg.helmExtraValuesFile);
 
   const res = await run(args, { timeoutMs: (cfg.helmTimeoutSec + 30) * 1000 });
@@ -269,4 +273,20 @@ export async function suspendTenant(cfg: Config, t: Tenant): Promise<void> {
 export async function resumeTenant(cfg: Config, t: Tenant): Promise<void> {
   const res = await run(['kubectl', '-n', t.ns, 'scale', `statefulset/${fullname(t.ns)}`, '--replicas=1']);
   if (res.code !== 0) throw new ProvisionError(`scale-up failed for ${t.ns} (exit ${res.code})`, res.stderr);
+}
+
+/**
+ * Hand a shared workspace its member roster (src/shared-ops.ts). Same loopback-over-exec route as the busy
+ * probe: the control plane never needs the tenant's ingress, and the call never crosses the edge.
+ */
+//
+// Not execInTenant: its `gosu node:node` fails ("operation not permitted") in a pod that already runs as uid 1000
+// — the chart's default since 0.2.0 (found on a live k3s run). This call writes nothing in the pod, so it needs no
+// user switch at all.
+export async function pushRoster(cfg: Config, t: Tenant, token: string): Promise<void> {
+  const res = await run(['kubectl', '-n', t.ns, 'exec', tenantPod(t.ns), '--',
+    'curl', '-fsS', '-m', '10', '-X', 'POST', '-H', 'content-type: application/json',
+    '--data', JSON.stringify({ t: token }), `http://127.0.0.1:${cfg.tenantPort}/__api/auth/roster`,
+  ], { timeoutMs: 30_000 });
+  if (res.code !== 0) throw new ProvisionError(`roster push to ${t.ns} failed (exit ${res.code})`, res.stderr || res.stdout);
 }

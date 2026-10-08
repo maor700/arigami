@@ -9,6 +9,7 @@ import { resourceRoot } from './lib/resource-root.js';
 import { cfg, ensureConfigFile, flushState } from './state.js';
 import * as api from './api.js';
 import * as bus from './bus.js';
+import { trackSocket } from './org-access.js';
 import * as vnc from './vnc.js';
 import * as screencast from './screencast.js';
 import { killAll, kickAutoPlayAll } from './claude.js';
@@ -317,6 +318,9 @@ server.on(
       // need the cookie (or an internal bearer) — an anonymous upgrade is
       // answered 401 + closed.
       if (auth.gateUpgrade(req, socket)) return;
+      // Shared workspaces: remember whose socket this is, so revoking a member closes it (server/org-access.ts).
+      const who = (req as any).auth;
+      if (who?.kind === 'user' && who.user?.id) trackSocket(who.user.id, socket);
       if (pathname === '/__ws') return bus.handleUpgrade(req, socket, head);
       if (pathname === '/__vnc') return vnc.handleUpgrade(req, socket, head);
       // native-window's live view (no VNC server to bridge to there) — see screencast.ts.

@@ -3,12 +3,15 @@ import type { Store, Tenant } from './db.js';
 import { createAuthService } from './auth.js';
 import * as tpl from './templates.js';
 import { canTransition } from './state-machine.js';
-import { tenantUrl } from './provisioner.js';
+import { tenantUrl, pushRoster } from './provisioner.js';
 import * as backupMod from './backup.js';
 import { signInUrl } from './handoff.js';
 import { tenantNsForHost, safeReturnUrl, requestedUrl } from './gate.js';
 import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
 import { rolloutEnabled, haltingTenant, DESIRED_META_KEY, type DesiredRecord } from './profile-rollout.js';
+import { decideAccess } from './shared.js';
+import { handleShared, adminSection } from './shared-routes.js';
+import type { SharedDeps } from './shared-ops.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -23,12 +26,15 @@ export interface AdminOps {
   listBackups(cfg: Config, ns: string): { name: string; bytes: number; mtimeMs: number }[];
   /** live pod state behind the progress page; injected so tests need no cluster */
   podSnapshot(cfg: Config, t: Tenant): Promise<PodSnapshot>;
+  /** shared workspaces: hand the tenant its member roster (provisioner.pushRoster); optional so test doubles may omit it */
+  pushRoster?(cfg: Config, t: Tenant, token: string): Promise<void>;
 }
 
 const realAdminOps: AdminOps = {
   backupTenant: (cfg, t) => backupMod.backupTenant(cfg, t),
   listBackups: (cfg, ns) => backupMod.listBackups(cfg, ns),
   podSnapshot: (cfg, t) => podSnapshot(cfg, t),
+  pushRoster: (cfg, t, token) => pushRoster(cfg, t, token),
 };
 
 // A digest ("sha256:<hex>") or an image tag — the only two things the chart's
@@ -77,9 +83,11 @@ const pathSubject = (raw: string): string => {
 
 export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log, adminOps: AdminOps = realAdminOps) {
   const auth = createAuthService(cfg, store);
+  const sharedDeps: SharedDeps = { cfg, store, provisioner, log, pushRoster: adminOps.pushRoster };
 
   function ensureTenant(subject: string, email: string): Tenant {
-    let t = store.findTenantBySubject(subject);
+    // Personal only: a shared workspace is never "your" tenant, whatever subject string an IdP hands out.
+    let t: Tenant | null = store.findPersonalTenant(subject);
     if (!t) {
       t = store.createTenant(subject, email, { desiredDigest: cfg.imageTag });
       runProvisioning(cfg, store, provisioner, t, log); // not awaited — see runProvisioning
@@ -146,12 +154,16 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         return new Response(null, { status: 302, headers: { location: login, 'cache-control': 'no-store' } });
       }
       const t = store.findTenantByNs(ns);
+      // Owner of a personal tenant, or a member of a shared one (src/shared.ts decideAccess). Read fresh on every
+      // request — nothing is cached here, so removing a member shuts them out on their very next request.
       // Same answer for "no such tenant" and "not yours": the gate does not reveal which addresses exist.
-      if (!t || t.subject !== who.subject) return deny(403, `this workspace does not belong to ${who.email}`);
+      const access = decideAccess(t, who, t?.kind === 'shared' ? store.getMember(t.ns, who.email) : null);
+      if (!t || !access.allow) return deny(403, `this workspace is not open to ${who.email}`);
       if (t.state !== 'running') {
+        const back = t.kind === 'shared' ? `/workspaces/${encodeURIComponent(t.name || '')}/open` : '/workspace';
         // The sign-in this 401 leads to lands on /workspace for a workspace that is not running (/auth/callback).
         if (noRedirect) return deny(401, 'this workspace is not running');
-        return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}/workspace`, 'cache-control': 'no-store' } });
+        return new Response(null, { status: 302, headers: { location: `${cfg.publicUrl}${back}`, 'cache-control': 'no-store' } });
       }
       return new Response(null, { status: 200, headers: { 'cache-control': 'no-store' } });
     }
@@ -195,7 +207,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     // `redirect` is only ever present once the tenant is genuinely ready.
     if (url.pathname === '/api/progress') {
       if (!principal) return json({ phase: 'unavailable', steps: [], title: 'Signed out', detail: 'Sign in again to continue.', slow: false, failed: true }, 401);
-      const t = store.findTenantBySubject(principal.subject);
+      const t = store.findPersonalTenant(principal.subject);
       if (!t) return json({ phase: 'queued', steps: [], title: 'Setting up your workspace', detail: 'Getting started…', slow: false, failed: false });
       const snap = t.state === 'provisioning' || t.state === 'dormant'
         ? await adminOps.podSnapshot(cfg, t).catch(() => EMPTY_SNAPSHOT)
@@ -207,6 +219,9 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
         ...(p.phase === 'ready' ? { redirect: signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email) } : {}),
       });
     }
+
+    const shared = await handleShared(req, url, principal, { deps: sharedDeps, resumeTenant: provisioner.resumeTenant });
+    if (shared) return shared;
 
     if (url.pathname === '/admin') {
       if (!principal) return redirect('/');
@@ -227,7 +242,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
             haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
           }
         : null;
-      return html(tpl.adminPage(tenants, principal.email, backups, profile));
+      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store)));
     }
 
     // Profile rollout: "retry now" for a tenant whose apply failed — drops the
@@ -303,7 +318,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     return html(tpl.errorPage(404, 'not found'), 404);
   }
 
-  return { handle, ensureTenant, auth };
+  return { handle, ensureTenant, auth, sharedDeps };
 }
 
 export type App = ReturnType<typeof createApp>;
