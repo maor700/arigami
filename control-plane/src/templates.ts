@@ -6,40 +6,77 @@ export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
 
+// The look follows the cockpit (web/src/index.css): Inter, the --hb-* surface/status tokens, the mint brand accent,
+// 1px hairline borders, soft rounded panels. No theme switch here — it follows the OS (the cockpit's dark palette).
+const CSS = `
+  :root { color-scheme: light dark; --brand: #6eceb7; --bg: #ffffff; --panel: #fcfcfb; --fg: #1a1a1a; --dim: #777777; --border: #e2e2e0; --hair: #ececec; --sel: rgba(0,0,0,.055);
+    --ok: #2f7d4f; --ok-bg: #eaf6ef; --ok-line: #bfe3cf; --warn: #82671b; --warn-bg: #fbf3e0; --warn-line: #e7d3a8; --err: #9c3b33; --err-bg: #fbecea; --err-line: #e2c4c0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0d10; --panel: #111418; --fg: #e8eaee; --dim: #8e96a4; --border: #303743; --hair: #262b33; --sel: rgba(255,255,255,.06);
+      --ok: #7fcf9c; --ok-bg: #12211a; --ok-line: #2b5039; --warn: #e0bd6a; --warn-bg: #1f1a0f; --warn-line: #5a4a24; --err: #f08f86; --err-bg: #261413; --err-line: #6a302b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 Inter, "Rubik Variable", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  ::selection { background: color-mix(in srgb, var(--brand) 35%, transparent); }
+  .top { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid var(--hair); background: var(--panel); }
+  .logo { font-weight: 650; letter-spacing: -.01em; }
+  .logo::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; background: var(--brand); }
+  main { max-width: 640px; margin: 8vh auto; padding: 0 20px; }
+  main.wide { max-width: 1240px; margin: 28px auto 64px; }
+  h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 8px; }
+  h2 { font-size: 16px; font-weight: 650; margin: 36px 0 6px; }
+  h3 { font-size: 14px; font-weight: 650; margin: 22px 0 6px; }
+  p { margin: 8px 0; }
+  a { color: inherit; text-decoration-color: var(--border); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--brand); }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--sel); padding: 1px 5px; border-radius: 4px; }
+  small, .detail { color: var(--dim); font-size: 12px; }
+  a.button, button { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--fg);
+    font: inherit; font-size: 13px; font-weight: 500; line-height: 1.3; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background .12s, border-color .12s; }
+  a.button:hover, button:hover { background: var(--sel); border-color: var(--dim); }
+  a.button { background: var(--brand); border-color: var(--brand); color: #10231d; padding: 9px 18px; font-size: 14px; }
+  a.button:hover { background: color-mix(in srgb, var(--brand) 85%, #fff); border-color: transparent; }
+  button.danger { color: var(--err); border-color: var(--err-line); background: var(--err-bg); }
+  button.danger:hover { border-color: var(--err); background: var(--err-bg); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  input, select { padding: 6px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; }
+  input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
+  input[type=checkbox] { accent-color: var(--brand); }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; margin-top: 16px; font-size: 13px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--hair); }
+  th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); background: var(--bg); }
+  tr:last-child td { border-bottom: none; }
+  td form.inline { margin: 2px 4px 2px 0; white-space: nowrap; }
+  td input { width: 96px; }
+  td:nth-child(2), td:nth-child(4) { white-space: nowrap; }
+  .state { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--sel); color: var(--dim); }
+  .state-running { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+  .state-provisioning { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+  .state-deleted { background: var(--err-bg); border-color: var(--err-line); color: var(--err); }
+  form.inline { display: inline; }
+  .pending { color: var(--warn); font-weight: 600; }
+  .failed { color: var(--err); font-weight: 600; }
+  .banner { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+  .banner.bad { background: var(--err-bg); border-color: var(--err-line); }
+  .steps { list-style: none; padding: 0; margin: 24px 0; }
+  .step { display: flex; align-items: center; gap: 10px; padding: 7px 0; color: var(--dim); transition: color .3s; }
+  .step-done, .step-active { color: var(--fg); }
+  .step-failed { color: var(--err); }
+  .mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; font-size: 12px; }
+  .step-done .mark { color: var(--ok); }
+  .mark i { width: 11px; height: 11px; border: 2px solid var(--brand); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .mark i { animation-duration: 2.4s; } }
+  .meta { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+`;
+
 function shell(title: string, body: string, tail = ''): string {
+  // Pages with a table (admin) get the wide column; the rest stay a narrow card-less column.
+  const wide = body.includes('<table');
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 640px; margin: 10vh auto; padding: 0 20px; color: #1a1a1a; }
-  h1 { font-size: 20px; }
-  a.button, button { display: inline-block; padding: 10px 18px; background: #1a1a1a; color: #fff; text-decoration: none; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #ddd; }
-  .state { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-  .state-running { background: #d6f5d6; }
-  .state-provisioning { background: #fff3cd; }
-  .state-dormant { background: #eee; }
-  .state-archived { background: #eee; }
-  .state-deleted { background: #f8d7da; }
-  form.inline { display: inline; }
-  .pending { color: #b26a00; font-weight: 600; }
-  .failed { color: #b3261e; font-weight: 600; }
-  .banner { padding: 8px 12px; border-radius: 6px; background: #f6f6f6; font-size: 13px; }
-  .banner.bad { background: #f8d7da; }
-  input { padding: 4px 6px; font-size: 12px; }
-  .detail { color: #555; }
-  .steps { list-style: none; padding: 0; margin: 24px 0; }
-  .step { display: flex; align-items: center; gap: 10px; padding: 7px 0; color: #999; transition: color .3s; }
-  .step-done, .step-active { color: #1a1a1a; }
-  .step-failed { color: #b3261e; }
-  .mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; font-size: 12px; }
-  .step-done .mark { color: #1e7a34; }
-  .mark i { width: 11px; height: 11px; border: 2px solid #1a1a1a; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .mark i { animation-duration: 2.4s; } }
-  .meta { color: #999; font-size: 12px; font-variant-numeric: tabular-nums; }
-</style></head><body>${body}${tail}</body></html>`;
+<style>${CSS}</style></head><body><header class="top"><span class="logo">Arigami</span></header><main${wide ? ' class="wide"' : ''}>${body}</main>${tail}</body></html>`;
 }
 
 /** The shared shell, for pages rendered outside this file (shared-templates.ts). */
@@ -236,5 +273,5 @@ function resumeForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/resume"><button type="submit">Resume</button></form>`;
 }
 function deleteForm(subject: string): string {
-  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/delete" onsubmit="return confirm('Delete this tenant? This deletes the namespace.')"><button type="submit">Delete</button></form>`;
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/delete" onsubmit="return confirm('Delete this tenant? This deletes the namespace.')"><button type="submit" class="danger">Delete</button></form>`;
 }

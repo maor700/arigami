@@ -52,7 +52,7 @@ export function sharedAdminSection(items: { tenant: SharedTenant; members: Membe
         <form class="inline" method="post" action="/admin/shared/${n}/policy">Who may open it:
           <select name="policy"><option value="explicit"${t.member_policy === 'explicit' ? ' selected' : ''}>listed members only</option><option value="org"${t.member_policy === 'org' ? ' selected' : ''}>any org member</option></select>
           default role <select name="default_role">${roleOptions(t.default_role)}</select><button type="submit">Save</button></form>
-        <form class="inline" method="post" action="/admin/shared/${n}/delete" onsubmit="return confirm('Delete shared workspace ${n}? This deletes its namespace and data.')"><button type="submit">Delete</button></form></p>
+        <form class="inline" method="post" action="/admin/shared/${n}/delete" onsubmit="return confirm('Delete shared workspace ${n}? This deletes its namespace and data.')"><button type="submit" class="danger">Delete</button></form></p>
       <table><thead><tr><th>Member</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>${memberRows || '<tr><td colspan="4">No listed members.</td></tr>'}</tbody></table>
       <form method="post" action="/admin/shared/${n}/members"><input name="email" placeholder="name@example.com" size="24">
         <select name="role">${roleOptions('member')}</select><button type="submit">Add / change role</button></form>`}`;
