@@ -173,6 +173,23 @@ describe('POST /admin/tenants/:subject/:action', () => {
     expect(store.findTenantBySubject(t.subject)?.state).toBe('dormant');
   });
 
+  test('a subject with URL-special characters (auth0|…, …@…) round-trips through the admin page form', async () => {
+    const { app, store, calls } = setup();
+    store.createUser('admin-1', 'admin@example.com', 'admin');
+    for (const sub of ['auth0|abc123', 'sub-bob@example.com', 'a/b c']) {
+      const t = store.createTenant(sub, `${encodeURIComponent(sub)}@example.com`, { desiredDigest: 'sha256:test' });
+      store.setTenantState(t.subject, 'running');
+    }
+    const page = await (await app.handle(new Request('http://localhost:8090/admin', { headers: { cookie: cookieFor(store, 'admin-1') } }))).text();
+    for (const sub of ['auth0|abc123', 'sub-bob@example.com', 'a/b c']) {
+      const action = `/admin/tenants/${encodeURIComponent(sub)}/suspend`;
+      expect(page).toContain(`action="${action}"`);
+      const res = await app.handle(new Request(`http://localhost:8090${action}`, { method: 'POST', headers: { cookie: cookieFor(store, 'admin-1') } }));
+      expect([sub, res.status]).toEqual([sub, 302]);
+      expect(calls).toContain(`suspend:${sub}`);
+    }
+  });
+
   test('suspend on a still-provisioning tenant is rejected (409), no provisioner call', async () => {
     const { app, store, calls } = setup();
     store.createUser('admin-1', 'admin@example.com', 'admin');

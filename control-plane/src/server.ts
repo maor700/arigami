@@ -65,6 +65,15 @@ async function runProvisioning(cfg: Config, store: Store, provisioner: Provision
   }
 }
 
+// An OIDC `sub` is any string ("auth0|123", "…@…"); the admin page puts it in the path percent-encoded.
+const pathSubject = (raw: string): string => {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
+
 export function createApp(cfg: Config, store: Store, provisioner: Provisioner, log: (m: string) => void = console.log, adminOps: AdminOps = realAdminOps) {
   const auth = createAuthService(cfg, store);
 
@@ -212,7 +221,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (digestAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const subject = digestAction[1];
+      const subject = pathSubject(digestAction[1]);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state === 'deleted') return html(tpl.errorPage(409, 'tenant is deleted'), 409);
@@ -229,7 +238,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (backupAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const t = store.findTenantBySubject(backupAction[1]);
+      const t = store.findTenantBySubject(pathSubject(backupAction[1]));
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       if (t.state !== 'running') return html(tpl.errorPage(409, `cannot back up a tenant in state ${t.state}`), 409);
       try {
@@ -245,7 +254,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (adminAction && req.method === 'POST') {
       if (!principal) return redirect('/');
       if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
-      const [, subject, action] = adminAction;
+      const [, rawSubject, action] = adminAction;
+      const subject = pathSubject(rawSubject);
       const t = store.findTenantBySubject(subject);
       if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
       const nextState = action === 'suspend' ? 'dormant' : action === 'resume' ? 'running' : 'deleted';
