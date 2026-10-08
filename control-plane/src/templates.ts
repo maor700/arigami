@@ -18,7 +18,9 @@ const CSS = `
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 Inter, "Rubik Variable", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   ::selection { background: color-mix(in srgb, var(--brand) 35%, transparent); }
-  .top { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid var(--hair); background: var(--panel); }
+  .top { border-bottom: 1px solid var(--hair); background: var(--panel); }
+  .top .in { max-width: 640px; margin: 0 auto; padding: 14px 20px; }
+  .top .in.wide { max-width: 1240px; }
   .logo { font-weight: 650; letter-spacing: -.01em; }
   .logo::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; background: var(--brand); }
   main { max-width: 640px; margin: 8vh auto; padding: 0 20px; }
@@ -32,21 +34,27 @@ const CSS = `
   code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--sel); padding: 1px 5px; border-radius: 4px; }
   small, .detail { color: var(--dim); font-size: 12px; }
   a.button, button { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--fg);
-    font: inherit; font-size: 13px; font-weight: 500; line-height: 1.3; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background .12s, border-color .12s; }
+    font: inherit; font-size: 13px; font-weight: 500; line-height: 1.3; height: 32px; justify-content: center; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background .12s, border-color .12s; }
   a.button:hover, button:hover { background: var(--sel); border-color: var(--dim); }
-  a.button { background: var(--brand); border-color: var(--brand); color: #10231d; padding: 9px 18px; font-size: 14px; }
+  a.button { background: var(--brand); border-color: var(--brand); color: #10231d; padding: 0 18px; height: 38px; font-size: 14px; }
   a.button:hover { background: color-mix(in srgb, var(--brand) 85%, #fff); border-color: transparent; }
   button.danger { color: var(--err); border-color: var(--err-line); background: var(--err-bg); }
   button.danger:hover { border-color: var(--err); background: var(--err-bg); }
   :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-  input, select { padding: 6px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; }
+  input, select { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; }
   input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); }
   input[type=checkbox] { accent-color: var(--brand); }
   table { border-collapse: separate; border-spacing: 0; width: 100%; margin-top: 16px; font-size: 13px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); }
-  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--hair); }
+  th, td { text-align: left; vertical-align: middle; padding: 9px 10px; border-bottom: 1px solid var(--hair); }
   th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); background: var(--bg); }
   tr:last-child td { border-bottom: none; }
-  td form.inline { margin: 2px 4px 2px 0; white-space: nowrap; }
+  td form.inline { margin: 0; white-space: nowrap; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+  .row > span { white-space: nowrap; }
+  .row.col { flex-direction: column; align-items: flex-start; }
+  .formrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+  .formrow form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
+  .fld { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); }
   td input { width: 96px; }
   td:nth-child(2), td:nth-child(4) { white-space: nowrap; }
   .state { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--sel); color: var(--dim); }
@@ -76,7 +84,7 @@ function shell(title: string, body: string, tail = ''): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${CSS}</style></head><body><header class="top"><span class="logo">Arigami</span></header><main${wide ? ' class="wide"' : ''}>${body}</main>${tail}</body></html>`;
+<style>${CSS}</style></head><body><header class="top"><div class="in${wide ? ' wide' : ''}"><span class="logo">Arigami</span></div></header><main${wide ? ' class="wide"' : ''}>${body}</main>${tail}</body></html>`;
 }
 
 /** The shared shell, for pages rendered outside this file (shared-templates.ts). */
@@ -230,15 +238,15 @@ export function adminPage(
       <td>${esc(t.ns)}</td>
       <td><span class="state state-${esc(t.state)}">${esc(t.state)}</span></td>
       <td>${esc(t.last_seen_at)}</td>
-      <td>${digest}${t.state !== 'deleted' ? digestForm(t.subject) : ''}</td>
+      <td><div class="row"><span>${digest}</span>${t.state !== 'deleted' ? digestForm(t.subject) : ''}</div></td>
       <td>${profileCell(t, profile)}</td>
-      <td>${b ? `${b.count}${b.newestMs ? ` <small>(${esc(new Date(b.newestMs).toISOString().slice(0, 16))}Z)</small>` : ''}` : '0'}
-        ${t.state === 'running' ? backupForm(t.subject) : ''}</td>
-      <td>
+      <td><div class="row"><span>${b ? `${b.count}${b.newestMs ? ` <small>(${esc(new Date(b.newestMs).toISOString().slice(0, 16))}Z)</small>` : ''}` : '0'}</span>
+        ${t.state === 'running' ? backupForm(t.subject) : ''}</div></td>
+      <td><div class="row">
         ${t.state === 'running' ? suspendForm(t.subject) : ''}
         ${t.state === 'dormant' ? resumeForm(t.subject) : ''}
         ${t.state !== 'deleted' ? deleteForm(t.subject) : ''}
-      </td>
+      </div></td>
     </tr>`;
     })
     .join('\n');
@@ -249,7 +257,7 @@ export function adminPage(
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
      ${profileBanner(profile)}
      <table>
-       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image (running → desired)</th><th>Profile (applied → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
+       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image</th><th title="Profile (applied → desired)">Profile (applied → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
        <tbody>${rows || '<tr><td colspan="8">No tenants yet.</td></tr>'}</tbody>
      </table>${extra}`,
   );

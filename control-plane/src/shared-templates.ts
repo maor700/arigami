@@ -48,13 +48,13 @@ export function sharedAdminSection(items: { tenant: SharedTenant; members: Membe
           <td>${t.state === 'deleted' ? '' : `<form class="inline" method="post" action="/admin/shared/${n}/members/remove"><input type="hidden" name="email" value="${esc(m.email)}"><button type="submit">Remove</button></form>`}</td></tr>`)
         .join('');
       return `<h3>${n} <small>${esc(t.ns)} · <span class="state state-${esc(t.state)}">${esc(t.state)}</span>${t.org_host ? ' · org host' : ''}${synced ? '' : ' · <span class="pending">member changes not yet applied inside the workspace</span>'}</small></h3>
-      ${t.state === 'deleted' ? '' : `<p>
-        <form class="inline" method="post" action="/admin/shared/${n}/policy">Who may open it:
+      ${t.state === 'deleted' ? '' : `<div class="formrow">
+        <form method="post" action="/admin/shared/${n}/policy"><span class="fld">Who may open it</span>
           <select name="policy"><option value="explicit"${t.member_policy === 'explicit' ? ' selected' : ''}>listed members only</option><option value="org"${t.member_policy === 'org' ? ' selected' : ''}>any org member</option></select>
-          default role <select name="default_role">${roleOptions(t.default_role)}</select><button type="submit">Save</button></form>
-        <form class="inline" method="post" action="/admin/shared/${n}/delete" onsubmit="return confirm('Delete shared workspace ${n}? This deletes its namespace and data.')"><button type="submit" class="danger">Delete</button></form></p>
+          <label class="fld">default role <select name="default_role">${roleOptions(t.default_role)}</select></label><button type="submit">Save</button></form>
+        <form class="inline" method="post" action="/admin/shared/${n}/delete" onsubmit="return confirm('Delete shared workspace ${n}? This deletes its namespace and data.')"><button type="submit" class="danger">Delete</button></form></div>
       <table><thead><tr><th>Member</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>${memberRows || '<tr><td colspan="4">No listed members.</td></tr>'}</tbody></table>
-      <form method="post" action="/admin/shared/${n}/members"><input name="email" placeholder="name@example.com" size="24">
+      <form class="formrow" method="post" action="/admin/shared/${n}/members"><input name="email" placeholder="name@example.com" size="24">
         <select name="role">${roleOptions('member')}</select><button type="submit">Add / change role</button></form>`}`;
     })
     .join('\n');
@@ -63,10 +63,10 @@ export function sharedAdminSection(items: { tenant: SharedTenant; members: Membe
     being an org-admin does not let you in. Removing someone shuts them out at the edge at once and inside the
     workspace as soon as it hears the new member list.</small></p>
     ${blocks || '<p>None yet.</p>'}
-    <form method="post" action="/admin/shared" style="margin-top:16px"><strong>New shared workspace</strong>
+    <form class="formrow" method="post" action="/admin/shared" style="margin-top:20px"><strong>New shared workspace</strong>
       <input name="name" placeholder="name (e.g. team)" size="14">
       <select name="policy"><option value="explicit">listed members only</option><option value="org">any org member</option></select>
-      default role <select name="default_role">${roleOptions('member')}</select>
-      <label><input type="checkbox" name="org_host" value="1"${items.some((i) => i.tenant.org_host && i.tenant.state !== 'deleted') ? '' : ' checked'}> org host (runs org-wide cron jobs)</label>
+      <label class="fld">default role <select name="default_role">${roleOptions('member')}</select></label>
+      <label class="fld"><input type="checkbox" name="org_host" value="1"${items.some((i) => i.tenant.org_host && i.tenant.state !== 'deleted') ? '' : ' checked'}> org host (runs org-wide cron jobs)</label>
       <button type="submit">Create</button></form>`;
 }
