@@ -544,7 +544,8 @@ describe('provisioner: chart flags and the roster transport', () => {
     const cfg = cfgOf();
     await provisioner.pushRoster(cfg, tenant({ kind: 'shared' }), 'tok.sig');
     const c = seen[0];
-    expect(c.slice(0, 6)).toEqual(['kubectl', '-n', 'u-abcdef0123', 'exec', 'arigami-abcdef0123-0', '--']);
+    // no `gosu`: it cannot switch user inside a pod that already runs as non-root (chart default since 0.2.0)
+    expect(c.slice(0, 7)).toEqual(['kubectl', '-n', 'u-abcdef0123', 'exec', 'arigami-abcdef0123-0', '--', 'curl']);
     expect(c).toContain('http://127.0.0.1:3099/__api/auth/roster');
     expect(c[c.indexOf('--data') + 1]).toBe('{"t":"tok.sig"}');
   });

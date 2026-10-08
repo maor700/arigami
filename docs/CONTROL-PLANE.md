@@ -811,7 +811,9 @@ cockpit's users, audit trail and per-user settings stay per person. There is no 
 2. **The pod, within a push.** On every membership change the control plane mints a *roster* token
    (`{kind:'roster', exp, jti, roster:{gen, policy, defaultRole, members:{email: role}}}`, HMAC with the tenant's
    handoff secret, single-use) and posts it over loopback inside the pod (`kubectl exec … curl` →
-   `POST /__api/auth/roster`, `provisioner.pushRoster`, same route as the busy probe). The tenant
+   `POST /__api/auth/roster`, `provisioner.pushRoster`; like the busy probe, but without the `gosu node:node`
+   user switch, which fails in a pod that already runs as uid 1000 — the chart default since 0.2.0. The busy probe
+   and backups (`execInTenant`) still carry that switch; found on a live k3s run, not fixed here). The tenant
    (`server/org-access.ts applyRoster`) drops every **web session, API token and open socket** (`/__ws`, `/__vnc`,
    `/__screencast`, proxied websockets) of anyone no longer on it, parks them as `viewer`, moves changed roles in
    place (closing that user's sockets so a desktop opened as admin does not outlive a downgrade), and records the
