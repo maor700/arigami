@@ -206,3 +206,10 @@ limits, values.yaml). Moving the pilot to a dedicated machine (the €46/mo
 Everything above is a deployment of already-proven pieces; nothing in this
 section was newly proven on such a box this wave (no such box exists yet —
 and no cloud resources were provisioned for this task, per its constraints).
+
+## Lessons from a public multi-tenant lab on GKE
+
+A throwaway cluster with the control plane, Google sign-in and per-user workspaces reachable from a phone was built and
+torn down; every pitfall it hit (NetworkPolicy not enforced, NodeLocal DNS vs the policy, Chrome without a sandbox in a
+pod, `http://` public origin, Spot preemption, `ClusterRole` IAM, certificates on an `emptyDir`) is encoded in
+`deploy/gke-lab/` — Terraform for the cloud, manifests for the edge, and a symptom → cause → fix table in its README.

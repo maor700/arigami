@@ -1,0 +1,107 @@
+# The lab's public edge, in ONE namespace and with NO cluster-scoped objects (so it installs with namespace-level rights):
+#   internet -> Service type LoadBalancer (the static IP from `terraform output edge_ip`)
+#            -> Caddy, which gets a Let's Encrypt certificate per hostname on first use (HTTP-01, only for names under $DOMAIN)
+#            -> $DOMAIN                 the control plane  (CP_UPSTREAM)
+#            -> u-<id>.$DOMAIN          that tenant's Service  arigami-<id>.u-<id>.svc:3099
+# Tenants therefore need no Ingress of their own (values: tenant-values.yaml sets ingress.enabled=false).
+#
+#   export DOMAIN=lab.example.com EDGE_IP=203.0.113.10 CP_UPSTREAM=chisel.edge.svc.cluster.local:18090
+#   envsubst '${DOMAIN} ${DOMAIN_RE} ${EDGE_IP} ${CP_UPSTREAM} ${ACME_EMAIL}' < edge.yaml | kubectl apply -f -
+#   (DOMAIN_RE is DOMAIN with the dots escaped: ${DOMAIN//./\\.})
+#
+# If you have cluster-admin, prefer ingress-nginx + cert-manager + the control-plane chart (README, "the proper way").
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: edge
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddyfile
+  namespace: edge
+data:
+  Caddyfile: |
+    {
+      email ${ACME_EMAIL}
+      on_demand_tls {
+        ask http://127.0.0.1:5555/ok
+      }
+      servers {
+        protocols h1 h2
+      }
+    }
+    # Only certify names under the lab domain — otherwise anyone pointing a name at this IP could burn the CA quota.
+    http://127.0.0.1:5555 {
+      @ok expression `{query.domain} == "${DOMAIN}" || {query.domain}.endsWith(".${DOMAIN}")`
+      respond @ok "ok" 200
+      respond 403
+    }
+    http:// {
+      redir https://{host}{uri} permanent
+    }
+    https:// {
+      tls {
+        on_demand
+      }
+      @cp host ${DOMAIN}
+      handle @cp {
+        reverse_proxy ${CP_UPSTREAM}
+      }
+      # Caddy does not allow placeholders in an upstream that has a scheme — keep it scheme-less.
+      @tenant header_regexp t Host ^u-([0-9a-f]+)\.${DOMAIN_RE}$
+      handle @tenant {
+        reverse_proxy arigami-{re.t.1}.u-{re.t.1}.svc.cluster.local:3099
+      }
+      handle {
+        respond "not found" 404
+      }
+    }
+---
+# Certificates live here. On an emptyDir every restart re-issues them, and Let's Encrypt allows only a handful of
+# duplicate certificates per week — which is how a node replacement turned into an outage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-data
+  namespace: edge
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: edge
+spec:
+  replicas: 1
+  strategy: {type: Recreate} # the PVC is ReadWriteOnce
+  selector: {matchLabels: {app: caddy}}
+  template:
+    metadata: {labels: {app: caddy}}
+    spec:
+      containers:
+        - name: caddy
+          image: caddy:2
+          ports: [{containerPort: 80}, {containerPort: 443}]
+          volumeMounts:
+            - {name: cfg, mountPath: /etc/caddy}
+            - {name: data, mountPath: /data}
+          resources: {requests: {cpu: 50m, memory: 64Mi}}
+      volumes:
+        - {name: cfg, configMap: {name: caddyfile}}
+        - {name: data, persistentVolumeClaim: {claimName: caddy-data}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: edge
+spec:
+  type: LoadBalancer
+  loadBalancerIP: ${EDGE_IP}
+  selector: {app: caddy}
+  ports:
+    - {name: http, port: 80, targetPort: 80}
+    - {name: https, port: 443, targetPort: 443}

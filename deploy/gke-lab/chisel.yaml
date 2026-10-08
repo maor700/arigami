@@ -1,0 +1,33 @@
+# An OUTBOUND-ONLY reverse tunnel, for running the control plane on a machine you do not want to open inbound ports on
+# (a dev VM behind a deny-all firewall): the machine dials this server through `kubectl port-forward`, and the server
+# exposes the control plane to the cluster as chisel.edge.svc:18090 (edge.yaml's CP_UPSTREAM). See tunnel.sh.
+#
+#   kubectl -n edge create secret generic chisel-auth --from-literal=auth="lab:$(openssl rand -hex 16)"
+#   kubectl apply -f chisel.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: chisel, namespace: edge}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: chisel}}
+  template:
+    metadata: {labels: {app: chisel}}
+    spec:
+      containers:
+        - name: chisel
+          image: jpillora/chisel:1.12.0
+          args: ["server", "--port", "8080", "--reverse", "--keepalive", "10s"]
+          env:
+            - name: AUTH
+              valueFrom: {secretKeyRef: {name: chisel-auth, key: auth}}
+          ports: [{containerPort: 8080}, {containerPort: 18090}]
+          resources: {requests: {cpu: 20m, memory: 32Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: chisel, namespace: edge}
+spec:
+  selector: {app: chisel}
+  ports:
+    - {name: control, port: 8080, targetPort: 8080}
+    - {name: cp, port: 18090, targetPort: 18090}

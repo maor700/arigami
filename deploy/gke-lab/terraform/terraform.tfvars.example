@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (kept OUT of the repo — it names real projects and domains).
+project_id       = "my-sandbox-project"
+domain           = "arigami-lab.example.com"
+dns_zone_name    = "example-com"            # an existing Cloud DNS zone for example.com; "" to create the records by hand
+authorized_cidrs = ["203.0.113.7/32"]       # the machine that runs kubectl / helm / the control plane
+# node_machine_type = "n2d-standard-8"
+# ttl_hours         = 12
