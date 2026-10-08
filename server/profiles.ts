@@ -165,7 +165,7 @@ export interface ApplyReport {
   /** `scope: org` jobs this host did not register (it is not the org host) */
   cronSkipped?: { name: string; reason: string }[];
   /** extensions the profile installs/updates (only for a trusted bundle) */
-  extensions?: { name: string; status: 'installed' | 'updated' | 'unchanged' | 'skipped' | 'error'; sha?: string; error?: string }[];
+  extensions?: { name: string; status: 'installed' | 'updated' | 'unchanged' | 'skipped' | 'error'; sha?: string; error?: string; deps?: 'ok' | 'missing'; depsError?: string }[];
   /** A4: agents shipped by the bundle — created when absent, left alone when present (unless force) */
   agents: { slug: string; status: 'created' | 'updated' | 'unchanged' | 'error'; assets?: number; skippedSkills?: string[]; error?: string }[];
   errors: string[];
@@ -748,12 +748,15 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
         continue;
       }
       try {
-        const r = await ex.installOrUpdateExtension({ name: x.name, dir: x.dir, source: x.source, ref: x.ref }, { trust: true });
+        // deps: a trusted bundle's extensions may `bun install` what their package.json declares
+        // (lifecycle scripts off). Offline is not an apply error — the extension carries the status.
+        const r = await ex.installOrUpdateExtension({ name: x.name, dir: x.dir, source: x.source, ref: x.ref }, { trust: true, deps: true });
+        const deps = r.deps && r.deps.status !== 'none' ? { deps: r.deps.ok ? ('ok' as const) : ('missing' as const), ...(r.deps.ok ? {} : { depsError: r.deps.error }) } : {};
         if (!r.ok) {
-          report.extensions.push({ name: x.name, status: r.status === 'installed' ? 'installed' : 'error', error: r.error });
+          report.extensions.push({ name: x.name, status: r.status === 'installed' ? 'installed' : 'error', error: r.error, ...deps });
           if (!r.status) report.errors.push(`extension "${x.name}": ${r.error}`);
         } else {
-          report.extensions.push({ name: x.name, status: r.status!, ...(r.sha ? { sha: r.sha } : {}) });
+          report.extensions.push({ name: x.name, status: r.status!, ...(r.sha ? { sha: r.sha } : {}), ...deps });
         }
         // seed settings once; a user's own edits are never overwritten
         if (x.settings && Object.keys(x.settings).length && r.status && ex.readState().settings[x.name] === undefined) await ex.patchExtension(x.name, { settings: x.settings });

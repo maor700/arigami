@@ -516,8 +516,13 @@ ext() {
       if ext_live; then ext_api POST /__api/extensions/validate "$(ext_json "$src")"; echo
       else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" validate "$src"; fi ;;
     add|install)
-      src="${1:?usage: host ext add <dir|git-url> [--trust]}"
+      src="${1:?usage: host ext add <dir|git-url> [--trust] [--deps]}"
       trust=false; case " ${*:2} " in *" --trust "*) trust=true ;; esac
+      # --deps: allow `bun install` of the extension's package.json (lifecycle scripts stay off).
+      deps=false; case " ${*:2} " in *" --deps "*) deps=true ;; esac
+      set -- "$src"
+      [ "$trust" = true ] && set -- "$@" --trust
+      [ "$deps" = true ] && set -- "$@" --deps
       if ext_live; then
         # The TRUSTED tier is served WITHOUT the tab sandbox — the page runs with
         # the cockpit's own session. Never granted silently: --trust, or a y/N in
@@ -534,9 +539,13 @@ ext() {
             dl "  no terminal to ask on — installing sandboxed; pass --trust to grant"
           fi
         fi
-        ext_api POST /__api/extensions/add "$(printf '{"source":"%s","trust":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$trust")"; echo
-      elif [ "$trust" = true ]; then ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src" --trust
-      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$src"; fi ;;
+        ext_api POST /__api/extensions/add "$(printf '{"source":"%s","trust":%s,"installDeps":%s}' "$(printf '%s' "$src" | sed 's/["\\]/\\&/g')" "$trust" "$deps")"; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" add "$@"; fi ;;
+    deps)
+      # Allow + run `bun install` for an extension's own package.json (and the retry after a failure).
+      name="${1:?usage: host ext deps <name>}"
+      if ext_live; then ext_api PATCH "/__api/extensions/$name" '{"installDeps":true}'; echo
+      else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" deps "$name"; fi ;;
     trust|untrust)
       name="${1:?usage: host ext $sub <name>}"
       want=$([ "$sub" = trust ] && echo true || echo false)
@@ -561,7 +570,7 @@ ext() {
       if ext_live; then ext_api PATCH "/__api/extensions/$name" "{\"enabled\":$want}"; echo
       else ARIGAMI_DIR="$DIR" bun "$ROOT/server/extensions.ts" "$sub" "$name"; fi ;;
     *)
-      echo "usage: host ext <list|validate <dir>|add <dir|git-url> [--trust]|trust <name>|untrust <name>|remove <name>|update <name>|reload|enable <name>|disable <name>>"
+      echo "usage: host ext <list|validate <dir>|add <dir|git-url> [--trust] [--deps]|deps <name>|trust <name>|untrust <name>|remove <name>|update <name>|reload|enable <name>|disable <name>>"
       dl "  with the host UP, export ARIGAMI_TOKEN=<admin api token> so the change reaches the running process"
       return 1 ;;
   esac

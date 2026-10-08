@@ -32,6 +32,24 @@ export const strings = {
   'ext.c.none': 'עדיין כלום',
   'ext.warnings': 'אזהרות',
 
+  // התלויות של ההרחבה עצמה (package.json ← bun install)
+  'ext.state.depsMissing': 'חסרות תלויות',
+  'ext.deps.label': 'תלויות',
+  'ext.deps.state.none': 'אין',
+  'ext.deps.state.ok': 'מותקנות',
+  'ext.deps.state.missing': 'חסרות',
+  'ext.deps.state.installing': 'מתקין…',
+  'ext.deps.unpinned': 'אין lockfile — הגרסאות לא נעולות',
+  'ext.deps.install': 'להתקין תלויות',
+  'ext.deps.retry': 'לנסות שוב',
+  'ext.deps.installed': 'התלויות של „{name}” הותקנו',
+  'ext.deps.title': 'נדרשות לה {n} חבילות npm',
+  'ext.deps.body': 'הן יורדות ממאגר החבילות שלך עם bun install, נעולות לפי ה-lockfile של ההרחבה אם יש לה. שום סקריפט התקנה לא רץ.',
+  'ext.deps.grant': 'להתקין אותן עכשיו',
+  'ext.deps.confirm.title': 'להתקין את התלויות של „{name}”?',
+  'ext.deps.confirm.body': 'מריץ bun install בתיקיית ההרחבה: {list}. החבילות מגיעות מהמאגר שלך ורצות בהרשאות של המארח כשההרחבה משתמשת בהן; סקריפטי התקנה לא רצים.',
+  'ext.deps.confirm.go': 'להתקין',
+
   // טופס ההגדרות
   'ext.settings': 'הגדרות',
   'ext.settings.save': 'שמירה',

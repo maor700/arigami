@@ -32,6 +32,24 @@ export const strings = {
   'ext.c.none': 'nothing yet',
   'ext.warnings': 'Warnings',
 
+  // the extension's own npm dependencies (package.json → bun install)
+  'ext.state.depsMissing': 'Needs dependencies',
+  'ext.deps.label': 'Dependencies',
+  'ext.deps.state.none': 'none',
+  'ext.deps.state.ok': 'installed',
+  'ext.deps.state.missing': 'missing',
+  'ext.deps.state.installing': 'installing…',
+  'ext.deps.unpinned': 'no lockfile — versions not pinned',
+  'ext.deps.install': 'Install dependencies',
+  'ext.deps.retry': 'Retry install',
+  'ext.deps.installed': 'Dependencies of “{name}” installed',
+  'ext.deps.title': 'It needs {n} npm package(s)',
+  'ext.deps.body': 'They are downloaded from your package registry with bun install, pinned by the extension’s lockfile when it has one. No install script runs.',
+  'ext.deps.grant': 'Install them now',
+  'ext.deps.confirm.title': 'Install the dependencies of “{name}”?',
+  'ext.deps.confirm.body': 'Runs bun install in the extension’s directory: {list}. Packages come from your registry and run with this host’s privileges when the extension uses them; install scripts are not run.',
+  'ext.deps.confirm.go': 'Install',
+
   // settings form
   'ext.settings': 'Settings',
   'ext.settings.save': 'Save',
