@@ -116,6 +116,11 @@ spec:
               value: {{ .Values.config.backupKeep | quote }}
             - name: CP_COOKIE_DAYS
               value: {{ .Values.config.cookieDays | quote }}
+            {{- if .Values.tenantValues }}
+            # Extra Helm values layered on every tenant install (ingress TLS/annotations, resources, …).
+            - name: CP_HELM_EXTRA_VALUES
+              value: /etc/arigami/tenant-values/values.yaml
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
@@ -128,6 +133,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.tenantValues }}
+            - name: tenant-values
+              mountPath: /etc/arigami/tenant-values
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
@@ -150,10 +160,17 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
-      {{- if not .Values.persistence.enabled }}
+      {{- if or (not .Values.persistence.enabled) .Values.tenantValues }}
       volumes:
+        {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}
+        {{- end }}
+        {{- if .Values.tenantValues }}
+        - name: tenant-values
+          configMap:
+            name: {{ include "arigami-control-plane.fullname" . }}-tenant-values
+        {{- end }}
       {{- end }}
   {{- if .Values.persistence.enabled }}
   volumeClaimTemplates:

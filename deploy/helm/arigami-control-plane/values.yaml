@@ -174,6 +174,13 @@ config:
   cookieDays: "30"
 
 # Extra plain env vars. [{name, value}]
+# Extra Helm values layered on EVERY tenant install (rendered into a ConfigMap, passed as CP_HELM_EXTRA_VALUES):
+# ingress annotations/TLS, resources, networkPolicy, …. Example for cert-manager + ingress-nginx:
+#   tenantValues:
+#     ingress:
+#       annotations: {cert-manager.io/cluster-issuer: letsencrypt-prod}
+#       tls: {enabled: true}
+tenantValues: {}
 extraEnv: []
 
 # Secret material: CP_OIDC_CLIENT_SECRET, and anything else the service should

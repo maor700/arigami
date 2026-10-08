@@ -161,7 +161,7 @@ export function adminPage(
     .join('\n');
   return shell(
     'Tenants — Arigami admin',
-    `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/auth/logout">Sign out</a></p>
+    `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/workspace">Open my workspace</a> · <a href="/auth/logout">Sign out</a></p>
      <p><small>Image changes converge on the next reconcile tick, and only while the tenant has no
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
      <table>

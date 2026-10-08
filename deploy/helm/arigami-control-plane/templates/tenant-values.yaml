@@ -1,0 +1,11 @@
+{{- if .Values.tenantValues }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "arigami-control-plane.fullname" . }}-tenant-values
+  labels:
+    {{- include "arigami-control-plane.labels" . | nindent 4 }}
+data:
+  values.yaml: |
+    {{- toYaml .Values.tenantValues | nindent 4 }}
+{{- end }}

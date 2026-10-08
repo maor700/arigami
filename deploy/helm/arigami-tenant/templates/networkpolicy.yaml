@@ -44,10 +44,26 @@ spec:
     - {}
     {{- else }}
     # Cluster DNS. Without this nothing resolves and every other rule is moot.
+    #
+    # Two ways a pod reaches DNS, and a policy must allow both:
+    #   - the kube-dns pods themselves (the namespaceSelector), and
+    #   - the kube-dns Service IP. With NodeLocal DNSCache (GKE's default) the node answers on that IP locally, so the
+    #     packet is never rewritten to a kube-dns pod and the selector above does not match it — every lookup times out
+    #     while egress by IP works. The Service IP is read from the cluster when the chart is rendered against one
+    #     (`lookup`), and `networkPolicy.egress.dnsServiceCidrs` adds any others.
     - to:
         - namespaceSelector:
             matchLabels:
               {{ .Values.networkPolicy.ingressNamespaceLabelKey }}: {{ .Values.networkPolicy.egress.dnsNamespace | quote }}
+        {{- $dnsSvc := lookup "v1" "Service" .Values.networkPolicy.egress.dnsNamespace "kube-dns" }}
+        {{- if and $dnsSvc $dnsSvc.spec $dnsSvc.spec.clusterIP }}
+        - ipBlock:
+            cidr: {{ printf "%s/32" $dnsSvc.spec.clusterIP }}
+        {{- end }}
+        {{- range .Values.networkPolicy.egress.dnsServiceCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
       ports:
         - protocol: UDP
           port: 53

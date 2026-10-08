@@ -101,9 +101,11 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
 
     const principal = auth.principalFromCookieHeader(cookieHeader);
 
-    if (url.pathname === '/') {
+    // An org-admin has no workspace of their own by default (they land on /admin); /workspace gives them — or any
+    // signed-in user — the same "get me into my workspace" flow as /.
+    if (url.pathname === '/' || url.pathname === '/workspace') {
       if (!principal) return html(tpl.loginPage(cfg.orgDomain));
-      if (principal.role === 'admin') return redirect('/admin');
+      if (principal.role === 'admin' && url.pathname === '/') return redirect('/admin');
       const t = ensureTenant(principal.subject, principal.email);
       store.touchLastSeen(principal.subject);
       if (t.state === 'provisioning') return html(tpl.startingPage());

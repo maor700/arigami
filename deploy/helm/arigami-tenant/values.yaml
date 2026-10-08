@@ -226,6 +226,9 @@ networkPolicy:
     mode: restricted
     # Namespace of the cluster DNS service, matched on ingressNamespaceLabelKey.
     dnsNamespace: kube-system
+    # Extra DNS addresses to allow (CIDRs) — the kube-dns Service IP is looked up automatically on a live cluster;
+    # set this when rendering offline (`helm template`) for a cluster with NodeLocal DNSCache.
+    dnsServiceCidrs: []
     # Subtracted from 0.0.0.0/0 in restricted mode. The /8, /12 and /16 are
     # RFC1918 (pod, Service and node networks live in there); 169.254.169.254/32
     # is the cloud metadata endpoint, which on GCP and AWS hands out node
