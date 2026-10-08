@@ -140,6 +140,9 @@ spec:
               mountPath: /etc/arigami/tenant-values
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
@@ -162,7 +165,7 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
-      {{- if or (not .Values.persistence.enabled) .Values.tenantValues }}
+      {{- if or (not .Values.persistence.enabled) .Values.tenantValues .Values.extraVolumes }}
       volumes:
         {{- if not .Values.persistence.enabled }}
         - name: data
@@ -172,6 +175,9 @@ spec:
         - name: tenant-values
           configMap:
             name: {{ include "arigami-control-plane.fullname" . }}-tenant-values
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
   {{- if .Values.persistence.enabled }}

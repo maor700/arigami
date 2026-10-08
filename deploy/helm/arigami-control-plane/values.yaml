@@ -186,6 +186,10 @@ config:
 #       tls: {enabled: true}
 tenantValues: {}
 extraEnv: []
+# Extra volumes / mounts for the control-plane container, e.g. a ConfigMap of control-plane/src mounted over /app/src
+# to try an unreleased fix on top of a published image (deploy/local-k3s/up.sh CP_SRC_OVERLAY=1). Plain pod-spec YAML.
+extraVolumes: []
+extraVolumeMounts: []
 
 # Secret material: CP_OIDC_CLIENT_SECRET, and anything else the service should
 # read from a Secret. Values set here are rendered into a chart-owned Secret —
