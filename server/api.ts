@@ -17,6 +17,7 @@ import * as screens from './screenshots.js';
 import * as artifacts from './artifacts.js';
 import { shareTokens } from './share-token.js';
 import * as handoff from './handoff.js';
+import * as orgAccess from './org-access.js';
 import { webhooks, isInboundWebhookPath, CUSTOM_ID_RE } from './webhooks.js';
 // desktops.js stays a direct import for ONE call only: ensureGlobalDesktop()
 // (the shared, non-per-session desktop the `desktop` JIT-setup capability
@@ -3384,11 +3385,19 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
       );
       return;
     }
-    // This tenant belongs to the one user the orchestrator named: reuse their
-    // row if they have signed in before, else create it. Admin because it is
-    // their own instance — the same role `pair()` grants for the same reason.
-    const user = auth.findByEmail(r.payload.email) || auth.createUser(r.payload.email, 'admin');
-    const ws = auth.createWebSession(user.id, String(req.headers['user-agent'] || ''));
+    // Personal tenant (no role in the token): it belongs to the one user the
+    // orchestrator named — reuse their row or create it, as admin of their own
+    // instance (the role `pair()` grants for the same reason). Shared workspace:
+    // each member signs in as themselves with the role the control plane gave
+    // them, on a short session (server/org-access.ts).
+    const sh = orgAccess.handoffUser(r.payload, auth);
+    if (!sh.ok) {
+      res.writeHead(sh.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(`<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px"><h1>Sign-in failed</h1><p>${escapeHtml(sh.error)}</p>`);
+      return;
+    }
+    const user = sh.user;
+    const ws = auth.createWebSession(user.id, String(req.headers['user-agent'] || ''), sh.ttlMs);
     // Land on the cockpit, not back on this URL: the spent token must not sit
     // in the address bar to be re-shared or re-loaded.
     res.writeHead(302, {
@@ -3398,6 +3407,21 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
     });
     res.end();
     return;
+  }
+  // Shared workspaces: the control plane pushes the member list here over loopback (control-plane
+  // provisioner.pushRoster). Public route, but the body is a single-use token signed with this tenant's handoff
+  // secret, so only the control plane that provisioned it can send one (server/org-access.ts).
+  if (p === '/__api/auth/roster' && m === 'POST') {
+    const b = (await readBody(req, 1e6).catch(() => ({}))) as any;
+    const r = handoff.consume(String(b?.t || ''), { kind: handoff.ROSTER_KIND });
+    if (!r.ok) return json(res, { error: r.error }, r.status);
+    const roster = orgAccess.parseRoster(r.payload.roster);
+    if (!roster) return json(res, { error: 'malformed roster' }, 400);
+    const out = orgAccess.applyRoster(roster, auth);
+    if (!out.ok) return json(res, { error: out.error }, out.status);
+    if (out.revoked.length || out.changed.length)
+      console.log(`[auth] roster gen ${out.gen}: revoked ${out.revoked.join(', ') || '-'}; roles ${out.changed.map((c) => `${c.email} ${c.from}->${c.to}`).join(', ') || '-'}`);
+    return json(res, out);
   }
   if (p === '/__api/auth/oidc/start' && m === 'GET') {
     if (!auth.oidcEnabled()) return json(res, { error: 'oidc not configured' }, 404);
