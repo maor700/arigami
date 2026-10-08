@@ -71,7 +71,7 @@ export const strings = {
   'wizard.profile.blank': 'Start blank',
   'wizard.profile.trusted': 'built-in',
   'wizard.profile.external': 'external — skills land as pending proposals',
-  'wizard.profile.none': 'No bundles found. Add one under $ARIGAMI_DIR/profiles or continue blank.',
+  'wizard.profile.none': 'No profiles installed. Profiles come from your organization profile repo (paste its git URL below) or $ARIGAMI_DIR/profiles — or continue blank.',
   'wizard.profile.fromUrl': 'From git URL…',
   'wizard.profile.urlPlaceholder': 'https://github.com/org/bundle.git',
 

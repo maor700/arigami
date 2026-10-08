@@ -40,8 +40,10 @@ const SKILL = '---\ndescription: a throwaway test skill\n---\n\n# T\n\nbody\n';
 
 // ---- pure ------------------------------------------------------------------------
 
-test('shipped solo-dev bundle loads, validates and is trusted', () => {
-  const b = pf.loadBundle(path.join(ROOT, 'profiles', 'bundles', 'solo-dev'));
+const FIX = path.join(ROOT, 'test', 'fixtures', 'bundles'); // ARIGAMI_SHIPPED_BUNDLES_DIR (test/_preload.ts)
+
+test('fixture solo-dev bundle (in the shipped dir) loads, validates and is trusted', () => {
+  const b = pf.loadBundle(path.join(FIX, 'solo-dev'));
   const v = pf.validate(b);
   expect(v.ok).toBe(true);
   expect(v.errors).toEqual([]);
@@ -102,17 +104,30 @@ test('isGitUrl / nameFromUrl', () => {
   expect(pf.nameFromUrl('git@github.com:o/ops.git')).toBe('ops');
 });
 
+test('an absent shipped dir is an empty list, not a crash', () => {
+  const r = runInChild(
+    "const pf=await import('./server/profiles.ts');const ob=await import('./server/onboarding.ts');" +
+      "let unknown='';try{pf.resolveSource('solo-dev')}catch(e){unknown=String(e.message)}" +
+      'emit({shipped:pf.SHIPPED_BUNDLES_DIR,list:pf.listBundles(),profiles:ob.listProfiles().map(p=>p.name),unknown});',
+    { ARIGAMI_SHIPPED_BUNDLES_DIR: path.join(tmp(), 'nope'), ARIGAMI_DIR: tmp() }
+  );
+  if (!r.ok) throw new Error(r.error);
+  expect(r.out[0].list).toEqual([]);
+  expect(r.out[0].profiles).toEqual([]);
+  expect(r.out[0].unknown).toMatch(/no such profile bundle/);
+});
+
 test('resolveSource: dir, shipped name, unknown', () => {
   const dir = writeBundle(tmp(), { name: 'ext' });
   expect(pf.resolveSource(dir).dir).toBe(dir);
-  expect(pf.resolveSource('solo-dev').dir).toBe(path.join(ROOT, 'profiles', 'bundles', 'solo-dev'));
+  expect(pf.resolveSource('solo-dev').dir).toBe(path.join(FIX, 'solo-dev'));
   expect(() => pf.resolveSource('definitely-not-a-bundle')).toThrow(/no such profile bundle/);
   expect(() => pf.resolveSource('')).toThrow(/required/);
 });
 
 // ---- apply (isolated child) ----------------------------------------------------
 
-function applyInChild(bundleDir: string, arigamiDir: string, extra = '') {
+function applyInChild(bundleDir: string, arigamiDir: string, extra = '', env: Record<string, string> = {}) {
   return runInChild(
     "const pf=await import('./server/profiles.ts');const tr=await import('./server/triggers.ts');tr.load();" +
       `const b=pf.loadBundle(${JSON.stringify(bundleDir)});` +
@@ -122,7 +137,7 @@ function applyInChild(bundleDir: string, arigamiDir: string, extra = '') {
       'emit({rep,prov:pf.readProvenance(),pending:pf.getPending(),' +
       "mem:fs.existsSync(path.join(process.env.ARIGAMI_DIR,'memory','MEMORY.md'))?fs.readFileSync(path.join(process.env.ARIGAMI_DIR,'memory','MEMORY.md'),'utf8'):''," +
       'triggers:tr.listTriggers()});',
-    { ARIGAMI_DIR: arigamiDir, ARIGAMI_PORT: '', ARIGAMI_STATE_FILE: path.join(arigamiDir, 'state.json') }
+    { ARIGAMI_DIR: arigamiDir, ARIGAMI_PORT: '', ARIGAMI_STATE_FILE: path.join(arigamiDir, 'state.json'), ...env }
   );
 }
 
@@ -171,14 +186,15 @@ test('external bundle: skill → pending proposal, memory appended, cron disable
 });
 
 test('shipped bundle: new skill auto-applied; a CHANGE to an existing skill stays pending', () => {
-  // Simulate "shipped" by placing the bundle under profiles/bundles/ (trusted by location).
+  // Simulate "shipped" by placing the bundle under the shipped dir (trusted by location) — a private one, via the env override.
+  const shipDir = tmp('arigami-pf-shipped-');
   const skillName = `zz-pf-ship-${Date.now().toString(36)}`;
   const bname = `zz-tmp-${Date.now().toString(36)}`;
-  const bdir = path.join(ROOT, 'profiles', 'bundles', bname);
+  const bdir = path.join(shipDir, bname);
   const adir = tmp();
   try {
     writeBundle(bdir, { name: bname, skill: { name: skillName, content: SKILL } });
-    const r = applyInChild(bdir, adir);
+    const r = applyInChild(bdir, adir, '', { ARIGAMI_SHIPPED_BUNDLES_DIR: shipDir });
     if (!r.ok) throw new Error(r.error);
     expect(r.out[0].rep.trusted).toBe(true);
     expect(r.out[0].rep.skills[0].status).toBe('applied');
@@ -186,17 +202,17 @@ test('shipped bundle: new skill auto-applied; a CHANGE to an existing skill stay
     expect(fs.existsSync(path.join(ROOT, 'skills', skillName))).toBe(false); // repo tree untouched
 
     // same content again → unchanged
-    const r2 = applyInChild(bdir, adir);
+    const r2 = applyInChild(bdir, adir, '', { ARIGAMI_SHIPPED_BUNDLES_DIR: shipDir });
     expect(r2.out[0].rep.skills[0].status).toBe('unchanged');
 
     // changed content → pending (never overwrite a live skill silently)
     fs.writeFileSync(path.join(bdir, 'skills', skillName, 'SKILL.md'), SKILL + '\nchanged\n');
-    const r3 = applyInChild(bdir, adir);
+    const r3 = applyInChild(bdir, adir, '', { ARIGAMI_SHIPPED_BUNDLES_DIR: shipDir });
     if (!r3.ok) throw new Error(r3.error);
     expect(r3.out[0].rep.skills[0].status).toBe('pending');
     expect(fs.readFileSync(path.join(adir, 'skills', skillName, 'SKILL.md'), 'utf8')).toBe(SKILL);
   } finally {
-    fs.rmSync(bdir, { recursive: true, force: true });
+    fs.rmSync(shipDir, { recursive: true, force: true });
     fs.rmSync(path.join(ROOT, 'skills', skillName), { recursive: true, force: true });
   }
 });

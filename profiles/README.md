@@ -1,28 +1,20 @@
-# Shipped profiles
+# Profiles
 
-A **Profile Bundle** folds a fresh host to a purpose: `profile.json` (repos,
-issue source, workflows) + `skills/` + `memory-seed/` + `cron.json` +
-`agents/` (A4) + `README.md`. Applying one is additive and idempotent — repos are upserted,
+The product ships **no** example profiles. A **Profile Bundle** folds a fresh host to a purpose, and yours comes from
+your organisation's profile repo (a git URL, see below) or from `$ARIGAMI_DIR/profiles/<name>/` (default
+`~/.arigami/profiles/`). A bundle is `profile.json` (repos, issue source, workflows) + `skills/` + `memory-seed/` +
+`cron.json` + `agents/` (A4) + `README.md`. Applying one is additive and idempotent — repos are upserted,
 new skills land in `$ARIGAMI_DIR/skills`, memory lines are appended only if
 missing, cron jobs are registered **disabled**, agents are created under
 `$ARIGAMI_DIR/agents/<slug>` only when absent (`--force` overwrites). See `docs/INSTALL.md` §3.
 
-| Bundle | For | Ships |
-|---|---|---|
-| [`bundles/solo-dev/`](bundles/solo-dev/) | one developer, their own repos | `daily-standup` skill, weekday standup cron |
-| [`bundles/agency-client/`](bundles/agency-client/) | an agency / freelancer running a cockpit **for one client** | `client-status-report` (weekly report → artifact + share link), `client-intake` (request → ticket → child session), `CLIENT.md` template, weekly-report cron |
-| [`bundles/ops/`](bundles/ops/) | an operations team, no product repo | `oncall-triage` (signed webhook → incident session → decision on the phone), `runbook-execute` (real desktop, hands you the wheel at login/2FA), daily digest + sweep crons |
-| [`bundles/marketing-team/`](bundles/marketing-team/) | a small marketing team as **agents** (A4): manager awesome, copywriter Mila, image maker Jord, researcher Reachard, outreach Richi, social manager Fibi | six `agents/<slug>/` (persona + tools/domains/budget), `campaign-brief`, `content-calendar`, `outreach-sequence` skills, placeholder-product memory seed, disabled weekly-plan cron born from awesome |
-| [`bundles/il-whatsapp-business/`](bundles/il-whatsapp-business/) | a small Hebrew-speaking service business living in WhatsApp | `whatsapp-inbox-triage` (classify → draft → owner approves → send; never auto-sends), `followup` (quotes, appointments), `BUSINESS.md` template (Hebrew), morning-digest cron |
-
 Apply with `install.sh --profile <name>`, `bin/host profile apply <name>`, the
 Setup/Wizard profile picker, or `POST /__api/profiles/apply {"source":"<name>"}`.
 
-Your own bundles go in `$ARIGAMI_DIR/profiles/<name>/` (default
-`~/.arigami/profiles/`) and override shipped ones by `name`. A thin
-`<name>.json` manifest (repos only) is still accepted in either directory.
-Nothing private belongs in this directory — bundles are generic templates
-with `<placeholder>` repo sources.
+Installed bundles live in `$ARIGAMI_DIR/profiles/<name>/` (git sources are cloned there). A thin
+`<name>.json` manifest (repos only) is still accepted. `ARIGAMI_SHIPPED_BUNDLES_DIR` (default `profiles/bundles/`,
+absent in this repo) names a read-only, trusted directory of bundles baked into an image; empty or missing is fine —
+the picker then shows a hint that profiles come from the org profile repo. Nothing private belongs in this repository.
 
 ## An organisation's profile repo
 

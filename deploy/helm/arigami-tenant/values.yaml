@@ -265,8 +265,8 @@ probes:
 
 env:
   TZ: "UTC"
-  # K8S-1 (server/profiles.ts applyBundleEnv): a git URL (or a name shipped in
-  # the image under profiles/bundles/<name>) applied once, on this tenant's
+  # K8S-1 (server/profiles.ts applyBundleEnv): a git URL (or a name baked into
+  # the image's ARIGAMI_SHIPPED_BUNDLES_DIR) applied once, on this tenant's
   # first boot. Empty = no bundle, tenant starts blank like a fresh install.
   ARIGAMI_BUNDLE: ""
   # tag / branch / commit of ARIGAMI_BUNDLE checked out on that first boot

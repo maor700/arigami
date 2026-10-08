@@ -13,3 +13,7 @@
 for (const k of Object.keys(process.env)) {
   if (k.startsWith('ARIGAMI_')) delete process.env[k];
 }
+
+// The product ships no example profile bundles; tests that need a real bundle use the fixtures.
+// Set after the wipe above so in-process modules AND spawned hosts/children inherit it.
+process.env.ARIGAMI_SHIPPED_BUNDLES_DIR = new URL('./fixtures/bundles', import.meta.url).pathname;

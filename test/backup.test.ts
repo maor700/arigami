@@ -305,7 +305,7 @@ test('round-trip is idempotent for cron: apply → export → import into the SA
   const r = runInChild(
     `const pf = await import('./server/profiles.ts'); const tr = await import('./server/triggers.ts'); const bk = await import('./server/backup.ts'); tr.load();
      const cron = () => tr.listTriggers().filter(t => t.type === 'cron').map(t => ({ name: t.name, key: t.bundleKey, enabled: t.enabled, prompt: t.prompt })).sort((a, b) => a.name.localeCompare(b.name));
-     // 1. apply the shipped solo-dev bundle → +1 trigger "[solo-dev] standup"
+     // 1. apply the (fixture) shipped solo-dev bundle → +1 trigger "[solo-dev] standup"
      const a1 = await pf.applySource('solo-dev'); const after1 = cron();
      // 2. export this instance, 3. import the export back into the same instance
      const b = bk.exportBundle({ out: ${JSON.stringify(bundle)}, cron: tr.listTriggers() });
