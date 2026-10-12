@@ -649,6 +649,8 @@ export function mergeSeed(existing: string, seed: string): { content: string; ad
 export interface ApplyOptions {
   /** Skip cron registration (CLI mode with a live host that owns triggers.json). */
   skipCron?: boolean;
+  /** Do not clone the registered repos in the background (default: clone when git access exists). */
+  cloneRepos?: boolean;
   /** Skip repos.json upsert. */
   skipRepos?: boolean;
   /** A4: overwrite an EXISTING agent's record/persona/assets with the bundle's (default: leave the user's edits alone). */
@@ -686,6 +688,8 @@ export async function applyBundle(b: Bundle, opts: ApplyOptions = {}): Promise<A
     try {
       const ob = await import('./onboarding.js');
       report.repos = ob.upsertRepos(b.manifest.repos as any).map((r: any) => r.name);
+      // Fetch them in the background when the host can authenticate (never blocks or fails the apply).
+      if (opts.cloneRepos !== false && ob.autoCloneEnabled()) ob.cloneInBackground(report.repos);
     } catch (e) {
       report.errors.push(`repos: ${(e as Error).message}`);
     }
