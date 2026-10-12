@@ -155,6 +155,21 @@ export const strings = {
 
   // RepoStep
   'setup.repo.have': 'Repos on this host: {names}',
+  'setup.repo.list.title': 'Repositories on this host',
+  'setup.repo.state.cloned': 'In your workspace',
+  'setup.repo.state.not_cloned': 'Not downloaded',
+  'setup.repo.state.cloning': 'Downloading…',
+  'setup.repo.state.failed': 'Failed',
+  'setup.repo.download': 'Download',
+  'setup.repo.copy': 'Copy in',
+  'setup.repo.retry': 'Try again',
+  'setup.repo.notDownloadedHint': 'Registered, but its files are not on this host yet. Download it to work on it.',
+  'setup.repo.connectGit': 'Connect GitHub',
+  'setup.repo.err.gitMissing': 'This repository is private and this host is not signed in to GitHub. Connect GitHub first, then download it again.',
+  'setup.repo.err.gitRejected': 'This host has git access, but it cannot read this repository. Check that the connected GitHub account (or the access token) has access to it.',
+  'setup.repo.already': '“{name}” is already in your workspace.',
+  'setup.repo.alreadyCloning': '“{name}” was already registered — downloading it now.',
+  'setup.repo.added': '“{name}” added — downloading it now.',
 
   // TakeoverStep (identity)
   'setup.takeover.step1': 'Open the agent’s screen and sign in to Google in its Chrome.',

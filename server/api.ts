@@ -4298,14 +4298,16 @@ export async function handle(
     }
     if (p === '/__api/onboarding/repos' && m === 'GET') {
       const ob = await import('./onboarding.js');
-      return json(res, ob.listRepos().map((r) => ob.resolveRepo(r)));
+      return json(res, ob.repoStatuses());
     }
     if (p === '/__api/onboarding/repos' && m === 'POST') {
       const ob = await import('./onboarding.js');
       const body = (await readBody(req)) as any;
       if (!body.name || !body.source) return badRequest(res, 'name and source required');
       try {
-        return json(res, ob.addRepo(body), 201);
+        // Registered already? Not an error: clone it if it is not on disk, else say it is already there.
+        const out = ob.addOrClone(body);
+        return json(res, out, out.existing ? 200 : 201);
       } catch (e) {
         return badRequest(res, (e as Error).message);
       }
@@ -4481,11 +4483,7 @@ export async function handle(
           return json(res, ob.saveRepo(name, (await readBody(req)) as any));
         if (!action && m === 'DELETE') return json(res, { ok: ob.removeRepo(name) });
         if (action === 'clone' && m === 'POST') {
-          // S1: a remote clone without git credentials asks for `git` instead of failing.
-          const entry = ob.listRepos().find((r) => r.name === name);
-          const gate = ob.status().steps.find((st) => st.id === 'git-auth');
-          if (entry && !/^(\/|~|\.)/.test(entry.source) && !ob.repoPresent(ob.resolveRepo(entry)) && gate && gate.status !== 'ok')
-            return json(res, caps.needsSetup('git', `clone ${name}`));
+          // Credentials are resolved inside cloneRepo (token / gh); a failure is classified for the UI.
           return json(res, ob.cloneRepo(name));
         }
         if (action === 'env' && m === 'POST') return json(res, ob.resolveEnv(name));

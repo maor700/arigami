@@ -15,8 +15,21 @@ test('connect("repo") adds the repository through /onboarding/repos, not /setup/
   };
   const { connect } = await import('../web/src/lib/setup-api.js');
   await connect('repo', { entry: { name: 'app', source: 'github.com/org/app' } });
-  expect(calls.length).toBe(1);
+  // a brand-new repo is registered, then its clone is started (registering alone never fetches the files)
+  expect(calls.length).toBe(2);
+  expect(calls[1].url).toContain('/onboarding/repos/app/clone');
   expect(calls[0].url).toContain('/onboarding/repos');
   expect(calls[0].url).not.toContain('/setup/');
   expect(JSON.parse(calls[0].body)).toEqual({ name: 'app', source: 'github.com/org/app' });
+});
+
+test('connect("repo") for an already-registered name does not start a second clone (the host already did)', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ name: 'app', existing: true, state: 'cloning', present: false }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const { connect } = await import('../web/src/lib/setup-api.js');
+  await connect('repo', { entry: { name: 'app', source: 'github.com/org/app' } });
+  expect(calls.length).toBe(1);
 });

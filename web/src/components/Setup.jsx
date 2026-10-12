@@ -11,6 +11,8 @@ import { faCheck, faRotateRight, faXmark, faArrowRight, faTriangleExclamation } 
 import { useStore } from '../lib/store.js';
 import { EngineConnect } from './setup/index.js';
 import RepoPicker from './setup/RepoPicker.jsx';
+import { RepoRow } from './setup/RepoList.jsx';
+import { addOutcome } from '../lib/repo-status.js';
 import { entryFromRepo } from '../lib/repo-picker.js';
 import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import * as setupApi from '../lib/setup-api.js';
@@ -298,14 +300,17 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [profiles, setProfiles] = useState([]);
+  const [repoList, setRepoList] = useState([]); // GET /onboarding/repos — real per-repo clone state
+  const [repoNote, setRepoNote] = useState(null);
   const [engines, setEngines] = useState(null); // {claude, codex}: {ok, detail, data} from setup-api.overview()
   const [more, setMore] = useState(false);
   const { setupTick, wizardTick } = useStore();
 
   const refresh = useCallback(async () => {
     try {
-      const [st, ov] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null)]);
+      const [st, ov, rl] = await Promise.all([api.get('/onboarding/status'), setupApi.overview().catch(() => null), api.get('/onboarding/repos').catch(() => null)]);
       setData(st);
+      if (Array.isArray(rl)) setRepoList(rl);
       const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
       setEngines({ claude: cap('claude'), codex: cap('codex') });
       setErr(null);
@@ -322,11 +327,11 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
 
   // While any step is running a background job, poll status until it settles.
   useEffect(() => {
-    const running = (data?.steps || []).some((s) => s.status === 'running');
+    const running = (data?.steps || []).some((s) => s.status === 'running') || repoList.some((r) => r.state === 'cloning');
     if (!running) return undefined;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [data, refresh]);
+  }, [data, repoList, refresh]);
 
   const fix = async (name, ep) => {
     setBusy(true);
@@ -342,7 +347,8 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
   const addRepo = async (entry) => {
     setBusy(true);
     try {
-      await api.post('/onboarding/repos', entry);
+      const r = await setupApi.addRepoAndFetch(entry);
+      setRepoNote({ key: addOutcome(r), name: r?.name || entry.name });
     } catch (e) {
       setErr(e.message);
     }
@@ -508,13 +514,21 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
                       {t('launcher.setup.remove')}
                     </button>
                   </div>
+                  {repoList.find((r) => r.name === name) && (
+                    <RepoRow repo={repoList.find((r) => r.name === name)} onClone={(n) => fix(n, 'clone')} busy={busy} />
+                  )}
                   {steps
-                    .filter((s) => s.scope === `repo:${name}`)
+                    .filter((s) => s.scope === `repo:${name}` && !(repoList.length && s.action === 'onboarding.cloneRepo'))
                     .map((s) => (
                       <StepRow key={s.id} step={s} onFix={fix} busy={busy} />
                     ))}
                 </div>
               ))}
+              {repoNote && (
+                <div className="border-t border-hair px-3 py-2 text-[11.5px] font-semibold text-ok">
+                  {t({ already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added' }[repoNote.key], { name: repoNote.name })}
+                </div>
+              )}
               <AddRepo onAdd={addRepo} busy={busy} />
             </Section>
 
