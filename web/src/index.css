@@ -497,6 +497,17 @@ body {
   --sx-meta: #569cd6;
   --sx-regexp: #d16969;
 }
+/* The chat pane carries its own light/dark (.term-light), independent of the app theme. */
+.term-light .diff-syntax {
+  --sx-comment: #008000; --sx-keyword: #0000ff; --sx-string: #a31515; --sx-number: #098658;
+  --sx-title: #795e26; --sx-type: #267f99; --sx-variable: #0070c1; --sx-tag: #800000;
+  --sx-attr: #e50000; --sx-meta: #0000ff; --sx-regexp: #811f3f;
+}
+.term:not(.term-light) .diff-syntax {
+  --sx-comment: #6a9955; --sx-keyword: #569cd6; --sx-string: #ce9178; --sx-number: #b5cea8;
+  --sx-title: #dcdcaa; --sx-type: #4ec9b0; --sx-variable: #9cdcfe; --sx-tag: #569cd6;
+  --sx-attr: #9cdcfe; --sx-meta: #569cd6; --sx-regexp: #d16969;
+}
 .diff-syntax .hljs-comment,
 .diff-syntax .hljs-quote { color: var(--sx-comment); font-style: italic; }
 .diff-syntax .hljs-keyword,

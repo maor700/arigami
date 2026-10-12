@@ -3,6 +3,8 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { loadOlderChat, loadFullChatEvent, chatHasMore, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
+import DiffCard from './DiffCard.jsx';
+import { isEditEvent, summarizeEdits } from '../lib/editDiff.js';
 import ScreenView from './ScreenView.jsx';
 import OpenUICard from './OpenUICard.jsx';
 import { HostCard } from '../openui/host.jsx';
@@ -406,7 +408,40 @@ function SystemLine({ event }) {
 // folded into a muted line that expands inline to the terminal rendering.
 // `group` is filled in by the ChatPane loop AFTER this element is created (the
 // slot sits where the turn's first folded event was), so read it at render.
-function BehindScenes({ sessionId, group, streaming }) {
+function EditSummary({ sessionId, group, results }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const edits = group.events.filter(isEditEvent);
+  // A clipped Write carries a truncated body: fetch the full rows so the
+  // totals are real (bounded — a turn rarely edits more than a handful).
+  useEffect(() => {
+    edits.filter((e) => e.clipped && e.seq).slice(0, 8).forEach((e) => loadFullChatEvent(sessionId, e.seq));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edits.map((e) => `${e.seq}:${e.clipped ? 1 : 0}`).join(',')]);
+  if (!edits.length) return null;
+  const sum = summarizeEdits(edits, results);
+  if (!sum.files) return null;
+  const label = sum.files === 1 ? t('chat.diff.editedOne') : t('chat.diff.editedN', { n: sum.files });
+  return (
+    <div className="my-1" data-edit-summary={sum.files}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] max-md:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]"
+      >
+        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[11px] md:text-[9px]" />
+        <span>{label}</span>
+        <span dir="ltr" className="whitespace-nowrap"><span className="text-diffadd">+{sum.add}</span> <span className="text-diffdel">−{sum.del}</span></span>
+      </button>
+      {open && edits.map((e) => (
+        <DiffCard key={e.id || e.toolUseId || e.seq || e.ts} event={e} result={results.get(e.toolUseId)} sessionId={sessionId} />
+      ))}
+    </div>
+  );
+}
+
+function BehindScenes({ sessionId, group, streaming, results }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   if (!groupHasSubstance(group.events)) return null;
@@ -424,11 +459,12 @@ function BehindScenes({ sessionId, group, streaming }) {
         <span>{label}</span>
         {streaming && <span className="host-spinner h-2.5 w-2.5" />}
       </button>
+      <EditSummary sessionId={sessionId} group={group} results={results} />
       {open && (
         <div className="mt-1 mb-1.5 border-s-2 border-[var(--term-border)] ps-2.5">
           {group.rows.map((r) => (
             <div key={r.key} data-event-id={r.event.id || r.key}>
-              <Event sessionId={sessionId} event={r.event} recap={r.recap} />
+              <Event sessionId={sessionId} event={r.event} recap={r.recap} result={results.get(r.event.toolUseId)} />
             </div>
           ))}
         </div>
@@ -471,7 +507,7 @@ function ChatSkeleton({ label }) {
 // Memoized: the store keeps every settled event's object identity stable and
 // only replaces the trailing (streaming) one, so a delta re-renders exactly one
 // row instead of re-parsing markdown for the whole transcript.
-const Event = memo(function Event({ sessionId, event, live, stale, recap }) {
+const Event = memo(function Event({ sessionId, event, live, stale, recap, result }) {
   switch (event.kind) {
     case 'user':
       return <UserMsg event={event} />;
@@ -484,6 +520,7 @@ const Event = memo(function Event({ sessionId, event, live, stale, recap }) {
       const name = event.name ?? event.tool ?? event.toolName;
       if (name === 'AskUserQuestion')
         return <HostCard name="QuestionCard" props={{ sessionId, event, live, stale }} />;
+      if (isEditEvent(event)) return <DiffCard event={event} result={result} sessionId={sessionId} />;
       return <ToolUse event={event} sessionId={sessionId} />;
     }
     case 'tool-result':
@@ -551,11 +588,11 @@ const REVEAL = 300;
 // The slot decides "still streaming" from the transcript itself: the group is
 // live while its last folded event is also the transcript's tail (no prose /
 // result after it yet) — the counter then shows a spinner and keeps growing.
-function BehindScenesSlot({ sessionId, group, events }) {
+function BehindScenesSlot({ sessionId, group, events, results }) {
   const last = group.events[group.events.length - 1];
   const tail = events[events.length - 1];
   const streaming = !!last && last === tail && last.kind !== 'result';
-  return <BehindScenes sessionId={sessionId} group={group} streaming={streaming} />;
+  return <BehindScenes sessionId={sessionId} group={group} streaming={streaming} results={results} />;
 }
 
 export default function ChatPane({ sessionId, events, working, action, loading, awaiting, mode = 'full' }) {
@@ -787,6 +824,15 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           events.forEach((e) => { if (isCapUse(e) && e.toolUseId) capIds.add(e.toolUseId); });
           const isCapRow = (e) =>
             isCapUse(e) || (e.kind === 'tool-result' && capIds.has(e.toolUseId) && !(e.isError ?? e.is_error));
+          // Tool results paired to their tool_use (edit cards read "not applied" from it).
+          const results = new Map();
+          const editIds = new Set();
+          events.forEach((e) => {
+            if (e.kind === 'tool-result' && e.toolUseId) results.set(e.toolUseId, e);
+            else if (isEditEvent(e) && e.toolUseId) editIds.add(e.toolUseId);
+          });
+          // The card IS the visible output of an edit (a failure shows as its "not applied" note) — its result row would only repeat it.
+          const isEditOk = (e) => e.kind === 'tool-result' && editIds.has(e.toolUseId);
           const out = [];
           let actionRendered = false;
           let mergeOfferRendered = false;
@@ -798,7 +844,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           for (let j = 0; j < visible.length; j++) {
             const e = visible[j];
             const i = hiddenCount + j;
-            if (isCapRow(e)) continue;
+            if (isCapRow(e) || isEditOk(e)) continue;
             if (simple) {
               if (e.kind === 'user') group = null;
               if (hiddenInSimple(e)) {
@@ -806,7 +852,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
                   group = { events: [], rows: [] };
                   const g = group;
                   out.push(
-                    <BehindScenesSlot key={`bs:${keys[i]}`} sessionId={sessionId} group={g} events={events} />
+                    <BehindScenesSlot key={`bs:${keys[i]}`} sessionId={sessionId} group={g} events={events} results={results} />
                   );
                 }
                 group.events.push(e);
@@ -864,7 +910,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               continue;
             }
             const live = !!awaiting && i === lastBlockIdx;
-            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} /></div>);
+            out.push(<div key={keys[i]} data-event-id={e.id || keys[i]}><Event sessionId={sessionId} event={e} live={live} stale={stale.has(i)} recap={recap.has(i)} result={results.get(e.toolUseId)} /></div>);
           }
           // A current action with no record in the visible transcript (raised before cards were
           // recorded, or scrolled out of the window) still has to be answerable: show it last.

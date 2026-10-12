@@ -1761,6 +1761,16 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, session.id, isDesktop]);
 
+  // ChatPane's large-diff card asks to jump to the Changes tab.
+  useEffect(() => {
+    const onOpen = (ev) => {
+      if (ev.detail?.sessionId && ev.detail.sessionId !== session.id) return;
+      if (tabs.some((t) => t.id === CHANGES_TAB_ID)) setLocalActive(CHANGES_TAB_ID);
+    };
+    window.addEventListener('host:open-changes', onOpen);
+    return () => window.removeEventListener('host:open-changes', onOpen);
+  });
+
   const onActivate = (tab) => {
     if (tab.id === CHANGES_TAB_ID || tab.id === ORCH_TAB_ID) {
       setLocalActive(tab.id);

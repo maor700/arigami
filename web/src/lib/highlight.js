@@ -34,7 +34,7 @@ const EXT_LANG = {
   swift: 'swift', kt: 'kotlin', dockerfile: 'dockerfile', diff: 'diff',
 };
 
-function langFor(path) {
+export function langFor(path) {
   const base = String(path || '').split('/').pop().toLowerCase();
   if (base === 'dockerfile') return 'dockerfile';
   const ext = base.includes('.') ? base.split('.').pop() : '';
