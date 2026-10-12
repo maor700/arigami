@@ -226,7 +226,7 @@ function disconnect(c) {
 // Cmd reaches the page as a Super key nobody listens to. The screencast
 // transport already inserts on a native paste event, so V is left to it there.
 
-const XK = { Control_L: 0xffe3, a: 0x61, x: 0x78, z: 0x7a };
+const XK = { Control_L: 0xffe3, a: 0x61, v: 0x76, x: 0x78, z: 0x7a };
 
 function sendCtrl(rfb, key, code) {
   if (typeof rfb.sendKey !== 'function') return;
@@ -270,6 +270,26 @@ export function clipboardKey(e, transport) {
   return null;
 }
 
+/**
+ * Paste `text` into the remote screen. First choice: insert it at the cursor of the focused page over DevTools (exact,
+ * one call). If the screen has no DevTools Chrome (the shared desktop's Chrome icon, a terminal, a native dialog) fall
+ * back to the desktop's X clipboard plus a Ctrl+V sent over VNC. Pure over its two seams, so it is testable.
+ */
+export async function pasteIntoRemote(text, { post, ctrlV }) {
+  if (!text) return;
+  let first;
+  try {
+    first = await post('type', { text });
+  } catch (e) {
+    first = { ok: false, error: e?.message || String(e) };
+  }
+  if (first?.ok !== false) return;
+  if (!ctrlV) throw new Error(first.error || 'paste failed');
+  const set = await post('clipboard', { text });
+  if (set?.ok === false) throw new Error(set.error || first.error || 'paste failed');
+  ctrlV();
+}
+
 function attachClipboard(c, sessionId, transport) {
   const base = sessionId ? `/sessions/${encodeURIComponent(sessionId)}/desktop` : '/desktop';
   c.host.addEventListener(
@@ -294,10 +314,12 @@ function attachClipboard(c, sessionId, transport) {
         e.stopImmediatePropagation();
         const read = navigator.clipboard?.readText ? navigator.clipboard.readText() : Promise.reject(new Error('clipboard unavailable'));
         read
-          .then((txt) => (txt ? api.post(`${base}/type`, { text: txt }) : null))
-          .then((r) => {
-            if (r && r.ok === false) throw new Error(r.error || 'paste failed');
-          })
+          .then((txt) =>
+            pasteIntoRemote(txt, {
+              post: (path, body) => api.post(`${base}/${path}`, body),
+              ctrlV: transport === 'rfb' ? () => sendCtrl(c.rfb, 'v', 'KeyV') : null,
+            })
+          )
           .catch((err) => reportError('screen.pasteFailed', err));
         return;
       }

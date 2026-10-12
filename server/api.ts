@@ -3740,6 +3740,19 @@ export async function handle(
     }
     // Copy/paste for the shared screen ("my browser"): the same two halves as a
     // session's desktop/type + desktop/selection, aimed at the vault Chrome.
+    if (p === '/__api/desktop/clipboard' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const dc = await import('./lib/desktop-clipboard.js');
+      const ds = await import('./lib/desktops.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        await dc.setXClipboard(ds.screenTarget(null).display || '', String(body?.text || ''));
+        return json(res, { ok: true });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
+      }
+    }
     if ((p === '/__api/desktop/type' || p === '/__api/desktop/selection') && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -6473,6 +6486,19 @@ export async function handle(
         return json(res, await cdp.typeIntoDesktop(id, String(body?.text || ''), body?.enter ? 'Enter' : undefined));
       } catch (e) {
         return json(res, { ok: false, error: (e as Error).message }, 400);
+      }
+    }
+    // Paste fallback for a screen whose focused app is not a DevTools-controllable Chrome: the text goes on the
+    // desktop's X clipboard and the viewer sends Ctrl+V over VNC (desktop-clipboard.ts setXClipboard).
+    if (sub === 'desktop/clipboard' && m === 'POST') {
+      const dc = await import('./lib/desktop-clipboard.js');
+      const ds = await import('./lib/desktops.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        await dc.setXClipboard(ds.screenTarget(id).display || '', String(body?.text || ''));
+        return json(res, { ok: true });
+      } catch (e) {
+        return json(res, { ok: false, error: (e as Error).message }, 409);
       }
     }
     // Copy from the remote screen: what is selected in the session's focused

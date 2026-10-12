@@ -97,3 +97,47 @@ test('the viewer maps clipboard keys per transport', async () => {
     Object.assign(g, saved);
   }
 });
+
+// ---- paste fallback: an app that DevTools cannot reach (the shared desktop's plain Chrome, a terminal) ----
+
+test('paste: DevTools insert first; when the screen has no DevTools Chrome, X clipboard + Ctrl+V over VNC', async () => {
+  const { pasteIntoRemote } = await import('../web/src/lib/useScreenConnection.js');
+  const calls: string[] = [];
+  const post = (ok: boolean) => async (path: string) => {
+    calls.push(path);
+    return path === 'type' ? { ok, error: 'no browser is open on this screen' } : { ok: true };
+  };
+  let ctrlV = 0;
+
+  await pasteIntoRemote('hello', { post: post(true), ctrlV: () => ctrlV++ });
+  expect(calls).toEqual(['type']);
+  expect(ctrlV).toBe(0);
+
+  calls.length = 0;
+  await pasteIntoRemote('hello', { post: post(false), ctrlV: () => ctrlV++ });
+  expect(calls).toEqual(['type', 'clipboard']);
+  expect(ctrlV).toBe(1);
+
+  // the screencast transport has no keyboard to send Ctrl+V with: the DevTools error is the honest answer
+  await expect(pasteIntoRemote('hello', { post: post(false), ctrlV: null })).rejects.toThrow('no browser is open');
+  // an empty clipboard pastes nothing
+  calls.length = 0;
+  await pasteIntoRemote('', { post: post(false), ctrlV: () => ctrlV++ });
+  expect(calls).toEqual([]);
+});
+
+test('setXClipboard puts text on the X clipboard of the display (needs xclip + Xvfb)', async () => {
+  const have = (c: string) => Bun.spawnSync(['which', c]).exitCode === 0;
+  if (!have('xclip') || !have('Xvfb')) return;
+  const { setXClipboard } = await import('../server/lib/desktop-clipboard.js');
+  const disp = ':' + (200 + Math.floor(Math.random() * 90));
+  const x = Bun.spawn(['Xvfb', disp, '-screen', '0', '320x200x24', '-nolisten', 'tcp'], { stdout: 'ignore', stderr: 'ignore' });
+  try {
+    await Bun.sleep(800);
+    await setXClipboard(disp, 'שלום world');
+    const out = Bun.spawnSync(['xclip', '-selection', 'clipboard', '-o'], { env: { ...process.env, DISPLAY: disp } });
+    expect(out.stdout.toString()).toBe('שלום world');
+  } finally {
+    x.kill();
+  }
+});
