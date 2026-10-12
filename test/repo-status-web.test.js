@@ -32,3 +32,14 @@ test('add outcome: new, already cloned, already registered (now cloning)', () =>
   expect(addOutcome({ existing: true, state: 'cloned', present: true })).toBe('already');
   expect(addOutcome({ existing: true, state: 'cloning' })).toBe('cloning-existing');
 });
+
+test('a repo name is derived from its source when the user does not type one', async () => {
+  const { repoNameFromSource: n } = await import('../web/src/lib/repo-picker.js');
+  expect(n('github.com/acme/web-app.git')).toBe('web-app');
+  expect(n('https://github.com/acme/web-app')).toBe('web-app');
+  expect(n('acme/web-app')).toBe('web-app');
+  expect(n('git@github.com:acme/api.git')).toBe('api');
+  expect(n('/Users/me/src/app/')).toBe('app');
+  expect(n('C:\\work\\my repo')).toBe('my-repo');
+  expect(n('')).toBe('');
+});

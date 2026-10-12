@@ -246,5 +246,7 @@ export const strings = {
   'server.pasteAddress': 'הדבק את הכתובת משורת הכתובת של הדפדפן אחרי שהתחברת.',
   'setup.minimal.needEngine': 'קודם מחברים את Claude או את Codex למעלה — ואז הכפתור נפתח.',
   'setup.oauth.gettingCode': 'מקבל את הקוד שלך…',
+  'setup.repo.advanced': 'אפשרויות מתקדמות (שם, פקודת התקנה, קבצי סביבה)',
+  'setup.repo.needSource': 'צריך לבחור ריפוזיטורי, או להדביק איפה הוא נמצא.',
   'setup.repo.needBoth': 'צריך לתת לריפוזיטורי שם ולבחור (או להדביק) איפה הוא נמצא.',
 };

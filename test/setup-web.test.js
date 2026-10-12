@@ -90,7 +90,7 @@ test('one component per manual.kind renders (en + he)', () => {
   expect(render(h(setup.stepFor('oauth'), { capability: 'git', manual: { flow: 'device' } }))).toContain('device code');
   expect(render(h(setup.stepFor('token'), { capability: 'claude' }))).toContain('type="password"');
   expect(render(h(setup.stepFor('takeover'), { capability: 'identity' }))).toContain('Open the agent');
-  expect(render(h(setup.stepFor('repo'), { capability: 'repo', have: ['app'] }))).toContain('app');
+  expect(render(h(setup.stepFor('repo'), { capability: 'repo', have: ['app'] }))).toContain('Advanced options');
   expect(render(h(setup.AutoConnect, { state: 'auto', lines: ['Opening Composio…'], sessionId: 's1' }))).toContain('Opening Composio…');
   expect(render(h(setup.AutoConnect, { state: 'done', evidence: '/__artifacts/abc/', sessionId: 's1' }))).toContain('href="/__artifacts/abc/"');
 });

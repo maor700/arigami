@@ -260,5 +260,7 @@ export const strings = {
   'server.pasteAddress': 'Paste the address from the browser’s address bar after you signed in.',
   'setup.minimal.needEngine': 'Connect Claude or Codex above first — then Start unlocks.',
   'setup.oauth.gettingCode': 'Getting your code…',
+  'setup.repo.advanced': 'Advanced options (name, install command, env files)',
+  'setup.repo.needSource': 'Pick a repository, or paste where it lives.',
   'setup.repo.needBoth': 'Give the repository a name and pick (or paste) where it lives.',
 };

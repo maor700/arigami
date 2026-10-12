@@ -13,7 +13,7 @@ import { EngineConnect } from './setup/index.js';
 import RepoPicker from './setup/RepoPicker.jsx';
 import { RepoRow } from './setup/RepoList.jsx';
 import { addOutcome } from '../lib/repo-status.js';
-import { entryFromRepo } from '../lib/repo-picker.js';
+import { entryFromRepo, repoNameFromSource } from '../lib/repo-picker.js';
 import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import * as setupApi from '../lib/setup-api.js';
 
@@ -102,7 +102,8 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
   const [kind, setKind] = useState('github'); // 'github' | 'local'
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
-  const [missing, setMissing] = useState(false); // tried to add with name/source empty
+  const [missing, setMissing] = useState(false); // tried to add with the source empty
+  const [showAdv, setShowAdv] = useState(false); // install command, env files, a custom name: rarely needed
   const [installCmd, setInstallCmd] = useState('');
   const [envFolder, setEnvFolder] = useState(''); // where to copy env from (github mode)
   const [detect, setDetect] = useState(null); // detect-local result for the env folder
@@ -111,7 +112,7 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
   const [simpleEnv, setSimpleEnv] = useState('none'); // fallback when no files picked
 
   const reset = () => {
-    setKind('github'); setName(''); setSource(''); setInstallCmd('');
+    setKind('github'); setName(''); setSource(''); setInstallCmd(''); setShowAdv(false);
     setEnvFolder(''); setDetect(null); setPicked([]); setSimpleEnv('none'); setOpen(false);
   };
 
@@ -137,9 +138,10 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
   const toggle = (f) => setPicked((p) => (p.includes(f) ? p.filter((x) => x !== f) : [...p, f]));
 
   const submit = () => {
-    if (!name.trim() || !source.trim()) { setMissing(true); return; }
+    const finalName = name.trim() || repoNameFromSource(source);
+    if (!finalName || !source.trim()) { setMissing(true); return; }
     setMissing(false);
-    const entry = { name: name.trim(), source: source.trim() };
+    const entry = { name: finalName, source: source.trim() };
     if (installCmd.trim()) entry.installCmd = installCmd.trim();
     if (picked.length && envBase) {
       const base = envBase.replace(/\/+$/, '');
@@ -179,11 +181,10 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
 
       {kind === 'github' && (
         <>
-          <RepoPicker onPick={(r) => { const e = entryFromRepo(r); setName(e.name); setSource(e.source); }} />
+          <RepoPicker onPick={(r) => setSource(entryFromRepo(r).source)} />
           <div className="text-[11px] text-fgdim">{t('setup.repo.pick.orPaste')}</div>
         </>
       )}
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('launcher.setup.namePlaceholder')} className={INPUT} />
       <input
         value={source}
         onChange={(e) => setSource(e.target.value)}
@@ -201,6 +202,15 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
         </div>
       )}
 
+      <button
+        type="button" onClick={() => setShowAdv((v) => !v)} aria-expanded={showAdv}
+        className="cursor-pointer self-start text-[11.5px] font-semibold text-fgdim hover:text-fg"
+      >
+        {showAdv ? '▾' : '▸'} {t('setup.repo.advanced')}
+      </button>
+      {showAdv && (
+        <div className="flex flex-col gap-2.5 rounded-[8px] border border-hair bg-panel px-2.5 py-2.5">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={source.trim() ? repoNameFromSource(source) || t('launcher.setup.namePlaceholder') : t('launcher.setup.namePlaceholder')} className={INPUT} />
       <input value={installCmd} onChange={(e) => setInstallCmd(e.target.value)} placeholder={t('launcher.setup.installPlaceholder')} className={MONO} />
 
       {/* env files to copy */}
@@ -238,8 +248,10 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
           </select>
         </div>
       )}
+        </div>
+      )}
 
-      {missing && (!name.trim() || !source.trim()) && <div role="alert" className="text-[11.5px] text-warn">{t('setup.repo.needBoth')}</div>}
+      {missing && !source.trim() && <div role="alert" className="text-[11.5px] text-warn">{t('setup.repo.needSource')}</div>}
       <div className="flex items-center gap-2">
         <button
           type="button" disabled={busy} onClick={submit}

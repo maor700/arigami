@@ -33,3 +33,17 @@ export function entryFromRepo(r) {
 
 /** The error codes that mean "GitHub is not usable from here" (the picker hides its list, the URL box stays). */
 export const SOFT_ERRORS = ['no_token', 'bad_token', 'rate_limited', 'forbidden', 'unreachable', 'error'];
+
+/**
+ * The name a repository gets when the user does not type one: the last path segment of its source
+ * ("github.com/acme/web-app.git" → "web-app"; "/Users/me/src/app/" → "app"), reduced to what a repo name may hold.
+ */
+export function repoNameFromSource(source) {
+  const seg = String(source || '')
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .replace(/\.git$/i, '')
+    .split(/[\\/:]/)
+    .pop();
+  return String(seg || '').replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-.]+/, '').slice(0, 64);
+}
