@@ -844,7 +844,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           for (let j = 0; j < visible.length; j++) {
             const e = visible[j];
             const i = hiddenCount + j;
-            if (isCapRow(e) || isEditOk(e)) continue;
+            if (isCapRow(e) || (!simple && isEditOk(e))) continue;
             if (simple) {
               if (e.kind === 'user') group = null;
               if (hiddenInSimple(e)) {
@@ -856,7 +856,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
                   );
                 }
                 group.events.push(e);
-                group.rows.push({ key: keys[i], event: e, recap: recap.has(i) });
+                if (!isEditOk(e)) group.rows.push({ key: keys[i], event: e, recap: recap.has(i) });
                 continue;
               }
             }
