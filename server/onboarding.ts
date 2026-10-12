@@ -574,11 +574,45 @@ export interface Step {
   required?: boolean; // false = not needed for readiness (the other engine is connected)
 }
 
+/**
+ * Is the `claude` login that sits in ~/.claude really usable? The file alone proves nothing: it also exists
+ * for MCP-only grants (`mcpOAuth` with no Claude account), expired logins and half-finished sign-ins — all
+ * of which then fail with "Not logged in". Ask the CLI itself (`claude auth status`: local, no network,
+ * ~0.3s), cached for 20s; no CLI to ask → judge the file's content.
+ */
+let nativeLogin: { at: number; ok: boolean } | null = null;
+export function claudeFileLoginUsable(file = path.join(HOME, '.claude', '.credentials.json')): boolean {
+  let j: any;
+  try {
+    j = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return false;
+  }
+  const o = j?.claudeAiOauth;
+  if (!o || (!o.accessToken && !o.refreshToken)) return false; // mcpOAuth-only or empty
+  return !(typeof o.expiresAt === 'number' && o.expiresAt < Date.now() && !o.refreshToken);
+}
+function claudeNativeLoggedIn(): boolean {
+  if (!fs.existsSync(path.join(HOME, '.claude', '.credentials.json'))) return false;
+  if (nativeLogin && Date.now() - nativeLogin.at < 20_000) return nativeLogin.ok;
+  let ok = claudeFileLoginUsable();
+  const bin = which('claude');
+  if (ok && bin) {
+    try {
+      const r = spawnSync(bin, ['auth', 'status'], { encoding: 'utf8', timeout: 5000, shell: isWin });
+      const m = r.status === 0 ? String(r.stdout || '').match(/"loggedIn"\s*:\s*(true|false)/) : null;
+      if (m) ok = m[1] === 'true'; // an answer from the CLI beats our reading of its file
+    } catch { /* keep the file verdict */ }
+  }
+  nativeLogin = { at: Date.now(), ok };
+  return ok;
+}
+
 const claudeAuthed = (): boolean =>
   hasCredentials() || // macOS keychain login or a stored account token
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN ||
   !!process.env.ANTHROPIC_API_KEY ||
-  fs.existsSync(path.join(HOME, '.claude', '.credentials.json'));
+  claudeNativeLoggedIn();
 
 const codexAuthed = (): boolean => hasCredentials('codex') || hasLocalCodexLogin();
 

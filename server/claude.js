@@ -1616,6 +1616,9 @@ function tryAutoSwitch(id, text) {
 // subscription-limit hit: from the structured `result` event's error text.
 // F8: also the CLI's own "Not logged in · Please run /login" — the human cannot
 // run /login in the cockpit; the answer is a `claude` Setup card.
+// The CLI's own "no credentials at all" notice: the Connect card says it, in the human's language — the raw
+// English line (it used to land three times: assistant bubble, error row, card title) is not shown.
+export const NOT_LOGGED_RE = /^\s*(?:not logged in|please run \/login)/i;
 export const AUTH_RE = /unauthorized|revoked|invalid[_ ](?:api key|token|grant)|token.{0,20}expired|authentication_error|please (?:log ?in|authenticate) again|not logged in|please run \/login/i;
 const authRecovering = new Set(); // guards against re-entrant recovery per session
 /** A short fingerprint of an access token — enough to tell two tokens apart, useless as a secret. */
@@ -1668,7 +1671,7 @@ async function tryAuthRecover(id, text) {
   if (!resolveRefreshToken(accountId)) {
     // Nothing to refresh: open the Connect-Claude card right here in the chat
     // (paste the code / a token) instead of a dead-end error.
-    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in').catch(() => {});
+    openClaudeSetupCard(id, '').catch(() => {}); // no reason line: the card itself says what to do, in the UI language
     return;
   }
   authRecovering.add(id);
@@ -1761,6 +1764,7 @@ function handleEvent(id, j) {
       noteTurnUsage(id, j.message?.usage);
       for (const block of j.message?.content || []) {
         if (block.type === 'text' && block.text) {
+          if (NOT_LOGGED_RE.test(block.text) && block.text.length < 160 && !isCodexSession(id)) continue; // the Connect card covers it
           appendChat(id, { kind: 'assistant-text', text: block.text });
         } else if (block.type === 'thinking' && block.thinking) {
           appendChat(id, { kind: 'thinking', text: block.thinking });
@@ -1865,7 +1869,8 @@ function handleEvent(id, j) {
             break;
           }
         }
-        appendChat(id, {
+        const notLoggedIn = !!j.is_error && NOT_LOGGED_RE.test(text) && !isCodexSession(id);
+        if (!notLoggedIn) appendChat(id, {
           kind: j.is_error ? 'error' : 'result',
           text,
           isError: !!j.is_error,
