@@ -92,6 +92,11 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
   function ensureTenant(subject: string, email: string): Tenant {
     // Personal only: a shared workspace is never "your" tenant, whatever subject string an IdP hands out.
     let t: Tenant | null = store.findPersonalTenant(subject);
+    // Deleted earlier (by the user's own admin click or an admin's): signing in again starts a fresh workspace.
+    if (t && t.state === 'deleted' && store.purgeDeletedTenant(subject)) {
+      log(`[tenant] ${t.ns} was deleted; ${email} signed in again — provisioning a new workspace`);
+      t = null;
+    }
     if (!t) {
       t = store.createTenant(subject, email, { desiredDigest: cfg.imageTag });
       runProvisioning(cfg, store, provisioner, t, log); // not awaited — see runProvisioning

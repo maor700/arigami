@@ -123,14 +123,17 @@ describe('GET /', () => {
     expect(store.findTenantBySubject('user-1')?.state).toBe('running');
   });
 
-  test('a deleted tenant shows the unavailable page, not a redirect', async () => {
-    const { app, store } = setup();
+  test('a deleted tenant is replaced by a fresh one when its owner signs in again', async () => {
+    const { app, store, calls } = setup();
     store.createUser('user-1', 'bob@example.com', 'user');
     const t = store.createTenant('user-1', 'bob@example.com', { desiredDigest: 'sha256:test' });
     store.setTenantState(t.subject, 'deleted');
     const res = await app.handle(new Request('http://localhost:8090/', { headers: { cookie: cookieFor(store, 'user-1') } }));
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('deleted');
+    expect(await res.text()).toContain('Setting up your workspace');
+    await tick();
+    expect(calls).toContain('provision:user-1');
+    expect(store.findPersonalTenant('user-1')?.state).toBe('running');
   });
 });
 

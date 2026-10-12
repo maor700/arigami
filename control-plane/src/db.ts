@@ -219,6 +219,15 @@ export function createStore(db: Database) {
   // Validated against state-machine.ts — callers never write an illegal edge
   // by accident (the provisioner, the admin HTTP routes, and the tests all
   // go through this one function).
+  /**
+   * A deleted tenant is a tombstone (its namespace is gone). Remove it so the same person can sign in again and get
+   * a fresh workspace — otherwise the sign-in answers "tenant is deleted" forever. Personal tenants only.
+   */
+  function purgeDeletedTenant(subject: string): boolean {
+    const r = db.query("DELETE FROM tenants WHERE subject = ? AND state = 'deleted' AND COALESCE(kind, 'personal') = 'personal'").run(subject);
+    return Number(r.changes) > 0;
+  }
+
   function setTenantState(subject: string, next: TenantState): Tenant {
     const t = findTenantBySubject(subject);
     if (!t) throw new Error(`no tenant for subject ${subject}`);
@@ -307,7 +316,7 @@ export function createStore(db: Database) {
 
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
-    findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
+    findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, purgeDeletedTenant, setRunningDigest, setDesiredDigest, touchLastSeen,
     setRing, setTier, setProfileApplied, setProfileFailed, clearProfileBackoff, getMeta, setMeta,
     createSession, findSession, deleteSession,
     ...createSharedStore(db),
