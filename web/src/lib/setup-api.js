@@ -77,6 +77,10 @@ export async function overview({ owner = 'global' } = {}) {
 //   token   {token}            oauth  {action:'start'|'code'|'device', id?, code?}
 //   qr      {}                 toggle {enable}      repo {entry}      takeover {email?}
 export async function connect(capability, payload = {}) {
+  // The bare `repo` id is the wizard's "add a repository" form (no name yet), not a registry capability — the host
+  // only knows `repo:<name>`, so asking it answers 400 "unknown capability: repo" (which the 404 fallback below
+  // never catches). Go straight to the route that adds one.
+  if (capability === 'repo') return legacyConnect(capability, payload);
   try {
     return await api.post(`/setup/${encodeURIComponent(capability)}`, payload);
   } catch (e) {
