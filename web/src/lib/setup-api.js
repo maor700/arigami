@@ -48,8 +48,22 @@ async function legacyOverview() {
   push('remote', !!remote?.serving, remote?.httpsUrl || remote?.reason, remote);
   push('telemetry', !!tele?.enabled, tele?.reason, tele);
   push('push', false, '', {});
-  push('repo', (step('repo')?.data?.repos || []).length > 0, (step('repo')?.data?.repos || []).join(', '), step('repo')?.data);
+  push('repo', (step('repo')?.data?.present || step('repo')?.data?.repos || []).length > 0, (step('repo')?.data?.present || step('repo')?.data?.repos || []).join(', '), step('repo')?.data);
   return { identity: null, capabilities: caps, audit: [], legacy: true };
+}
+
+// Register a repo AND get its files: a registered-but-not-cloned name is not an error on the server (it starts the
+// clone itself), a new one is registered here and then cloned. Returns the server's status entry.
+export async function addRepoAndFetch(entry) {
+  const res = await api.post('/onboarding/repos', entry);
+  if (!res?.existing && !res?.present) {
+    try {
+      await api.post(`/onboarding/repos/${encodeURIComponent(res?.name || entry.name)}/clone`);
+    } catch {
+      /* the repo list shows the state either way */
+    }
+  }
+  return res;
 }
 
 // A2: `owner` = 'global' (default) or 'agent:<slug>' — the agent's connections,
@@ -121,7 +135,7 @@ async function legacyConnect(capability, p) {
     case 'telemetry':
       return api.post('/onboarding/wizard/telemetry', { action: p.enable ? 'enable' : 'disable' });
     case 'repo':
-      return api.post('/onboarding/repos', p.entry || p);
+      return addRepoAndFetch(p.entry || p);
     default:
       break;
   }

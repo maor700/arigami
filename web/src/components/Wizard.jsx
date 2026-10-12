@@ -210,7 +210,7 @@ function WizardRepoStep({ step, refresh }) {
   return (
     <>
       <p className={BODY}>{t('wizard.repo.body')}</p>
-      <RepoStep capability="repo" have={step.data?.repos || []} onDone={refresh} />
+      <RepoStep capability="repo" onDone={refresh} />
     </>
   );
 }
