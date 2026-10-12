@@ -4,7 +4,7 @@ export const strings = {
   'brain.tab.pending': 'ממתין לאישור',
   'brain.tab.cron': 'משימות מתוזמנות',
   'brain.tab.proposals': 'הצעות סקילים',
-  'brain.askBrain': 'שאל את המוח →',
+  'brain.askBrain': 'שאל את המוח ←',
   'brain.asking': 'פותח…',
 
   'brain.lineCount': '{n} שורות',

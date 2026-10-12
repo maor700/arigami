@@ -17,3 +17,11 @@ for (const k of Object.keys(process.env)) {
 // The product ships no example profile bundles; tests that need a real bundle use the fixtures.
 // Set after the wipe above so in-process modules AND spawned hosts/children inherit it.
 process.env.ARIGAMI_SHIPPED_BUNDLES_DIR = new URL('./fixtures/bundles', import.meta.url).pathname;
+
+// A test host must keep the plain configured default engine: whether the machine running the tests happens to be
+// signed in to claude / codex must not decide which engine a new session gets (see registerEngineReadiness).
+process.env.ARIGAMI_ENGINE_AUTOPICK = '0';
+
+// Web tests compare rendered Hebrew against exact literals. The UI wraps Latin runs inside Hebrew in invisible
+// bidi isolates (web/src/lib/i18n.js isolateLatin); tests that exercise it call isolateLatin() directly.
+(globalThis as any).__ARIGAMI_PLAIN_T = true;

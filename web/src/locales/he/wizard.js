@@ -1,7 +1,7 @@
 // B3 — אשף הרצה ראשונה (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'הגדרת Arigami',
-  'wizard.subtitle': '{n} צעדים קצרים. אפשר לדלג על רובם ולחזור אליהם מ״התקנה״ בהמשך.',
+  'wizard.subtitle': '{n} צעדים קצרים. חיבור Claude או Codex הוא הצעד היחיד שחובה — על השאר אפשר לדלג ולחזור אליהם מ״התקנה״ בהמשך.',
   'wizard.reviewSteps': 'עיון בשלבים',
   'wizard.stepOf': 'שלב {n} מתוך {total}',
   'wizard.back': 'חזרה',
@@ -21,10 +21,10 @@ export const strings = {
   'wizard.status.running': 'רץ',
   'wizard.lang': 'English',
 
-  'wizard.pair.title': 'צימוד המכשיר',
-  'wizard.pair.body': 'אתה מחובר כמנהל של המארח הזה. אפשר לצמד טלפון או מחשב נוסף עם קוד חד-פעמי.',
+  'wizard.pair.title': 'חיבור המכשיר',
+  'wizard.pair.body': 'אתה מחובר כמנהל של המארח הזה. אפשר לחבר טלפון או מחשב נוסף עם קוד חד-פעמי.',
   'wizard.pair.paired': 'מצומד בתור {email}',
-  'wizard.pair.another': 'צמד מכשיר נוסף',
+  'wizard.pair.another': 'חבר מכשיר נוסף',
   'wizard.pair.codeHint': 'הזן את הקוד במכשיר השני באותה כתובת. הקוד פג תוך כמה דקות.',
 
   'wizard.claude.title': 'חיבור Claude',
@@ -71,7 +71,7 @@ export const strings = {
   'wizard.profile.blank': 'התחל ריק',
   'wizard.profile.trusted': 'מובנה',
   'wizard.profile.external': 'חיצוני — סקילים נכנסים כהצעות ממתינות',
-  'wizard.profile.none': 'לא הותקנו פרופילים. פרופילים מגיעים ממאגר הפרופילים של הארגון (הדבק כתובת git למטה) או מ‎$ARIGAMI_DIR/profiles — או המשך ריק.',
+  'wizard.profile.none': 'לא הותקנו פרופילים. כדי להשתמש באחד, הדבק למטה את כתובת ה-git שלו — או פשוט המשך ריק.',
   'wizard.profile.fromUrl': 'מכתובת git…',
   'wizard.profile.urlPlaceholder': 'https://github.com/org/bundle.git',
 
@@ -100,7 +100,7 @@ export const strings = {
 
   'wizard.telemetry.title': 'עזרו לשפר את Arigami',
   'wizard.telemetry.body': 'כבוי כברירת מחדל. אם תבחרו להצטרף, המארח ישלח כמה אבני-דרך אנונימיות כדי שנראה איפה אנשים נתקעים.',
-  'wizard.telemetry.sends': 'נשלח: שמות אבני-דרך + חותמות זמן (התקנה, סשן ראשון, עץ PM ראשון…), גרסה, מערכת הפעלה/ארכיטקטורה, Docker כן/לא, טווח מספר סשנים, מזהה מופע אקראי.',
+  'wizard.telemetry.sends': 'נשלח: שמות אבני-דרך + חותמות זמן (התקנה, סשן ראשון…), גרסה, מערכת הפעלה/ארכיטקטורה, Docker כן/לא, טווח מספר סשנים, מזהה מופע אקראי.',
   'wizard.telemetry.never': 'לעולם לא: פרומפטים, קוד, נתיבים, שמות ריפו, מיילים, שמות מארח, כתובות IP.',
   'wizard.telemetry.control': 'אפשר לשנות בכל רגע ב״הגדרות ← טלמטריה״; DO_NOT_TRACK=1 תמיד גובר.',
   'wizard.telemetry.yes': 'כן, שלחו אבני-דרך אנונימיות',
@@ -115,9 +115,9 @@ export const strings = {
   'wizard.health.pass': 'עבר',
   'wizard.health.fail': 'נכשל',
   'wizard.health.optional': 'אופציונלי',
-  'wizard.health.check.claude': 'Claude עונה (claude -p ping)',
-  'wizard.health.check.codex': 'Codex עונה (codex exec ping)',
-  'wizard.health.check.desktop': 'דסקטופ (X display) פעיל',
+  'wizard.health.check.claude': 'Claude עונה',
+  'wizard.health.check.codex': 'Codex עונה',
+  'wizard.health.check.desktop': 'שולחן העבודה המשותף פועל',
   'wizard.health.check.chrome': 'כרום זמין',
   'wizard.health.check.whatsapp': 'גשר WhatsApp',
   'wizard.health.allGood': 'כל הבדיקות הנדרשות עברו.',
@@ -125,4 +125,10 @@ export const strings = {
 
   'launcher.setup.runWizard': 'הרץ אשף הגדרה',
   'launcher.setup.runWizardHint': 'זרימת הרצה-ראשונה צעד-צעד: Claude, Git, פרופיל, אינטגרציות, ריפו, תקינות.',
+  'wizard.gate.engine': 'כדי להמשיך מחברים את Claude או את Codex — מספיק אחד מהם.',
+  'wizard.gate.skip': 'משלימים את הצעד הזה, או לוחצים ״דלג בינתיים״, כדי להמשיך.',
+  'wizard.gate.required': 'משלימים את הצעד הזה כדי להמשיך.',
+  'wizard.health.fix': 'לתקן את החיבור',
+  'wizard.health.openAnyway': 'לפתוח את הקוקפיט בכל זאת',
+  'wizard.gate.profile': 'מחילים חבילה, או לוחצים ״התחל ריק״, כדי להמשיך.',
 };

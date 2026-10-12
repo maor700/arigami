@@ -428,7 +428,7 @@ export async function loadExtensions() {
 export async function loadConfig() {
   try {
     const cfg = await api.get('/config');
-    setDefaultEngine(cfg?.defaultEngine);
+    setDefaultEngine(cfg?.effectiveDefaultEngine || cfg?.defaultEngine);
     setCodexTransport(cfg?.codexTransport);
     setState({ config: cfg || {} });
   } catch {

@@ -18,7 +18,7 @@ export default function RepoStep({ capability = 'repo', have = [], onDone }) {
     <>
       {have.length > 0 && <OkLine>{t('setup.repo.have', { names: have.join(', ') })}</OkLine>}
       <div className={`${CARD} mt-2 overflow-hidden`}>
-        <AddRepo onAdd={add} busy={busy} />
+        <AddRepo onAdd={add} busy={busy} defaultOpen />
       </div>
       <ErrorBox err={err} />
     </>

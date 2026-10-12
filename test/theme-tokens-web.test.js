@@ -71,7 +71,8 @@ test('mint buttons carry dark ink, not text-fg (near-white on mint in the dark t
 
 test('the setup hero and its engine cards use theme tokens only', () => {
   const src = fs.readFileSync(path.join(SRC, 'components/Setup.jsx'), 'utf8');
-  const hero = src.slice(src.indexOf('function EngineCard'), src.indexOf('export default function Setup'));
+  const hero = src.slice(src.indexOf('function MinimalHero'), src.indexOf('export default function Setup'))
+    + fs.readFileSync(path.join(SRC, 'components/setup/EngineConnect.jsx'), 'utf8');
   // (text-[#1a1a1a] is the fixed dark ink every mint button uses)
   expect(hero.replaceAll('text-[#1a1a1a]', '')).not.toMatch(/\[#[0-9a-fA-F]{3,6}\]/);
   expect(hero).toContain('bg-warn-bg');

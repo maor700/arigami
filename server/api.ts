@@ -10,7 +10,7 @@ import * as claude from './claude.js';
 import { broadcast, emitLocal } from './bus.js';
 import { cfg, nano, untildify } from './state.js';
 import { skillDir, NAME_RE as SKILL_NAME_RE } from './skills.js';
-import { updateScreenConfig, updateAuthConfig, updateDefaultEngine } from './lib/config.js';
+import { updateScreenConfig, updateAuthConfig, updateDefaultEngine, defaultEngine } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { auth, canReadFullList } from './auth.js';
 import * as screens from './screenshots.js';
@@ -3922,6 +3922,7 @@ export async function handle(
       const { clientSecret, ...oidcPub } = authCfg?.oidc || {};
       return json(res, {
         ...pub,
+        effectiveDefaultEngine: defaultEngine(), // what a new session really gets: a host with only Codex connected defaults to Codex
         version: VERSION,
         auth: { ...authCfg, oidc: authCfg?.oidc ? oidcPub : undefined },
         ...auth.publicInfo(),
@@ -4286,6 +4287,14 @@ export async function handle(
       } catch (e) {
         return badRequest(res, (e as Error).message);
       }
+    }
+    // The repos the connected GitHub account can see, filtered server-side: ?q=<text>&page=<n>&perPage=<n>.
+    // Soft failures (no token, rate limit, bad token…) are 200 {ok:false, code, message} so the repo step can show them.
+    if (p === '/__api/onboarding/github/repos' && m === 'GET') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(auth.isAdmin(me) || me?.kind === 'session')) return json(res, { error: 'admin only' }, 403);
+      const gr = await import('./lib/github-repos.js');
+      return json(res, await gr.listGithubRepos({ q: u.searchParams.get('q') || '', page: Number(u.searchParams.get('page')), perPage: Number(u.searchParams.get('perPage')) }));
     }
     if (p === '/__api/onboarding/repos' && m === 'GET') {
       const ob = await import('./onboarding.js');

@@ -21,6 +21,9 @@ import { stepFor } from './index.js';
 import { capTitle, capFamily, consentKeys, manualFor } from './registry.js';
 import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
 import ConnectStep from './ConnectStep.jsx';
+import EngineConnect from './EngineConnect.jsx';
+import { api } from '../../lib/api.js';
+import { serverText } from '../../lib/server-text.js';
 import { Pill, ErrorBox } from './shared.jsx';
 import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../../openui/define.js';
@@ -100,6 +103,7 @@ function SetupCardView({ props: { sessionId, event } }) {
   const [local, setLocal] = useState(null); // optimistic terminal state
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [engineDone, setEngineDone] = useState(null); // which engine the human connected from an engine card
   const phase = derivePhase(event, local);
   const capability = event.capability;
   const manual = event.manual || manualFor(capability).manual;
@@ -107,6 +111,8 @@ function SetupCardView({ props: { sessionId, event } }) {
   const identity = event.identity || null;
   const autoAllowed = !!autoCapable && !!identity;
   const title = capTitle(t, capability);
+  // Claude and Codex are two equal choices: the card for either one offers both.
+  const isEngine = capFamily(capability) === 'claude' || capFamily(capability) === 'codex';
   // A2: a card raised by a session born from an agent connects the AGENT (its
   // identity / Composio account) — say so, by the agent's name.
   const { agents } = useStore();
@@ -130,6 +136,7 @@ function SetupCardView({ props: { sessionId, event } }) {
   const notNow = () => call(async () => { await setupApi.skip(event.requestId); setLocal('skipped'); });
   const manualDone = (r) => {
     setLocal('done');
+    if (isEngine && typeof r?.engine === 'string') setEngineDone(r.engine);
     // Tell the server the human finished the manual path (it re-checks and
     // resolves the agent's request_setup). Old hosts: 404, ignored.
     setupApi.report(event.requestId, { ok: true, mode: 'manual', detail: r?.detail || r?.email || '' , human: true }).catch(() => {});
@@ -149,7 +156,7 @@ function SetupCardView({ props: { sessionId, event } }) {
 
   const terminal = TERMINAL.has(phase);
   const termLabel = {
-    done: t('setup.card.done', { name: title }),
+    done: t('setup.card.done', { name: engineDone ? capTitle(t, engineDone) : title }),
     failed: t('setup.card.failed', { name: title }),
     skipped: t('setup.card.skipped', { name: title }),
     timeout: t('setup.card.timeout', { name: title }),
@@ -165,7 +172,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       live={!terminal}
       data-setup-phase={phase}
       className={waiting ? 'setup-waiting' : ''}
-      label={<>{t('setup.card.needs', { name: title })}{event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}</>}
+      label={<>{isEngine ? t('setup.engine.cardTitle') : t('setup.card.needs', { name: title })}{event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}</>}
       meta={ownerSlug && (
         <span data-setup-owner={event.owner} dir="auto" className="rounded-full border border-[var(--term-accent-border)] px-2 py-px text-[11.5px] md:text-[10px] text-[var(--term-accent-fg)]">
           {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
@@ -192,8 +199,18 @@ function SetupCardView({ props: { sessionId, event } }) {
           <span className={phase === 'done' ? 'text-ok' : phase === 'failed' ? 'text-err' : ''}>
             <Icon icon={phase === 'done' ? faCheck : faXmark} /> {termLabel}
           </span>
-          {event.detail && <span dir="auto">— {event.detail}</span>}
+          {event.detail && <span dir="auto">— {serverText(event.detail)}</span>}
           {event.evidence && <EvidenceLink sessionId={sessionId} evidence={event.evidence} title={title} />}
+        </div>
+      )}
+
+      {phase === 'done' && engineDone === 'codex' && capability === 'claude' && (
+        <div dir="auto" className="mt-2 flex flex-wrap items-center gap-2 rounded-[8px] border border-ok-line bg-ok-bg px-3 py-2 text-[11.5px] text-ok">
+          <span>{t('setup.engine.switched')}</span>
+          <Btn variant="primary" disabled={busy} onClick={() => call(async () => {
+            const s = await api.post('/sessions', { title: 'Codex', engine: 'codex', permissionMode: 'bypassPermissions' });
+            if (s?.id) window.location.hash = `#/session/${s.id}`;
+          })}>{busy ? t('setup.engine.starting') : t('setup.engine.newCodex')}</Btn>
         </div>
       )}
 
@@ -228,7 +245,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       )}
       {(phase === 'pending' || phase === 'failed') && capFamily(capability) !== 'mcp' && (
         <div className="mt-2.5 flex flex-col gap-2.5">
-          {autoCapable && (
+          {autoCapable && (!isEngine || autoAllowed) && (
             <ModeSwitch mode={mode} onChange={changeMode} autoAllowed={autoAllowed} identity={identity} />
           )}
           {mode === 'auto' && autoAllowed ? (
@@ -245,7 +262,9 @@ function SetupCardView({ props: { sessionId, event } }) {
             <>
               {/* the manual step components use the panel palette — give them a solid panel inside the dark card */}
               <div className="rounded-[8px] border border-border bg-panel px-3 py-2.5 text-fg">
-                <Step {...stepProps} />
+                {isEngine
+                  ? <EngineConnect sessionId={sessionId} owner={event.owner} onDone={(engine, r) => manualDone({ ...r, engine })} />
+                  : <Step {...stepProps} />}
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <Btn variant="secondary" disabled={busy} onClick={notNow}>{t('setup.notNow')}</Btn>
@@ -264,7 +283,7 @@ export const SetupCardDef = defineHostComponent({
   description: 'Host: request_setup — the agent needs a capability; the human connects it (auto / manual)',
   props: loose({
     sessionId: z.string(),
-    event: loose({ requestId: str, capability: str, why: str, title: str, state: str, mode: str, autoCapable: bool, identity: any, owner: str, manual: any, lines: any, detail: any, evidence: str, enabled: bool, have: any }),
+    event: loose({ requestId: str, capability: str, why: str, title: str, state: str, mode: str, autoCapable: bool, identity: any, owner: str, manual: any, lines: any, detail: any, evidence: any, enabled: bool, have: any }),
   }),
   component: SetupCardView,
 });

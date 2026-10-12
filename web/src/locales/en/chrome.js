@@ -170,4 +170,5 @@ export const strings = {
   'chrome.webhooks.funnel.off': 'Off. Turns on `tailscale funnel` for /__api/webhooks only — nothing else leaves the tailnet.',
   'chrome.webhooks.funnel.on': 'On — {url} is reachable from the internet (webhook routes only).',
   'chrome.webhooks.funnel.confirm': 'Expose /__api/webhooks to the public internet via Tailscale Funnel? Every route there verifies its own token/signature; nothing else is exposed.',
+  'auth.login.phoneHint': 'On a phone? Ask whoever runs this host to send you the code, or get it from the computer the host runs on.',
 };

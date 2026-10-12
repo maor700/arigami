@@ -38,13 +38,12 @@ const DEFAULTS = {
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
-  // 'auto' (browser) | 'en' | 'he' — drives strings + text direction.
-  // English, not 'auto': the product is English-first, and 'auto' meant a
-  // Hebrew-locale machine opened in Hebrew with no warning. 'auto' is still
-  // selectable in Settings for anyone who wants it. Note the sanitiser below
-  // falls back to 'en' as well, so this moves any stored profile that never
-  // wrote a `language` key — not only fresh installs.
-  language: 'en',
+  // 'auto' (browser language: Hebrew on a he browser, else English) | 'en' | 'he' —
+  // drives strings + text direction. First-run testers on Hebrew phones were
+  // dropped into English with the switch buried in Settings, so a fresh profile
+  // follows the browser. An explicit pick in Settings (or the pair screen's
+  // toggle) always wins.
+  language: 'auto',
 };
 
 export const EMPTY_TICKET_FILTERS = {
@@ -172,7 +171,7 @@ function sanitize(raw) {
     // old localStorage. Once a picker ships, go back to
     // `isLogoId(p.logo) ? p.logo : DEFAULT_LOGO` to respect a real choice.
     logo: DEFAULT_LOGO,
-    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'en',
+    language: p.language === 'auto' || isLangId(p.language) ? p.language : 'auto',
   };
 }
 

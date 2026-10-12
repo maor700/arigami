@@ -433,7 +433,7 @@ server.listen(cfg.port, cfg.bind, () => {
       m.initAccounts(); // seed from keychain + any inherited .env token
       // B3: `install.sh --unattended` → pre-complete every skippable wizard step
       // so the wizard is done the moment pairing lands (no UI on a headless box).
-      import('./onboarding.js').then((ob) => { try { ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
+      import('./onboarding.js').then((ob) => { try { ob.registerEngineReadiness(); ob.unattendedPrecomplete(); } catch {} }).catch(() => {});
       // K5/D3: `install` = the first boot of this data dir; then arm the
       // opt-in telemetry shipper (a no-op timer until someone opts in).
       import('./funnel.js').then((f) => { try { f.firstTime('install'); } catch {} }).catch(() => {});

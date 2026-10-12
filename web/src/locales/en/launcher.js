@@ -446,4 +446,7 @@ export const strings = {
   'launcher.mcp.checkNow': 'Check now',
   'launcher.mcp.statusHint':
     'The servers this session’s {engine} was started with, each checked where it is really served: by Arigami, by the engine’s own config, or by a live tool call. Reconnect restarts the session’s {engine} process, which also picks up services connected since it started.',
+  'launcher.firstRun.needEngineTitle': 'Connect Claude or Codex first',
+  'launcher.firstRun.needEngineBody': 'Arigami answers through Claude or Codex — connect whichever you have (one is enough). It takes about a minute.',
+  'launcher.firstRun.needEngineBtn': 'Connect Claude or Codex',
 };

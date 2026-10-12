@@ -74,7 +74,8 @@ test('Rail source: Pending/Triggers and Usage are hidden until a session exists'
 test('one-engine gate + P1-11: Start needs either engine; usage, Connections and Health are not Claude-only', () => {
   const setup = fs.readFileSync(web('components/Setup.jsx'), 'utf8');
   expect(setup).toMatch(/disabled=\{busy \|\| !anyOk\}/);
-  expect(setup).toMatch(/id: 'codex'.*flow: 'codex'/);
+  expect(setup).toMatch(/<EngineConnect /); // Claude + Codex as two equal cards
+  expect(fs.readFileSync(web('components/setup/EngineConnect.jsx'), 'utf8')).toMatch(/id: 'codex'.*flow: 'codex'/);
   expect(fs.readFileSync(web('components/Wizard.jsx'), 'utf8')).toMatch(/step\.id === 'codex'/);
   const rail = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
   expect(rail).toMatch(/activeEngine === 'codex'/);

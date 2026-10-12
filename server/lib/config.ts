@@ -699,9 +699,27 @@ export function updateHostConfig(patch: Partial<HostConfig>): HostConfig {
   return next;
 }
 
-/** The host default engine; anything but 'codex' reads as claude. */
+// Whether an engine is signed in on this host (registered by onboarding.ts, which owns the probes).
+let engineReady: ((e: 'claude' | 'codex') => boolean) | null = null;
+export function setEngineReadiness(fn: ((e: 'claude' | 'codex') => boolean) | null): void {
+  engineReady = fn;
+}
+
+/**
+ * The host default engine; anything but 'codex' reads as claude. A user who
+ * connected only ONE engine must not get sessions on the other (a Codex-only
+ * host would otherwise spawn `claude` and hit "Not logged in"): when the
+ * configured default is not connected but the other engine is, the other wins.
+ */
 export function defaultEngine(): 'claude' | 'codex' {
-  return cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+  const want = cfg.defaultEngine === 'codex' ? 'codex' : 'claude';
+  if (!engineReady) return want;
+  const other = want === 'codex' ? 'claude' : 'codex';
+  try {
+    return !engineReady(want) && engineReady(other) ? other : want;
+  } catch {
+    return want;
+  }
 }
 
 // Persist cfg.defaultEngine (Settings › Host); an unknown value falls back to claude.

@@ -446,4 +446,7 @@ export const strings = {
   'launcher.mcp.checkNow': 'בדיקה עכשיו',
   'launcher.mcp.statusHint':
     'השרתים ש-{engine} של הסשן הזה עלה איתם, וכל אחד נבדק במקום שבאמת מגיש אותו: Arigami, ההגדרות של המנוע עצמו, או קריאה חיה לכלי. חיבור מחדש מפעיל מחדש את תהליך {engine} של הסשן, וכך הוא מקבל גם שירותים שחוברו מאז שעלה.',
+  'launcher.firstRun.needEngineTitle': 'קודם מחברים את Claude או את Codex',
+  'launcher.firstRun.needEngineBody': 'Arigami עונה דרך Claude או דרך Codex — מחברים את מה שיש לך (מספיק אחד). זה לוקח כדקה.',
+  'launcher.firstRun.needEngineBtn': 'חיבור Claude או Codex',
 };

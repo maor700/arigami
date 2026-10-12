@@ -372,6 +372,7 @@ function Cockpit() {
     setAgentOpen(r.view === 'agent' ? r.slug : null);
     if (r.view === 'agent') setAgentTab(r.tab || 'home');
     setSetupOpen(r.view === 'setup');
+    setWizardOpen((w) => (r.wizard ? true : w === true ? false : w)); // navigating away closes the first-run overlay
     setLauncher(r.view === 'launcher' ? { mode: r.mode } : null);
     setPreviewTicket(r.view === 'ticket' ? r.id : null);
     if (r.view === 'session') setSelectedId(r.id);
@@ -987,6 +988,7 @@ function Cockpit() {
         sessions={sessions}
         onCreated={onCreated}
         onOpenLauncher={() => setLauncher({ mode: 'empty' })}
+        onNeedsSetup={() => setSetupOpen(true)}
       />
     );
   }
