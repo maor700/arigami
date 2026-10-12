@@ -20,6 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { cfg } from './config.js';
 import { supervise, killTree } from './children.js';
 import { portFree } from './hostlock.js';
+import { ensureChromeLauncherFlags } from './chrome-launcher.js';
 import * as state from '../state.js';
 
 export interface DesktopInfo {
@@ -293,6 +294,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
   }
   const panel = w('tint2');
   if (panel) {
+    ensureChromeLauncherFlags({ env }); // the panel's Chrome icon must start in a pod too
     const p = sp(panel, [], { stdio: 'ignore', env: denv });
     supervise(p, 'desktop:global:panel');
     globalProcs.push(p);
