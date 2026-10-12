@@ -13,7 +13,7 @@ import { Icon } from '../lib/icons.js';
 import { useT, currentLang, LANGS } from '../lib/i18n.js';
 import { setPrefs } from '../lib/prefs.js';
 import { useStore } from '../lib/store.js';
-import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep } from './setup/index.js';
+import { OAuthCodeStep, TokenStep, QrStep, ToggleStep, RepoStep, EngineConnect } from './setup/index.js';
 import { BTN, BTN2, INPUT, CARD, BODY, PILL, ErrorBox, OkLine, Spinner } from './setup/shared.jsx';
 import {
   faCheck,
@@ -70,45 +70,16 @@ function PairStep({ step }) {
 }
 
 // ---- claude / codex / git — the shared setup components ------------
-// (web/src/components/setup/*): the same OAuthCodeStep/TokenStep the chat's
-// SetupCard renders. The wizard only adds the step's copy + "done" line.
-const ENGINE_STEP = {
-  claude: { key: 'wizard.claude', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce', other: 'codex' },
-  codex: { key: 'wizard.codex', install: 'npm i -g @openai/codex', flow: 'codex', other: 'claude' },
-};
-
-// claude / codex: one connected engine is enough; the other reads 'skipped'.
-function EngineStep({ step, refresh, onOther }) {
-  const t = useT();
-  const e = ENGINE_STEP[step.id];
-  const other = onOther && step.status !== 'skipped' && (
-    <button type="button" className="mt-3 block cursor-pointer text-[11px] text-fgdim underline hover:text-fg" onClick={onOther}>{t(`wizard.${e.other}.instead`)}</button>
-  );
-  if (step.status === 'ok')
-    return (
-      <>
-        <p className={BODY}>{t(`${e.key}.body`)}</p>
-        <OkLine>{t(`${e.key}.connected`)}</OkLine>
-      </>
-    );
-  if (step.status === 'skipped')
-    return <p className={BODY}>{t(`${e.key}.optional`)}</p>;
-  if (!step.data?.cli)
-    return (
-      <>
-        <p className={BODY}>{t(`${e.key}.noCli`)}</p>
-        <code className="mt-2 block rounded-[6px] border border-hair bg-bg px-2 py-1.5 font-mono text-[11px] select-all">{e.install}</code>
-        <button type="button" className={`${BTN2} mt-3`} onClick={refresh}><Icon icon={faRotateRight} /> {t('wizard.recheck')}</button>
-        {other}
-      </>
-    );
-  return (
-    <>
-      <p className={`${BODY} mb-4`}>{t(`${e.key}.body`)}</p>
-      <OAuthCodeStep capability={step.id} manual={{ kind: 'oauth', flow: e.flow, token: true }} onDone={refresh} />
-      {other}
-    </>
-  );
+// (web/src/components/setup/*): the same EngineConnect the chat's SetupCard and
+// the Setup screen render. Claude and Codex are two equal choices side by side;
+// either one satisfies both wizard steps (the server marks the other 'skipped').
+function EngineStep({ steps, refresh }) {
+  const engines = {};
+  for (const id of ['claude', 'codex']) {
+    const s = steps.find((x) => x.id === id);
+    engines[id] = { ok: !!(s?.data?.cli && s?.data?.authed), data: { cli: s?.data?.cli !== false } };
+  }
+  return <EngineConnect engines={engines} onChanged={refresh} />;
 }
 
 function GitStep({ step, refresh }) {
@@ -449,7 +420,7 @@ export default function Wizard({ onDone, onExit, onStart }) {
             <h2 className="mb-2 text-[16px] font-bold">{t(STEP_TITLE[step.id])}</h2>
 
             {step.id === 'pair' && <PairStep step={step} />}
-            {(step.id === 'claude' || step.id === 'codex') && <EngineStep step={step} refresh={refresh} onOther={() => { const i = steps.findIndex((x) => x.id === ENGINE_STEP[step.id].other); if (i >= 0) setIdx(i); }} />}
+            {(step.id === 'claude' || step.id === 'codex') && <EngineStep steps={view.steps} refresh={refresh} />}
             {step.id === 'git' && <GitStep step={step} refresh={refresh} />}
             {step.id === 'profile' && <ProfileStep step={step} refresh={refresh} onSkip={() => act('skip')} />}
             {step.id === 'integrations' && <IntegrationsStep step={step} refresh={refresh} />}

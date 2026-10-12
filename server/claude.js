@@ -1668,7 +1668,7 @@ async function tryAuthRecover(id, text) {
   if (!resolveRefreshToken(accountId)) {
     // Nothing to refresh: open the Connect-Claude card right here in the chat
     // (paste the code / a token) instead of a dead-end error.
-    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in — connect one to continue').catch(() => {});
+    openClaudeSetupCard(id, 'this session\'s Claude account is not signed in').catch(() => {});
     return;
   }
   authRecovering.add(id);

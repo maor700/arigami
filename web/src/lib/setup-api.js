@@ -41,6 +41,7 @@ async function legacyOverview() {
   const push = (id, ok, detail, data) => caps.push({ id, ok: !!ok, detail: detail || '', data: data || {}, ...manualFor(id) });
   push('identity', false, '');
   push('claude', step('claude')?.status === 'ok', step('claude')?.detail, step('claude')?.data);
+  push('codex', step('codex')?.status === 'ok', step('codex')?.detail, step('codex')?.data);
   push('git', step('git')?.status === 'ok', step('git')?.detail, { ...step('git')?.data, ghLogin: wiz?.ghLogin });
   push('whatsapp', wa?.status === 'connected', wa?.user || wa?.status, wa);
   push('composio', !!step('integrations')?.data?.composio, '', step('integrations')?.data);

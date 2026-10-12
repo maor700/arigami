@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { isWin, which, shellArgs, toPosixPath, HOME, chromeCandidates } from './lib/platform.js';
 import { supervise } from './lib/children.js';
-import { cfg } from './lib/config.js';
+import { cfg, setEngineReadiness } from './lib/config.js';
 import { syncComposioKey } from './lib/mcp-servers.js';
 import { hasCredentials, hasLocalCodexLogin } from './accounts.js';
 import * as funnel from './funnel.js';
@@ -987,6 +987,15 @@ export const defaultProbes: WizardProbes = {
     return { enabled: !!cfg.telemetry?.enabled, reason: 'config' };
   },
 };
+
+/**
+ * New sessions default to a CONNECTED engine: a Codex-only host must not spawn `claude` (lib/config.ts defaultEngine()).
+ * Called once by the real host (server/index.ts), so in-process test harnesses keep the plain configured default.
+ */
+export function registerEngineReadiness(probes: Pick<WizardProbes, 'claudeCli' | 'claudeAuth' | 'codexCli' | 'codexAuth'> = defaultProbes): void {
+  if (process.env.ARIGAMI_ENGINE_AUTOPICK === '0') return; // opt-out (test hosts)
+  setEngineReadiness((e) => (e === 'codex' ? probes.codexCli() && probes.codexAuth() : probes.claudeCli() && probes.claudeAuth()));
+}
 
 // --- the machine ---------------------------------------------------------------
 

@@ -9,7 +9,10 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { faCheck, faRotateRight, faXmark, faArrowRight, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
 import { useStore } from '../lib/store.js';
-import { OAuthCodeStep } from './setup/index.js';
+import { EngineConnect } from './setup/index.js';
+import RepoPicker from './setup/RepoPicker.jsx';
+import { entryFromRepo } from '../lib/repo-picker.js';
+import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import * as setupApi from '../lib/setup-api.js';
 
 const PILL = {
@@ -91,9 +94,9 @@ const MONO = 'rounded-[7px] border border-border bg-panel px-2 py-1 font-mono te
 // the .git/worktrees). Two sources: clone from GitHub, or copy an existing local
 // working dir (minus node_modules). Either way you can pick env files (.env.local
 // etc.) to copy in, so a fresh clone/copy is actually installable.
-export function AddRepo({ onAdd, busy }) {
+export function AddRepo({ onAdd, busy, defaultOpen = false }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState('github'); // 'github' | 'local'
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
@@ -170,6 +173,12 @@ export function AddRepo({ onAdd, busy }) {
         ))}
       </div>
 
+      {kind === 'github' && (
+        <>
+          <RepoPicker onPick={(r) => { const e = entryFromRepo(r); setName(e.name); setSource(e.source); }} />
+          <div className="text-[11px] text-fgdim">{t('setup.repo.pick.orPaste')}</div>
+        </>
+      )}
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('launcher.setup.namePlaceholder')} className={INPUT} />
       <input
         value={source}
@@ -244,39 +253,9 @@ export function AddRepo({ onAdd, busy }) {
 // S2 — minimal first screen: Connect Claude / Connect Codex → Start. Nothing else blocks;
 // every other capability connects just-in-time from the chat (SetupCard).
 // "Run full setup" reopens the B3 wizard for people who want all the steps.
-const ENGINE_CARDS = [
-  { id: 'claude', title: 'setup.minimal.connectClaude', connected: 'wizard.claude.connected', noCli: 'wizard.claude.noCli', install: 'npm i -g @anthropic-ai/claude-code', flow: 'pkce' },
-  { id: 'codex', title: 'setup.minimal.connectCodex', connected: 'wizard.codex.connected', noCli: 'wizard.codex.noCli', install: 'npm i -g @openai/codex', flow: 'codex' },
-];
-
-function EngineCard({ spec, cap, optional, onRecheck }) {
-  const t = useT();
-  const cli = cap?.data?.cli !== false;
-  return (
-    <div className={`rounded-[9px] border px-3 py-2.5 ${cap?.ok ? 'border-ok-line bg-ok-bg' : optional ? 'border-hair bg-bg' : 'border-warn-line bg-warn-bg'}`}>
-      <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
-        {cap?.ok && <Icon icon={faCheck} />}
-        {t(spec.title)}
-        {optional && <span className="text-[11px] font-normal text-fgdim">{t('setup.minimal.optional')}</span>}
-      </div>
-      {cap?.ok ? (
-        <div className="mt-1 text-[11.5px] text-ok">{t(spec.connected)}</div>
-      ) : optional ? null : !cli ? (
-        <div className="mt-2">
-          <p className="text-[11px] leading-snug text-warn">{t(spec.noCli)}</p>
-          <code className="mt-1 block rounded-[6px] border border-warn-line bg-bg px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] select-all">{spec.install}</code>
-          <button type="button" onClick={onRecheck} className="mt-2 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a]"><Icon icon={faRotateRight} /> {t('launcher.setup.recheck')}</button>
-        </div>
-      ) : (
-        <div className="mt-2"><OAuthCodeStep capability={spec.id} manual={{ kind: 'oauth', flow: spec.flow, token: true }} onDone={onRecheck} /></div>
-      )}
-    </div>
-  );
-}
-
 function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
   const t = useT();
-  const anyOk = ENGINE_CARDS.some((e) => engines?.[e.id]?.ok);
+  const anyOk = anyEngineConnected(engines);
   return (
     <div className="mb-4 overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel">
       <div className="px-4 py-4">
@@ -288,11 +267,7 @@ function MinimalHero({ engines, onStart, onRecheck, onRunWizard, busy }) {
               <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-ink bg-bg text-[11.5px] md:text-[10px]">{anyOk ? <Icon icon={faCheck} /> : '1'}</span>
               {t('setup.minimal.connectEngine')}
             </div>
-            <div className="mt-2 flex flex-col gap-2">
-              {ENGINE_CARDS.map((e) => (
-                <EngineCard key={e.id} spec={e} cap={engines?.[e.id]} optional={anyOk && !engines?.[e.id]?.ok} onRecheck={onRecheck} />
-              ))}
-            </div>
+            <div className="mt-2"><EngineConnect engines={engines} onChanged={onRecheck} intro={false} /></div>
           </li>
           <li className={`rounded-[9px] border px-3 py-2.5 ${anyOk ? 'border-border bg-bg' : 'border-hair bg-chip/40 opacity-70'}`}>
             <div className="flex items-center gap-2 text-[12px] font-bold text-fg">
