@@ -39,9 +39,9 @@ export function screenFilePath(sessionId: string, file: string): string | null {
 }
 
 // Dedup / change detection (T9). Per session we keep the last RECORDED frame
-// (raw RGBA, ~4MB — one per active session, dropped by forgetSession) so both
-// the agent's capture_screen and the Watch-mode loop can ask "is this frame
-// materially different from what's already in the chat?".
+// (raw RGBA, ~4MB — one per active session, dropped by forgetSession) so the
+// Watch-mode loop can suppress insignificant changes. Explicit observations
+// always record a fresh frame, regardless of this passive change threshold.
 interface LastShot { rgba: Buffer; width: number; height: number; pngSha?: string; url: string; ts: number; }
 const lastShot = new Map<string, LastShot>();
 
@@ -84,7 +84,9 @@ export async function takeScreenshot(
   const now = Date.now();
   const prev = lastShot.get(sessionId);
   const pngSha = cap.frame ? undefined : crypto.createHash('sha1').update(png).digest('hex');
-  if (prev && !opts.force) {
+  // Explicit observations must reflect the current click targets, even for
+  // changes below the passive timeline threshold.
+  if (prev && opts.auto && !opts.force) {
     let verdict: ReturnType<typeof judgeFrame>;
     if (cap.frame) {
       const diff = frameDiffRatio(prev.rgba, cap.frame.rgba, cap.frame.width, cap.frame.height);
