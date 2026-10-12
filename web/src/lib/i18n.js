@@ -46,6 +46,24 @@ export function currentLang() {
   return resolveLang(getPrefs().language);
 }
 
+// Latin runs (names, commands, URLs, paths) inside Hebrew text: wrap each in a
+// first-strong isolate (U+2068 … U+2069) so the surrounding punctuation and the
+// neighbouring Hebrew words keep their order ("ב-Docker", "(HTTPS)", "$ARIGAMI_DIR/x").
+// Pure strings stay strings, so placeholders and titles are covered too.
+const HEBREW = /[\u0590-\u05FF]/;
+const LATIN_TOKEN = '[A-Za-z0-9$~/@#][\\w.:/\\-@$#%+=~?&*]*';
+const LATIN_RUN = new RegExp(`${LATIN_TOKEN}(?: ${LATIN_TOKEN})*`, 'g');
+export function isolateLatin(s) {
+  if (!HEBREW.test(s)) return s;
+  return s.replace(LATIN_RUN, (run) => {
+    if (!/[A-Za-z]/.test(run)) return run;
+    const m = run.match(/[.:?&\-,;*=+]+$/); // sentence punctuation belongs to the Hebrew sentence
+    const tail = m ? m[0] : '';
+    const body = tail ? run.slice(0, -tail.length) : run;
+    return body ? `\u2068${body}\u2069${tail}` : run;
+  });
+}
+
 // t('some.key', { name: 'x' }) — {name} placeholders are substituted.
 export function t(key, vars) {
   const lang = currentLang();
@@ -53,7 +71,7 @@ export function t(key, vars) {
   if (s == null) s = en[key];
   if (s == null) s = key;
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
-  return s;
+  return lang === 'he' && !globalThis.__ARIGAMI_PLAIN_T ? isolateLatin(s) : s; // flag: test seam (test/_preload.ts) — tests compare exact literals
 }
 
 // Direction of a string by its first strong directional character. Neutral or

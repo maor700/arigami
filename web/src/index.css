@@ -580,3 +580,22 @@ body {
     min-height: 1.0625rem;
   }
 }
+
+/* Hebrew: letter-spacing pulls the joined letters of a word apart ("ז י כ ר ו ן"), so wide-tracked
+   labels/chips lose it under the Hebrew UI. Latin-only fields (pairing/OAuth codes: dir=ltr or
+   inputs) keep their spacing. */
+:lang(he) [class*='tracking-']:not(input):not(textarea):not([dir='ltr']) {
+  letter-spacing: 0;
+}
+/* inline code / URLs / paths inside any text never take part in the surrounding bidi order */
+code,
+kbd,
+samp {
+  unicode-bidi: isolate;
+}
+
+/* Hebrew labels set in the mono face fall back to a fixed-width Hebrew font whose letters spread apart
+   ("טרמי נל"); labels (not code, not dir=ltr values) use the sans face instead. */
+:lang(he) [class~='font-mono']:not(code):not(pre):not(kbd):not([dir='ltr']) {
+  font-family: var(--font-sans);
+}

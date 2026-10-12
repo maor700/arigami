@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
 import { afterLogin } from '../lib/store.js';
-import { useT } from '../lib/i18n.js';
+import { useT, currentLang } from '../lib/i18n.js';
+import { setPrefs } from '../lib/prefs.js';
 import { Logo } from './Logo.jsx';
 import { canShellSignIn, shellSignIn, shellSignInOnce } from '../lib/shell.js';
 
 // C1 — full-page sign-in. Pairing: the one-time code printed by the host at
 // boot (or `bin/host pair`). OIDC: a redirect to /__api/auth/oidc/start when the
 // host has a provider configured. Success → afterLogin() boots the store.
+// `inline code` in a locale string → <code dir="ltr"> so a command keeps its own direction inside Hebrew text.
+function Rich({ text }) {
+  return text.split('`').map((part, i) => (i % 2 ? <code key={i} dir="ltr" className="whitespace-nowrap rounded bg-chip px-1 font-mono text-[0.625rem]">{part}</code> : part));
+}
+
 export default function Login({ info }) {
   const t = useT();
   const [code, setCode] = useState('');
@@ -42,6 +48,7 @@ export default function Login({ info }) {
       await afterLogin();
     } catch (e) {
       setError(String(e.message || e));
+      setCode(''); // the wrong code must not linger in the field
       setBusy(false);
     }
   };
@@ -51,13 +58,22 @@ export default function Login({ info }) {
     window.location.href = `/__api/auth/oidc/start?redirect=${redirect}`;
   };
 
+  const lang = currentLang();
   return (
-    <div className="flex h-screen flex-col items-center justify-center bg-bg p-6 text-fg">
+    <div className="relative flex h-screen flex-col items-center justify-center overflow-y-auto bg-bg p-6 text-fg">
+      <button
+        type="button"
+        onClick={() => setPrefs({ language: lang === 'he' ? 'en' : 'he' })}
+        className="absolute end-3 top-3 min-h-[44px] cursor-pointer rounded-[8px] border border-border px-3 text-[0.75rem] text-fgdim hover:border-ink hover:text-fg"
+      >
+        {lang === 'he' ? 'English' : 'עברית'}
+      </button>
       <Logo size="3rem" className="mb-4" />
       <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('auth.login.heading')}</div>
       <div className="mb-4 max-w-[22.5rem] text-center text-[0.71875rem] text-fgdim">
-        {hasAdmin ? t('auth.login.subPaired') : t('auth.login.subFirst')}
-        {!hasAdmin && <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-fgdim">{t('auth.login.whereCode')}</div>}
+        {hasAdmin ? <Rich text={t('auth.login.subPaired')} /> : t('auth.login.subFirst')}
+        {!hasAdmin && <div className="mt-1.5 hidden text-[0.6875rem] leading-relaxed text-fgdim md:block"><Rich text={t('auth.login.whereCode')} /></div>}
+        {!hasAdmin && <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-fgdim md:hidden">{t('auth.login.phoneHint')}</div>}
       </div>
 
       {shellSignin && (
@@ -83,7 +99,8 @@ export default function Login({ info }) {
       <div className="flex w-[20rem] max-w-[90%] flex-col gap-2">
         <input
           value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          onChange={(e) => { setCode(e.target.value.toUpperCase()); if (error) setError(null); }}
+          dir="ltr"
           onKeyDown={(e) => e.key === 'Enter' && submit()}
           placeholder="XXXX-XXXX"
           autoFocus
@@ -106,7 +123,7 @@ export default function Login({ info }) {
           type="button"
           onClick={submit}
           disabled={busy || !code.trim()}
-          className="cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-brand px-4 py-2.5 text-sm font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
+          className="min-h-[44px] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-brand px-4 py-2.5 text-sm font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
         >
           {busy ? t('auth.login.busy') : t('auth.login.pair')}
         </button>
