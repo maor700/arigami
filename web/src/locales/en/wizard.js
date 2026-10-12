@@ -1,7 +1,7 @@
 // B3 — first-run wizard (web/src/components/Wizard.jsx).
 export const strings = {
   'wizard.title': 'Set up Arigami',
-  'wizard.subtitle': '{n} short steps. You can skip most of them and come back from Setup later.',
+  'wizard.subtitle': '{n} short steps. Connecting Claude or Codex is the one required step — you can skip the rest and come back from Setup later.',
   'wizard.reviewSteps': 'Review the steps',
   'wizard.stepOf': 'Step {n} of {total}',
   'wizard.back': 'Back',
@@ -71,7 +71,7 @@ export const strings = {
   'wizard.profile.blank': 'Start blank',
   'wizard.profile.trusted': 'built-in',
   'wizard.profile.external': 'external — skills land as pending proposals',
-  'wizard.profile.none': 'No profiles installed. Profiles come from your organization profile repo (paste its git URL below) or $ARIGAMI_DIR/profiles — or continue blank.',
+  'wizard.profile.none': 'No profiles installed. To use one, paste its git URL below — or just continue blank.',
   'wizard.profile.fromUrl': 'From git URL…',
   'wizard.profile.urlPlaceholder': 'https://github.com/org/bundle.git',
 
@@ -100,7 +100,7 @@ export const strings = {
 
   'wizard.telemetry.title': 'Help improve Arigami',
   'wizard.telemetry.body': 'Off by default. If you opt in, this host sends a few anonymous milestones so we can see where people get stuck.',
-  'wizard.telemetry.sends': 'Sent: milestone names + timestamps (install, first session, first PM tree…), version, OS/arch, Docker yes/no, session count bucket, a random instance id.',
+  'wizard.telemetry.sends': 'Sent: milestone names + timestamps (install, first session…), version, OS/arch, Docker yes/no, a session-count range, a random instance id.',
   'wizard.telemetry.never': 'Never: prompts, code, paths, repo names, emails, hostnames, IPs.',
   'wizard.telemetry.control': 'Change your mind any time in Settings → Telemetry; DO_NOT_TRACK=1 always wins.',
   'wizard.telemetry.yes': 'Yes, send anonymous milestones',
@@ -115,9 +115,9 @@ export const strings = {
   'wizard.health.pass': 'pass',
   'wizard.health.fail': 'fail',
   'wizard.health.optional': 'optional',
-  'wizard.health.check.claude': 'Claude answers (claude -p ping)',
-  'wizard.health.check.codex': 'Codex answers (codex exec ping)',
-  'wizard.health.check.desktop': 'Desktop (X display) up',
+  'wizard.health.check.claude': 'Claude answers',
+  'wizard.health.check.codex': 'Codex answers',
+  'wizard.health.check.desktop': 'Shared desktop is running',
   'wizard.health.check.chrome': 'Chrome available',
   'wizard.health.check.whatsapp': 'WhatsApp bridge',
   'wizard.health.allGood': 'Everything required passed.',
@@ -125,4 +125,10 @@ export const strings = {
 
   'launcher.setup.runWizard': 'Run setup wizard',
   'launcher.setup.runWizardHint': 'Step-by-step first-run flow: Claude, Git, profile, integrations, repo, telemetry, health.',
+  'wizard.gate.engine': 'Connect Claude or Codex to continue — either one is enough.',
+  'wizard.gate.skip': 'Finish this step, or press “Skip for now”, to continue.',
+  'wizard.gate.required': 'Finish this step to continue.',
+  'wizard.health.fix': 'Fix the connection',
+  'wizard.health.openAnyway': 'Open cockpit anyway',
+  'wizard.gate.profile': 'Apply a bundle, or press “Start blank”, to continue.',
 };

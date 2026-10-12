@@ -23,6 +23,7 @@ import AutoConnect, { EvidenceLink } from './AutoConnect.jsx';
 import ConnectStep from './ConnectStep.jsx';
 import EngineConnect from './EngineConnect.jsx';
 import { api } from '../../lib/api.js';
+import { serverText } from '../../lib/server-text.js';
 import { Pill, ErrorBox } from './shared.jsx';
 import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../../openui/define.js';
@@ -198,7 +199,7 @@ function SetupCardView({ props: { sessionId, event } }) {
           <span className={phase === 'done' ? 'text-ok' : phase === 'failed' ? 'text-err' : ''}>
             <Icon icon={phase === 'done' ? faCheck : faXmark} /> {termLabel}
           </span>
-          {event.detail && <span dir="auto">— {event.detail}</span>}
+          {event.detail && <span dir="auto">— {serverText(event.detail)}</span>}
           {event.evidence && <EvidenceLink sessionId={sessionId} evidence={event.evidence} title={title} />}
         </div>
       )}
@@ -282,7 +283,7 @@ export const SetupCardDef = defineHostComponent({
   description: 'Host: request_setup — the agent needs a capability; the human connects it (auto / manual)',
   props: loose({
     sessionId: z.string(),
-    event: loose({ requestId: str, capability: str, why: str, title: str, state: str, mode: str, autoCapable: bool, identity: any, owner: str, manual: any, lines: any, detail: any, evidence: str, enabled: bool, have: any }),
+    event: loose({ requestId: str, capability: str, why: str, title: str, state: str, mode: str, autoCapable: bool, identity: any, owner: str, manual: any, lines: any, detail: any, evidence: any, enabled: bool, have: any }),
   }),
   component: SetupCardView,
 });

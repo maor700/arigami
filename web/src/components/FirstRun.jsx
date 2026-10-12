@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { Logo } from './Logo.jsx';
+import * as setupApi from '../lib/setup-api.js';
+import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import { faArrowUp, faCamera, faComment, faCodeBranch } from '@fortawesome/free-solid-svg-icons';
 
 // F8: no sessions yet → one question ("What would you like me to do?"), three
@@ -16,14 +18,29 @@ export const FIRST_RUN_CHIPS = [
   { id: 'clone', icon: faCodeBranch, label: 'launcher.firstRun.chip.clone', prompt: 'launcher.firstRun.chip.clone.prompt' },
 ];
 
-export default function FirstRun({ config, onCreated, onOpenLauncher }) {
+export default function FirstRun({ config, onCreated, onOpenLauncher, onNeedsSetup }) {
   const t = useT();
   const [val, setVal] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // Is an engine (Claude or Codex) connected? null = not known yet (never blocks; the host's own card still catches it).
+  const [connected, setConnected] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const check = () => setupApi.overview().then((ov) => {
+      if (!live) return;
+      const cap = (id) => ov?.capabilities?.find((c) => c.id === id) || null;
+      setConnected(anyEngineConnected({ claude: cap('claude'), codex: cap('codex') }));
+    }).catch(() => {});
+    check();
+    const id = setInterval(check, 4000); // a sign-in finished in another tab/window lifts the gate by itself
+    return () => { live = false; clearInterval(id); };
+  }, []);
+  const needsEngine = connected === false;
 
   const submit = async () => {
     if (busy) return; // guard: Enter can fire while a POST is already in flight
+    if (needsEngine) { onNeedsSetup?.(); return; } // an unanswerable first message would only fail with "Not logged in"
     const prompt = val.trim();
     if (!prompt) {
       setError(t('launcher.firstRun.emptyError'));
@@ -49,6 +66,19 @@ export default function FirstRun({ config, onCreated, onOpenLauncher }) {
       <Logo size="3rem" className="mb-4" />
       <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('launcher.firstRun.heading')}</div>
       <div className="mb-4 max-w-[28.75rem] text-center text-[0.71875rem] leading-relaxed text-fgdim">{t('launcher.firstRun.sub')}</div>
+      {needsEngine && (
+        <div role="status" data-testid="first-run-connect" className="mb-3 flex w-[28.75rem] max-w-[92%] flex-col gap-2 rounded-[12px] border-[1.5px] border-warn-line bg-warn-bg px-4 py-3">
+          <div className="text-[0.8125rem] font-bold text-fg">{t('launcher.firstRun.needEngineTitle')}</div>
+          <div className="text-[0.75rem] leading-snug text-fgdim">{t('launcher.firstRun.needEngineBody')}</div>
+          <button
+            type="button"
+            onClick={onNeedsSetup}
+            className="min-h-[44px] cursor-pointer self-start rounded-[9px] border-[1.5px] border-ink bg-brand px-4 py-2 text-[0.8125rem] font-bold text-[#1a1a1a] md:min-h-0"
+          >
+            {t('launcher.firstRun.needEngineBtn')}
+          </button>
+        </div>
+      )}
       <div className="flex w-[28.75rem] max-w-[92%] items-end gap-[0.5625rem] rounded-[12px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2.5 focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
         <textarea
           value={val}
@@ -66,7 +96,7 @@ export default function FirstRun({ config, onCreated, onOpenLauncher }) {
           onClick={submit}
           disabled={busy}
           title={t('launcher.firstRun.createTitle')}
-          className="flex h-[1.75rem] w-[1.75rem] shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50"
+          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50 md:h-[1.75rem] md:w-[1.75rem]"
         >
           {busy ? '…' : <Icon icon={faArrowUp} />}
         </button>
