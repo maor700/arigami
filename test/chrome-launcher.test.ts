@@ -23,12 +23,12 @@ test('in a pod the launcher is shadowed in the user data dir; on a native host n
   expect(ensureChromeLauncherFlags({ env: {}, home, dockerenv: false, systemLaunchers: [sys] })).toEqual([]);
   expect(fs.existsSync(path.join(home, '.local/share/applications'))).toBe(false);
 
-  const written = ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: '10.0.0.1' }, home, dockerenv: false, systemLaunchers: [sys] });
+  const written = ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: 'kubernetes.example.test' }, home, dockerenv: false, systemLaunchers: [sys] });
   expect(written).toEqual([path.join(home, '.local/share/applications/google-chrome.desktop')]);
   expect(fs.readFileSync(written[0], 'utf8')).toContain('google-chrome-stable --no-sandbox %U');
   // second run: nothing to do
-  expect(ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: '10.0.0.1' }, home, dockerenv: false, systemLaunchers: [sys] })).toEqual([]);
+  expect(ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: 'kubernetes.example.test' }, home, dockerenv: false, systemLaunchers: [sys] })).toEqual([]);
   // CHROME_NO_SANDBOX=0 forces the sandbox: leave the icon alone
-  expect(ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: '10.0.0.1', CHROME_NO_SANDBOX: '0' }, home: path.join(root, 'h2'), dockerenv: false, systemLaunchers: [sys] })).toEqual([]);
+  expect(ensureChromeLauncherFlags({ env: { KUBERNETES_SERVICE_HOST: 'kubernetes.example.test', CHROME_NO_SANDBOX: '0' }, home: path.join(root, 'h2'), dockerenv: false, systemLaunchers: [sys] })).toEqual([]);
   fs.rmSync(root, { recursive: true, force: true });
 });
