@@ -225,6 +225,7 @@ export function adminPage(
   backups: Record<string, { count: number; newestMs: number | null }> = {},
   profile: ProfileView | null = null,
   extra = '',
+  tiers: { names: string[]; def: string } | null = null,
 ): string {
   const rows = tenants
     .map((t) => {
@@ -240,6 +241,7 @@ export function adminPage(
       <td>${esc(t.last_seen_at)}</td>
       <td><div class="row"><span>${digest}</span>${t.state !== 'deleted' ? digestForm(t.subject) : ''}</div></td>
       <td>${profileCell(t, profile)}</td>
+      ${tiers ? `<td><div class="row"><span>${esc(t.tier || tiers.def)}</span>${t.state === 'running' ? tierForm(t.subject, t.tier || tiers.def, tiers.names) : ''}</div></td>` : ''}
       <td><div class="row"><span>${b ? `${b.count}${b.newestMs ? ` <small>(${esc(new Date(b.newestMs).toISOString().slice(0, 16))}Z)</small>` : ''}` : '0'}</span>
         ${t.state === 'running' ? backupForm(t.subject) : ''}</div></td>
       <td><div class="row">
@@ -257,8 +259,8 @@ export function adminPage(
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
      ${profileBanner(profile)}
      <table>
-       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image</th><th title="Profile (applied → desired)">Profile (applied → desired)</th><th>Backups</th><th>Actions</th></tr></thead>
-       <tbody>${rows || '<tr><td colspan="8">No tenants yet.</td></tr>'}</tbody>
+       <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image</th><th title="Profile (applied → desired)">Profile (applied → desired)</th>${tiers ? '<th>Tier</th>' : ''}<th>Backups</th><th>Actions</th></tr></thead>
+       <tbody>${rows || `<tr><td colspan="${tiers ? 9 : 8}">No tenants yet.</td></tr>`}</tbody>
      </table>${extra}`,
   );
 }
@@ -266,6 +268,10 @@ export function adminPage(
 function digestForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/digest">
     <input name="digest" placeholder="tag or sha256:…" size="14"><button type="submit">Set</button></form>`;
+}
+function tierForm(subject: string, current: string, names: string[]): string {
+  const opts = names.map((n) => `<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  return `<form class="inline" method="post" action="/admin/tenants/${esc(encodeURIComponent(subject))}/tier" onsubmit="return confirm('Change the hardware tier of this tenant? The workspace pod restarts (a few minutes offline), and only while no turn is running. A disk can only grow.')"><select name="tier" aria-label="Tier">${opts}</select><button type="submit">Set tier</button></form>`;
 }
 function profileRetryForm(subject: string): string {
   return `<form class="inline" method="post" action="/admin/tenants/${esc(subject)}/profile-retry"><button type="submit">Retry now</button></form>`;

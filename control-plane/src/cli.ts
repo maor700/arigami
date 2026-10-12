@@ -5,6 +5,7 @@
 //
 //   bun src/cli.ts tenants
 //   bun src/cli.ts set-digest  <ns|subject|email> <tag-or-sha256:digest>
+//   bun src/cli.ts set-tier    <ns|subject|email> <tier>      # hardware tier (CP_TIERS); guarded like an upgrade, restarts the pod
 //   bun src/cli.ts upgrade     <ns|subject|email>            # one tenant, right now (still refuses while busy)
 //   bun src/cli.ts backup      <ns|subject|email>
 //   bun src/cli.ts backups     <ns|subject|email>
@@ -20,6 +21,7 @@ import { loadConfig } from './config.js';
 import { openDb, createStore, type Tenant } from './db.js';
 import * as provisioner from './provisioner.js';
 import { upgradeTenant, UpgradeBlockedError } from './upgrade.js';
+import { setTier, realTierDeps, TierError } from './tier.js';
 import { realOps } from './reconcile.js';
 import { backupTenant, listBackups, restoreTenant } from './backup.js';
 import { DESIRED_META_KEY, haltingTenant, rolloutEnabled, type DesiredRecord } from './profile-rollout.js';
@@ -63,6 +65,16 @@ try {
       if (e instanceof UpgradeBlockedError) { out({ ok: false, blocked: true, busySessions: e.busySessions }); process.exitCode = 3; }
       else throw e;
     }
+  } else if (cmd === 'set-tier') {
+    const t = findTenant(ref);
+    if (!arg3) throw new Error(`usage: set-tier <tenant> <tier> (tiers: ${Object.keys(cfg.tiers).join(', ') || 'none configured'})`);
+    try {
+      out({ ok: true, ...(await setTier(cfg, store, realTierDeps(cfg), t, arg3)) });
+    } catch (e) {
+      if (e instanceof UpgradeBlockedError) { out({ ok: false, blocked: true, busySessions: e.busySessions }); process.exitCode = 3; }
+      else if (e instanceof TierError) { process.stderr.write(`refused: ${e.message}\n`); process.exitCode = 4; }
+      else throw e;
+    }
   } else if (cmd === 'backup') {
     const t = findTenant(ref);
     out({ ok: true, ns: t.ns, ...(await backupTenant(cfg, t)) });
@@ -96,7 +108,7 @@ try {
     store.clearProfileBackoff(t.subject);
     out({ ok: true, ns: t.ns, note: `retried on the next reconcile tick (${cfg.reconcileSec}s) when the tenant is idle` });
   } else {
-    process.stderr.write('usage: bun src/cli.ts tenants | shared … | set-digest <t> <digest> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
+    process.stderr.write('usage: bun src/cli.ts tenants | shared … | set-digest <t> <digest> | set-tier <t> <tier> | upgrade <t> | backup <t> | backups <t> | restore <t> <file.tgz> [--force] | set-ring <t> canary|stable | profile | profile-retry <t>\n');
     process.exitCode = 2;
   }
 } catch (e) {

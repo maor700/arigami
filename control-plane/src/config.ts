@@ -1,5 +1,6 @@
 // Env contract for the control-plane. Every knob an operator needs is read
 // here, once, at boot — see docs/CONTROL-PLANE.md for the full reference.
+import fs from 'node:fs';
 import path from 'node:path';
 
 const bool = (v: string | undefined, def: boolean): boolean => {
@@ -11,6 +12,8 @@ const csv = (v: string | undefined): string[] =>
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+
+export type TierOverlay = Record<string, unknown>;
 
 export interface Config {
   port: number;
@@ -54,6 +57,10 @@ export interface Config {
   helmReleasePrefix: string; // "u-" — release/namespace name = prefix + tenant id
   helmExtraValuesFile: string; // optional extra -f layered on every install (e.g. a k3d/stub overlay)
   helmTimeoutSec: number;
+  /** Hardware tiers (src/tier.ts): name -> Helm values overlay, layered LAST on a tenant's install. Empty = no tiers (every tenant gets the same values). */
+  tiers: Record<string, TierOverlay>;
+  /** The tier a tenant with no explicit one gets. Always a key of `tiers` when `tiers` is non-empty. */
+  defaultTier: string;
   ingressClassName: string;
   // Namespaces the tenant NetworkPolicy accepts ingress from. The chart has no
   // default and refuses to render without at least one (arigami-tenant 0.2.0),
@@ -89,8 +96,52 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return cfg;
 }
 
+const TIER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+
+/**
+ * CP_TIERS: a JSON object, inline (starts with "{") or the path to a JSON file (what the Helm chart mounts).
+ * {"<tier>": {<Helm values overlay>}, ...}. Throws a message that names the problem — boot refuses on it.
+ */
+export function parseTiers(raw: string): Record<string, TierOverlay> {
+  const src = raw.trim();
+  if (!src) return {};
+  let text = src;
+  if (!src.startsWith('{') && !src.startsWith('[')) {
+    try {
+      text = fs.readFileSync(src, 'utf8');
+    } catch (e) {
+      throw new Error(`CP_TIERS is neither inline JSON nor a readable file (${src}): ${(e as Error).message}`);
+    }
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`CP_TIERS is not valid JSON: ${(e as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('CP_TIERS must be a JSON object mapping tier name to a Helm values overlay');
+  const out: Record<string, TierOverlay> = {};
+  for (const [name, overlay] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!TIER_NAME_RE.test(name)) throw new Error(`CP_TIERS: tier name "${name}" is invalid (letters, digits, . _ - ; at most 32 characters)`);
+    if (!overlay || typeof overlay !== 'object' || Array.isArray(overlay)) throw new Error(`CP_TIERS: tier "${name}" must be an object of Helm values`);
+    const o = overlay as TierOverlay;
+    if ('tenant' in o) throw new Error(`CP_TIERS: tier "${name}" sets "tenant" — the tenant identity is owned by the control plane`);
+    const size = (o.persistence as { size?: unknown } | undefined)?.size;
+    if (size !== undefined && (typeof size !== 'string' || !/^\d+(\.\d+)?(Ki|Mi|Gi|Ti|Pi|k|M|G|T|P)?$/.test(size)))
+      throw new Error(`CP_TIERS: tier "${name}" persistence.size must be a Kubernetes quantity string such as "50Gi"`);
+    out[name] = o;
+  }
+  return out;
+}
+
 function readConfig(env: NodeJS.ProcessEnv): Config {
   const port = Number(env.CP_PORT || 8090);
+  const tiers = parseTiers(env.CP_TIERS || '');
+  const defaultTier = (env.CP_DEFAULT_TIER || 'standard').trim();
+  if (Object.keys(tiers).length && !(defaultTier in tiers))
+    throw new Error(`CP_DEFAULT_TIER "${defaultTier}" is not a tier in CP_TIERS (${Object.keys(tiers).join(', ')}) — set CP_DEFAULT_TIER`);
+  if (!Object.keys(tiers).length && env.CP_DEFAULT_TIER && defaultTier !== 'standard')
+    throw new Error(`CP_DEFAULT_TIER "${defaultTier}" is set but CP_TIERS defines no tiers`);
   return {
     port,
     publicUrl: (env.CP_PUBLIC_URL || `http://localhost:${port}`).replace(/\/$/, ''),
@@ -117,6 +168,8 @@ function readConfig(env: NodeJS.ProcessEnv): Config {
     helmReleasePrefix: env.CP_RELEASE_PREFIX || 'u-',
     helmExtraValuesFile: env.CP_HELM_EXTRA_VALUES || '',
     helmTimeoutSec: Number(env.CP_HELM_TIMEOUT_SEC || 120),
+    tiers,
+    defaultTier,
     ingressClassName: env.CP_INGRESS_CLASS || '',
     ingressNamespaces: csv(env.CP_INGRESS_NAMESPACES),
 

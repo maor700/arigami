@@ -62,6 +62,8 @@ export interface Tenant {
   profile_error: string;
   // Shared org workspaces (src/shared.ts). Always present on a row read from the DB (column defaults); optional
   // in the type so a hand-built Tenant (tests, fixtures) is still a personal one. Missing kind = 'personal'.
+  /** Hardware tier name (src/tier.ts). '' = the configured default tier. */
+  tier?: string;
   kind?: TenantKind;
   name?: string;
   member_policy?: MemberPolicy;
@@ -137,6 +139,8 @@ export function openDb(dbPath: string): Database {
     ['profile_error', "TEXT NOT NULL DEFAULT ''"],
   ] as const)
     if (!tenantCols.has(col)) db.exec(`ALTER TABLE tenants ADD COLUMN ${col} ${ddl}`);
+  // Hardware tier (src/tier.ts): '' = whatever CP_DEFAULT_TIER is.
+  if (!tenantCols.has('tier')) db.exec("ALTER TABLE tenants ADD COLUMN tier TEXT NOT NULL DEFAULT ''");
   migrateShared(db);
   return db;
 }
@@ -174,7 +178,7 @@ export function createStore(db: Database) {
   function listTenants(): Tenant[] {
     return db.query('SELECT * FROM tenants ORDER BY created_at ASC').all() as Tenant[];
   }
-  function createTenant(subject: string, email: string, opts: { desiredDigest: string; ring?: string; handoffSecret?: string }): Tenant {
+  function createTenant(subject: string, email: string, opts: { desiredDigest: string; ring?: string; handoffSecret?: string; tier?: string }): Tenant {
     const id = tenantIdFor(subject);
     const ns = `u-${id}`;
     const t: Tenant = {
@@ -196,6 +200,7 @@ export function createStore(db: Database) {
       profile_failures: 0,
       profile_next_at: 0,
       profile_error: '',
+      tier: opts.tier || '',
       // the column defaults (src/shared.ts migrateShared); a shared tenant is turned into one by markShared
       kind: 'personal',
       name: '',
@@ -206,9 +211,9 @@ export function createStore(db: Database) {
       roster_synced_gen: 0,
     };
     db.query(
-      `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(t.subject, t.email, t.ns, t.release, t.desired_digest, t.running_digest, t.ring, t.state, t.created_at, t.last_seen_at, t.handoff_secret);
+      `INSERT INTO tenants (subject, email, ns, release, desired_digest, running_digest, ring, state, created_at, last_seen_at, handoff_secret, tier)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(t.subject, t.email, t.ns, t.release, t.desired_digest, t.running_digest, t.ring, t.state, t.created_at, t.last_seen_at, t.handoff_secret, t.tier ?? '');
     return t;
   }
   // Validated against state-machine.ts — callers never write an illegal edge
@@ -229,6 +234,10 @@ export function createStore(db: Database) {
   // tenant has no turn in flight).
   function setDesiredDigest(subject: string, digest: string): void {
     db.query('UPDATE tenants SET desired_digest = ? WHERE subject = ?').run(digest, subject);
+  }
+  /** Record the hardware tier a tenant now runs on (src/tier.ts setTier calls this only after the helm upgrade is healthy). */
+  function setTier(subject: string, tier: string): void {
+    db.query('UPDATE tenants SET tier = ? WHERE subject = ?').run(tier, subject);
   }
   /** Rollout ring: `canary` tenants get a new profile first (src/profile-rollout.ts rolloutOrder). */
   function setRing(subject: string, ring: string): void {
@@ -299,7 +308,7 @@ export function createStore(db: Database) {
   return {
     findUserBySubject, findUserByEmail, hasAdmin, createUser, listUsers,
     findTenantBySubject, findTenantByNs, listTenants, createTenant, setTenantState, setRunningDigest, setDesiredDigest, touchLastSeen,
-    setRing, setProfileApplied, setProfileFailed, clearProfileBackoff, getMeta, setMeta,
+    setRing, setTier, setProfileApplied, setProfileFailed, clearProfileBackoff, getMeta, setMeta,
     createSession, findSession, deleteSession,
     ...createSharedStore(db),
   };

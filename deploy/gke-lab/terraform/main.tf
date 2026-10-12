@@ -104,6 +104,31 @@ resource "google_container_node_pool" "main" {
   }
 }
 
+# Optional extra pools (var.extra_node_pools): hardware for tenants whose tier selects them. None by default.
+resource "google_container_node_pool" "extra" {
+  for_each   = var.extra_node_pools
+  name       = each.key
+  location   = var.zone
+  cluster    = google_container_cluster.lab.name
+  node_count = each.value.node_count
+
+  node_config {
+    machine_type = each.value.machine_type
+    disk_size_gb = each.value.disk_gb
+    disk_type    = "pd-balanced"
+    labels       = merge(each.value.labels, { pool = each.key })
+
+    dynamic "taint" {
+      for_each = each.value.taints
+      content {
+        key    = taint.value.key
+        value  = taint.value.value
+        effect = taint.value.effect
+      }
+    }
+  }
+}
+
 # The apex serves the control plane, the wildcard the tenants.
 resource "google_dns_record_set" "apex" {
   count        = var.dns_zone_name == "" ? 0 : 1

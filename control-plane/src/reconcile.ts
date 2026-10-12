@@ -24,6 +24,7 @@ import type { Config } from './config.js';
 import type { Store, Tenant } from './db.js';
 import { upgradeTenant, UpgradeBlockedError, UpgradeRolledBackError, type UpgradeDeps } from './upgrade.js';
 import * as provisioner from './provisioner.js';
+import { tierChangeInFlight } from './tier.js';
 import { backupTenant, listBackups } from './backup.js';
 import {
   profilePass, realProfileOps, resolveDesired, rolloutEnabled, redact, DESIRED_META_KEY,
@@ -74,6 +75,7 @@ export async function reconcileTick(
   const touched = new Set<string>(); // tenants that already had their lifecycle action this tick
   for (const t of store.listTenants()) {
     if (t.state !== 'running') continue;
+    if (tierChangeInFlight(t.ns)) { touched.add(t.ns); continue; } // a tier change owns the release right now
 
     if (t.desired_digest && t.desired_digest !== t.running_digest) {
       touched.add(t.ns);
