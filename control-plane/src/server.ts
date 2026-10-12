@@ -12,6 +12,8 @@ import { rolloutEnabled, haltingTenant, DESIRED_META_KEY, type DesiredRecord } f
 import { decideAccess } from './shared.js';
 import { handleShared, adminSection } from './shared-routes.js';
 import type { SharedDeps } from './shared-ops.js';
+import { setTier, realTierDeps, TierError, type TierDeps } from './tier.js';
+import { UpgradeBlockedError, UpgradeRolledBackError, UpgradeFailedError } from './upgrade.js';
 
 export interface Provisioner {
   provisionTenant(cfg: Config, t: Tenant): Promise<{ url: string }>;
@@ -28,6 +30,8 @@ export interface AdminOps {
   podSnapshot(cfg: Config, t: Tenant): Promise<PodSnapshot>;
   /** shared workspaces: hand the tenant its member roster (provisioner.pushRoster); optional so test doubles may omit it */
   pushRoster?(cfg: Config, t: Tenant, token: string): Promise<void>;
+  /** tier changes (src/tier.ts); optional so test doubles may omit it — the real helm/kubectl deps are used then */
+  tierDeps?: TierDeps;
 }
 
 const realAdminOps: AdminOps = {
@@ -242,7 +246,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
             haltedBy: desired?.commit ? haltingTenant(tenants, desired.commit)?.ns ?? null : null,
           }
         : null;
-      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store)));
+      const tiers = Object.keys(cfg.tiers).length ? { names: Object.keys(cfg.tiers), def: cfg.defaultTier } : null;
+      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store), tiers));
     }
 
     // Profile rollout: "retry now" for a tenant whose apply failed — drops the
@@ -274,6 +279,28 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       if (!DIGEST_RE.test(digest)) return html(tpl.errorPage(400, 'digest must be an image tag or sha256:<hex> digest'), 400);
       store.setDesiredDigest(subject, digest);
       log(`[admin] ${t.ns} desired_digest set to ${digest} by ${principal.email}`);
+      return redirect('/admin');
+    }
+
+    // Hardware tier: helm upgrade with the new overlay through the same guarded path as an image upgrade
+    // (src/tier.ts) — refused while a turn is in flight, rolled back if the tenant is not healthy afterwards.
+    const tierAction = /^\/admin\/tenants\/([^/]+)\/tier$/.exec(url.pathname);
+    if (tierAction && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (principal.role !== 'admin') return html(tpl.errorPage(403, 'org-admin only'), 403);
+      const t = store.findTenantBySubject(pathSubject(tierAction[1]));
+      if (!t) return html(tpl.errorPage(404, 'no such tenant'), 404);
+      const form = await req.formData().catch(() => null);
+      const tier = String(form?.get('tier') || '').trim();
+      try {
+        const r = await setTier(cfg, store, adminOps.tierDeps ?? realTierDeps(cfg), t, tier);
+        log(`[admin] ${t.ns} tier ${r.from} -> ${r.to}${r.disk.grew ? ` (disk ${r.disk.from} -> ${r.disk.to})` : ''} by ${principal.email}`);
+      } catch (e) {
+        if (e instanceof TierError) return html(tpl.errorPage(e.status, e.message), e.status);
+        if (e instanceof UpgradeBlockedError) return html(tpl.errorPage(409, `${e.message}. Try again when the user is idle.`), 409);
+        if (e instanceof UpgradeRolledBackError || e instanceof UpgradeFailedError) return html(tpl.errorPage(500, e.message), 500);
+        return html(tpl.errorPage(500, (e as Error).message), 500);
+      }
       return redirect('/admin');
     }
 

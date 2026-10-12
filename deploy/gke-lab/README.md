@@ -84,6 +84,25 @@ itself), an `auth-snippet` setting `X-Forwarded-Host`/`-Uri`, and a `configurati
 **Tested in-cluster on a local k3s, not on this lab**: [deploy/local-k3s](../local-k3s/README.md) (values, the proof,
 what is not in the published images yet, and the cloud checklist).
 
+## Per-user hardware
+
+`extra_node_pools` (terraform variable, default `{}` — the plan for existing users does not change) adds node pools,
+each labelled `pool=<name>` and optionally tainted:
+
+```hcl
+extra_node_pools = {
+  large = {
+    machine_type = "n2d-standard-16"
+    taints       = [{ key = "dedicated", value = "large", effect = "NO_SCHEDULE" }]
+  }
+}
+```
+
+Then give the control plane a tier that selects it (`tiers:` in the control-plane chart, or `CP_TIERS`) with
+`nodeSelector: {pool: large}` and a matching toleration, and move one tenant with
+`bun src/cli.ts set-tier <tenant> large` (or the admin page). See `docs/CONTROL-PLANE.md` "Tiers". The pool must be in
+the cluster's zone (a zonal cluster has one), because the tenant's disk is zonal.
+
 ## Not covered / known gaps
 
 * A new image is needed for tenants to apply a profile bundle that carries extensions (`CP_ARIGAMI_BUNDLE`, and

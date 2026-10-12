@@ -192,6 +192,18 @@ config:
 #       annotations: {cert-manager.io/cluster-issuer: letsencrypt-prod}
 #       tls: {enabled: true}
 tenantValues: {}
+# Hardware tiers (CP_TIERS / CP_DEFAULT_TIER, docs/CONTROL-PLANE.md "Tiers"): name -> Helm values overlay for the
+# tenant chart, layered on top of tenantValues. Empty = no tiers, every tenant gets the same values. Rendered into a
+# ConfigMap and passed as CP_TIERS (a file path). defaultTier must be one of the names. Example:
+#   tiers:
+#     standard: {persistence: {size: 10Gi}}
+#     large:
+#       resources: {requests: {cpu: "4", memory: 16Gi}, limits: {cpu: "8", memory: 32Gi}}
+#       persistence: {size: 50Gi}
+#       nodeSelector: {pool: large}
+#       tolerations: [{key: dedicated, operator: Equal, value: large, effect: NoSchedule}]
+tiers: {}
+defaultTier: standard
 extraEnv: []
 # Extra volumes / mounts for the control-plane container, e.g. a ConfigMap of control-plane/src mounted over /app/src
 # to try an unreleased fix on top of a published image (deploy/local-k3s/up.sh CP_SRC_OVERLAY=1). Plain pod-spec YAML.

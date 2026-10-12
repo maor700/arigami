@@ -308,6 +308,8 @@ All read once at boot (`src/config.ts`):
 | `CP_ARIGAMI_BUNDLE_REF` | — (default branch) | tag / branch / commit of the profile every tenant converges to. Passed to new tenants as the chart's `env.ARIGAMI_BUNDLE_REF` (first boot checks it out) and resolved to one commit on every reconcile tick for the [profile rollout](#profile-rollout). |
 | `CP_HELM_CHART_PATH` | `../deploy/helm/arigami-tenant` | which chart to render |
 | `CP_RELEASE_PREFIX` | `u-` | release/namespace name prefix |
+| `CP_TIERS` | — | hardware tiers, a JSON object (inline, or the path to a JSON file) of tier name → tenant-chart values overlay; see [Tiers](#tiers). Unset = no tiers |
+| `CP_DEFAULT_TIER` | `standard` | the tier a tenant gets unless an admin sets another; must be a key of `CP_TIERS` (boot refuses otherwise) |
 | `CP_HELM_EXTRA_VALUES` | — | optional extra `-f` layered on every install (used by the test/demo to swap in the stub image's resource/security overrides) |
 | `CP_HELM_TIMEOUT_SEC` | `120` | `helm --wait --timeout` |
 | `CP_INGRESS_CLASS` | — | not currently read by the provisioner (the chart's own `ingress.className` default is used) — reserved for a future per-org override |
@@ -675,6 +677,56 @@ production sizing; a real tenant keeps values.yaml's 2Gi/8Gi).
   (helm-template-verified) but the pilot had no registry to pull from.
 - Multi-node behaviour, real storage classes, TLS — K8S-4 territory
   (docs/K8S-OPERATIONS.md sketches the dedicated-box path).
+
+## Tiers
+
+Per-user hardware. Without `CP_TIERS` every tenant gets the same Helm values (the chart defaults plus
+`CP_HELM_EXTRA_VALUES`) — exactly as before. With it, each tenant has a tier, and the tier's overlay is layered
+on top of everything else.
+
+**Config.** `CP_TIERS` is a JSON object: inline (starts with `{`) or the path to a JSON file (the Helm chart
+mounts one — `tiers:` in the control-plane chart's values). Each value is a values overlay for the tenant chart:
+
+```json
+{
+  "standard": { "persistence": { "size": "10Gi" } },
+  "large": {
+    "resources": { "requests": { "cpu": "4", "memory": "16Gi" }, "limits": { "cpu": "8", "memory": "32Gi" } },
+    "persistence": { "size": "50Gi" },
+    "nodeSelector": { "pool": "large" },
+    "tolerations": [{ "key": "dedicated", "operator": "Equal", "value": "large", "effect": "NoSchedule" }],
+    "priorityClassName": "workspace-large"
+  }
+}
+```
+
+`CP_DEFAULT_TIER` (default `standard`) names the tier of a tenant with none of its own. Boot fails with a clear
+message on invalid JSON, a bad tier name, a non-object overlay, a malformed `persistence.size`, an overlay that
+sets `tenant`, or a default tier that is not in `CP_TIERS`.
+
+**Layering** (later wins): chart defaults < the control plane's own `--set` flags < `CP_HELM_EXTRA_VALUES` <
+the tier overlay (a last `-f`). The tenant row's `tier` column (`''` = the default tier) is read on every
+install and upgrade, so an image upgrade keeps the tier. A tenant whose tier was removed from `CP_TIERS`
+fails its next provision with a message rather than silently falling back to other hardware.
+
+**Changing a tenant's tier.** Admin page (a select and "Set tier" in the tenant row, with a confirm that says
+the pod restarts) or `bun src/cli.ts set-tier <tenant> <tier>`. It takes the image-upgrade path
+(`src/upgrade.ts`): refused while any session has a turn in flight (nothing is touched; retry when idle),
+then `helm upgrade` with the new overlay, wait healthy, roll back to the previous revision if it is not, and
+only then record the tier. The pod restarts.
+
+**Disk only grows.** If the new tier's `persistence.size` is smaller than the tenant's current PVC, the change
+is refused with the two sizes. If it is larger and the StorageClass has `allowVolumeExpansion: false` (or that
+cannot be determined), it is refused before anything changes. Otherwise the PVC is patched, and because a
+StatefulSet's `volumeClaimTemplates` are immutable the StatefulSet object is deleted with `--cascade=orphan`
+(pod and PVC stay) and recreated by the upgrade. The size compared is the tier's, else `CP_HELM_EXTRA_VALUES`', else the chart default.
+
+**One person gets a bigger machine** = a tier plus a node pool: add a pool with a label and a taint
+(`extra_node_pools` in `deploy/gke-lab/terraform`, or any node pool on another cluster), define a tier whose
+`nodeSelector` matches the label and whose `tolerations` match the taint (so nobody else lands there), then
+`set-tier <tenant> large`. The pod reschedules onto the new pool, against the same disk (a zonal disk needs the pool in the same zone).
+
+Tests: `control-plane/test/tier.test.ts`. Not exercised against a real cluster: the kubectl/helm calls are covered through injected deps.
 
 ## Org SSO in front of every cockpit (tenant gate, 2026-10-08)
 

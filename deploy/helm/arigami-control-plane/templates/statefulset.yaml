@@ -127,6 +127,13 @@ spec:
             - name: CP_HELM_EXTRA_VALUES
               value: /etc/arigami/tenant-values/values.yaml
             {{- end }}
+            {{- if .Values.tiers }}
+            # Hardware tiers: name -> tenant chart values overlay (control-plane/src/tier.ts).
+            - name: CP_TIERS
+              value: /etc/arigami/tiers/tiers.json
+            - name: CP_DEFAULT_TIER
+              value: {{ .Values.defaultTier | quote }}
+            {{- end }}
             {{- range .Values.extraEnv }}
             - name: {{ .name }}
               value: {{ .value | quote }}
@@ -142,6 +149,11 @@ spec:
             {{- if .Values.tenantValues }}
             - name: tenant-values
               mountPath: /etc/arigami/tenant-values
+              readOnly: true
+            {{- end }}
+            {{- if .Values.tiers }}
+            - name: tiers
+              mountPath: /etc/arigami/tiers
               readOnly: true
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -169,7 +181,7 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
-      {{- if or (not .Values.persistence.enabled) .Values.tenantValues .Values.extraVolumes }}
+      {{- if or (not .Values.persistence.enabled) .Values.tenantValues .Values.tiers .Values.extraVolumes }}
       volumes:
         {{- if not .Values.persistence.enabled }}
         - name: data
@@ -179,6 +191,11 @@ spec:
         - name: tenant-values
           configMap:
             name: {{ include "arigami-control-plane.fullname" . }}-tenant-values
+        {{- end }}
+        {{- if .Values.tiers }}
+        - name: tiers
+          configMap:
+            name: {{ include "arigami-control-plane.fullname" . }}-tiers
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

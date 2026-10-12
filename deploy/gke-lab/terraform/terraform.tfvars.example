@@ -5,3 +5,13 @@ dns_zone_name    = "example-com"            # an existing Cloud DNS zone for exa
 authorized_cidrs = ["203.0.113.7/32"]       # the machine that runs kubectl / helm / the control plane
 # node_machine_type = "n2d-standard-8"
 # ttl_hours         = 12
+
+# A bigger machine for one person's tenant (see ../README.md "Per-user hardware"). Default: no extra pools.
+# extra_node_pools = {
+#   large = {
+#     machine_type = "n2d-standard-16"
+#     node_count   = 1
+#     disk_gb      = 200
+#     taints       = [{ key = "dedicated", value = "large", effect = "NO_SCHEDULE" }]
+#   }
+# }

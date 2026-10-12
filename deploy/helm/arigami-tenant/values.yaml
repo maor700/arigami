@@ -89,6 +89,15 @@ resources:
     cpu: "4"
     memory: 8Gi
 
+# Where the pod may run. Empty = anywhere (the default). The control plane's hardware tiers (CP_TIERS,
+# docs/CONTROL-PLANE.md "Tiers") use these to put one person on a dedicated node pool:
+#   nodeSelector: {pool: large}
+#   tolerations: [{key: dedicated, operator: Equal, value: large, effect: NoSchedule}]
+nodeSelector: {}
+tolerations: []
+# Optional PriorityClass name (must already exist in the cluster). Empty = none.
+priorityClassName: ""
+
 persistence:
   enabled: true
   # ReadWriteOnce only: single pod, single writer (SQLite, worktrees). Never RWX.

@@ -57,3 +57,33 @@ variable "ttl_hours" {
   type        = number
   default     = 12
 }
+
+variable "extra_node_pools" {
+  description = <<-EOT
+    Additional node pools, e.g. a bigger machine for one person's tenant (control-plane tier with a matching nodeSelector,
+    docs/CONTROL-PLANE.md "Tiers"). Map of pool name => settings. Empty (the default) creates nothing, so existing plans do not change.
+    Every pool gets the label pool=<name>; `labels` adds more. `taints` keep other tenants off it (effect: NO_SCHEDULE, PREFER_NO_SCHEDULE or NO_EXECUTE) —
+    pair them with `tolerations` in the tier.
+  EOT
+  type = map(object({
+    machine_type = string
+    node_count   = optional(number, 1)
+    disk_gb      = optional(number, 100)
+    labels       = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = string
+      effect = string
+    })), [])
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for n, p in var.extra_node_pools : can(regex("^[a-z]([-a-z0-9]{0,38}[a-z0-9])?$", n)) && n != "main"])
+    error_message = "extra_node_pools keys must be valid node pool names (lowercase letters, digits, '-'; at most 40 characters) and not \"main\"."
+  }
+  validation {
+    condition     = alltrue([for n, p in var.extra_node_pools : alltrue([for t in p.taints : contains(["NO_SCHEDULE", "PREFER_NO_SCHEDULE", "NO_EXECUTE"], t.effect)])])
+    error_message = "A taint effect must be NO_SCHEDULE, PREFER_NO_SCHEDULE or NO_EXECUTE."
+  }
+}
