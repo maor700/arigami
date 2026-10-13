@@ -51,6 +51,13 @@ data:
       handle @cp {
         reverse_proxy ${CP_UPSTREAM}
       }
+      # The control plane's own machine dials OUT to the tunnel server (chisel.yaml) over this name — HTTPS + websocket
+      # + chisel's own credential — so the tunnel needs no kubectl, no cloud login, nothing that expires. Skip this
+      # block if you run the control plane in the cluster (no tunnel).
+      @tunnel host tunnel.${DOMAIN}
+      handle @tunnel {
+        reverse_proxy chisel.edge.svc.cluster.local:8080
+      }
       # Org SSO in front of every cockpit: before anything reaches a tenant pod, forward_auth sends a copy of the
       # request (headers only, websocket upgrades included) to the control plane's GET /auth/verify. 2xx = proxy it;
       # anything else is returned to the browser as-is — 302 to sign in, 403 someone else's workspace, and a 502/504
