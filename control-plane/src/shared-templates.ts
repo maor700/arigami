@@ -2,26 +2,61 @@
 // Same plain server-rendered HTML as templates.ts, which owns the shell.
 import type { Tenant } from './db.js';
 import { esc, page } from './templates.js';
+import type { PersonalWorkspaces } from './config.js';
 import { SHARED_ROLES, type Member, type SharedRole, type SharedTenant } from './shared.js';
 
-export function workspacesPage(email: string, personal: Tenant | null, shared: { tenant: SharedTenant; role: SharedRole }[], isAdmin: boolean): string {
-  const rows = shared
-    .map(({ tenant: t, role }) => `<tr>
-      <td><strong>${esc(t.name)}</strong>${t.org_host ? ' <small>(org host)</small>' : ''}</td>
-      <td>${esc(role)}</td>
-      <td><span class="state state-${esc(t.state)}">${esc(t.state)}</span></td>
-      <td><a class="button" href="/workspaces/${esc(t.name)}/open">Open</a></td>
-    </tr>`)
+const STATE_LABEL: Record<string, string> = { running: 'running', provisioning: 'being set up', dormant: 'asleep', archived: 'archived' };
+const stateBadge = (state: string): string => `<span class="state state-${esc(state)}">${esc(STATE_LABEL[state] || state)}</span>`;
+
+/**
+ * The chooser (`/workspaces`, and where `/` lands someone with a choice to make): one card per place the person can
+ * work — every shared workspace they are a member of, and (unless the org runs shared-only) their own personal one.
+ * `personal` is their live personal tenant or null (none yet / deleted). `mode` is CP_PERSONAL_WORKSPACES.
+ */
+export function workspacesPage(email: string, personal: Tenant | null, shared: { tenant: SharedTenant; role: SharedRole }[], isAdmin: boolean, mode: PersonalWorkspaces = 'auto'): string {
+  const sharedCards = shared
+    .map(({ tenant: t, role }) => `<div class="card">
+      <div class="head"><strong>${esc(t.name)}</strong>${stateBadge(t.state)}</div>
+      <p class="detail">Shared workspace${t.org_host ? ' (org host)' : ''} · your role: ${esc(role)}</p>
+      <div class="act"><a class="button" href="/workspaces/${esc(t.name)}/open">Open</a></div>
+    </div>`)
     .join('\n');
+  // An org-admin's own workspace is unaffected by the mode; everyone else only gets the card when personal workspaces exist at all.
+  const offerPersonal = isAdmin || mode !== 'never';
+  const personalAction = personal || mode === 'auto' || isAdmin
+    ? `<a class="button" href="/workspace">Open my workspace</a>`
+    : `<form class="inline" method="post" action="/workspaces/personal"><button type="submit" class="primary">Create my workspace</button></form>`;
+  const personalCard = offerPersonal
+    ? `<div class="card">
+      <div class="head"><strong>Your own workspace</strong>${personal ? stateBadge(personal.state) : ''}</div>
+      <p class="detail">Private to you. It runs on its own dedicated machine, so it uses more of the organisation's resources than joining a shared workspace.</p>
+      <div class="act">${personalAction}</div>
+    </div>`
+    : '';
+  const hint = !shared.length
+    ? mode === 'never'
+      ? '<p class="detail">You are not a member of any shared workspace yet. Ask an organisation admin to invite you.</p>'
+      : mode === 'choose' && !personal
+        ? '<p class="detail">An organisation admin can also invite you to a shared workspace, which needs no machine of your own.</p>'
+        : ''
+    : '';
   return page(
     'Workspaces — Arigami',
-    `<h1>Workspaces</h1><p>Signed in as ${esc(email)}.${isAdmin ? ' <a href="/admin">Admin</a> ·' : ''} <a href="/auth/logout">Sign out</a></p>
-     <p><a class="button" href="/workspace">Open my workspace</a>${personal ? ` <small>${esc(personal.state)}</small>` : ''}</p>
-     <h2>Shared with you</h2>
-     <table><thead><tr><th>Workspace</th><th>Your role</th><th>State</th><th></th></tr></thead>
-     <tbody>${rows || '<tr><td colspan="4">No shared workspaces yet.</td></tr>'}</tbody></table>
+    `<h1>Where do you want to work?</h1><p>Signed in as ${esc(email)}.${isAdmin ? ' <a href="/admin">Admin</a> ·' : ''} <a href="/auth/logout">Sign out</a></p>
+     <div class="cards">${sharedCards}${personalCard}</div>
+     ${hint}
      <p><small>A shared workspace is one machine for several people: everyone in it sees its sessions and uses the
      accounts connected there. Viewers can look but never run a turn.</small></p>`,
+  );
+}
+
+/** `never` mode: a non-admin asked for a personal workspace the organisation does not offer. */
+export function sharedOnlyPage(email: string, shared: number): string {
+  return page(
+    'Shared workspaces only — Arigami',
+    `<h1>This organisation uses shared workspaces</h1>
+     <p>Personal workspaces are not offered here. ${shared ? 'Pick a shared workspace you are a member of.' : `Ask an organisation admin to invite <strong>${esc(email)}</strong> to one.`}</p>
+     <p>${shared ? '<a class="button" href="/workspaces">Choose a workspace</a> ' : ''}<a href="/auth/logout">Sign out</a></p>`,
   );
 }
 

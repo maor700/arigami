@@ -183,6 +183,9 @@ config:
   backupIntervalSec: "86400"
   backupKeep: "7"
   cookieDays: "30"
+  # Who gets a personal workspace (one pod + one disk each): auto = every non-admin on sign-in (default), choose = only
+  # when they press "Create my workspace" (invited people can use shared ones without), never = shared workspaces only.
+  personalWorkspaces: auto
 
 # Extra plain env vars. [{name, value}]
 # Extra Helm values layered on EVERY tenant install (rendered into a ConfigMap, passed as CP_HELM_EXTRA_VALUES):

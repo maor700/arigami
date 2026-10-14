@@ -67,6 +67,9 @@ export interface Config {
   // because getting it wrong makes a healthy-looking tenant unreachable.
   ingressNamespaces: string[];
 
+  /** Who gets a personal workspace: `auto` = every non-admin gets one on sign-in (default), `choose` = only when they ask for it, `never` = shared workspaces only. */
+  personalWorkspaces: PersonalWorkspaces;
+
   // K8S-3 — reconcile / upgrades / backups
   tenantPort: number; // the port the tenant host listens on in-pod (chart service.port)
   reconcileSec: number; // 0 = reconcile loop off (tests, one-shot CLI use)
@@ -82,6 +85,9 @@ export interface Config {
   profileBatch: number; // max applies per tick (0 = no limit) — a slower canary
 }
 
+export type PersonalWorkspaces = 'auto' | 'choose' | 'never';
+export const PERSONAL_MODES: readonly PersonalWorkspaces[] = ['auto', 'choose', 'never'];
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const cfg = readConfig(env);
   // A browser silently drops a Set-Cookie whose Domain does not cover the host that sent it — every sign-in
@@ -94,6 +100,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   return cfg;
+}
+
+function parsePersonalMode(raw: string | undefined): PersonalWorkspaces {
+  const v = String(raw ?? '').trim().toLowerCase() || 'auto';
+  if (!(PERSONAL_MODES as readonly string[]).includes(v)) throw new Error(`CP_PERSONAL_WORKSPACES "${raw}" is not one of ${PERSONAL_MODES.join(', ')}`);
+  return v as PersonalWorkspaces;
 }
 
 const TIER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
@@ -173,6 +185,7 @@ function readConfig(env: NodeJS.ProcessEnv): Config {
     ingressClassName: env.CP_INGRESS_CLASS || '',
     ingressNamespaces: csv(env.CP_INGRESS_NAMESPACES),
 
+    personalWorkspaces: parsePersonalMode(env.CP_PERSONAL_WORKSPACES),
     tenantPort: Number(env.CP_TENANT_PORT || 3099),
     reconcileSec: Number(env.CP_RECONCILE_SEC ?? 60),
     backupDir: env.CP_BACKUP_DIR || path.join(process.cwd(), 'data', 'backups'),

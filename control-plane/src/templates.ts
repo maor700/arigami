@@ -1,6 +1,7 @@
 // Plain server-rendered HTML — no SPA, no build step, matches the task's
 // "the user-facing bit, minimal" instruction. One shared shell + escape().
 import type { Tenant } from './db.js';
+import type { PersonalWorkspaces } from './config.js';
 
 export function esc(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
@@ -75,6 +76,16 @@ const CSS = `
   .mark i { width: 11px; height: 11px; border: 2px solid var(--brand); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .mark i { animation-duration: 2.4s; } }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #10231d; padding: 0 18px; height: 38px; font-size: 14px; }
+  button.primary:hover { background: color-mix(in srgb, var(--brand) 85%, #fff); border-color: transparent; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 20px 0 12px; }
+  .card { display: flex; flex-direction: column; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+  .card .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .card .head strong { overflow-wrap: anywhere; }
+  .card .head .state { flex: none; white-space: nowrap; }
+  .card p { flex: 1; margin: 8px 0 14px; }
+  .card .act { display: flex; }
+  .card .act form { margin: 0; }
   .meta { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 `;
 
@@ -226,6 +237,7 @@ export function adminPage(
   profile: ProfileView | null = null,
   extra = '',
   tiers: { names: string[]; def: string } | null = null,
+  personalMode: PersonalWorkspaces = 'auto',
 ): string {
   const rows = tenants
     .map((t) => {
@@ -257,6 +269,9 @@ export function adminPage(
     `<h1>Tenants</h1><p>Signed in as ${esc(adminEmail)} (org-admin). <a href="/workspace">Open my workspace</a> · <a href="/workspaces">Workspaces</a> · <a href="/auth/logout">Sign out</a></p>
      <p><small>Image and profile changes converge on the next reconcile tick, and only while the tenant has no
      turn in flight. Restores are an operator action: <code>bun src/cli.ts restore …</code>.</small></p>
+     ${personalMode === 'auto' ? '' : `<p class="banner">${personalMode === 'choose'
+       ? 'Personal workspaces are created by the users themselves: nobody gets one when they sign in, they choose it on their workspace screen.'
+       : 'This organisation is shared-only: personal workspaces are not offered, people use the shared workspaces below.'}</p>`}
      ${profileBanner(profile)}
      <table>
        <thead><tr><th>Email</th><th>Namespace</th><th>State</th><th>Last seen</th><th>Image</th><th title="Profile (applied → desired)">Profile (applied → desired)</th>${tiers ? '<th>Tier</th>' : ''}<th>Backups</th><th>Actions</th></tr></thead>

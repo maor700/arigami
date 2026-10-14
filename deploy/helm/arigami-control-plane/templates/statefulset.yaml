@@ -122,6 +122,8 @@ spec:
               value: {{ .Values.config.backupKeep | quote }}
             - name: CP_COOKIE_DAYS
               value: {{ .Values.config.cookieDays | quote }}
+            - name: CP_PERSONAL_WORKSPACES
+              value: {{ .Values.config.personalWorkspaces | default "auto" | quote }}
             {{- if .Values.tenantValues }}
             # Extra Helm values layered on every tenant install (ingress TLS/annotations, resources, …).
             - name: CP_HELM_EXTRA_VALUES

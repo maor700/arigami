@@ -10,7 +10,8 @@ import { tenantNsForHost, safeReturnUrl, requestedUrl } from './gate.js';
 import { stepsFor, podSnapshot, EMPTY_SNAPSHOT, type PodSnapshot } from './progress.js';
 import { rolloutEnabled, haltingTenant, DESIRED_META_KEY, type DesiredRecord } from './profile-rollout.js';
 import { decideAccess } from './shared.js';
-import { handleShared, adminSection } from './shared-routes.js';
+import { sharedOnlyPage } from './shared-templates.js';
+import { handleShared, adminSection, livePersonal } from './shared-routes.js';
 import type { SharedDeps } from './shared-ops.js';
 import { setTier, realTierDeps, TierError, type TierDeps } from './tier.js';
 import { UpgradeBlockedError, UpgradeRolledBackError, UpgradeFailedError } from './upgrade.js';
@@ -122,7 +123,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
       const result = await auth.oidcCallback(cookieHeader, url);
       if (!result.ok) return html(tpl.errorPage(result.status, result.error), result.status);
       const { setCookie } = auth.login(result.subject, https);
-      if (result.role === 'user') ensureTenant(result.subject, result.email);
+      // `choose` / `never`: nothing is created behind the person's back — see CP_PERSONAL_WORKSPACES.
+      if (result.role === 'user' && cfg.personalWorkspaces === 'auto') ensureTenant(result.subject, result.email);
       store.touchLastSeen(result.subject);
       const back = safeReturnUrl(cfg, result.returnTo);
       // Back to the user's OWN workspace: through the handoff while it runs — the gate now lets the browser in, but
@@ -180,7 +182,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     // Admin forms are plain POSTs with the session cookie. Every u-<id>.<orgDomain> is same-site with this
     // service (and, with CP_COOKIE_PARENT_DOMAIN, receives the cookie's scope), so SameSite=Lax alone does not
     // stop a page served from a tenant from posting here. A browser always sends Origin on a POST.
-    if (req.method === 'POST' && url.pathname.startsWith('/admin/')) {
+    if (req.method === 'POST' && (url.pathname.startsWith('/admin/') || url.pathname === '/workspaces/personal')) {
       const origin = req.headers.get('origin');
       if (origin && origin !== new URL(cfg.publicUrl).origin) return html(tpl.errorPage(403, 'cross-origin form post refused'), 403);
     }
@@ -192,23 +194,49 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     if (url.pathname === '/' || url.pathname === '/workspace') {
       if (!principal) return html(tpl.loginPage(cfg.orgDomain));
       if (principal.role === 'admin' && url.pathname === '/') return redirect('/admin');
-      const t = ensureTenant(principal.subject, principal.email);
       store.touchLastSeen(principal.subject);
-      if (t.state === 'provisioning') return html(tpl.startingPage());
-      if (t.state === 'dormant') {
-        provisioner.resumeTenant(cfg, t).then(
-          () => store.setTenantState(t.subject, 'running'),
-          (e) => log(`[provisioner] resume ${t.ns} failed: ${(e as Error).message}`),
-        );
-        return html(tpl.startingPage());
-      }
       // K8S-3: land the user INSIDE their workspace. They authenticated here
       // moments ago against the org IdP; making them hunt for a pairing code
       // that only exists inside the pod was the single worst step of the
       // flow. `signInUrl` mints a one-shot, short-lived, email-bound token the
       // tenant redeems for a session cookie (src/handoff.ts, server/handoff.ts).
-      if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
-      return html(tpl.unavailablePage(t.state));
+      const enter = (t: Tenant): Response => {
+        if (t.state === 'provisioning') return html(tpl.startingPage());
+        if (t.state === 'dormant') {
+          provisioner.resumeTenant(cfg, t).then(
+            () => store.setTenantState(t.subject, 'running'),
+            (e) => log(`[provisioner] resume ${t.ns} failed: ${(e as Error).message}`),
+          );
+          return html(tpl.startingPage());
+        }
+        if (t.state === 'running') return redirect(signInUrl(tenantUrl(cfg, t.ns), t.handoff_secret, t.email));
+        return html(tpl.unavailablePage(t.state));
+      };
+      // `auto` (and an org-admin's own workspace, whatever the mode): the workspace is made on demand, as ever.
+      if (cfg.personalWorkspaces === 'auto' || principal.role === 'admin') return enter(ensureTenant(principal.subject, principal.email));
+      // `choose` / `never`: /workspace means "my personal workspace" (also where the gate sends a personal tenant that is
+      // not running), so it never provisions one — without one it goes to the chooser (or says shared-only).
+      const mine = livePersonal(store, principal.subject);
+      const openShared = store.sharedFor(principal).filter((x) => x.tenant.state !== 'deleted');
+      if (url.pathname === '/workspace') {
+        if (mine) return enter(mine);
+        return cfg.personalWorkspaces === 'never' ? html(sharedOnlyPage(principal.email, openShared.length)) : redirect('/workspaces');
+      }
+      // `/`: exactly one place to go -> straight in; otherwise the person has a choice to make.
+      if (mine && !openShared.length) return enter(mine);
+      if (!mine && openShared.length === 1) return redirect(`/workspaces/${encodeURIComponent(openShared[0].tenant.name || '')}/open`);
+      if (!openShared.length && cfg.personalWorkspaces === 'never') return html(sharedOnlyPage(principal.email, 0));
+      return redirect('/workspaces');
+    }
+
+    // "Create my workspace" on the chooser. Self-service only (the subject is the session's, never a form field) and
+    // idempotent: a double click or a refresh finds the tenant the first one made; after a deletion it starts fresh.
+    if (url.pathname === '/workspaces/personal' && req.method === 'POST') {
+      if (!principal) return redirect('/');
+      if (cfg.personalWorkspaces === 'never' && principal.role !== 'admin') return html(tpl.errorPage(403, 'this organisation uses shared workspaces only'), 403);
+      ensureTenant(principal.subject, principal.email);
+      store.touchLastSeen(principal.subject);
+      return new Response(null, { status: 303, headers: { location: '/workspace' } });
     }
 
     // Feeds the progress view on the starting page. Returns the SAME shape
@@ -252,7 +280,7 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
           }
         : null;
       const tiers = Object.keys(cfg.tiers).length ? { names: Object.keys(cfg.tiers), def: cfg.defaultTier } : null;
-      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store), tiers));
+      return html(tpl.adminPage(tenants, principal.email, backups, profile, adminSection(store), tiers, cfg.personalWorkspaces));
     }
 
     // Profile rollout: "retry now" for a tenant whose apply failed — drops the

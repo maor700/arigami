@@ -308,6 +308,7 @@ All read once at boot (`src/config.ts`):
 | `CP_ARIGAMI_BUNDLE_REF` | — (default branch) | tag / branch / commit of the profile every tenant converges to. Passed to new tenants as the chart's `env.ARIGAMI_BUNDLE_REF` (first boot checks it out) and resolved to one commit on every reconcile tick for the [profile rollout](#profile-rollout). |
 | `CP_HELM_CHART_PATH` | `../deploy/helm/arigami-tenant` | which chart to render |
 | `CP_RELEASE_PREFIX` | `u-` | release/namespace name prefix |
+| `CP_PERSONAL_WORKSPACES` | `auto` | who gets a personal workspace (a dedicated pod and disk): `auto` = every non-admin on sign-in (today's behaviour), `choose` = nobody automatically, the person picks on a "Where do you want to work?" screen and creates their own with one click, `never` = shared workspaces only (an org-admin's own `/workspace` is unaffected). Anything else refuses to boot; see [Choosing a workspace](#choosing-a-workspace) |
 | `CP_TIERS` | — | hardware tiers, a JSON object (inline, or the path to a JSON file) of tier name → tenant-chart values overlay; see [Tiers](#tiers). Unset = no tiers |
 | `CP_DEFAULT_TIER` | `standard` | the tier a tenant gets unless an admin sets another; must be a key of `CP_TIERS` (boot refuses otherwise) |
 | `CP_HELM_EXTRA_VALUES` | — | optional extra `-f` layered on every install (used by the test/demo to swap in the stub image's resource/security overrides) |
@@ -983,10 +984,31 @@ cockpit's users, audit trail and per-user settings stay per person. There is no 
 
 ### Landing
 
-`/` is unchanged: a normal user lands in their personal workspace, an org-admin on `/admin`. **`/workspaces`** is
-the picker: "Open my workspace" plus every shared workspace the user may open (same `decideAccess`), with their
+With the default `CP_PERSONAL_WORKSPACES=auto`, `/` is unchanged: a normal user lands in their personal workspace, an org-admin on `/admin`
+([Choosing a workspace](#choosing-a-workspace) for the other modes). **`/workspaces`** is
+the chooser: "Open my workspace" plus every shared workspace the user may open (same `decideAccess`), with their
 role, state and **Open**. `/admin` links to it. Open on a dormant workspace wakes it and shows a self-refreshing
 wait page.
+
+### Choosing a workspace
+
+`CP_PERSONAL_WORKSPACES` decides whether a person gets a personal workspace (one pod + one disk each) on their own or by choice.
+Having a personal workspace never blocks shared ones and the other way round.
+
+| mode | sign-in | `/` | `/workspace` | create button |
+| --- | --- | --- | --- | --- |
+| `auto` (default) | a personal workspace is made automatically | as above: straight into it | the same flow | none (it exists) |
+| `choose` | nothing is created | one running personal and no shared -> straight in; exactly one shared and no personal -> straight into it; anything else -> the chooser | the personal workspace (starting page / resume), or the chooser when there is none | "Create my workspace" on the chooser |
+| `never` | nothing is created | one shared -> straight in; several -> the chooser; none -> a "shared workspaces only" page | the "shared workspaces only" page (org-admins unaffected) | none; `POST /workspaces/personal` answers 403 |
+
+The chooser is `/workspaces` ("Where do you want to work?"): a card per shared workspace the person is a member of (role, state,
+**Open**) plus, outside `never`, "Your own workspace". **Create my workspace** is `POST /workspaces/personal`: Origin-checked
+like the admin forms, always for the signed-in user (no subject in the form), idempotent (a double click or refresh finds the
+tenant the first press made), answers 303 to `/workspace` (the starting page with live progress). A deleted personal workspace
+counts as none: it can be created again in `choose`, and `auto` starts a fresh one on the next visit. The edge gate sends a personal
+workspace that is not running to `/workspace` and a shared one to its open route, so neither mode provisions behind the user's back or
+loops. Personal workspaces that already exist keep running when an install is switched to `never`; they just have no entry point
+for non-admins. Admins cannot create a personal workspace for someone else; the admin page only notes the mode.
 
 ### Trust model (read this before creating one)
 

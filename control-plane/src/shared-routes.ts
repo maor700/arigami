@@ -1,7 +1,7 @@
 // HTTP routes for shared workspaces, mounted by server.ts before its own fallthrough. Returns null for any path
 // that is not one of ours.
 //
-//   GET  /workspaces                         the picker: your own workspace + every shared one you may open
+//   GET  /workspaces                         the chooser: your own workspace (per CP_PERSONAL_WORKSPACES) + every shared one you may open
 //   GET  /workspaces/<name>/open             membership check -> handoff into the tenant AS YOU, with your role
 //   POST /admin/shared                       create              (org-admin; Origin-checked by server.ts)
 //   POST /admin/shared/<name>/members        add / change role
@@ -35,6 +35,12 @@ export interface SharedRouteCtx {
   resumeTenant(cfg: Config, t: import('./db.js').Tenant): Promise<void>;
 }
 
+/** A person's own tenant unless it was deleted (a deleted one is replaced by a fresh start, never reopened). */
+export function livePersonal(store: Store, subject: string) {
+  const t = store.findPersonalTenant(subject);
+  return t && t.state !== 'deleted' ? t : null;
+}
+
 /** The admin page's shared section (server.ts appends it to tpl.adminPage). */
 export function adminSection(store: Store): string {
   return sharedAdminSection(store.listShared().map((t) => ({ tenant: t, members: store.listMembers(t.ns) })));
@@ -46,7 +52,7 @@ export async function handleShared(req: Request, url: URL, principal: Principal 
 
   if (p === '/workspaces' && req.method === 'GET') {
     if (!principal) return redirect('/');
-    return html(workspacesPage(principal.email, store.findPersonalTenant(principal.subject), store.sharedFor(principal), principal.role === 'admin'));
+    return html(workspacesPage(principal.email, livePersonal(store, principal.subject), store.sharedFor(principal), principal.role === 'admin', cfg.personalWorkspaces));
   }
 
   const open = /^\/workspaces\/([^/]+)\/open$/.exec(p);
