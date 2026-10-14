@@ -355,7 +355,7 @@ describe('admin routes', () => {
     const s = setup();
     const boss = s.user('boss', 'admin');
     await s.shared('eng');
-    expect((await s.post('/admin/shared', boss.cookie, { name: 'Bad Name!' })).status).toBe(400);
+    expect((await s.post('/admin/shared', boss.cookie, { name: '9 Bad Name!' })).status).toBe(400);
     expect((await s.post('/admin/shared', boss.cookie, { name: 'eng' })).status).toBe(409);
     expect((await s.post('/admin/shared/eng/members', boss.cookie, { email: 'not-an-email', role: 'member' })).status).toBe(400);
     expect((await s.post('/admin/shared/eng/members', boss.cookie, { email: 'a@example.com', role: 'root' })).status).toBe(400);
@@ -548,5 +548,17 @@ describe('provisioner: chart flags and the roster transport', () => {
     expect(c.slice(0, 7)).toEqual(['kubectl', '-n', 'u-abcdef0123', 'exec', 'arigami-abcdef0123-0', '--', 'curl']);
     expect(c).toContain('http://127.0.0.1:3099/__api/auth/roster');
     expect(c[c.indexOf('--data') + 1]).toBe('{"t":"tok.sig"}');
+  });
+});
+
+describe('workspace names', () => {
+  test('a typed name is normalised before it is checked', async () => {
+    const { normalizeSharedName: n } = await import('../src/shared-ops.js');
+    expect(n('Team Alpha')).toBe('team-alpha');
+    expect(n('  my_team  ')).toBe('my-team');
+    expect(n('a--b')).toBe('a-b');
+    expect(n('x'.repeat(40))).toBe('x'.repeat(32));
+    expect(n('צוות')).toBe(''); // nothing usable: the error says why
+    expect(n('9lives')).toBe('9lives'); // still invalid (must start with a letter) — reported, not silently changed
   });
 });

@@ -65,13 +65,32 @@ export interface CreateOpts {
 }
 
 /**
+ * What a typed workspace name becomes: lowercase, spaces and underscores to dashes, anything else that a Kubernetes
+ * namespace name cannot hold dropped. "Team Alpha" → "team-alpha". May still be invalid (starts with a digit, too short).
+ */
+export function normalizeSharedName(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, 32)
+    .replace(/-+$/, '');
+}
+
+/**
  * Create the row (and members) synchronously; provisioning runs in `provisioned`, which a caller may await (the
  * CLI) or leave running (the admin page — the row is already `provisioning`, the list shows it).
  */
 export function createShared(deps: SharedDeps, o: CreateOpts): { tenant: SharedTenant; provisioned: Promise<boolean> } {
   const { cfg, store, log } = deps;
-  const name = String(o.name || '').trim().toLowerCase();
-  if (!NAME_RE.test(name)) throw new SharedError('name must be 2-32 chars: lowercase letters, digits and dashes, starting with a letter');
+  const name = normalizeSharedName(o.name);
+  if (!NAME_RE.test(name)) {
+    const shown = String(o.name || '').trim();
+    throw new SharedError(`name must be 2-32 chars: lowercase letters, digits and dashes, starting with a letter${shown ? ` (got "${shown}"${name ? `, which becomes "${name}"` : ', which has no usable letters or digits — use English letters'})` : ''}`);
+  }
   const policy = o.policy ?? 'explicit';
   const defaultRole = o.defaultRole ?? 'member';
   if (!isMemberPolicy(policy)) throw new SharedError('policy must be explicit or org');

@@ -64,9 +64,10 @@ export function sharedAdminSection(items: { tenant: SharedTenant; members: Membe
     workspace as soon as it hears the new member list.</small></p>
     ${blocks || '<p>None yet.</p>'}
     <form class="formrow" method="post" action="/admin/shared" style="margin-top:20px"><strong>New shared workspace</strong>
-      <input name="name" placeholder="name (e.g. team)" size="14">
+      <input name="name" placeholder="name (e.g. team)" size="14" required minlength="2" maxlength="32" pattern="[A-Za-z][A-Za-z0-9 _\\-]{1,31}" title="2-32 characters, English letters, digits and dashes, starting with a letter (e.g. team-alpha)" autocapitalize="none" autocomplete="off">
       <select name="policy"><option value="explicit">listed members only</option><option value="org">any org member</option></select>
       <label class="fld">default role <select name="default_role">${roleOptions('member')}</select></label>
       <label class="fld"><input type="checkbox" name="org_host" value="1"${items.some((i) => i.tenant.org_host && i.tenant.state !== 'deleted') ? '' : ' checked'}> org host (runs org-wide cron jobs)</label>
-      <button type="submit">Create</button></form>`;
+      <button type="submit">Create</button>
+      <small class="detail" style="flex-basis:100%">Name: 2–32 English letters, digits or dashes, starting with a letter (e.g. <code>team-alpha</code>). It becomes the workspace's address.</small></form>`;
 }
