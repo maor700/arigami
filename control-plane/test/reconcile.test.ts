@@ -90,6 +90,34 @@ describe('reconcileTick', () => {
     expect(calls).toEqual([]);
   });
 
+  test('a tenant orphaned in provisioning (control plane restarted mid-install) is finished once it is stale', async () => {
+    const { cfg, store } = setup({ CP_BACKUP_INTERVAL_SEC: '0' });
+    mkTenant(store, 's1', 'provisioning');
+    mkTenant(store, 's2', 'provisioning');
+    const provisioned: string[] = [];
+    const { o } = ops({}, { provision: async (t) => { provisioned.push(t.subject); } });
+    // young: a normal install may still be running — leave it alone
+    let sum = await reconcileTick(cfg, store, o, () => {});
+    expect(provisioned).toEqual([]);
+    expect(sum.resumed).toBeUndefined();
+    // stale: nothing in this process is working on it any more
+    const later = () => Date.now() + 10 * 60_000;
+    sum = await reconcileTick(cfg, store, o, () => {}, later);
+    expect(provisioned.sort()).toEqual(['s1', 's2']);
+    expect(sum.resumed?.length).toBe(2);
+    expect(store.findTenantBySubject('s1')!.state).toBe('running');
+    expect(store.findTenantBySubject('s1')!.running_digest).toBe('digest-a');
+  });
+
+  test('a stuck install that fails again stays in provisioning and is reported', async () => {
+    const { cfg, store } = setup({ CP_BACKUP_INTERVAL_SEC: '0' });
+    mkTenant(store, 's1', 'provisioning');
+    const { o } = ops({}, { provision: async () => { throw new Error('helm: boom'); } });
+    const sum = await reconcileTick(cfg, store, o, () => {}, () => Date.now() + 10 * 60_000);
+    expect(sum.failed).toEqual([store.findTenantBySubject('s1')!.ns]);
+    expect(store.findTenantBySubject('s1')!.state).toBe('provisioning');
+  });
+
   test('backup runs when the newest archive is stale (or absent), skips when fresh', async () => {
     const { cfg, store } = setup({ CP_BACKUP_INTERVAL_SEC: '3600' });
     mkTenant(store, 's1');

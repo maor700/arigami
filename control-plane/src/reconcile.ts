@@ -9,6 +9,9 @@
 //      is resolved to one commit and every running tenant that has not applied
 //      it is asked to re-apply — same "busy → skip, next tick retries" rule,
 //      canary ring first, stopping on the first failed apply.
+//   0. a tenant stuck in `provisioning` (the control plane restarted while its helm install was running — the
+//      in-process provisioning is gone and nothing else would ever finish it) gets its install re-run once it is
+//      older than STALE_PROVISIONING_MS. helm upgrade --install is idempotent, so re-running is safe.
 //   3. every `running` tenant whose newest backup is older than
 //      CP_BACKUP_INTERVAL_SEC gets one taken (src/backup.ts) — the
 //      "control-plane job" flavour of the PRD's backup CronJob.
@@ -31,7 +34,12 @@ import {
   type DesiredProfile, type DesiredRecord, type ProfileOps, type ProfileSummary,
 } from './profile-rollout.js';
 
+/** A tenant that has been `provisioning` longer than a normal install takes (30-90 s) is presumed orphaned. */
+export const STALE_PROVISIONING_MS = 150_000;
+
 export interface ReconcileOps {
+  /** (re)run a tenant's install — the same idempotent `helm upgrade --install` the sign-in path uses */
+  provision?(t: Tenant): Promise<unknown>;
   upgradeDeps: UpgradeDeps;
   backup(t: Tenant): Promise<unknown>;
   newestBackupMs(ns: string): number | null;
@@ -41,6 +49,7 @@ export interface ReconcileOps {
 
 export function realOps(cfg: Config): ReconcileOps {
   return {
+    provision: (t) => provisioner.provisionTenant(cfg, t),
     upgradeDeps: {
       busySessions: (t) => provisioner.tenantBusySessions(cfg, t),
       revision: (t) => provisioner.helmRevision(cfg, t),
@@ -55,6 +64,7 @@ export function realOps(cfg: Config): ReconcileOps {
 }
 
 export interface TickSummary {
+  resumed?: string[];
   upgraded: string[];
   blocked: string[];
   rolledBack: string[];
@@ -73,6 +83,22 @@ export async function reconcileTick(
 ): Promise<TickSummary> {
   const sum: TickSummary = { upgraded: [], blocked: [], rolledBack: [], failed: [], backedUp: [], backupFailed: [] };
   const touched = new Set<string>(); // tenants that already had their lifecycle action this tick
+  for (const t of store.listTenants()) {
+    if (t.state !== 'provisioning' || !ops.provision) continue;
+    const age = now() - (Date.parse(t.created_at || '') || 0);
+    if (age < STALE_PROVISIONING_MS) continue;
+    touched.add(t.ns);
+    try {
+      await ops.provision(t);
+      store.setRunningDigest(t.subject, t.desired_digest);
+      store.setTenantState(t.subject, 'running');
+      (sum.resumed ||= []).push(t.ns);
+      log(`[reconcile] ${t.ns} was stuck in provisioning — install finished, now running`);
+    } catch (e) {
+      sum.failed.push(t.ns);
+      log(`[reconcile] ${t.ns} provisioning retry failed: ${(e as Error).message}`);
+    }
+  }
   for (const t of store.listTenants()) {
     if (t.state !== 'running') continue;
     if (tierChangeInFlight(t.ns)) { touched.add(t.ns); continue; } // a tier change owns the release right now
