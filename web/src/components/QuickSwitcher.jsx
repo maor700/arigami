@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Truncate } from './Truncate.jsx';
 import { Command as CommandIcon } from 'lucide-react';
 import { Dot, sessionLabel } from './ui.jsx';
 import { needsAttention } from '../lib/store.js';
@@ -56,7 +57,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
         return (
           <CommandItem key={`s:${s.id}`} value={`s:${s.id}`} onSelect={run(() => onSelect(s.id))} data-palette-session={s.id}>
             <span className="flex size-4 shrink-0 items-center justify-center"><Dot color={s.color} size={9} /></span>
-            <span className="min-w-0 flex-1 truncate">{sessionLabel(s)}</span>
+            <Truncate text={sessionLabel(s)} className="min-w-0 flex-1" />
             {s.id === selectedId && <span className="text-2xs text-muted-foreground">{t('rail.current')}</span>}
             {working && <StatusDot status="info" pulse />}
             {attn && !working && <StatusDot status="warn" pulse />}

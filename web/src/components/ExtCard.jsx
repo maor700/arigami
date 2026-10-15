@@ -11,8 +11,7 @@
  * ordinary message, which is all a card is allowed to do.
  */
 import { useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Md from './Md.jsx';
 import { api } from '../lib/api.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
@@ -45,8 +44,8 @@ function ExtCardView({ props: { sessionId, event } }) {
       <Eyebrow>{event.extension ? `${t('ext.card.from')} · ${event.extension}` : t('ext.card.from')}</Eyebrow>
       {title && <div className="text-[13px] font-medium text-fg" dir={dirOf(title)}>{title}</div>}
       {body && (
-        <div className="md mt-1 text-[13px]" dir={dirOf(body)}>
-          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
+        <div className="md mt-1 text-[13px]">
+          <Md>{body}</Md>
         </div>
       )}
       {buttons.length > 0 && (

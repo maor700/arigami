@@ -1,6 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Md from './Md.jsx';
 import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
@@ -227,7 +226,7 @@ function SummaryChip({ session }) {
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="host-spinner size-3" /> {t('rail.generating')}</div>
           ) : (
             <div className="md text-sm" dir="auto">
-              <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
+              <Md>{summary.text || '…'}</Md>
             </div>
           )}
         </div>
@@ -626,7 +625,7 @@ function ListenersPanel({ session, initialId, onClose }) {
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* left: listener list — stacks on top of the details on phones */}
-          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[300px] md:border-r md:border-b-0">
+          <div className="thin-scroll max-h-[30vh] shrink-0 overflow-y-auto border-b border-hair bg-bg md:max-h-none md:w-[300px] md:border-e md:border-b-0">
             {list.map((l) => (
               <button
                 key={l.id}
@@ -945,7 +944,7 @@ function ContentTab({ tab }) {
   return (
     <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-bg">
       <div className="md-light mx-auto max-w-[860px] px-7 py-6">
-        <Markdown>{tab.body || ''}</Markdown>
+        <Md>{tab.body || ''}</Md>
       </div>
     </div>
   );

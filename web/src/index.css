@@ -284,6 +284,16 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
     "Rubik Variable", monospace;
 }
+/* Text aligned to the UI's start edge even when its own dir (dir="ltr" for a
+   Latin title in a Hebrew UI, and vice versa) differs; truncation/ellipsis still
+   follows the element's own dir. (`text-align: match-parent` is not honoured for
+   this by Blink, so the two cross cases are spelled out against <html dir>.) */
+html[dir='rtl'] .ui-start[dir='ltr'] {
+  text-align: right;
+}
+html[dir='ltr'] .ui-start[dir='rtl'] {
+  text-align: left;
+}
 html[dir="rtl"] {
   --font-sans: "Rubik Variable", "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -556,6 +566,19 @@ body {
 }
 .md li {
   margin: 0.15em 0;
+  /* the marker and indent belong to the LIST (its dir, set in Md.jsx); an item in
+     the other script still orders its own words/punctuation (plaintext) but stays
+     flush with the list's edge */
+  unicode-bidi: plaintext;
+}
+/* plaintext resolves `start` per item, so pin the edge to the list's side */
+.md ul[dir='ltr'] > li,
+.md ol[dir='ltr'] > li {
+  text-align: left;
+}
+.md ul[dir='rtl'] > li,
+.md ol[dir='rtl'] > li {
+  text-align: right;
 }
 .md code {
   font-family: var(--font-mono);
@@ -608,18 +631,9 @@ body {
   border-top: 1px solid var(--term-border);
   margin: 0.8em 0;
 }
-/* RTL only when needed: each text block picks its own direction from its
-   content (Hebrew/Arabic → RTL, otherwise LTR), while code/pre stay LTR. */
-.md p,
-.md li,
-.md h1,
-.md h2,
-.md h3,
-.md h4,
-.md blockquote,
-.md td {
-  unicode-bidi: plaintext;
-}
+/* RTL only when needed: each text block carries its own dir="auto" (see
+   components/Md.jsx) so markers, indents and quote bars follow the block's
+   language, not the app's; code/pre stay LTR. */
 .md pre,
 .md pre code,
 .md code {
@@ -684,6 +698,13 @@ body {
   color: inherit;
   padding: 0;
   font-size: 12px;
+}
+.md-light pre,
+.md-light pre code,
+.md-light code {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: left;
 }
 .md-light a {
   color: var(--color-fg);

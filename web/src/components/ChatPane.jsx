@@ -1,6 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Md from './Md.jsx';
 import { loadOlderChat, loadFullChatEvent, chatHasMore, useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import DiffCard from './DiffCard.jsx';
@@ -213,7 +212,7 @@ function AssistantMsg({ event, recap }) {
   useNow(30_000); // Event is memoized, so each stamp refreshes itself
   return (
     <div className="group md my-3" data-recap={recap ? '1' : undefined}>
-      <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      <Md>{text}</Md>
       {event.ts && <MsgMeta event={event} text={text} />}
     </div>
   );
@@ -276,9 +275,9 @@ export function TodoList({ todos }) {
         const Glyph = st === 'completed' ? CircleCheckIcon : st === 'in_progress' ? LoaderCircleIcon : CircleDashedIcon;
         const label = st === 'in_progress' && td?.activeForm ? td.activeForm : td?.content ?? '';
         return (
-          <li key={i} data-todo-status={st} className="flex items-start gap-2 text-[13px] leading-snug">
+          <li key={i} dir={dirOf(label)} data-todo-status={st} className="flex items-start gap-2 text-[13px] leading-snug">
             <Glyph className={`mt-0.5 size-3.5 shrink-0 ${st === 'completed' ? 'text-ok' : st === 'in_progress' ? 'text-[var(--term-fg)]' : 'text-[var(--term-faint)]'}`} />
-            <span dir="auto" className={st === 'completed' ? 'text-[var(--term-faint)] line-through' : st === 'in_progress' ? 'text-[var(--term-strong)]' : 'text-[var(--term-dim)]'}>{label}</span>
+            <span className={st === 'completed' ? 'text-[var(--term-faint)] line-through' : st === 'in_progress' ? 'text-[var(--term-strong)]' : 'text-[var(--term-dim)]'}>{label}</span>
           </li>
         );
       })}

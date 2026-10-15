@@ -4,8 +4,7 @@
 // Renderer contract: a component receives `{ props }` (already evaluated), not
 // spread props; arguments are POSITIONAL in zod key order, so required keys first.
 import { useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import Md from '../components/Md.jsx';
 import { z } from 'zod';
 import { defineComponent, createLibrary, useRenderNode, useTriggerAction, useSetFieldValue, useGetFieldValue, useFormName, FormNameContext } from '@openuidev/react-lang';
 import { dirOf, useT } from '../lib/i18n.js';
@@ -63,8 +62,8 @@ const MarkdownBlock = defineComponent({
   component: ({ props }) => {
     const text = str(props.text);
     return (
-      <div className="md text-[12.5px]" dir={dirOf(text)}>
-        <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      <div className="md text-[12.5px]">
+        <Md>{text}</Md>
       </div>
     );
   },

@@ -119,7 +119,7 @@ function AddTabForm({ sessionId, onClose }) {
                 onClick={() => openExt(row)}
                 className="flex min-h-8 cursor-pointer items-baseline gap-1.5 rounded-md px-2 py-1 text-start text-sm text-foreground outline-none hover:bg-muted focus-visible:bg-muted disabled:opacity-50 coarse:min-h-11 coarse:items-center"
               >
-                <span className="min-w-0 truncate">{row.title}</span>
+                <Truncate text={row.title} className="min-w-0" />
                 <span className="shrink-0 text-2xs text-muted-foreground">{row.extTitle}</span>
               </button>
             ))}

@@ -4,7 +4,7 @@ import { runAction } from '../lib/commands.js';
 import { useStore } from '../lib/store.js';
 import { usePrefs } from '../lib/prefs.js';
 import { sessionLabel } from './ui.jsx';
-import { t as tr, useT } from '../lib/i18n.js';
+import { t as tr, useT, fieldDir } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faMicrophone, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/button.jsx';
@@ -213,7 +213,7 @@ export default function VoiceHUD() {
                   {t('dialogs.voiceSendTo', { target: target ? sessionLabel(target) : t('dialogs.voiceCurrentSession') })}
                 </div>
                 <textarea
-                  dir="auto"
+                  dir={fieldDir(a.text)}
                   rows={2}
                   value={a.text}
                   onChange={(e) => setInjects((arr) => arr.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}

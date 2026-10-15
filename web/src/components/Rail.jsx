@@ -440,7 +440,7 @@ function Row({ session, selected, onSelect, onArchive, onRestore, onRestart, onD
               <Truncate
                 text={showTitle && session.metadata?.ticket ? session.title : label}
                 dir={dirOf(label)}
-                className={`min-w-0 flex-1 text-start leading-tight ${titleCls}`}
+                className={`min-w-0 flex-1 leading-tight ${titleCls}`}
               />
               <span className="flex shrink-0 items-center gap-1.5">
                 {watch && (
@@ -676,7 +676,7 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
-                  <Truncate text={a.name} dir={dirOf(a.name)} className="min-w-0 flex-1 text-start text-sm font-medium leading-tight text-foreground" />
+                  <Truncate text={a.name} dir={dirOf(a.name)} className="min-w-0 flex-1 text-sm font-medium leading-tight text-foreground" />
                   {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
                 </span>
                 <span className={META_CLS}>
@@ -922,7 +922,7 @@ function FolderRow({
               <Truncate
                 text={folder.name}
                 dir={dirOf(folder.name)}
-                className={`min-w-0 flex-1 text-start text-sm leading-tight ${isProject ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}
+                className={`min-w-0 flex-1 text-sm leading-tight ${isProject ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}
               />
               <span className="flex shrink-0 items-center gap-1.5">
                 {/* Per-kid dots exist to survive a fold — so they show only on a
@@ -982,7 +982,8 @@ function FolderRow({
               )}
               {isProject && <span className="shrink-0">{t('rail.managerChip')} ·</span>}
               {statusWord && <StatusWord>{statusWord}</StatusWord>}
-              {descLine && <Truncate as="span" text={`· ${descLine}`} dir={dirOf(descLine)} className="min-w-0 text-start" />}
+              {descLine && <span className="shrink-0">·</span>}
+              {descLine && <Truncate as="span" text={descLine} dir={dirOf(descLine)} className="min-w-0" />}
               {time && <span className="ms-auto shrink-0 tabular-nums">{time}</span>}
             </span>
           </span>
@@ -1926,7 +1927,7 @@ export default function Rail({
                   <Truncate
                     text={f.name}
                     dir={dirOf(f.name)}
-                    className="min-w-0 flex-1 text-start text-sm font-medium leading-tight text-foreground/90"
+                    className="min-w-0 flex-1 text-sm font-medium leading-tight text-foreground/90"
                   />
                   <span className="shrink-0 px-1.5 text-2xs tabular-nums leading-4 text-muted-foreground">
                     {(folderKids.get(f.id) || []).length}

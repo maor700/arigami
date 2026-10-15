@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from './ChatIcon.jsx';
-import { useT } from '../lib/i18n.js';
+import { useT, fieldDir } from '../lib/i18n.js';
 import { useModels } from '../lib/models.js';
 import { toastError } from '../lib/toast.js';
 import { engineLabel } from '../lib/engines.js';
@@ -129,7 +129,7 @@ function AgentCardView({ props: { sessionId, event } }) {
           <div className="grid grid-cols-[1fr_64px] gap-2 sm:col-span-2">
             <div>
               <label className={label}>{t('agent.card.name')}</label>
-              <input data-agent-field="name" dir="auto" value={draft.name} onChange={set('name')} className={field} />
+              <input data-agent-field="name" dir={fieldDir(draft.name)} value={draft.name} onChange={set('name')} className={field} />
             </div>
             <div>
               <label className={label}>{t('agent.card.emoji')}</label>
@@ -138,7 +138,7 @@ function AgentCardView({ props: { sessionId, event } }) {
           </div>
           <div className="sm:col-span-2">
             <label className={label}>{t('agent.card.persona')}</label>
-            <textarea data-agent-field="persona" dir="auto" rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
+            <textarea data-agent-field="persona" dir={fieldDir(draft.persona)} rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
           </div>
           <button type="button" data-agent-advanced onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1 text-xs text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] sm:col-span-2">
             <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}

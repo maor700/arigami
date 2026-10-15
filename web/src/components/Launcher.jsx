@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import { Truncate } from './Truncate.jsx';
+import Md from './Md.jsx';
 import { ChevronDown, ChevronRight, Pin, Star, TriangleAlert, X, Zap, ArrowUp } from 'lucide-react';
 import { api, PALETTE } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
@@ -639,7 +640,7 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
         <div className="mb-0.5 flex min-h-9 cursor-not-allowed items-center gap-3 rounded-md px-3 py-1.5 opacity-70 coarse:min-h-11">
           <Dot color={color} size={10} />
           <bdi className="shrink-0 text-xs font-medium text-muted-foreground tabular-nums">{ticket.id}</bdi>
-          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{ticket.title}</span>
+          <Truncate text={ticket.title} className="min-w-0 flex-1 text-sm text-muted-foreground" />
           <Badge>{t('launcher.ticket.inSession')}</Badge>
         </div>
       </Hint>
@@ -655,9 +656,7 @@ function TicketRow({ ticket, selected, onPick, openSession }) {
     >
       <PriorityGlyph priority={ticket.priority} />
       <bdi className="shrink-0 text-xs font-medium text-foreground tabular-nums">{ticket.id}</bdi>
-      <span className={cn('min-w-0 flex-1 truncate text-sm', selected ? 'text-foreground' : 'text-muted-foreground')}>
-        {ticket.title}
-      </span>
+      <Truncate text={ticket.title} className={cn('min-w-0 flex-1 text-sm', selected ? 'text-foreground' : 'text-muted-foreground')} />
       {ticket.status && <Badge variant="outline">{ticket.status}</Badge>}
       {ticket.project && (
         <span className="hidden max-w-32 shrink-0 truncate text-xs text-muted-foreground sm:inline">{ticket.project}</span>
@@ -967,7 +966,7 @@ function TicketDetailsModal({ id, onClose }) {
 
               {data.description ? (
                 <div className="md-light border-t border-hair pt-4">
-                  <Markdown>{data.description}</Markdown>
+                  <Md>{data.description}</Md>
                 </div>
               ) : (
                 <div className="border-t border-hair pt-4 text-sm text-muted-foreground">{t('launcher.details.noDescription')}</div>
@@ -995,7 +994,7 @@ function TicketDetailsModal({ id, onClose }) {
                     {data.comments.map((c, i) => (
                       <div key={i} className="rounded-md border border-hair bg-card px-3.5 py-3">
                         <div className="mb-1 text-xs font-medium text-foreground">{c.author || t('launcher.details.someone')}</div>
-                        <div className="md-light text-sm"><Markdown>{c.body}</Markdown></div>
+                        <div className="md-light text-sm"><Md>{c.body}</Md></div>
                       </div>
                     ))}
                   </div>
@@ -1741,7 +1740,7 @@ export function CronSubPanel() {
                   </Hint>
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{cj.name}</span>
+                  <Truncate text={cj.name} className="block text-sm font-medium" />
                   <span className="block truncate text-xs text-muted-foreground">{scheduleSummary(cj.schedule, t)}</span>
                 </span>
                 {lastRunState && (
@@ -2022,7 +2021,7 @@ function TriggerTab() {
               </Hint>
             )}
             <span className="min-w-0 flex-1 basis-40">
-              <span className="block truncate text-sm font-medium">{trg.name}</span>
+              <Truncate text={trg.name} className="block text-sm font-medium" />
               <span className="block truncate text-xs text-muted-foreground">
                 {filterSummary(trg.filters)}
                 {trg.lastError ? <> · <TriangleAlert className="inline size-3.5 align-text-bottom" aria-hidden="true" /> {trg.lastError}</> : ''}
