@@ -16,6 +16,8 @@ This file lists what changed against `master`, organised by area. Rule of the br
 | Open in VS Code (Changes) | Changes header row | Changes `⋯` menu | D2 |
 | Changes file / feature list (phone) | inline collapsible | bottom sheet from the same "Files · n" bar | — |
 | Machine / Summary | header chips | stay in the header (ghost buttons) | D9 C |
+| Terminal-controls gear (context, direction, theme, restart, clear) | session header gear | **removed from the session header** (D10): context % is a chip that opens Context / Compact; Restart + Clear + "Display for this chat" (direction, chat theme) + chat view + text size are in the header `…` menu; default direction / chat theme / text size / accent are in Settings › General › Appearance (the gear remains only on an agent home page, which has no composer) | D10 (approved) |
+| Model, effort, permissions row in the gear | gear | composer pill only | D10 |
 
 Added (derived display only, no new capability): "Needs you" group pinned at the top of the rail; ⌘/Ctrl+J = next session that needs me; palette shows sessions + commands on an empty query, "Switch language" command; PR and branch chips on rail rows when the data exists; Plan card for `TodoWrite`; `@` button in the composer; Changes meta line with total +/−; Orchestration progress rollup and "Needs you" strip with Open.
 
@@ -32,14 +34,14 @@ Removed: nothing.
 
 ## Open decisions for the owner
 
-1. D10 — gear vs composer pill. Current: pill is the source of truth; gear keeps Context, Direction, Theme, Restart, Clear plus one row that opens the pill. Recommended (consolidation C): drop the gear entirely, make the context chip open Context/Compact, move Restart and Clear to the header `…`, move Direction/Theme to Settings. See: any session, gear icon in the header and the pill in the composer.
+1. ~~D10~~ DONE in QA round 1 — gear removed (see the moved index). Was: gear vs composer pill. Current: pill is the source of truth; gear keeps Context, Direction, Theme, Restart, Clear plus one row that opens the pill. Recommended (consolidation C): drop the gear entirely, make the context chip open Context/Compact, move Restart and Clear to the header `…`, move Direction/Theme to Settings. See: any session, gear icon in the header and the pill in the composer.
 2. D9 — Simple/Terminal now lives in the header `…` menu (2 clicks). Recommended: keep (C). See: session header `…`.
-3. D12 — Orchestration has the rollup + Needs-you strip but no inline "Approve" (a new capability). Recommended: C with context shown before acting. See: a project controller session → Orchestration tab.
+3. ~~D12~~ DONE in QA round 1 — inline Approve / Deny / Answer / Review on the Needs-you rows via the existing permission answer. Was: Orchestration has the rollup + Needs-you strip but no inline "Approve" (a new capability). Recommended: C with context shown before acting. See: a project controller session → Orchestration tab.
 4. D14 — rows show branch and PR chips but no `+a −d` or CI dot (not on the session data). Recommended: add only when the data exists.
 5. D15 — no working timer, tool durations or Retry-on-error in chat (need defined semantics). Recommended: defer.
 6. D8 — permission card keeps Allow / Deny only (no "Always allow", no "Undo"). Recommended: keep as is.
-7. Several pending cards in one chat each carry their own primary button (e.g. "Create agent" and "Connect automatically" at once). Recommended: only the newest waiting card is primary.
-8. Chat pane keeps its own light/dark (`termTheme`), independent of the app theme (V12). Recommended: follow the app theme by default.
+7. ~~DONE~~ only the newest waiting card keeps the accent button (QA round 1). Was: Several pending cards in one chat each carry their own primary button (e.g. "Create agent" and "Connect automatically" at once). Recommended: only the newest waiting card is primary.
+8. ~~DONE~~ chat follows the app theme by default; Settings › Appearance has Follow app / Light / Dark (QA round 1). Was: Chat pane keeps its own light/dark (`termTheme`), independent of the app theme (V12). Recommended: follow the app theme by default.
 
 ## RTL / Hebrew text alignment (fix pass)
 
@@ -230,3 +232,5 @@ Finding numbers: UX = astra-ux.md, M = astra-mobile.md, R = astra-rtl.md.
 
 **Left as decisions**
 - UX7/D10 gear vs pill consolidation; D9 Simple/Terminal in the header menu; M "Skills" title translation gap (R12).
+
+**Owner decisions applied in QA round 1:** D10 gear removed (every item ≤ 2 clicks: context chip 1; Restart / Clear / chat view / text size / display-for-this-chat via `…` = 2; direction, chat theme, UI size, text size, accent in Settings › Appearance); D12 inline Approve/Deny (permission), Answer (question), Review (finished branch) on Orchestration "Needs attention" rows, using only `POST /sessions/:id/permission/answer` and the child's own chat read — the first row's action is the only accent button; newest waiting card keeps the accent in a chat; chat theme default "Follow app", contrast of all chat colours checked in both themes (scan: 0 failures at 4.5:1 on chat EN/HE, 1440/390). Kept as is: Simple/Terminal in `…`, permission card Allow/Deny only, tool durations / Retry deferred, row +/- and CI dot only with data (skipped).

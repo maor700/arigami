@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckIcon, FolderTreeIcon, RotateCwIcon, TriangleAlertIcon } from 'lucide-react';
 import { api } from '../lib/api.js';
+import { answerPermission } from '../lib/store.js';
+import { pendingRequestOf, nextAction } from '../lib/orch-pending.js';
 import { toastError, toastSuccess } from '../lib/toast.js';
 import { confirmDialog } from '../lib/confirm.js';
 import { Truncate } from './Truncate.jsx';
@@ -116,6 +118,55 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
   );
 }
 
+// A "Needs you" row's request, shown first, with its one next action. Approve / Deny use the
+// existing permission answer; a question or a review opens the child (its own card / Changes).
+function NeedRow({ n, first, last }) {
+  const t = useT();
+  const [pending, setPending] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api.get(`/sessions/${n.id}/chat?limit=40&clip=300`).then((r) => { if (live) setPending(pendingRequestOf(r?.events || r)); }).catch(() => {});
+    return () => { live = false; };
+  }, [n.id]);
+  const action = nextAction(pending, n.worker);
+  const answer = async (behavior) => {
+    setBusy(true);
+    try { await answerPermission(n.id, pending.requestId, behavior); setDone(behavior); setPending(null); } catch { setPending(null); }
+    setBusy(false);
+  };
+  return (
+    <div className={`flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1.5 px-3.5 py-2 ${last ? '' : ''}`} data-need-row={n.id} data-next-action={action || undefined}>
+      <StatusDot status="warn" pulse />
+      <span className="min-w-0 flex-1 basis-48">
+        <span className="text-sm font-medium text-foreground">{n.title}</span>
+        <span className="ms-2 text-xs text-muted-foreground">{t(n.reasonKey)}</span>
+        {pending?.type === 'permission' && (
+          <span className="block truncate text-xs text-foreground" dir="auto" data-need-request>
+            <b className="font-medium">{pending.tool}</b>{pending.summary ? <> · <bdi dir="ltr" className="font-mono">{pending.summary}</bdi></> : null}
+          </span>
+        )}
+        {pending?.type === 'question' && pending.text && <span className="block truncate text-xs text-foreground" dir="auto">{pending.text}</span>}
+        {!pending && n.reason && <span className="block truncate text-xs text-muted-foreground">{n.reason}</span>}
+        {done && <span className="block text-xs text-muted-foreground">{t(done === 'allow' ? 'chat.orchApproved' : 'chat.orchDenied')}</span>}
+      </span>
+      {action === 'approve' && (
+        <>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => answer('deny')} data-need-deny>{t('chat.orchDeny')}</Button>
+          {/* only the first row's action carries the accent: one primary per view */}
+          <Button variant={first ? 'primary' : 'outline'} size="sm" disabled={busy} onClick={() => answer('allow')} data-need-approve>{t('chat.orchApprove')}</Button>
+        </>
+      )}
+      {action !== 'approve' && (
+        <Button variant={first && action ? 'primary' : 'outline'} size="sm" onClick={() => jump(n.id)} title={t('chat.jumpToWorker')} data-need-open>
+          {action === 'answer' ? t('chat.orchAnswer') : action === 'review' ? t('chat.orchReview') : t('chat.orchOpen')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function GroupHeader({ dot, label, count }) {
   return (
     <div className="mb-2 flex items-center gap-2">
@@ -217,15 +268,15 @@ export default function OrchestrationTab({ session, active }) {
   const rollCounts = groups.map((g) => [g, byGroup.get(g).length]);
   const needs = [];
   const seen = new Set();
-  const pushNeed = (id, title, reasonKey, reason) => { if (!seen.has(id)) { seen.add(id); needs.push({ id, title, reasonKey, reason }); } };
+  const pushNeed = (id, title, reasonKey, reason, worker) => { if (!seen.has(id)) { seen.add(id); needs.push({ id, title, reasonKey, reason, worker }); } };
   for (const n of nodes) {
     const w = workerFor(n);
-    if (n.state === 'blocked' || n.state === 'error') pushNeed(w?.id || n.id, n.id, STATE_STYLE[n.state].key, w?.result?.note || n.desc || '');
-    else if (w?.claude_state === 'awaiting-input') pushNeed(w.id, n.id, 'screen.needsYou', '');
+    if (n.state === 'blocked' || n.state === 'error') pushNeed(w?.id || n.id, n.id, STATE_STYLE[n.state].key, w?.result?.note || n.desc || '', w);
+    else if (w?.claude_state === 'awaiting-input') pushNeed(w.id, n.id, 'screen.needsYou', '', w);
   }
   for (const c of orphans) {
-    if (c.claude_state === 'awaiting-input') pushNeed(c.id, c.subtask || c.title || c.id, 'screen.needsYou', '');
-    else if (c.result?.state === 'blocked') pushNeed(c.id, c.subtask || c.title || c.id, 'chat.stateBlocked', c.result?.note || '');
+    if (c.claude_state === 'awaiting-input') pushNeed(c.id, c.subtask || c.title || c.id, 'screen.needsYou', '', c);
+    else if (c.result?.state === 'blocked') pushNeed(c.id, c.subtask || c.title || c.id, 'chat.stateBlocked', c.result?.note || '', c);
   }
 
   return (
@@ -279,15 +330,7 @@ export default function OrchestrationTab({ session, active }) {
             <GroupHeader dot="warn" label={t('chat.orchNeedsAttention')} count={needs.length} />
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {needs.map((n, i) => (
-                <div key={n.id} className={`flex min-h-11 items-center gap-2 px-3.5 py-2 ${i ? 'border-t border-border' : ''}`}>
-                  <StatusDot status="warn" pulse />
-                  <span className="min-w-0 flex-1">
-                    <span className="text-sm font-medium text-foreground">{n.title}</span>
-                    <span className="ms-2 text-xs text-muted-foreground">{t(n.reasonKey)}</span>
-                    {n.reason && <span className="block truncate text-xs text-muted-foreground">{n.reason}</span>}
-                  </span>
-                  <Button variant="outline" size="sm" onClick={() => jump(n.id)} title={t('chat.jumpToWorker')}>{t('chat.orchOpen')}</Button>
-                </div>
+                <div key={n.id} className={i ? 'border-t border-border' : ''}><NeedRow n={n} first={i === 0} last={i === needs.length - 1} /></div>
               ))}
             </div>
           </section>

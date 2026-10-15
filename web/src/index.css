@@ -761,6 +761,17 @@ body {
   padding: 4px 9px;
 }
 
+/* Several waiting cards in one chat: only the newest keeps the accent button (ChatPane marks it
+   data-newest-waiting); older waiting cards show the same button neutral (the `outline` look). */
+.term [data-waiting]:not([data-newest-waiting]) [data-slot="button"][data-variant="primary"] {
+  background: transparent;
+  color: var(--foreground);
+  border-color: var(--input);
+}
+.term [data-waiting]:not([data-newest-waiting]) [data-slot="button"][data-variant="primary"]:hover {
+  background: var(--muted);
+}
+
 /* ------- diff syntax highlighting (lowlight / highlight.js tokens) -------
    VSCode "Light+" palette by default, "Dark+" under [data-theme="dark"].
    Scoped to .diff-syntax so it never leaks into markdown/content tabs. */

@@ -290,3 +290,15 @@ test('Triggers and New agent show a visible label; Open in VS Code is a visible 
   expect(rail).toMatch(/<Plus \/> <span className="truncate">\{t\('rail\.teamNewAgent'\)/);
   expect(read('components/ChangesTab.jsx')).toContain('data-action="open-editor"');
 });
+
+test('several waiting cards: only the newest keeps the accent button', () => {
+  expect(read('openui/primitives.jsx')).toContain("data-waiting={live ? '' : undefined}");
+  expect(read('openui/primitives.jsx')).toContain('data-variant={variant}');
+  expect(read('components/ChatPane.jsx')).toContain("setAttribute('data-newest-waiting', '')");
+  expect(read('index.css')).toMatch(/\.term \[data-waiting\]:not\(\[data-newest-waiting\]\) \[data-slot="button"\]\[data-variant="primary"\]/);
+});
+
+test('chat follows the app theme by default; explicit chat theme stays in Appearance (follow app / light / dark)', () => {
+  expect(read('lib/prefs.js')).toContain("termTheme: 'auto'");
+  expect(read('components/settings/Appearance.jsx')).toContain("settings.chatTheme.auto");
+});

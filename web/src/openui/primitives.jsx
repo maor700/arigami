@@ -50,7 +50,7 @@ export const CardFrame = forwardRef(function CardFrame({ tone = 'accent', live, 
   const uiDir = langDir(usePrefs().language);
   const dot = live ? 'bg-warn pulse-yellow' : TONE_DOT[tone] || TONE_DOT.accent;
   return (
-    <div ref={ref} dir={uiDir} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
+    <div ref={ref} dir={uiDir} data-waiting={live ? '' : undefined} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
       {(label || right || live) && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {(live || ((tone === 'ok' || tone === 'danger') && !icon)) && <span aria-hidden="true" data-card-dot className={`size-1.5 shrink-0 rounded-full ${dot}`} />}
@@ -87,7 +87,7 @@ export const btnClass = (variant = 'primary', extra = '') => `cursor-pointer ${B
 
 export const Btn = forwardRef(function Btn({ variant = 'primary', className = '', type = 'button', children, ...rest }, ref) {
   return (
-    <button ref={ref} type={type} className={btnClass(variant, className)} {...rest}>
+    <button ref={ref} type={type} data-slot="button" data-variant={variant} className={btnClass(variant, className)} {...rest}>
       {children}
     </button>
   );
