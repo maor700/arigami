@@ -275,8 +275,8 @@ export default function OrchestrationTab({ session, active }) {
 
       <div className="space-y-5 p-4">
         {needs.length > 0 && (
-          <section data-needs-you="">
-            <GroupHeader dot="warn" label={t('screen.needsYou')} count={needs.length} />
+          <section data-needs-you="" title={t('chat.orchNeedsAttentionHint')}>
+            <GroupHeader dot="warn" label={t('chat.orchNeedsAttention')} count={needs.length} />
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {needs.map((n, i) => (
                 <div key={n.id} className={`flex min-h-11 items-center gap-2 px-3.5 py-2 ${i ? 'border-t border-border' : ''}`}>

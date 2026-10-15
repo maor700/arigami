@@ -239,7 +239,7 @@ applyTheme(); // set before first paint
 applyBranding();
 
 // Follow the OS while themeMode is 'system' (a phone that switches at sunset).
-if (HAS_DOM && typeof window.matchMedia === 'function') {
+if (HAS_DOM && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
   try {
     const mq = window.matchMedia('(prefers-color-scheme: light)');
     const onChange = () => {

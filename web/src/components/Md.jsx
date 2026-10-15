@@ -33,7 +33,7 @@ export function nodeDir(node) {
 // between two RTL runs go RTL), so the quote, `;` and `//` hop sides. Each run of
 // RTL words becomes its own isolate (<bdi>): the words keep their reading order,
 // the syntax around them keeps the code's order.
-const RTL_RUN = /[\u0590-\u08FF\uFB1D-\uFEFC](?:[\u0590-\u08FF\uFB1D-\uFEFC\d ]*[\u0590-\u08FF\uFB1D-\uFEFC])?/g;
+const RTL_RUN = /[\u0590-\u08FF\uFB1D-\uFEFC](?:[\u0590-\u08FF\uFB1D-\uFEFC\d ]*[\u0590-\u08FF\uFB1D-\uFEFC\d])?/g;
 export function isolateRtlRuns(text) {
   const out = [];
   let last = 0;

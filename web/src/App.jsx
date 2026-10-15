@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { api } from './lib/api.js';
 import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
@@ -11,23 +11,13 @@ import { Icon } from './lib/icons.js';
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
 import ScreenSidePanel from './components/ScreenSidePanel.jsx';
-import ScreenModal from './components/ScreenModal.jsx';
-import Launcher, { buildTicketPayload, EngineToggle, SessionOptionsPicker } from './components/Launcher.jsx';
 import FirstRun from './components/FirstRun.jsx';
-import Settings from './components/Settings.jsx';
+import { EngineToggle } from './components/EngineToggle.jsx';
 import { parseHash, parseLocation, routeFromState, sessionFromSearch } from './lib/route.js';
-import SkillsView from './components/SkillsView.jsx';
-import BrainView from './components/BrainView.jsx';
-import AgentView from './components/AgentView.jsx';
-import Setup from './components/Setup.jsx';
-import Wizard from './components/Wizard.jsx';
 import VoiceHUD from './components/VoiceHUD.jsx';
-import QuickSwitcher from './components/QuickSwitcher.jsx';
-import ShortcutsHelp from './components/ShortcutsHelp.jsx';
 import Toaster from './components/Toaster.jsx';
 import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
-import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
 import { Archive, Bell, Brain, ChevronDown, ChevronUp, CircleHelp, CircleUser, Contrast, Diff, House, Languages, Menu, Pencil, Plus, Puzzle, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { Button } from './components/ui/button.jsx';
 import { Badge } from './components/ui/badge.jsx';
@@ -35,6 +25,27 @@ import { Tip } from './components/ui/tooltip.jsx';
 import { Input, Textarea } from './components/ui/input.jsx';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from './components/ui/sheet.jsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.jsx';
+
+// Whole screens and dialogs that are not on the first paint load on demand: the
+// first view (rail + session) ships without Settings, the launcher, setup, skills,
+// brain, agents, the palette, shortcuts and the dialogs. The fallbacks hold the
+// same space (a flexible empty pane / nothing for overlays), so nothing shifts.
+const lazyNamed = (load, name) => lazy(() => load().then((m) => ({ default: m[name] })));
+const Settings = lazy(() => import('./components/Settings.jsx'));
+const SkillsView = lazy(() => import('./components/SkillsView.jsx'));
+const BrainView = lazy(() => import('./components/BrainView.jsx'));
+const AgentView = lazy(() => import('./components/AgentView.jsx'));
+const Setup = lazy(() => import('./components/Setup.jsx'));
+const Wizard = lazy(() => import('./components/Wizard.jsx'));
+const Launcher = lazy(() => import('./components/Launcher.jsx'));
+const SessionOptionsPicker = lazyNamed(() => import('./components/Launcher.jsx'), 'SessionOptionsPicker');
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher.jsx'));
+const ShortcutsHelp = lazy(() => import('./components/ShortcutsHelp.jsx'));
+const ScreenModal = lazy(() => import('./components/ScreenModal.jsx'));
+const ArchiveDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'ArchiveDialog');
+const DeleteDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'DeleteDialog');
+const EditSessionDialog = lazyNamed(() => import('./components/Dialogs.jsx'), 'EditSessionDialog');
+const ViewFallback = () => <div className="min-h-0 flex-1" aria-busy="true" />;
 
 // matchesHotkey (the "Cmd+Shift+V" parser) lives in lib/voice.js (VOICE2).
 
@@ -1104,9 +1115,10 @@ function Cockpit() {
             {reconnecting ? t('chrome.conn.reconnecting') : conn === 'connecting' ? t('chrome.conn.connecting') : t('chrome.conn.offline')}
           </div>
         )}
-        {main}
+        <Suspense fallback={<ViewFallback />}>{main}</Suspense>
       </main>
       <VoiceHUD />
+      <Suspense fallback={null}>
       {quickSwitcherOpen && (
         <QuickSwitcher
           sessions={active}
@@ -1140,6 +1152,7 @@ function Cockpit() {
           Take over on a request_screen card (same, plus the request
           context). Closing never answers the request. */}
       {storeState.screen.modal && <ScreenModal context={storeState.screen.modal} onClose={closeScreenTakeover} />}
+      </Suspense>
       <ConfirmHost />
       <Toaster />
     </div>

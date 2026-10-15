@@ -112,7 +112,7 @@ export function Webhooks() {
           pill={<StatusPill status={cfgv[kind].configured ? 'ok' : 'off'} label={cfgv[kind].configured ? t('chrome.webhooks.secret.set', { source: cfgv[kind].source }) : t('chrome.webhooks.secret.missing')} />}
           hint={<span dir="ltr" className="font-mono">{cfgv[kind].url}</span>}
           actions={<>
-            <input type="password" autoComplete="off" value={secretDraft[kind]} onChange={(e) => setSecretDraft((d) => ({ ...d, [kind]: e.target.value }))} placeholder={t('chrome.webhooks.secret.placeholder')} className={input} disabled={cfgv[kind].source === 'env'} />
+            <input type="password" autoComplete="off" value={secretDraft[kind]} onChange={(e) => setSecretDraft((d) => ({ ...d, [kind]: e.target.value }))} placeholder={t('chrome.webhooks.secret.placeholder')} aria-label={`${kind} · ${t('chrome.webhooks.secret.placeholder')}`} className={input} disabled={cfgv[kind].source === 'env'} />
             <button type="button" disabled={busy || cfgv[kind].source === 'env'} onClick={() => saveSecret(kind)} className={BTN_SM}>{secretDraft[kind] ? t('chrome.webhooks.secret.save') : t('chrome.webhooks.secret.clear')}</button>
           </>}
         />
@@ -122,7 +122,7 @@ export function Webhooks() {
         title={t('chrome.webhooks.custom')}
         hint={t('chrome.webhooks.custom.hint')}
         actions={<>
-          <input type="text" value={customId} onChange={(e) => setCustomId(e.target.value)} placeholder="my-hook" className={input} />
+          <input type="text" value={customId} onChange={(e) => setCustomId(e.target.value)} placeholder="my-hook" aria-label={t('chrome.webhooks.custom')} className={input} />
           <button type="button" disabled={busy || !/^[A-Za-z0-9_.-]{1,64}$/.test(customId.trim())} onClick={addCustom} className={BTN_SM}>{t('chrome.webhooks.custom.add')}</button>
         </>}
       >

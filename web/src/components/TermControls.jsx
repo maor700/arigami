@@ -15,10 +15,17 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu.jsx';
+import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
+import { chatModeOf } from '../lib/chatMode.js';
+import { useIsDesktop } from '../lib/useMedia.js';
 
 // Permission modes mirror server/claude.js PERMISSION_MODES.
 const PERMISSION_OPTIONS = [
@@ -378,6 +385,8 @@ export default function TermControls({ session }) {
   const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
   const pillOwns = useComposerPillMounted();
   const restarting = session.claude?.state === 'restarting';
+  const isDesktop = useIsDesktop();
+  const chatMode = chatModeOf(session, isDesktop);
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'model' | 'effort'
 
   // A picker opens after the menu has finished closing (Radix returns focus to
@@ -387,9 +396,9 @@ export default function TermControls({ session }) {
   return (
     <span className="relative flex items-center">
       <DropdownMenu>
-        <Tip label={t('rail.terminalControls')}>
+        <Tip label={t('rail.readingControls')}>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" aria-label={t('rail.terminalControls')} data-term-controls className="gap-1.5 px-1.5 text-muted-foreground aria-expanded:text-foreground">
+            <Button variant="ghost" size="sm" aria-label={t('rail.readingControls')} data-term-controls className="gap-1.5 px-1.5 text-muted-foreground aria-expanded:text-foreground">
               {ctx?.ctxPct != null && (
                 <span className="text-xs font-medium tabular-nums" style={{ color: ctxTone(ctx.ctxPct) }}>
                   {ctx.ctxPct}%
@@ -400,14 +409,22 @@ export default function TermControls({ session }) {
           </DropdownMenuTrigger>
         </Tip>
         <DropdownMenuContent align="end" className="w-64">
+          {/* one "reading" group: chat view, text size, direction, theme — the same
+              controls (and ⌘+ / ⌘− / ⌘0 for the size) as Settings → General */}
+          <ChatModeItems
+            M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+            session={session}
+            mode={chatMode}
+          />
+          <ChatTextSizeSub />
+          <MenuRow label={t('rail.direction')} value={t(`common.${view.dir}`)} onSelect={openModal('dir')} />
+          <MenuRow label={t('rail.chatTheme')} value={t(`common.${view.theme}`)} onSelect={openModal('theme')} />
+          <DropdownMenuSeparator />
           <MenuRow
             label={t('rail.context')}
             value={ctx?.ctxPct != null ? `${ctx.ctxPct}%` : '—'}
             onSelect={openModal('context')}
           />
-          <DropdownMenuSeparator />
-          <MenuRow label={t('rail.direction')} value={t(`common.${view.dir}`)} onSelect={openModal('dir')} />
-          <MenuRow label={t('rail.theme')} value={t(`common.${view.theme}`)} onSelect={openModal('theme')} />
           <DropdownMenuSeparator />
           {pillOwns ? (
             <MenuRow

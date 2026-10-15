@@ -158,6 +158,7 @@ export const strings = {
   'setup.repo.err.gitRejected': 'למכונה יש גישת git, אבל היא לא מצליחה לקרוא את הריפוזיטורי הזה. בדוק שלחשבון ה-GitHub המחובר (או לטוקן) יש גישה אליו.',
   'setup.repo.already': '“{name}” כבר בסביבת העבודה שלך.',
   'setup.repo.alreadyCloning': '“{name}” כבר היה רשום — מוריד אותו עכשיו.',
+  'setup.repo.addedLocal': '״{name}״ נוסף — מעתיק אותו אל סביבת העבודה.',
   'setup.repo.added': '“{name}” נוסף — מוריד אותו עכשיו.',
 
   'setup.takeover.step1': 'פתח את המסך של הסוכן והתחבר ל-Google ב-Chrome שלו.',

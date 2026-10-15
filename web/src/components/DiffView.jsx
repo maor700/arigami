@@ -3,10 +3,9 @@
 // opens an inline composer; existing comments render as threads under the line.
 // Colours come from the shared --diff-* tokens (index.css), the same ones the
 // chat DiffCard uses, so a diff reads the same in both places.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PlusIcon } from 'lucide-react';
 import { CommentThread, CommentComposer } from './Comments.jsx';
-import { highlightDiff } from '../lib/highlight.js';
 import { useT } from '../lib/i18n.js';
 
 // Render a line of code as syntax-highlighted spans (lowlight tokens) when we
@@ -158,7 +157,15 @@ export function DiffView({ diff, mode = 'split', comments = [], onAddComment, co
   // Parse + syntax-highlight once per (diff, path); coloring is class-based so
   // it's theme-independent (the .diff-syntax CSS palette follows the theme).
   const lines = useMemo(() => (diff == null ? [] : parseDiff(diff)), [diff]);
-  const tokens = useMemo(() => highlightDiff(lines, path), [lines, path]);
+  // The highlighter (lowlight + its grammars, ~0.4 MB) is its own chunk: lines render plain at once
+  // and take their colours when it arrives — same row heights, so nothing shifts.
+  const [tokens, setTokens] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setTokens(null);
+    import('../lib/highlight.js').then((m) => { if (live) setTokens(m.highlightDiff(lines, path)); }).catch(() => {});
+    return () => { live = false; };
+  }, [lines, path]);
   const tok = (li) => (tokens ? tokens.get(li) : null);
 
   const note = 'p-8 text-center text-sm text-muted-foreground';

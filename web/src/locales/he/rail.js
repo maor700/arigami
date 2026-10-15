@@ -217,6 +217,8 @@ export const strings = {
   'rail.switchEffortWarnBefore': '{engine} עובד בסשן הזה. מעבר אל ',
   'rail.switchEffortWarnAfter': ' יעצור את הריצה הנוכחית וימשיך את אותה שיחה בטרמינל הזה עם רמת המאמץ החדשה.',
   'rail.clearConversation': 'ניקוי שיחה',
+  'rail.readingControls': 'תצוגת הצ׳אט — מצב, גודל טקסט, ערכת נושא, כיוון',
+  'rail.chatTheme': 'ערכת נושא לצ׳אט',
   'rail.terminalControls': 'בקרות טרמינל',
   'rail.context': 'הקשר',
   'rail.direction': 'כיוון',

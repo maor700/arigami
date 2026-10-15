@@ -31,9 +31,14 @@ export function newlyCloned(prev, next) {
   return (next || []).filter((r) => r.state === 'cloned' && was.has(r.name) && was.get(r.name) !== 'cloned').map((r) => r.name);
 }
 
+/** A source typed as a folder on this machine (not a GitHub owner/repo or git URL): "/srv/app", "~/app", "./app", "C:\\app". */
+export function isLocalSource(source) {
+  return /^(\/|~|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(String(source || '').trim());
+}
+
 /** What to tell the user after "add": the response of POST /onboarding/repos. */
-export function addOutcome(res) {
+export function addOutcome(res, source) {
   if (res?.existing && (res.state === 'cloned' || res.present)) return 'already';
   if (res?.existing) return 'cloning-existing';
-  return 'added';
+  return isLocalSource(source) ? 'added-local' : 'added';
 }

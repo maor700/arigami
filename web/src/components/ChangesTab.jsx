@@ -689,10 +689,15 @@ export default function ChangesTab({ session, active }) {
                   <RotateCwIcon className={`size-4 ${loading ? 'animate-spin' : ''}`} />
                 </Button>
               </Tip>
-              <ChangesMenu
-                desktop noWorktree={noWorktree} onOpenEditor={openEditor} opening={opening}
-                outdated={outdated} filesCount={files.length} mode={mode} setMode={setMode} loading={loading} onRefresh={load}
-              />
+              {/* QA round 1: the editor action is a visible button again (it was behind "⋯"
+                  next to its visible neighbours); the desktop "⋯" menu held nothing else */}
+              {!noWorktree && (
+                <Tip label={t('chat.openInVsCode')}>
+                  <Button variant="outline" size="sm" onClick={openEditor} disabled={opening} data-action="open-editor">
+                    <ExternalLinkIcon className="size-3.5 rtl:-scale-x-100" /> {opening ? t('chat.opening') : t('chat.openInVsCodeShort')}
+                  </Button>
+                </Tip>
+              )}
             </>
           ) : (
             <ChangesMenu

@@ -220,6 +220,8 @@ export const strings = {
   'rail.switchEffortWarnBefore': '{engine} is working in this session. Switching to ',
   'rail.switchEffortWarnAfter': ' will stop the current run and resume the same conversation in this terminal with the new effort level.',
   'rail.clearConversation': 'Clear conversation',
+  'rail.readingControls': 'Chat display — view, text size, theme, direction',
+  'rail.chatTheme': 'Chat theme',
   'rail.terminalControls': 'Terminal controls',
   'rail.context': 'Context',
   'rail.direction': 'Direction',

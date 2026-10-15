@@ -16,6 +16,22 @@ import { INPUT } from './shared.jsx';
 
 const DEBOUNCE_MS = 250;
 
+// The picker's place when GitHub is not connected: it says so and offers the way to fix it.
+export function GithubDisconnected() {
+  const t = useT();
+  return (
+    <div data-repo-picker-disconnected="">
+      <div className="mb-1.5 block text-sm font-medium text-fg">{t('setup.repo.pick.label')}</div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-hair bg-muted/40 px-3 py-2.5">
+        <p dir="auto" className="min-w-0 flex-1 basis-48 text-xs leading-snug text-fgdim">{t('setup.repo.pick.disconnected')}</p>
+        <Button asChild variant="outline" size="sm" className="coarse:min-h-11">
+          <a href="#/settings/connections/integrations">{t('setup.repo.pick.connect')}</a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function RepoPicker({ onPick }) {
   const t = useT();
   const id = useId();
@@ -65,18 +81,7 @@ export default function RepoPicker({ onPick }) {
   const listId = `${id}-list`;
   // GitHub not connected: keep the picker's place with a stable "not connected"
   // state and the way to fix it; the URL / folder fields below still work.
-  if (problem?.code === 'no_token' || problem?.code === 'bad_token')
-    return (
-      <div data-repo-picker-disconnected="">
-        <div className="mb-1.5 block text-sm font-medium text-fg">{t('setup.repo.pick.label')}</div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-hair bg-muted/40 px-3 py-2.5">
-          <p dir="auto" className="min-w-0 flex-1 basis-48 text-xs leading-snug text-fgdim">{t('setup.repo.pick.disconnected')}</p>
-          <Button asChild variant="outline" size="sm" className="coarse:min-h-11">
-            <a href="#/settings/connections/integrations">{t('setup.repo.pick.connect')}</a>
-          </Button>
-        </div>
-      </div>
-    );
+  if (problem?.code === 'no_token' || problem?.code === 'bad_token') return <GithubDisconnected />;
   return (
     <div>
       <label className="mb-1.5 block text-sm font-medium text-fg" htmlFor={`${id}-input`}>{t('setup.repo.pick.label')}</label>

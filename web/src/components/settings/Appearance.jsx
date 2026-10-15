@@ -20,7 +20,7 @@ import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
 
-export const GENERAL_ADVANCED_IDS = ['accent', 'terminal', 'voice-advanced', 'heartbeat', 'telemetry'];
+export const GENERAL_ADVANCED_IDS = ['terminal', 'voice-advanced', 'heartbeat', 'telemetry'];
 
 export default function General({ section = '', voiceEnabled = false, recording, setRecording }) {
   const prefs = usePrefs();
@@ -43,6 +43,13 @@ export default function General({ section = '', voiceEnabled = false, recording,
             options={[{ value: 'system', label: t('common.system') }, ...lightDark]}
           />
         </Field>
+        <Field label={t('settings.termTheme')} hint={t('settings.termTheme.hint')}>
+          <Segmented
+            value={prefs.termTheme}
+            onChange={(v) => setPrefs({ termTheme: v })}
+            options={[{ value: 'auto', label: t('settings.chatTheme.auto') }, ...lightDark]}
+          />
+        </Field>
         <Field label={t('settings.language')} hint={t('settings.language.hint')}>
           <select
             value={prefs.language}
@@ -63,6 +70,26 @@ export default function General({ section = '', voiceEnabled = false, recording,
           />
         </Field>
         <ChatTextSize />
+        <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
+          <span className="flex items-center gap-2">
+            <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer coarse:h-11 coarse:w-11 items-center justify-center overflow-hidden rounded-md border border-input">
+              <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
+              <input
+                type="color"
+                value={prefs.accent || DEFAULT_ACCENT}
+                onChange={(e) => setPrefs({ accent: e.target.value })}
+                className="absolute inset-0 cursor-pointer opacity-0"
+                aria-label={t('settings.accent')}
+              />
+            </label>
+            <code dir="ltr" className="font-mono text-xs text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
+            {prefs.accent ? (
+              <button type="button" onClick={() => setPrefs({ accent: '' })} className={BTN_SM}>
+                {t('common.reset')}
+              </button>
+            ) : null}
+          </span>
+        </Field>
       </Section>
 
       <MemoryLearning />
@@ -74,33 +101,8 @@ export default function General({ section = '', voiceEnabled = false, recording,
       )}
 
       <Advanced section={section} ids={advIds}>
-        <Section id="accent" title={t('settings.appearance')}>
-          <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
-            <span className="flex items-center gap-2">
-              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer coarse:h-11 coarse:w-11 items-center justify-center overflow-hidden rounded-md border border-input">
-                <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
-                <input
-                  type="color"
-                  value={prefs.accent || DEFAULT_ACCENT}
-                  onChange={(e) => setPrefs({ accent: e.target.value })}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label={t('settings.accent')}
-                />
-              </label>
-              <code dir="ltr" className="font-mono text-xs text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
-              {prefs.accent ? (
-                <button type="button" onClick={() => setPrefs({ accent: '' })} className={BTN_SM}>
-                  {t('common.reset')}
-                </button>
-              ) : null}
-            </span>
-          </Field>
-        </Section>
 
         <Section id="terminal" title={t('settings.terminal')}>
-          <Field label={t('settings.termTheme')} hint={t('settings.termTheme.hint')}>
-            <Segmented value={prefs.termTheme} onChange={(v) => setPrefs({ termTheme: v })} options={lightDark} />
-          </Field>
           <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
             <Segmented
               value={prefs.termDir}

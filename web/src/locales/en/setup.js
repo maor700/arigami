@@ -169,6 +169,7 @@ export const strings = {
   'setup.repo.err.gitRejected': 'This host has git access, but it cannot read this repository. Check that the connected GitHub account (or the access token) has access to it.',
   'setup.repo.already': '“{name}” is already in your workspace.',
   'setup.repo.alreadyCloning': '“{name}” was already registered — downloading it now.',
+  'setup.repo.addedLocal': '“{name}” added — copying it into your workspace.',
   'setup.repo.added': '“{name}” added — downloading it now.',
 
   // TakeoverStep (identity)

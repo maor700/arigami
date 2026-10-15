@@ -7,6 +7,7 @@ import { errText } from '../lib/errors.js';
 import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
+import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
 import { engineLabel, engineTermName } from '../lib/engines.js';
 import { providerForEngine, providerOf } from '../lib/providers.js';
 import { tabSrc } from '../lib/hostUrl.js';
@@ -323,41 +324,9 @@ function useChatModeDefault(session) {
   return chatModeOf(session, isDesktop);
 }
 
-// The radio items themselves; `M` carries the menu parts (a test renders them
-// with plain stand-ins, the header passes the DropdownMenu ones).
-export function ChatModeItems({ M, session, mode }) {
-  const t = useT();
-  return (
-    <M.Group aria-label={t('rail.chatMode')} data-chat-mode-toggle={mode}>
-      <M.Label>{t('rail.chatMode')}</M.Label>
-      <M.RadioGroup value={mode} onValueChange={(v) => { if (v !== mode) setChatMode(session, v); }}>
-        <M.RadioItem value="simple" data-chat-mode-btn="simple" aria-pressed={mode === 'simple'}>{t('rail.chatModeSimple')}</M.RadioItem>
-        <M.RadioItem value="full" data-chat-mode-btn="full" aria-pressed={mode === 'full'}>{t('rail.chatModeTerminal')}</M.RadioItem>
-      </M.RadioGroup>
-    </M.Group>
-  );
-}
-
-// "Text size ▸ smaller / default / larger", the current px beside the label.
-// Smaller/larger keep the menu open so a few steps are one visit.
-function ChatTextSizeSub() {
-  const t = useT();
-  const px = usePrefs().chatTextSize;
-  const step = (dir) => (e) => { e.preventDefault(); setPrefs({ chatTextSize: stepChatText(px, dir) }); };
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger data-chat-text-size-menu>
-        <ALargeSmall /> {t('chat.textSize')}
-        <span dir="ltr" className="ms-auto text-xs tabular-nums text-muted-foreground">{px}px</span>
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>
-        <DropdownMenuItem disabled={px <= CHAT_TEXT.min} onSelect={step('down')}>{t('chat.textSizeSmaller')}<DropdownMenuShortcut dir="ltr">⌘−</DropdownMenuShortcut></DropdownMenuItem>
-        <DropdownMenuItem disabled={px === CHAT_TEXT.def} onSelect={() => setPrefs({ chatTextSize: CHAT_TEXT.def })}>{t('chat.textSizeDefault', { px: CHAT_TEXT.def })}<DropdownMenuShortcut dir="ltr">⌘0</DropdownMenuShortcut></DropdownMenuItem>
-        <DropdownMenuItem disabled={px >= CHAT_TEXT.max} onSelect={step('up')}>{t('chat.textSizeLarger')}<DropdownMenuShortcut dir="ltr">⌘+</DropdownMenuShortcut></DropdownMenuItem>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  );
-}
+// The chat-view radio items and the text-size submenu live in ChatReadingMenu.jsx (the terminal
+// gear shows the same ones — one "reading" group, two doors).
+export { ChatModeItems };
 
 // The "…" menu: everything that is not state and not daily. Each item is two
 // clicks away (… then the item).

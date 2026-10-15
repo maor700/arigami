@@ -24,6 +24,13 @@ export const LIST = 'mt-2 rounded-lg border border-hair px-3 py-1';
 const FieldCtx = createContext(null);
 
 // Neutral switch (ink when on) — behaviour unchanged: onChange(!on).
+// For a control that is not the Field's direct child (a select inside a span, an input in a row):
+// spread the result onto it, `<input {...useFieldLabel()} />`.
+export function useFieldLabel() {
+  const f = useContext(FieldCtx);
+  return f ? { 'aria-labelledby': f.labelId } : {};
+}
+
 export function Toggle({ on, onChange, disabled, ...rest }) {
   const f = useContext(FieldCtx);
   const named = rest['aria-label'] || rest['aria-labelledby'];

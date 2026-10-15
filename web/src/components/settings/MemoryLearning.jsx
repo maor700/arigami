@@ -295,6 +295,7 @@ export default function MemoryLearning({ first = false }) {
 
       <div data-learning-mode className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-hair bg-panel px-3.5 py-3">
         <Segmented
+          label={t('memory.title')}
           value={st?.mode || 'auto'}
           onChange={(v) => admin && setMode(v)}
           options={[{ value: 'auto', label: t('memory.mode.auto') }, { value: 'manual', label: t('memory.mode.manual') }]}

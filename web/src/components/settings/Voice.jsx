@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { usePrefs, setPrefs } from '../../lib/prefs.js';
 import { useT } from '../../lib/i18n.js';
-import { Field, Segmented, Section, Toggle, INPUT } from './shared.jsx';
+import { Field, Segmented, Section, Toggle, INPUT, useFieldLabel } from './shared.jsx';
 import { Button } from '../ui/button.jsx';
 import VoiceLangPicker from '../VoiceLangPicker.jsx';
 import { useIsDesktop } from '../../lib/useMedia.js';
@@ -17,6 +17,7 @@ import { useIsDesktop } from '../../lib/useMedia.js';
 // until then offer a one-tap "Allow" that requests access and re-enumerates.
 function MicPicker({ value, onChange }) {
   const t = useT();
+  const fieldLabel = useFieldLabel();
   const [devices, setDevices] = useState([]);
   const [needsPerm, setNeedsPerm] = useState(false);
 
@@ -58,6 +59,7 @@ function MicPicker({ value, onChange }) {
 
   return (
     <select
+      {...fieldLabel}
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
       className={`${INPUT} max-w-[220px] cursor-pointer`}
@@ -95,6 +97,7 @@ export function VoiceMain({ recording, setRecording }) {
             value={recording ? t('chrome.voice.hotkey.pressKeys') : prefs.voiceHotkey}
             readOnly
             placeholder="Cmd+Shift+V"
+            aria-label={t('chrome.voice.hotkey')}
             dir="ltr"
             className={`${INPUT} w-[140px] text-center font-mono text-xs`}
           />

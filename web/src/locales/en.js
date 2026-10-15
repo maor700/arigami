@@ -73,8 +73,10 @@ export const en = {
 
   // settings — appearance
   'settings.appearance': 'Appearance',
+  'settings.find': 'Find a setting',
+  'settings.find.none': 'No setting matches',
   'settings.theme': 'Theme',
-  'settings.theme.hint': 'Light or dark host chrome.',
+  'settings.theme.hint': 'The app: rail, panels, settings. “System” follows your device.',
   'settings.language': 'Language',
   'settings.language.hint': 'Interface language and text direction.',
   'settings.language.auto': 'Automatic',
@@ -98,9 +100,10 @@ export const en = {
   'settings.fontSize.reset': 'Reset to {px}px',
   'settings.fontSize.previewEn': 'Aa — The quick brown fox jumps over the lazy dog. Tests passed, 3 files changed.',
   'settings.fontSize.previewHe': 'אבג — השועל החום המהיר קופץ מעל הכלב העצלן. הבדיקות עברו, 3 קבצים השתנו.',
-  'settings.termTheme': 'Terminal theme',
+  'settings.termTheme': 'Chat theme',
   'settings.termTheme.hint':
-    'Default light/dark for the chat terminal. Each terminal has its own toggle in its header.',
+    'The chat surface. “Follow app” keeps it in step with the theme above; pick Light or Dark to give chats their own. A single chat can still override it from its display menu.',
+  'settings.chatTheme.auto': 'Follow app',
   'settings.textDir': 'Text direction',
   'settings.textDir.hint':
     'Default chat direction — Auto detects per message. Each terminal has its own toggle in its header.',

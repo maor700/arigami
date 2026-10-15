@@ -154,6 +154,7 @@ function CappedDoc({ target, path, onChanged }) {
             if (e.key === 'Enter' && draft.trim()) write({ action: 'add', content: draft.trim() }).then(() => setDraft(''));
           }}
           placeholder={t('brain.addLinePlaceholder')}
+            aria-label={t('brain.addLinePlaceholder')}
           className="flex-1"
         />
         <Button
@@ -197,6 +198,7 @@ function SearchPane() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
           placeholder={t('brain.searchPlaceholder')}
+            aria-label={t('brain.searchPlaceholder')}
           className="flex-1"
         />
         <Button size="icon" aria-label={t('brain.searchPlaceholder')} disabled={busy || !query.trim()} onClick={run}>
@@ -280,6 +282,7 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
             placeholder={t('brain.journalPlaceholder')}
+            aria-label={t('brain.journalPlaceholder')}
             className="flex-1"
           />
           <Button size="icon" aria-label={t('brain.journalPlaceholder')} disabled={busy || !draft.trim()} onClick={submitAdd}>

@@ -629,13 +629,13 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
         <Tip label={t('rail.teamNewAgent')}>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="xs"
             data-rail-team-new
             aria-label={t('rail.teamNewAgent')}
             onClick={onNewAgent}
             className="text-muted-foreground"
           >
-            <Plus />
+            <Plus /> <span className="truncate">{t('rail.teamNewAgent').replace(/^\+\s*/, '')}</span>
           </Button>
         </Tip>
       </SectionToggle>
@@ -1180,8 +1180,8 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           className="min-w-0 flex-1 !pe-0"
         />
         <Tip label={t('rail.manageTriggers')}>
-          <Button variant="ghost" size="icon-sm" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
-            <Zap />
+          <Button variant="ghost" size="xs" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
+            <Zap /> <span className="capitalize">{t('rail.triggers')}</span>
           </Button>
         </Tip>
         <Tip label={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}>
