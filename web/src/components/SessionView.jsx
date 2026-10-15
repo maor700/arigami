@@ -407,7 +407,7 @@ function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }
   const name = session.metadata?.ticket || session.title || session.id;
   const meta = [session.metadata?.ticket, session.metadata?.branch].filter(Boolean).join(' · ');
   return (
-    <div className="flex min-h-11 shrink-0 items-center gap-x-2 border-b border-border bg-background px-3 text-sm text-foreground md:px-4">
+    <div data-engine={engineTermName(session.engine)} className="flex min-h-11 shrink-0 items-center gap-x-2 border-b border-border bg-background px-3 text-sm text-foreground md:px-4">
       <Dot color={session.color} size={9} />
       <Tip label={meta || undefined}>
         <span className="min-w-0 shrink">
@@ -538,7 +538,7 @@ export function ListenerChips({ session }) {
             key={l.id}
             label={contacts.length ? `${t('rail.contacts')} ${contacts.map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
           >
-            <span className={`${badgeVariants({ variant: 'outline' })} h-6 gap-1.5 ps-2 pe-1 ${errored ? 'text-destructive' : 'text-foreground'}`}>
+            <span aria-label={contacts.length ? `${t('rail.contacts')} ${contacts.map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : undefined} className={`${badgeVariants({ variant: 'outline' })} h-6 gap-1.5 ps-2 pe-1 ${errored ? 'text-destructive' : 'text-foreground'}`}>
               <button type="button" onClick={() => setOpenId(l.id)} className="inline-flex cursor-pointer items-center gap-1.5 outline-none focus-visible:outline-2 focus-visible:outline-ring">
                 {errored ? <TriangleAlert /> : <Eye />}
                 <span className="font-medium">{l.label}</span>

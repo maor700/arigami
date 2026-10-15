@@ -184,3 +184,28 @@ test('dropZone reads before/after/into from where the pointer sits over the row 
   expect(dropZone(evt(120), true)).toBe('into'); // 50%
   expect(dropZone(evt(135), true)).toBe('after'); // 87.5%
 });
+
+test('redesign: sessions waiting for the human are pinned in a "Needs you" group on top, and stay in their own place too', async () => {
+  const sessions = [
+    { id: 'a', title: 'Calm one', color: '#1F9C82', metadata: {}, claude: { state: 'idle' } },
+    { id: 'b', title: 'Asking one', color: '#CE8324', metadata: {}, claude: { state: 'awaiting-input' } },
+  ];
+  const out = await renderRail(sessions);
+  expect(out).toContain('data-rail-needs');
+  expect(out).toContain('Needs you');
+  const pinned = out.slice(out.indexOf('data-rail-needs'));
+  expect(pinned.indexOf('data-needs-row="b"')).toBeGreaterThan(-1);
+  // the normal row is still there (one data-session-row for b)
+  expect(out).toContain('data-session-row="b"');
+  // nothing pinned when nobody is waiting
+  const calm = await renderRail([sessions[0]]);
+  expect(calm).not.toContain('data-rail-needs');
+});
+
+test('redesign: a row shows its branch and PR chips when the session has them', async () => {
+  const sessions = [{ id: 'a', title: 'Has PR', color: '#1F9C82', metadata: { branch: 'fix/x', prNumber: 482 }, claude: { state: 'idle' } }];
+  const out = await renderRail(sessions);
+  expect(out).toContain('data-row-branch');
+  expect(out).toContain('fix/x');
+  expect(out).toMatch(/data-row-pr[^>]*>#482</);
+});

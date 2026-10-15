@@ -37,7 +37,7 @@ beforeAll(async () => {
   prefs = await import(web('lib/prefs.js'));
   chatMode = await import(web('lib/chatMode.js'));
   ({ default: ChatPane } = await import(web('components/ChatPane.jsx')));
-  ({ ChatModeToggle } = await import(web('components/SessionView.jsx')));
+  ({ ChatModeItems: ChatModeToggle } = await import(web('components/SessionView.jsx')));
 });
 
 test('chatModeOf: the stored mode wins; unset is terminal on desktop and simple on a phone', () => {
@@ -146,15 +146,16 @@ test('simple mode: one line PER TURN, a question card still shows, a plain "done
   expect(html).toContain('Done, a.md too.');
 });
 
-test('the header toggle renders פשוט | טרמינל with the active segment pressed', () => {
+test('the "…" menu offers פשוט | טרמינל as a radio group with the active one pressed', () => {
   prefs.setPrefs({ language: 'he' });
-  const s = { id: 'sess_x', metadata: { chatMode: 'simple' }, claude: { state: 'idle' } };
-  const html = render(h(ChatModeToggle, { session: s }));
+  // The menu is a Radix portal (closed in a static render): render the items with stand-in parts.
+  const M = { Group: 'div', Label: 'span', RadioGroup: 'div', RadioItem: 'button' };
+  const view = (metadata) => render(h(ChatModeToggle, { M, session: { id: 'sess_x', metadata, claude: { state: 'idle' } }, mode: metadata.chatMode }));
+  const html = view({ chatMode: 'simple' });
   expect(html).toContain('data-chat-mode-toggle="simple"');
   expect(html).toContain('>פשוט<');
   expect(html).toContain('>טרמינל<');
   expect(html).toMatch(/data-chat-mode-btn="simple" aria-pressed="true"/);
   expect(html).toMatch(/data-chat-mode-btn="full" aria-pressed="false"/);
-  const full = render(h(ChatModeToggle, { session: { ...s, metadata: { chatMode: 'full' } } }));
-  expect(full).toMatch(/data-chat-mode-btn="full" aria-pressed="true"/);
+  expect(view({ chatMode: 'full' })).toMatch(/data-chat-mode-btn="full" aria-pressed="true"/);
 });
