@@ -51,7 +51,7 @@ export default function ConnectDialog({ cap, identity, owner = 'global', onClose
         )}
         {!isService && cap.autoCapable && (
           <div className="mt-3">
-            <div role="radiogroup" className="flex gap-0.5 rounded-md bg-muted p-0.5">
+            <div role="radiogroup" aria-label={`${t('setup.mode.auto')} / ${t('setup.mode.manual')}`} className="flex gap-0.5 rounded-md bg-muted p-0.5">
               {seg('auto', faWandMagicSparkles, t('setup.mode.auto'))}
               {seg('manual', faHand, t('setup.mode.manual'))}
             </div>

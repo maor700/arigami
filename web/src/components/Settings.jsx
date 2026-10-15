@@ -24,6 +24,7 @@ import General from './settings/Appearance.jsx';
 import Connections from './settings/Connections.jsx';
 import HostPage from './settings/Host.jsx';
 import ExtensionsPage from './settings/Extensions.jsx';
+import SettingsFind from './settings/Find.jsx';
 
 // Route ids App.jsx accepts. The first four are the nav; `voice` and
 // `automation` are legacy aliases that resolve onto `appearance` (General).
@@ -114,9 +115,10 @@ export default function Settings({ category = 'appearance', section = '', initia
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hair px-4">
         <Wave />
         <span className="text-sm font-semibold text-fg">{t('settings.title')}</span>
-        <span className="text-xs text-fgdim">/ {t(`settings.cat.${cat}`)}</span>
+        <span className="hidden text-xs text-fgdim sm:inline">/ {t(`settings.cat.${cat}`)}</span>
+        <SettingsFind />
         <Tip label={t('chrome.settings.closeTitle')}>
-          <Button variant="ghost" size="icon-sm" className="ms-auto" onClick={onClose} aria-label={t('chrome.settings.closeTitle')}>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('chrome.settings.closeTitle')}>
             <Icon icon={faXmark} />
           </Button>
         </Tip>

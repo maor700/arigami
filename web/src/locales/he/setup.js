@@ -158,6 +158,7 @@ export const strings = {
   'setup.repo.err.gitRejected': 'למכונה יש גישת git, אבל היא לא מצליחה לקרוא את הריפוזיטורי הזה. בדוק שלחשבון ה-GitHub המחובר (או לטוקן) יש גישה אליו.',
   'setup.repo.already': '“{name}” כבר בסביבת העבודה שלך.',
   'setup.repo.alreadyCloning': '“{name}” כבר היה רשום — מוריד אותו עכשיו.',
+  'setup.repo.addedLocal': '״{name}״ נוסף — מעתיק אותו אל סביבת העבודה.',
   'setup.repo.added': '“{name}” נוסף — מוריד אותו עכשיו.',
 
   'setup.takeover.step1': 'פתח את המסך של הסוכן והתחבר ל-Google ב-Chrome שלו.',
@@ -233,6 +234,8 @@ export const strings = {
   'setup.repo.pick.private': 'פרטי',
   'setup.repo.pick.noMatch': 'אין מאגר שמתאים ל-“{q}”. אפשר להדביק את הכתובת שלו למטה.',
   'setup.repo.pick.empty': 'לא נמצאו מאגרים בחשבון ה-GitHub הזה.',
+  'setup.repo.pick.disconnected': 'GitHub לא מחובר, ולכן אי אפשר להציג את המאגרים שלך. אפשר להתחבר, או להדביק למטה כתובת של מאגר.',
+  'setup.repo.pick.connect': 'התחברות ל־GitHub',
   'setup.repo.pick.more': 'הצג עוד',
   'setup.repo.pick.error': 'לא הצלחנו לטעון את המאגרים שלך. הדבק את הכתובת למטה.',
   'setup.repo.pick.orPaste': 'או הדבק כתובת git (owner/repo) או תיקייה מקומית:',

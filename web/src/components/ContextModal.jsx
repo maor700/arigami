@@ -81,7 +81,7 @@ export default function ContextModal({ session, usage, onClose }) {
           <DialogTitle>{t('dialogs.contextWindow')}</DialogTitle>
           <DialogDescription className="flex items-center gap-2 text-xs tabular-nums">
             <span className="font-medium" style={{ color: pct >= 75 ? contextColor(pct) : undefined }}>{pct}%</span>
-            <span>{fmtTokens(used)} / {fmtTokens(win)}{assumed ? ` (${t('dialogs.ctxWindowAssumed')})` : ''}</span>
+            <span><bdi dir="ltr">{fmtTokens(used)} / {fmtTokens(win)}</bdi>{assumed ? <> <bdi>({t('dialogs.ctxWindowAssumed')})</bdi></> : ''}</span>
           </DialogDescription>
         </DialogHeader>
 

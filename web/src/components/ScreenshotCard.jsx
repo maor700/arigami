@@ -56,7 +56,7 @@ function Lightbox({ shots, index, onClose, onStep }) {
             </button>
           )}
           <span dir="auto" className="min-w-0 flex-1 truncate">
-            {shot.caption || t('chat.screenshotNoCaption')} · {clock(shot.ts)}
+            <bdi>{shot.caption || t('chat.screenshotNoCaption')}</bdi> · <bdi dir="ltr">{clock(shot.ts)}</bdi>
             {shots.length > 1 ? ` · ${index + 1}/${shots.length}` : ''}
           </span>
           {shots.length > 1 && (
@@ -139,7 +139,7 @@ function ScreenshotCardView({ props }) {
             <div key={s.id || s.url} className="w-[102px]">
               <Thumb shot={s} onClick={() => setOpen(i)} className="h-[64px] w-full" />
               <div dir="auto" className="mt-0.5 truncate text-xs text-[var(--term-faint)]" title={s.caption || ''}>
-                {clock(s.ts)}{s.caption ? ` · ${s.caption}` : ''}
+                <bdi dir="ltr">{clock(s.ts)}</bdi>{s.caption ? <> · <bdi>{s.caption}</bdi></> : ''}
               </div>
             </div>
           ))}
@@ -158,7 +158,7 @@ function ScreenshotCardView({ props }) {
       icon={<Icon icon={faCamera} />}
       label={shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
       labelClass="text-[var(--term-fg)]"
-      right={<span className="text-xs text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</span>}
+      right={<bdi dir="ltr" className="text-xs text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</bdi>}
     >
       {body}
       {open >= 0 && <Lightbox shots={shots} index={open} onClose={() => setOpen(-1)} onStep={step} />}

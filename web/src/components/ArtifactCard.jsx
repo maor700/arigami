@@ -126,10 +126,10 @@ function ArtifactCardView({ props: { sessionId, event } }) {
       labelClass="truncate text-[var(--term-fg)]"
       meta={
         <span className="shrink-0 text-xs text-[var(--term-faint)]">
-          v{event.version} · {fmtBytes(event.bytes)} · {t('chat.artifactFiles', { n: event.files })}
+          <bdi dir="ltr">v{event.version}</bdi> · <bdi dir="ltr">{fmtBytes(event.bytes)}</bdi> · <bdi>{t('chat.artifactFiles', { n: event.files })}</bdi>
         </span>
       }
-      right={<span className="text-xs text-[var(--term-faint)]">{clock(event.ts)}</span>}
+      right={<bdi dir="ltr" className="text-xs text-[var(--term-faint)]">{clock(event.ts)}</bdi>}
     >
       <div dir="ltr" className="mt-1 truncate font-mono text-xs text-[var(--term-dim)]" title={abs}>{path}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

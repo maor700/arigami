@@ -34,7 +34,8 @@
 // ownership, mirroring, teardown, the `data-vnc-input` hotkey guard — is
 // shared verbatim and neither transport has a special case in it.
 import { useEffect, useRef, useState } from 'react';
-import RFB from '@novnc/novnc';
+// noVNC is ~0.5 MB: fetched when the first x11 desktop connects, never for the rest of the app.
+const loadRFB = () => import('@novnc/novnc').then((m) => m.default);
 import { api } from './api.js';
 import { ScreencastConnection } from './screencastClient.js';
 
@@ -136,7 +137,7 @@ function connect(c, sessionId) {
   // `c.rfb` is null and runs again below once it isn't, so ownership settles
   // the same way it always did — just one tick later on the very first mount.
   const gen = ++c.generation;
-  void resolveTransport(scopeKey(sessionId), sessionId).then((t) => {
+  void resolveTransport(scopeKey(sessionId), sessionId).then(async (t) => {
     // Everything left while we were probing (fast tab switch): the teardown
     // already ran, and connecting now would leak a socket nobody closes.
     if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
@@ -168,9 +169,12 @@ function connect(c, sessionId) {
     // The transport name is here for the same reason: "which one did this tab
     // pick" is the first question when a screen is black on a desktop-app host.
     console.info('[screen] connecting to', sessionId ? `session ${sessionId}` : 'the global desktop', url, `(${t.transport})`);
-    const r = t.transport === 'screencast'
-      ? new ScreencastConnection(c.host, url)
-      : new RFB(c.host, url, { wsProtocols: ['binary'] });
+    const RFB = t.transport === 'screencast' ? null : await loadRFB();
+    // the user may have left while the chunk loaded: same rule as after the probe
+    if (c.generation !== gen || c.consumers.length === 0) { c.connecting = false; return; }
+    const r = RFB
+      ? new RFB(c.host, url, { wsProtocols: ['binary'] })
+      : new ScreencastConnection(c.host, url);
     c.rfb = r;
     attachClipboard(c, sessionId, t.transport);
     c.connecting = false;

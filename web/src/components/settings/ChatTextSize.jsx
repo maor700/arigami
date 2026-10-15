@@ -30,7 +30,7 @@ export default function ChatTextSize() {
     <div data-chat-text-size>
       <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: CHAT_TEXT.min, max: CHAT_TEXT.max })} wrap>
         <span className="flex flex-wrap items-center gap-2">
-          <Button type="button" aria-label={t('settings.fontSize.smaller')} onClick={() => set(stepChatText(px, 'down'))} disabled={px <= CHAT_TEXT.min}>A−</Button>
+          <Button type="button" aria-label={t('settings.fontSize.smaller')} onClick={() => set(stepChatText(px, 'down'))} disabled={px <= CHAT_TEXT.min}><span dir="ltr">A−</span></Button>
           <input
             type="range"
             dir="ltr"
@@ -42,7 +42,7 @@ export default function ChatTextSize() {
             aria-label={t('settings.fontSize.slider')}
             className="w-28 cursor-pointer accent-[var(--color-brand)]"
           />
-          <Button type="button" aria-label={t('settings.fontSize.larger')} onClick={() => set(stepChatText(px, 'up'))} disabled={px >= CHAT_TEXT.max}>A+</Button>
+          <Button type="button" aria-label={t('settings.fontSize.larger')} onClick={() => set(stepChatText(px, 'up'))} disabled={px >= CHAT_TEXT.max}><span dir="ltr">A+</span></Button>
           <span className="min-w-10 text-center text-sm tabular-nums text-fg" dir="ltr">{px}px</span>
           {px !== CHAT_TEXT.def && (
             <button type="button" onClick={() => set(CHAT_TEXT.def)} className={BTN_SM}>

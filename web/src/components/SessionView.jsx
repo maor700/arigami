@@ -4,9 +4,10 @@ import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention, restartSession, clearSessionConversation } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
+import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
 import { engineLabel, engineTermName } from '../lib/engines.js';
 import { providerForEngine, providerOf } from '../lib/providers.js';
 import { tabSrc } from '../lib/hostUrl.js';
@@ -21,7 +22,7 @@ import { currentTheme, usePrefs, setPrefs } from '../lib/prefs.js';
 import { CHAT_TEXT, stepChatText } from '../lib/chatText.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
-import { ALargeSmall, Archive, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { ALargeSmall, Archive, Eraser, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
 import { Checkbox } from './ui/checkbox.jsx';
@@ -39,7 +40,7 @@ import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
-import TermControls from './TermControls.jsx';
+import TermControls, { ContextChip, ChatDisplayItems } from './TermControls.jsx';
 import LadderBadge from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -323,41 +324,9 @@ function useChatModeDefault(session) {
   return chatModeOf(session, isDesktop);
 }
 
-// The radio items themselves; `M` carries the menu parts (a test renders them
-// with plain stand-ins, the header passes the DropdownMenu ones).
-export function ChatModeItems({ M, session, mode }) {
-  const t = useT();
-  return (
-    <M.Group aria-label={t('rail.chatMode')} data-chat-mode-toggle={mode}>
-      <M.Label>{t('rail.chatMode')}</M.Label>
-      <M.RadioGroup value={mode} onValueChange={(v) => { if (v !== mode) setChatMode(session, v); }}>
-        <M.RadioItem value="simple" data-chat-mode-btn="simple" aria-pressed={mode === 'simple'}>{t('rail.chatModeSimple')}</M.RadioItem>
-        <M.RadioItem value="full" data-chat-mode-btn="full" aria-pressed={mode === 'full'}>{t('rail.chatModeTerminal')}</M.RadioItem>
-      </M.RadioGroup>
-    </M.Group>
-  );
-}
-
-// "Text size ▸ smaller / default / larger", the current px beside the label.
-// Smaller/larger keep the menu open so a few steps are one visit.
-function ChatTextSizeSub() {
-  const t = useT();
-  const px = usePrefs().chatTextSize;
-  const step = (dir) => (e) => { e.preventDefault(); setPrefs({ chatTextSize: stepChatText(px, dir) }); };
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger data-chat-text-size-menu>
-        <ALargeSmall /> {t('chat.textSize')}
-        <span dir="ltr" className="ms-auto text-xs tabular-nums text-muted-foreground">{px}px</span>
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>
-        <DropdownMenuItem disabled={px <= CHAT_TEXT.min} onSelect={step('down')}>{t('chat.textSizeSmaller')}<DropdownMenuShortcut dir="ltr">⌘−</DropdownMenuShortcut></DropdownMenuItem>
-        <DropdownMenuItem disabled={px === CHAT_TEXT.def} onSelect={() => setPrefs({ chatTextSize: CHAT_TEXT.def })}>{t('chat.textSizeDefault', { px: CHAT_TEXT.def })}<DropdownMenuShortcut dir="ltr">⌘0</DropdownMenuShortcut></DropdownMenuItem>
-        <DropdownMenuItem disabled={px >= CHAT_TEXT.max} onSelect={step('up')}>{t('chat.textSizeLarger')}<DropdownMenuShortcut dir="ltr">⌘+</DropdownMenuShortcut></DropdownMenuItem>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  );
-}
+// The chat-view radio items and the text-size submenu live in ChatReadingMenu.jsx (the terminal
+// gear shows the same ones — one "reading" group, two doors).
+export { ChatModeItems };
 
 // The "…" menu: everything that is not state and not daily. Each item is two
 // clicks away (… then the item).
@@ -403,6 +372,26 @@ function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddT
           mode={mode}
         />
         <ChatTextSizeSub />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-chat-display-menu>{t('rail.chatDisplay')}</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <ChatDisplayItems
+              M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+              session={session}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {!session.archived && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={session.claude?.state === 'restarting'} onSelect={() => restartSession(session)}>
+              <RefreshCw /> {session.claude?.state === 'restarting' ? t('rail.restartingEllipsis') : t('rail.restartSession')}
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" disabled={session.claude?.state === 'restarting'} onSelect={() => clearSessionConversation(session)}>
+              <Eraser /> {t('rail.clearConversation')}
+            </DropdownMenuItem>
+          </>
+        )}
         {(session.archived ? onRestore : onArchive) && <DropdownMenuSeparator />}
         {session.archived
           ? onRestore && (
@@ -451,7 +440,7 @@ function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
-        <TermControls session={session} />
+        <ContextChip session={session} />
         <HeaderMenu session={session} mode={mode} meta={meta} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
       </div>
       {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}

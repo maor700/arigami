@@ -66,7 +66,7 @@ function ModeSwitch({ mode, onChange, autoAllowed, identity }) {
   );
   return (
     <div>
-      <div role="radiogroup" className="flex gap-1 rounded-md border border-[var(--term-accent-border)] p-0.5">
+      <div role="radiogroup" aria-label={`${t('setup.mode.auto')} / ${t('setup.mode.manual')}`} className="flex gap-1 rounded-md border border-[var(--term-accent-border)] p-0.5">
         {seg('auto', faWandMagicSparkles, t('setup.mode.auto'))}
         {seg('manual', faHand, t('setup.mode.manual'))}
       </div>

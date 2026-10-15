@@ -76,7 +76,7 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
       <DialogContent showClose={false} className="top-[14%] w-[min(32rem,calc(100vw-1.5rem))] translate-y-0 gap-0 overflow-hidden p-0" data-quick-switcher>
         {/* shouldFilter off: the lists above are already filtered */}
         <Command shouldFilter={false} loop className="[&_[cmdk-input-wrapper]_svg]:size-4">
-          <CommandInput value={q} onValueChange={setQ} placeholder={t('rail.searchSessionsCommands')} />
+          <CommandInput value={q} onValueChange={setQ} placeholder={t('rail.searchSessionsCommands')} aria-label={t('rail.searchSessionsCommands')} />
           <CommandList className="max-h-[50vh]">
             {sessionMatches.length === 0 && actionMatches.length === 0 && (
               <CommandEmpty>{t('rail.noMatchQuery', { q })}</CommandEmpty>

@@ -3057,6 +3057,20 @@ export function markApproved(id: string, by: string, expected?: { sha: string; r
   return true;
 }
 
+// A local "request changes" verdict withdraws any earlier approval: the stamp is
+// replaced by a `changes-requested` marker, so mergeStatus reports it and the
+// merge is refused until the human approves again (a fresh markApproved).
+export function markChangesRequested(id: string, by: string): boolean {
+  const s = state.getSession(id);
+  if (!s) return false;
+  const md: any = s.metadata || {};
+  if (!md.branch || md.merged) return false;
+  state.patchSession(id, {
+    metadata: { review: { state: 'changes-requested', at: new Date().toISOString(), by }, mergeConflict: null },
+  });
+  return true;
+}
+
 // Where the base lives: the master's checkout (its worktree or cwd), else the
 // main worktree of the child's repo.
 async function baseRepoRootFor(s: any): Promise<string | null> {
@@ -3131,7 +3145,7 @@ export async function mergeStatus(s: any) {
   else if (!st.checkedOut) out.reason = 'base-not-checked-out';
   else if (st.dirty) out.reason = 'dirty';
   else if (st.ahead === 0) out.reason = 'nothing-to-merge';
-  else if (!approved) out.reason = md.review?.state === 'approved' ? 'approval-stale' : 'not-approved';
+  else if (!approved) out.reason = md.review?.state === 'approved' ? 'approval-stale' : md.review?.state === 'changes-requested' ? 'changes-requested' : 'not-approved';
   out.canMerge = out.reason === null;
   return out;
 }
@@ -3169,6 +3183,9 @@ async function mergeSessionLocked(
   if (!st.branch) return { error: 'session has no branch to merge', status: 400 };
   if (st.merged) return { error: `already merged (${String(st.merged.sha).slice(0, 7)})`, status: 409 };
   if (!st.repoRoot) return { error: 'could not resolve the base repository', status: 400 };
+  // Withdrawn by a "request changes" verdict: not even force overrides it.
+  if (st.reason === 'changes-requested')
+    return { error: 'changes were requested — approve again after the review', status: 409, reason: 'changes-requested' };
   if (st.reason === 'not-approved' && !o.force)
     return { error: 'not approved — the human approves first (review verdict approve / ✓ Verified)', status: 409, reason: 'not-approved' };
   if (st.reason && st.reason !== 'not-approved')
@@ -7280,6 +7297,10 @@ export async function handle(
         if (target === 'local' && verdict === 'approve') {
           state.patchSession(id, { status: 'Approved' });
           markApproved(id, principalLabel((req as any).auth)); // F7
+        }
+        if (target === 'local' && verdict === 'request-changes') {
+          if ((s as any).status === 'Approved') state.patchSession(id, { status: 'In Progress' });
+          markChangesRequested(id, principalLabel((req as any).auth));
         }
         const sessTab =
           (s as any).tabs.find((t: any) => t.type === 'session') ||

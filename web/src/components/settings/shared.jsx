@@ -2,7 +2,7 @@
 // Section (anchored heading), SettingCard (the uniform card), StatusPill,
 // Field/Toggle/Segmented/CopyRow (moved here from the old 1300-line
 // Settings.jsx) and hostPost (admin-confirmed POST to /__api/host/*).
-import { useEffect, useState } from 'react';
+import { cloneElement, createContext, isValidElement, useContext, useEffect, useId, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n.js';
 import { Icon } from '../../lib/icons.js';
 import { faRotateRight, faChevronDown } from '@fortawesome/free-solid-svg-icons';
@@ -18,24 +18,66 @@ export const INPUT = 'h-8 min-w-0 rounded-md border border-input bg-background p
 export const ROW = 'flex items-center justify-between gap-2 border-b border-hair py-2 text-sm last:border-b-0';
 export const LIST = 'mt-2 rounded-lg border border-hair px-3 py-1';
 
+// A Field names its control: the label text carries an id (aria-labelledby for
+// switches and segmented groups) and, around one native control, a real
+// <label for>. Controls outside a Field keep passing their own aria-label.
+const FieldCtx = createContext(null);
+
 // Neutral switch (ink when on) — behaviour unchanged: onChange(!on).
+// For a control that is not the Field's direct child (a select inside a span, an input in a row):
+// spread the result onto it, `<input {...useFieldLabel()} />`.
+export function useFieldLabel() {
+  const f = useContext(FieldCtx);
+  return f ? { 'aria-labelledby': f.labelId } : {};
+}
+
 export function Toggle({ on, onChange, disabled, ...rest }) {
-  return <Switch checked={!!on} onCheckedChange={(v) => onChange(v)} disabled={disabled} {...rest} />;
+  const f = useContext(FieldCtx);
+  const named = rest['aria-label'] || rest['aria-labelledby'];
+  return <Switch checked={!!on} onCheckedChange={(v) => onChange(v)} disabled={disabled} {...(!named && f ? { 'aria-labelledby': f.labelId } : {})} {...rest} />;
 }
 
 // Neutral segmented control: a quiet track, the selected option a raised
-// neutral chip. Same props as before; radio semantics for a11y.
-export function Segmented({ value, options, onChange }) {
+// neutral chip. Same props as before; a real radio group: one tab stop (the
+// selected option), arrow keys move + select (mirrored in RTL), Home/End jump.
+export function Segmented({ value, options, onChange, label }) {
+  const f = useContext(FieldCtx);
+  const ref = useRef(null);
+  const stop = options.some((o) => o.value === value) ? value : options[0]?.value;
+  const onKeyDown = (e) => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    const i = Math.max(0, options.findIndex((o) => o.value === value));
+    const rtl = ref.current && getComputedStyle(ref.current).direction === 'rtl';
+    let j = i;
+    if (e.key === 'Home') j = 0;
+    else if (e.key === 'End') j = options.length - 1;
+    else {
+      const fwd = e.key === 'ArrowDown' || e.key === (rtl ? 'ArrowLeft' : 'ArrowRight');
+      j = (i + (fwd ? 1 : -1) + options.length) % options.length;
+    }
+    e.preventDefault();
+    onChange(options[j].value);
+    ref.current?.querySelectorAll('[role=radio]')[j]?.focus();
+  };
   return (
-    <span role="radiogroup" className="inline-flex gap-0.5 rounded-md bg-muted p-0.5">
+    <span
+      ref={ref}
+      role="radiogroup"
+      aria-label={label}
+      aria-labelledby={label ? undefined : f?.labelId}
+      onKeyDown={onKeyDown}
+      className="inline-flex gap-0.5 rounded-md bg-muted p-0.5"
+    >
       {options.map((opt) => (
         <button
           key={opt.value}
           type="button"
           role="radio"
           aria-checked={value === opt.value}
+          tabIndex={opt.value === stop ? 0 : -1}
           onClick={() => onChange(opt.value)}
-          className={`inline-flex h-7 cursor-pointer items-center rounded-sm px-3 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:outline-2 focus-visible:outline-ring coarse:h-10 ${
+          className={`inline-flex h-7 cursor-pointer items-center rounded-sm px-3 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:outline-2 focus-visible:outline-ring coarse:h-11 ${
             value === opt.value ? 'bg-card text-foreground shadow-[0_0_0_1px_var(--hb-hair)]' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -46,18 +88,36 @@ export function Segmented({ value, options, onChange }) {
   );
 }
 
-// label + hint on the left, control on the right. `wrap`: a wide control
-// (several buttons) drops under the label instead of squeezing it (F4 #6).
+// label + hint on the left, control on the right. On a phone the control drops
+// under the label whenever the two don't fit side by side (a wide control or a
+// long description used to push the field past the card edge). `wrap` forces
+// the same on desktop too (F4 #6).
 export function Field({ label, hint, children, wrap = false }) {
+  const uid = useId();
+  const labelId = `${uid}-l`;
+  const controlId = `${uid}-c`;
+  const native =
+    isValidElement(children) &&
+    ['select', 'input', 'textarea'].includes(children.type) &&
+    !children.props.id &&
+    !children.props['aria-label'] &&
+    !children.props['aria-labelledby'];
+  const control = native ? cloneElement(children, { id: controlId, ...(hint ? { 'aria-describedby': `${uid}-h` } : {}) }) : children;
   return (
-    <div className={`flex items-center gap-4 border-b border-hair py-3 last:border-b-0${wrap ? ' flex-wrap' : ''}`}>
-      <div className="min-w-[9rem] flex-1">
-        <div className="text-sm font-medium text-fg">{label}</div>
-        {hint && <div className="mt-0.5 text-xs text-fgdim">{hint}</div>}
+    <FieldCtx.Provider value={{ labelId }}>
+      <div className={`flex items-center gap-x-4 gap-y-2 border-b border-hair py-3  last:border-b-0 max-sm:flex-wrap ${wrap ? 'flex-wrap' : ''}`}>
+        <div className="min-w-[9rem] flex-1 max-sm:basis-full">
+          {native ? (
+            <label id={labelId} htmlFor={controlId} className="block text-sm font-medium text-fg">{label}</label>
+          ) : (
+            <div id={labelId} className="text-sm font-medium text-fg">{label}</div>
+          )}
+          {hint && <div id={`${uid}-h`} className="mt-0.5 text-xs text-fgdim">{hint}</div>}
+        </div>
+        {/* VER1: max-w-full so a wide control that wrapped under the label can't run past the viewport (mobile) */}
+        <div className="max-w-full min-w-0 shrink-0 max-sm:shrink">{control}</div>
       </div>
-      {/* VER1: max-w-full so a wide control that wrapped under the label can't run past the viewport (mobile) */}
-      <div className="max-w-full shrink-0">{children}</div>
-    </div>
+    </FieldCtx.Provider>
   );
 }
 
@@ -76,7 +136,7 @@ export function Section({ id, title, onRefresh, children, first = false }) {
       <div className="mb-2 flex items-center text-xs font-medium text-fgdim">
         {title}
         {onRefresh && (
-          <button type="button" onClick={onRefresh} className="ms-auto cursor-pointer text-xs font-normal hover:text-fg">
+          <button type="button" onClick={onRefresh} className="ms-auto inline-flex cursor-pointer items-center gap-1 text-xs font-normal hover:text-fg coarse:min-h-11 coarse:min-w-11 coarse:justify-center">
             <Icon icon={faRotateRight} /> {t('settings.refresh')}
           </button>
         )}
@@ -179,7 +239,7 @@ export function Advanced({ section, ids = [], children, hint }) {
       onToggle={(e) => setOpen(e.currentTarget.open)}
       className="mt-8 rounded-lg border border-hair"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-medium text-fgdim select-none hover:text-fg [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 coarse:min-h-11 text-xs font-medium text-fgdim select-none hover:text-fg [&::-webkit-details-marker]:hidden">
         <span className={`text-xs transition-transform ${open ? '' : 'rtl:rotate-90 ltr:-rotate-90'}`}><Icon icon={faChevronDown} /></span>
         {t('settings.advanced')}
         {hint && <span className="ms-auto text-xs font-normal">{hint}</span>}

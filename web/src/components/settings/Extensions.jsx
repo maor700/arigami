@@ -255,6 +255,7 @@ function AddExtension({ onDone }) {
           onChange={(e) => setSource(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && check()}
           placeholder={t('ext.add.placeholder')}
+          aria-label={t('ext.add.placeholder')}
           className={`${INPUT} min-w-0 flex-1`}
         />
         <button type="button" disabled={busy || !source.trim()} onClick={check} className={BTN}>

@@ -8,17 +8,24 @@ import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import { t, useT } from '../lib/i18n.js';
-import { ChevronRight, Eraser, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { ChevronRight, Eraser, Gauge, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
 import { Button } from './ui/button.jsx';
 import { Tip } from './ui/tooltip.jsx';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog.jsx';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu.jsx';
+import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
+import { chatModeOf } from '../lib/chatMode.js';
+import { useIsDesktop } from '../lib/useMedia.js';
 
 // Permission modes mirror server/claude.js PERMISSION_MODES.
 const PERMISSION_OPTIONS = [
@@ -359,6 +366,47 @@ const ctxTone = (pct) => (pct >= 75 ? contextColor(pct) : undefined);
 
 import { useComposerPillMounted, openComposerPill } from '../lib/composerPill.js';
 
+// D10: the header carries ONE chip instead of the gear: the context meter. It opens the
+// Context / Compact dialog. Restart, Clear and the per-chat display overrides live in the
+// header "…" menu (ChatDisplayItems below); defaults for direction and theme in Settings.
+export function ContextChip({ session }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const ctx = session.claude?.usage;
+  return (
+    <>
+      <Tip label={t('rail.context')}>
+        <Button variant="ghost" size="sm" data-context-chip aria-label={`${t('rail.context')} ${ctx?.ctxPct != null ? ctx.ctxPct + '%' : ''}`} onClick={() => setOpen(true)} className="gap-1.5 px-1.5 text-muted-foreground">
+          <span className="text-xs font-medium tabular-nums" style={{ color: ctx?.ctxPct != null ? ctxTone(ctx.ctxPct) : undefined }}>{ctx?.ctxPct != null ? `${ctx.ctxPct}%` : '—'}</span>
+          <Gauge />
+        </Button>
+      </Tip>
+      {open && <ContextModal session={session} usage={ctx} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// "This chat" display overrides (direction, theme) as radio groups for a dropdown menu.
+export function ChatDisplayItems({ M, session }) {
+  const t = useT();
+  const prefs = usePrefs();
+  const view = termViewFrom(prefs, session.id);
+  const group = (title, key, opts) => (
+    <M.Group aria-label={title}>
+      <M.Label>{title}</M.Label>
+      <M.RadioGroup value={view[key]} onValueChange={(v) => setTermOverride(session.id, { [key]: v })}>
+        {opts.map((o) => <M.RadioItem key={o} value={o}>{t(`common.${o}`)}</M.RadioItem>)}
+      </M.RadioGroup>
+    </M.Group>
+  );
+  return (
+    <>
+      {group(`${t('rail.direction')} · ${t('rail.thisChat')}`, 'dir', ['auto', 'ltr', 'rtl'])}
+      {group(`${t('rail.chatTheme')} · ${t('rail.thisChat')}`, 'theme', ['light', 'dark'])}
+    </>
+  );
+}
+
 export default function TermControls({ session }) {
   const t = useT();
   const prefs = usePrefs();
@@ -378,6 +426,8 @@ export default function TermControls({ session }) {
   const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
   const pillOwns = useComposerPillMounted();
   const restarting = session.claude?.state === 'restarting';
+  const isDesktop = useIsDesktop();
+  const chatMode = chatModeOf(session, isDesktop);
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'model' | 'effort'
 
   // A picker opens after the menu has finished closing (Radix returns focus to
@@ -387,9 +437,9 @@ export default function TermControls({ session }) {
   return (
     <span className="relative flex items-center">
       <DropdownMenu>
-        <Tip label={t('rail.terminalControls')}>
+        <Tip label={t('rail.readingControls')}>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" aria-label={t('rail.terminalControls')} data-term-controls className="gap-1.5 px-1.5 text-muted-foreground aria-expanded:text-foreground">
+            <Button variant="ghost" size="sm" aria-label={t('rail.readingControls')} data-term-controls className="gap-1.5 px-1.5 text-muted-foreground aria-expanded:text-foreground">
               {ctx?.ctxPct != null && (
                 <span className="text-xs font-medium tabular-nums" style={{ color: ctxTone(ctx.ctxPct) }}>
                   {ctx.ctxPct}%
@@ -400,14 +450,22 @@ export default function TermControls({ session }) {
           </DropdownMenuTrigger>
         </Tip>
         <DropdownMenuContent align="end" className="w-64">
+          {/* one "reading" group: chat view, text size, direction, theme — the same
+              controls (and ⌘+ / ⌘− / ⌘0 for the size) as Settings → General */}
+          <ChatModeItems
+            M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+            session={session}
+            mode={chatMode}
+          />
+          <ChatTextSizeSub />
+          <MenuRow label={t('rail.direction')} value={t(`common.${view.dir}`)} onSelect={openModal('dir')} />
+          <MenuRow label={t('rail.chatTheme')} value={t(`common.${view.theme}`)} onSelect={openModal('theme')} />
+          <DropdownMenuSeparator />
           <MenuRow
             label={t('rail.context')}
             value={ctx?.ctxPct != null ? `${ctx.ctxPct}%` : '—'}
             onSelect={openModal('context')}
           />
-          <DropdownMenuSeparator />
-          <MenuRow label={t('rail.direction')} value={view.dir} onSelect={openModal('dir')} />
-          <MenuRow label={t('rail.theme')} value={view.theme} onSelect={openModal('theme')} />
           <DropdownMenuSeparator />
           {pillOwns ? (
             <MenuRow

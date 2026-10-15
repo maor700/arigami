@@ -153,6 +153,7 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
             <Input
               type="search"
               placeholder={t('integrations.search')}
+              aria-label={t('integrations.search')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="min-w-[160px] flex-1"

@@ -686,6 +686,20 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   const mergeOfferLive = mdReview?.state === 'approved' && !!session?.metadata?.branch && !session?.metadata?.merged && session?.metadata?.mergeOfferDismissedAt !== mdReview?.at;
   const dismissMergeOffer = () => { api.patch(`/sessions/${sessionId}`, { metadata: { mergeOfferDismissedAt: mdReview?.at || 'x' } }).catch(() => {}); };
   const scrollRef = useRef(null);
+  // Several cards can wait at once (a permission, an agent draft, a connect card…). Only the
+  // NEWEST waiting card keeps the accent button; older ones go neutral (index.css, data-newest-waiting).
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const mark = () => {
+      const all = root.querySelectorAll('[data-waiting]');
+      all.forEach((el, i) => { if (i === all.length - 1) el.setAttribute('data-newest-waiting', ''); else el.removeAttribute('data-newest-waiting'); });
+    };
+    mark();
+    const mo = new MutationObserver(mark);
+    mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-waiting'] });
+    return () => mo.disconnect();
+  });
   const stickRef = useRef(true);
   // Scrolled away from the bottom → show the floating "jump to latest" button.
   const [away, setAway] = useState(false);

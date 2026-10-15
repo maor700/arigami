@@ -109,6 +109,7 @@ export function AddConnectionPanel({ mcpCaps = [], composio, whatsappCap, busy, 
       value={q}
       onChange={(e) => setQ(e.target.value)}
       placeholder={t('settings.connections.add.search')}
+      aria-label={t('settings.connections.add.search')}
       className="w-full"
     />
     <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">

@@ -81,7 +81,7 @@ test('cards: neutral surface, status dot only when live, one primary Btn', () =>
   expect(live).toContain('pulse-yellow');
   expect(live).toContain('bg-warn');
   expect(live).not.toMatch(/bg-brand|border-ink|shadow-\[2px/);
-  expect((live.match(/data-variant="primary"|bg-primary/g) || []).length).toBe(1);
+  expect((live.match(/<button[^>]*(data-variant="primary"|bg-primary)/g) || []).length).toBe(1);
   const quiet = render(h(CardFrame, { tone: 'panel', label: 'Info' }));
   expect(quiet).not.toContain('data-card-dot');
 });

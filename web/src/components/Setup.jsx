@@ -51,6 +51,13 @@ function StatusPill({ status }) {
   );
 }
 
+// Backend detail strings for the "nothing to do here" cases, said in task language.
+export function stepDetail(detail, t) {
+  if (/^envSource: none$/.test(detail)) return t('launcher.setup.detail.envNone');
+  if (detail === 'no install step') return t('launcher.setup.detail.noInstall');
+  return detail;
+}
+
 function StepRow({ step, onFix, busy }) {
   const t = useT();
   const name = step.scope.startsWith('repo:') ? step.scope.slice(5) : null;
@@ -62,7 +69,7 @@ function StepRow({ step, onFix, busy }) {
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-fg">{step.title}</div>
         {step.detail && (
-          <div dir="auto" className="truncate text-start font-mono text-xs text-fgdim">{step.detail}</div>
+          <div dir="auto" className="truncate text-start font-mono text-xs text-fgdim">{stepDetail(step.detail, t)}</div>
         )}
       </div>
       {fixable && (
@@ -156,7 +163,7 @@ export function AddRepo({ onAdd, busy, defaultOpen = false }) {
         onClick={() => setOpen(true)}
         className="w-full cursor-pointer border-t border-hair px-3 py-2 text-start text-xs font-medium text-fg outline-none hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring coarse:min-h-11"
       >
-        + {t('launcher.setup.addRepo')}
+        {t('launcher.setup.addRepo')}
       </button>
     );
 
@@ -350,7 +357,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
     setBusy(true);
     try {
       const r = await setupApi.addRepoAndFetch(entry);
-      setRepoNote({ key: addOutcome(r), name: r?.name || entry.name });
+      setRepoNote({ key: addOutcome(r, entry.source), name: r?.name || entry.name });
     } catch (e) {
       setErr(e.message);
     }
@@ -526,7 +533,7 @@ export default function Setup({ onClose, onCreated, onRunWizard }) {
               ))}
               {repoNote && (
                 <div className="border-t border-hair px-3 py-2 text-xs font-medium text-ok">
-                  {t({ already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added' }[repoNote.key], { name: repoNote.name })}
+                  {t({ already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added', 'added-local': 'setup.repo.addedLocal' }[repoNote.key], { name: repoNote.name })}
                 </div>
               )}
               <AddRepo onAdd={addRepo} busy={busy} />

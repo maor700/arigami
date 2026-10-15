@@ -17,11 +17,11 @@ export default function RepoStep({ capability = 'repo', onDone }) {
   const add = (entry) =>
     run(async () => {
       const r = await setupApi.connect(capability, { entry });
-      setNote({ key: addOutcome(r), name: r?.name || entry.name });
+      setNote({ key: addOutcome(r, entry.source), name: r?.name || entry.name });
       setTick((n) => n + 1);
       onDone?.(r);
     });
-  const key = { already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added' };
+  const key = { already: 'setup.repo.already', 'cloning-existing': 'setup.repo.alreadyCloning', added: 'setup.repo.added', 'added-local': 'setup.repo.addedLocal' };
   return (
     <>
       <RepoList onChange={onDone} refreshKey={tick} />

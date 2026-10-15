@@ -46,6 +46,13 @@ export function MergePill({ session, compact }) {
       </Badge>
     );
   }
+  if (md.review?.state === 'changes-requested' && md.branch) {
+    return (
+      <Badge status="warn" title={t('chat.mergeReason.changes-requested')}>
+        <TriangleAlertIcon /> {t('chat.mergeChangesRequested')}
+      </Badge>
+    );
+  }
   return null;
 }
 
@@ -113,7 +120,7 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
   const box = dark ? '' : 'rounded-lg border border-border bg-card px-3 py-2';
   // the chat (dark) face keeps native controls on the terminal palette; the
   // Changes/Orchestration face uses the ui kit
-  const field = 'rounded-md border border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 text-xs text-[var(--term-accent-strong)]';
+  const field = 'rounded-md border border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 text-xs text-[var(--term-accent-strong)] coarse:min-h-11';
   const Frame = dark && !dense ? CardFrame : 'div';
   const frameProps = dark && !dense ? { tone: 'accent', dense: true, className: 'flex flex-wrap items-center gap-2 !my-2.5' } : { className: `flex flex-wrap items-center gap-x-3 gap-y-2 ${dense ? 'my-0.5' : `my-2.5 ${box}`}` };
   const reasonCls = 'basis-full text-xs text-destructive';

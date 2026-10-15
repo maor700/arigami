@@ -93,7 +93,7 @@ export function UsersAdvanced() {
         <>
           <Field label={t('auth.settings.tokens')} hint={t('auth.settings.tokensHint')}>
             <span className="flex items-center gap-1.5">
-              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('auth.settings.tokenLabel')} className={`${INPUT} w-[110px]`} />
+              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('auth.settings.tokenLabel')} aria-label={t('auth.settings.tokenLabel')} className={`${INPUT} w-[110px]`} />
               <button type="button" disabled={busy} onClick={createToken} className={BTN_SM}>{t('auth.settings.createToken')}</button>
             </span>
           </Field>
@@ -155,6 +155,7 @@ export function ScreenShare() {
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && value && !busy && submit(value)}
               placeholder={t('settings.vncPassword.placeholder')}
+              aria-label={t('settings.vncPassword.placeholder')}
               className={`${INPUT} w-[160px]`}
             />
             <button type="button" disabled={busy || !value} onClick={() => submit(value)} className={BTN}>{t('settings.vncPassword.save')}</button>

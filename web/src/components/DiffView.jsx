@@ -3,10 +3,9 @@
 // opens an inline composer; existing comments render as threads under the line.
 // Colours come from the shared --diff-* tokens (index.css), the same ones the
 // chat DiffCard uses, so a diff reads the same in both places.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PlusIcon } from 'lucide-react';
 import { CommentThread, CommentComposer } from './Comments.jsx';
-import { highlightDiff } from '../lib/highlight.js';
 import { useT } from '../lib/i18n.js';
 
 // Render a line of code as syntax-highlighted spans (lowlight tokens) when we
@@ -73,7 +72,7 @@ function toSplitRows(lines) {
 
 const Gutter = ({ n, compact, tint }) => (
   <span
-    className={`inline-block shrink-0 select-none border-e border-border/60 text-end text-faint tabular-nums ${compact ? 'w-8 pe-1.5' : 'w-11 pe-2'}`}
+    className={`inline-block shrink-0 select-none border-e border-border/60 text-end text-muted-foreground tabular-nums ${compact ? 'w-8 pe-1.5' : 'w-11 pe-2'}`}
     style={tint ? { background: tint.gutter } : undefined}
   >
     {n ?? ''}
@@ -100,7 +99,7 @@ function AddBtn({ onClick }) {
       onClick={onClick}
       title={t('chat.addCommentLine')}
       aria-label={t('chat.addCommentLine')}
-      className="absolute left-1 top-1/2 z-10 hidden size-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border border-border bg-card text-muted-foreground shadow-sm hover:bg-foreground hover:text-background focus-visible:flex group-hover:flex coarse:flex coarse:size-6"
+      className="absolute left-1 top-1/2 z-10 hidden size-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border border-border bg-card text-muted-foreground shadow-sm hover:bg-foreground hover:text-background focus-visible:flex group-hover:flex coarse:flex coarse:size-6 coarse:after:absolute coarse:after:-inset-[11px]"
     >
       <PlusIcon className="size-3" />
     </button>
@@ -158,7 +157,15 @@ export function DiffView({ diff, mode = 'split', comments = [], onAddComment, co
   // Parse + syntax-highlight once per (diff, path); coloring is class-based so
   // it's theme-independent (the .diff-syntax CSS palette follows the theme).
   const lines = useMemo(() => (diff == null ? [] : parseDiff(diff)), [diff]);
-  const tokens = useMemo(() => highlightDiff(lines, path), [lines, path]);
+  // The highlighter (lowlight + its grammars, ~0.4 MB) is its own chunk: lines render plain at once
+  // and take their colours when it arrives — same row heights, so nothing shifts.
+  const [tokens, setTokens] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setTokens(null);
+    import('../lib/highlight.js').then((m) => { if (live) setTokens(m.highlightDiff(lines, path)); }).catch(() => {});
+    return () => { live = false; };
+  }, [lines, path]);
   const tok = (li) => (tokens ? tokens.get(li) : null);
 
   const note = 'p-8 text-center text-sm text-muted-foreground';

@@ -627,6 +627,7 @@ export function ChatFooter({ session }) {
         <textarea
           ref={taRef}
           data-composer
+          aria-label={t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })}
           rows={1}
           dir={fieldDir(text)}
           value={text}
@@ -642,7 +643,7 @@ export function ChatFooter({ session }) {
           style={{ fieldSizing: 'content' }}
         />
 
-        <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+        <div className="flex min-w-0 items-center gap-0.5 px-1.5 pb-1.5">
           <input
             ref={fileRef}
             type="file"
@@ -682,7 +683,7 @@ export function ChatFooter({ session }) {
               </Button>
             </Tip>
           )}
-          <span className="ms-auto flex items-center gap-0.5">
+          <span className="ms-auto flex shrink-0 items-center gap-0.5">
             {working && (
               <Tip label={t('rail.interruptClaude', { engine: engineLabel(session.engine) })} shortcut="Esc">
                 <Button variant="outline" size="icon-sm" data-composer-stop aria-label={t('rail.interruptClaude', { engine: engineLabel(session.engine) })} onClick={interrupt} className="text-destructive">

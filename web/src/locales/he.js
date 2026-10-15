@@ -3,6 +3,7 @@ export const he = {
   // common
   'common.light': 'בהיר',
   'common.dark': 'כהה',
+  'common.system': 'מערכת',
   'common.auto': 'אוטומטי',
   'common.ltr': 'שמאל־לימין',
   'common.rtl': 'ימין־לשמאל',
@@ -69,8 +70,10 @@ export const he = {
 
   // settings — appearance
   'settings.appearance': 'מראה',
+  'settings.find': 'חיפוש הגדרה',
+  'settings.find.none': 'אין הגדרה תואמת',
   'settings.theme': 'ערכת נושא',
-  'settings.theme.hint': 'ממשק בהיר או כהה.',
+  'settings.theme.hint': 'האפליקציה: הרשימה, הלוחות וההגדרות. ״מערכת״ עוקב אחרי המכשיר.',
   'settings.language': 'שפה',
   'settings.language.hint': 'שפת הממשק וכיוון הטקסט.',
   'settings.language.auto': 'אוטומטי',
@@ -94,9 +97,10 @@ export const he = {
   'settings.fontSize.reset': 'איפוס ל-{px}px',
   'settings.fontSize.previewEn': 'Aa — The quick brown fox jumps over the lazy dog. Tests passed, 3 files changed.',
   'settings.fontSize.previewHe': 'אבג — השועל החום המהיר קופץ מעל הכלב העצלן. הבדיקות עברו, 3 קבצים השתנו.',
-  'settings.termTheme': 'ערכת נושא לטרמינל',
+  'settings.termTheme': 'ערכת נושא לצ׳אט',
   'settings.termTheme.hint':
-    'ברירת מחדל בהיר/כהה לטרמינל הצ׳אט. לכל טרמינל מתג משלו בכותרת.',
+    'משטח הצ׳אט. ״כמו האפליקציה״ שומר אותו בהתאמה לערכת הנושא שלמעלה; בחירה בבהיר או כהה נותנת לצ׳אטים ערכה משלהם. אפשר גם לשנות צ׳אט אחד מתפריט התצוגה שלו.',
+  'settings.chatTheme.auto': 'כמו האפליקציה',
   'settings.textDir': 'כיוון טקסט',
   'settings.textDir.hint':
     'כיוון ברירת המחדל של הצ׳אט — אוטומטי מזהה לפי הודעה. לכל טרמינל מתג משלו בכותרת.',

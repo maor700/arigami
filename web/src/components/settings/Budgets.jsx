@@ -51,7 +51,7 @@ export function BudgetRow({ row, onSaved }) {
       <td className="py-1.5 pe-2 font-mono text-xs text-fgdim" dir="ltr">{row.model || t('host.budgets.modelDefault')}</td>
       <td className="py-1.5 pe-2">
         <span className="flex items-center gap-1.5">
-          <input type="number" min="0" step="1000" value={cap} onChange={(e) => setCap(e.target.value)} placeholder={t('host.budgets.noCap')} className={`${INPUT} w-[110px]`} dir="ltr" />
+          <input type="number" min="0" step="1000" value={cap} onChange={(e) => setCap(e.target.value)} placeholder={t('host.budgets.noCap')} aria-label={`${row.name || row.slug} · ${t('host.budgets.noCap')}`} className={`${INPUT} w-[110px]`} dir="ltr" />
           {dirty && <button type="button" disabled={busy} onClick={save} className={BTN_SM}>{t('host.budgets.save')}</button>}
         </span>
       </td>

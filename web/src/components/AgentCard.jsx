@@ -8,7 +8,7 @@
 //   cancelled  the human said no.
 // Same visual language as SetupCard/MergeCard (term accent vars, host-relative
 // links only — the card must work from a phone).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from './ChatIcon.jsx';
 import { useT, fieldDir } from '../lib/i18n.js';
@@ -23,7 +23,7 @@ import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
 export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish'];
 
-const field = 'w-full rounded-md border border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-xs text-[var(--term-accent-strong)] outline-none focus:border-[var(--term-accent-fg)]';
+const field = 'w-full rounded-md border border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-xs text-[var(--term-accent-strong)] outline-none coarse:min-h-11 focus:border-[var(--term-accent-fg)]';
 const label = 'mb-0.5 block text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';
 
 // The emoji-in-a-ring avatar every agent surface uses (rail row, card, page) — lives in the primitives now.
@@ -51,6 +51,7 @@ function Pill({ state }) {
 
 // OPENUI phase 2: a host library component on CardFrame/Btn; ChatPane renders it through HostCard.
 function AgentCardView({ props: { sessionId, event } }) {
+  const uid = useId();
   const t = useT();
   const { models } = useModels();
   const skillNames = useSkillNames();
@@ -128,17 +129,17 @@ function AgentCardView({ props: { sessionId, event } }) {
         <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="grid grid-cols-[1fr_64px] gap-2 sm:col-span-2">
             <div>
-              <label className={label}>{t('agent.card.name')}</label>
-              <input data-agent-field="name" dir={fieldDir(draft.name)} value={draft.name} onChange={set('name')} className={field} />
+              <label htmlFor={`${uid}-name`} className={label}>{t('agent.card.name')}</label>
+              <input id={`${uid}-name`} data-agent-field="name" dir={fieldDir(draft.name)} value={draft.name} onChange={set('name')} className={field} />
             </div>
             <div>
-              <label className={label}>{t('agent.card.emoji')}</label>
-              <input data-agent-field="emoji" value={draft.emoji} onChange={set('emoji')} className={`${field} text-center`} />
+              <label htmlFor={`${uid}-emoji`} className={label}>{t('agent.card.emoji')}</label>
+              <input id={`${uid}-emoji`} data-agent-field="emoji" value={draft.emoji} onChange={set('emoji')} className={`${field} text-center`} />
             </div>
           </div>
           <div className="sm:col-span-2">
-            <label className={label}>{t('agent.card.persona')}</label>
-            <textarea data-agent-field="persona" dir={fieldDir(draft.persona)} rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
+            <label htmlFor={`${uid}-persona`} className={label}>{t('agent.card.persona')}</label>
+            <textarea id={`${uid}-persona`} data-agent-field="persona" dir={fieldDir(draft.persona)} rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
           </div>
           <button type="button" data-agent-advanced onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1 text-xs text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] sm:col-span-2">
             <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
@@ -146,8 +147,8 @@ function AgentCardView({ props: { sessionId, event } }) {
           {advanced && (
             <>
               <div>
-                <label className={label}>{t('agent.card.slug')}</label>
-                <input data-agent-field="slug" value={draft.slug} onChange={set('slug')} placeholder="marketing-lead" className={field} />
+                <label htmlFor={`${uid}-slug`} className={label}>{t('agent.card.slug')}</label>
+                <input id={`${uid}-slug`} data-agent-field="slug" value={draft.slug} onChange={set('slug')} placeholder="marketing-lead" className={field} />
               </div>
               <EngineToggle
                 data-agent-field="engine"
@@ -157,15 +158,15 @@ function AgentCardView({ props: { sessionId, event } }) {
                 onChange={(o) => setDraft((cur) => ({ ...cur, engine: o.engine || '', model: o.model || '' }))}
               />
               <div>
-                <label className={label}>{t('agent.card.model')}</label>
-                <select data-agent-field="model" value={draft.model} onChange={set('model')} className={field}>
+                <label htmlFor={`${uid}-model`} className={label}>{t('agent.card.model')}</label>
+                <select id={`${uid}-model`} data-agent-field="model" value={draft.model} onChange={set('model')} className={field}>
                   <option value="">{t('agent.card.modelDefault')}</option>
                   {agentModelOptions(draft.engine, models, draft.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className={label}>{t('agent.card.budget')}</label>
-                <input data-agent-field="budget" type="number" min="0" value={draft.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={field} />
+                <label htmlFor={`${uid}-budget`} className={label}>{t('agent.card.budget')}</label>
+                <input id={`${uid}-budget`} data-agent-field="budget" type="number" min="0" value={draft.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={field} />
               </div>
               <div className="sm:col-span-2">
                 <label className={label}>{t('agent.card.tools')}</label>

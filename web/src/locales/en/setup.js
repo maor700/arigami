@@ -169,6 +169,7 @@ export const strings = {
   'setup.repo.err.gitRejected': 'This host has git access, but it cannot read this repository. Check that the connected GitHub account (or the access token) has access to it.',
   'setup.repo.already': '“{name}” is already in your workspace.',
   'setup.repo.alreadyCloning': '“{name}” was already registered — downloading it now.',
+  'setup.repo.addedLocal': '“{name}” added — copying it into your workspace.',
   'setup.repo.added': '“{name}” added — downloading it now.',
 
   // TakeoverStep (identity)
@@ -247,6 +248,8 @@ export const strings = {
   'setup.repo.pick.private': 'private',
   'setup.repo.pick.noMatch': 'No repository matches “{q}”. You can paste its URL below.',
   'setup.repo.pick.empty': 'No repositories found for this GitHub account.',
+  'setup.repo.pick.disconnected': 'GitHub is not connected, so your repositories cannot be listed. Connect it, or paste a repository URL below.',
+  'setup.repo.pick.connect': 'Connect GitHub',
   'setup.repo.pick.more': 'Show more',
   'setup.repo.pick.error': 'Could not load your repositories. Paste the URL below instead.',
   'setup.repo.pick.orPaste': 'Or paste a git URL (owner/repo) or a local folder:',

@@ -43,11 +43,11 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
         <div className="mb-2 text-xs text-fgdim">{t('agent.conn.ownHint', { name: agent.name })}</div>
         <div className={LIST}>
           {own.map((c) => (
-            <div key={c.id} data-agent-cap={c.id} data-resolved={c.resolvedFrom || 'none'} className={ROW}>
+            <div key={c.id} data-agent-cap={c.id} data-resolved={c.resolvedFrom || 'none'} className={`${ROW} max-sm:flex-wrap`}>
               {pill(c)}
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{capTitle(t, c.id)}</span>
-                {c.detail && <span dir="ltr" className="ms-2 font-mono text-xs text-fgdim">{c.detail}</span>}
+              <span className="min-w-0 flex-1 basis-32">
+                <bdi className="block truncate font-medium">{capTitle(t, c.id)}</bdi>
+                {c.detail && <span dir="auto" className="ui-start block truncate text-xs text-fgdim">{c.detail}</span>}
               </span>
               {c.ok && c.resolvedFrom === owner && (
                 <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-xs text-fgdim hover:text-err coarse:min-h-11">{t('agent.conn.disconnect')}</button>
@@ -69,9 +69,12 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
         <div className="mb-2 text-xs text-fgdim">{t('agent.conn.hostHint')}</div>
         <div className={LIST}>
           {host.map((c) => (
-            <div key={c.id} className={ROW}>
+            <div key={c.id} className={`${ROW} max-sm:flex-wrap`}>
               <StatusPill status={c.ok ? 'ok' : 'todo'} label={c.ok ? t('setup.connections.on') : t('setup.connections.off')} />
-              <span className="min-w-0 flex-1 truncate"><span className="font-medium">{capTitle(t, c.id)}</span>{c.detail && <span dir="ltr" className="ms-2 font-mono text-xs text-fgdim">{c.detail}</span>}</span>
+              <span className="min-w-0 flex-1 basis-32">
+                <bdi className="block truncate font-medium">{capTitle(t, c.id)}</bdi>
+                {c.detail && <span dir="auto" className="ui-start block truncate text-xs text-fgdim">{c.detail}</span>}
+              </span>
             </div>
           ))}
         </div>

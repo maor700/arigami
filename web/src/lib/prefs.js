@@ -18,8 +18,9 @@ export const UI_SCALE_IDS = ['small', 'medium', 'large'];
 export const isUiScale = (v) => UI_SCALE_IDS.includes(v);
 
 const DEFAULTS = {
-  theme: 'dark', // app chrome: 'light' | 'dark' — dark by default, like the landing page
-  termTheme: 'dark', // default terminal: 'light' | 'dark'
+  themeMode: 'system', // app chrome choice: 'system' (follows prefers-color-scheme) | 'light' | 'dark'
+  theme: 'dark', // app chrome as RENDERED: 'light' | 'dark' — derived from themeMode (dark when no system signal)
+  termTheme: 'auto', // default chat theme: 'auto' (follows the app theme) | 'light' | 'dark'
   chatTextSize: CHAT_TEXT.def, // px, clamped 12–20 — the chat prose size; --chat-scale on <html> (index.css)
   termDir: 'auto', // default terminal direction: 'auto' | 'ltr' | 'rtl'
   railWidth: 264, // px, clamped 180–420
@@ -141,11 +142,31 @@ function sanitizeOverrides(o) {
   return out;
 }
 
+// The OS colour scheme: 'light' only when the browser says so, else 'dark'
+// (no signal, SSR/tests → the brand default).
+export function systemTheme() {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
+  } catch {
+    /* no matchMedia */
+  }
+  return 'dark';
+}
+
+// A store written before `themeMode` existed carries an explicit light/dark —
+// that stays an explicit choice. A fresh store (nothing saved) follows the system.
+export function resolveThemeMode(p) {
+  if (['system', 'light', 'dark'].includes(p.themeMode)) return p.themeMode;
+  return p.theme === 'light' || p.theme === 'dark' ? p.theme : 'system';
+}
+
 function sanitize(raw) {
   const p = raw && typeof raw === 'object' ? raw : {};
+  const themeMode = resolveThemeMode(p);
   return {
-    theme: p.theme === 'light' ? 'light' : 'dark',
-    termTheme: p.termTheme === 'light' ? 'light' : 'dark',
+    themeMode,
+    theme: themeMode === 'system' ? systemTheme() : themeMode,
+    termTheme: p.termTheme === 'light' || p.termTheme === 'dark' ? p.termTheme : 'auto',
     chatTextSize: migrateChatText(p),
     termDir: ['auto', 'ltr', 'rtl'].includes(p.termDir) ? p.termDir : DEFAULTS.termDir,
     railWidth: clamp(p.railWidth, PREF_LIMITS.rail[0], PREF_LIMITS.rail[1], DEFAULTS.railWidth),
@@ -217,6 +238,24 @@ function applyBranding() {
 applyTheme(); // set before first paint
 applyBranding();
 
+// Follow the OS while themeMode is 'system' (a phone that switches at sunset).
+if (HAS_DOM && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  try {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => {
+      if (state.themeMode !== 'system') return;
+      const next = systemTheme();
+      if (next === state.theme) return;
+      state = { ...state, theme: next };
+      applyTheme();
+      for (const fn of listeners) fn();
+    };
+    mq.addEventListener?.('change', onChange);
+  } catch {
+    /* old browsers */
+  }
+}
+
 export function subscribe(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -236,6 +275,9 @@ export const getPrefs = () => state;
 export const currentTheme = () => (state.theme === 'light' ? 'light' : 'dark');
 
 export function setPrefs(patch) {
+  // An explicit `theme: 'light'|'dark'` (settings, palette toggle, extension
+  // bridge) is a choice: it becomes the mode. 'system' goes through themeMode.
+  if (patch && (patch.theme === 'light' || patch.theme === 'dark') && !('themeMode' in patch)) patch = { ...patch, themeMode: patch.theme };
   state = sanitize({ ...state, ...patch });
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -257,7 +299,7 @@ export function termViewFrom(prefs, sessionId) {
   const ov = (prefs.termOverrides && prefs.termOverrides[sessionId]) || {};
   return {
     dir: ov.dir || prefs.termDir,
-    theme: ov.theme || prefs.termTheme,
+    theme: ov.theme || (prefs.termTheme === 'light' || prefs.termTheme === 'dark' ? prefs.termTheme : prefs.theme === 'light' ? 'light' : 'dark'),
   };
 }
 

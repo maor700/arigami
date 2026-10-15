@@ -139,7 +139,7 @@ function ProviderPicker({ catalog, value, onChange }) {
   return (
     <div className="mt-2">
       <div className="text-xs text-fgdim">{t('launcher.account.providerLabel')}</div>
-      <div role="radiogroup" className="mt-1 flex flex-wrap gap-2">
+      <div role="radiogroup" aria-label={t('launcher.account.providerLabel')} className="mt-1 flex flex-wrap gap-2">
         {ids.map((id) => {
           const p = catalog[id];
           const on = id === value;

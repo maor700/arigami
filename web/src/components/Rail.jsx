@@ -562,7 +562,7 @@ function SectionToggle({ label, count, open, onToggle, title, className = '', ch
         >
           <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? 'rotate-90' : 'rtl:rotate-180'}`} />
           <span className="min-w-0 truncate">{label}</span>
-          <span className="tabular-nums text-muted-foreground/80">{count}</span>
+          <span className="tabular-nums text-muted-foreground">{count}</span>
         </button>
       </Tip>
       {children}
@@ -629,13 +629,13 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
         <Tip label={t('rail.teamNewAgent')}>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="xs"
             data-rail-team-new
             aria-label={t('rail.teamNewAgent')}
             onClick={onNewAgent}
             className="text-muted-foreground"
           >
-            <Plus />
+            <Plus /> <span className="truncate">{t('rail.teamNewAgent').replace(/^\+\s*/, '')}</span>
           </Button>
         </Tip>
       </SectionToggle>
@@ -758,7 +758,7 @@ function GroupHeader({ label, count }) {
   return (
     <div className="flex items-center gap-1.5 px-2.5 pt-3 pb-1 text-xs font-medium text-muted-foreground">
       <span className="min-w-0 truncate">{label}</span>
-      <span className="tabular-nums text-muted-foreground/80">{count}</span>
+      <span className="tabular-nums text-muted-foreground">{count}</span>
     </div>
   );
 }
@@ -1180,8 +1180,8 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           className="min-w-0 flex-1 !pe-0"
         />
         <Tip label={t('rail.manageTriggers')}>
-          <Button variant="ghost" size="icon-sm" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
-            <Zap />
+          <Button variant="ghost" size="xs" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
+            <Zap /> <span className="capitalize">{t('rail.triggers')}</span>
           </Button>
         </Tip>
         <Tip label={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}>

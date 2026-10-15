@@ -28,6 +28,30 @@ export function nodeDir(node) {
   return out || 'ltr';
 }
 
+// Code is LTR, but a string and a comment that both hold Hebrew would otherwise
+// fuse into ONE right-to-left run across the `"; // ` between them (bidi: neutrals
+// between two RTL runs go RTL), so the quote, `;` and `//` hop sides. Each run of
+// RTL words becomes its own isolate (<bdi>): the words keep their reading order,
+// the syntax around them keeps the code's order.
+const RTL_RUN = /[\u0590-\u08FF\uFB1D-\uFEFC](?:[\u0590-\u08FF\uFB1D-\uFEFC\d ]*[\u0590-\u08FF\uFB1D-\uFEFC\d])?/g;
+export function isolateRtlRuns(text) {
+  const out = [];
+  let last = 0;
+  for (const m of String(text).matchAll(RTL_RUN)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push({ rtl: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function MdCode({ node, children, ...props }) { // eslint-disable-line no-unused-vars
+  const parts = typeof children === 'string' ? isolateRtlRuns(children) : null;
+  if (!parts || !parts.some((x) => typeof x !== 'string')) return <code {...props}>{children}</code>;
+  return <code {...props}>{parts.map((x, i) => (typeof x === 'string' ? x : <bdi key={i}>{x.rtl}</bdi>))}</code>;
+}
+
 const dirred = (Tag) => function MdBlock({ node, ...props }) {
   return <Tag dir={nodeDir(node)} {...props} />;
 };
@@ -36,6 +60,7 @@ export const MD_COMPONENTS = {
   p: dirred('p'), ul: dirred('ul'), ol: dirred('ol'), // li inherits its list: the marker sits on the list's side (see .md li)
   h1: dirred('h1'), h2: dirred('h2'), h3: dirred('h3'), h4: dirred('h4'), h5: dirred('h5'), h6: dirred('h6'),
   blockquote: dirred('blockquote'), table: dirred('table'), th: dirred('th'), td: dirred('td'),
+  code: MdCode,
   pre: function MdPre({ node, ...props }) { return <pre dir="ltr" {...props} />; }, // eslint-disable-line no-unused-vars
 };
 
