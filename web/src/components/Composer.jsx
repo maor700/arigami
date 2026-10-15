@@ -628,7 +628,7 @@ export function ChatFooter({ session }) {
           ref={taRef}
           data-composer
           rows={1}
-          dir={dirOf(text)}
+          dir={text ? dirOf(text) : undefined}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}

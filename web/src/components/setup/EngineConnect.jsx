@@ -56,7 +56,7 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
             {!cli ? (
               <>
                 <p className="text-xs leading-snug text-warn">{t(`wizard.${spec.id}.noCli`)}</p>
-                <code dir="ltr" className="mt-1 block rounded-md border border-border bg-background px-2 py-1.5 text-xs select-all">{spec.install}</code>
+                <code dir="ltr" className="mt-1 block rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs select-all">{spec.install}</code>
                 <button type="button" onClick={onChanged} className={`${BTN2} mt-2`}><Icon icon={faRotateRight} /> {t('setup.engine.recheck')}</button>
               </>
             ) : (

@@ -10,7 +10,7 @@ import { useT } from '../lib/i18n.js';
 import { useModels, refreshModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, permissionModesFor, codexModel } from '../lib/engines.js';
 import { toastError } from '../lib/toast.js';
-import { Button, Popover, PopoverContent, PopoverTrigger, StatusDot, Tip } from './ui/index.js';
+import { Button, Popover, PopoverContent, PopoverTrigger, StatusDot, Tip, TooltipProvider } from './ui/index.js';
 
 const PERM = [
   { value: 'default', label: 'rail.permDefault', desc: 'rail.permDefaultDesc' },
@@ -115,9 +115,11 @@ export default function ComposerPill({ session }) {
     }[pending.kind]
   );
   const dot = PERM_DOT[perm];
-  const summary = `${modelLabel} · ${effortLabel}`;
+  // the effort rides in the label only when one was chosen (a default effort adds no information)
+  const summary = effort && effort !== 'default' ? `${modelLabel} · ${effortLabel}` : modelLabel;
 
   return (
+    <TooltipProvider>
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPending(null); }}>
       <Tip label={t('rail.model') + ' · ' + t('rail.effort') + ' · ' + t('rail.permissionMode')}>
         <PopoverTrigger asChild>
@@ -180,5 +182,6 @@ export default function ComposerPill({ session }) {
         )}
       </PopoverContent>
     </Popover>
+    </TooltipProvider>
   );
 }

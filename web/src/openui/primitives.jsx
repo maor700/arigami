@@ -47,7 +47,7 @@ export const CardFrame = forwardRef(function CardFrame({ tone = 'accent', live, 
     <div ref={ref} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
       {(label || right || live) && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {(live || tone === 'ok' || tone === 'danger') && <span aria-hidden="true" data-card-dot className={`size-1.5 shrink-0 rounded-full ${dot}`} />}
+          {(live || ((tone === 'ok' || tone === 'danger') && !icon)) && <span aria-hidden="true" data-card-dot className={`size-1.5 shrink-0 rounded-full ${dot}`} />}
           {icon && <span className="text-[var(--term-dim)]">{icon}</span>}
           {label && <span dir="auto" className={`min-w-0 font-medium ${labelClass || strong}`}>{label}</span>}
           {meta}

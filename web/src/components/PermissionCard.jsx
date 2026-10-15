@@ -58,7 +58,7 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
   return (
     <CardFrame ref={cardRef} tone="accent" live={!frozen} label={t('chat.permissionRequest')} meta={<span className={ACCENT.dim}>{toolName}</span>} data-permission-card={answered || (expired ? 'expired' : stale ? 'stale' : 'open')} data-live={live || undefined}>
       {event.input != null && (
-        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 text-xs leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
+        <pre dir="ltr" data-code className="thin-scroll mt-2 max-h-40 overflow-auto rounded-md bg-[var(--term-codebg)] p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
           {prettyInput(event.input)}
         </pre>
       )}

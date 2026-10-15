@@ -131,7 +131,7 @@ function ArtifactCardView({ props: { sessionId, event } }) {
       }
       right={<span className="text-xs text-[var(--term-faint)]">{clock(event.ts)}</span>}
     >
-      <div dir="ltr" className="mt-1 truncate text-xs text-[var(--term-dim)]" title={abs}>{path}</div>
+      <div dir="ltr" className="mt-1 truncate font-mono text-xs text-[var(--term-dim)]" title={abs}>{path}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <Btn variant="chip" onClick={openTab} disabled={opening} title={t('chat.artifactOpenTabHint')}>
           <Icon icon={faArrowUpRightFromSquare} /> {t('chat.artifactOpenTab')}
@@ -165,7 +165,7 @@ function ArtifactCardView({ props: { sessionId, event } }) {
       {share && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md border border-dashed border-[var(--term-border)] px-2 py-1">
           <span className="text-[var(--term-dim)]"><Icon icon={faShareNodes} /></span>
-          <span dir="ltr" className="min-w-0 flex-1 truncate text-xs text-[var(--term-dim)]" title={absolutize(share.url)}>
+          <span dir="ltr" className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--term-dim)]" title={absolutize(share.url)}>
             {absolutize(share.url)}
           </span>
           {share.exp && (

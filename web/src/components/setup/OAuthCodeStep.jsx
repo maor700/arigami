@@ -172,7 +172,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
         {link.url && (
           <details className="text-xs text-fgdim">
             <summary className="cursor-pointer select-none py-1">{t('setup.oauth.showLink')}</summary>
-            <div dir="ltr" className="mt-1 max-h-[4.5rem] overflow-auto break-all rounded-md border border-hair bg-bg px-2 py-1.5 text-xs select-all">{link.url}</div>
+            <div dir="ltr" className="mt-1 max-h-[4.5rem] overflow-auto break-all rounded-md border border-hair bg-bg px-2 py-1.5 font-mono text-xs select-all">{link.url}</div>
           </details>
         )}
         {flow === 'device' && (

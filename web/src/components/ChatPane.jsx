@@ -449,7 +449,7 @@ function ResultLine({ event }) {
   }
   const text = textOf(event) || t('chat.errored');
   return (
-    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
+    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--term-accent-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
       <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-err" aria-hidden="true" />
       <span className="min-w-0">{text.length > 400 ? `${text.slice(0, 400)}…` : text}</span>
     </div>
@@ -458,7 +458,7 @@ function ResultLine({ event }) {
 
 function ErrorLine({ event }) {
   return (
-    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
+    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--term-accent-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
       <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-err" aria-hidden="true" />
       <span className="min-w-0">{textOf(event)}</span>
     </div>

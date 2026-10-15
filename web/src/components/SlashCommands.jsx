@@ -92,7 +92,7 @@ export function SlashPalette({ items, active, onPick, onHover }) {
             i === active ? 'bg-muted' : ''
           }`}
         >
-          <span dir="ltr" className="font-mono text-xs font-medium text-foreground">/{it.name}{it.argumentHint && it.host ? <span className="ms-1 font-normal text-fgdim">{it.argumentHint}</span> : null}</span>
+          <span dir="ltr" className="shrink-0 font-mono text-xs font-medium whitespace-nowrap text-foreground">/{it.name}{it.argumentHint && it.host ? <span className="ms-1 font-normal text-fgdim">{it.argumentHint}</span> : null}</span>
           {it.host ? (
             <span className="rounded-sm bg-muted px-1.5 text-2xs text-muted-foreground">host</span>
           ) : it.skill ? (
