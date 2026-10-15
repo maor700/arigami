@@ -795,8 +795,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   }, [shown]);
 
   // The renderers use fixed-px Tailwind classes, so scale the whole output via
-  // CSS zoom relative to the 12px default (clean, overrides fixed sizes).
-  const scale = (termFontSize || 12) / 12;
+  // CSS zoom relative to the 16px default (clean, overrides fixed sizes).
+  const scale = (termFontSize || 16) / 16;
 
   return (
     <TooltipProvider>

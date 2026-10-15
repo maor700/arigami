@@ -31,8 +31,8 @@ export default function ToggleStep({ capability, enabled = false, detail = '', p
   const bodyKey = `setup.toggle.${['push', 'remote', 'telemetry', 'desktop'].includes(fam) ? fam : 'generic'}.body`;
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-[12px] leading-relaxed text-fgdim">{t(bodyKey)}</p>
-      {detail && <div dir="ltr" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{detail}</div>}
+      <p className="text-[13px] leading-relaxed text-fgdim">{t(bodyKey)}</p>
+      {detail && <div dir="ltr" className="text-xs text-fgdim">{detail}</div>}
       {on && <OkLine>{t('setup.toggle.on')}</OkLine>}
       {!pinned && (
         <div className="flex flex-wrap gap-2">

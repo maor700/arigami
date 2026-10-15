@@ -8,7 +8,7 @@
 // own "I'm signed in" button.
 import { useState } from 'react';
 import { useT } from '../../lib/i18n.js';
-import { Icon } from '../../lib/icons.js';
+import { Icon } from '../ChatIcon.jsx';
 import { useStore, setScreenModal, openScreenTakeover, openScreenRequest } from '../../lib/store.js';
 import * as setupApi from '../../lib/setup-api.js';
 import { BTN, BTN2, INPUT, ErrorBox, OkLine, useAction } from './shared.jsx';
@@ -41,7 +41,7 @@ export default function TakeoverStep({ capability = 'identity', sessionId, reque
   if (result) return <OkLine>{t('setup.takeover.done', { email: result.email || email || '' })}</OkLine>;
   return (
     <div className="flex flex-col gap-2">
-      <ol className="list-decimal ps-5 text-[12px] leading-relaxed text-fgdim">
+      <ol className="list-decimal ps-5 text-[13px] leading-relaxed text-fgdim">
         <li>{t('setup.takeover.step1')}</li>
         <li>{t('setup.takeover.step2')}</li>
         <li>{t('setup.takeover.step3')}</li>

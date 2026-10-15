@@ -5,7 +5,7 @@
 // are exactly as they were.
 import { useEffect, useRef, useState } from 'react';
 import { answerPermission } from '../lib/store.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { useT } from '../lib/i18n.js';
 import { keysBlocked } from '../openui/keys.js';
 import { prettyInput } from '../lib/pretty-input.js';
@@ -58,7 +58,7 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
   return (
     <CardFrame ref={cardRef} tone="accent" live={!frozen} label={t('chat.permissionRequest')} meta={<span className={ACCENT.dim}>{toolName}</span>} data-permission-card={answered || (expired ? 'expired' : stale ? 'stale' : 'open')} data-live={live || undefined}>
       {event.input != null && (
-        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
+        <pre className="thin-scroll mt-2 max-h-40 overflow-auto rounded-lg bg-[var(--term-codebg)] p-2 text-xs leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
           {prettyInput(event.input)}
         </pre>
       )}
@@ -74,13 +74,13 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
           </SettledLine>
         ) : (
           <>
-            <Btn ref={allowRef} variant="primary" className="outline-none focus-visible:ring-2 focus-visible:ring-ink" disabled={busy} onClick={() => answer('allow')} title={t('chat.allowHint')}>
+            <Btn ref={allowRef} variant="primary" className="" disabled={busy} onClick={() => answer('allow')} title={t('chat.allowHint')}>
               {t('chat.allow')}
             </Btn>
             <Btn variant="quiet" disabled={busy} onClick={() => answer('deny')} title={t('chat.denyHint')}>
               {t('chat.deny')}
             </Btn>
-            <span className="ml-1 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
+            <span dir="ltr" className="ms-1 text-xs text-[var(--term-accent-dim)]">Enter/y · Esc/n</span>
           </>
         )}
       </div>

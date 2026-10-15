@@ -3,7 +3,7 @@
 // wrapped by this card, unmounted the moment the request is answered.
 import { useState } from 'react';
 import { cancelScreenRequest, openScreenTakeover, useStore, SCREEN_CANCEL_NOTE } from '../lib/store.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { useT } from '../lib/i18n.js';
 import { engineLabel } from '../lib/engines.js';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
@@ -54,16 +54,16 @@ function ScreenRequestCardView({ props: { sessionId, event } }) {
       data-screen-request={answered ? 'answered' : 'open'}
       label={t('chat.screenRequest', { engine })}
       meta={reasonLabel && (
-        <span className="rounded-full border border-[var(--term-accent-border)] px-2 py-[1px] text-[11.5px] md:text-[10px] font-bold uppercase tracking-wide text-[var(--term-accent-strong)]">
+        <span className="rounded-md border border-[var(--term-accent-border)] px-2 py-[1px] text-xs font-medium uppercase tracking-wide text-[var(--term-accent-strong)]">
           {reasonLabel}
         </span>
       )}
-      right={!answered && <span className="text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>}
+      right={!answered && <span className="text-xs text-[var(--term-accent-dim)]">{t('chat.screenModeWatch')}</span>}
     >
       {event.prompt && <Prose className="mt-2">{event.prompt}</Prose>}
       {event.hint && (
         <Prose dim className="mt-1.5">
-          <span className="font-bold">{t('chat.screenHint')}:</span> {event.hint}
+          <span className="font-medium">{t('chat.screenHint')}:</span> {event.hint}
         </Prose>
       )}
       {answered ? (

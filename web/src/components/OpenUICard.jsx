@@ -41,17 +41,17 @@ export default function OpenUICard({ sessionId, event }) {
     }
   };
 
-  const quiet = <div data-openui-fallback="chunk" className="text-[11.5px] text-fgdim">{t('openui.fallback')}</div>;
+  const quiet = <div data-openui-fallback="chunk" className="text-xs text-fgdim">{t('openui.fallback')}</div>;
   return (
-    <div data-openui-card="" className="my-1.5 rounded-[10px] border border-hair bg-panel px-3 py-2.5">
-      <div className="mb-1 font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{t('openui.from')}</div>
-      {title && <div className="mb-1.5 text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
+    <div data-openui-card="" className="my-1.5 rounded-lg border border-hair bg-panel px-3 py-2.5">
+      <div className="mb-1 text-xs tracking-[0.08em] text-fgdim uppercase">{t('openui.from')}</div>
+      {title && <div className="mb-1.5 text-[13px] font-medium text-fg" dir={dirOf(title)}>{title}</div>}
       <ChunkBoundary fallback={quiet}>
         <Suspense fallback={<div data-openui-loading="" className="h-6 animate-pulse rounded-md bg-[var(--term-hover)] opacity-60" />}>
           <Body ui={ui} busy={busy} onAction={onAction} />
         </Suspense>
       </ChunkBoundary>
-      {sent && <div data-openui-sent="" className="mt-1.5 text-[11px] text-fgdim" dir={dirOf(sent)}>✓ {sent}</div>}
+      {sent && <div data-openui-sent="" className="mt-1.5 text-xs text-fgdim" dir={dirOf(sent)}>✓ {sent}</div>}
     </div>
   );
 }

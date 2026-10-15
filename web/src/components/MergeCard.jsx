@@ -6,7 +6,8 @@
 // The HOST executes the merge (POST /sessions/:id/merge) — never a claude turn.
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
+import { StatusDot } from './ui/badge.jsx';
 import { faCheck, faTriangleExclamation, faRotateRight, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { useT } from '../lib/i18n.js';
 import { toastSuccess, toastError } from '../lib/toast.js';
@@ -23,22 +24,22 @@ export function MergePill({ session, compact }) {
   const md = session?.metadata || {};
   if (md.merged) {
     return (
-      <span title={`${md.merged.base || ''} · ${md.merged.at ? fmtDateTime(md.merged.at) : ''}`} className="flex shrink-0 items-center gap-1 rounded-full border border-ok-line bg-ok-bg px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-ok">
-        <Icon icon={faCheck} /> {t('chat.mergeMerged', { sha: short(md.merged.sha) })}
+      <span title={`${md.merged.base || ''} · ${md.merged.at ? fmtDateTime(md.merged.at) : ''}`} className="flex shrink-0 items-center gap-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+        <StatusDot status="ok" /> {t('chat.mergeMerged', { sha: short(md.merged.sha) })}
       </span>
     );
   }
   if (md.mergeConflict && md.review?.state === 'approved') {
     return (
-      <span title={(md.mergeConflict.files || []).join(', ')} className="flex shrink-0 items-center gap-1 rounded-full border border-err-line bg-danger/10 px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-danger">
-        <Icon icon={faTriangleExclamation} /> {t('chat.mergeConflict')}
+      <span title={(md.mergeConflict.files || []).join(', ')} className="flex shrink-0 items-center gap-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+        <StatusDot status="err" /> {t('chat.mergeConflict')}
       </span>
     );
   }
   if (md.review?.state === 'approved' && md.branch) {
     return (
-      <span title={md.review.by ? t('chat.mergeApprovedBy', { by: md.review.by }) : ''} className="flex shrink-0 items-center gap-1 rounded-full border border-warn-line bg-chip/60 px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold text-fgdim">
-        <Icon icon={faCheck} /> {compact ? t('chat.mergeApproved').split(' ')[0] : t('chat.mergeApproved')}
+      <span title={md.review.by ? t('chat.mergeApprovedBy', { by: md.review.by }) : ''} className="flex shrink-0 items-center gap-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+        <StatusDot status="warn" /> {compact ? t('chat.mergeApproved').split(' ')[0] : t('chat.mergeApproved')}
       </span>
     );
   }
@@ -106,20 +107,20 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
 
   const fg = dark ? 'text-[var(--term-accent-strong)]' : 'text-fg';
   const dim = dark ? 'text-[var(--term-accent-dim)]' : 'text-fgdim';
-  const box = dark ? '' : 'rounded-[9px] border-[1.5px] border-warn-line bg-chip/40 px-3 py-2';
+  const box = dark ? '' : 'rounded-lg border border-border bg-muted/50 px-3 py-2';
   const field = dark
-    ? 'rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-strong)]'
-    : 'rounded-[6px] border-[1.5px] border-border bg-panel px-1.5 py-0.5 font-mono text-[11.5px] md:text-[10px] text-fg';
+    ? 'rounded-md border border-[var(--term-accent-border)] bg-transparent px-1.5 py-0.5 text-xs text-[var(--term-accent-strong)]'
+    : 'rounded-md border border-border bg-panel px-1.5 py-0.5 text-xs text-fg';
   const Frame = dark && !dense ? CardFrame : 'div';
   const frameProps = dark && !dense ? { tone: 'accent', dense: true, className: 'flex flex-wrap items-center gap-2 !my-2.5' } : { className: `my-2.5 flex flex-wrap items-center gap-2 ${dense ? '' : box}` };
   return (
     <Frame data-merge-panel="" {...frameProps}>
       {!dense && (
-        <span className={`flex items-center gap-1.5 font-mono text-[11px] font-bold ${fg}`}>
+        <span className={`flex items-center gap-1.5 font-mono text-xs font-medium ${fg}`}>
           <Icon icon={faCheck} /> {t('chat.mergeInto', { branch: md.branch, base: st?.base || md.base || '…' })}
         </span>
       )}
-      {!dense && md.review?.by && <span className={`font-mono text-[11.5px] md:text-[10px] ${dim}`}>{t('chat.mergeApprovedBy', { by: md.review.by })}</span>}
+      {!dense && md.review?.by && <span className={`text-xs ${dim}`}>{t('chat.mergeApprovedBy', { by: md.review.by })}</span>}
       <span className="ms-auto flex flex-wrap items-center gap-2">
         <select
           value={strategy}
@@ -130,7 +131,7 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
           <option value="no-ff">{t('chat.mergeStrategyNoFf')}</option>
           <option value="squash">{t('chat.mergeStrategySquash')}</option>
         </select>
-        <label className={`flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10px] ${dim}`}>
+        <label className={`flex cursor-pointer items-center gap-1 text-xs ${dim}`}>
           <input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} disabled={busy} /> {t('chat.mergeDeleteBranch')}
         </label>
         <Btn
@@ -152,12 +153,12 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
         )}
       </span>
       {!canMerge && reasonText && !busy && (
-        <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{reasonText}</span>
+        <span className="basis-full text-xs text-danger">{reasonText}</span>
       )}
       {result?.conflict && (
-        <span className="basis-full font-mono text-[11.5px] md:text-[10px] text-danger">{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>
+        <span className="basis-full text-xs text-danger">{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>
       )}
-      {!dense && <span className={`basis-full font-mono text-[11px] md:text-[9.5px] ${dim}`}>{t('chat.mergeHint')}</span>}
+      {!dense && <span className={`basis-full text-xs ${dim}`}>{t('chat.mergeHint')}</span>}
     </Frame>
   );
 }
@@ -179,7 +180,7 @@ function MergeEventView({ props: { event } }) {
     <CardFrame
       tone={ok ? 'ok' : 'danger'}
       data-merge-event={ok ? 'merged' : 'conflict'}
-      className="!rounded-[9px] !px-3 !py-2 font-mono text-[11px]"
+      className="!rounded-lg !px-3 !py-2 font-mono text-xs"
       icon={<Icon icon={ok ? faCheck : faTriangleExclamation} />}
       label={t('chat.mergeCardTitle')}
       meta={event.child && <span className="font-normal opacity-70">· {t('chat.mergeChild')} {event.child}</span>}

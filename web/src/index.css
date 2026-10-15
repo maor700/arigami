@@ -545,6 +545,15 @@ body {
   /* logical: a Hebrew list indents from the right, like its text */
   padding-inline-start: 1.4em;
 }
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li::marker {
+  color: var(--term-faint);
+}
 .md li {
   margin: 0.15em 0;
 }
