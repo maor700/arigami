@@ -77,7 +77,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id="accent" title={t('settings.appearance')}>
           <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
             <span className="flex items-center gap-2">
-              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer items-center justify-center overflow-hidden rounded-md border border-input">
+              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer coarse:h-11 coarse:w-11 items-center justify-center overflow-hidden rounded-md border border-input">
                 <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
                 <input
                   type="color"

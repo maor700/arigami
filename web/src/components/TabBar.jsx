@@ -205,7 +205,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
     }`;
 
   return (
-    <div className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-border bg-background ps-1 pe-2 md:ps-3">
+    <div className="relative z-10 flex h-11 coarse:h-[calc(2.75rem+1px)] shrink-0 items-stretch border-b border-border bg-background ps-1 pe-2 md:ps-3">
       {/* mobile: hamburger opens the rail drawer (there's no separate top bar
           over a session — this row is the top bar) */}
       {!embedded && (

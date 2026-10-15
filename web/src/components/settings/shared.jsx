@@ -129,7 +129,7 @@ export function Section({ id, title, onRefresh, children, first = false }) {
       <div className="mb-2 flex items-center text-xs font-medium text-fgdim">
         {title}
         {onRefresh && (
-          <button type="button" onClick={onRefresh} className="ms-auto cursor-pointer text-xs font-normal hover:text-fg">
+          <button type="button" onClick={onRefresh} className="ms-auto inline-flex cursor-pointer items-center gap-1 text-xs font-normal hover:text-fg coarse:min-h-11 coarse:min-w-11 coarse:justify-center">
             <Icon icon={faRotateRight} /> {t('settings.refresh')}
           </button>
         )}
@@ -232,7 +232,7 @@ export function Advanced({ section, ids = [], children, hint }) {
       onToggle={(e) => setOpen(e.currentTarget.open)}
       className="mt-8 rounded-lg border border-hair"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-medium text-fgdim select-none hover:text-fg [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 coarse:min-h-11 text-xs font-medium text-fgdim select-none hover:text-fg [&::-webkit-details-marker]:hidden">
         <span className={`text-xs transition-transform ${open ? '' : 'rtl:rotate-90 ltr:-rotate-90'}`}><Icon icon={faChevronDown} /></span>
         {t('settings.advanced')}
         {hint && <span className="ms-auto text-xs font-normal">{hint}</span>}

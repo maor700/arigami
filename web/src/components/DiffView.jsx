@@ -100,7 +100,7 @@ function AddBtn({ onClick }) {
       onClick={onClick}
       title={t('chat.addCommentLine')}
       aria-label={t('chat.addCommentLine')}
-      className="absolute left-1 top-1/2 z-10 hidden size-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border border-border bg-card text-muted-foreground shadow-sm hover:bg-foreground hover:text-background focus-visible:flex group-hover:flex coarse:flex coarse:size-6"
+      className="absolute left-1 top-1/2 z-10 hidden size-4 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border border-border bg-card text-muted-foreground shadow-sm hover:bg-foreground hover:text-background focus-visible:flex group-hover:flex coarse:flex coarse:size-6 coarse:after:absolute coarse:after:-inset-[11px]"
     >
       <PlusIcon className="size-3" />
     </button>
