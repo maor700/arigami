@@ -316,6 +316,8 @@ export const strings = {
   'chat.mergeConflictFiles': 'קונפליקט ב: {files}. פתרו בצ׳קאאוט הבסיס ומזגו שוב.',
   'chat.mergeFailed': 'המיזוג נכשל: {err}',
   'chat.mergeReason.not-approved': 'עדיין לא אושר — קודם אישור אנושי',
+  'chat.mergeChangesRequested': 'התבקשו שינויים',
+  'chat.mergeReason.changes-requested': 'התבקשו שינויים — המיזוג כבוי עד האישור הבא',
   'chat.mergeReason.dirty': 'לצ׳קאאוט הבסיס יש שינויים שלא קומטו',
   'chat.mergeReason.base-not-checked-out': 'ענף הבסיס לא מוצ׳ק-אאוט בריפו הבסיס',
   'chat.mergeReason.branch-missing': 'הענף כבר לא קיים',

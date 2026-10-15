@@ -276,3 +276,34 @@ test('concurrent merge requests recheck metadata inside the repository lock', as
   await removeWorktree(repo, wt.dir);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('request-changes withdraws an approval: no merge (not even forced) until a fresh approve', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'changes-requested', reposDir: repos });
+  commit(wt.dir, 'cr.txt', 'reviewed', 'reviewed');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-cr-'));
+  const before = sh(repo, 'git', 'rev-parse', 'HEAD');
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
+    const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
+    api.markApproved(s.id,'human');
+    const approved=await api.mergeStatus(st.getSession(s.id));
+    const revoked=api.markChangesRequested(s.id,'human');
+    const status=await api.mergeStatus(st.getSession(s.id));
+    const refused=await api.mergeSession(st.getSession(s.id),{force:true},'human');
+    const review=st.getSession(s.id).metadata.review;
+    api.markApproved(s.id,'human');
+    const again=await api.mergeStatus(st.getSession(s.id));
+    emit({approved,revoked,status,refused,review,again}); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  expect(r.ok).toBe(true);
+  const o = r.out[0];
+  expect(o.approved.canMerge).toBe(true);
+  expect(o.revoked).toBe(true);
+  expect(o.review.state).toBe('changes-requested');
+  expect(o.status).toMatchObject({ approved: false, approvedSha: null, canMerge: false, reason: 'changes-requested' });
+  expect(o.refused).toMatchObject({ status: 409, reason: 'changes-requested' });
+  expect(o.again.canMerge).toBe(true);
+  expect(sh(repo, 'git', 'rev-parse', 'HEAD')).toBe(before);
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

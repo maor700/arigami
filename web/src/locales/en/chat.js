@@ -316,6 +316,8 @@ export const strings = {
   'chat.mergeConflictFiles': 'Conflict in: {files}. Resolve in the base checkout, then merge again.',
   'chat.mergeFailed': "Couldn't merge: {err}",
   'chat.mergeReason.not-approved': 'not approved yet — the human approves first',
+  'chat.mergeChangesRequested': 'Changes requested',
+  'chat.mergeReason.changes-requested': 'changes were requested — merge stays off until the next approval',
   'chat.mergeReason.dirty': 'base checkout has uncommitted changes',
   'chat.mergeReason.base-not-checked-out': 'base branch is not checked out in the base repo',
   'chat.mergeReason.branch-missing': 'branch no longer exists',

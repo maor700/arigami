@@ -46,6 +46,13 @@ export function MergePill({ session, compact }) {
       </Badge>
     );
   }
+  if (md.review?.state === 'changes-requested' && md.branch) {
+    return (
+      <Badge status="warn" title={t('chat.mergeReason.changes-requested')}>
+        <TriangleAlertIcon /> {t('chat.mergeChangesRequested')}
+      </Badge>
+    );
+  }
   return null;
 }
 

@@ -520,16 +520,25 @@ export function getChatPage(id, { limit = 100, beforeSeq = Infinity, clip = 0 } 
     const page = t.events.slice(-limit);
     return { events: clipEvents(page, clip), hasMore: t.events.length > limit || t.seq > t.events.length, oldestSeq: page[0]?.seq ?? 0 };
   }
-  // Read only what we need from disk (from the end)
-  const needed = beforeSeq < Infinity ? limit + 500 : limit + 1; // overshoot for filtering
-  const raw = readTailLines(chatFile(id), needed);
-  const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
-  const page = filtered.slice(-limit);
-  return {
-    events: clipEvents(page, clip),
-    hasMore: filtered.length > limit || (raw.length >= needed),
-    oldestSeq: page[0]?.seq ?? 0,
-  };
+  // Read only what we need from disk (from the end). Older cursors used to read
+  // a fixed limit+500 lines, which cannot reach past the last ~700 events; keep
+  // widening the window until `limit + 1` events sit before the cursor (the +1
+  // is how we know there is another page) or the file start is reached.
+  let needed = beforeSeq < Infinity ? limit + 500 : limit + 1;
+  for (;;) {
+    const raw = readTailLines(chatFile(id), needed);
+    const filtered = beforeSeq < Infinity ? raw.filter((e) => e.seq < beforeSeq) : raw;
+    const atStart = raw.length < needed;
+    if (atStart || filtered.length > limit) {
+      const page = filtered.slice(-limit);
+      return {
+        events: clipEvents(page, clip),
+        hasMore: filtered.length > limit,
+        oldestSeq: page[0]?.seq ?? 0,
+      };
+    }
+    needed *= 2;
+  }
 }
 
 // ---- process lifecycle -----------------------------------------------------

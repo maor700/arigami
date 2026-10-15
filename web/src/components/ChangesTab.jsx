@@ -604,7 +604,7 @@ export default function ChangesTab({ session, active }) {
 
   const mergeReady = session.metadata?.review?.state === 'approved' && !session.metadata?.merged;
   const md = session.metadata || {};
-  const pillShown = !!(md.merged || (md.review?.state === 'approved' && md.branch));
+  const pillShown = !!(md.merged || ((md.review?.state === 'approved' || md.review?.state === 'changes-requested') && md.branch));
   const hasMeta = desktop ? !!(data?.branch || files.length > 0 || expl || outdated || pillShown) : !!(outdated || pillShown);
 
   return (
