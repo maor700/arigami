@@ -95,6 +95,11 @@ export const strings = {
   'chat.working': 'working…',
   'chat.plan': 'Plan',
   'chat.jumpToLatest': 'Jump to latest',
+  'chat.textSize': 'Text size',
+  'chat.textSizeSmaller': 'Smaller',
+  'chat.textSizeDefault': 'Default ({px}px)',
+  'chat.textSizeLarger': 'Larger',
+  'chat.textSizeToast': 'Chat text size {px}px',
 
   // --- ChangesTab: header / navigation ---
   'chat.changes': 'Changes',

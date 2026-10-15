@@ -95,6 +95,11 @@ export const strings = {
   'chat.working': 'עובד…',
   'chat.plan': 'תוכנית',
   'chat.jumpToLatest': 'קפוץ לאחרון',
+  'chat.textSize': 'גודל טקסט',
+  'chat.textSizeSmaller': 'קטן יותר',
+  'chat.textSizeDefault': 'ברירת מחדל ({px}px)',
+  'chat.textSizeLarger': 'גדול יותר',
+  'chat.textSizeToast': 'גודל טקסט הצ׳אט {px}px',
 
   // --- ChangesTab: header / navigation ---
   'chat.changes': 'שינויים',

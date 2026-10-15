@@ -96,7 +96,7 @@ test('General: 4 fields on the page while voice is off; accent/terminal/voice/he
   const top = beforeDrawer(html);
   expect(top).toContain('Theme');
   expect(top).toContain('Language');
-  expect(top).toContain('Chat font size');
+  expect(top).toContain('Chat text size');
   expect(top).toContain('UI size');
   expect(top).not.toContain('Accent');
   expect(top).not.toContain('Record hotkey');

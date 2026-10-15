@@ -3,15 +3,16 @@
 // terminal overrides (each terminal can flip its own dir + light/dark).
 import { useSyncExternalStore } from 'react';
 import { logoDataUri, DEFAULT_ACCENT, DEFAULT_LOGO } from './logos.js';
+import { CHAT_TEXT, chatScale, migrateChatText } from './chatText.js';
 import { langDir, resolveLang, isLangId, isVoiceLangId, resolveVoiceLang } from './langs.js';
 
 const KEY = 'arigami-prefs';
 
-export const PREF_LIMITS = { font: [10, 24], rail: [180, 420] };
+export const PREF_LIMITS = { chat: [CHAT_TEXT.min, CHAT_TEXT.max], rail: [180, 420] };
 
 // UI size: one factor on the root font-size, so everything measured in rem/em
 // (the rail, chrome, settings) grows together. The chat output has its own
-// px size (termFontSize) and is untouched by this.
+// px size (chatTextSize) and is untouched by this.
 export const UI_SCALES = { small: 0.875, medium: 1, large: 1.15 };
 export const UI_SCALE_IDS = ['small', 'medium', 'large'];
 export const isUiScale = (v) => UI_SCALE_IDS.includes(v);
@@ -19,7 +20,7 @@ export const isUiScale = (v) => UI_SCALE_IDS.includes(v);
 const DEFAULTS = {
   theme: 'dark', // app chrome: 'light' | 'dark' — dark by default, like the landing page
   termTheme: 'dark', // default terminal: 'light' | 'dark'
-  termFontSize: 16, // px, clamped 10–24 — the chat output text size
+  chatTextSize: CHAT_TEXT.def, // px, clamped 12–20 — the chat prose size; --chat-scale on <html> (index.css)
   termDir: 'auto', // default terminal direction: 'auto' | 'ltr' | 'rtl'
   railWidth: 264, // px, clamped 180–420
   uiScale: 'medium', // whole-UI size incl. the rail: 'small' | 'medium' | 'large' → --ui-scale on <html> (rem)
@@ -145,7 +146,7 @@ function sanitize(raw) {
   return {
     theme: p.theme === 'light' ? 'light' : 'dark',
     termTheme: p.termTheme === 'light' ? 'light' : 'dark',
-    termFontSize: clamp(p.termFontSize, PREF_LIMITS.font[0], PREF_LIMITS.font[1], DEFAULTS.termFontSize),
+    chatTextSize: migrateChatText(p),
     termDir: ['auto', 'ltr', 'rtl'].includes(p.termDir) ? p.termDir : DEFAULTS.termDir,
     railWidth: clamp(p.railWidth, PREF_LIMITS.rail[0], PREF_LIMITS.rail[1], DEFAULTS.railWidth),
     uiScale: isUiScale(p.uiScale) ? p.uiScale : DEFAULTS.uiScale,
@@ -205,6 +206,7 @@ function applyBranding() {
   if (state.accent) root.style.setProperty('--color-brand', state.accent);
   else root.style.removeProperty('--color-brand');
   root.style.setProperty('--ui-scale', String(UI_SCALES[state.uiScale] || 1));
+  root.style.setProperty('--chat-scale', String(chatScale(state.chatTextSize)));
   root.setAttribute('dir', langDir(state.language));
   root.setAttribute('lang', resolveLang(state.language));
   const link = document.querySelector("link[rel='icon']");

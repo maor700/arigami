@@ -10,12 +10,12 @@
 // pending strip, manual block) sits here, on the page, under the chrome block:
 // it is about how the assistant behaves for the human, like language/voice,
 // not about the machine (Host). Deep link: #/settings/appearance/memory.
-import { usePrefs, setPrefs, PREF_LIMITS, UI_SCALE_IDS } from '../../lib/prefs.js';
+import { usePrefs, setPrefs, UI_SCALE_IDS } from '../../lib/prefs.js';
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';
 import { useT } from '../../lib/i18n.js';
 import { Field, Segmented, Section, Advanced, BTN_SM, INPUT } from './shared.jsx';
-import { Button } from '../ui/button.jsx';
+import ChatTextSize from './ChatTextSize.jsx';
 import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
@@ -25,8 +25,6 @@ export const GENERAL_ADVANCED_IDS = ['accent', 'terminal', 'voice-advanced', 'he
 export default function General({ section = '', voiceEnabled = false, recording, setRecording }) {
   const prefs = usePrefs();
   const t = useT();
-  const [fontMin, fontMax] = PREF_LIMITS.font;
-  const stepFont = (delta) => setPrefs({ termFontSize: prefs.termFontSize + delta });
   const lightDark = [
     { value: 'light', label: t('common.light') },
     { value: 'dark', label: t('common.dark') },
@@ -60,25 +58,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
             options={UI_SCALE_IDS.map((id) => ({ value: id, label: t(`settings.uiScale.${id}`) }))}
           />
         </Field>
-        <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: fontMin, max: fontMax })}>
-          <span className="flex items-center gap-1">
-            <Button
-              type="button"
-              onClick={() => stepFont(-1)}
-              disabled={prefs.termFontSize <= fontMin}
-            >
-              A−
-            </Button>
-            <span className="min-w-12 text-center text-sm tabular-nums text-fg" dir="ltr">{prefs.termFontSize}px</span>
-            <Button
-              type="button"
-              onClick={() => stepFont(1)}
-              disabled={prefs.termFontSize >= fontMax}
-            >
-              A+
-            </Button>
-          </span>
-        </Field>
+        <ChatTextSize />
       </Section>
 
       <MemoryLearning />

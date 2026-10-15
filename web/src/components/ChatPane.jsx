@@ -172,7 +172,7 @@ function UserMsg({ event }) {
       <span className="sr-only">{t('chat.you')}</span>
       <div
         dir={d}
-        className="max-w-[85%] rounded-lg border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-[var(--term-userfg)]"
+        className="max-w-[85%] rounded-lg border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-[var(--term-userfg)]"
       >
         {text}
         {atts.length > 0 && (
@@ -694,7 +694,6 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   // the user was looking at stays put after the prepend.
   const anchorRef = useRef(null);
   const prefs = usePrefs();
-  const termFontSize = prefs.termFontSize;
   const view = termViewFrom(prefs, sessionId);
 
   // CHATWS: scrolling near the top pulls the previous page by itself (the
@@ -793,10 +792,6 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
     anchorRef.current = null;
   }, [shown]);
 
-  // The renderers use fixed-px Tailwind classes, so scale the whole output via
-  // CSS zoom relative to the 16px default (clean, overrides fixed sizes).
-  const scale = (termFontSize || 16) / 16;
-
   return (
     <TooltipProvider>
     <div className="relative min-h-0 flex-1">
@@ -804,10 +799,11 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       ref={scrollRef}
       onScroll={onScroll}
       dir={view.dir || 'auto'}
+      tabIndex={-1}
       data-chat-mode={mode}
-      className={`term ${view.theme === 'light' ? 'term-light' : ''} thin-scroll h-full overflow-y-auto bg-[var(--term-bg)] px-4 py-3.5`}
+      className={`term ${view.theme === 'light' ? 'term-light' : ''} thin-scroll outline-none h-full overflow-y-auto bg-[var(--term-bg)] px-4 py-3.5`}
     >
-      <div className="term-events" style={scale === 1 ? undefined : { zoom: scale }}>
+      <div className="term-events">
         {(hiddenCount > 0 || serverHasMore) && (
           <div className="pb-2 text-center">
             <Button variant="ghost" size="sm" onClick={revealEarlier} disabled={loadingOlder}>
