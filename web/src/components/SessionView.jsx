@@ -747,14 +747,9 @@ function ArchivedFooter({ session }) {
       <span className="min-w-0 flex-1 basis-52 text-[12px] text-fgdim">
         {t('rail.sessionArchivedReadonly')}
       </span>
-      <button
-        type="button"
-        onClick={restore}
-        disabled={busy}
-        className="ms-auto cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-50"
-      >
+      <Button variant="primary" onClick={restore} disabled={busy} className="ms-auto">
         {busy ? t('rail.restoring') : t('rail.restoreSession')}
-      </button>
+      </Button>
     </div>
   );
 }

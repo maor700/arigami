@@ -3,13 +3,14 @@
 // gear (POST /sessions/:id/model | /effort | /permission-mode) and keeps the
 // same rule: while a turn is running a change must be confirmed, because it
 // stops and resumes the session.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckIcon, ChevronDownIcon, RefreshCwIcon, SlidersHorizontalIcon } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useModels, refreshModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, effortLabelFor, engineLabel, normalizeEngine, hasPermissionModes, permissionModesFor, codexModel } from '../lib/engines.js';
 import { toastError } from '../lib/toast.js';
+import { registerComposerPill } from '../lib/composerPill.js';
 import { Button, Popover, PopoverContent, PopoverTrigger, StatusDot, Tip, TooltipProvider } from './ui/index.js';
 
 const PERM = [
@@ -67,6 +68,12 @@ export default function ComposerPill({ session }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(null); // { kind, value, label } awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const un = registerComposerPill();
+    const onOpen = () => setOpen(true);
+    window.addEventListener('arigami:open-composer-pill', onOpen);
+    return () => { un(); window.removeEventListener('arigami:open-composer-pill', onOpen); };
+  }, []);
   const claude = session.claude || {};
   const working = claude.state === 'working';
   const codex = normalizeEngine(session.engine) === 'codex';

@@ -357,6 +357,8 @@ function MenuRow({ label, value, danger, onSelect, children, ...props }) {
 // The context figure is quiet until the window is getting full.
 const ctxTone = (pct) => (pct >= 75 ? contextColor(pct) : undefined);
 
+import { useComposerPillMounted, openComposerPill } from '../lib/composerPill.js';
+
 export default function TermControls({ session }) {
   const t = useT();
   const prefs = usePrefs();
@@ -374,6 +376,7 @@ export default function TermControls({ session }) {
       ? modelOptions.find((o) => o.value === modelChoice)?.label || modelChoice
       : prettyModel(reportedModel) || t('rail.permDefault');
   const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
+  const pillOwns = useComposerPillMounted();
   const restarting = session.claude?.state === 'restarting';
   const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'model' | 'effort'
 
@@ -406,7 +409,14 @@ export default function TermControls({ session }) {
           <MenuRow label={t('rail.direction')} value={view.dir} onSelect={openModal('dir')} />
           <MenuRow label={t('rail.theme')} value={view.theme} onSelect={openModal('theme')} />
           <DropdownMenuSeparator />
-          {permModes ? (
+          {pillOwns ? (
+            <MenuRow
+              label={t('rail.modelEffortPerm')}
+              value={effortValue && effortValue !== modelValue ? `${modelValue} · ${effortValue}` : modelValue}
+              data-term-open-pill
+              onSelect={() => setTimeout(openComposerPill, 0)}
+            />
+          ) : permModes ? (
             <MenuRow
               label={t('rail.permissionMode')}
               value={PERMISSION_LABEL[perm] || perm}
@@ -421,8 +431,8 @@ export default function TermControls({ session }) {
               danger
             />
           )}
-          <MenuRow label={t('rail.model')} value={modelValue} onSelect={openModal('model')} />
-          <MenuRow label={t('rail.effort')} value={effortValue} onSelect={openModal('effort')} />
+          {!pillOwns && <MenuRow label={t('rail.model')} value={modelValue} onSelect={openModal('model')} />}
+          {!pillOwns && <MenuRow label={t('rail.effort')} value={effortValue} onSelect={openModal('effort')} />}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => { if (!restarting) restartSession(session); }}>
             <RefreshCw /> {restarting ? t('rail.restartingEllipsis') : t('rail.restartSession')}

@@ -7,6 +7,7 @@ import { sessionLabel } from './ui.jsx';
 import { t as tr, useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
 import { faCheck, faMicrophone, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { Button } from './ui/button.jsx';
 import VoiceLangPicker from './VoiceLangPicker.jsx';
 
 // Actions that change app state but can't lose work → run automatically.
@@ -142,7 +143,7 @@ export default function VoiceHUD() {
 
   return (
     <div className="fixed bottom-4 left-1/2 z-[70] w-[460px] max-w-[92vw] -translate-x-1/2" data-voice-hud data-voice-status={status}>
-      <div className="overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
+      <div className="overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-dialog">
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-2.5">
           {status === 'recording' ? (
             <span className="pulse-yellow h-2.5 w-2.5 rounded-full bg-danger" />
@@ -216,23 +217,15 @@ export default function VoiceHUD() {
                   rows={2}
                   value={a.text}
                   onChange={(e) => setInjects((arr) => arr.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
-                  className="max-h-40 w-full resize-none rounded-[7px] border border-border bg-panel px-2.5 py-1.5 text-[12px] outline-none focus:border-ink"
+                  className="max-h-40 w-full resize-none rounded-[7px] border border-border bg-panel px-2.5 py-1.5 text-[12px] outline-none focus:border-ring"
                 />
                 <div className="mt-2 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { const rest = injects.filter((_, j) => j !== i); setInjects(rest); if (!rest.length) close(); }}
-                    className="cursor-pointer rounded-[7px] border-[1.5px] border-border px-3 py-1 text-[11.5px] text-fgdim hover:border-ink hover:text-fg"
-                  >
+                  <Button variant="outline" size="sm" onClick={() => { const rest = injects.filter((_, j) => j !== i); setInjects(rest); if (!rest.length) close(); }}>
                     {t('dialogs.discard')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendInject(i)}
-                    className="cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]"
-                  >
-                    {t('dialogs.send')} →
-                  </button>
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={() => sendInject(i)}>
+                    {t('dialogs.send')} <span className="rtl:rotate-180" aria-hidden="true">→</span>
+                  </Button>
                 </div>
               </div>
             );
@@ -252,26 +245,26 @@ export default function VoiceHUD() {
           {status === 'recording' ? (
             <span className="flex shrink-0 items-center gap-1.5">
               {listeningForAnswer && (
-                <button type="button" onClick={() => endConversation('stop')} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink" data-voice-cancel>
+                <Button variant="outline" size="sm" onClick={() => endConversation('stop')} data-voice-cancel>
                   {t('dialogs.cancel')}
-                </button>
+                </Button>
               )}
-              <button type="button" onClick={stopRecording} className="cursor-pointer rounded-[6px] border-[1.5px] border-ink bg-brand px-3 py-1 text-[11px] font-bold text-[#1a1a1a]">
+              <Button variant="primary" size="sm" onClick={stopRecording}>
                 {listeningForAnswer ? t('dialogs.voiceDoneTalking') : t('dialogs.stop')}
-              </button>
+              </Button>
             </span>
           ) : status === 'error' ? (
-            <button type="button" onClick={() => { ranFor.current = null; startRecording({ mode }); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
+            <Button variant="outline" size="sm" onClick={() => { ranFor.current = null; startRecording({ mode }); }}>
               {t('dialogs.tryAgain')}
-            </button>
+            </Button>
           ) : status === 'thinking' ? (
-            <button type="button" onClick={cancel} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink">
+            <Button variant="outline" size="sm" onClick={cancel}>
               {t('dialogs.cancel')}
-            </button>
+            </Button>
           ) : status === 'review' && !dictate && injects.length === 0 && plan?.kind !== 'act' ? (
-            <button type="button" onClick={() => { ranFor.current = null; startRecording({ mode: 'command' }); }} className="cursor-pointer rounded-[6px] border-[1.5px] border-border px-3 py-1 text-[11px] hover:border-ink" data-voice-again>
+            <Button variant="outline" size="sm" onClick={() => { ranFor.current = null; startRecording({ mode: 'command' }); }} data-voice-again>
               {t('dialogs.voiceSpeakAgain')}
-            </button>
+            </Button>
           ) : <span />}
         </div>
       </div>

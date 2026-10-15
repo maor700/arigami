@@ -366,4 +366,5 @@ export const strings = {
   'rail.sessionsGroup': 'סשנים',
   'rail.commandsGroup': 'פקודות',
   'rail.scNextNeedsYou': 'הסשן הבא שצריך אותך',
+  'rail.modelEffortPerm': 'מודל, מאמץ, הרשאות',
 };

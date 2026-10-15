@@ -369,4 +369,5 @@ export const strings = {
   'rail.sessionsGroup': 'Sessions',
   'rail.commandsGroup': 'Commands',
   'rail.scNextNeedsYou': 'Next session that needs you',
+  'rail.modelEffortPerm': 'Model, effort, permissions',
 };

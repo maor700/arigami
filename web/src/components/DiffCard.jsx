@@ -12,11 +12,11 @@ import { Button, Tip, TooltipProvider } from './ui/index.js';
 export const PREVIEW_LINES = 14;
 export const MAX_RENDER = 400;
 
-const ADD_BG = 'color-mix(in oklab, var(--hb-ok) 14%, transparent)';
-const DEL_BG = 'color-mix(in oklab, var(--hb-err) 14%, transparent)';
-const GAP_BG = 'color-mix(in oklab, var(--term-faint) 10%, transparent)';
-const ADD_FG = 'var(--hb-ok)';
-const DEL_FG = 'var(--hb-err)';
+const ADD_BG = 'var(--diff-add-bg)';
+const DEL_BG = 'var(--diff-del-bg)';
+const GAP_BG = 'var(--diff-gap-bg)';
+const ADD_FG = 'var(--diff-add-mark)'; // same mark colour as the Changes tab diff
+const DEL_FG = 'var(--diff-del-mark)';
 const TAP = 'coarse:min-h-11';
 
 // rows → the slice to draw for `limit` code lines (gaps are free).
