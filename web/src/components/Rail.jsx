@@ -1322,7 +1322,6 @@ export default function Rail({
   config,
   conn,
   isDesktop = true,
-  mobileOpen = false,
   onClose,
   onPreviewTicket,
   onOpenTriggers,
@@ -1806,17 +1805,12 @@ export default function Rail({
 
   return (
     <div
-      className={`flex shrink-0 flex-col border-e border-border bg-rail transition-transform md:relative md:z-auto md:translate-x-0 ${
+      className={
         isDesktop
-          ? 'relative'
-          // The drawer lives on the START edge — the same edge the hamburger
-          // that opens it sits on. `left-0`/`-translate-x-full` were physical,
-          // so in Hebrew (RTL) the button was top-RIGHT and the drawer still
-          // slid in from the LEFT, across the whole screen.
-          : `fixed inset-y-0 start-0 z-50 w-[82%] max-w-[20rem] shadow-pop ${
-              mobileOpen ? 'translate-x-0' : rtl ? 'translate-x-full' : '-translate-x-full'
-            }`
-      }`}
+          ? 'relative flex shrink-0 flex-col border-e border-border bg-rail'
+          // Phone: the rail fills the start-edge Sheet App wraps it in.
+          : 'flex h-full min-h-0 w-full flex-col bg-rail'
+      }
       // The stored width is at UI size medium; it follows --ui-scale like the rows do.
       style={isDesktop ? { width: `calc(${railWidth}px * var(--ui-scale, 1))` } : undefined}
       data-rail

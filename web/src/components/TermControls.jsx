@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { usePrefs, termViewFrom, setTermOverride } from '../lib/prefs.js';
 import { useModels, refreshModels } from '../lib/models.js';
@@ -8,8 +8,17 @@ import { toastError } from '../lib/toast.js';
 import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import { t, useT } from '../lib/i18n.js';
-import { Icon } from '../lib/icons.js';
-import { faGear, faRotateRight, faBroom } from '@fortawesome/free-solid-svg-icons';
+import { ChevronRight, Eraser, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { Button } from './ui/button.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog.jsx';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu.jsx';
 
 // Permission modes mirror server/claude.js PERMISSION_MODES.
 const PERMISSION_OPTIONS = [
@@ -50,49 +59,44 @@ const THEME_OPTIONS = [
 
 function OptionsModal({ title, subtitle, options, value, onSelect, onClose, footer, headerExtra }) {
   const t = useT();
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  // Radix Dialog: focus trap + restore, Esc and outside-click close.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[420px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
-      >
-        <div className="flex items-start justify-between gap-2 border-b border-hair px-[18px] py-3">
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="w-[min(26rem,calc(100vw-1.5rem))] gap-0 p-0" showClose={false}>
+        <DialogHeader className="flex-row items-start justify-between gap-2 border-b border-border px-5 py-3.5 pe-5">
           <div>
-            <div className="text-[15px] font-bold">{title}</div>
-            {subtitle && <div className="mt-0.5 text-[11.5px] text-fgdim">{subtitle}</div>}
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="mt-0.5 text-xs">{subtitle || '\u00a0'}</DialogDescription>
           </div>
           {headerExtra}
-        </div>
-        <div className="flex flex-col gap-1.5 px-3.5 py-3.5">
+        </DialogHeader>
+        <div role="radiogroup" aria-label={title} className="flex flex-col gap-1 p-3">
           {options.map((o) => {
             const active = o.value === value;
             return (
               <button
                 key={o.value}
                 type="button"
+                role="radio"
+                aria-checked={active}
                 onClick={() => onSelect(o.value)}
-                className={`flex cursor-pointer items-start gap-2.5 rounded-lg border-[1.5px] px-3 py-2.5 text-left transition-colors ${
-                  active ? 'border-ink bg-chip' : 'border-border bg-bg hover:border-fgdim'
+                className={`flex cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-2 text-start outline-none transition-colors focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11 ${
+                  active ? 'bg-muted' : 'hover:bg-muted/60'
                 }`}
               >
                 <span
-                  className={`mt-[3px] flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full border-[1.5px] ${
-                    active ? 'border-ink' : 'border-border'
+                  className={`mt-[3px] flex size-3.5 shrink-0 items-center justify-center rounded-full border ${
+                    active ? 'border-foreground' : 'border-input'
                   }`}
                 >
-                  {active && <span className="h-[7px] w-[7px] rounded-full bg-brand" />}
+                  {active && <span className="size-1.5 rounded-full bg-foreground" />}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-[13px] ${o.danger ? 'font-bold text-danger' : 'font-bold text-fg'}`}>
+                  <span className={`block text-sm font-medium ${o.danger ? 'text-destructive' : 'text-foreground'}`}>
                     {o.label}
-                    {active && <span className="ml-1.5 font-mono text-[9.5px] font-normal text-fgdim">{t('rail.current')}</span>}
+                    {active && <span className="ms-1.5 text-2xs font-normal text-muted-foreground">{t('rail.current')}</span>}
                   </span>
-                  {o.desc && <span className="mt-px block text-[11px] text-fgdim">{o.desc}</span>}
+                  {o.desc && <span className="mt-px block text-xs text-muted-foreground">{o.desc}</span>}
                 </span>
               </button>
             );
@@ -100,16 +104,26 @@ function OptionsModal({ title, subtitle, options, value, onSelect, onClose, foot
         </div>
         {footer}
         {!footer && (
-          <div className="flex justify-end border-t border-hair px-[18px] py-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
-            >
-              {t('rail.close')}
-            </button>
+          <div className="flex justify-end border-t border-border px-5 py-3">
+            <Button variant="outline" onClick={onClose}>{t('rail.close')}</Button>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// The "a turn is in flight — this will stop it" step shared by the three pickers.
+function ConfirmFooter({ message, busy, onCancel, onConfirm }) {
+  const t = useT();
+  return (
+    <div className="border-t border-border bg-muted/50 px-5 py-3">
+      <div className="text-sm text-foreground">{message}</div>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="outline" disabled={busy} onClick={onCancel}>{t('rail.cancelBtn')}</Button>
+        <Button variant="primary" disabled={busy} onClick={onConfirm}>
+          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
+        </Button>
       </div>
     </div>
   );
@@ -148,29 +162,12 @@ function PermissionModal({ session, onClose }) {
 
   // Confirmation step: a turn is in flight and the user picked a different mode.
   const confirmFooter = pending && (
-    <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-fg">
-        {t('rail.switchModeWarnBefore', { engine })}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}
-      </div>
-      <div className="mt-3 flex justify-end gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onClose}
-          className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
-        >
-          {t('rail.cancelBtn')}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => apply(pending)}
-          className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
-        >
-          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
-        </button>
-      </div>
-    </div>
+    <ConfirmFooter
+      busy={busy}
+      onCancel={onClose}
+      onConfirm={() => apply(pending)}
+      message={<>{t('rail.switchModeWarnBefore', { engine })}<b>{PERMISSION_LABEL[pending]}</b>{t('rail.switchModeWarnAfter')}</>}
+    />
   );
 
   return (
@@ -220,29 +217,12 @@ function ModelModal({ session, onClose }) {
 
   // Confirmation step: a turn is in flight and the user picked a different model.
   const confirmFooter = pending && (
-    <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-fg">
-        {t('rail.switchModelWarnBefore', { engine })}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}
-      </div>
-      <div className="mt-3 flex justify-end gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onClose}
-          className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
-        >
-          {t('rail.cancelBtn')}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => apply(pending)}
-          className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
-        >
-          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
-        </button>
-      </div>
-    </div>
+    <ConfirmFooter
+      busy={busy}
+      onCancel={onClose}
+      onConfirm={() => apply(pending)}
+      message={<>{t('rail.switchModelWarnBefore', { engine })}<b>{modelLabel[pending] || pending}</b>{t('rail.switchModelWarnAfter')}</>}
+    />
   );
 
   return (
@@ -261,29 +241,27 @@ function ModelModal({ session, onClose }) {
       // button that does nothing and a version that isn't the one running.
       headerExtra={
         isClaude && (
-        <span className="flex shrink-0 items-center gap-1.5">
+        <span className="flex shrink-0 items-center gap-1.5 pe-1">
           {cliUpdate?.updateAvailable && (
             // UPD1: a newer `claude` CLI (= a newer model list) is waiting — one
             // click to Settings › Host, where "update now" lives.
-            <a
-              href="#/settings/host/host"
-              onClick={onClose}
-              title={t('rail.cliUpdate.hint', { v: cliUpdate.latest })}
-              className="mt-0.5 rounded-full border border-[#CE8324] bg-warn-bg px-2 py-0.5 font-mono text-[9.5px] font-bold text-warn no-underline hover:bg-[#CE8324]/20"
-              dir="ltr"
-            >
-              {t('rail.cliUpdate', { v: cliUpdate.latest })}
-            </a>
+            <Tip label={t('rail.cliUpdate.hint', { v: cliUpdate.latest })}>
+              <a
+                href="#/settings/host/host"
+                onClick={onClose}
+                className="inline-flex h-[1.125rem] items-center gap-1.5 rounded-sm bg-muted px-1.5 text-2xs font-medium text-foreground no-underline hover:bg-[var(--hb-hover)]"
+                dir="ltr"
+              >
+                <span className="size-1.5 rounded-full bg-warn" aria-hidden="true" />
+                {t('rail.cliUpdate', { v: cliUpdate.latest })}
+              </a>
+            </Tip>
           )}
-          <button
-            type="button"
-            onClick={refreshModels}
-            title={t('rail.refetchModelList')}
-            disabled={loading}
-            className="mt-0.5 shrink-0 cursor-pointer rounded-[6px] border-[1.5px] border-border bg-panel px-2 py-0.5 font-mono text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-50"
-          >
-            {loading ? '…' : <><Icon icon={faRotateRight} /> {t('rail.refresh')}</>}
-          </button>
+          <Tip label={t('rail.refetchModelList')}>
+            <Button variant="outline" size="xs" onClick={refreshModels} disabled={loading}>
+              {loading ? '…' : <><RefreshCw /> {t('rail.refresh')}</>}
+            </Button>
+          </Tip>
         </span>
         )
       }
@@ -321,29 +299,12 @@ function EffortModal({ session, onClose }) {
   };
 
   const confirmFooter = pending && (
-    <div className="border-t-2 border-ink bg-chip px-[18px] py-3">
-      <div className="text-[12.5px] text-fg">
-        {t('rail.switchEffortWarnBefore', { engine })}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}
-      </div>
-      <div className="mt-3 flex justify-end gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onClose}
-          className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
-        >
-          {t('rail.cancelBtn')}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => apply(pending)}
-          className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
-        >
-          {busy ? t('rail.stopping') : t('rail.stopAndSwitch')}
-        </button>
-      </div>
-    </div>
+    <ConfirmFooter
+      busy={busy}
+      onCancel={onClose}
+      onConfirm={() => apply(pending)}
+      message={<>{t('rail.switchEffortWarnBefore', { engine })}<b>{effortLabelFor(session.engine, session.claude?.modelChoice, pending)}</b>{t('rail.switchEffortWarnAfter')}</>}
+    />
   );
 
   return (
@@ -368,33 +329,33 @@ function EffortModal({ session, onClose }) {
  */
 function StaticRow({ label, value, note, danger }) {
   return (
-    <div className="w-full px-3 py-2 text-start text-[12px] text-fg">
+    <div className="px-2 py-1.5 text-sm text-foreground">
       <div className="flex items-center gap-2">
         <span className="flex-1">{label}</span>
-        <span className={`shrink-0 font-mono text-[10.5px] ${danger ? 'font-bold text-danger' : 'text-fgdim'}`}>
+        <span className={`shrink-0 text-xs ${danger ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
           {value}
         </span>
       </div>
-      {note && <div className="mt-0.5 text-[10.5px] leading-snug text-fgdim">{note}</div>}
+      {note && <div className="mt-0.5 text-2xs leading-snug text-muted-foreground">{note}</div>}
     </div>
   );
 }
 
-function MenuRow({ label, value, danger, onClick }) {
+// A menu row that opens a picker: label at the start, the current value at the end.
+function MenuRow({ label, value, danger, onSelect, children, ...props }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-start text-[12px] text-fg hover:bg-chip"
-    >
-      <span className="flex-1">{label}</span>
-      <span className={`shrink-0 font-mono text-[10.5px] ${danger ? 'font-bold text-danger' : 'text-fgdim'}`}>
+    <DropdownMenuItem onSelect={onSelect} {...props}>
+      <span className="flex-1 whitespace-nowrap">{label}</span>
+      <span className={`shrink-0 whitespace-nowrap text-xs ${danger ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
         {value}
       </span>
-      <span className="shrink-0 text-[10px] text-fgdim rtl:-scale-x-100">›</span>
-    </button>
+      {children || <ChevronRight className="size-3.5 shrink-0 text-muted-foreground rtl:rotate-180" />}
+    </DropdownMenuItem>
   );
 }
+
+// The context figure is quiet until the window is getting full.
+const ctxTone = (pct) => (pct >= 75 ? contextColor(pct) : undefined);
 
 export default function TermControls({ session }) {
   const t = useT();
@@ -414,60 +375,43 @@ export default function TermControls({ session }) {
       : prettyModel(reportedModel) || t('rail.permDefault');
   const effortValue = effortLabelFor(session.engine, modelChoice, session.claude?.effort);
   const restarting = session.claude?.state === 'restarting';
-  const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'effort'
-  const ref = useRef(null);
+  const [modal, setModal] = useState(null); // 'context' | 'dir' | 'theme' | 'permission' | 'model' | 'effort'
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
-
-  const openModal = (kind) => { setOpen(false); setModal(kind); };
+  // A picker opens after the menu has finished closing (Radix returns focus to
+  // the trigger on close — opening the dialog in the same tick would lose it).
+  const openModal = (kind) => () => setTimeout(() => setModal(kind), 0);
 
   return (
-    <span ref={ref} className="relative flex items-center">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={t('rail.terminalControls')}
-        aria-label={t('rail.terminalControls')}
-        className={`flex h-[30px] items-center gap-1.5 rounded-full border-[1.5px] px-2 text-fgdim hover:border-ink hover:text-fg md:h-[22px] ${
-          open ? 'border-ink text-fg' : 'border-border bg-bg'
-        }`}
-      >
-        {ctx?.ctxPct != null && (
-          <span className="font-mono text-[11px] font-bold tabular-nums md:text-[9.5px]" style={{ color: contextColor(ctx.ctxPct) }}>
-            {ctx.ctxPct}%
-          </span>
-        )}
-        <span className="text-[12px] leading-none"><Icon icon={faGear} /></span>
-      </button>
-
-      {open && (
-        <div className="absolute top-[28px] end-0 z-30 w-[224px] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
+    <span className="relative flex items-center">
+      <DropdownMenu>
+        <Tip label={t('rail.terminalControls')}>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" aria-label={t('rail.terminalControls')} data-term-controls className="gap-1.5 px-1.5 text-muted-foreground aria-expanded:text-foreground">
+              {ctx?.ctxPct != null && (
+                <span className="text-xs font-medium tabular-nums" style={{ color: ctxTone(ctx.ctxPct) }}>
+                  {ctx.ctxPct}%
+                </span>
+              )}
+              <SettingsIcon />
+            </Button>
+          </DropdownMenuTrigger>
+        </Tip>
+        <DropdownMenuContent align="end" className="w-64">
           <MenuRow
             label={t('rail.context')}
             value={ctx?.ctxPct != null ? `${ctx.ctxPct}%` : '—'}
-            onClick={() => openModal('context')}
+            onSelect={openModal('context')}
           />
-          <span className="block h-px bg-hair" />
-          <MenuRow label={t('rail.direction')} value={view.dir} onClick={() => openModal('dir')} />
-          <MenuRow label={t('rail.theme')} value={view.theme} onClick={() => openModal('theme')} />
-          <span className="block h-px bg-hair" />
+          <DropdownMenuSeparator />
+          <MenuRow label={t('rail.direction')} value={view.dir} onSelect={openModal('dir')} />
+          <MenuRow label={t('rail.theme')} value={view.theme} onSelect={openModal('theme')} />
+          <DropdownMenuSeparator />
           {permModes ? (
             <MenuRow
               label={t('rail.permissionMode')}
               value={PERMISSION_LABEL[perm] || perm}
               danger={perm === 'bypassPermissions'}
-              onClick={() => openModal('permission')}
+              onSelect={openModal('permission')}
             />
           ) : (
             <StaticRow
@@ -477,22 +421,17 @@ export default function TermControls({ session }) {
               danger
             />
           )}
-          <MenuRow label={t('rail.model')} value={modelValue} onClick={() => openModal('model')} />
-          <MenuRow label={t('rail.effort')} value={effortValue} onClick={() => openModal('effort')} />
-          <span className="block h-px bg-hair" />
-          <MenuRow
-            label={restarting ? t('rail.restartingEllipsis') : t('rail.restartSession')}
-            value={<Icon icon={faRotateRight} />}
-            onClick={() => { setOpen(false); if (!restarting) restartSession(session); }}
-          />
-          <MenuRow
-            label={t('rail.clearConversation')}
-            value={<Icon icon={faBroom} />}
-            danger
-            onClick={() => { setOpen(false); if (!restarting) clearSessionConversation(session); }}
-          />
-        </div>
-      )}
+          <MenuRow label={t('rail.model')} value={modelValue} onSelect={openModal('model')} />
+          <MenuRow label={t('rail.effort')} value={effortValue} onSelect={openModal('effort')} />
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => { if (!restarting) restartSession(session); }}>
+            <RefreshCw /> {restarting ? t('rail.restartingEllipsis') : t('rail.restartSession')}
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={() => { if (!restarting) clearSessionConversation(session); }}>
+            <Eraser /> {t('rail.clearConversation')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {modal === 'context' && <ContextModal session={session} usage={ctx} onClose={() => setModal(null)} />}
       {modal === 'dir' && (

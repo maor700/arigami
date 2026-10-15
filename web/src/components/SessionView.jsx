@@ -21,6 +21,15 @@ import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
 import { currentTheme, usePrefs } from '../lib/prefs.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
+import { Archive, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
+import { Button } from './ui/button.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Label } from './ui/label.jsx';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog.jsx';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
 import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
@@ -63,6 +72,8 @@ export function resolveTabs(session, hasChildren = false) {
 
 /* ---------- terminal header strip ---------------------------------------- */
 
+// The ONE status indicator of the header: a neutral chip with a status dot —
+// amber (pulsing) when it is waiting for you, green working, red dead, grey idle.
 function StatusChip({ session }) {
   const t = useT();
   const cState = session.claude?.state;
@@ -73,61 +84,27 @@ function StatusChip({ session }) {
   const attention = !restarting && needsAttention(session);
   const status = restarting ? t('rail.statusRestartingDots') : attention ? t('status.needsYou') : statusLabel(session.status || cState) || t('rail.statusIdle');
   const awaiting = !restarting && (attention || /review/i.test(session.status || '') || cState === 'awaiting-input');
-  const dotColor = awaiting
-    ? '#F9D312'
-    : cState === 'working'
-      ? '#3C9A4E'
-      : cState === 'dead'
-        ? '#B23B30'
-        : '#c4c4c4';
+  const dot = awaiting ? 'warn' : cState === 'working' ? 'ok' : cState === 'dead' ? 'err' : 'idle';
   return (
-    <span
-      className={`ms-auto flex shrink-0 items-center gap-[7px] rounded-full border-[1.5px] px-[11px] py-[3px] whitespace-nowrap ${
-        awaiting ? 'border-ink bg-chip' : 'border-border bg-panel'
-      }`}
-    >
-      {restarting ? (
-        <span className="host-spinner h-[9px] w-[9px]" />
-      ) : (
-        <span
-          className={`h-[7px] w-[7px] rounded-full ${awaiting ? 'pulse-yellow' : ''}`}
-          style={{ background: dotColor }}
-        />
-      )}
-      <span
-        className={`font-mono text-[11.5px] md:text-[10.5px] font-bold ${awaiting ? 'text-fg' : restarting ? 'text-[#ce8324]' : 'text-fgdim'}`}
-      >
-        {String(status).toLowerCase()}
-      </span>
-    </span>
+    <Badge variant="outline" className="shrink-0 text-foreground" data-session-status={restarting ? 'restarting' : awaiting ? 'needs-you' : cState || 'idle'}>
+      {restarting ? <span className="host-spinner size-2.5" /> : <StatusDot status={dot} pulse={awaiting} />}
+      <span className="max-w-[10rem] truncate">{String(status).toLowerCase()}</span>
+    </Badge>
   );
 }
 
 // Which account this session runs on. Reads the session's pinned accountId (or
 // the active account of the PROVIDER its engine consumes, if unpinned) so
 // switching accounts is VISIBLE per session — otherwise a switch looks like it
-// did nothing. A codex session never shows a Claude login here.
-function AccountChip({ session }) {
-  const t = useT();
+// did nothing. A codex session never shows a Claude login here. D11: it lives
+// in the header's "…" menu now (one click there opens the accounts page).
+function useSessionAccount(session) {
   const { accounts } = useStore();
   const list = accounts?.accounts || [];
   const provider = providerForEngine(session.engine);
   const pinned = session.claude?.accountId;
   const pinnedAcc = pinned ? list.find((a) => a.id === pinned) : null;
-  const acc = (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
-  if (!acc) return null;
-  const name = acc.email || acc.label || t('rail.accountFallback');
-  return (
-    <span
-      className="hidden items-center gap-1 font-mono text-[11.5px] md:text-[10px] text-fgdim sm:flex"
-      title={t('rail.runsOn', { name }) + (acc.active ? t('rail.activeAccountSuffix') : '')}
-      onClick={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}
-      style={{ cursor: 'pointer' }}
-    >
-      <span><Icon icon={faCircleUser} /></span>
-      <span className="max-w-[90px] truncate sm:max-w-[150px]">{name}</span>
-    </span>
-  );
+  return (pinnedAcc && providerOf(pinnedAcc) === provider ? pinnedAcc : null) || list.find((a) => a.active && providerOf(a) === provider) || null;
 }
 
 // Mobile stand-in for the full listeners row: one "👀 N" chip in the terminal
@@ -141,17 +118,18 @@ function ListenersChipCompact({ session }) {
   const errored = listeners.some((l) => l.status === 'errored');
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11.5px] md:text-[10px] sm:hidden ${
-          errored ? 'border-danger/40 bg-danger/10 text-danger' : 'border-hair bg-bg text-fg2'
-        }`}
-      >
-        <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
-        <span className="font-mono font-bold">{listeners.length}</span>
-      </button>
+      <Tip label={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setOpen(true)}
+          aria-label={listeners.length > 1 ? t('rail.listenersWatching', { n: listeners.length }) : t('rail.listenerWatching', { n: listeners.length })}
+          className={`shrink-0 gap-1 px-1.5 sm:hidden ${errored ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
+          {errored ? <TriangleAlert /> : <Eye />}
+          <span className="text-xs tabular-nums">{listeners.length}</span>
+        </Button>
+      </Tip>
       {open && <ListenersPanel session={session} onClose={() => setOpen(false)} />}
     </>
   );
@@ -162,15 +140,16 @@ function ListenersChipCompact({ session }) {
 function LangToggle({ value, onChange, disabled }) {
   const t = useT();
   return (
-    <span className="inline-flex shrink-0 items-center overflow-hidden rounded-[5px] border border-border" title={t('rail.summaryLanguage')}>
-      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label], i) => (
+    <span role="group" aria-label={t('rail.summaryLanguage')} className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-muted p-0.5">
+      {[['auto', t('rail.auto')], ['he', t('rail.hebrew')], ['en', t('rail.english')]].map(([key, label]) => (
         <button
           key={key}
           type="button"
+          aria-pressed={value === key}
           onClick={() => value !== key && onChange(key)}
           disabled={disabled}
-          className={`cursor-pointer px-1.5 py-[1px] text-[11.5px] md:text-[10.5px] leading-none disabled:opacity-50 ${i ? 'border-l border-border' : ''} ${
-            value === key ? 'bg-ink text-white' : 'bg-panel text-fgdim hover:text-fg'
+          className={`h-5 cursor-pointer rounded-sm px-1.5 text-2xs leading-none outline-none focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 coarse:h-9 coarse:px-3 ${
+            value === key ? 'bg-background font-medium text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           {label}
@@ -186,16 +165,6 @@ function LangToggle({ value, onChange, disabled }) {
 function SummaryChip({ session }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [open]);
-
   const summary = session.statusSummary;
   const busy = !!session.summarizing;
   const on = !!summary;
@@ -213,81 +182,79 @@ function SummaryChip({ session }) {
   const lang = summary?.lang || 'auto';
 
   return (
-    <span ref={ref} className="relative flex items-center">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={t('rail.statusSummary')}
-        className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-2 py-1.5 text-[11.5px] md:px-1.5 md:py-0.5 md:text-[10px] ${
-          on ? 'border-ink bg-chip text-fg' : 'border-hair bg-bg text-fg2'
-        }`}
-      >
-        {busy ? <span className="host-spinner h-2.5 w-2.5" /> : <Icon icon={faListCheck} />}
-        <span className="hidden font-mono sm:inline">{t('rail.summary')}</span>
-      </button>
-      {open && (
-        <div className="absolute top-[28px] end-0 z-30 w-[340px] max-w-[86vw] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-          <div className="flex items-center gap-2 border-b border-hair px-3 py-2">
-            <span className="font-mono text-[11px] font-bold text-fg">{t('rail.statusSummary')}</span>
-            <span className="ms-auto flex items-center gap-1.5">
-              {on && (
-                <button type="button" onClick={updateNow} disabled={busy} title={t('rail.updateNow')}
-                  className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg disabled:opacity-40">
-                  <Icon icon={faRotateRight} className={busy ? 'animate-spin' : ''} />
-                </button>
-              )}
-              <button type="button" onClick={() => setOpen(false)} title={t('rail.close')}
-                className="cursor-pointer rounded px-1 text-[11px] text-fgdim hover:text-fg">
-                <Icon icon={faXmark} />
-              </button>
-            </span>
-          </div>
-          <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
-            {!on ? (
-              <div className="text-[12px] text-fgdim">
-                <p className="mb-2.5">{t('rail.summaryIntro')}</p>
-                <div className="mb-2.5 flex items-center gap-2">
-                  <span>{t('rail.language')}</span>
-                  <LangToggle value={pendingLang} onChange={setPendingLang} />
-                </div>
-                <button type="button" onClick={enable}
-                  className="cursor-pointer rounded-md border-2 border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] active:translate-x-[1px] active:translate-y-[1px]">
-                  {t('rail.summarizeConversation')}
-                </button>
-              </div>
-            ) : busy && !summary.text ? (
-              <div className="flex items-center gap-2 text-[12px] text-fgdim"><span className="host-spinner h-3 w-3" /> {t('rail.generating')}</div>
-            ) : (
-              <div className="md text-[12.5px]" dir="auto">
-                <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
-              </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tip label={t('rail.statusSummary')}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-summary-chip
+            aria-label={t('rail.statusSummary')}
+            className={`shrink-0 gap-1.5 px-2 ${on ? 'text-foreground' : 'text-muted-foreground'} aria-expanded:bg-muted aria-expanded:text-foreground`}
+          >
+            {busy ? <span className="host-spinner size-3" /> : <ListChecks />}
+            <span className="hidden sm:inline">{t('rail.summary')}</span>
+          </Button>
+        </PopoverTrigger>
+      </Tip>
+      <PopoverContent align="end" className="w-[21.25rem] max-w-[calc(100vw-1rem)] p-0">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+          <span className="text-sm font-medium text-foreground">{t('rail.statusSummary')}</span>
+          <span className="ms-auto flex items-center gap-0.5">
+            {on && (
+              <Tip label={t('rail.updateNow')}>
+                <Button variant="ghost" size="icon-xs" onClick={updateNow} disabled={busy} aria-label={t('rail.updateNow')} className="text-muted-foreground">
+                  <RefreshCw className={busy ? 'animate-spin' : ''} />
+                </Button>
+              </Tip>
             )}
-          </div>
-          {on && (
-            <div className="flex items-center gap-2 border-t border-hair px-3 py-2 text-[11.5px] md:text-[10.5px] text-fgdim">
-              <label className="flex cursor-pointer items-center gap-1.5">
-                <input type="checkbox" className="accent-brand" checked={!!summary.autoUpdate} onChange={toggleAuto} />
-                {t('rail.autoUpdateEachTurn')}
-              </label>
-              {/* Output language: Auto (follow the conversation) | English */}
-              <span className="ms-auto">
-                <LangToggle value={lang} onChange={setLang} disabled={busy} />
-              </span>
+            <Button variant="ghost" size="icon-xs" onClick={() => setOpen(false)} aria-label={t('rail.close')} className="text-muted-foreground">
+              <X />
+            </Button>
+          </span>
+        </div>
+        <div className="max-h-[42vh] overflow-y-auto px-3 py-2.5">
+          {!on ? (
+            <div className="text-xs text-muted-foreground">
+              <p className="mb-2.5">{t('rail.summaryIntro')}</p>
+              <div className="mb-2.5 flex items-center gap-2">
+                <span>{t('rail.language')}</span>
+                <LangToggle value={pendingLang} onChange={setPendingLang} />
+              </div>
+              <Button variant="default" onClick={enable}>{t('rail.summarizeConversation')}</Button>
             </div>
-          )}
-          {on && (
-            <div className="border-t border-hair px-3 py-1.5 text-end">
-              <button type="button" onClick={turnOff} className="cursor-pointer text-[11.5px] md:text-[10.5px] text-danger hover:underline">{t('rail.turnOff')}</button>
+          ) : busy && !summary.text ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="host-spinner size-3" /> {t('rail.generating')}</div>
+          ) : (
+            <div className="md text-sm" dir="auto">
+              <Markdown remarkPlugins={[remarkGfm]}>{summary.text || '…'}</Markdown>
             </div>
           )}
         </div>
-      )}
-    </span>
+        {on && (
+          <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Checkbox id={`sum-auto-${sid}`} checked={!!summary.autoUpdate} onCheckedChange={toggleAuto} />
+              <Label htmlFor={`sum-auto-${sid}`} className="cursor-pointer text-xs font-normal">{t('rail.autoUpdateEachTurn')}</Label>
+            </span>
+            {/* Output language: Auto (follow the conversation) | English */}
+            <span className="ms-auto">
+              <LangToggle value={lang} onChange={setLang} disabled={busy} />
+            </span>
+          </div>
+        )}
+        {on && (
+          <div className="border-t border-border px-3 py-1.5 text-end">
+            <Button variant="link" size="xs" onClick={turnOff} className="text-destructive">{t('rail.turnOff')}</Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
 // 🖥 "Machine" — toggles the session side panel with the live shared desktop
-// (ScreenSidePanel.jsx). Highlighted while a request_screen is waiting on you.
+// (ScreenSidePanel.jsx). Amber dot (pulsing) while a request_screen is waiting on you.
 function MachineChip({ session }) {
   const t = useT();
   const s = useStore();
@@ -295,23 +262,20 @@ function MachineChip({ session }) {
   const open = screenPanelOpen(s, session.id);
   const pending = !!openScreenRequest(s, session.id);
   return (
-    <button
-      type="button"
-      onClick={() => setScreenPanel(!open)}
-      title={open ? t('screen.hidePanel') : t('screen.showPanel')}
-      aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
-      aria-pressed={open}
-      className={`hidden h-6 cursor-pointer items-center gap-1 rounded-md border px-1.5 font-mono text-[11.5px] md:text-[10.5px] md:flex ${
-        pending
-          ? 'pulse-yellow border-ink bg-brand font-bold text-[#1a1a1a]'
-          : open
-            ? 'border-ink bg-bg text-fg'
-            : 'border-hair text-fgdim hover:border-ink hover:text-fg'
-      }`}
-    >
-      <Icon icon={faDisplay} />
-      <span>{t('screen.panelTitle')}</span>
-    </button>
+    <Tip label={open ? t('screen.hidePanel') : t('screen.showPanel')}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setScreenPanel(!open)}
+        aria-label={open ? t('screen.hidePanel') : t('screen.showPanel')}
+        aria-pressed={open}
+        data-machine-chip
+        className={`hidden shrink-0 gap-1.5 px-2 md:inline-flex ${open ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}
+      >
+        {pending ? <StatusDot status="warn" pulse /> : <Monitor />}
+        <span>{t('screen.panelTitle')}</span>
+      </Button>
+    </Tip>
   );
 }
 
@@ -329,93 +293,144 @@ export function BornFromChip({ session, className = '' }) {
   const agent = (agents || []).find((a) => a.slug === slug) || { slug, name: slug };
   const name = agent.name || slug;
   return (
-    <button
-      type="button"
-      data-born-from={slug}
-      title={tt('session.bornFromTitle', { name })}
-      onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
-      className={`flex shrink-0 cursor-pointer items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[11px] md:text-[9.5px] leading-none whitespace-nowrap hover:opacity-80 ${className}`}
-      style={{ borderColor: `${agent.color || '#c4c4c4'}66`, background: `${agent.color || '#c4c4c4'}14` }}
-    >
-      <AgentAvatar agent={agent} size={12} />
-      {tt('session.bornFrom', { name })}
-    </button>
+    <Tip label={tt('session.bornFromTitle', { name })}>
+      <button
+        type="button"
+        data-born-from={slug}
+        onClick={(e) => { e.stopPropagation(); openAgent(slug); }}
+        className={`${badgeVariants()} max-w-[14rem] cursor-pointer hover:text-foreground ${className}`}
+      >
+        <AgentAvatar agent={agent} size={12} />
+        <span className="truncate">{tt('session.bornFrom', { name })}</span>
+      </button>
+    </Tip>
   );
 }
 
-/* ---------- SIMPLE1: chat view toggle (Simple | Terminal) --------------------- */
+/* ---------- SIMPLE1: chat view (Simple | Terminal) ---------------------------- */
 
 // Per-session, persisted in metadata.chatMode (the host reads it every turn).
 // The Simple default for an unset session on a phone-width viewport is what
 // the human actually sees — persist it, so the model answers briefly too.
-export function ChatModeToggle({ session }) {
-  const t = useT();
+// D9: the control is a radio group inside the header's "…" menu now; the
+// effect below keeps running because the header is always mounted.
+function useChatModeDefault(session) {
   const isDesktop = useIsDesktop();
-  const mode = chatModeOf(session, isDesktop);
   const stored = session.metadata?.chatMode;
   useEffect(() => {
     if (!isDesktop && stored == null && !session.archived) setChatMode({ id: session.id }, 'simple');
   }, [session.id, isDesktop, stored, session.archived]);
-  const seg = (value, label) => {
-    const active = mode === value;
-    return (
-      <button
-        type="button"
-        data-chat-mode-btn={value}
-        aria-pressed={active}
-        onClick={() => { if (!active) setChatMode(session, value); }}
-        className={`h-full cursor-pointer px-2 text-[11.5px] md:text-[10.5px] leading-none ${active ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:text-fg'}`}
-      >
-        {label}
-      </button>
-    );
-  };
+  return chatModeOf(session, isDesktop);
+}
+
+// The radio items themselves; `M` carries the menu parts (a test renders them
+// with plain stand-ins, the header passes the DropdownMenu ones).
+export function ChatModeItems({ M, session, mode }) {
+  const t = useT();
   return (
-    <span
-      role="group"
-      aria-label={t('rail.chatMode')}
-      title={t('rail.chatModeHint')}
-      data-chat-mode-toggle={mode}
-      className="flex h-[30px] shrink-0 overflow-hidden rounded-full border-[1.5px] border-border bg-bg font-mono md:h-[22px]"
-    >
-      {seg('simple', t('rail.chatModeSimple'))}
-      {seg('full', t('rail.chatModeTerminal'))}
-    </span>
+    <M.Group aria-label={t('rail.chatMode')} data-chat-mode-toggle={mode}>
+      <M.Label>{t('rail.chatMode')}</M.Label>
+      <M.RadioGroup value={mode} onValueChange={(v) => { if (v !== mode) setChatMode(session, v); }}>
+        <M.RadioItem value="simple" data-chat-mode-btn="simple" aria-pressed={mode === 'simple'}>{t('rail.chatModeSimple')}</M.RadioItem>
+        <M.RadioItem value="full" data-chat-mode-btn="full" aria-pressed={mode === 'full'}>{t('rail.chatModeTerminal')}</M.RadioItem>
+      </M.RadioGroup>
+    </M.Group>
   );
 }
 
-function TerminalHeader({ session }) {
+// The "…" menu: everything that is not state and not daily. Each item is two
+// clicks away (… then the item).
+function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddTabOpen }) {
+  const t = useT();
+  const account = useSessionAccount(session);
+  const accountName = account ? account.email || account.label || t('rail.accountFallback') : null;
+  return (
+    <DropdownMenu>
+      <Tip label={t('rail.sessionActions')}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={t('rail.sessionActions')} data-header-menu className="shrink-0 text-muted-foreground aria-expanded:text-foreground">
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+      </Tip>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="flex flex-col gap-0.5 font-normal">
+          <span className="text-2xs text-muted-foreground">{engineTermName(session.engine)}</span>
+          {meta && <bdi className="truncate text-xs text-foreground">{meta}</bdi>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {onEdit && (
+          <DropdownMenuItem onSelect={() => onEdit(session)}>
+            <Pencil /> {t('rail.editDetails')}
+          </DropdownMenuItem>
+        )}
+        {setAddTabOpen && (
+          <DropdownMenuItem onSelect={() => setAddTabOpen(true)}>
+            <Plus /> {t('rail.openUrlAsTab')}
+            <DropdownMenuShortcut>⌘T</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+        {accountName && (
+          <DropdownMenuItem onSelect={() => window.dispatchEvent(new CustomEvent('host:open-accounts'))}>
+            <CircleUser /> <span className="min-w-0 truncate">{t('rail.runsOn', { name: accountName })}</span>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <ChatModeItems
+          M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+          session={session}
+          mode={mode}
+        />
+        {(session.archived ? onRestore : onArchive) && <DropdownMenuSeparator />}
+        {session.archived
+          ? onRestore && (
+            <DropdownMenuItem onSelect={() => onRestore(session)}>
+              <RotateCcw /> {t('rail.restoreSession')}
+            </DropdownMenuItem>
+          )
+          : onArchive && (
+            <DropdownMenuItem onSelect={() => onArchive(session)}>
+              <Archive /> {t('rail.archiveSession')}
+            </DropdownMenuItem>
+          )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }) {
   const [procPanel, setProcPanel] = useState(false);
+  const mode = useChatModeDefault(session);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
   // session identifier at all when the rail (the only other place showing it)
   // is collapsed behind the mobile hamburger.
   const name = session.metadata?.ticket || session.title || session.id;
   const meta = [session.metadata?.ticket, session.metadata?.branch].filter(Boolean).join(' · ');
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hair bg-panel px-3.5 py-2 text-xs text-fg sm:flex-nowrap">
+    <div className="flex min-h-11 shrink-0 items-center gap-x-2 border-b border-border bg-background px-3 text-sm text-foreground md:px-4">
       <Dot color={session.color} size={9} />
-      <span className="shrink-0 font-bold whitespace-nowrap">{engineTermName(session.engine)}</span>
-      <Truncate text={name} className="min-w-0 font-mono text-[11px] font-bold text-fg" />
+      <Tip label={meta || undefined}>
+        <span className="min-w-0 shrink">
+          <Truncate text={name} className="block text-sm font-medium text-foreground" />
+        </span>
+      </Tip>
+      <StatusChip session={session} />
       <BornFromChip session={session} />
       {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
       <LadderBadge session={session} />
-      {/* ticket · branch — desktop-only detail; `name` above already covers mobile */}
-      {meta && <Truncate text={meta} className="hidden min-w-0 font-mono text-[11.5px] md:text-[10.5px] text-fgdim sm:block" />}
       {session.metadata?.fromTriggerName && (
         <TriggerTag
           name={session.metadata.fromTriggerName}
-          className="max-w-[160px] text-[11.5px] md:text-[10.5px]"
+          className="hidden max-w-[10rem] text-xs text-muted-foreground sm:inline-flex"
         />
       )}
-      <div className="ms-auto flex shrink-0 items-center gap-2">
-        <AccountChip session={session} />
+      <div className="ms-auto flex shrink-0 items-center gap-0.5">
         <ProcessChip session={session} onClick={() => setProcPanel(true)} />
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
-        <ChatModeToggle session={session} />
         <TermControls session={session} />
-        <StatusChip session={session} />
+        <HeaderMenu session={session} mode={mode} meta={meta} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
       </div>
       {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}
     </div>
@@ -428,35 +443,35 @@ export function ProgressStrip({ progress }) {
   const steps = progress?.steps;
   if (!Array.isArray(steps) || steps.length === 0) return null;
   return (
-    <div className="flex shrink-0 items-stretch border-b border-hair bg-panel">
+    <div className="flex shrink-0 items-stretch border-b border-border bg-background">
       {steps.map((step, i) => {
         const st = step.state || 'pending';
         return (
           <div
             key={i}
-            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-3.5 sm:py-2.5 ${
-              i < steps.length - 1 ? 'border-r border-hair' : ''
-            } ${st === 'active' ? 'bg-warn-bg' : ''}`}
+            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 sm:px-4 sm:py-2 ${
+              i < steps.length - 1 ? 'border-e border-border' : ''
+            } ${st === 'active' ? 'bg-muted/60' : ''}`}
           >
             {st === 'done' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-[#3C9A4E] text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
-                <Icon icon={faCheck} />
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-ok">
+                <Check className="size-3" />
               </span>
             ) : st === 'active' ? (
-              <span className="host-spinner h-[14px] w-[14px] shrink-0 sm:h-[18px] sm:w-[18px]" />
+              <span className="host-spinner size-4 shrink-0" />
             ) : st === 'error' ? (
-              <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full bg-danger text-[11px] md:text-[9px] text-white sm:h-[18px] sm:w-[18px] sm:text-[11px]">
-                <Icon icon={faXmark} />
+              <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-destructive">
+                <X className="size-3" />
               </span>
             ) : (
-              <span className="h-[14px] w-[14px] shrink-0 rounded-full border-2 border-dashed border-border sm:h-[18px] sm:w-[18px]" />
+              <span className="size-4 shrink-0 rounded-full border border-dashed border-input" />
             )}
             {/* on phones only the active step keeps its label — the others are
                 just state icons, so five steps never overflow the viewport */}
             <span
               className={`truncate text-xs ${
-                st === 'pending' ? 'text-fgdim' : 'text-fg2'
-              } ${st === 'active' ? 'font-mono' : 'hidden sm:block'}`}
+                st === 'pending' ? 'text-muted-foreground' : 'text-foreground'
+              } ${st === 'active' ? 'font-medium' : 'hidden sm:block'}`}
             >
               {step.label || ''}
             </span>
@@ -513,35 +528,34 @@ export function ListenerChips({ session }) {
   };
   return (
     // Desktop-only: on phones this whole row folds into the header's 👀 chip.
-    <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-hair bg-panel px-3.5 py-2 sm:flex">
-      <span className="font-mono text-[11.5px] md:text-[10px] tracking-wide text-fgdim uppercase">{t('rail.watching')}</span>
+    <div className="hidden shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-background px-4 py-1.5 sm:flex">
+      <span className="text-xs text-muted-foreground">{t('rail.watching')}</span>
       {listeners.map((l) => {
         const errored = l.status === 'errored';
+        const contacts = listenerContacts(l);
         return (
-          <button
+          <Tip
             key={l.id}
-            type="button"
-            onClick={() => setOpenId(l.id)}
-            title={listenerContacts(l).length ? `${t('rail.contacts')} ${listenerContacts(l).map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
-              errored
-                ? 'border-danger/40 bg-danger/10 text-danger'
-                : 'border-hair bg-bg text-fg2 hover:bg-chip'
-            }`}
+            label={contacts.length ? `${t('rail.contacts')} ${contacts.map((c) => `${c.name || c.raw} (${(c.jids || []).join(', ')})`).join('; ')}` : t('rail.openListenerDetails')}
           >
-            <span><Icon icon={errored ? faTriangleExclamation : faEye} /></span>
-            <span className="font-medium">{l.label}</span>
-            {l.firedCount > 0 && !errored && <span className="text-fgdim">{t('rail.firedCount', { n: l.firedCount })}</span>}
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => cancel(l.id, e)}
-              title={t('rail.cancelListener')}
-              className="ml-0.5 cursor-pointer text-fgdim hover:text-danger"
-            >
-              <Icon icon={faXmark} />
+            <span className={`${badgeVariants({ variant: 'outline' })} h-6 gap-1.5 ps-2 pe-1 ${errored ? 'text-destructive' : 'text-foreground'}`}>
+              <button type="button" onClick={() => setOpenId(l.id)} className="inline-flex cursor-pointer items-center gap-1.5 outline-none focus-visible:outline-2 focus-visible:outline-ring">
+                {errored ? <TriangleAlert /> : <Eye />}
+                <span className="font-medium">{l.label}</span>
+                {l.firedCount > 0 && !errored && <span className="text-muted-foreground">{t('rail.firedCount', { n: l.firedCount })}</span>}
+              </button>
+              <Tip label={t('rail.cancelListener')}>
+                <button
+                  type="button"
+                  onClick={(e) => cancel(l.id, e)}
+                  aria-label={t('rail.cancelListener')}
+                  className="flex size-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-destructive"
+                >
+                  <X className="size-3" />
+                </button>
+              </Tip>
             </span>
-          </button>
+          </Tip>
         );
       })}
       {openId && (
@@ -586,11 +600,6 @@ function ListenersPanel({ session, initialId, onClose }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail?.log?.length]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const cancel = async (lid) => {
     try {
@@ -604,22 +613,15 @@ function ListenersPanel({ session, initialId, onClose }) {
   const log = detail?.log || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-[78vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className="text-[13px] leading-none"><Icon icon={faEye} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{t('rail.listeners')}</span>
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('rail.nWatching', { n: list.length })}</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ms-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          >
-            <Icon icon={faXmark} />
-          </button>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent showClose={false} className="flex h-[78vh] w-[min(57.5rem,calc(100vw-1.5rem))] max-w-none flex-col gap-0 overflow-hidden p-0">
+        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+          <Eye className="size-4 text-muted-foreground" />
+          <DialogTitle>{t('rail.listeners')}</DialogTitle>
+          <DialogDescription className="text-xs">{t('rail.nWatching', { n: list.length })}</DialogDescription>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('rail.close')} className="ms-auto text-muted-foreground">
+            <X />
+          </Button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -718,8 +720,8 @@ function ListenersPanel({ session, initialId, onClose }) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1718,7 +1720,7 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
 // header) and the TabBar is `embedded`; every other tab (desktop, artifacts,
 // url, changes…) is the same component a work session gets, so the human can
 // see what the agent opened.
-export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession }) {
+export default function SessionView({ session, events, chatLoading, addTabOpen, setAddTabOpen, homeAgent = null, onOpenSession, onEdit, onArchive, onRestore }) {
   const isDesktop = useIsDesktop();
   const tt = useT();
   const { sessions: allSessions } = useStore();
@@ -1844,7 +1846,7 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                 <AgentHomeChat session={session} agent={homeAgent} events={events} loading={chatLoading} onOpenSession={onOpenSession} />
               ) : tab.type === 'session' ? (
                 <>
-                  <TerminalHeader session={session} />
+                  <TerminalHeader session={session} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
                   <ProgressStrip progress={session.progress} />
                   <ListenerChips session={session} />
                   <ChatPane

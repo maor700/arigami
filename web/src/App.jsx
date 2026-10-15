@@ -1,28 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './lib/api.js';
-import { useStore, loadChat, setAttentionHandler, needsAttention, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
+import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
 import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
-import { useT } from './lib/i18n.js';
+import { useT, currentLang } from './lib/i18n.js';
 import { Icon } from './lib/icons.js';
-import {
-  faBars,
-  faBoxArchive,
-  faBrain,
-  faCircleHalfStroke,
-  faCircleUser,
-  faGear,
-  faHouse,
-  faPen,
-  faPlus,
-  faPlusMinus,
-  faPuzzlePiece,
-  faQuestion,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons';
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
 import ScreenSidePanel from './components/ScreenSidePanel.jsx';
@@ -43,6 +28,11 @@ import Toaster from './components/Toaster.jsx';
 import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
 import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
+import { Archive, Bell, Brain, CircleHelp, CircleUser, Contrast, Diff, House, Languages, Menu, Pencil, Plus, Puzzle, Settings as SettingsIcon, Trash2 } from 'lucide-react';
+import { Button } from './components/ui/button.jsx';
+import { Input, Textarea } from './components/ui/input.jsx';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from './components/ui/sheet.jsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.jsx';
 
 // matchesHotkey (the "Cmd+Shift+V" parser) lives in lib/voice.js (VOICE2).
 
@@ -600,6 +590,33 @@ function Cockpit() {
     return () => setCommandHandlers({});
   }, []);
 
+  // D13: jump to the next session (after the current one, wrapping) that is
+  // waiting on the human — a question, a permission, a take-over request.
+  // Reads the live store, so the keyboard handler and the palette share it.
+  const goToNextNeedingMe = () => {
+    const st = getState();
+    const list = st.sessions
+      .filter((s) => !s.archived && !s.metadata?.agentHome)
+      .sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9));
+    const waiting = (s) => needsAttention(s) || hasOpenScreenRequest(s);
+    const cur = list.findIndex((s) => s.id === keyCtx.current.selected?.id);
+    for (let step = 1; step <= list.length; step++) {
+      const cand = list[(Math.max(cur, -1) + step) % list.length];
+      if (cand && cand.id !== keyCtx.current.selected?.id && waiting(cand)) {
+        setSelectedId(cand.id);
+        setLauncher(null);
+        setPreviewTicket(null);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setBrainOpen(false);
+        setAgentOpen(null);
+        setSetupOpen(false);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
   const keyCtx = useRef({});
   keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, sessionCount: sessions.length };
@@ -698,6 +715,12 @@ function Cockpit() {
         }
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        // D13: ⌘J — the next session that needs me (works from the composer too).
+        if (e.key.toLowerCase() === 'j') {
+          e.preventDefault();
+          goToNextNeedingMe();
+          return;
+        }
         if (e.key >= '1' && e.key <= '9') {
           const idx = Number(e.key) - 1;
           const target = ctx.active[idx];
@@ -851,24 +874,26 @@ function Cockpit() {
     );
   };
   const paletteActions = [
-    { id: 'new-empty', label: t('chrome.palette.newEmpty'), keywords: t('chrome.palette.newEmpty.kw'), icon: faPlus, run: () => {
+    { id: 'new-empty', label: t('chrome.palette.newEmpty'), keywords: t('chrome.palette.newEmpty.kw'), icon: Plus, run: () => {
       const cfg = getState().config;
       api.post('/sessions', { title: scratchName(getState().sessions), cwd: cfg?.reposDir || cfg?.defaultCwd || undefined })
         .then((s) => { if (s?.id) { setSelectedId(s.id); setLauncher(null); } }).catch(() => {});
     } },
-    { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: faPlus, run: () => setLauncher({ mode: 'ticket' }) },
-    { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: faGear, run: () => setSettingsOpen(true) },
-    { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: faPuzzlePiece, run: () => setSkillsOpen(true) },
-    { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: faBrain, run: () => setBrainOpen(true) },
-    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: faCircleUser, run: () => openSettings('connections', 'claude') },
-    { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: faHouse, run: () => setSetupOpen(true) },
-    { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: faQuestion, run: () => setShortcutsOpen(true) },
-    { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: faCircleHalfStroke, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
+    { id: 'new-ticket', label: t('chrome.palette.newTicket'), keywords: t('chrome.palette.newTicket.kw'), icon: Plus, run: () => setLauncher({ mode: 'ticket' }) },
+    { id: 'settings', label: t('chrome.palette.settings'), keywords: t('chrome.palette.settings.kw'), icon: SettingsIcon, run: () => setSettingsOpen(true) },
+    { id: 'skills', label: t('chrome.palette.skills'), keywords: t('chrome.palette.skills.kw'), icon: Puzzle, run: () => setSkillsOpen(true) },
+    { id: 'brain', label: t('chrome.palette.brain'), keywords: t('chrome.palette.brain.kw'), icon: Brain, run: () => setBrainOpen(true) },
+    { id: 'accounts', label: t('chrome.palette.accounts'), keywords: t('chrome.palette.accounts.kw'), icon: CircleUser, run: () => openSettings('connections', 'claude') },
+    { id: 'setup', label: t('chrome.palette.setup'), keywords: t('chrome.palette.setup.kw'), icon: House, run: () => setSetupOpen(true) },
+    { id: 'shortcuts', label: t('chrome.palette.shortcuts'), keywords: t('chrome.palette.shortcuts.kw'), icon: CircleHelp, run: () => setShortcutsOpen(true) },
+    { id: 'next-needs', label: t('chrome.palette.nextNeedsYou'), keywords: t('chrome.palette.nextNeedsYou.kw'), icon: Bell, shortcut: '⌘J', run: () => { goToNextNeedingMe(); } },
+    { id: 'language', label: t('chrome.palette.language'), keywords: t('chrome.palette.language.kw'), icon: Languages, run: () => setPrefs({ language: currentLang() === 'he' ? 'en' : 'he' }) },
+    { id: 'theme', label: t('chrome.palette.theme'), keywords: t('chrome.palette.theme.kw'), icon: Contrast, run: () => setPrefs({ theme: getPrefs().theme === 'dark' ? 'light' : 'dark' }) },
     ...(selected ? [
-      { id: 'changes', label: t('chrome.palette.changes'), keywords: t('chrome.palette.changes.kw'), icon: faPlusMinus, run: goToChanges },
-      { id: 'edit', label: t('chrome.palette.edit'), keywords: t('chrome.palette.edit.kw'), icon: faPen, run: () => setDialog({ type: 'edit', session: selected }) },
-      { id: 'archive', label: t('chrome.palette.archive'), keywords: t('chrome.palette.archive.kw'), icon: faBoxArchive, run: () => setDialog({ type: 'archive', session: selected }) },
-      { id: 'delete', label: t('chrome.palette.delete'), keywords: t('chrome.palette.delete.kw'), icon: faTrash, run: () => setDialog({ type: 'delete', session: selected }) },
+      { id: 'changes', label: t('chrome.palette.changes'), keywords: t('chrome.palette.changes.kw'), icon: Diff, run: goToChanges },
+      { id: 'edit', label: t('chrome.palette.edit'), keywords: t('chrome.palette.edit.kw'), icon: Pencil, run: () => setDialog({ type: 'edit', session: selected }) },
+      { id: 'archive', label: t('chrome.palette.archive'), keywords: t('chrome.palette.archive.kw'), icon: Archive, run: () => setDialog({ type: 'archive', session: selected }) },
+      { id: 'delete', label: t('chrome.palette.delete'), keywords: t('chrome.palette.delete.kw'), icon: Trash2, run: () => setDialog({ type: 'delete', session: selected }) },
     ] : []),
   ];
 
@@ -972,6 +997,9 @@ function Cockpit() {
         <div className="flex min-w-0 flex-1 flex-col">
           <SessionView
             session={selected}
+            onEdit={(s) => setDialog({ type: 'edit', session: s })}
+            onArchive={(s) => setDialog({ type: 'archive', session: s })}
+            onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
             events={chats[selected.id] || []}
             chatLoading={!chatLoaded[selected.id] && !(chats[selected.id]?.length)}
             addTabOpen={addTabOpen}
@@ -995,73 +1023,76 @@ function Cockpit() {
 
   if (storeState.auth === null) return <Login info={storeState.authInfo} />;
 
+  const rail = (
+    <Rail
+      sessions={sessions}
+      selectedId={selected?.id}
+      agentOpen={agentOpen}
+      isDesktop={isDesktop}
+      onClose={() => setRailOpen(false)}
+      onSelect={(id) => {
+        setSelectedId(id);
+        setLauncher(null);
+        setPreviewTicket(null);
+        setSettingsOpen(false);
+        setSkillsOpen(false);
+        setBrainOpen(false);
+        setAgentOpen(null);
+        setSetupOpen(false);
+        setAddTabOpen(false);
+        setRailOpen(false);
+      }}
+      onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
+      onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
+      onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
+      onOpenShortcuts={() => setShortcutsOpen(true)}
+      onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setAgentDraftName(''); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
+      searchRef={searchRef}
+      onArchive={(s) => setDialog({ type: 'archive', session: s })}
+      onEdit={(s) => setDialog({ type: 'edit', session: s })}
+      onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
+      onRestart={restartSession}
+      onDelete={(s) => setDialog({ type: 'delete', session: s })}
+      config={config}
+      conn={conn}
+    />
+  );
+
   // --app-height, not h-screen: 100vh ignores the mobile keyboard (lib/viewport.js)
   return (
     <div className="flex h-[var(--app-height)] overflow-hidden bg-bg font-sans text-fg">
-      {/* mobile drawer backdrop */}
-      {railOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
-          onClick={() => setRailOpen(false)}
-        />
+      {/* Desktop: the rail is a fixed column. Phone: the same rail inside a
+          start-edge Sheet (focus trap, Esc, backdrop tap, slides in from the
+          side the text starts on). */}
+      {isDesktop ? rail : (
+        <Sheet open={railOpen} onOpenChange={setRailOpen}>
+          <SheetContent side="start" showClose={false} className="w-[min(20rem,88vw)] gap-0 p-0" data-rail-drawer>
+            <SheetTitle className="sr-only">{t('chrome.topbar.openSessions')}</SheetTitle>
+            <SheetDescription className="sr-only">{t('chrome.topbar.openSessions')}</SheetDescription>
+            {rail}
+          </SheetContent>
+        </Sheet>
       )}
-      <Rail
-        sessions={sessions}
-        selectedId={selected?.id}
-        agentOpen={agentOpen}
-        isDesktop={isDesktop}
-        mobileOpen={railOpen}
-        onClose={() => setRailOpen(false)}
-        onSelect={(id) => {
-          setSelectedId(id);
-          setLauncher(null);
-          setPreviewTicket(null);
-          setSettingsOpen(false);
-          setSkillsOpen(false);
-          setBrainOpen(false);
-          setAgentOpen(null);
-          setSetupOpen(false);
-          setAddTabOpen(false);
-          setRailOpen(false);
-        }}
-        onNew={() => { setLauncher({ mode: 'ticket' }); setPreviewTicket(null); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSettings={() => { setSettingsOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSkills={() => { setSkillsOpen(true); setSettingsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenBrain={() => { setBrainOpen(true); setSettingsOpen(false); setSkillsOpen(false); setSetupOpen(false); setRailOpen(false); }}
-        onOpenSetup={() => { setSetupOpen(true); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSettingsOpen(false); setLauncher(null); setRailOpen(false); }}
-        onPreviewTicket={(t) => { setPreviewTicket(t); setLauncher(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenTriggers={() => { setLauncher({ mode: 'trigger' }); setPreviewTicket(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setAgentOpen(null); setSetupOpen(false); setRailOpen(false); }}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenAgent={(slug, tab) => { setAgentOpen(slug); setAgentTab(tab || 'home'); setAgentDraftName(''); setSelectedId(null); setSettingsOpen(false); setSkillsOpen(false); setBrainOpen(false); setSetupOpen(false); setLauncher(null); setPreviewTicket(null); setRailOpen(false); }}
-        searchRef={searchRef}
-        onArchive={(s) => setDialog({ type: 'archive', session: s })}
-        onEdit={(s) => setDialog({ type: 'edit', session: s })}
-        onRestore={(s) => api.patch(`/sessions/${s.id}`, { archived: false }).catch(() => {})}
-        onRestart={restartSession}
-        onDelete={(s) => setDialog({ type: 'delete', session: s })}
-        config={config}
-        conn={conn}
-      />
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* mobile top bar: hamburger + current view — not shown over a session,
             where the TabBar hosts the hamburger instead */}
         {!mainHasHamburger && (
-          <div className="flex shrink-0 items-center gap-2.5 border-b border-hair bg-panel px-3 py-2 md:hidden">
-            <button
-              type="button"
-              onClick={() => setRailOpen(true)}
-              aria-label={t('chrome.topbar.openSessions')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border-[1.5px] border-border bg-bg text-[15px] text-fg"
-            >
-              <Icon icon={faBars} />
-            </button>
-            <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-fg">
+          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-2 md:hidden">
+            <Button variant="ghost" size="icon" onClick={() => setRailOpen(true)} aria-label={t('chrome.topbar.openSessions')} className="text-muted-foreground">
+              <Menu />
+            </Button>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
               {topBarTitle}
             </span>
           </div>
         )}
         {conn !== 'open' && (
-          <div className="absolute top-2 right-3 z-40 rounded-full border border-err-line bg-err-bg px-2.5 py-1 font-mono text-[10px] text-err">
+          <div className="absolute top-2 end-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-pop" data-conn-state={conn}>
+            <span className="size-1.5 rounded-full bg-err" aria-hidden="true" />
             {/* CHATWS: once the link was up, both the retry wait and the attempt read
                 "reconnecting…" — "host offline" is misleading when it is the PHONE
                 that lost its network. */}

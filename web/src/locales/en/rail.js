@@ -364,4 +364,9 @@ export const strings = {
   'rail.clearConfirmBody': 'Starts a brand new {engine} conversation for "{name}" — the worktree, chat log and metadata are kept, but the model loses all memory of what was discussed so far. Anything it is doing right now is aborted.',
   'rail.clearConfirm': 'Clear',
   'rail.clearFailed': 'Clear failed: {error}',
+  // ---- redesign: shell ----
+  'rail.needsYouGroup': 'Needs you',
+  'rail.sessionsGroup': 'Sessions',
+  'rail.commandsGroup': 'Commands',
+  'rail.scNextNeedsYou': 'Next session that needs you',
 };

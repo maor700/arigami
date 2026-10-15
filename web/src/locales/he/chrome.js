@@ -171,4 +171,9 @@ export const strings = {
   'chrome.webhooks.funnel.on': 'פעיל — {url} נגיש מהאינטרנט (נתיבי webhook בלבד).',
   'chrome.webhooks.funnel.confirm': 'לחשוף את /__api/webhooks לאינטרנט הציבורי דרך Tailscale Funnel? כל נתיב שם מאמת טוקן/חתימה בעצמו; שום דבר אחר לא נחשף.',
   'auth.login.phoneHint': 'מהטלפון? בקש ממי שמפעיל את המארח לשלוח לך את הקוד, או קח אותו מהמחשב שהמארח רץ עליו.',
+  // ---- עיצוב חדש: מעטפת ----
+  'chrome.palette.nextNeedsYou': 'עבור לסשן הבא שמחכה לי',
+  'chrome.palette.nextNeedsYou.kw': 'תשומת לב ממתין שאלה הרשאה attention',
+  'chrome.palette.language': 'החלף שפה (אנגלית / עברית)',
+  'chrome.palette.language.kw': 'שפה locale hebrew english rtl ltr',
 };

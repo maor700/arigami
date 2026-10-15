@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
 import { useT } from '../lib/i18n.js';
+import { Kbd } from './ui/kbd.jsx';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog.jsx';
 
 // macOS uses ⌘; everything else shows Ctrl.
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
@@ -12,6 +13,7 @@ const buildGroups = (t) => [
       [[`${MOD}`, '1–9'], t('dialogs.scJumpToSession')],
       [[`${MOD}`, '⇧', '↑'], t('dialogs.scPrevSession')],
       [[`${MOD}`, '⇧', '↓'], t('dialogs.scNextSession')],
+      [[`${MOD}`, 'J'], t('rail.scNextNeedsYou')],
       [[`${MOD}`, 'K'], t('dialogs.scCommandPalette')],
       [['/'], t('dialogs.scFocusSearch')],
     ],
@@ -41,51 +43,36 @@ const buildGroups = (t) => [
 
 function Keys({ keys }) {
   return (
-    <span className="flex items-center gap-1">
-      {keys.map((k, i) => (
-        <kbd
-          key={i}
-          className="inline-flex min-w-[20px] items-center justify-center rounded-[5px] border border-border bg-bg px-1.5 py-0.5 font-mono text-[10.5px] text-fg shadow-[0_1px_0_var(--color-border)]"
-        >
-          {k}
-        </kbd>
-      ))}
+    <span dir="ltr" className="flex items-center gap-1">
+      {keys.map((k, i) => (k === 'or' ? <span key={i} className="text-2xs text-muted-foreground">{k}</span> : <Kbd key={i}>{k}</Kbd>))}
     </span>
   );
 }
 
+// Esc closes (Radix); "?" toggles it from the app-level handler, which also
+// closes it, so the key is handled here as well for when the dialog has focus.
 export default function ShortcutsHelp({ onClose }) {
   const t = useT();
   const GROUPS = buildGroups(t);
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); e.stopPropagation(); onClose(); }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[460px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        showClose={false}
+        className="w-[min(36rem,calc(100vw-1.5rem))] gap-0 p-0"
+        onKeyDownCapture={(e) => { if (e.key === '?') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
       >
-        <div className="flex items-center justify-between border-b border-hair px-[18px] py-3">
-          <div className="text-[15px] font-bold">{t('dialogs.keyboardShortcuts')}</div>
-          <kbd className="font-mono text-[11px] text-fgdim">?</kbd>
-        </div>
-        <div className="grid grid-cols-1 gap-x-6 gap-y-4 px-[18px] py-4 sm:grid-cols-2">
+        <DialogHeader className="flex-row items-center justify-between border-b border-border px-5 py-3.5 pe-5">
+          <DialogTitle>{t('dialogs.keyboardShortcuts')}</DialogTitle>
+          <Kbd>?</Kbd>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 px-5 py-4 sm:grid-cols-2">
           {GROUPS.map((g) => (
             <div key={g.title}>
-              <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{g.title}</div>
+              <div className="mb-2 text-xs font-medium text-muted-foreground">{g.title}</div>
               <div className="flex flex-col gap-2">
                 {g.rows.map(([keys, label], i) => (
                   <div key={i} className="flex items-center justify-between gap-3">
-                    <span className="text-[12px] text-fg">{label}</span>
+                    <span className="text-sm text-foreground">{label}</span>
                     <Keys keys={keys} />
                   </div>
                 ))}
@@ -93,7 +80,7 @@ export default function ShortcutsHelp({ onClose }) {
             </div>
           ))}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
