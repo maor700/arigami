@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
-import { useT } from '../lib/i18n.js';
+import { useT, fieldDir } from '../lib/i18n.js';
 import { Logo } from './Logo.jsx';
 import { Button } from './ui/button.jsx';
 import { Tip } from './ui/tooltip.jsx';
@@ -85,7 +85,7 @@ export default function FirstRun({ config, onCreated, onOpenLauncher, onNeedsSet
           placeholder={t('launcher.firstRun.placeholder')}
           rows={2}
           autoFocus
-          dir="auto"
+          dir={fieldDir(val)}
           data-testid="first-run-prompt"
           className="min-w-0 flex-1 resize-none bg-transparent text-sm leading-snug outline-none placeholder:text-muted-foreground"
         />

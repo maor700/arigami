@@ -26,7 +26,7 @@ import { useIsDesktop } from '../lib/useMedia.js';
 import { engineLabel } from '../lib/engines.js';
 import { setDictationSink, appendDictation } from '../lib/voice.js';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
-import { useT, dirOf } from '../lib/i18n.js';
+import { useT, fieldDir } from '../lib/i18n.js';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { extSlashItems } from '../lib/ext.js';
@@ -628,7 +628,7 @@ export function ChatFooter({ session }) {
           ref={taRef}
           data-composer
           rows={1}
-          dir={text ? dirOf(text) : undefined}
+          dir={fieldDir(text)}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
@@ -638,7 +638,7 @@ export function ChatFooter({ session }) {
               ? t('rail.replyPlaceholder', { engine: engineLabel(session.engine) })
               : t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })
           }
-          className="max-h-40 min-h-[2.5rem] w-full min-w-0 resize-none bg-transparent px-3.5 pt-3 pb-1 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground sm:text-[14px]"
+          className="max-h-40 min-h-[2.5rem] w-full min-w-0 resize-none bg-transparent [unicode-bidi:plaintext] px-3.5 pt-3 pb-1 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground sm:text-[14px]"
           style={{ fieldSizing: 'content' }}
         />
 

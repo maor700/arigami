@@ -81,12 +81,24 @@ export function t(key, vars) {
 // field inherit the app's RTL direction and mis-aligns English text.
 const RTL_STRONG = /[֐-׿؀-ۿ܀-ݏݐ-ݿ߀-߿ࡠ-ࣿיִ-ﭏﭐ-﷿ﹰ-﻿]/;
 const LTR_STRONG = /[A-Za-zÀ-ʸͰ-ӿ]/;
-export function dirOf(s) {
+// strongDirOf is the same scan but says null for neutral-only text, so a caller
+// stitching several text runs together (markdown blocks) can keep looking.
+export function strongDirOf(s) {
   for (const ch of s || '') {
     if (RTL_STRONG.test(ch)) return 'rtl';
     if (LTR_STRONG.test(ch)) return 'ltr';
   }
-  return 'ltr';
+  return null;
+}
+export function dirOf(s) {
+  return strongDirOf(s) || 'ltr';
+}
+// Direction attribute for a text field: its content's first strong direction, or
+// undefined (= follow the app language) while it is empty / neutral ("/", "123").
+// Native dir="auto" would fall back to LTR there, leaving a Hebrew UI's empty
+// field with a left caret and a left-aligned Hebrew placeholder.
+export function fieldDir(value) {
+  return strongDirOf(value == null ? '' : String(value)) || undefined;
 }
 
 // Hook form — re-renders the component when the language pref changes.

@@ -368,7 +368,7 @@ function DescList({ items, onPick }) {
                 key={it.name}
                 type="button"
                 onClick={onPick ? () => onPick(it.name) : undefined}
-                className={`flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left ${
+                className={`flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-start ${
                   onPick ? 'cursor-pointer hover:bg-chip' : 'cursor-default'
                 }`}
               >

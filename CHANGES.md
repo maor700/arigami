@@ -41,6 +41,13 @@ Removed: nothing.
 7. Several pending cards in one chat each carry their own primary button (e.g. "Create agent" and "Connect automatically" at once). Recommended: only the newest waiting card is primary.
 8. Chat pane keeps its own light/dark (`termTheme`), independent of the app theme (V12). Recommended: follow the app theme by default.
 
+## RTL / Hebrew text alignment (fix pass)
+
+- **One markdown component** (`components/Md.jsx`) for chat prose, ext/OpenUI cards, skills, launcher and content tabs: every paragraph, list, heading, quote and table cell gets its own `dir` from its first strong character (inline code ignored), code blocks stay LTR. Bullets, numbers, indents and quote bars now sit on the side of the text, not of the app language; a list item in the other script stays flush with its list.
+- **Truncating text** (`Truncate.jsx`) reads its own direction off the text, so an ellipsis cuts the tail (not the head) of an English title in a Hebrew UI and vice versa, while rail titles, folder names, tab titles and quick-switcher rows still align to the UI's start edge (`.ui-start`) next to the identity dot and chips.
+- **Text fields**: `Input`/`Textarea` with `dir="auto"` and the composer use `fieldDir()` — own direction once there is a strong character, the app's direction while empty or neutral ("/", "123"), so the caret and a Hebrew placeholder start on the right. The composer paragraphs order themselves (`unicode-bidi: plaintext`).
+- Todo rows take their label's direction (icon on the text side). Logical-property guard test keeps `ml-/mr-/pl-/pr-/text-left/text-right/border-l/border-r` out of the app.
+
 ## Phase 1 — foundation
 
 #### Moved

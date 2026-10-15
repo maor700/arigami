@@ -5,7 +5,7 @@
 // correct); an opt-in AI pass adds per-skill summaries and inferred secondary
 // edges, clearly marked as suggested.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import Md from './Md.jsx';
 
 // B24: SKILL.md starts with YAML frontmatter (name/description/triggers…) — metadata the
 // page already shows in its header, not prose to render as a giant bold paragraph.
@@ -253,7 +253,7 @@ function DetailPane({ name, aiSummary }) {
                 {aiSummary}
               </div>
             )}
-            <Markdown>{stripFrontmatter(detail.content)}</Markdown>
+            <Md>{stripFrontmatter(detail.content)}</Md>
 
             {detail.supporting?.length > 0 && (
               <div className="mt-8 border-t border-hair pt-4">
