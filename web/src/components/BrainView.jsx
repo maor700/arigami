@@ -24,6 +24,10 @@ import {
 import { CronSubPanel } from './Launcher.jsx';
 import { ProposalsPane } from './SkillsView.jsx';
 import { fmtDateTime } from '../lib/time.js';
+import { Button } from './ui/button.jsx';
+import { Input } from './ui/input.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs.jsx';
 
 function bulletLines(content) {
   return (content || '')
@@ -72,20 +76,20 @@ function CappedDoc({ target, path, onChanged }) {
     }
   };
 
-  if (content === null) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (content === null) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   const items = bulletLines(content);
 
   return (
-    <div className="rounded-[10px] border border-hair p-3">
+    <div className="rounded-lg border border-hair p-3">
       <div className="mb-2 flex items-center gap-2">
-        <span className="font-mono text-[11.5px] font-bold text-fg">{path}</span>
-        <span className="text-[11.5px] md:text-[10px] text-fgdim">{t('brain.lineCount', { n: items.length })}</span>
+        <span className="font-mono text-xs font-medium text-fg" dir="ltr">{path}</span>
+        <span className="text-xs text-fgdim">{t('brain.lineCount', { n: items.length })}</span>
       </div>
       <div className="flex flex-col gap-1">
         {items.map((line, i) =>
           editingIdx === i ? (
             <div key={i} className="flex items-center gap-1.5">
-              <input
+              <Input
                 autoFocus
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
@@ -94,66 +98,72 @@ function CappedDoc({ target, path, onChanged }) {
                     write({ action: 'replace', old_text: line, content: editText.trim() }).then(() => setEditingIdx(null));
                   if (e.key === 'Escape') setEditingIdx(null);
                 }}
-                className="min-w-0 flex-1 rounded-[6px] border border-ink bg-bg px-2 py-1 text-[11.5px] outline-none"
+                className="flex-1"
               />
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('dialogs.save')}
                 disabled={busy || !editText.trim()}
                 onClick={() => write({ action: 'replace', old_text: line, content: editText.trim() }).then(() => setEditingIdx(null))}
-                className="shrink-0 cursor-pointer text-[11px] text-fgdim hover:text-fg disabled:opacity-40"
               >
                 <Icon icon={faCheck} />
-              </button>
-              <button type="button" onClick={() => setEditingIdx(null)} className="shrink-0 cursor-pointer text-[11px] text-fgdim hover:text-fg">
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={t('dialogs.cancel')} onClick={() => setEditingIdx(null)}>
                 <Icon icon={faXmark} />
-              </button>
+              </Button>
             </div>
           ) : (
             <div key={i} className="flex items-start gap-1.5">
-              <span className="min-w-0 flex-1 text-[11.5px] leading-snug text-fg">{line}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingIdx(i);
-                  setEditText(line);
-                }}
-                title={t('dialogs.edit')}
-                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-fg"
-              >
-                <Icon icon={faPen} />
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => write({ action: 'remove', old_text: line })}
-                title={t('dialogs.delete')}
-                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-danger disabled:opacity-40"
-              >
-                <Icon icon={faTrashCan} />
-              </button>
+              <span className="min-w-0 flex-1 text-sm leading-snug text-fg">{line}</span>
+              <Tip label={t('dialogs.edit')}>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('dialogs.edit')}
+                  onClick={() => {
+                    setEditingIdx(i);
+                    setEditText(line);
+                  }}
+                >
+                  <Icon icon={faPen} />
+                </Button>
+              </Tip>
+              <Tip label={t('dialogs.delete')}>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('dialogs.delete')}
+                  disabled={busy}
+                  onClick={() => write({ action: 'remove', old_text: line })}
+                  className="hover:text-danger"
+                >
+                  <Icon icon={faTrashCan} />
+                </Button>
+              </Tip>
             </div>
           )
         )}
-        {!items.length && <div className="text-[11px] text-fgdim">{t('brain.docEmpty')}</div>}
+        {!items.length && <div className="text-xs text-fgdim">{t('brain.docEmpty')}</div>}
       </div>
       <div className="mt-2 flex items-center gap-1.5">
-        <input
+        <Input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && draft.trim()) write({ action: 'add', content: draft.trim() }).then(() => setDraft(''));
           }}
           placeholder={t('brain.addLinePlaceholder')}
-          className="min-w-0 flex-1 rounded-[7px] border border-border bg-panel px-2 py-1 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+          className="flex-1"
         />
-        <button
-          type="button"
+        <Button
+          size="icon"
+          aria-label={t('brain.addLinePlaceholder')}
           disabled={busy || !draft.trim()}
           onClick={() => write({ action: 'add', content: draft.trim() }).then(() => setDraft(''))}
-          className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[11.5px] md:text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
         >
           <Icon icon={faPlus} />
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -180,35 +190,30 @@ function SearchPane() {
   };
 
   return (
-    <div className="rounded-[10px] border border-hair p-3">
+    <div className="rounded-lg border border-hair p-3">
       <div className="mb-2 flex items-center gap-1.5">
-        <input
+        <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
           placeholder={t('brain.searchPlaceholder')}
-          className="min-w-0 flex-1 rounded-[7px] border border-border bg-panel px-2 py-1.5 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+          className="flex-1"
         />
-        <button
-          type="button"
-          disabled={busy || !query.trim()}
-          onClick={run}
-          className="shrink-0 cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-panel px-2.5 py-1.5 text-[11px] font-bold text-fg hover:bg-chip disabled:opacity-40"
-        >
+        <Button size="icon" aria-label={t('brain.searchPlaceholder')} disabled={busy || !query.trim()} onClick={run}>
           <Icon icon={faMagnifyingGlass} />
-        </button>
+        </Button>
       </div>
       {hits && (
         <div className="flex flex-col gap-1.5">
-          {hits.length === 0 && <div className="text-[11px] text-fgdim">{t('brain.noHits')}</div>}
+          {hits.length === 0 && <div className="text-xs text-fgdim">{t('brain.noHits')}</div>}
           {hits.map((h, i) => (
-            <div key={i} className="rounded-[8px] border border-hair p-2">
-              <div className="mb-0.5 flex items-center gap-2">
-                <span className="font-mono text-[11.5px] md:text-[10.5px] font-bold text-fg">{h.path}</span>
-                <span className="text-[11px] md:text-[9.5px] text-fgdim">{h.scope}</span>
-                <span className="ml-auto text-[11px] md:text-[9.5px] text-fgdim">{fmtDate(h.updatedAt)}</span>
+            <div key={i} className="rounded-md border border-hair p-2">
+              <div className="mb-0.5 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs font-medium text-fg" dir="ltr">{h.path}</span>
+                <span className="text-xs text-fgdim">{h.scope}</span>
+                <span className="ms-auto text-xs text-fgdim">{fmtDate(h.updatedAt)}</span>
               </div>
-              <div className="text-[11px] leading-snug text-fgdim">{h.snippet}</div>
+              <div className="text-xs leading-snug text-fgdim">{h.snippet}</div>
             </div>
           ))}
         </div>
@@ -263,32 +268,27 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
     }
   };
 
-  if (files === null) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (files === null) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
 
   return (
-    <div className="rounded-[10px] border border-hair p-3">
-      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{title} · {files.length}</div>
+    <div className="rounded-lg border border-hair p-3">
+      <div className="mb-2 text-xs font-medium text-fgdim">{title} · {files.length}</div>
       {addable && (
         <div className="mb-2 flex items-center gap-1.5">
-          <input
+          <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submitAdd()}
             placeholder={t('brain.journalPlaceholder')}
-            className="min-w-0 flex-1 rounded-[7px] border border-border bg-panel px-2 py-1 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+            className="flex-1"
           />
-          <button
-            type="button"
-            disabled={busy || !draft.trim()}
-            onClick={submitAdd}
-            className="shrink-0 cursor-pointer rounded-[7px] border border-ink bg-panel px-2 py-1 text-[11.5px] md:text-[10.5px] font-bold text-fg hover:bg-chip disabled:opacity-40"
-          >
+          <Button size="icon" aria-label={t('brain.journalPlaceholder')} disabled={busy || !draft.trim()} onClick={submitAdd}>
             <Icon icon={faPlus} />
-          </button>
+          </Button>
         </div>
       )}
       {files.length === 0 ? (
-        <div className="text-[11px] text-fgdim">{emptyLabel}</div>
+        <div className="text-xs text-fgdim">{emptyLabel}</div>
       ) : (
         <div className="flex gap-3">
           <div className="flex max-h-[220px] w-[180px] shrink-0 flex-col gap-0.5 overflow-y-auto thin-scroll">
@@ -297,15 +297,15 @@ function FileListPane({ scope, title, emptyLabel, addable, onAdd }) {
                 key={f.path}
                 type="button"
                 onClick={() => setSelected(f.path)}
-                className={`truncate rounded-[6px] px-2 py-1 text-left font-mono text-[11.5px] md:text-[10.5px] ${
-                  selected === f.path ? 'bg-chip text-fg' : 'text-fgdim hover:bg-chip/60'
+                className={`truncate rounded-md px-2 py-1 text-start font-mono text-xs ${
+                  selected === f.path ? 'bg-muted text-fg' : 'text-fgdim hover:bg-muted'
                 }`}
               >
                 {f.path.split('/').pop()}
               </button>
             ))}
           </div>
-          <pre className="thin-scroll min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-hair bg-bg p-2 text-[11px] leading-relaxed text-fg">
+          <pre className="thin-scroll min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-hair bg-bg p-2 text-xs leading-relaxed text-fg">
             {content}
           </pre>
         </div>
@@ -338,30 +338,26 @@ function LogPane({ onChanged }) {
     }
   };
 
-  if (log === null) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (log === null) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
 
   return (
-    <div className="rounded-[10px] border border-hair p-3">
-      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('brain.changeLog')}</div>
-      {log.length === 0 && <div className="text-[11px] text-fgdim">{t('brain.logEmpty')}</div>}
+    <div className="rounded-lg border border-hair p-3">
+      <div className="mb-2 text-xs font-medium text-fgdim">{t('brain.changeLog')}</div>
+      {log.length === 0 && <div className="text-xs text-fgdim">{t('brain.logEmpty')}</div>}
       <div className="flex flex-col gap-1">
         {log.map((e) => (
-          <div key={e.seq} className="flex items-center gap-2 rounded-[7px] border border-hair px-2 py-1.5">
-            <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] text-fgdim">#{e.seq}</span>
-            <span className="shrink-0 rounded-full border border-hair px-1.5 text-[11px] md:text-[9px] font-bold text-fgdim uppercase">{e.action}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10.5px] text-fg">{e.path}</span>
-            <span className="shrink-0 text-[11px] md:text-[9.5px] text-fgdim">{e.source}</span>
-            <span className="shrink-0 text-[11px] md:text-[9.5px] text-fgdim">{fmtDate(e.ts)}</span>
+          <div key={e.seq} className="flex items-center gap-2 rounded-md border border-hair px-2 py-1.5">
+            <span className="shrink-0 font-mono text-xs text-fgdim">#{e.seq}</span>
+            <span className="shrink-0 rounded-sm bg-muted px-1.5 text-2xs font-medium text-fgdim">{e.action}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg" dir="ltr">{e.path}</span>
+            <span className="shrink-0 text-xs text-fgdim">{e.source}</span>
+            <span className="shrink-0 text-xs text-fgdim">{fmtDate(e.ts)}</span>
             {e.action !== 'undo' && (
-              <button
-                type="button"
-                disabled={busy === e.seq}
-                onClick={() => undo(e.seq)}
-                title={t('brain.undo')}
-                className="shrink-0 cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg disabled:opacity-40"
-              >
-                <Icon icon={faRotateLeft} />
-              </button>
+              <Tip label={t('brain.undo')}>
+                <Button variant="ghost" size="icon-xs" aria-label={t('brain.undo')} disabled={busy === e.seq} onClick={() => undo(e.seq)}>
+                  <Icon icon={faRotateLeft} />
+                </Button>
+              </Tip>
             )}
           </div>
         ))}
@@ -431,43 +427,30 @@ export default function BrainView({ onClose }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-hair bg-panel px-4 py-2.5">
-        <span className="flex items-center gap-1.5 text-[14px] font-bold text-fg">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
           <Icon icon={faBrain} /> {t('brain.title')}
         </span>
-        <div className="ml-2 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
-          {TABS.map((mItem) => (
-            <button
-              key={mItem}
-              type="button"
-              onClick={() => setMode(mItem)}
-              className={`relative cursor-pointer px-3 py-1 text-[11px] font-bold ${
-                mode === mItem ? 'bg-brand text-[#1a1a1a]' : 'bg-panel text-fgdim hover:bg-chip'
-              }`}
-            >
-              {t(`brain.tab.${mItem}`)}
-            </button>
-          ))}
-        </div>
-        <a href="#/settings/appearance/memory" data-brain-pending-link className="ms-auto shrink-0 text-[11px] text-fgdim underline hover:text-fg">
+        <Tabs value={mode} onValueChange={setMode} className="ms-2">
+          <TabsList variant="segmented">
+            {TABS.map((mItem) => (
+              <TabsTrigger key={mItem} value={mItem}>
+                {t(`brain.tab.${mItem}`)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <a href="#/settings/appearance/memory" data-brain-pending-link className="ms-auto shrink-0 text-xs text-fgdim underline hover:text-fg">
           {pendingCount > 0 ? t('brain.pendingLink', { n: pendingCount }) : t('brain.pendingLink.none')}
         </a>
-        <a href="#/settings/automation/heartbeat" className="shrink-0 text-[11px] text-fgdim underline hover:text-fg">{t('brain.heartbeatSettings')}</a>
-        <button
-          type="button"
-          onClick={askBrain}
-          disabled={askBusy}
-          className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
-        >
+        <a href="#/settings/automation/heartbeat" className="shrink-0 text-xs text-fgdim underline hover:text-fg">{t('brain.heartbeatSettings')}</a>
+        <Button variant="primary" onClick={askBrain} disabled={askBusy}>
           {askBusy ? t('brain.asking') : t('brain.askBrain')}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          title={t('dialogs.close')}
-        >
-          <Icon icon={faXmark} />
-        </button>
+        </Button>
+        <Tip label={t('dialogs.close')}>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('dialogs.close')}>
+            <Icon icon={faXmark} />
+          </Button>
+        </Tip>
       </div>
 
       {mode === 'memory' && (

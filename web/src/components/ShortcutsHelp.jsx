@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { useT } from '../lib/i18n.js';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog.jsx';
+import { Kbd } from './ui/kbd.jsx';
 
 // macOS uses ⌘; everything else shows Ctrl.
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
@@ -42,14 +44,7 @@ const buildGroups = (t) => [
 function Keys({ keys }) {
   return (
     <span className="flex items-center gap-1">
-      {keys.map((k, i) => (
-        <kbd
-          key={i}
-          className="inline-flex min-w-[20px] items-center justify-center rounded-[5px] border border-border bg-bg px-1.5 py-0.5 font-mono text-[10.5px] text-fg shadow-[0_1px_0_var(--color-border)]"
-        >
-          {k}
-        </kbd>
-      ))}
+      {keys.map((k, i) => <Kbd key={i}>{k}</Kbd>)}
     </span>
   );
 }
@@ -66,26 +61,19 @@ export default function ShortcutsHelp({ onClose }) {
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[460px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
-      >
-        <div className="flex items-center justify-between border-b border-hair px-[18px] py-3">
-          <div className="text-[15px] font-bold">{t('dialogs.keyboardShortcuts')}</div>
-          <kbd className="font-mono text-[11px] text-fgdim">?</kbd>
-        </div>
-        <div className="grid grid-cols-1 gap-x-6 gap-y-4 px-[18px] py-4 sm:grid-cols-2">
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent aria-describedby={undefined} className="w-[min(460px,calc(100vw-1.5rem))]">
+        <DialogHeader>
+          <DialogTitle className="text-sm">{t('dialogs.keyboardShortcuts')}</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
           {GROUPS.map((g) => (
             <div key={g.title}>
-              <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-fgdim uppercase">{g.title}</div>
+              <div className="mb-2 text-xs font-medium text-fgdim">{g.title}</div>
               <div className="flex flex-col gap-2">
                 {g.rows.map(([keys, label], i) => (
                   <div key={i} className="flex items-center justify-between gap-3">
-                    <span className="text-[12px] text-fg">{label}</span>
+                    <span className="text-xs text-fg">{label}</span>
                     <Keys keys={keys} />
                   </div>
                 ))}
@@ -93,7 +81,7 @@ export default function ShortcutsHelp({ onClose }) {
             </div>
           ))}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

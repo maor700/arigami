@@ -18,7 +18,6 @@
 // Fullscreen API toggle (the canvas benefits from true fullscreen / pointer
 // lock). Mounted ONCE, in App.jsx, from store.screen.modal.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
@@ -27,6 +26,11 @@ import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { engineLabel } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
+import { Button } from './ui/button.jsx';
+import { Badge, StatusDot } from './ui/badge.jsx';
+import { Input } from './ui/input.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog.jsx';
 import { faXmark, faExpand, faCompress, faDisplay } from '@fortawesome/free-solid-svg-icons';
 
 // `context` — store.screen.modal: {} for the global view, {sessionId} for a
@@ -77,14 +81,6 @@ export default function ScreenModal({ context, onClose }) {
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
-
-  useEffect(() => {
-    // Esc closes the modal — but while fullscreen, the browser's own Esc
-    // handling exits fullscreen first; only close on a second Esc after that.
-    const onKey = (e) => { if (e.key === 'Escape' && !document.fullscreenElement) onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -138,59 +134,45 @@ export default function ScreenModal({ context, onClose }) {
     error: t('rail.screenError'),
   }[status];
   const reasonLabel = req?.reason ? t(`chat.screenReason.${req.reason}`) : '';
-  const iconBtn =
-    'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg';
-  const btnPrimary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50';
-  const btnSecondary =
-    'cursor-pointer rounded-[7px] border-[1.5px] border-border bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-bg disabled:opacity-50';
 
-  // Portaled to <body> so no ancestor transform/overflow can clip it.
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 md:p-6" onMouseDown={onClose}>
-      <div
+  // Radix Dialog: portaled to <body>, focus trap/restore, Esc + backdrop close.
+  // Esc closes the modal — but while fullscreen, the browser's own Esc handling
+  // exits fullscreen first; only close on a second Esc after that.
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
         ref={shellRef}
-        className="flex h-[86vh] w-[1100px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
+        showClose={false}
+        aria-describedby={undefined}
+        onEscapeKeyDown={(e) => { if (document.fullscreenElement) e.preventDefault(); }}
+        className="flex h-[86vh] w-[min(68.75rem,calc(100vw-1.5rem))] max-w-full flex-col gap-0 overflow-hidden p-0"
       >
         <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className={`text-[13px] leading-none ${req ? 'text-red-500' : ''}`}><Icon icon={faDisplay} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{req ? t('screen.takeoverTitle') : t('rail.screen')}</span>
-          {reasonLabel && (
-            <span className="rounded-full border border-border px-1.5 py-[1px] text-[9.5px] font-bold uppercase tracking-wide text-fgdim">
-              {reasonLabel}
-            </span>
-          )}
-          {statusLabel && status !== 'connected' && <span className="font-mono text-[10.5px] text-fgdim">{statusLabel}</span>}
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            title={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
-            aria-label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}
-            className={`ms-auto ${iconBtn}`}
-          >
-            <Icon icon={fullscreen ? faCompress : faExpand} />
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            title={req ? t('screen.closeKeepOpen') : t('dialogs.close')}
-            aria-label={req ? t('screen.closeKeepOpen') : t('dialogs.close')}
-            className={iconBtn}
-          >
-            <Icon icon={faXmark} />
-          </button>
+          <span className="text-sm leading-none text-muted-foreground"><Icon icon={faDisplay} /></span>
+          <DialogTitle className="text-sm">{req ? t('screen.takeoverTitle') : t('rail.screen')}</DialogTitle>
+          {reasonLabel && <Badge variant="outline">{reasonLabel}</Badge>}
+          {statusLabel && status !== 'connected' && <span className="text-xs text-fgdim">{statusLabel}</span>}
+          <Tip label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')}>
+            <Button variant="ghost" size="icon-sm" onClick={toggleFullscreen} aria-label={fullscreen ? t('chat.exitFullscreen') : t('chat.fullscreen')} className="ms-auto">
+              <Icon icon={fullscreen ? faCompress : faExpand} />
+            </Button>
+          </Tip>
+          <Tip label={req ? t('screen.closeKeepOpen') : t('dialogs.close')}>
+            <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={req ? t('screen.closeKeepOpen') : t('dialogs.close')}>
+              <Icon icon={faXmark} />
+            </Button>
+          </Tip>
         </div>
 
         {req && (
-          <div className="flex items-start gap-2 border-b border-hair bg-red-500/10 px-4 py-2 text-[11.5px] leading-snug">
-            <span className="pulse-yellow mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-red-500" />
+          <div className="flex items-start gap-2 border-b border-hair bg-muted px-4 py-2 text-xs leading-snug">
+            <StatusDot status="err" pulse className="mt-1.5" />
             <div className="min-w-0">
-              <div className="font-bold text-fg">{t('chat.screenControlBanner')}</div>
+              <div className="font-medium text-fg">{t('chat.screenControlBanner')}</div>
               {req.prompt && <div dir="auto" className="mt-0.5 text-fg">{req.prompt}</div>}
               {req.hint && (
                 <div dir="auto" className="mt-0.5 text-fgdim">
-                  <span className="font-bold">{t('chat.screenHint')}:</span> {req.hint}
+                  <span className="font-medium">{t('chat.screenHint')}:</span> {req.hint}
                 </div>
               )}
             </div>
@@ -200,52 +182,53 @@ export default function ScreenModal({ context, onClose }) {
         <ScreenView priority={SCREEN_PRIORITY.modal} sessionId={context?.sessionId} className="min-h-0 flex-1" onStatusChange={onStatusChange} />
 
         {context?.sessionId && (
-          <div className="flex items-center gap-2 border-t border-hair px-4 py-2" title={t('screen.typeIntoHint')}>
-            <input
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !typeBusy && typeIt(true)}
-              placeholder={t('screen.typeInto')}
-              dir="auto"
-              spellCheck={false}
-              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1 font-mono text-[11.5px] text-fg outline-none placeholder:font-sans placeholder:text-fgdim"
-            />
-            <button type="button" disabled={typeBusy || !typed} onClick={() => typeIt(false)} className={btnSecondary}>{t('screen.typeSend')}</button>
-            {typeErr && <span className="text-[11px] text-err">{typeErr}</span>}
-          </div>
+          <Tip label={t('screen.typeIntoHint')}>
+            <div className="flex items-center gap-2 border-t border-hair px-4 py-2">
+              <Input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !typeBusy && typeIt(true)}
+                placeholder={t('screen.typeInto')}
+                dir="auto"
+                spellCheck={false}
+                className="flex-1 font-mono text-xs placeholder:font-sans"
+              />
+              <Button disabled={typeBusy || !typed} onClick={() => typeIt(false)}>{t('screen.typeSend')}</Button>
+              {typeErr && <span className="text-xs text-err">{typeErr}</span>}
+            </div>
+          </Tip>
         )}
         {setupCtx && (
           <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
-            <span dir="auto" className="min-w-0 flex-1 text-[11.5px] text-fgdim">
+            <span dir="auto" className="min-w-0 flex-1 text-xs text-fgdim">
               {setupErr ? <span className="text-err">{setupErr}</span> : t('setup.card.identityHint')}
             </span>
-            <button type="button" disabled={busy} onClick={setupDone} title={t('setup.card.identityHint')} className={btnPrimary}>
+            <Button variant="primary" disabled={busy} onClick={setupDone}>
               {busy ? t('setup.takeover.verifying') : t('setup.takeover.modalDone')}
-            </button>
+            </Button>
           </div>
         )}
         {req && (
-          <div className="flex items-center gap-2 border-t border-hair px-4 py-2.5">
-            <input
+          <div className="flex flex-wrap items-center gap-2 border-t border-hair px-4 py-2.5">
+            <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !busy && done()}
               placeholder={t('chat.screenRequestNotePlaceholder', { engine })}
-              className="min-w-0 flex-1 rounded-[7px] border-[1.5px] border-border bg-transparent px-2.5 py-1.5 text-[11.5px] text-fg outline-none placeholder:text-fgdim"
+              className="min-w-0 flex-1 basis-48"
             />
-            <button type="button" disabled={busy} onClick={cancel} title={t('screen.cancelRequestHint')} className={btnSecondary}>
-              {t('screen.cancelRequest')}
-            </button>
-            <button type="button" disabled={busy} onClick={done} title={t('screen.doneHint')} className={btnPrimary}>
-              {t('chat.screenRequestDone')}
-            </button>
+            <Tip label={t('screen.cancelRequestHint')}>
+              <Button disabled={busy} onClick={cancel}>{t('screen.cancelRequest')}</Button>
+            </Tip>
+            <Tip label={t('screen.doneHint')}>
+              <Button variant="primary" disabled={busy} onClick={done}>{t('chat.screenRequestDone')}</Button>
+            </Tip>
           </div>
         )}
         {req && doneErr && (
-          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-[11px] font-bold text-err">{doneErr}</div>
+          <div data-screen-done-error dir="auto" className="border-t border-hair px-4 py-2 text-xs font-medium text-err">{doneErr}</div>
         )}
-      </div>
-    </div>,
-    document.body
+      </DialogContent>
+    </Dialog>
   );
 }

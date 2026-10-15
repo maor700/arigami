@@ -43,9 +43,9 @@ function ExtCardView({ props: { sessionId, event } }) {
   return (
     <CardFrame tone="panel" dense data-ext-card={event.extension || true}>
       <Eyebrow>{event.extension ? `${t('ext.card.from')} · ${event.extension}` : t('ext.card.from')}</Eyebrow>
-      {title && <div className="text-[12.5px] font-bold text-fg" dir={dirOf(title)}>{title}</div>}
+      {title && <div className="text-sm font-medium text-fg" dir={dirOf(title)}>{title}</div>}
       {body && (
-        <div className="md mt-1 text-[12px]" dir={dirOf(body)}>
+        <div className="md mt-1 text-sm" dir={dirOf(body)}>
           <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
         </div>
       )}

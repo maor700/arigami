@@ -42,7 +42,8 @@ export function BrainHeartbeat({ first = false }) {
           onChange={(e) => setEvery(e.target.value)}
           onBlur={() => status?.enabled && every.trim() && every !== status.every && toggle(true)}
           placeholder="30m"
-          className={`${INPUT} w-[100px] px-3 py-1.5 text-center text-[11.5px]`}
+          dir="ltr"
+          className={`${INPUT} w-[100px] text-center`}
         />
       </Field>
     </Section>

@@ -52,8 +52,8 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
     <div className="flex flex-col items-start gap-2">
       {state === 'qr' && qr ? (
         <>
-          <img src={qr} alt="WhatsApp QR" className="h-[200px] w-[200px] rounded-[8px] border border-hair bg-white" />
-          <div className="text-[11px] text-fgdim">{t('setup.qr.scanHint')}</div>
+          <img src={qr} alt="WhatsApp QR" className="size-[200px] rounded-md border border-hair bg-white" />
+          <div className="text-xs text-fgdim">{t('setup.qr.scanHint')}</div>
         </>
       ) : active ? (
         <Spinner>{t('setup.qr.starting')}</Spinner>

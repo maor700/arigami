@@ -27,7 +27,8 @@ import AddConnection, { composioCap } from './AddConnection.jsx';
 import { Webhooks } from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
 import { AgentAvatar } from '../AgentCard.jsx';
-import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_PRIMARY, BTN_DANGER, ROW, LIST, fmtWhen, Advanced } from './shared.jsx';
+import { Tip } from '../ui/tooltip.jsx';
+import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_PRIMARY, BTN_DANGER, ROW, LIST, INPUT, fmtWhen, Advanced } from './shared.jsx';
 
 // Families rendered by a section of their own — everything else falls into the
 // "infrastructure status" list in the drawer (git, desktop, repo:*).
@@ -59,9 +60,9 @@ function OwnerFilter({ owner, agents, onChange }) {
   const t = useT();
   if (!agents?.length) return null;
   return (
-    <label className="mb-3 flex items-center gap-2 text-[11.5px]">
-      <span className="font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.conn.ownerLabel')}</span>
-      <select data-connections-owner value={owner} onChange={(e) => onChange(e.target.value)} className="rounded-[7px] border-[1.5px] border-border bg-panel px-2 py-1 text-[11.5px] text-fg outline-none focus:border-ink">
+    <label className="mb-3 flex items-center gap-2">
+      <span className="text-xs font-medium text-fgdim">{t('agent.conn.ownerLabel')}</span>
+      <select data-connections-owner value={owner} onChange={(e) => onChange(e.target.value)} className={`${INPUT} h-7 text-xs`}>
         <option value="global">{t('agent.conn.ownerGlobal')}</option>
         {agents.map((a) => <option key={a.slug} value={`agent:${a.slug}`}>{a.emoji} {a.name}</option>)}
       </select>
@@ -72,7 +73,7 @@ function OwnerFilter({ owner, agents, onChange }) {
 function RowLogo({ row }) {
   const [broken, setBroken] = useState(false);
   if (row.logo && !broken) return <img src={row.logo} alt="" onError={() => setBroken(true)} className="h-7 w-7 shrink-0 rounded-lg border border-hair bg-white object-contain p-0.5" />;
-  return <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-hair bg-chip text-[12px] font-bold text-fgdim">{(row.title || '?')[0].toUpperCase()}</span>;
+  return <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-hair bg-chip text-sm font-medium text-fgdim">{(row.title || '?')[0].toUpperCase()}</span>;
 }
 
 // One row of the unified list. `provider` is the route (native-mcp / composio /
@@ -81,19 +82,21 @@ function ConnectedRow({ row, busy, onDisconnect }) {
   const t = useT();
   const providerLabel = t(`settings.connections.provider.${row.provider}`);
   return (
-    <div data-connected-row={row.id} data-provider={row.provider} title={providerLabel} className={`${ROW} py-2`}>
+    <Tip label={providerLabel}>
+    <div data-connected-row={row.id} data-provider={row.provider} className={`${ROW} py-2`}>
       <RowLogo row={row} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[12px] font-bold text-fg">{row.title}</span>
+          <span className="truncate text-sm font-medium text-fg">{row.title}</span>
           {row.pill || <StatusPill status="ok" label={t('setup.connections.on')} />}
         </span>
-        {row.detail && <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{row.detail}</span>}
+        {row.detail && <span dir="ltr" className="block truncate font-mono text-xs text-fgdim">{row.detail}</span>}
       </span>
       {row.copy && <CopyRow url={row.copy} compact />}
       {row.actions}
-      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('setup.connections.disconnect')}</button>}
+      {onDisconnect && <button type="button" disabled={busy} onClick={onDisconnect} className="cursor-pointer text-xs text-fgdim hover:text-err coarse:min-h-11">{t('setup.connections.disconnect')}</button>}
     </div>
+    </Tip>
   );
 }
 
@@ -127,7 +130,7 @@ function MoveToHost({ caps, onDone }) {
   };
   const names = caps.map((c) => c.title || c.id).join(', ');
   return (
-    <div data-move-to-host className="mb-2 rounded-lg border border-warn-line bg-warn-bg px-3 py-2 text-[11.5px] text-warn">
+    <div data-move-to-host className="mb-2 rounded-lg border border-warn-line bg-warn-bg px-3 py-2 text-xs text-warn">
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1"><b>{t('mcp.move.title', { n: caps.length })}</b> {t('mcp.move.body', { names })}</span>
         {!state && <button type="button" className={BTN_SM} onClick={move}>{t('mcp.move.go')}</button>}
@@ -223,7 +226,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
       title: c.title || capTitle(t, c.id),
       provider: 'native-mcp',
       detail: [d.tools, d.heldBy === 'host' ? t('mcp.card.viaHost') : '', engineOnly ? t('mcp.card.engineOnly', { engines: (d.engines || []).map((e) => (e === 'codex' ? 'Codex' : 'Claude')).join(', ') }) : '', c.resolvedFrom && c.resolvedFrom !== c.owner ? ownerName(c.resolvedFrom) : ''].filter(Boolean).join(' · '),
-      ...(engineOnly ? { pill: <StatusPill status="missing" label={t('mcp.card.enginePill', { engines: (d.engines || []).map((e) => (e === 'codex' ? 'Codex' : 'Claude')).join(', ') })} />, actions: <button type="button" data-move-to-host={c.id} disabled={busy} onClick={() => setDialog(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fg underline hover:text-ink">{t('mcp.card.moveToHost')}</button> } : {}),
+      ...(engineOnly ? { pill: <StatusPill status="missing" label={t('mcp.card.enginePill', { engines: (d.engines || []).map((e) => (e === 'codex' ? 'Codex' : 'Claude')).join(', ') })} />, actions: <button type="button" data-move-to-host={c.id} disabled={busy} onClick={() => setDialog(c)} className="cursor-pointer text-xs text-fg underline hover:text-ink">{t('mcp.card.moveToHost')}</button> } : {}),
       cap: c,
     });
   }
@@ -252,7 +255,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
     return (
       <Section id="identity" title={t('agent.conn.title', { name: ownerAgent.name })} first>
         <OwnerFilter owner={owner} agents={agents} onChange={setOwner} />
-        <div className="mb-3 flex items-center gap-2 text-[12px]"><AgentAvatar agent={ownerAgent} size={18} /> <span className="font-bold">{ownerAgent.name}</span></div>
+        <div className="mb-3 flex items-center gap-2 text-sm"><AgentAvatar agent={ownerAgent} size={18} /> <span className="font-medium">{ownerAgent.name}</span></div>
         <AgentConnectionsPanel agent={ownerAgent} />
       </Section>
     );
@@ -275,11 +278,11 @@ export default function Connections({ initialAdd = false, section = '' }) {
       <Accounts initialAdd={initialAdd} identity={identity} footer={false} onConnectAuto={claudeCap ? () => setDialog(claudeCap) : null} />
 
       <Section id="connected" title={t('settings.connections.connected')} onRefresh={load}>
-        <div className="mb-2 text-[11px] text-fgdim">{t('settings.connections.connected.hint')}</div>
+        <div className="mb-2 text-xs text-fgdim">{t('settings.connections.connected.hint')}</div>
         {mcpCaps.some((c) => c.ok && c.data?.heldBy === 'engine') && <MoveToHost caps={mcpCaps.filter((c) => c.ok && c.data?.heldBy === 'engine')} onDone={load} />}
         {composio?.error && composio.hasKey && <ErrorLine>{composio.error}</ErrorLine>}
         <div data-connected-list className="rounded-lg border border-hair px-3 py-1">
-          {rows.length === 0 && <div className="py-2 text-[11px] text-fgdim">{t('settings.connections.none')}</div>}
+          {rows.length === 0 && <div className="py-2 text-xs text-fgdim">{t('settings.connections.none')}</div>}
           {rows.map((r) => (
             <ConnectedRow
               key={r.id}
@@ -299,7 +302,7 @@ export default function Connections({ initialAdd = false, section = '' }) {
       <Advanced section={section} ids={CONNECTIONS_ADVANCED_IDS}>
         <Section id="owner" title={t('agent.conn.ownerLabel')}>
           <OwnerFilter owner={owner} agents={agents} onChange={setOwner} />
-          {!agents?.length && <div className="text-[11px] text-fgdim">{t('agent.conn.ownerGlobal')}</div>}
+          {!agents?.length && <div className="text-xs text-fgdim">{t('agent.conn.ownerGlobal')}</div>}
         </Section>
 
         <Section id="claude-more" title={t('settings.connections.claude.more')}>
@@ -329,19 +332,19 @@ export default function Connections({ initialAdd = false, section = '' }) {
 
         {leftovers.length > 0 && (
           <Section id="status" title={t('settings.connections.status')}>
-            <div className="text-[11px] text-fgdim">{t('settings.connections.status.hint')}</div>
+            <div className="text-xs text-fgdim">{t('settings.connections.status.hint')}</div>
             <div className={LIST}>
               {leftovers.map((c) => (
                 <div key={c.id} className={ROW}>
                   <StatusPill status={c.ok ? 'ok' : 'todo'} label={c.ok ? t('setup.connections.on') : t('setup.connections.off')} />
                   <span className="min-w-0 flex-1 truncate">
-                    <span className="font-bold">{capTitle(t, c.id)}</span>
-                    {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
+                    <span className="font-medium">{capTitle(t, c.id)}</span>
+                    {(c.detail || c.connectedAt) && <span dir="ltr" className="ms-2 font-mono text-xs text-fgdim">{c.detail}{c.connectedAt ? ` · ${fmtWhen(c.connectedAt)}` : ''}</span>}
                   </span>
                   {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
-                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-[11.5px] md:text-[10px] text-fgdim hover:text-err">{t('setup.connections.disconnect')}</button>
+                    <button type="button" disabled={busy} onClick={() => disconnect(c)} className="cursor-pointer text-xs text-fgdim hover:text-err coarse:min-h-11">{t('setup.connections.disconnect')}</button>
                   )}
-                  <button type="button" className={c.ok ? 'cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg' : BTN_PRIMARY} onClick={() => setDialog(c)}>
+                  <button type="button" className={c.ok ? 'cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11' : BTN_PRIMARY} onClick={() => setDialog(c)}>
                     {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}
                   </button>
                 </div>
@@ -352,13 +355,13 @@ export default function Connections({ initialAdd = false, section = '' }) {
 
         <Section id="audit" title={t('setup.connections.audit')}>
           {audit.length === 0 ? (
-            <div className="text-[11px] text-fgdim">{t('setup.connections.noAudit')}</div>
+            <div className="text-xs text-fgdim">{t('setup.connections.noAudit')}</div>
           ) : (
-            <div dir="ltr" className="max-h-[180px] overflow-auto rounded-lg border border-hair px-3 py-1 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+            <div dir="ltr" className="max-h-[180px] overflow-auto rounded-lg border border-hair px-3 py-1 font-mono text-xs text-fgdim">
               {audit.map((a, i) => (
                 <div key={i} className="flex flex-wrap gap-x-2 border-b border-hair py-1 last:border-b-0">
                   <span>{fmtWhen(a.at)}</span>
-                  <span className="font-bold text-fg">{a.capability}</span>
+                  <span className="font-medium text-fg">{a.capability}</span>
                   <span data-audit-owner={a.owner || 'global'} dir="auto">{ownerName(a.owner)}</span>
                   <span>{a.mode}</span>
                   <span className={a.result === 'ok' || a.result === 'done' || a.result === 'already' ? 'text-ok' : a.result === 'failed' ? 'text-err' : ''}>{a.result}</span>

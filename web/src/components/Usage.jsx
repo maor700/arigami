@@ -10,6 +10,7 @@ import { Icon } from '../lib/icons.js';
 import { faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
 import { windowLabel } from '../lib/providers.js';
 import { useIsDesktop } from '../lib/useMedia.js';
+import { Tip } from './ui/tooltip.jsx';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
 // tight, red when nearly exhausted. `left` is a 0–100 percentage.
@@ -30,14 +31,14 @@ export function UsageBar({ label, win, sub }) {
   return (
     <div className={sub ? 'mt-2.5' : 'mt-3.5 first:mt-0'}>
       <div className="mb-1 flex items-baseline gap-2">
-        <span className={`flex-1 ${sub ? 'text-[11.5px] text-fgdim' : 'text-[12.5px] font-bold text-fg'}`}>
+        <span className={`flex-1 ${sub ? 'text-xs text-fgdim' : 'text-sm font-medium text-fg'}`}>
           {label}
         </span>
-        <span className="font-mono text-[11px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="text-xs font-medium tabular-nums" style={{ color: leftColor(left) }}>
           {t('dialogs.percentLeft', { pct: left })}
         </span>
         {reset && (
-          <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
+          <span className="text-xs text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
         )}
       </div>
       <div className={`w-full overflow-hidden rounded-full bg-hair ${sub ? 'h-1.5' : 'h-2.5'}`}>
@@ -59,10 +60,12 @@ export function UsageChip({ usage }) {
   if (!wins.length) return null;
   const left = Math.min(...wins.map((w) => 100 - Math.max(0, Math.min(100, w.pct ?? 0))));
   return (
-    <span className="flex items-center gap-1" title={t('dialogs.subscriptionUsageTitle')}>
-      <span className="h-2 w-2 rounded-full" style={{ background: leftColor(left) }} />
-      <span className="font-mono text-[11.5px] md:text-[10px] tabular-nums">{left}%</span>
-    </span>
+    <Tip label={t('dialogs.subscriptionUsageTitle')}>
+      <span className="flex items-center gap-1">
+        <span className="h-2 w-2 rounded-full" style={{ background: leftColor(left) }} />
+        <span className="text-xs tabular-nums">{left}%</span>
+      </span>
+    </Tip>
   );
 }
 
@@ -78,24 +81,24 @@ function MiniBar({ title, win }) {
   const left = 100 - used;
   const reset = untilTime(win.resetsAt);
   return (
-    <div title={`${t('dialogs.spentPct', { title, pct: used })}${reset ? ` · ${t('dialogs.resetsIn', { t: reset })}` : ''}`}>
+    <Tip label={`${t('dialogs.spentPct', { title, pct: used })}${reset ? ` · ${t('dialogs.resetsIn', { t: reset })}` : ''}`}><div>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-[11px] md:text-[9.5px] tracking-[0.04em] text-fgdim uppercase">
+        <span className="min-w-0 truncate text-xs text-fgdim">
           {title}
         </span>
         {reset && (
-          <span className="shrink-0 font-mono text-[11px] md:text-[9px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
+          <span className="shrink-0 text-xs text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
         )}
       </div>
       <div className="mt-[3px] flex items-center gap-1.5">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hair">
           <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: leftColor(left) }} />
         </div>
-        <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="shrink-0 text-xs font-medium tabular-nums" style={{ color: leftColor(left) }}>
           {used}%
         </span>
       </div>
-    </div>
+    </div></Tip>
   );
 }
 
@@ -119,13 +122,15 @@ export function UsageMini({ usage, provider = 'claude' }) {
     const used = Math.max(0, Math.min(100, win.pct ?? 0));
     return (
       <div className="border-t border-hair px-[13px] py-1.5" data-usage-mini-phone>
-        <button type="button" onClick={toggle} aria-expanded={expanded} className="flex w-full cursor-pointer items-center gap-2 py-1 font-mono text-[11px] text-fgdim hover:text-fg">
-          <span className="shrink-0 font-bold text-fg">{provider === 'codex' ? 'Codex' : 'Claude'}</span>
-          <span className="shrink-0 tracking-[0.06em] uppercase">{t('dialogs.usageShort')}</span>
-          <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hair" title={label(usage.session ? 'session' : 'week')}>
-            <span className="block h-full rounded-full" style={{ width: `${used}%`, background: leftColor(100 - used) }} />
-          </span>
-          <span className="shrink-0 font-bold tabular-nums" style={{ color: leftColor(100 - used) }}>{used}%</span>
+        <button type="button" onClick={toggle} aria-expanded={expanded} className="flex w-full cursor-pointer items-center gap-2 py-1 coarse:min-h-11 text-xs text-fgdim hover:text-fg">
+          <span className="shrink-0 font-medium text-fg">{provider === 'codex' ? 'Codex' : 'Claude'}</span>
+          <span className="shrink-0">{t('dialogs.usageShort')}</span>
+          <Tip label={label(usage.session ? 'session' : 'week')}>
+            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hair">
+              <span className="block h-full rounded-full" style={{ width: `${used}%`, background: leftColor(100 - used) }} />
+            </span>
+          </Tip>
+          <span className="shrink-0 font-medium tabular-nums" style={{ color: leftColor(100 - used) }}>{used}%</span>
           <Icon icon={expanded ? faChevronUp : faChevronDown} />
         </button>
         {expanded && (
@@ -142,7 +147,7 @@ export function UsageMini({ usage, provider = 'claude' }) {
       <button
         type="button"
         onClick={toggle}
-        className="flex cursor-pointer items-center gap-1.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg md:py-0 md:text-[9px]"
+        className="flex cursor-pointer items-center gap-1.5 py-1.5 text-xs font-medium text-fgdim hover:text-fg coarse:min-h-11 md:py-0"
       >
         <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
         <Icon icon={expanded ? faChevronUp : faChevronDown} />
@@ -156,14 +161,14 @@ export function UsageMini({ usage, provider = 'claude' }) {
 export default function Usage({ usage }) {
   const t = useT();
   if (!usage) {
-    return <div className="py-4 font-mono text-[11px] text-fgdim">{t('dialogs.checkingUsage')}</div>;
+    return <div className="py-4 text-xs text-fgdim">{t('dialogs.checkingUsage')}</div>;
   }
   if (!usage.available) {
     const why =
       usage.reason === 'no-credentials'
         ? t('dialogs.signInForUsage')
         : t('dialogs.usageUnavailable');
-    return <div className="py-4 text-[11.5px] text-fgdim">{why}</div>;
+    return <div className="py-4 text-xs text-fgdim">{why}</div>;
   }
   const extra = usage.extra;
   return (
@@ -175,8 +180,8 @@ export default function Usage({ usage }) {
       {extra && extra.limit > 0 && (
         <div className="mt-3.5 border-t border-hair pt-3">
           <div className="flex items-baseline gap-2">
-            <span className="flex-1 text-[12.5px] font-bold text-fg">{t('dialogs.extraUsageThisMonth')}</span>
-            <span className="font-mono text-[11px] text-fgdim tabular-nums">
+            <span className="flex-1 text-sm font-medium text-fg">{t('dialogs.extraUsageThisMonth')}</span>
+            <span className="text-xs text-fgdim tabular-nums">
               {extra.currency === 'USD' ? '$' : ''}{(extra.used / 100).toFixed(2)} / {extra.currency === 'USD' ? '$' : ''}{(extra.limit / 100).toFixed(2)}
             </span>
           </div>
@@ -189,7 +194,7 @@ export default function Usage({ usage }) {
         </div>
       )}
       {usage.fetchedAt && (
-        <div className="mt-3 font-mono text-[11px] md:text-[9.5px] text-fgdim">
+        <div className="mt-3 text-xs text-fgdim">
           {untilTime(usage.fetchedAt + 60000) === 'now' ? t('dialogs.updatedJustNow') : t('dialogs.updatedRecently')}
         </div>
       )}

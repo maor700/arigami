@@ -141,12 +141,13 @@ test('Connections: one connected list (native + Composio + WhatsApp + Tailscale)
   expect(html).toContain('Recent connections');
   // Deep-linking to the old catalog sections opens the picker instead.
   const picker = render(h(Connections, { section: 'mcp' }));
-  expect(picker).toContain('data-add-connection');
-  expect(picker).toContain('Search services');
+  // The picker is a Radix Dialog (portaled, so absent from SSR output); its body is covered below.
+  expect(picker).toContain('data-add-connection-btn');
+  expect(picker).not.toContain('Search services');
 });
 
 test('Connections rows: provider is a hover title, not a heading', async () => {
-  const { default: AddConnection } = await import(web('components/settings/AddConnection.jsx'));
+  const { AddConnectionPanel: AddConnection } = await import(web('components/settings/AddConnection.jsx')); // the dialog body (Radix portals do not SSR)
   // The picker: unconnected native rows + FEATURED Composio only (not the 150-card catalog) until you type.
   const html = render(h(AddConnection, { mcpCaps: CAPS.capabilities.filter((c) => c.provider === 'native-mcp'), composio: TOOLKITS, whatsappCap: { id: 'whatsapp', ok: false }, onPick: () => {}, onClose: () => {} }));
   expect(html).toContain('data-add-item="mcp:notion"');

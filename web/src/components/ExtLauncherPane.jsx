@@ -88,8 +88,8 @@ export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) 
   if (!extRecord) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 bg-bg text-center">
-        <div className="text-[13px] font-bold text-fg">{t('launcher.ext.gone')}</div>
-        <div className="text-[11.5px] text-fgdim">{item.ext}</div>
+        <div className="text-sm font-medium text-fg">{t('launcher.ext.gone')}</div>
+        <div className="text-xs text-fgdim">{item.ext}</div>
       </div>
     );
   }
@@ -105,13 +105,13 @@ export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) 
         {...(sandboxed ? { sandbox: 'allow-scripts allow-forms allow-popups' } : {})}
       />
       <div className="flex h-7 shrink-0 items-center gap-2 border-t border-hair bg-panel px-2.5">
-        <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <span className="text-xs font-medium text-fgdim">
           {extRecord.title || item.ext}
         </span>
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
-          className="ml-auto cursor-pointer font-mono text-[9.5px] text-fgdim uppercase hover:text-fg"
+          className="ms-auto cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11"
         >
           {t('launcher.ext.reload')}
         </button>

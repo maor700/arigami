@@ -26,28 +26,28 @@ export function EngineToggle({ options, onChange, className = '', label, ...rest
     onChange(coerceSessionOptions({ ...options, engine: value === DEFAULT_ENGINE ? '' : value }, claudeModels));
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`} {...rest}>
-      <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+      <span className="text-xs font-medium text-fgdim">
         {label ?? t('launcher.options.engine')}
       </span>
       <span
         role="radiogroup"
         aria-label={t('launcher.options.engine')}
-        className="inline-flex shrink-0 items-center overflow-hidden rounded-[7px] border-[1.5px] border-ink"
+        className="inline-flex shrink-0 gap-0.5 rounded-md bg-muted p-0.5"
       >
-        {engineOptions().map((o, i) => (
+        {engineOptions().map((o) => (
           <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={current === o.value}
-            title={o.desc}
-            onClick={() => current !== o.value && pick(o.value)}
-            className={`cursor-pointer px-3 py-[5px] text-[11.5px] leading-none ${i ? 'border-s border-ink' : ''} ${
-              current === o.value ? 'bg-ink font-bold text-white' : 'bg-panel text-fgdim hover:text-fg'
-            }`}
-          >
-            {o.label}
-          </button>
+              key={o.value}
+              title={o.desc}
+              type="button"
+              role="radio"
+              aria-checked={current === o.value}
+              onClick={() => current !== o.value && pick(o.value)}
+              className={`inline-flex h-7 cursor-pointer items-center rounded-sm px-3 text-xs font-medium whitespace-nowrap outline-none transition-colors focus-visible:outline-2 focus-visible:outline-ring coarse:h-10 ${
+                current === o.value ? 'bg-card text-foreground shadow-[0_0_0_1px_var(--hb-hair)]' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {o.label}
+            </button>
         ))}
       </span>
     </div>

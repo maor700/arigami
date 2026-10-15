@@ -1,36 +1,33 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
-import { sessionLabel, Dot, YellowButton, GhostButton } from './ui.jsx';
+import { sessionLabel, Dot } from './ui.jsx';
 import { Icon } from '../lib/icons.js';
-import { faCheck, faFolder } from '@fortawesome/free-solid-svg-icons';
+import { faFolder } from '@fortawesome/free-solid-svg-icons';
+import { Button } from './ui/button.jsx';
+import { Input, Textarea } from './ui/input.jsx';
+import { Label } from './ui/label.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from './ui/dialog.jsx';
 
-export function Overlay({ onClose, children }) {
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-  // Portaled to <body>: mounted from Rail.jsx, whose transform/overflow makes
-  // a containing block for position:fixed descendants — without this, the
-  // overlay is clipped to the rail's own box instead of covering the viewport
-  // (same issue Rail.jsx's useHoverTip already works around the same way).
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-5 animate-in fade-in-0 duration-150"
-      onClick={onClose}
-    >
-      <div onClick={(e) => e.stopPropagation()}>{children}</div>
-    </div>,
-    document.body
+// Modal shell on the ui Dialog (Radix: focus trap + restore, Esc, outside
+// click, portaled to <body> so Rail's transformed box can't clip it). Same
+// props as before; `size` picks the width.
+const OVERLAY_W = {
+  sm: 'w-[min(24rem,calc(100vw-1.5rem))]',
+  md: 'w-[min(26.25rem,calc(100vw-1.5rem))]',
+};
+export function Overlay({ onClose, children, size = 'sm', className = '' }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent showClose={false} aria-describedby={undefined} className={`${OVERLAY_W[size] || size} ${className}`}>
+        {children}
+      </DialogContent>
+    </Dialog>
   );
 }
+
+const ERR = 'text-xs text-err';
 
 // What a delete/archive will actually do, as the host computed it (GET
 // /sessions/:id/cleanup → preview, server/reap.ts). This used to list the
@@ -70,12 +67,12 @@ function TeardownLines({ preview, worktree = true, scratch = true, tone = 'text-
   if (scratch && preview.scratch) lines.push({ k: 's', text: t('dialogs.teardown.scratch') });
   if (!lines.length) return null;
   return (
-    <ul className={`flex flex-col gap-1 text-[0.71875rem] leading-snug ${tone}`}>
+    <ul className={`flex flex-col gap-1 text-xs leading-snug ${tone}`}>
       {lines.map((l) => (
-        <li key={l.k} style={l.warn ? { color: '#CE8324' } : undefined}>
+        <li key={l.k} className={l.warn ? 'text-warn' : undefined}>
           {l.text}
           {l.dir && (
-            <span className="block break-all font-mono text-[0.65625rem] opacity-80" dir="ltr">
+            <span className="block break-all font-mono text-2xs opacity-80" dir="ltr">
               {l.dir}
             </span>
           )}
@@ -109,43 +106,31 @@ export function ArchiveDialog({ session, onClose }) {
 
   return (
     <Overlay onClose={onClose}>
-      <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">{t('dialogs.archiveTitle')}</div>
-          <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            <span className="font-mono font-bold text-fg">{sessionLabel(session)}</span>{' '}
-            {t('dialogs.archiveBody')}
-          </p>
-        </div>
-        {hasCleanup && (
-          <div
-            onClick={() => setRemoveWorktree((v) => !v)}
-            className="mx-[18px] mt-3.5 flex cursor-pointer items-start gap-[11px] rounded-[9px] border-[1.5px] border-border p-[11px_12px]"
-          >
-            <span
-              className="mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] border-[1.5px] border-ink text-[11px] text-[#1a1a1a]"
-              style={{ background: removeWorktree ? '#F9D312' : 'var(--color-panel)' }}
-            >
-              {removeWorktree ? <Icon icon={faCheck} /> : ''}
+      <DialogHeader>
+        <DialogTitle>{t('dialogs.archiveTitle')}</DialogTitle>
+        <p className="text-sm text-fgdim">
+          <span className="font-medium text-fg" dir="auto">{sessionLabel(session)}</span>{' '}
+          {t('dialogs.archiveBody')}
+        </p>
+      </DialogHeader>
+      {hasCleanup && (
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-hair p-3">
+          <Checkbox checked={removeWorktree} onCheckedChange={(v) => setRemoveWorktree(v === true)} className="mt-0.5" />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-fg">{t('dialogs.alsoRemoveWorktree')}</span>
+            <span className="mt-1 block">
+              <TeardownLines preview={preview} scratch={false} />
             </span>
-            <span className="min-w-0">
-              <span className="block text-[12.5px] font-bold text-fg">
-                {t('dialogs.alsoRemoveWorktree')}
-              </span>
-              <span className="mt-1 block">
-                <TeardownLines preview={preview} scratch={false} />
-              </span>
-            </span>
-          </div>
-        )}
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <YellowButton onClick={archive} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? t('dialogs.archiving') : t('dialogs.archive')}
-          </YellowButton>
-        </div>
-      </div>
+          </span>
+        </label>
+      )}
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="primary" onClick={archive} disabled={busy}>
+          {busy ? t('dialogs.archiving') : t('dialogs.archive')}
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -182,57 +167,56 @@ export function EditSessionDialog({ session, onClose }) {
     'w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 text-[12.5px] outline-none placeholder:text-fgdim focus:border-fgdim';
 
   return (
-    <Overlay onClose={onClose}>
-      <div className="w-[420px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">{t('dialogs.editSession')}</div>
+    <Overlay onClose={onClose} size="md">
+      <DialogHeader>
+        <DialogTitle>{t('dialogs.editSession')}</DialogTitle>
+      </DialogHeader>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="edit-session-title">{t('dialogs.title')}</Label>
+          <Input
+            id="edit-session-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            autoFocus
+          />
         </div>
-        <div className="flex flex-col gap-3 px-[18px] pt-3.5">
-          <label className="block">
-            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.title')}</span>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && save()}
-              autoFocus
-              className={field}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.status')}</span>
-            <input
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && save()}
-              list="session-status-suggestions"
-              placeholder="In Progress"
-              className={field}
-            />
-            <datalist id="session-status-suggestions">
-              {STATUS_SUGGESTIONS.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-          </label>
-          <label className="block">
-            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('dialogs.description')}</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder={t('dialogs.descriptionPlaceholder')}
-              className={`${field} resize-none`}
-            />
-          </label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="edit-session-status">{t('dialogs.status')}</Label>
+          <Input
+            id="edit-session-status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            list="session-status-suggestions"
+            placeholder="In Progress"
+          />
+          <datalist id="session-status-suggestions">
+            {STATUS_SUGGESTIONS.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </div>
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <YellowButton onClick={save} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? t('dialogs.saving') : t('dialogs.save')}
-          </YellowButton>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="edit-session-desc">{t('dialogs.description')}</Label>
+          <Textarea
+            id="edit-session-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder={t('dialogs.descriptionPlaceholder')}
+            className="resize-none"
+          />
         </div>
       </div>
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="primary" onClick={save} disabled={busy}>
+          {busy ? t('dialogs.saving') : t('dialogs.save')}
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -251,34 +235,28 @@ function FolderNameShell({ title, children, name, setName, busy, error, submitLa
   const t = useT();
   return (
     <Overlay onClose={onClose}>
-      <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">{title}</div>
-          {children}
-        </div>
-        <div className="px-[18px] pt-3.5">
-          <label className="block">
-            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
-              {t('dialogs.folderName')}
-            </span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
-              onFocus={(e) => e.currentTarget.select()}
-              autoFocus
-              className="w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 text-[12.5px] outline-none placeholder:text-fgdim focus:border-fgdim"
-            />
-          </label>
-        </div>
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <YellowButton onClick={onSubmit} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? '…' : submitLabel}
-          </YellowButton>
-        </div>
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        {children}
+      </DialogHeader>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="folder-name">{t('dialogs.folderName')}</Label>
+        <Input
+          id="folder-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
+          onFocus={(e) => e.currentTarget.select()}
+          autoFocus
+        />
       </div>
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="primary" onClick={onSubmit} disabled={busy}>
+          {busy ? '…' : submitLabel}
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -325,11 +303,11 @@ export function CreateFolderDialog({ target, dragged, onClose }) {
       onSubmit={create}
       onClose={onClose}
     >
-      <div className="mt-2 flex flex-col gap-1 text-[12.5px] text-fgdim">
+      <div className="flex flex-col gap-1 text-sm text-fgdim">
         {[target, dragged].map((s) => (
           <span key={s.id} className="flex min-w-0 items-center gap-2">
             <Dot color={s.color || '#c4c4c4'} />
-            <span className="truncate font-mono text-fg">{sessionLabel(s)}</span>
+            <span className="truncate text-fg" dir="auto">{sessionLabel(s)}</span>
           </span>
         ))}
       </div>
@@ -397,39 +375,31 @@ export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
   };
 
   return (
-    <Overlay onClose={onClose}>
-      <div className="w-[420px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold">
-            {t('dialogs.makeProjectTitle', { name: folder.name })}
-          </div>
-          <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            {t('dialogs.makeProjectBody')}
-          </p>
-        </div>
-        <div className="px-[18px] pt-3.5">
-          <label className="block">
-            <span className="mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
-              {t('dialogs.controllerWorkingDir')}
-            </span>
-            <input
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && make()}
-              autoFocus
-              placeholder={t('dialogs.controllerCwdPlaceholder')}
-              className="w-full rounded-lg border-[1.5px] border-border px-2.5 py-2 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-fgdim"
-            />
-          </label>
-        </div>
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <YellowButton onClick={make} disabled={busy} className="px-4 py-2 text-[12.5px]">
-            {busy ? t('dialogs.creating') : t('dialogs.createController')}
-          </YellowButton>
-        </div>
+    <Overlay onClose={onClose} size="md">
+      <DialogHeader>
+        <DialogTitle>{t('dialogs.makeProjectTitle', { name: folder.name })}</DialogTitle>
+        <p className="text-sm text-fgdim">{t('dialogs.makeProjectBody')}</p>
+      </DialogHeader>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="make-project-cwd">{t('dialogs.controllerWorkingDir')}</Label>
+        <Input
+          id="make-project-cwd"
+          value={cwd}
+          onChange={(e) => setCwd(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && make()}
+          autoFocus
+          dir="ltr"
+          placeholder={t('dialogs.controllerCwdPlaceholder')}
+          className="font-mono text-xs"
+        />
       </div>
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="primary" onClick={make} disabled={busy}>
+          {busy ? t('dialogs.creating') : t('dialogs.createController')}
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }
@@ -456,44 +426,37 @@ export function DeleteFolderDialog({ folder, children: kids, onClose }) {
 
   return (
     <Overlay onClose={onClose}>
-      <div className="w-[400px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="flex items-center gap-2 text-[17px] leading-tight font-bold">
-            <Icon icon={faFolder} className="text-fgdim" /> {t('dialogs.deleteFolderTitle', { name: folder.name })}
-          </div>
-          <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            {kids.length === 1
-              ? t('dialogs.folderSessionCountOne', { count: kids.length })
-              : t('dialogs.folderSessionCountOther', { count: kids.length })}
-          </p>
-          <div className="mt-1.5 flex max-h-32 flex-col gap-1 overflow-y-auto text-[12px] text-fgdim">
-            {kids.map((s) => (
-              <span key={s.id} className="flex min-w-0 items-center gap-2">
-                <Dot color={s.color || '#c4c4c4'} />
-                <span className="truncate font-mono text-fg">{sessionLabel(s)}</span>
-              </span>
-            ))}
-          </div>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <Icon icon={faFolder} className="text-fgdim" /> {t('dialogs.deleteFolderTitle', { name: folder.name })}
+        </DialogTitle>
+        <p className="text-sm text-fgdim">
+          {kids.length === 1
+            ? t('dialogs.folderSessionCountOne', { count: kids.length })
+            : t('dialogs.folderSessionCountOther', { count: kids.length })}
+        </p>
+        <div className="mt-1 flex max-h-32 flex-col gap-1 overflow-y-auto text-xs text-fgdim">
+          {kids.map((s) => (
+            <span key={s.id} className="flex min-w-0 items-center gap-2">
+              <Dot color={s.color || '#c4c4c4'} />
+              <span className="truncate text-fg" dir="auto">{sessionLabel(s)}</span>
+            </span>
+          ))}
         </div>
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex flex-col gap-2 p-[16px_18px]">
-          <YellowButton onClick={() => run('ungroup')} disabled={!!busy} className="w-full px-4 py-2 text-[12.5px]">
-            {busy === 'ungroup' ? t('dialogs.deleting') : t('dialogs.deleteFolderOnly')}
-          </YellowButton>
-          <button
-            type="button"
-            onClick={() => run('purge')}
-            disabled={!!busy}
-            className="w-full cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:opacity-50"
-          >
-            {busy === 'purge'
-              ? t('dialogs.deleting')
-              : kids.length === 1
-                ? t('dialogs.deleteFolderAndSessionsOne', { count: kids.length })
-                : t('dialogs.deleteFolderAndSessionsOther', { count: kids.length })}
-          </button>
-          <GhostButton onClick={onClose} className="w-full">{t('dialogs.cancel')}</GhostButton>
-        </div>
+      </DialogHeader>
+      {error && <div className={ERR}>{error}</div>}
+      <div className="flex flex-col gap-2">
+        <Button variant="primary" onClick={() => run('ungroup')} disabled={!!busy} className="w-full">
+          {busy === 'ungroup' ? t('dialogs.deleting') : t('dialogs.deleteFolderOnly')}
+        </Button>
+        <Button variant="destructive" onClick={() => run('purge')} disabled={!!busy} className="w-full whitespace-normal">
+          {busy === 'purge'
+            ? t('dialogs.deleting')
+            : kids.length === 1
+              ? t('dialogs.deleteFolderAndSessionsOne', { count: kids.length })
+              : t('dialogs.deleteFolderAndSessionsOther', { count: kids.length })}
+        </Button>
+        <Button onClick={onClose} className="w-full">{t('dialogs.cancel')}</Button>
       </div>
     </Overlay>
   );
@@ -521,35 +484,26 @@ export function DeleteDialog({ session, onClose, onDeleted }) {
 
   return (
     <Overlay onClose={onClose}>
-      <div className="w-[384px] max-w-full overflow-hidden rounded-xl border-2 border-danger bg-panel text-fg shadow-[5px_6px_0_rgba(178,59,48,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold text-danger">
-            {t('dialogs.deletePermanentlyTitle')}
-          </div>
-          <p className="mt-2 text-[12.5px] leading-normal text-fgdim">
-            {t('dialogs.deleteBodyBefore')}{' '}
-            <span className="font-mono font-bold text-fg">{sessionLabel(session)}</span>{' '}
-            {t('dialogs.deleteBodyAfter')}
-          </p>
+      <DialogHeader>
+        <DialogTitle className="text-destructive">{t('dialogs.deletePermanentlyTitle')}</DialogTitle>
+        <p className="text-sm text-fgdim">
+          {t('dialogs.deleteBodyBefore')}{' '}
+          <span className="font-medium text-fg" dir="auto">{sessionLabel(session)}</span>{' '}
+          {t('dialogs.deleteBodyAfter')}
+        </p>
+      </DialogHeader>
+      {preview && (preview.processes?.length || hasWorktree(preview) || preview.scratch) ? (
+        <div className="rounded-lg border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] p-3">
+          <TeardownLines preview={preview} tone="text-danger" />
         </div>
-        {preview && (preview.processes?.length || hasWorktree(preview) || preview.scratch) ? (
-          <div className="mx-[18px] mt-3.5 rounded-[9px] border-[1.5px] border-danger/30 bg-danger/10 p-[10px_12px]">
-            <TeardownLines preview={preview} tone="text-danger" />
-          </div>
-        ) : null}
-        {error && <div className="px-[18px] pt-2 text-[11px] text-danger">{error}</div>}
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <button
-            type="button"
-            onClick={del}
-            disabled={busy}
-            className="cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:opacity-50"
-          >
-            {busy ? t('dialogs.deleting') : t('dialogs.delete')}
-          </button>
-        </div>
-      </div>
+      ) : null}
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="destructive" onClick={del} disabled={busy}>
+          {busy ? t('dialogs.deleting') : t('dialogs.delete')}
+        </Button>
+      </DialogFooter>
     </Overlay>
   );
 }

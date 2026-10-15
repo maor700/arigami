@@ -12,6 +12,8 @@ import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { toastSuccess, toastError } from '../../lib/toast.js';
 import { Section, Segmented, BTN, BTN_SM, BTN_PRIMARY } from './shared.jsx';
+import { Badge } from '../ui/badge.jsx';
+import { Checkbox } from '../ui/checkbox.jsx';
 import { fmtDate, fmtTime } from '../../lib/time.js';
 
 const errText = (e) => String(e?.message || e).replace(/^HTTP \d+ — /, '');
@@ -73,7 +75,7 @@ function summaryLine(run, t) {
   return parts;
 }
 
-const DOT = { ENTER: 'bg-brand', MERGE: 'bg-[#e0a030]', DROP: 'bg-fgdim/60', DEFER: 'bg-fgdim/30' };
+const DOT = { ENTER: 'bg-ok', MERGE: 'bg-warn', DROP: 'bg-faint', DEFER: 'bg-faint/50' };
 
 function FactRow({ item, t, onUndo, busy }) {
   const canUndo = item.applied && item.logSeq && !item.undone && (item.action === 'ENTER' || item.action === 'MERGE');
@@ -81,18 +83,18 @@ function FactRow({ item, t, onUndo, busy }) {
     <div data-learning-fact data-action={item.action} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-chip/50 ${item.undone ? 'opacity-50' : ''}`}>
       <span className={`mt-[7px] h-2 w-2 shrink-0 rounded-full ${DOT[item.action] || DOT.DROP}`} />
       <span className="min-w-0 flex-1">
-        <span className={`text-[12.5px] text-fg ${item.undone ? 'line-through' : ''}`}>
+        <span className={`text-sm text-fg ${item.undone ? 'line-through' : ''}`}>
           {item.action === 'DROP' && item.count > 1 ? `"${item.content}" ×${item.count}` : item.content}
         </span>
-        {item.action === 'MERGE' && item.mergeInto && <div className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('memory.mergedFrom', { line: item.mergeInto })}</div>}
-        <div className="text-[11.5px] md:text-[10.5px] text-fgdim">{reasonText(item, t)}{item.error ? ` · ${item.error}` : ''}</div>
+        {item.action === 'MERGE' && item.mergeInto && <div className="text-xs text-fgdim">{t('memory.mergedFrom', { line: item.mergeInto })}</div>}
+        <div className="text-xs text-fgdim">{reasonText(item, t)}{item.error ? ` · ${item.error}` : ''}</div>
       </span>
       {canUndo && (
-        <button type="button" disabled={busy === item.logSeq} onClick={() => onUndo(item.logSeq)} className="shrink-0 cursor-pointer rounded-md border border-hair px-1.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg disabled:opacity-40">
+        <button type="button" disabled={busy === item.logSeq} onClick={() => onUndo(item.logSeq)} className={BTN_SM}>
           {t('memory.undo')}
         </button>
       )}
-      {item.undone && <span className="shrink-0 text-[11.5px] md:text-[10.5px] text-fgdim">{t('memory.undone')}</span>}
+      {item.undone && <span className="shrink-0 text-xs text-fgdim">{t('memory.undone')}</span>}
     </div>
   );
 }
@@ -106,51 +108,51 @@ function RunRow({ run, open, onToggle, t, onUndo, busy }) {
   }, [run]);
   const sum = summaryLine(run, t);
   return (
-    <div data-learning-run={run.id} className="mb-2 overflow-hidden rounded-xl border border-hair bg-panel">
-      <button type="button" onClick={onToggle} className="flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2.5 text-start">
-        <span className="w-[92px] shrink-0 text-[11.5px] text-fgdim">{whenLabel(run.ts, t)}</span>
-        <span className="min-w-0 flex-1 text-[12.5px] text-fg">
+    <div data-learning-run={run.id} className="mb-2 overflow-hidden rounded-lg border border-hair bg-panel">
+      <button type="button" onClick={onToggle} className="flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2.5 text-start coarse:min-h-11">
+        <span className="w-[92px] shrink-0 text-xs text-fgdim">{whenLabel(run.ts, t)}</span>
+        <span className="min-w-0 flex-1 text-sm text-fg">
           {t('memory.run.proposed', { n: run.counts?.proposed ?? 0 })} →{' '}
           {typeof sum === 'string' ? <span className="text-err">{sum}</span>
             : sum.length === 0 ? <span className="text-fgdim">{t('memory.run.nothing')}</span>
               : sum.map((p, i) => (
-                <span key={i}>{i > 0 && ' · '}{p.bold ? <b className="text-brand-ink">{p.text}</b> : p.text}</span>
+                <span key={i}>{i > 0 && ' · '}{p.bold ? <b className="text-fg">{p.text}</b> : p.text}</span>
               ))}
-          {!run.applied && !run.error && <span className="ms-2 rounded-full border border-hair px-1.5 text-[11px] md:text-[9.5px] font-bold text-fgdim uppercase">{t('memory.run.notApplied')}</span>}
+          {!run.applied && !run.error && <Badge className="ms-2">{t('memory.run.notApplied')}</Badge>}
         </span>
-        <span className="shrink-0 text-[11.5px] md:text-[10px] text-fgdim">{t(`memory.run.trigger.${run.trigger}`, { h: 48 })}</span>
-        <span className="shrink-0 text-fgdim">{open ? '▾' : '▸'}</span>
+        <span className="shrink-0 text-xs text-fgdim">{t(`memory.run.trigger.${run.trigger}`, { h: 48 })}</span>
+        <span className="shrink-0 text-fgdim"><span className={`inline-block ${open ? '' : 'rtl:-scale-x-100'}`}>{open ? '▾' : '▸'}</span></span>
       </button>
       {open && (
-        <div className="border-t border-hair px-3.5 py-2.5 text-[13px]">
+        <div className="border-t border-hair px-3.5 py-2.5 text-sm">
           {groups.ENTER.length > 0 && (
             <div className="mb-2.5">
-              <div className="mb-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('memory.grp.entered')}</div>
+              <div className="mb-1 text-xs text-fgdim">{t('memory.grp.entered')}</div>
               {groups.ENTER.map((it) => <FactRow key={it.key} item={it} t={t} onUndo={onUndo} busy={busy} />)}
             </div>
           )}
           {groups.MERGE.length > 0 && (
             <div className="mb-2.5">
-              <div className="mb-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('memory.grp.merged')}</div>
+              <div className="mb-1 text-xs text-fgdim">{t('memory.grp.merged')}</div>
               {groups.MERGE.map((it) => <FactRow key={it.key} item={it} t={t} onUndo={onUndo} busy={busy} />)}
             </div>
           )}
           {groups.DEFER.length > 0 && (
             <div className="mb-2.5">
-              <div className="mb-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('memory.grp.deferred', { n: groups.DEFER.reduce((n, i) => n + i.count, 0) })}</div>
+              <div className="mb-1 text-xs text-fgdim">{t('memory.grp.deferred', { n: groups.DEFER.reduce((n, i) => n + i.count, 0) })}</div>
               {groups.DEFER.map((it) => <FactRow key={it.key} item={it} t={t} onUndo={onUndo} busy={busy} />)}
             </div>
           )}
           {groups.DROP.length > 0 && (
             <div className="mb-1">
-              <button type="button" onClick={() => setShowDropped((v) => !v)} className="mb-1 cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-fg">
+              <button type="button" onClick={() => setShowDropped((v) => !v)} className="mb-1 cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11">
                 {t('memory.grp.dropped', { n: groups.DROP.reduce((n, i) => n + i.count, 0) })}{!showDropped && ` — ${t('memory.grp.expand')}`}
               </button>
               {(showDropped ? groups.DROP : groups.DROP.slice(0, 3)).map((it) => <FactRow key={it.key} item={it} t={t} onUndo={onUndo} busy={busy} />)}
             </div>
           )}
           {run.notes?.length > 0 && (
-            <div className="mt-2 text-[11.5px] md:text-[10.5px] text-fgdim">
+            <div className="mt-2 text-xs text-fgdim">
               <div className="mb-0.5">{t('memory.notes')}</div>
               {run.notes.map((n, i) => <div key={i} dir="ltr" className="font-mono">· {n}</div>)}
             </div>
@@ -161,7 +163,7 @@ function RunRow({ run, open, onToggle, t, onUndo, busy }) {
   );
 }
 
-const TAG_CLS = 'mt-[3px] shrink-0 rounded-md border border-hair px-1.5 text-[11.5px] md:text-[10px] text-fgdim';
+const TAG_CLS = 'mt-[3px]';
 
 // Manual mode. Before a smart sort: the pre-pass clusters (checked) + the
 // deterministic drops (unchecked, struck through). After "Smart sort": the stored
@@ -221,25 +223,25 @@ function ManualBlock({ st, t, reload, setBusyGlobal }) {
   };
 
   return (
-    <div data-learning-manual className="mt-5 rounded-xl border border-hair bg-panel px-3.5 py-3">
+    <div data-learning-manual className="mt-5 rounded-lg border border-hair bg-panel px-3.5 py-3">
       <div className="mb-2 flex flex-wrap items-center gap-2.5">
-        <b className="text-[12.5px] text-fg">{t('memory.manual.title')}</b>
-        <span className="text-[11.5px] text-fgdim">— {t('memory.manual.hint')}</span>
+        <b className="text-sm text-fg">{t('memory.manual.title')}</b>
+        <span className="text-xs text-fgdim">— {t('memory.manual.hint')}</span>
         <span className="ms-auto flex items-center gap-1.5">
           <button type="button" disabled={!!busy || st.running || !(st.pending > 0)} onClick={smart} className={BTN_SM}>{busy === 'smart' ? t('memory.learning') : t('memory.manual.smart')}</button>
           <button type="button" disabled={!!busy || n === 0} onClick={approve} className={BTN_PRIMARY}>{t('memory.manual.approve', { n })}</button>
         </span>
       </div>
-      {rows.length === 0 && <div className="py-1 text-[11.5px] text-fgdim">{t('memory.manual.empty')}</div>}
+      {rows.length === 0 && <div className="py-1 text-xs text-fgdim">{t('memory.manual.empty')}</div>}
       {rows.map((r) => (
-        <label key={r.key} data-learning-row data-action={r.action} className={`flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[12.5px] ${r.selectable ? 'text-fg' : 'text-fgdim'}`}>
-          <input type="checkbox" className="mt-1" disabled={!r.selectable} checked={r.selectable && checked.has(r.key)} onChange={() => toggle(r.key)} />
+        <label key={r.key} data-learning-row data-action={r.action} className={`flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-sm ${r.selectable ? 'text-fg' : 'text-fgdim'}`}>
+          <Checkbox className="mt-0.5" disabled={!r.selectable} checked={!!(r.selectable && checked.has(r.key))} onCheckedChange={() => toggle(r.key)} />
           <span className={`min-w-0 flex-1 ${r.selectable ? '' : 'line-through'}`}>
             {r.content}
-            {r.action === 'MERGE' && r.mergeInto && <div className="text-[11.5px] md:text-[10.5px] text-fgdim no-underline">{t('memory.mergedFrom', { line: r.mergeInto })}</div>}
-            {(r.reason || r.reasonKey) && <div className="text-[11.5px] md:text-[10.5px] text-fgdim">{reasonText(r, t)}</div>}
+            {r.action === 'MERGE' && r.mergeInto && <div className="text-xs text-fgdim no-underline">{t('memory.mergedFrom', { line: r.mergeInto })}</div>}
+            {(r.reason || r.reasonKey) && <div className="text-xs text-fgdim">{reasonText(r, t)}</div>}
           </span>
-          <span className={TAG_CLS}>{tag(r)}</span>
+          <Badge className={TAG_CLS}>{tag(r)}</Badge>
         </label>
       ))}
     </div>
@@ -289,47 +291,47 @@ export default function MemoryLearning({ first = false }) {
 
   return (
     <Section id="memory" title={t('memory.title')} first={first}>
-      <div className="mb-3 text-[11.5px] text-fgdim">{t('memory.sub')}</div>
+      <div className="mb-3 text-xs text-fgdim">{t('memory.sub')}</div>
 
-      <div data-learning-mode className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-hair bg-panel px-3.5 py-3">
+      <div data-learning-mode className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-hair bg-panel px-3.5 py-3">
         <Segmented
           value={st?.mode || 'auto'}
           onChange={(v) => admin && setMode(v)}
           options={[{ value: 'auto', label: t('memory.mode.auto') }, { value: 'manual', label: t('memory.mode.manual') }]}
         />
         <div className="min-w-[12rem] flex-1">
-          <b className="block text-[12.5px] text-fg">{t(auto ? 'memory.mode.auto.title' : 'memory.mode.manual.title')}</b>
-          <span className="text-[11px] text-fgdim">{t(auto ? 'memory.mode.auto.desc' : 'memory.mode.manual.desc')}</span>
+          <b className="block text-sm text-fg">{t(auto ? 'memory.mode.auto.title' : 'memory.mode.manual.title')}</b>
+          <span className="text-xs text-fgdim">{t(auto ? 'memory.mode.auto.desc' : 'memory.mode.manual.desc')}</span>
         </div>
         <div className="flex w-full items-center gap-3 border-t border-hair pt-2.5">
-          <div data-learning-next className="flex-1 text-[11px] text-fgdim">
+          <div data-learning-next className="flex-1 text-xs text-fgdim">
             {t('memory.next')}: {nextRunLine(st, t)}
             {' · '}
             <b className="text-fg">{t('memory.pendingCount', { n: st?.pending ?? 0 })}</b>
           </div>
           <button type="button" disabled={!st || busy || st.running || !admin} onClick={learnNow} className={BTN}>{busy || st?.running ? t('memory.learning') : t('memory.learnNow')}</button>
         </div>
-        {deferred && <div className="w-full text-[11px] text-amber-600">{t('memory.deferred', { mb: st.lastDeferred.availableMb ?? '?', min: st.config?.minFreeMb ?? '?' })}</div>}
+        {deferred && <div className="w-full text-xs text-warn">{t('memory.deferred', { mb: st.lastDeferred.availableMb ?? '?', min: st.config?.minFreeMb ?? '?' })}</div>}
       </div>
 
-      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('memory.log')}</div>
-      {st && st.runs.length === 0 && <div className="mb-3 rounded-xl border border-hair bg-panel px-3.5 py-3 text-[11.5px] text-fgdim">{t('memory.log.empty')}</div>}
+      <div className="mb-2 text-xs font-medium text-fgdim">{t('memory.log')}</div>
+      {st && st.runs.length === 0 && <div className="mb-3 rounded-lg border border-hair bg-panel px-3.5 py-3 text-xs text-fgdim">{t('memory.log.empty')}</div>}
       {(st?.runs || []).map((run) => (
         <RunRow key={run.id} run={run} open={open === run.id} onToggle={() => setOpen(open === run.id ? '' : run.id)} t={t} onUndo={undo} busy={undoBusy} />
       ))}
 
-      <div data-learning-pending className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-dashed border-hair px-3.5 py-3 text-[12.5px] text-fgdim">
+      <div data-learning-pending className="mt-3 flex flex-wrap items-center gap-2.5 rounded-lg border border-dashed border-hair px-3.5 py-3 text-sm text-fgdim">
         <span>⏳</span>
         <span>{st?.pending > 0 ? t('memory.pending.strip', { n: st.pending }) : t('memory.pending.none')}</span>
         <span className="flex-1" />
         {st?.pending > 0 && auto && <button type="button" onClick={() => setShowPending((v) => !v)} className={BTN_SM}>{showPending ? t('memory.pending.hide') : t('memory.pending.show')}</button>}
       </div>
       {auto && showPending && st?.preview && (
-        <div className="mt-2 rounded-xl border border-hair bg-panel px-3.5 py-2">
+        <div className="mt-2 rounded-lg border border-hair bg-panel px-3.5 py-2">
           {[...st.preview.clusters.map((c) => ({ ...c, action: 'ENTER' })), ...st.preview.dropped].map((r) => (
-            <div key={r.key} className={`flex items-start gap-2 px-1.5 py-1 text-[12px] ${r.action === 'DROP' ? 'text-fgdim' : 'text-fg'}`}>
+            <div key={r.key} className={`flex items-start gap-2 px-1.5 py-1 text-xs ${r.action === 'DROP' ? 'text-fgdim' : 'text-fg'}`}>
               <span className={`min-w-0 flex-1 ${r.action === 'DROP' ? 'line-through' : ''}`}>{r.content}</span>
-              <span className={TAG_CLS}>{r.action === 'DROP' ? t(`memory.reason.${r.reasonKey}`) : r.count > 1 ? t('memory.tag.times', { n: r.count }) : t('memory.tag.new')}</span>
+              <Badge className={TAG_CLS}>{r.action === 'DROP' ? t(`memory.reason.${r.reasonKey}`) : r.count > 1 ? t('memory.tag.times', { n: r.count }) : t('memory.tag.new')}</Badge>
             </div>
           ))}
         </div>
@@ -337,7 +339,7 @@ export default function MemoryLearning({ first = false }) {
 
       {st && !auto && admin && <ManualBlock st={st} t={t} reload={load} setBusyGlobal={setBusy} />}
 
-      <div className="mt-4 border-t border-hair pt-2.5 text-[11.5px] md:text-[10.5px] leading-relaxed text-fgdim">
+      <div className="mt-4 border-t border-hair pt-2.5 text-xs leading-relaxed text-fgdim">
         {t('memory.footnote', { n: st?.config?.minBatch ?? 40 })}{' '}
         <a href="#/brain" className="underline hover:text-fg">{t('memory.brainLink')}</a>
       </div>

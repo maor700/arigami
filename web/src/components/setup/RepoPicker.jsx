@@ -9,6 +9,9 @@ import { Icon } from '../../lib/icons.js';
 import { agoTime } from '../../lib/time.js';
 import { reposPath, mergePage, moveActive } from '../../lib/repo-picker.js';
 import { faLock, faCircleNotch, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons';
+import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover.jsx';
+import { Badge } from '../ui/badge.jsx';
+import { INPUT } from './shared.jsx';
 
 const DEBOUNCE_MS = 250;
 
@@ -62,10 +65,12 @@ export default function RepoPicker({ onPick }) {
   // GitHub not connected: say so quietly; the URL / folder fields below still work.
   if (problem?.code === 'no_token' && !open) return null;
   return (
-    <div className="relative">
-      <label className="mb-1 block text-[11px] font-bold tracking-wide text-fgdim uppercase" htmlFor={`${id}-input`}>{t('setup.repo.pick.label')}</label>
+    <div>
+      <label className="mb-1.5 block text-sm font-medium text-fg" htmlFor={`${id}-input`}>{t('setup.repo.pick.label')}</label>
+      <Popover open={open}>
+      <PopoverAnchor asChild>
       <div className="relative">
-        <Icon icon={faMagnifyingGlass} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-[11px] text-fgdim" />
+        <Icon icon={faMagnifyingGlass} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-xs text-fgdim" />
         <input
           id={`${id}-input`}
           role="combobox"
@@ -81,14 +86,21 @@ export default function RepoPicker({ onPick }) {
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onKeyDown={onKey}
           placeholder={picked ? picked.fullName : t('setup.repo.pick.placeholder')}
-          className="w-full rounded-[7px] border border-border bg-panel py-1.5 pe-2 ps-7 text-[12px] text-fg outline-none placeholder:text-fgdim focus:border-ink"
+          className={`${INPUT} ps-8`}
         />
-        {loading && <Icon icon={faCircleNotch} spin className="absolute end-2.5 top-1/2 -translate-y-1/2 text-[11px] text-fgdim" />}
+        {loading && <Icon icon={faCircleNotch} spin className="absolute end-2.5 top-1/2 -translate-y-1/2 text-xs text-fgdim" />}
       </div>
-      {open && (
-        <div className="absolute z-20 mt-1 max-h-[260px] w-full overflow-y-auto rounded-[8px] border-[1.5px] border-ink bg-panel shadow-lg thin-scroll">
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        className="max-h-[260px] w-(--radix-popper-anchor-width) overflow-y-auto border border-hair p-0 thin-scroll"
+      >
+        <div>
           {problem ? (
-            <div role="alert" dir="auto" className="px-3 py-2.5 text-[11.5px] leading-snug text-err">{problem.message}</div>
+            <div role="alert" dir="auto" className="px-3 py-2.5 text-xs leading-snug text-err">{problem.message}</div>
           ) : (
             <ul id={listId} role="listbox" aria-label={t('setup.repo.pick.label')}>
               {items.map((r, i) => (
@@ -99,26 +111,27 @@ export default function RepoPicker({ onPick }) {
                   aria-selected={i === active}
                   onMouseDown={(e) => { e.preventDefault(); choose(r); }}
                   onMouseEnter={() => setActive(i)}
-                  className={`flex cursor-pointer items-center gap-2 border-b border-hair px-3 py-1.5 last:border-0 ${i === active ? 'bg-chip' : ''}`}
+                  className={`flex cursor-pointer items-center gap-2 border-b border-hair px-3 py-2 last:border-0 coarse:min-h-11 ${i === active ? 'bg-muted' : ''}`}
                 >
                   <div className="min-w-0 flex-1">
-                    <div dir="ltr" className="truncate text-start font-mono text-[12px] text-fg"><span className="text-fgdim">{r.owner}/</span><span className="font-bold">{r.name}</span></div>
-                    {r.description && <div dir="auto" className="truncate text-[11px] text-fgdim">{r.description}</div>}
+                    <div dir="ltr" className="truncate text-start font-mono text-xs text-fg"><span className="text-fgdim">{r.owner}/</span><span className="font-medium">{r.name}</span></div>
+                    {r.description && <div dir="auto" className="truncate text-xs text-fgdim">{r.description}</div>}
                   </div>
-                  {r.private && <span className="shrink-0 rounded-full border border-warn-line bg-warn-bg px-1.5 py-px text-[10.5px] font-bold text-warn"><Icon icon={faLock} /> {t('setup.repo.pick.private')}</span>}
-                  {r.updatedAt && <span className="shrink-0 text-[11px] text-fgdim">{agoTime(r.updatedAt)}</span>}
+                  {r.private && <Badge status="warn"><Icon icon={faLock} /> {t('setup.repo.pick.private')}</Badge>}
+                  {r.updatedAt && <span className="shrink-0 text-xs text-fgdim">{agoTime(r.updatedAt)}</span>}
                 </li>
               ))}
-              {!loading && items.length === 0 && <li className="px-3 py-2.5 text-[11.5px] text-fgdim">{q ? t('setup.repo.pick.noMatch', { q }) : t('setup.repo.pick.empty')}</li>}
+              {!loading && items.length === 0 && <li className="px-3 py-2.5 text-xs text-fgdim">{q ? t('setup.repo.pick.noMatch', { q }) : t('setup.repo.pick.empty')}</li>}
               {hasMore && (
                 <li>
-                  <button type="button" onMouseDown={(e) => { e.preventDefault(); load(q, page + 1); }} className="w-full cursor-pointer px-3 py-1.5 text-center text-[11.5px] font-semibold text-fgdim hover:text-fg">{t('setup.repo.pick.more')}</button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); load(q, page + 1); }} className="w-full cursor-pointer px-3 py-2 text-center text-xs font-medium text-fgdim hover:text-fg coarse:min-h-11">{t('setup.repo.pick.more')}</button>
                 </li>
               )}
             </ul>
           )}
         </div>
-      )}
+      </PopoverContent>
+      </Popover>
     </div>
   );
 }

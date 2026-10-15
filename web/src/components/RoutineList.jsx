@@ -20,9 +20,15 @@ import { toastError, toastSuccess } from '../lib/toast.js';
 import * as setupApi from '../lib/setup-api.js';
 import { EngineToggle } from './EngineToggle.jsx';
 import { engineLabel } from '../lib/engines.js';
+import { Button } from './ui/button.jsx';
+import { Input, Textarea } from './ui/input.jsx';
+import { Switch } from './ui/switch.jsx';
+import { Tip } from './ui/tooltip.jsx';
+import { INPUT } from './settings/shared.jsx';
 import { faPlay, faTrash, faComments, faClock, faSatelliteDish, faPlus } from '@fortawesome/free-solid-svg-icons';
 
-const btn = 'cursor-pointer rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40';
+const card = 'rounded-lg border border-hair p-4';
+const heading = 'flex items-center gap-1.5 text-xs font-medium text-fgdim';
 
 /** "in 3h" / "in 2d" — the forward twin of relTime, for next-run times. */
 export function untilTime(ms, t) {
@@ -68,29 +74,29 @@ export function AddRoutineForm({ agent, busy = false, onCreate, onCancel }) {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [engine, setEngine] = useState(agent.engine || '');
-  const field = 'w-full rounded-md border border-border bg-transparent px-2 py-1 font-mono text-[11px] text-fg';
+  const field = `${INPUT} w-full`;
   const submit = (e) => {
     e?.preventDefault?.();
     const payload = routinePayload({ kind, value, name, prompt, engine });
     if (payload) onCreate?.(payload);
   };
   return (
-    <form data-routine-form={agent.slug} onSubmit={submit} className="mb-2 flex flex-col gap-1.5 rounded-[8px] border border-hair p-2">
-      <div className="flex items-center gap-1.5">
-        <select aria-label={t('agent.routine.form.kind')} value={kind} onChange={(e) => setKind(e.target.value)} className={`${field} w-auto cursor-pointer`}>
+    <form data-routine-form={agent.slug} onSubmit={submit} className="mb-3 flex flex-col gap-3 rounded-lg border border-hair p-3">
+      <div className="flex items-center gap-2">
+        <select aria-label={t('agent.routine.form.kind')} value={kind} onChange={(e) => setKind(e.target.value)} className={`${field} !w-auto cursor-pointer`}>
           <option value="cron">{t('agent.routine.form.kindCron')}</option>
           <option value="interval">{t('agent.routine.form.kindInterval')}</option>
           <option value="at">{t('agent.routine.form.kindAt')}</option>
         </select>
-        <input dir="ltr" data-routine-schedule value={value} onChange={(e) => setValue(e.target.value)} placeholder={t(`agent.routine.form.ph.${kind}`)} aria-label={t('agent.routine.form.schedule')} className={`${field} flex-1`} />
+        <Input dir="ltr" data-routine-schedule value={value} onChange={(e) => setValue(e.target.value)} placeholder={t(`agent.routine.form.ph.${kind}`)} aria-label={t('agent.routine.form.schedule')} className="flex-1 font-mono text-xs" />
       </div>
-      <input dir="auto" data-routine-name value={name} onChange={(e) => setName(e.target.value)} placeholder={t('agent.routine.form.name')} aria-label={t('agent.routine.form.name')} className={field} />
+      <Input dir="auto" data-routine-name value={name} onChange={(e) => setName(e.target.value)} placeholder={t('agent.routine.form.name')} aria-label={t('agent.routine.form.name')} />
       <EngineToggle data-routine-engine options={{ engine }} onChange={(o) => setEngine(o.engine || '')} />
-      <textarea dir="auto" data-routine-prompt rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t('agent.routine.form.prompt', { name: agent.name })} aria-label={t('agent.routine.form.prompt', { name: agent.name })} className={`${field} resize-y`} />
-      <div className="flex items-center gap-1.5">
-        <button type="submit" data-routine-save disabled={busy || !prompt.trim() || !value.trim()} className={btn}>{t('agent.routine.form.save')}</button>
-        <button type="button" onClick={onCancel} className={btn}>{t('agent.routine.form.cancel')}</button>
-        <span className="text-[11.5px] md:text-[10px] text-fgdim">{t('agent.routine.form.hint')}</span>
+      <Textarea dir="auto" data-routine-prompt rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t('agent.routine.form.prompt', { name: agent.name })} aria-label={t('agent.routine.form.prompt', { name: agent.name })} />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" variant="primary" data-routine-save disabled={busy || !prompt.trim() || !value.trim()}>{t('agent.routine.form.save')}</Button>
+        <Button onClick={onCancel}>{t('agent.routine.form.cancel')}</Button>
+        <span className="text-xs text-fgdim">{t('agent.routine.form.hint')}</span>
       </div>
     </form>
   );
@@ -102,45 +108,48 @@ export function RoutineList({ agent, data, busy = false, adding = false, onToggl
   const listeners = (data?.listeners || []).filter((l) => l.status !== 'stopped');
   return (
     <div data-agent-routine={agent.slug} className="flex flex-col gap-3">
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faClock} /> {t('agent.routine.cron')} · {cron.length}</span>
-          <button type="button" data-routine-add onClick={onAdd} className={`ms-auto ${btn}`}><Icon icon={faPlus} /> {t('agent.routine.addForm')}</button>
-          <button type="button" data-routine-add-chat onClick={onAddViaChat} className={btn}><Icon icon={faComments} /> {t('agent.routine.add')}</button>
+      <div className={card}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className={heading}><Icon icon={faClock} /> {t('agent.routine.cron')} · {cron.length}</span>
+          <Button size="sm" data-routine-add onClick={onAdd} className="ms-auto"><Icon icon={faPlus} /> {t('agent.routine.addForm')}</Button>
+          <Button size="sm" data-routine-add-chat onClick={onAddViaChat}><Icon icon={faComments} /> {t('agent.routine.add')}</Button>
         </div>
         {adding && <AddRoutineForm agent={agent} busy={busy} onCreate={onCreate} onCancel={onCancelAdd} />}
-        {cron.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.routine.empty')}</div>}
+        {cron.length === 0 && <div className="text-xs text-fgdim">{t('agent.routine.empty')}</div>}
         {cron.map((c) => (
-          <div key={c.id} data-routine-cron={c.id} data-enabled={c.enabled ? '1' : '0'} className={`flex items-center gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0 ${c.enabled ? '' : 'opacity-60'}`}>
-            <button type="button" role="switch" aria-checked={c.enabled} title={c.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')} disabled={busy} onClick={() => onToggle?.(c)}
-              className={`h-[16px] w-[28px] shrink-0 cursor-pointer rounded-full border border-ink p-px ${c.enabled ? 'bg-brand' : 'bg-chip'}`}>
-              <span className={`block h-[12px] w-[12px] rounded-full bg-ink transition-transform ${c.enabled ? 'translate-x-[12px] rtl:-translate-x-[12px]' : ''}`} />
-            </button>
+          <div key={c.id} data-routine-cron={c.id} data-enabled={c.enabled ? '1' : '0'} className={`flex items-center gap-3 border-b border-hair py-2 text-sm last:border-b-0 ${c.enabled ? '' : 'opacity-60'}`}>
+            <Tip label={c.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}>
+              <Switch checked={!!c.enabled} disabled={busy} onCheckedChange={() => onToggle?.(c)} aria-label={c.name} />
+            </Tip>
             <span className="min-w-0 flex-1">
-              <span dir="auto" className="block truncate font-mono font-bold">{c.name}</span>
-              <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">
+              <span dir="auto" className="block truncate font-medium">{c.name}</span>
+              <span dir="ltr" className="block truncate text-xs text-fgdim">
                 {c.schedule?.kind}: {c.schedule?.value}
                 {c.engine ? ` · ${engineLabel(c.engine)}` : ''}
                 {c.enabled && c.nextRunAt ? ` · ${t('launcher.cron.metaNextRun')} ${untilTime(c.nextRunAt, t)}` : ''}
                 {c.lastRun ? ` · ${t('launcher.cron.metaLastRun')} ${relTime(c.lastRun)}` : ''}
               </span>
             </span>
-            <button type="button" title={t('launcher.cron.runNow')} disabled={busy} onClick={() => onRun?.(c)} className={btn}><Icon icon={faPlay} /></button>
-            <button type="button" title={t('launcher.trigger.deleteTitle')} disabled={busy} onClick={() => onDelete?.(c)} className={`${btn} hover:text-err`}><Icon icon={faTrash} /></button>
+            <Tip label={t('launcher.cron.runNow')}>
+              <Button variant="ghost" size="icon-sm" aria-label={t('launcher.cron.runNow')} disabled={busy} onClick={() => onRun?.(c)}><Icon icon={faPlay} /></Button>
+            </Tip>
+            <Tip label={t('launcher.trigger.deleteTitle')}>
+              <Button variant="ghost" size="icon-sm" aria-label={t('launcher.trigger.deleteTitle')} disabled={busy} onClick={() => onDelete?.(c)} className="hover:text-err"><Icon icon={faTrash} /></Button>
+            </Tip>
           </div>
         ))}
       </div>
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 flex items-center gap-1.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase"><Icon icon={faSatelliteDish} /> {t('agent.routine.listeners')} · {listeners.length}</div>
-        {listeners.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.routine.noListeners')}</div>}
+      <div className={card}>
+        <div className={`mb-3 ${heading}`}><Icon icon={faSatelliteDish} /> {t('agent.routine.listeners')} · {listeners.length}</div>
+        {listeners.length === 0 && <div className="text-xs text-fgdim">{t('agent.routine.noListeners')}</div>}
         {listeners.map((l) => (
-          <div key={l.id} data-routine-listener={l.id} className="flex items-center gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0">
-            <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: l.status === 'errored' ? '#9c3b33' : agent.color }} />
+          <div key={l.id} data-routine-listener={l.id} className="flex items-center gap-3 border-b border-hair py-2 text-sm last:border-b-0">
+            <span className="size-1.5 shrink-0 rounded-full" style={{ background: l.status === 'errored' ? 'var(--hb-err)' : agent.color }} />
             <span className="min-w-0 flex-1">
-              <span dir="auto" className="block truncate font-mono font-bold">{l.label}</span>
-              <span dir="ltr" className="block truncate font-mono text-[11.5px] md:text-[10px] text-fgdim">{l.type} · {l.status}{l.firedCount ? ` · ×${l.firedCount}` : ''}</span>
+              <span dir="auto" className="block truncate font-medium">{l.label}</span>
+              <span dir="ltr" className="block truncate text-xs text-fgdim">{l.type} · {l.status}{l.firedCount ? ` · ×${l.firedCount}` : ''}</span>
             </span>
-            <button type="button" disabled={busy} onClick={() => onCancelListener?.(l)} className={`${btn} hover:text-err`}>{t('agent.routine.cancelListener')}</button>
+            <Button size="sm" disabled={busy} onClick={() => onCancelListener?.(l)} className="hover:text-err">{t('agent.routine.cancelListener')}</Button>
           </div>
         ))}
       </div>
@@ -186,7 +195,7 @@ export default function RoutinePanel({ agent, onOpenSession }) {
       setBusy(false);
     }
   };
-  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (!data) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   return (
     <RoutineList
       agent={agent}

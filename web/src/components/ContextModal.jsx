@@ -3,6 +3,10 @@ import { fmtTokens, contextColor } from './ui.jsx';
 import { useT } from '../lib/i18n.js';
 import { api } from '../lib/api.js';
 import { supportsCompaction } from '../lib/engines.js';
+import { Button } from './ui/button.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Input } from './ui/input.jsx';
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog.jsx';
 
 // Context categories we can derive from the stream-json usage block. (Claude
 // Code's /context splits further — system prompt, tools, memory… — but the
@@ -22,11 +26,6 @@ const CELLS = COLS * ROWS; // each cell ≈ 1/200th of the window
 export default function ContextModal({ session, usage, onClose }) {
   const t = useT();
   const canCompact = supportsCompaction(session.engine);
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
 
   // Auto-compact is a real `claude --autocompact <tokens>` spawn flag now (not
   // a message injected into the conversation), so it's per-session and a
@@ -75,24 +74,18 @@ export default function ContextModal({ session, usage, onClose }) {
   }];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,22,0.5)] p-5"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[480px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
-      >
-        <div className="flex items-center justify-between border-b border-hair px-[18px] py-3">
-          <div className="text-[15px] font-bold">{t('dialogs.contextWindow')}</div>
-          <div className="flex items-center gap-2 font-mono text-[11px] text-fgdim">
-            <span className="font-bold" style={{ color: contextColor(pct) }}>{pct}%</span>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent showClose={false} aria-describedby={undefined} className="w-[min(30rem,calc(100vw-1.5rem))] gap-0 p-0">
+        <div className="flex items-center justify-between gap-3 border-b border-hair px-5 py-3">
+          <DialogTitle className="text-sm">{t('dialogs.contextWindow')}</DialogTitle>
+          <div className="flex items-center gap-2 text-xs text-fgdim tabular-nums" dir="ltr">
+            <span className="font-medium" style={{ color: contextColor(pct) }}>{pct}%</span>
             <span>{fmtTokens(used)} / {fmtTokens(win)}{assumed ? ` (${t('dialogs.ctxWindowAssumed')})` : ''}</span>
           </div>
         </div>
 
-        <div className="px-[18px] py-4">
-          <div className="grid gap-[3px]" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
+        <div className="px-5 py-4">
+          <div className="grid gap-[3px]" dir="ltr" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
             {cells.map((c, i) => (
               <span
                 key={i}
@@ -104,62 +97,50 @@ export default function ContextModal({ session, usage, onClose }) {
 
           <div className="mt-4 flex flex-col gap-1.5">
             {rows.map((r) => (
-              <div key={r.key} className="flex items-center gap-2 text-[12px]">
-                <span className="h-[11px] w-[11px] shrink-0 rounded-[3px]" style={{ background: r.color }} />
+              <div key={r.key} className="flex items-center gap-2 text-sm">
+                <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: r.color }} />
                 <span className="flex-1 text-fg">{r.label}</span>
-                <span className="font-mono text-[11px] text-fgdim tabular-nums">{fmtTokens(r.tokens)}</span>
-                <span className="w-[34px] text-right font-mono text-[11px] text-fgdim tabular-nums">{r.pct}%</span>
+                <span className="text-xs text-fgdim tabular-nums" dir="ltr">{fmtTokens(r.tokens)}</span>
+                <span className="w-9 text-end text-xs text-fgdim tabular-nums" dir="ltr">{r.pct}%</span>
               </div>
             ))}
           </div>
         </div>
 
         {!canCompact && (
-          <div className="border-t border-hair px-[18px] py-3 text-[11px] text-fgdim">{t('dialogs.ctxNoCompactionCodex')}</div>
+          <div className="border-t border-hair px-5 py-3 text-xs text-fgdim">{t('dialogs.ctxNoCompactionCodex')}</div>
         )}
-        {canCompact && <div className="border-t border-hair px-[18px] py-3">
-          <label className="flex cursor-pointer items-center gap-2.5 text-[12px]">
-            <input
-              type="checkbox"
+        {canCompact && <div className="border-t border-hair px-5 py-3">
+          <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+            <Checkbox
               checked={enabled}
-              onChange={(e) => applyAutoCompact(e.target.checked ? autoCompactPct : null)}
-              className="h-[14px] w-[14px] shrink-0 cursor-pointer accent-[var(--color-ink)]"
+              onCheckedChange={(v) => applyAutoCompact(v === true ? autoCompactPct : null)}
             />
             <span className="flex-1 text-fg">{t('dialogs.autoCompactWhenReaches')}</span>
-            <input
+            <Input
               type="number"
               min={50}
               max={95}
+              dir="ltr"
               value={autoCompactPct}
               disabled={!enabled}
               onChange={(e) => setAutoCompactPct(Number(e.target.value))}
               onBlur={() => enabled && applyAutoCompact(autoCompactPct)}
               onKeyDown={(e) => { if (e.key === 'Enter' && enabled) applyAutoCompact(autoCompactPct); }}
-              className="w-[48px] rounded-md border-[1.5px] border-border bg-panel px-1.5 py-1 text-right font-mono text-[11px] tabular-nums text-fg focus:border-ink focus:outline-none disabled:opacity-40"
+              className="w-14 px-1.5 text-end tabular-nums"
             />
-            <span className="font-mono text-[11px] text-fgdim">%</span>
+            <span className="text-xs text-fgdim">%</span>
           </label>
-          <div className="mt-1.5 pl-[24px] text-[11px] text-fgdim">{t('dialogs.ctxAutoCompactRestartNote')}</div>
+          <div className="mt-1.5 ps-6 text-xs text-fgdim">{t('dialogs.ctxAutoCompactRestartNote')}</div>
         </div>}
 
-        <div className="flex items-center justify-end gap-2 border-t border-hair px-[18px] py-2.5">
-          {canCompact && <button
-            type="button"
-            disabled={compacting}
-            onClick={compactNow}
-            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-50"
-          >
+        <div className="flex items-center justify-end gap-2 border-t border-hair px-5 py-2.5">
+          <Button onClick={onClose}>{t('dialogs.close')}</Button>
+          {canCompact && <Button variant="primary" disabled={compacting} onClick={compactNow}>
             {compacting ? t('dialogs.compacting') : t('dialogs.compactNow')}
-          </button>}
-          <button
-            type="button"
-            onClick={onClose}
-            className="cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3 py-1.5 text-[12px] text-fgdim hover:border-ink hover:text-fg"
-          >
-            {t('dialogs.close')}
-          </button>
+          </Button>}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

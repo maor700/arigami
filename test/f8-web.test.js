@@ -11,7 +11,7 @@ isolate(); // restore globalThis/process.env after this file (bun test shares th
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
 
-let React, render, prefs, FirstRun, FIRST_RUN_CHIPS;
+let React, render, prefs, FirstRun, FIRST_RUN_CHIPS, TooltipProvider;
 
 beforeAll(async () => {
   const mem = new Map();
@@ -29,9 +29,10 @@ beforeAll(async () => {
   ({ renderToStaticMarkup: render } = await import(path.join(ROOT, 'web/node_modules/react-dom/server.js')));
   prefs = await import(web('lib/prefs.js'));
   ({ default: FirstRun, FIRST_RUN_CHIPS } = await import(web('components/FirstRun.jsx')));
+  ({ TooltipProvider } = await import(web('components/ui/tooltip.jsx')));
 });
 
-const mount = () => render(React.createElement(FirstRun, { config: { defaultCwd: '/tmp/ws' }, sessions: [], onCreated() {}, onOpenLauncher() {} }));
+const mount = () => render(React.createElement(TooltipProvider, null, React.createElement(FirstRun, { config: { defaultCwd: '/tmp/ws' }, sessions: [], onCreated() {}, onOpenLauncher() {} })));
 
 test('FirstRun (en): one prompt box, three chips, Advanced link — no Linear', () => {
   prefs.setPrefs({ language: 'en' });

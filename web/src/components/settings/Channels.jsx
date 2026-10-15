@@ -87,12 +87,12 @@ export function Webhooks() {
     setFunnel(r); if (r?.error) setErr(r.error);
   });
 
-  if (!cfgv) return <div className="py-3 font-mono text-[11px] text-fgdim">{t('chrome.webhooks.loading')}</div>;
+  if (!cfgv) return <div className="py-3 text-xs text-fgdim">{t('chrome.webhooks.loading')}</div>;
   const sms = cfgv.sms;
   const input = `${INPUT} w-[180px]`;
   return (
     <>
-      {!cfgv.publicUrl && <div className="mb-2 text-[11px] text-fgdim">{t('chrome.webhooks.noPublicUrl')}</div>}
+      {!cfgv.publicUrl && <div className="mb-2 text-xs text-fgdim">{t('chrome.webhooks.noPublicUrl')}</div>}
       <SettingCard
         title={t('chrome.webhooks.sms')}
         pill={<StatusPill status={sms ? (sms.live ? 'ok' : 'error') : 'off'} label={sms ? (sms.live ? t('setup.state.ok') : t('chrome.webhooks.sms.expired')) : t('setup.state.todo')} />}
@@ -127,7 +127,7 @@ export function Webhooks() {
         </>}
       >
         {fresh && (
-          <div className="mt-2 border-t border-hair pt-2 text-[11px]">
+          <div className="mt-2 border-t border-hair pt-2 text-xs">
             <div className="text-fgdim">{t('chrome.webhooks.custom.once', { id: fresh.id })}</div>
             <CopyRow url={fresh.secret} />
             <CopyRow url={fresh.url} />
