@@ -36,7 +36,39 @@ const block = (selector) => {
   const i = css.indexOf(`${selector} {`);
   return css.slice(i, css.indexOf('}', i));
 };
-const tokenIn = (body, name) => body.match(new RegExp(`--hb-${name}:\\s*(#[0-9a-fA-F]{3,6})`))?.[1];
+// Tokens are oklch / color-mix(in oklab) expressions now: resolve them to sRGB hex.
+// Scope = :root declarations, overridden by the [data-theme="dark"] block when dark.
+const declsOf = (body) => Object.fromEntries([...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+const oklabToRgb = ([L, a, b]) => {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const lin = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+  return lin.map((c) => Math.round(255 * Math.min(1, Math.max(0, c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055))));
+};
+const hexToRgb = (h) => { h = h.replace('#', ''); if (h.length === 3) h = [...h].map((c) => c + c).join(''); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); };
+const toOklab = ([r, g, b]) => {
+  const f = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const [R, G, B] = [f(r), f(g), f(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+};
+const resolveColor = (expr, scope) => {
+  expr = expr.trim();
+  let m;
+  if ((m = expr.match(/^var\((--[\w-]+)\)$/))) return resolveColor(scope[m[1]], scope);
+  if (expr.startsWith('#')) return hexToRgb(expr);
+  if ((m = expr.match(/^oklch\(([\d.]+) ([\d.]+) ([\d.]+)/))) { const [L, C, H] = m.slice(1).map(Number); return oklabToRgb([L, C * Math.cos((H * Math.PI) / 180), C * Math.sin((H * Math.PI) / 180)]); }
+  if ((m = expr.match(/^color-mix\(in oklab,\s*(.+?)\s+(\d+)%,\s*(.+)\)$/))) {
+    const p = Number(m[2]) / 100, A = toOklab(resolveColor(m[1], scope)), B = toOklab(resolveColor(m[3], scope));
+    return oklabToRgb(A.map((v, i) => v * p + B[i] * (1 - p)));
+  }
+  throw new Error(`cannot resolve ${expr}`);
+};
+const hex = (rgb) => '#' + rgb.map((c) => c.toString(16).padStart(2, '0')).join('');
+const tokenIn = (body, name) => {
+  const dark = body.includes('[data-theme') || /dark/.test(body.slice(0, 30));
+  const scope = { ...declsOf(block(':root')), ...(dark ? declsOf(block('[data-theme="dark"]')) : {}) };
+  return hex(resolveColor(`var(--hb-${name})`, scope));
+};
 
 test('no light hardcoded background in any className (it stays light in the dark theme)', () => {
   const offenders = [];
