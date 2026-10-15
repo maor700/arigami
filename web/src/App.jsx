@@ -28,8 +28,10 @@ import Toaster from './components/Toaster.jsx';
 import Login from './components/Login.jsx';
 import ConfirmHost from './components/ConfirmHost.jsx';
 import { ArchiveDialog, DeleteDialog, EditSessionDialog } from './components/Dialogs.jsx';
-import { Archive, Bell, Brain, CircleHelp, CircleUser, Contrast, Diff, House, Languages, Menu, Pencil, Plus, Puzzle, Settings as SettingsIcon, Trash2 } from 'lucide-react';
+import { Archive, Bell, Brain, ChevronDown, ChevronUp, CircleHelp, CircleUser, Contrast, Diff, House, Languages, Menu, Pencil, Plus, Puzzle, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { Button } from './components/ui/button.jsx';
+import { Badge } from './components/ui/badge.jsx';
+import { Tip } from './components/ui/tooltip.jsx';
 import { Input, Textarea } from './components/ui/input.jsx';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from './components/ui/sheet.jsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.jsx';
@@ -87,7 +89,8 @@ function isTyping(e) {
 // What a pending item starts with, editable before it starts. A Linear ticket keeps its identity (title,
 // ticket id, cwd come from the ticket); a plain item (a queued PR review, a deferred session) can change
 // everything, including its title, working dir, permissions and prompt.
-const FIELD = 'w-full rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[12px] text-fg';
+import { fieldBase } from './components/ui/input.jsx';
+const FIELD = `${fieldBase} h-8 coarse:h-11 text-sm`;
 const draftOf = (item) => ({
   title: item?.title || '',
   prompt: item?.prompt || '',
@@ -132,20 +135,20 @@ function PendingOptionsForm({ item, draft, setDraft }) {
   const plain = item.kind === 'empty';
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   return (
-    <div className="flex flex-col gap-3 text-[12px]" data-pending-form>
+    <div className="flex flex-col gap-4 text-sm" data-pending-form>
       {plain && (
-        <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.titleField')}</span>
-          <input value={draft.title} onChange={(e) => set({ title: e.target.value })} className={FIELD} /></label>
+        <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.titleField')}</span>
+          <Input value={draft.title} onChange={(e) => set({ title: e.target.value })} /></label>
       )}
-      <div className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.engine')}</span>
+      <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.engine')}</span>
         <EngineToggle options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
-      <div className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.runWith')}</span>
+      <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.runWith')}</span>
         <SessionOptionsPicker options={draft} onChange={(o) => setDraft((d) => ({ ...d, ...o }))} /></div>
       {plain && (
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.cwd')}</span>
-            <input value={draft.cwd} onChange={(e) => set({ cwd: e.target.value })} className={FIELD} /></label>
-          <label className="flex flex-col gap-1"><span className="text-fgdim">{t('chrome.pending.permissions')}</span>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.cwd')}</span>
+            <Input dir="ltr" value={draft.cwd} onChange={(e) => set({ cwd: e.target.value })} className="font-mono text-xs" /></label>
+          <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{t('chrome.pending.permissions')}</span>
             <select value={draft.permissionMode} onChange={(e) => set({ permissionMode: e.target.value })} className={FIELD}>
               <option value="">—</option>
               <option value="bypassPermissions">Bypass</option>
@@ -155,8 +158,8 @@ function PendingOptionsForm({ item, draft, setDraft }) {
             </select></label>
         </div>
       )}
-      <label className="flex flex-col gap-1"><span className="text-fgdim">{plain ? t('chrome.pending.prompt') : t('chrome.pending.extraPrompt')}</span>
-        <textarea value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={plain ? 12 : 5} className={`${FIELD} leading-relaxed`} placeholder={t('chrome.pending.noPrompt')} /></label>
+      <label className="flex flex-col gap-1.5"><span className="text-xs font-medium text-muted-foreground">{plain ? t('chrome.pending.prompt') : t('chrome.pending.extraPrompt')}</span>
+        <Textarea value={draft.prompt} onChange={(e) => set({ prompt: e.target.value })} rows={plain ? 12 : 5} className="leading-relaxed" placeholder={t('chrome.pending.noPrompt')} /></label>
     </div>
   );
 }
@@ -165,23 +168,25 @@ function PendingOptionsForm({ item, draft, setDraft }) {
 function PendingHeader({ title, chip, dirty, saving, onSave, onStart, onDismiss, onClose, extra }) {
   const t = useT();
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair px-4 py-2" data-pending-header>
-      <span className="min-w-0 flex-1 basis-[10rem] truncate font-mono text-[12.5px] font-bold">{title}</span>
-      <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[10px] text-fgdim">{chip}</span>
-      <button type="button" onClick={onClose} title={t('chrome.ticket.closePreview')} className="order-2 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg md:order-last">×</button>
-      <div className="order-last flex w-full items-center gap-2 md:order-none md:ml-auto md:w-auto">
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2" data-pending-header>
+      <span className="min-w-0 flex-1 basis-[10rem] truncate text-sm font-medium">{title}</span>
+      <Badge variant="outline">{chip}</Badge>
+      <Tip label={t('chrome.ticket.closePreview')}>
+        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('chrome.ticket.closePreview')} className="order-2 text-muted-foreground md:order-last"><X /></Button>
+      </Tip>
+      <div className="order-last flex w-full items-center gap-2 md:order-none md:ms-auto md:w-auto">
         {extra}
         {dirty && (
-          <button type="button" onClick={onSave} disabled={saving} data-pending-save className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] font-bold text-fg disabled:opacity-50 md:py-1">
+          <Button variant="outline" onClick={onSave} disabled={saving} data-pending-save>
             {saving ? t('chrome.pending.saving') : t('chrome.pending.save')}
-          </button>
+          </Button>
         )}
         {onDismiss && (
-          <button type="button" onClick={onDismiss} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:text-danger md:py-1">{t('chrome.pending.dismiss')}</button>
+          <Button variant="outline" onClick={onDismiss} className="text-muted-foreground hover:text-destructive">{t('chrome.pending.dismiss')}</Button>
         )}
-        <button type="button" onClick={onStart} disabled={saving} data-pending-start className="min-w-0 flex-1 cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12.5px] font-bold text-ink disabled:opacity-50 md:flex-none md:py-1 md:text-[11.5px]">
+        <Button variant="primary" onClick={onStart} disabled={saving} data-pending-start className="min-w-0 flex-1 md:flex-none">
           {t('chrome.ticket.startSession')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -195,8 +200,8 @@ function PendingPreview({ item, onClose, onStart, onDismiss }) {
   if (!item)
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 bg-bg text-fg">
-        <div className="text-[13px] text-fgdim">{t('chrome.pending.gone')}</div>
-        <button type="button" onClick={onClose} className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1 text-[11.5px]">{t('chrome.pending.close')}</button>
+        <div className="text-sm text-muted-foreground">{t('chrome.pending.gone')}</div>
+        <Button variant="outline" onClick={onClose}>{t('chrome.pending.close')}</Button>
       </div>
     );
   const pr = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(draft.prompt || item.prompt || '')?.[0] || null;
@@ -213,12 +218,12 @@ function PendingPreview({ item, onClose, onStart, onDismiss }) {
         onClose={onClose}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5" data-pending-preview>
-        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-fgdim">
-          <span>{t('chrome.pending.source')}: <span className="font-mono text-fg">{item.triggerName || t('chrome.pending.manual')}</span></span>
-          <span>{t('chrome.pending.queued')}: <span className="font-mono text-fg">{item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'}</span></span>
-          {pr && <a href={pr} target="_blank" rel="noreferrer" className="font-mono text-brand hover:underline">{pr} ↗</a>}
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>{t('chrome.pending.source')}: <span className="text-foreground">{item.triggerName || t('chrome.pending.manual')}</span></span>
+          <span>{t('chrome.pending.queued')}: <span className="tabular-nums text-foreground">{item.addedAt ? new Date(item.addedAt).toLocaleString() : '—'}</span></span>
+          {pr && <a href={pr} target="_blank" rel="noreferrer" dir="ltr" className="text-foreground underline underline-offset-4 hover:decoration-2">{pr} ↗</a>}
         </div>
-        {error && <div className="mb-3 rounded-[7px] border border-err-line bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        {error && <div className="mb-3 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-destructive">{error}</div>}
         <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
       </div>
     </div>
@@ -251,14 +256,14 @@ function TicketPreview({ ticket, item, fallbackTitle, onClose, onStart, onDismis
         onDismiss={item ? onDismiss : null}
         onClose={onClose}
         extra={item ? (
-          <button type="button" onClick={() => setOptionsOpen((v) => !v)} data-pending-options className="cursor-pointer rounded-[8px] border-[1.5px] border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:text-fg md:py-1">
-            {t('chrome.pending.options')} {optionsOpen ? '▴' : '▾'}
-          </button>
+          <Button variant="outline" onClick={() => setOptionsOpen((v) => !v)} aria-expanded={optionsOpen} data-pending-options className="text-muted-foreground">
+            {t('chrome.pending.options')} {optionsOpen ? <ChevronUp /> : <ChevronDown />}
+          </Button>
         ) : null}
       />
       {item && optionsOpen && (
-        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-hair bg-panel px-4 py-3" data-pending-preview>
-          {error && <div className="mb-3 rounded-[7px] border border-err-line bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-border bg-card px-4 py-3" data-pending-preview>
+          {error && <div className="mb-3 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-destructive">{error}</div>}
           <div className="max-w-[760px]"><PendingOptionsForm item={item} draft={draft} setDraft={setDraft} /></div>
         </div>
       )}
