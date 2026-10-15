@@ -15,7 +15,7 @@ import { capTitle } from '../setup/registry.js';
 import { faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons';
 import { Badge } from '../ui/badge.jsx';
 import { Tip } from '../ui/tooltip.jsx';
-import { Section, StatusPill, BTN_PRIMARY, BTN_DANGER, fmtWhen } from './shared.jsx';
+import { Section, StatusPill, BTN_SM, BTN_DANGER, fmtWhen } from './shared.jsx';
 
 function McpCard({ cap, busy, onConnect, onDisconnect, ownerName }) {
   const t = useT();
@@ -52,7 +52,7 @@ function McpCard({ cap, busy, onConnect, onDisconnect, ownerName }) {
           <button type="button" disabled={busy} onClick={() => onDisconnect(cap)} className={BTN_DANGER}>{t('integrations.disconnect')}</button>
         ) : (
           <Tip label={byo ? t('mcp.auth.byo.hint') : undefined}>
-            <button type="button" disabled={busy || byo} onClick={() => onConnect(cap)} className={BTN_PRIMARY}>
+            <button type="button" disabled={busy || byo} onClick={() => onConnect(cap)} className={BTN_SM}>
               {busy ? t('integrations.connecting') : t('integrations.connect')}
             </button>
           </Tip>

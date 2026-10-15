@@ -19,7 +19,7 @@ import { confirmDialog } from '../../lib/confirm.js';
 import * as setupApi from '../../lib/setup-api.js';
 import { capTitle, capFamily } from '../setup/registry.js';
 import ConnectDialog from './ConnectDialog.jsx';
-import { StatusPill, BTN_PRIMARY, ROW, LIST, fmtWhen } from './shared.jsx';
+import { StatusPill, BTN_SM, ROW, LIST, fmtWhen } from './shared.jsx';
 import { faCheck, faGlobe } from '@fortawesome/free-solid-svg-icons';
 
 const HIDDEN = new Set(['telemetry', 'push']); // host-only toggles that mean nothing per agent
@@ -52,7 +52,7 @@ export function AgentConnections({ agent, data, busy = false, onConnect, onDisco
               {c.ok && c.resolvedFrom === owner && (
                 <button type="button" disabled={busy} onClick={() => onDisconnect?.(c)} className="cursor-pointer text-xs text-fgdim hover:text-err coarse:min-h-11">{t('agent.conn.disconnect')}</button>
               )}
-              <button type="button" disabled={busy} className={c.ok && c.resolvedFrom === owner ? 'cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11' : BTN_PRIMARY} onClick={() => onConnect?.(c)}>
+              <button type="button" disabled={busy} className={c.ok && c.resolvedFrom === owner ? 'cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11' : BTN_SM} onClick={() => onConnect?.(c)}>
                 {c.ok && c.resolvedFrom === owner ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('agent.conn.connect')}
               </button>
             </div>

@@ -16,7 +16,7 @@ import { Icon } from '../../lib/icons.js';
 import { capTitle, capFamily } from '../setup/registry.js';
 import { faArrowUpRightFromSquare, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { Input } from '../ui/input.jsx';
-import { Section, StatusPill, ErrorLine, BTN_PRIMARY, BTN_DANGER, BTN_SM, ROW, LIST, fmtWhen } from './shared.jsx';
+import { Section, StatusPill, ErrorLine, BTN_DANGER, BTN_SM, ROW, LIST, fmtWhen } from './shared.jsx';
 
 // M1: what Composio is still the best path for. `linear`/`notion`/`github` moved
 // to their vendors' own MCP servers (the native cards above), and `whatsapp` is
@@ -47,7 +47,7 @@ function ToolkitCard({ toolkit, busy, onConnect, onDisconnect }) {
         {toolkit.connected ? (
           <button type="button" disabled={busy} onClick={() => onDisconnect(toolkit)} className={BTN_DANGER}>{t('integrations.disconnect')}</button>
         ) : (
-          <button type="button" disabled={busy} onClick={() => onConnect(toolkit)} className={BTN_PRIMARY}>{busy ? t('integrations.connecting') : t('integrations.connect')}</button>
+          <button type="button" disabled={busy} onClick={() => onConnect(toolkit)} className={BTN_SM}>{busy ? t('integrations.connecting') : t('integrations.connect')}</button>
         )}
       </div>
     </div>
@@ -191,7 +191,7 @@ export default function Integrations({ caps, onOpen, onDisconnect, busy, tick })
               {c.ok && capFamily(c.id) !== 'repo' && capFamily(c.id) !== 'desktop' && (
                 <button type="button" disabled={busy} onClick={() => onDisconnect(c)} className="cursor-pointer text-xs text-fgdim hover:text-err coarse:min-h-11">{t('setup.connections.disconnect')}</button>
               )}
-              <button type="button" className={c.ok ? 'cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11' : BTN_PRIMARY} onClick={() => onOpen(c)}>
+              <button type="button" className={c.ok ? 'cursor-pointer text-xs text-fgdim hover:text-fg coarse:min-h-11' : BTN_SM} onClick={() => onOpen(c)}>
                 {c.ok ? <><Icon icon={faCheck} /> {t('setup.connections.reconnect')}</> : t('setup.connections.connect')}
               </button>
             </div>

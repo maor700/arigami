@@ -179,7 +179,7 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
           <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.teamTitle')}</span>
           <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{rows.length}</span>
-          <button type="button" onClick={onClose} className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg">
+          <button type="button" onClick={onClose} className="ms-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg">
             <Icon icon={faXmark} />
           </button>
         </div>
@@ -375,7 +375,7 @@ function DescList({ items, onPick }) {
                 <span className="font-mono text-[11px] font-bold text-fg">
                   /{it.name}
                   {it.argumentHint && (
-                    <span className="ml-1.5 font-normal text-fgdim">{it.argumentHint}</span>
+                    <span className="ms-1.5 font-normal text-fgdim">{it.argumentHint}</span>
                   )}
                 </span>
                 {it.description && (
@@ -443,7 +443,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
+            className="ms-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
           >
             <Icon icon={faXmark} />
           </button>
@@ -471,7 +471,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
                 }`}
               >
                 {label}
-                {count != null && <span className="ml-1 text-[11px] md:text-[9.5px] text-fgdim">{count}</span>}
+                {count != null && <span className="ms-1 text-[11px] md:text-[9.5px] text-fgdim">{count}</span>}
               </button>
             );
           })}
