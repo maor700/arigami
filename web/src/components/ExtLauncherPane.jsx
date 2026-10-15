@@ -19,6 +19,7 @@ import { findExtension } from '../lib/ext.js';
 import { createExtBridge } from '../lib/ext-bridge.js';
 import { currentLang, useT } from '../lib/i18n.js';
 import { currentTheme, usePrefs } from '../lib/prefs.js';
+import { Button } from './ui/button.jsx';
 
 export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) {
   const t = useT();
@@ -88,8 +89,8 @@ export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) 
   if (!extRecord) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 bg-bg text-center">
-        <div className="text-[13px] font-bold text-fg">{t('launcher.ext.gone')}</div>
-        <div className="text-[11.5px] text-fgdim">{item.ext}</div>
+        <div className="text-sm font-medium text-foreground">{t('launcher.ext.gone')}</div>
+        <bdi className="text-xs text-muted-foreground">{item.ext}</bdi>
       </div>
     );
   }
@@ -104,17 +105,13 @@ export default function ExtLauncherPane({ item, onCreated, getSessionOptions }) 
         className="min-h-0 flex-1 border-0 bg-white"
         {...(sandboxed ? { sandbox: 'allow-scripts allow-forms allow-popups' } : {})}
       />
-      <div className="flex h-7 shrink-0 items-center gap-2 border-t border-hair bg-panel px-2.5">
-        <span className="font-mono text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+      <div className="flex min-h-9 shrink-0 items-center gap-2 border-t border-hair bg-panel ps-3 pe-1.5">
+        <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
           {extRecord.title || item.ext}
         </span>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="ml-auto cursor-pointer font-mono text-[9.5px] text-fgdim uppercase hover:text-fg"
-        >
+        <Button variant="ghost" size="xs" className="ms-auto" onClick={() => setReloadKey((k) => k + 1)}>
           {t('launcher.ext.reload')}
-        </button>
+        </Button>
       </div>
     </div>
   );
