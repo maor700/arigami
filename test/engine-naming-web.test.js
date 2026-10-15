@@ -91,10 +91,11 @@ test('engineLabel/engineTermName: unknown, empty and missing all mean claude', (
 /* ---------- the terminal header ------------------------------------------- */
 
 test('the terminal header wears the session\'s OWN engine, and a legacy session still says claude-code', () => {
-  expect(viewOf(SESSIONS[1])).toContain('>codex<');
+  // redesign (D11): the engine name left the header row for the "…" menu; the header carries it as data-engine.
+  expect(viewOf(SESSIONS[1])).toContain('data-engine="codex"');
   const claude = viewOf(SESSIONS[0]);
-  expect(claude).toContain('claude-code');
-  expect(viewOf(SESSIONS[1])).not.toContain('claude-code');
+  expect(claude).toContain('data-engine="claude-code"');
+  expect(viewOf(SESSIONS[1])).not.toContain('data-engine="claude-code"');
 });
 
 /* ---------- the composer -------------------------------------------------- */

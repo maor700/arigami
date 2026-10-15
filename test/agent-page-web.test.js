@@ -120,14 +120,14 @@ test('SessionView in homeAgent mode: the shared TabBar (embedded: no hamburger, 
   expect(html).toContain('צ׳אט הבית'); // the session tab's title in home mode
   expect(html).toContain('דסקטופ'); // the agent's own tab is visible
   expect(html).not.toContain('claude-code');
-  expect(html).not.toContain('fa-bars'); // embedded: the agent header carries the hamburger
+  expect(html).not.toContain('aria-label="Open sessions"'); // embedded: the agent header carries the hamburger
   prefs.setPrefs({ language: 'en' });
 });
 
 test('a plain TabBar still has the hamburger; embedded drops it', () => {
   const session = { id: 's1', title: 'x', tabs: [{ id: 't1', type: 'session', title: 'Session' }] };
-  expect(render(h(TabBar, { session, activeTabId: 't1', addOpen: false, setAddOpen: noop }))).toContain('fa-bars');
-  expect(render(h(TabBar, { session, activeTabId: 't1', addOpen: false, setAddOpen: noop, embedded: true }))).not.toContain('fa-bars');
+  expect(render(h(TabBar, { session, activeTabId: 't1', addOpen: false, setAddOpen: noop }))).toContain('aria-label="Open sessions"');
+  expect(render(h(TabBar, { session, activeTabId: 't1', addOpen: false, setAddOpen: noop, embedded: true }))).not.toContain('aria-label="Open sessions"');
 });
 
 test('App: the agent page counts as a main view with its own hamburger (no duplicate mobile top bar)', () => {

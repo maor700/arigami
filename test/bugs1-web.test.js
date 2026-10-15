@@ -69,7 +69,7 @@ test('B18: diff code rows are forced LTR (the cockpit document is RTL in Hebrew)
 
 test('B5: the rail scrolls the selected session row into view', () => {
   const rail = src('components/Rail.jsx');
-  expect(rail).toContain('data-session-row={session.id}');
+  expect(rail).toContain("'data-session-row': session.id");
   expect(rail).toMatch(/querySelector\(`\[data-session-row="\$\{selectedId\}"\]`\)/);
   expect(rail).toContain("scrollIntoView({ block: 'nearest' })");
 });
@@ -79,7 +79,7 @@ test('B26: phone-sized inputs are 16px (no iOS auto-zoom), desktop keeps the com
   expect(sv).toMatch(/resize-none bg-transparent text-\[16px\][^"]*sm:text-\[11\.5px\]/);
   expect(sv).not.toMatch(/resize-none bg-transparent text-\[11\.5px\]/);
   const rail = src('components/Rail.jsx');
-  expect(rail).toMatch(/flex-1 bg-transparent text-\[16px\] outline-none placeholder:text-fgdim sm:text-xs/);
+  expect(rail).toMatch(/className="ps-8 pe-8 text-base sm:text-sm"/); // the rail search field: 16px on a phone
 });
 
 // ---- LOW batch ---------------------------------------------------------------

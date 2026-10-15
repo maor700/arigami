@@ -21,7 +21,7 @@ const DEFAULTS = {
   termTheme: 'dark', // default terminal: 'light' | 'dark'
   termFontSize: 16, // px, clamped 10–24 — the chat output text size
   termDir: 'auto', // default terminal direction: 'auto' | 'ltr' | 'rtl'
-  railWidth: 248, // px, clamped 180–420
+  railWidth: 264, // px, clamped 180–420
   uiScale: 'medium', // whole-UI size incl. the rail: 'small' | 'medium' | 'large' → --ui-scale on <html> (rem)
   termOverrides: {}, // { [sessionId]: { dir?, theme? } } — per-terminal overrides
   voiceAutoSend: false, // auto-send voice prompts without confirmation

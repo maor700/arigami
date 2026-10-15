@@ -58,7 +58,7 @@ const CommandSeparator = React.forwardRef(function CommandSeparator({ className,
 });
 
 const CommandItem = React.forwardRef(function CommandItem({ className, ...props }, ref) {
-  return <CommandPrimitive.Item ref={ref} data-slot="command-item" className={cn(menuItem, 'data-[selected=true]:bg-muted data-[selected=true]:text-foreground', className)} {...props} />;
+  return <CommandPrimitive.Item ref={ref} data-slot="command-item" className={cn(menuItem, 'data-[selected=true]:bg-muted data-[selected=true]:text-foreground data-[disabled=false]:pointer-events-auto data-[disabled=false]:opacity-100', className)} {...props} />;
 });
 
 const CommandShortcut = ({ className, ...props }) => (

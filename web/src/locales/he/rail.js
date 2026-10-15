@@ -361,4 +361,9 @@ export const strings = {
   'rail.clearConfirmBody': 'מתחיל שיחת {engine} חדשה לגמרי עבור "{name}" — ה-worktree, יומן השיחה והמטא-דאטה נשמרים, אבל המודל שוכח כל מה שנאמר עד עכשיו. כל מה שהוא עושה כרגע נקטע.',
   'rail.clearConfirm': 'ניקוי',
   'rail.clearFailed': 'הניקוי נכשל: {error}',
+  // ---- עיצוב חדש: מעטפת ----
+  'rail.needsYouGroup': 'צריכים אותך',
+  'rail.sessionsGroup': 'סשנים',
+  'rail.commandsGroup': 'פקודות',
+  'rail.scNextNeedsYou': 'הסשן הבא שצריך אותך',
 };

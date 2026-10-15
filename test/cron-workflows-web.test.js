@@ -31,7 +31,7 @@ beforeAll(async () => {
   const { Window } = await import(path.join(rootPath, 'web/node_modules/happy-dom/lib/index.js'));
   w = new Window();
   globalThis.window = globalThis;
-  for (const key of ['document', 'HTMLElement', 'HTMLIFrameElement', 'Node', 'Event', 'CustomEvent', 'localStorage']) globalThis[key] = w[key];
+  for (const key of ['document', 'HTMLElement', 'HTMLIFrameElement', 'HTMLFormElement', 'Node', 'Event', 'CustomEvent', 'localStorage', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'FocusEvent', 'PointerEvent', 'NodeFilter', 'Element']) globalThis[key] = w[key];
   globalThis.location = { origin: 'http://host.test', pathname: '/', port: '', search: '', hash: '' };
   globalThis.navigator = { language: 'en-US', userAgent: 'test' };
   globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -40,6 +40,9 @@ beforeAll(async () => {
   globalThis.removeEventListener = (...args) => w.removeEventListener(...args);
   globalThis.dispatchEvent = (...args) => w.dispatchEvent(...args);
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // The kit's Radix parts (Switch, Dialog, Tooltip) read computed style / observe size.
+  globalThis.getComputedStyle = (...args) => w.getComputedStyle(...args);
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   // Capture polling so stale/404 handling can be tested without waiting on wall time.
   globalThis.setInterval = (fn) => { poll = fn; return 99; };
   globalThis.clearInterval = () => {};
@@ -73,7 +76,7 @@ async function mount(Component, props = {}) {
   await act(async () => root.render(React.createElement(Component, props)));
 }
 async function click(text) {
-  const button = [...container.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const button = [...document.body.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
   expect(button).toBeTruthy();
   await act(async () => button.click());
 }
@@ -98,29 +101,29 @@ test('schedule kinds retain separate inputs and existing mode offers session tit
 
 test('cron logs display schedule, target and actual run history without Linear metadata', async () => {
   await mount(TriggerLogModal, { triggerId: job.id, onClose() {} });
-  expect(container.textContent).toContain('5/15 * * * *');
-  expect(container.textContent).toContain('isolated');
-  expect(container.textContent).toContain('history: 1 entries');
-  expect(container.querySelector('a').getAttribute('href')).toBe('#/session/sess_test');
-  expect(container.textContent).not.toContain('primed:');
-  expect(container.textContent).not.toContain('filter:');
-  expect(container.textContent).not.toContain('polling');
+  expect(document.body.textContent).toContain('5/15 * * * *');
+  expect(document.body.textContent).toContain('isolated');
+  expect(document.body.textContent).toContain('history: 1 entries');
+  expect(document.body.querySelector('a').getAttribute('href')).toBe('#/session/sess_test');
+  expect(document.body.textContent).not.toContain('primed:');
+  expect(document.body.textContent).not.toContain('filter:');
+  expect(document.body.textContent).not.toContain('polling');
 });
 
 test('log failures show retry, recovered details, stale timestamp, and terminal deletion', async () => {
   response = { status: 500, body: { error: 'log unavailable' } };
   await mount(TriggerLogModal, { triggerId: job.id, onClose() {} });
-  expect(container.querySelector('[role="alert"]').textContent).toContain('log unavailable');
+  expect(document.body.querySelector('[role="alert"]').textContent).toContain('log unavailable');
   response = null;
   await click('Retry');
-  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
   response = { error: 'offline' };
   await act(async () => poll());
-  expect(container.querySelector('[role="alert"]').textContent).toContain('Last updated:');
-  expect(container.textContent).toContain('5/15');
+  expect(document.body.querySelector('[role="alert"]').textContent).toContain('Last updated:');
+  expect(document.body.textContent).toContain('5/15');
   response = { status: 404, body: { error: 'not found' } };
   await act(async () => poll());
-  expect(container.querySelector('[role="alert"]').textContent).toContain('deleted');
+  expect(document.body.querySelector('[role="alert"]').textContent).toContain('deleted');
   const count = calls.length;
   await act(async () => poll());
   expect(calls.length).toBe(count);
@@ -131,8 +134,8 @@ for (const action of ['run', 'toggle', 'delete']) test(`failed ${action} is visi
   await mount(CronSubPanel);
   const buttons = [...container.querySelectorAll('button')];
   const button = action === 'run' ? buttons.find((b) => b.textContent.trim() === 'Run now')
-    : action === 'toggle' ? buttons.find((b) => b.textContent.trim() === 'On')
-    : buttons.find((b) => b.title === 'Delete trigger');
+    : action === 'toggle' ? buttons.find((b) => b.getAttribute('role') === 'switch')
+    : buttons.find((b) => b.getAttribute('aria-label') === 'Delete trigger');
   expect(button).toBeTruthy();
   await act(async () => button.click());
   expect(container.querySelector('[role="alert"]').textContent).toContain('operation unavailable');

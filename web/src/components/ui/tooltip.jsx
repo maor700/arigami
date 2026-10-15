@@ -4,8 +4,14 @@ import { cn } from '../../lib/utils.js';
 import { part } from './_styled.jsx';
 import { Kbd } from './kbd.jsx';
 
+// Radix throws when a Tooltip has no provider. The app mounts one at the root
+// (UiProvider); `Tip` also works without it (isolated renders, tests) by adding
+// its own, so a tooltip can never take a screen down.
+const HasProvider = React.createContext(false);
 const TooltipProvider = ({ delayDuration = 400, skipDelayDuration = 200, ...props }) => (
-  <TooltipPrimitive.Provider delayDuration={delayDuration} skipDelayDuration={skipDelayDuration} {...props} />
+  <HasProvider.Provider value={true}>
+    <TooltipPrimitive.Provider delayDuration={delayDuration} skipDelayDuration={skipDelayDuration} {...props} />
+  </HasProvider.Provider>
 );
 const Tooltip = TooltipPrimitive.Root;
 const TooltipTrigger = part(TooltipPrimitive.Trigger, 'tooltip-trigger');
@@ -35,8 +41,9 @@ const TooltipContent = React.forwardRef(function TooltipContent({ className, sid
  * The trigger is the child itself (asChild), so no wrapper element appears.
  */
 function Tip({ label, shortcut, side, children, ...props }) {
+  const hasProvider = React.useContext(HasProvider);
   if (!label) return children;
-  return (
+  const tip = (
     <Tooltip {...props}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent side={side}>
@@ -45,6 +52,7 @@ function Tip({ label, shortcut, side, children, ...props }) {
       </TooltipContent>
     </Tooltip>
   );
+  return hasProvider ? tip : <TooltipProvider>{tip}</TooltipProvider>;
 }
 
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, Tip };

@@ -1,18 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { Command as CommandIcon } from 'lucide-react';
 import { Dot, sessionLabel } from './ui.jsx';
 import { needsAttention } from '../lib/store.js';
 import { useT } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
+import { StatusDot } from './ui/badge.jsx';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog.jsx';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from './ui/command.jsx';
 
-// ⌘K command palette: fuzzy-filter sessions AND commands, then run/jump. Arrow
-// keys move, Enter runs, Esc closes. Empty query lists sessions (the fast
-// jump-to path); typing also surfaces matching commands (open Settings, new
-// session, archive current, …) so everything is reachable keyboard-only.
+// ⌘K command palette (cmdk): fuzzy-filter sessions AND commands, then run/jump.
+// Arrow keys move, Enter runs, Esc closes. Sessions are the fast jump-to path;
+// the commands (open Settings, new session, theme, language, archive current,
+// …) are listed under them, and when a query is typed the matching commands
+// come first — everything is reachable keyboard-only. Filtering stays ours
+// (id / title / ticket for sessions, label + keywords for commands), so what a
+// query matches is exactly what it matched before the cmdk skin.
 export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose, actions = [] }) {
   const t = useT();
   const [q, setQ] = useState('');
-  const [active, setActive] = useState(0);
-  const inputRef = useRef(null);
 
   const live = sessions.filter((s) => !s.archived);
   const needle = q.trim().toLowerCase();
@@ -23,98 +28,68 @@ export default function QuickSwitcher({ sessions, selectedId, onSelect, onClose,
     : live;
   const actionMatches = needle
     ? actions.filter((a) => `${a.label} ${a.keywords || ''}`.toLowerCase().includes(needle))
-    : [];
-  // Commands first when searching (they're the intent of a typed query), then
-  // sessions. One flat list so arrow-nav crosses both.
-  const items = [
-    ...actionMatches.map((a) => ({ kind: 'action', a })),
-    ...sessionMatches.map((s) => ({ kind: 'session', s })),
-  ];
+    : actions;
 
-  useEffect(() => { setActive(0); }, [q]);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const run = (item) => {
-    if (!item) return;
+  const run = (fn) => () => {
     onClose();
-    if (item.kind === 'action') item.a.run();
-    else onSelect(item.s.id);
+    fn();
   };
 
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(items.length - 1, i + 1)); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); return; }
-    if (e.key === 'Enter') { e.preventDefault(); run(items[active]); return; }
-  };
+  const actionsGroup = actionMatches.length > 0 && (
+    <CommandGroup heading={t('rail.commandsGroup')} key="actions">
+      {actionMatches.map((a) => (
+        <CommandItem key={`a:${a.id}`} value={`a:${a.id}`} onSelect={run(a.run)} data-palette-action={a.id}>
+          <span className="flex size-4 shrink-0 items-center justify-center text-xs text-muted-foreground [&_svg]:size-3.5">
+            {a.icon ? typeof a.icon === 'string' ? a.icon : a.icon.iconName ? <Icon icon={a.icon} /> : <a.icon /> : <CommandIcon className="size-3.5" />}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{a.label}</span>
+          {a.shortcut && <CommandShortcut>{a.shortcut}</CommandShortcut>}
+        </CommandItem>
+      ))}
+    </CommandGroup>
+  );
+  const sessionsGroup = sessionMatches.length > 0 && (
+    <CommandGroup heading={t('rail.sessionsGroup')} key="sessions">
+      {sessionMatches.map((s) => {
+        const attn = needsAttention(s);
+        const working = s.claude?.state === 'working';
+        return (
+          <CommandItem key={`s:${s.id}`} value={`s:${s.id}`} onSelect={run(() => onSelect(s.id))} data-palette-session={s.id}>
+            <span className="flex size-4 shrink-0 items-center justify-center"><Dot color={s.color} size={9} /></span>
+            <span className="min-w-0 flex-1 truncate">{sessionLabel(s)}</span>
+            {s.id === selectedId && <span className="text-2xs text-muted-foreground">{t('rail.current')}</span>}
+            {working && <StatusDot status="info" pulse />}
+            {attn && !working && <StatusDot status="warn" pulse />}
+          </CommandItem>
+        );
+      })}
+    </CommandGroup>
+  );
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-[rgba(20,20,22,0.45)] p-5 pt-[12vh]"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[440px] max-w-full overflow-hidden rounded-xl border-2 border-ink bg-panel text-fg shadow-[5px_6px_0_rgba(42,42,42,0.25)]"
-      >
-        <input
-          ref={inputRef}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={t('rail.searchSessionsCommands')}
-          className="w-full border-b border-hair bg-transparent px-4 py-3 text-[13px] outline-none placeholder:text-[#aaa]"
-        />
-        <div className="thin-scroll max-h-[50vh] overflow-auto py-1.5">
-          {items.length === 0 && (
-            <div className="px-4 py-3 text-[12px] text-fgdim">{t('rail.noMatchQuery', { q })}</div>
-          )}
-          {items.map((item, i) => {
-            const isActive = i === active;
-            if (item.kind === 'action') {
-              const a = item.a;
-              return (
-                <button
-                  key={`a:${a.id}`}
-                  type="button"
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => run(item)}
-                  className={`flex w-full items-center gap-2.5 px-4 py-2 text-left ${isActive ? 'bg-hair' : ''}`}
-                >
-                  <span className="w-[11px] shrink-0 text-center text-[11px] text-fgdim">{a.icon ? typeof a.icon === 'string' ? a.icon : <Icon icon={a.icon} /> : '⌘'}</span>
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{a.label}</span>
-                  <span className="font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.command')}</span>
-                </button>
-              );
-            }
-            const s = item.s;
-            const attn = needsAttention(s);
-            const working = s.claude?.state === 'working';
-            return (
-              <button
-                key={`s:${s.id}`}
-                type="button"
-                onMouseEnter={() => setActive(i)}
-                onClick={() => run(item)}
-                className={`flex w-full items-center gap-2.5 px-4 py-2 text-left ${isActive ? 'bg-hair' : ''}`}
-              >
-                <Dot color={s.color} size={11} />
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{sessionLabel(s)}</span>
-                {s.id === selectedId && (
-                  <span className="font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">{t('rail.current')}</span>
-                )}
-                {working && <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />}
-                {attn && !working && <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-danger" />}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-3 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogHeader className="sr-only">
+        <DialogTitle>{t('rail.searchSessionsCommands')}</DialogTitle>
+        <DialogDescription>{t('rail.searchSessionsCommands')}</DialogDescription>
+      </DialogHeader>
+      <DialogContent showClose={false} className="top-[14%] w-[min(32rem,calc(100vw-1.5rem))] translate-y-0 gap-0 overflow-hidden p-0" data-quick-switcher>
+        {/* shouldFilter off: the lists above are already filtered */}
+        <Command shouldFilter={false} loop className="[&_[cmdk-input-wrapper]_svg]:size-4">
+          <CommandInput value={q} onValueChange={setQ} placeholder={t('rail.searchSessionsCommands')} />
+          <CommandList className="max-h-[50vh]">
+            {sessionMatches.length === 0 && actionMatches.length === 0 && (
+              <CommandEmpty>{t('rail.noMatchQuery', { q })}</CommandEmpty>
+            )}
+            {/* a typed query puts the commands first (they are the intent), an empty one the sessions */}
+            {needle ? [actionsGroup, sessionsGroup] : [sessionsGroup, actionsGroup]}
+          </CommandList>
+        </Command>
+        <div className="hidden items-center gap-4 border-t border-border px-3 py-2 text-2xs text-muted-foreground sm:flex">
           <span>{t('rail.qsMove')}</span>
           <span>{t('rail.qsRun')}</span>
           <span>{t('rail.qsClose')}</span>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
