@@ -152,7 +152,7 @@ function ArtifactCardView({ props: { sessionId, event } }) {
             <select
               value={shareDays}
               onChange={(e) => setShareDays(Number(e.target.value))}
-              className="rounded-md border border-[var(--term-border)] bg-transparent px-1 py-0.5 text-xs text-[var(--term-fg)]"
+              className="rounded-md border border-[var(--term-border)] bg-transparent px-1 py-0.5 text-xs coarse:min-h-11 text-[var(--term-fg)]"
               aria-label={t('chat.artifactShareDays', { n: shareDays })}
             >
               {[1, 7, 30].map((n) => (

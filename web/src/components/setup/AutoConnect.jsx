@@ -8,7 +8,7 @@ import { api } from '../../lib/api.js';
 import { faCircleNotch, faCheck, faXmark, faArrowUpRightFromSquare, faImage } from '@fortawesome/free-solid-svg-icons';
 
 // Always rendered inside the chat card (term-accent palette), never on a panel.
-const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-md border border-[var(--term-accent-border)] px-2 py-0.5 text-xs text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)] disabled:opacity-50';
+const btn = 'inline-flex cursor-pointer items-center gap-1 rounded-md border border-[var(--term-accent-border)] px-2 py-0.5 text-xs text-[var(--term-accent-fg)] coarse:min-h-11 hover:bg-[var(--term-accent-border)] disabled:opacity-50';
 
 // Evidence is `/__artifacts/<id>/` (relative — works from the phone). Offer
 // "open as tab" (sandboxed iframe in the session) plus a plain relative link.
@@ -31,13 +31,13 @@ export default function AutoConnect({ sessionId, state = 'auto', lines = [], det
   return (
     <div className="flex flex-col gap-2">
       {header && (
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--term-accent-fg)]">
+        <div className="flex items-center gap-2 text-sm font-medium text-[var(--term-accent-fg)]">
           {running ? <Icon icon={faCircleNotch} spin /> : state === 'done' ? <span className="text-ok"><Icon icon={faCheck} /></span> : <span className="text-err"><Icon icon={faXmark} /></span>}
           <span>{t(running ? 'setup.auto.running' : state === 'done' ? 'setup.auto.done' : 'setup.auto.failed')}</span>
         </div>
       )}
       {lines.length > 0 && (
-        <ol dir="auto" className="max-h-[160px] overflow-auto rounded-lg border border-[var(--term-accent-border)] px-3 py-2 text-xs leading-relaxed text-[var(--term-accent-dim)]">
+        <ol dir="auto" className="max-h-[160px] overflow-auto rounded-md border border-[var(--term-accent-border)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--term-accent-dim)]">
           {lines.slice(-30).map((l, i) => <li key={i}>› {l}</li>)}
         </ol>
       )}

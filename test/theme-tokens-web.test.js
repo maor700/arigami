@@ -107,8 +107,7 @@ test('the setup hero and its engine cards use theme tokens only', () => {
     + fs.readFileSync(path.join(SRC, 'components/setup/EngineConnect.jsx'), 'utf8');
   // (text-[#1a1a1a] is the fixed dark ink every mint button uses)
   expect(hero.replaceAll('text-[#1a1a1a]', '')).not.toMatch(/\[#[0-9a-fA-F]{3,6}\]/);
-  expect(hero).toContain('bg-warn-bg');
-  expect(hero).toContain('bg-ok-bg');
+  expect(hero).toContain('bg-ok');
 });
 
 test('every tone token flips under the dark theme and stays readable in both', () => {

@@ -18,7 +18,6 @@
 // Fullscreen API toggle (the canvas benefits from true fullscreen / pointer
 // lock). Mounted ONCE, in App.jsx, from store.screen.modal.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import ScreenView from './ScreenView.jsx';
 import { SCREEN_PRIORITY } from '../lib/useScreenConnection.js';
 import { answerScreenRequest, cancelScreenRequest, openScreenRequest, setScreenModal, useStore } from '../lib/store.js';
@@ -77,14 +76,6 @@ export default function ScreenModal({ context, onClose }) {
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
-
-  useEffect(() => {
-    // Esc closes the modal — but while fullscreen, the browser's own Esc
-    // handling exits fullscreen first; only close on a second Esc after that.
-    const onKey = (e) => { if (e.key === 'Escape' && !document.fullscreenElement) onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -238,8 +229,7 @@ export default function ScreenModal({ context, onClose }) {
         {req && doneErr && (
           <div data-screen-done-error dir="auto" className="border-t border-border px-4 py-2 text-xs font-medium text-destructive">{doneErr}</div>
         )}
-      </div>
-    </div>,
-    document.body
+      </DialogContent>
+    </Dialog>
   );
 }

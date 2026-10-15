@@ -8,6 +8,7 @@ import { useStore } from '../../lib/store.js';
 import { useT } from '../../lib/i18n.js';
 import { toast, toastError } from '../../lib/toast.js';
 import { Section, BTN_SM, INPUT } from './shared.jsx';
+import { Badge } from '../ui/badge.jsx';
 import { AgentAvatar } from '../AgentCard.jsx';
 
 export const fmtTokens = (n) => {
@@ -44,21 +45,21 @@ export function BudgetRow({ row, onSaved }) {
       <td className="py-1.5 pe-2">
         <span className="flex items-center gap-1.5">
           <AgentAvatar agent={row} size={18} />
-          <span dir="auto" className="font-bold text-fg">{row.name}</span>
+          <span dir="auto" className="font-medium text-fg">{row.name}</span>
         </span>
       </td>
-      <td className="py-1.5 pe-2 font-mono text-[11.5px] md:text-[10.5px] text-fgdim" dir="ltr">{row.model || t('host.budgets.modelDefault')}</td>
+      <td className="py-1.5 pe-2 font-mono text-xs text-fgdim" dir="ltr">{row.model || t('host.budgets.modelDefault')}</td>
       <td className="py-1.5 pe-2">
         <span className="flex items-center gap-1.5">
           <input type="number" min="0" step="1000" value={cap} onChange={(e) => setCap(e.target.value)} placeholder={t('host.budgets.noCap')} className={`${INPUT} w-[110px]`} dir="ltr" />
           {dirty && <button type="button" disabled={busy} onClick={save} className={BTN_SM}>{t('host.budgets.save')}</button>}
         </span>
       </td>
-      <td className="py-1.5 font-mono text-[11.5px] md:text-[10.5px]" dir="ltr">
-        <span className={row.exceeded ? 'font-bold text-danger' : 'text-fg'}>{fmtTokens(row.usedTokens)}</span>
+      <td className="py-1.5 font-mono text-xs" dir="ltr">
+        <span className={row.exceeded ? 'font-medium text-err' : 'text-fg'}>{fmtTokens(row.usedTokens)}</span>
         {row.cap ? <span className="text-fgdim"> / {fmtTokens(row.cap)} · {pct}%</span> : null}
         <span className="text-fgdim"> · {fmtCost(row.usedCostUsd, t)}</span>
-        {row.exceeded && <span className="ms-1 rounded-full bg-danger/15 px-1.5 text-[11px] md:text-[9.5px] text-danger">{t('host.budgets.exceeded')}</span>}
+        {row.exceeded && <Badge status="err" className="ms-1">{t('host.budgets.exceeded')}</Badge>}
       </td>
     </tr>
   );
@@ -66,13 +67,13 @@ export function BudgetRow({ row, onSaved }) {
 
 export function BudgetsTable({ rows, day, onSaved }) {
   const t = useT();
-  if (!rows) return <div className="text-[11px] text-fgdim">…</div>;
-  if (rows.length === 0) return <div className="text-[11px] text-fgdim">{t('host.budgets.empty')}</div>;
+  if (!rows) return <div className="text-xs text-fgdim">…</div>;
+  if (rows.length === 0) return <div className="text-xs text-fgdim">{t('host.budgets.empty')}</div>;
   return (
     <div className="mt-2 overflow-x-auto rounded-lg border border-hair px-3 py-1">
-      <table className="w-full text-[11.5px]">
+      <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-hair font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">
+          <tr className="border-b border-hair text-xs text-fgdim">
             <th className="py-1 pe-2 text-start font-normal">{t('host.budgets.agent')}</th>
             <th className="py-1 pe-2 text-start font-normal">{t('host.budgets.model')}</th>
             <th className="py-1 pe-2 text-start font-normal">{t('host.budgets.cap')}</th>
@@ -81,7 +82,7 @@ export function BudgetsTable({ rows, day, onSaved }) {
         </thead>
         <tbody>{rows.map((r) => <BudgetRow key={r.slug} row={r} onSaved={onSaved} />)}</tbody>
       </table>
-      {day && <div className="py-1 font-mono text-[11px] md:text-[9.5px] text-fgdim">{t('host.budgets.day', { day })}</div>}
+      {day && <div className="py-1 text-xs text-fgdim">{t('host.budgets.day', { day })}</div>}
     </div>
   );
 }
@@ -94,7 +95,7 @@ export default function Budgets() {
   useEffect(() => { load(); }, [agents?.length]);
   return (
     <Section id="budgets" title={t('host.budgets')} onRefresh={load}>
-      <div className="text-[11px] text-fgdim">{t('host.budgets.hint')}</div>
+      <div className="text-xs text-fgdim">{t('host.budgets.hint')}</div>
       <BudgetsTable rows={data?.budgets || null} day={data?.day} onSaved={load} />
     </Section>
   );

@@ -41,17 +41,17 @@ export default function TakeoverStep({ capability = 'identity', sessionId, reque
   if (result) return <OkLine>{t('setup.takeover.done', { email: result.email || email || '' })}</OkLine>;
   return (
     <div className="flex flex-col gap-2">
-      <ol className="list-decimal ps-5 text-[13px] leading-relaxed text-fgdim">
+      <ol className="list-decimal ps-5 text-sm leading-relaxed text-fgdim">
         <li>{t('setup.takeover.step1')}</li>
         <li>{t('setup.takeover.step2')}</li>
         <li>{t('setup.takeover.step3')}</li>
       </ol>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={BTN} onClick={open}><Icon icon={faDisplay} /> {t('setup.takeover.open')}</button>
+        <button type="button" className={BTN2} onClick={open}><Icon icon={faDisplay} /> {t('setup.takeover.open')}</button>
       </div>
-      <input className={INPUT} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('setup.takeover.emailPlaceholder')} spellCheck={false} autoComplete="off" />
+      <input className={INPUT} dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('setup.takeover.emailPlaceholder')} spellCheck={false} autoComplete="off" />
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={BTN2} disabled={busy} onClick={verify}>{busy ? t('setup.takeover.verifying') : t('setup.takeover.verify')}</button>
+        <button type="button" className={BTN} disabled={busy} onClick={verify}>{busy ? t('setup.takeover.verifying') : t('setup.takeover.verify')}</button>
       </div>
       <ErrorBox err={err} />
     </div>

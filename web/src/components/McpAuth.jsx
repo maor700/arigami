@@ -14,17 +14,19 @@ import { restartSession } from '../lib/store.js';
 import { engineLabel } from '../lib/engines.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
+import { StatusDot } from './ui/badge.jsx';
+import { BTN_SM, BTN_DANGER } from './settings/shared.jsx';
 import { faRotateRight } from '@fortawesome/free-solid-svg-icons';
 
 const DOT = {
-  connected: '#3C9A4E',
-  'needs-auth': '#E08A2B',
-  pending: '#C9A227',
-  degraded: '#E08A2B',
-  'needs-reconnect': '#B23B30',
-  failed: '#B23B30',
-  error: '#B23B30',
-  unknown: '#9a9a9a',
+  connected: 'ok',
+  'needs-auth': 'warn',
+  pending: 'warn',
+  degraded: 'warn',
+  'needs-reconnect': 'err',
+  failed: 'err',
+  error: 'err',
+  unknown: 'idle',
 };
 // Statuses a proc restart actually fixes (vs needs-auth, which needs a login).
 const RECONNECTABLE = new Set(['degraded', 'needs-reconnect', 'failed', 'error']);
@@ -128,12 +130,12 @@ export default function McpAuth({ session, cwd }) {
     }
   };
 
-  if (!servers) return <p className="text-[12px] text-fgdim">{t('launcher.mcp.loading')}</p>;
+  if (!servers) return <p className="text-sm text-fgdim">{t('launcher.mcp.loading')}</p>;
 
   return (
     <div className="flex flex-col gap-2">
       {err && (
-        <div className="rounded-md border border-[#B23B30]/40 bg-[#B23B30]/10 px-2.5 py-1.5 text-[11px] text-[#B23B30]">{err}</div>
+        <div className="rounded-md border border-err-line bg-err-bg px-2.5 py-1.5 text-xs text-err">{err}</div>
       )}
       {servers.map((s) => {
         const active = flow && flow.name === s.name;
@@ -144,19 +146,19 @@ export default function McpAuth({ session, cwd }) {
         const status = restarting ? 'pending' : active && flow.state === 'done' ? 'connected' : s.status;
         const statusText = restarting ? t('launcher.mcp.reconnecting') : active && flow.state === 'done' ? t('launcher.mcp.connected') : s.statusText;
         return (
-          <div key={s.name} className="rounded-md border border-hair bg-bg px-3 py-2">
+          <div key={s.name} className="rounded-lg border border-hair bg-bg px-3 py-2">
             <div className="flex items-center gap-2.5">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DOT[status] || DOT.unknown }} />
+              <StatusDot status={DOT[status] || DOT.unknown} />
               <span className="min-w-0 flex-1 truncate">
-                <span className="font-mono text-[11.5px] text-fg">{s.name}</span>
-                <span className="ml-2 font-mono text-[11px] md:text-[9.5px] text-fgdim">{statusText}</span>
+                <span className="text-sm font-medium text-fg" dir="ltr">{s.name}</span>
+                <span className="ms-2 text-xs text-fgdim">{statusText}</span>
               </span>
               {RECONNECTABLE.has(status) && session && (
                 <button
                   type="button"
                   disabled={busy || restarting}
                   onClick={() => restartSession(session)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
+                  className={BTN_SM}
                 >
                   <Icon icon={faRotateRight} /> {t('launcher.mcp.reconnect')}
                 </button>
@@ -166,7 +168,7 @@ export default function McpAuth({ session, cwd }) {
                   type="button"
                   disabled={busy}
                   onClick={() => login(s.name)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fg hover:border-ink disabled:opacity-40"
+                  className={BTN_SM}
                 >
                   {t('launcher.mcp.authenticate')}
                 </button>
@@ -176,30 +178,30 @@ export default function McpAuth({ session, cwd }) {
                   type="button"
                   disabled={busy}
                   onClick={() => logout(s.name)}
-                  className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-[#B23B30] hover:text-[#B23B30] disabled:opacity-40"
+                  className={BTN_DANGER}
                 >
                   {t('launcher.mcp.signout')}
                 </button>
               )}
             </div>
             {active && (flow.state === 'starting' || flow.state === 'awaiting') && flow.auto?.status === 'running' && (
-              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">{t('setup.connect.running', { name: s.name })}</div>
+              <div className="mt-2 ps-5 text-xs text-fgdim">{t('setup.connect.running', { name: s.name })}</div>
             )}
             {active && (flow.state === 'starting' || flow.state === 'awaiting') && flow.auto?.status !== 'running' && (
-              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-fgdim">
+              <div className="mt-2 ps-5 text-xs text-fgdim">
                 {flow.auto?.reason ? `${t('setup.connect.needsYou', { name: s.name })} ${flow.auto.reason}. ` : t('launcher.mcp.opening')}
                 {flow.url && (
-                  <a href={flow.url} target="_blank" rel="noreferrer" className="ml-1 text-info underline">
+                  <a href={flow.url} target="_blank" rel="noreferrer" className="ms-1 text-info underline">
                     {t('launcher.mcp.openLink')}
                   </a>
                 )}
               </div>
             )}
             {active && flow.state === 'error' && (
-              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-[#B23B30]">{flow.error || t('launcher.mcp.loginFailed')}</div>
+              <div className="mt-2 ps-5 text-xs text-err">{flow.error || t('launcher.mcp.loginFailed')}</div>
             )}
             {active && flow.state === 'done' && (
-              <div className="mt-2 pl-5 text-[11.5px] md:text-[10.5px] text-[#3C9A4E]">{t('launcher.mcp.authorized')}</div>
+              <div className="mt-2 ps-5 text-xs text-ok">{t('launcher.mcp.authorized')}</div>
             )}
           </div>
         );
@@ -209,11 +211,11 @@ export default function McpAuth({ session, cwd }) {
           type="button"
           disabled={checking}
           onClick={() => check(true)}
-          className="rounded-md border border-border px-2.5 py-1 text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink hover:text-fg disabled:opacity-40"
+          className={BTN_SM}
         >
           <Icon icon={faRotateRight} /> {checking ? t('launcher.mcp.checking') : t('launcher.mcp.checkNow')}
         </button>
-        <span className="text-[11.5px] md:text-[10px] text-fgdim">
+        <span className="text-xs text-fgdim">
           {t('launcher.mcp.statusHint', { engine: engineLabel(session?.engine) })}
         </span>
       </div>

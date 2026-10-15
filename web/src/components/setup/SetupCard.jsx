@@ -25,6 +25,7 @@ import EngineConnect from './EngineConnect.jsx';
 import { api } from '../../lib/api.js';
 import { serverText } from '../../lib/server-text.js';
 import { Pill, ErrorBox } from './shared.jsx';
+import { StatusDot } from '../ui/badge.jsx';
 import { faCheck, faXmark, faWandMagicSparkles, faHand, faShieldHalved, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../../openui/define.js';
 import { CardFrame, Btn } from '../../openui/primitives.jsx';
@@ -58,14 +59,14 @@ function ModeSwitch({ mode, onChange, autoAllowed, identity }) {
       aria-checked={mode === v}
       disabled={v === 'auto' && !autoAllowed}
       onClick={() => onChange(v)}
-      className={`flex-1 cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium disabled:cursor-default disabled:opacity-40 ${mode === v ? 'bg-[var(--term-hover)] text-[var(--term-accent-strong)] shadow-sm' : 'text-[var(--term-accent-fg)]'}`}
+      className={`flex-1 cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium outline-none focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-40 coarse:min-h-11 ${mode === v ? 'bg-[var(--term-accent-border)] text-[var(--term-accent-fg)]' : 'text-[var(--term-accent-dim)] hover:text-[var(--term-accent-fg)]'}`}
     >
       <Icon icon={icon} /> {label}
     </button>
   );
   return (
     <div>
-      <div role="radiogroup" className="flex gap-1 rounded-lg border border-[var(--term-accent-border)] p-0.5">
+      <div role="radiogroup" className="flex gap-1 rounded-md border border-[var(--term-accent-border)] p-0.5">
         {seg('auto', faWandMagicSparkles, t('setup.mode.auto'))}
         {seg('manual', faHand, t('setup.mode.manual'))}
       </div>
@@ -83,7 +84,7 @@ function Consent({ capability, identity }) {
   const keys = consentKeys(capability);
   const name = capTitle(t, capability);
   return (
-    <div className="rounded-lg border border-dashed border-[var(--term-accent-border)] px-3 py-2 text-xs leading-relaxed text-[var(--term-accent-fg)]">
+    <div className="rounded-md border border-dashed border-[var(--term-accent-border)] px-3 py-2 text-xs leading-relaxed text-[var(--term-accent-fg)]">
       <div className="font-medium"><Icon icon={faShieldHalved} /> {t('setup.consent.title', { name })}</div>
       <ul className="mt-1 list-disc ps-5">
         {identity?.email && <li>{t('setup.consent.identity', { email: identity.email })}</li>}
@@ -174,15 +175,15 @@ function SetupCardView({ props: { sessionId, event } }) {
       className={waiting ? 'setup-waiting' : ''}
       label={<>{isEngine ? t('setup.engine.cardTitle') : t('setup.card.needs', { name: title })}{event.why && event.why !== event.title ? <span className="font-normal"> — {event.why}</span> : null}</>}
       meta={ownerSlug && (
-        <span data-setup-owner={event.owner} dir="auto" className="rounded-md bg-[var(--term-accent-border)] px-2 py-px text-xs text-[var(--term-accent-fg)]">
+        <span data-setup-owner={event.owner} dir="auto" className="rounded-sm border border-[var(--term-accent-border)] px-1.5 text-xs text-[var(--term-accent-fg)]">
           {ownerAgent?.emoji ? `${ownerAgent.emoji} ` : ''}{t('setup.card.owner', { name: ownerAgent?.name || ownerSlug })}
         </span>
       )}
       right={<Pill status={phase} />}
     >
       {statusLine && (
-        <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-xs font-semibold ${phase === 'done' ? 'text-ok' : 'text-[var(--term-accent-fg)]'}`}>
-          {waiting && <span className="pulse-yellow inline-block size-1.5 rounded-full bg-warn" />}
+        <div dir="auto" data-setup-status={phase} className={`mt-1.5 flex items-center gap-1.5 text-xs font-medium ${phase === 'done' ? 'text-ok' : 'text-[var(--term-accent-fg)]'}`}>
+          {waiting && <StatusDot status="warn" pulse />}
           {phase === 'auto' && <Icon icon={faCircleNotch} spin />}
           {phase === 'done' && <Icon icon={faCheck} />}
           <span>{statusLine}</span>
@@ -190,12 +191,12 @@ function SetupCardView({ props: { sessionId, event } }) {
       )}
       {capFamily(capability) === 'identity' && !terminal && (
         <div dir="auto" className="mt-1.5 text-xs leading-snug text-[var(--term-accent-dim)]">
-          {t('setup.card.identityIntro')} <span className="font-semibold text-[var(--term-accent-fg)]">{t('setup.card.identityHint')}</span>
+          {t('setup.card.identityIntro')} <span className="font-medium text-[var(--term-accent-fg)]">{t('setup.card.identityHint')}</span>
         </div>
       )}
 
       {terminal && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-[var(--term-accent-dim)]">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-xs text-[var(--term-accent-dim)]">
           <span className={phase === 'done' ? 'text-ok' : phase === 'failed' ? 'text-err' : ''}>
             <Icon icon={phase === 'done' ? faCheck : faXmark} /> {termLabel}
           </span>
@@ -205,7 +206,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       )}
 
       {phase === 'done' && engineDone === 'codex' && capability === 'claude' && (
-        <div dir="auto" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-[var(--term-border)] px-3 py-2 text-xs text-[var(--term-accent-fg)]">
+        <div dir="auto" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-hair bg-muted px-3 py-2 text-xs text-fg">
           <span>{t('setup.engine.switched')}</span>
           <Btn variant="primary" disabled={busy} onClick={() => call(async () => {
             const s = await api.post('/sessions', { title: 'Codex', engine: 'codex', permissionMode: 'bypassPermissions' });
@@ -215,7 +216,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       )}
 
       {phase === 'failed' && event.detail && (
-        <div dir="auto" className="mt-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-[var(--term-accent-fg)]">{t('setup.card.failedManual')}</div>
+        <div dir="auto" className="mt-2 rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">{t('setup.card.failedManual')}</div>
       )}
 
       {phase === 'auto' && (
@@ -235,7 +236,7 @@ function SetupCardView({ props: { sessionId, event } }) {
       {(phase === 'pending' || phase === 'failed') && capFamily(capability) === 'mcp' && (
         // One way to connect a service: the host tries by itself, asks only where it must.
         <div className="mt-2.5 flex flex-col gap-2.5">
-          <div className="rounded-lg border border-border bg-panel px-3 py-2.5 text-fg">
+          <div className="rounded-md border border-border bg-panel px-3 py-2.5 text-fg">
             <ConnectStep capability={capability} owner={event.owner} sessionId={sessionId} title={title} onDone={manualDone} />
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -261,7 +262,7 @@ function SetupCardView({ props: { sessionId, event } }) {
           ) : (
             <>
               {/* the manual step components use the panel palette — give them a solid panel inside the dark card */}
-              <div className="rounded-lg border border-border bg-panel px-3 py-2.5 text-fg">
+              <div className="rounded-md border border-border bg-panel px-3 py-2.5 text-fg">
                 {isEngine
                   ? <EngineConnect sessionId={sessionId} owner={event.owner} onDone={(engine, r) => manualDone({ ...r, engine })} />
                   : <Step {...stepProps} />}

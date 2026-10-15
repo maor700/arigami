@@ -3,6 +3,8 @@ import { afterLogin } from '../lib/store.js';
 import { useT, currentLang } from '../lib/i18n.js';
 import { setPrefs } from '../lib/prefs.js';
 import { Logo } from './Logo.jsx';
+import { Button } from './ui/button.jsx';
+import { Input } from './ui/input.jsx';
 import { canShellSignIn, shellSignIn, shellSignInOnce } from '../lib/shell.js';
 
 // C1 — full-page sign-in. Pairing: the one-time code printed by the host at
@@ -10,7 +12,7 @@ import { canShellSignIn, shellSignIn, shellSignInOnce } from '../lib/shell.js';
 // host has a provider configured. Success → afterLogin() boots the store.
 // `inline code` in a locale string → <code dir="ltr"> so a command keeps its own direction inside Hebrew text.
 function Rich({ text }) {
-  return text.split('`').map((part, i) => (i % 2 ? <code key={i} dir="ltr" className="whitespace-nowrap rounded bg-chip px-1 font-mono text-[0.625rem]">{part}</code> : part));
+  return text.split('`').map((part, i) => (i % 2 ? <code key={i} dir="ltr" className="whitespace-nowrap rounded-sm bg-muted px-1 font-mono text-xs">{part}</code> : part));
 }
 
 export default function Login({ info }) {
@@ -61,43 +63,31 @@ export default function Login({ info }) {
   const lang = currentLang();
   return (
     <div className="relative flex h-screen flex-col items-center justify-center overflow-y-auto bg-bg p-6 text-fg">
-      <button
-        type="button"
-        onClick={() => setPrefs({ language: lang === 'he' ? 'en' : 'he' })}
-        className="absolute end-3 top-3 min-h-[44px] cursor-pointer rounded-[8px] border border-border px-3 text-[0.75rem] text-fgdim hover:border-ink hover:text-fg"
-      >
+      <Button variant="outline" size="sm" onClick={() => setPrefs({ language: lang === 'he' ? 'en' : 'he' })} className="absolute end-3 top-3">
         {lang === 'he' ? 'English' : 'עברית'}
-      </button>
+      </Button>
       <Logo size="3rem" className="mb-4" />
-      <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('auth.login.heading')}</div>
-      <div className="mb-4 max-w-[22.5rem] text-center text-[0.71875rem] text-fgdim">
+      <div className="mb-1 text-2xl leading-tight font-semibold tracking-tight">{t('auth.login.heading')}</div>
+      <div className="mb-5 max-w-[22.5rem] text-center text-sm text-fgdim">
         {hasAdmin ? <Rich text={t('auth.login.subPaired')} /> : t('auth.login.subFirst')}
-        {!hasAdmin && <div className="mt-1.5 hidden text-[0.6875rem] leading-relaxed text-fgdim md:block"><Rich text={t('auth.login.whereCode')} /></div>}
-        {!hasAdmin && <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-fgdim md:hidden">{t('auth.login.phoneHint')}</div>}
+        {!hasAdmin && <div className="mt-1.5 hidden text-xs leading-relaxed text-fgdim md:block"><Rich text={t('auth.login.whereCode')} /></div>}
+        {!hasAdmin && <div className="mt-1.5 text-xs leading-relaxed text-fgdim md:hidden">{t('auth.login.phoneHint')}</div>}
       </div>
 
       {shellSignin && (
-        <button
-          type="button"
-          onClick={shellSignIn}
-          className="mb-4 w-[20rem] max-w-[90%] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-2.5 text-sm font-bold text-fg hover:bg-brand"
-        >
+        <Button size="lg" onClick={shellSignIn} className="mb-4 w-[20rem] max-w-[90%]">
           {t('auth.login.shellSignin')}
-        </button>
+        </Button>
       )}
 
       {oidc && (
-        <button
-          type="button"
-          onClick={oidcStart}
-          className="mb-4 w-[20rem] max-w-[90%] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-2.5 text-sm font-bold text-fg hover:bg-brand"
-        >
+        <Button size="lg" onClick={oidcStart} className="mb-4 w-[20rem] max-w-[90%]">
           {t('auth.login.oidc')}
-        </button>
+        </Button>
       )}
 
-      <div className="flex w-[20rem] max-w-[90%] flex-col gap-2">
-        <input
+      <div className="flex w-[20rem] max-w-[90%] flex-col gap-3">
+        <Input
           value={code}
           onChange={(e) => { setCode(e.target.value.toUpperCase()); if (error) setError(null); }}
           dir="ltr"
@@ -106,30 +96,25 @@ export default function Login({ info }) {
           autoFocus
           autoComplete="one-time-code"
           spellCheck={false}
-          className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2.5 text-center font-mono text-base tracking-[0.2em] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+          className="h-10 text-center font-mono text-base tracking-[0.2em] coarse:h-11"
         />
         {!hasAdmin && (
-          <input
+          <Input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
             placeholder={t('auth.login.emailPlaceholder')}
             type="email"
             autoComplete="email"
-            className="rounded-[10px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2 text-xs outline-none placeholder:text-fgdim"
+            className="h-10 coarse:h-11"
           />
         )}
-        <button
-          type="button"
-          onClick={submit}
-          disabled={busy || !code.trim()}
-          className="min-h-[44px] cursor-pointer rounded-[10px] border-[1.5px] border-ink bg-brand px-4 py-2.5 text-sm font-bold text-[#1a1a1a] disabled:cursor-default disabled:opacity-40"
-        >
+        <Button variant="primary" size="lg" onClick={submit} disabled={busy || !code.trim()}>
           {busy ? t('auth.login.busy') : t('auth.login.pair')}
-        </button>
+        </Button>
       </div>
-      {error && <div className="mt-3 max-w-[22.5rem] text-center text-[0.71875rem] text-err">{error}</div>}
-      <div className="mt-6 max-w-[22.5rem] text-center font-mono text-[0.625rem] text-fgdim">{t('auth.login.hint')}</div>
+      {error && <div role="alert" className="mt-3 max-w-[22.5rem] text-center text-xs text-err">{error}</div>}
+      <div className="mt-6 max-w-[22.5rem] text-center text-xs text-fgdim">{t('auth.login.hint')}</div>
     </div>
   );
 }

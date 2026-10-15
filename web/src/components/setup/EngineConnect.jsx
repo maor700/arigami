@@ -16,6 +16,7 @@ import { Icon } from '../ChatIcon.jsx';
 import * as setupApi from '../../lib/setup-api.js';
 import OAuthCodeStep from './OAuthCodeStep.jsx';
 import { BTN2 } from './shared.jsx';
+import { Badge } from '../ui/badge.jsx';
 import { faCheck, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 
 export const ENGINE_SPECS = [
@@ -32,20 +33,19 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
   const ok = !!cap?.ok;
   const cli = cap?.data?.cli !== false;
   const step = ok ? 4 : phase === 'waiting' ? 2 : phase === 'error' ? 1 : 1;
-  const tone = 'border-border bg-panel';
-  return (
-    <section data-engine={spec.id} data-connected={ok ? 'true' : 'false'} className={`flex min-w-0 flex-col rounded-lg border px-4 py-3.5 ${tone}`}>
+    return (
+    <section data-engine={spec.id} data-connected={ok ? 'true' : 'false'} className="flex min-w-0 flex-col rounded-lg border border-hair bg-panel px-4 py-4">
       <div className="flex items-center gap-2">
-        <h3 className="flex items-center gap-2 text-sm font-medium text-fg">{ok && <span aria-hidden="true" className="size-1.5 rounded-full bg-ok" />}{t(`setup.engine.${spec.id}.connect`)}</h3>
-        {ok && <span className="ms-auto text-[13px] font-medium text-ok"><Icon icon={faCheck} /> {t('setup.engine.connected', { name: spec.name })}</span>}
+        <h3 className="text-sm font-medium text-fg">{t(`setup.engine.${spec.id}.connect`)}</h3>
+        {ok && <Badge status="ok" className="ms-auto"><Icon icon={faCheck} /> {t('setup.engine.connected', { name: spec.name })}</Badge>}
       </div>
       <div className="mt-0.5 text-xs text-fgdim">{t(`setup.engine.${spec.id}.sub`)}</div>
       {!ok && (
         <>
           <ol className="mt-3 flex flex-col gap-1.5">
             {[1, 2, 3].map((n) => (
-              <li key={n} className={`flex items-start gap-2 text-[13px] leading-snug ${n === step ? 'font-semibold text-fg' : 'text-fgdim'}`}>
-                <span className={`mt-px inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border text-2xs font-medium ${n === step ? 'border-foreground bg-foreground text-background' : n < step ? 'border-border bg-muted text-ok' : 'border-border text-fgdim'}`}>
+              <li key={n} className={`flex items-start gap-2 text-xs leading-snug ${n === step ? 'font-medium text-fg' : 'text-fgdim'}`}>
+                <span className={`mt-px inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border text-2xs font-medium tabular-nums ${n === step ? 'border-foreground bg-foreground text-background' : n < step ? 'border-transparent bg-ok text-white' : 'border-input text-fgdim'}`}>
                   {n < step ? <Icon icon={faCheck} /> : n}
                 </span>
                 <span>{t(`setup.engine.${spec.id}.step${n}`)}</span>
@@ -55,8 +55,8 @@ function EngineCard({ spec, cap, otherOk, sessionId, owner, onChanged, onDone })
           <div className="mt-auto pt-3">
             {!cli ? (
               <>
-                <p className="text-xs leading-snug text-warn">{t(`wizard.${spec.id}.noCli`)}</p>
-                <code dir="ltr" className="mt-1 block rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs select-all">{spec.install}</code>
+                <p className="text-xs leading-snug text-fgdim">{t(`wizard.${spec.id}.noCli`)}</p>
+                <code dir="ltr" className="mt-1.5 block rounded-md border border-hair bg-muted px-2 py-1.5 font-mono text-xs select-all">{spec.install}</code>
                 <button type="button" onClick={onChanged} className={`${BTN2} mt-2`}><Icon icon={faRotateRight} /> {t('setup.engine.recheck')}</button>
               </>
             ) : (
@@ -107,7 +107,7 @@ export default function EngineConnect({ engines: given, onChanged, onDone, sessi
   const engines = given || own;
   return (
     <div>
-      {intro && <p className="mb-3 text-[13px] leading-relaxed text-fgdim">{t('setup.engine.intro')}</p>}
+      {intro && <p className="mb-3 text-sm leading-relaxed text-fgdim">{t('setup.engine.intro')}</p>}
       <div className="grid gap-3 sm:grid-cols-2">
         {ENGINE_SPECS.map((spec) => (
           <EngineCard

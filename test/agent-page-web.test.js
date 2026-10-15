@@ -88,14 +88,16 @@ test('the details drawer carries the handle, persona line, model, tools, domains
   prefs.setPrefs({ language: 'en' });
 });
 
-test('⋯ menu: details first, delete last, danger-styled and separated', () => {
+test('⋯ menu: a ui DropdownMenu — the trigger renders closed; items are details first, delete last, destructive and separated', () => {
   prefs.setPrefs({ language: 'he' });
-  const html = render(h(MoreMenu, { onClose: noop, onDetails: noop, onDelete: noop }));
-  expect(html.indexOf('data-agent-menu-details')).toBeLessThan(html.indexOf('data-agent-delete'));
-  const del = html.slice(html.indexOf('data-agent-delete'));
-  expect(del).toContain('text-danger');
-  expect(del).toContain('מחק סוכן');
-  expect(html).toContain('border-t border-hair'); // the separator
+  const html = render(h(MoreMenu, { open: false, onOpenChange: noop, onDetails: noop, onDelete: noop }));
+  expect(html).toContain('data-agent-more'); // the trigger; the Radix content only mounts once opened
+  expect(html).not.toContain('data-agent-delete');
+  const src = fs.readFileSync(web('components/AgentView.jsx'), 'utf8');
+  const menu = src.slice(src.indexOf('export function MoreMenu'));
+  expect(menu.indexOf('data-agent-menu-details')).toBeLessThan(menu.indexOf('data-agent-delete'));
+  expect(menu.indexOf('DropdownMenuSeparator')).toBeLessThan(menu.indexOf('data-agent-delete'));
+  expect(menu).toContain('variant="destructive" data-agent-delete');
   prefs.setPrefs({ language: 'en' });
 });
 

@@ -3,6 +3,8 @@ import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { Logo } from './Logo.jsx';
+import { Button } from './ui/button.jsx';
+import { Tip } from './ui/tooltip.jsx';
 import * as setupApi from '../lib/setup-api.js';
 import { anyEngineConnected } from './setup/EngineConnect.jsx';
 import { faArrowUp, faCamera, faComment, faCodeBranch } from '@fortawesome/free-solid-svg-icons';
@@ -64,22 +66,18 @@ export default function FirstRun({ config, onCreated, onOpenLauncher, onNeedsSet
   return (
     <div className="flex flex-1 flex-col items-center justify-center bg-bg p-6 text-fg">
       <Logo size="3rem" className="mb-4" />
-      <div className="mb-1 text-[1.625rem] leading-tight font-bold">{t('launcher.firstRun.heading')}</div>
-      <div className="mb-4 max-w-[28.75rem] text-center text-[0.71875rem] leading-relaxed text-fgdim">{t('launcher.firstRun.sub')}</div>
+      <div className="mb-1 text-2xl leading-tight font-semibold tracking-tight">{t('launcher.firstRun.heading')}</div>
+      <div className="mb-5 max-w-[28.75rem] text-center text-sm leading-relaxed text-fgdim">{t('launcher.firstRun.sub')}</div>
       {needsEngine && (
-        <div role="status" data-testid="first-run-connect" className="mb-3 flex w-[28.75rem] max-w-[92%] flex-col gap-2 rounded-[12px] border-[1.5px] border-warn-line bg-warn-bg px-4 py-3">
-          <div className="text-[0.8125rem] font-bold text-fg">{t('launcher.firstRun.needEngineTitle')}</div>
-          <div className="text-[0.75rem] leading-snug text-fgdim">{t('launcher.firstRun.needEngineBody')}</div>
-          <button
-            type="button"
-            onClick={onNeedsSetup}
-            className="min-h-[44px] cursor-pointer self-start rounded-[9px] border-[1.5px] border-ink bg-brand px-4 py-2 text-[0.8125rem] font-bold text-[#1a1a1a] md:min-h-0"
-          >
+        <div role="status" data-testid="first-run-connect" className="mb-3 flex w-[28.75rem] max-w-[92%] flex-col gap-2 rounded-lg border border-hair bg-panel px-4 py-3">
+          <div className="text-sm font-medium text-fg">{t('launcher.firstRun.needEngineTitle')}</div>
+          <div className="text-xs leading-snug text-fgdim">{t('launcher.firstRun.needEngineBody')}</div>
+          <Button variant="primary" onClick={onNeedsSetup} className="self-start">
             {t('launcher.firstRun.needEngineBtn')}
-          </button>
+          </Button>
         </div>
       )}
-      <div className="flex w-[28.75rem] max-w-[92%] items-end gap-[0.5625rem] rounded-[12px] border-[1.5px] border-ink bg-panel px-[0.8125rem] py-2.5 focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
+      <div className="flex w-[28.75rem] max-w-[92%] items-end gap-2 rounded-lg border border-input bg-panel px-3 py-2.5 transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/35">
         <textarea
           value={val}
           onChange={(e) => setVal(e.target.value)}
@@ -89,36 +87,32 @@ export default function FirstRun({ config, onCreated, onOpenLauncher, onNeedsSet
           autoFocus
           dir="auto"
           data-testid="first-run-prompt"
-          className="min-w-0 flex-1 resize-none bg-transparent text-[0.8125rem] leading-snug outline-none placeholder:text-fgdim"
+          className="min-w-0 flex-1 resize-none bg-transparent text-sm leading-snug outline-none placeholder:text-muted-foreground"
         />
-        <button
-          type="button"
-          onClick={submit}
-          disabled={busy}
-          title={t('launcher.firstRun.createTitle')}
-          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-[1.5px] border-ink bg-brand text-xs disabled:opacity-50 md:h-[1.75rem] md:w-[1.75rem]"
-        >
-          {busy ? '…' : <Icon icon={faArrowUp} />}
-        </button>
+        <Tip label={t('launcher.firstRun.createTitle')}>
+          <Button variant={needsEngine ? 'default' : 'primary'} size="icon" onClick={submit} disabled={busy} aria-label={t('launcher.firstRun.createTitle')}>
+            {busy ? '…' : <Icon icon={faArrowUp} />}
+          </Button>
+        </Tip>
       </div>
       <div className="mt-3 flex flex-wrap justify-center gap-2">
         {FIRST_RUN_CHIPS.map((c) => (
-          <button
+          <Button
             key={c.id}
-            type="button"
+            variant="outline"
+            size="sm"
             data-testid={`first-run-chip-${c.id}`}
             onClick={() => { setVal(t(c.prompt)); setError(null); }}
-            className="flex cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] border-border bg-panel px-3 py-1 text-[0.71875rem] text-fg hover:border-ink"
           >
             <Icon icon={c.icon} /> {t(c.label)}
-          </button>
+          </Button>
         ))}
       </div>
-      {error && <div className="mt-3 text-[0.6875rem] text-danger">{error}</div>}
+      {error && <div role="alert" className="mt-3 text-xs text-err">{error}</div>}
       <button
         type="button"
         onClick={onOpenLauncher}
-        className="mt-6 cursor-pointer text-[0.6875rem] text-fgdim underline-offset-2 hover:underline"
+        className="mt-6 cursor-pointer text-xs text-fgdim underline-offset-2 outline-none hover:underline focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
       >
         {t('launcher.firstRun.advanced')}
       </button>

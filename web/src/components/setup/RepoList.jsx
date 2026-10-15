@@ -5,7 +5,7 @@ import { api } from '../../lib/api.js';
 import { useT } from '../../lib/i18n.js';
 import { serverText } from '../../lib/server-text.js';
 import { repoRowModel, anyCloning, newlyCloned } from '../../lib/repo-status.js';
-import { BTN_SM, BTN2_SM, CARD, Pill, ErrorBox } from './shared.jsx';
+import { BTN2_SM, CARD, Pill, ErrorBox } from './shared.jsx';
 
 export function RepoRow({ repo, onClone, busy }) {
   const t = useT();
@@ -15,11 +15,11 @@ export function RepoRow({ repo, onClone, busy }) {
       <div className="flex items-center gap-2.5">
         <Pill status={m.pill} label={t(`setup.repo.state.${m.state}`)} />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-[13px] font-semibold text-fg">{repo.name}</div>
-          <div dir="ltr" className="truncate text-xs text-fgdim">{repo.source}</div>
+          <div dir="ltr" className="truncate text-start font-mono text-xs font-medium text-fg">{repo.name}</div>
+          <div dir="ltr" className="truncate text-start text-xs text-fgdim">{repo.source}</div>
         </div>
         {m.canClone && (
-          <button type="button" disabled={busy} onClick={() => onClone(repo.name)} className={BTN_SM}>
+          <button type="button" disabled={busy} onClick={() => onClone(repo.name)} className={BTN2_SM}>
             {t(m.cloneKey)}
           </button>
         )}
@@ -27,7 +27,7 @@ export function RepoRow({ repo, onClone, busy }) {
       {m.state === 'cloning' && m.progress && <div dir="ltr" className="mt-1 truncate font-mono text-xs text-fgdim">{m.progress}</div>}
       {m.state === 'not_cloned' && <div className="mt-1 text-xs text-fgdim">{t('setup.repo.notDownloadedHint')}</div>}
       {m.state === 'failed' && (
-        <div dir="auto" className="mt-1.5 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-fg">
+        <div dir="auto" className="mt-1.5 rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">
           {m.errorKey ? t(m.errorKey) : serverText(m.errorRaw)}
           {m.needsGit && (
             <div className="mt-1.5">
@@ -81,7 +81,7 @@ export default function RepoList({ onChange, refreshKey = 0 }) {
   if (!repos?.length) return <ErrorBox err={err} />;
   return (
     <>
-      <div className="mt-2 text-xs font-medium uppercase text-fgdim">{t('setup.repo.list.title')}</div>
+      <div className="mt-3 text-xs font-medium text-fgdim">{t('setup.repo.list.title')}</div>
       <div className={`${CARD} mt-1 overflow-hidden`}>
         {repos.map((r) => <RepoRow key={r.name} repo={r} onClone={clone} busy={busy} />)}
       </div>

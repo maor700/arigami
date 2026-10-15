@@ -39,6 +39,7 @@ const TooltipContent = React.forwardRef(function TooltipContent({ className, sid
  * The one-liner to replace a `title=` attribute:
  *   <Tip label="Archive" shortcut="⌘⌫"><IconButton …/></Tip>
  * The trigger is the child itself (asChild), so no wrapper element appears.
+ * Carries its own provider so it also renders outside UiProvider (SSR tests).
  */
 function Tip({ label, shortcut, side, children, ...props }) {
   const hasProvider = React.useContext(HasProvider);

@@ -23,29 +23,27 @@ import { useT } from '../../lib/i18n.js';
 import { Icon } from '../../lib/icons.js';
 import { faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import { PROVIDERS, DEFAULT_PROVIDER, providerOf, mergeCatalog, TYPE_LABEL_KEYS, windowLabel, snapshotUsage } from '../../lib/providers.js';
-import { Section, StatusPill, ErrorLine, BTN_SM } from './shared.jsx';
+import { Section, StatusPill, ErrorLine, BTN_SM, BTN_PRIMARY, BTN_DANGER, INPUT as FIELD } from './shared.jsx';
+import { Badge } from '../ui/badge.jsx';
+import { Checkbox } from '../ui/checkbox.jsx';
+import { Tip } from '../ui/tooltip.jsx';
 
-const INPUT = 'mt-2 w-full rounded-[6px] border border-border bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink';
-// The filled action button: brand fill + foreground text, like every other
-// primary button in Settings (shared.jsx BTN_PRIMARY). `bg-ink text-panel` was
-// dark-on-dark in dark mode — --color-ink is #2a2a2a in both themes while the
-// panel goes near-black — so the "Sign in" label became unreadable.
-const PRIMARY = 'cursor-pointer rounded-[6px] border border-ink bg-brand px-3 py-1.5 text-[12px] font-bold text-[#1a1a1a] hover:opacity-90 disabled:opacity-40';
-const GHOST = 'rounded-[6px] border border-border px-3 py-1.5 text-[11.5px] text-fgdim hover:border-ink hover:text-fg';
+const INPUT = `${FIELD} mt-2 w-full`;
+// The filled action button: the one accent (primary) fill of the add flow.
+const PRIMARY = `${BTN_PRIMARY} h-8 px-3 text-sm`;
+const GHOST = BTN_SM;
 
 /** The provider badge on a card: a coloured dot + the product name. Text, never colour alone. */
 export function ProviderBadge({ provider, catalog }) {
   const t = useT();
   const p = (catalog || PROVIDERS)[provider] || PROVIDERS[DEFAULT_PROVIDER];
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-hair bg-bg px-2 py-0.5 text-[11.5px] md:text-[10px] font-bold text-fg"
-      title={t('launcher.account.providerBadge', { provider: p.label })}
-      data-provider={p.id}
-    >
-      <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.dot || '#888' }} />
-      {p.label}
-    </span>
+    <Tip label={t('launcher.account.providerBadge', { provider: p.label })}>
+      <Badge variant="outline" className="h-5 text-foreground" data-provider={p.id}>
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.dot || '#888' }} />
+        {p.label}
+      </Badge>
+    </Tip>
   );
 }
 
@@ -72,21 +70,21 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
   const initial = ((account.label || '').trim()[0] || '?').toUpperCase();
   const typeKey = TYPE_LABEL_KEYS[account.type];
   return (
-    <div data-account-card data-provider={provider} className={`mb-2 rounded-xl border p-3 ${account.active ? 'border-ink bg-chip/40' : 'border-hair bg-panel'}`}>
+    <div data-account-card data-provider={provider} className={`mb-2 rounded-xl border p-3 ${account.active ? 'border-input bg-muted/50' : 'border-hair bg-panel'}`}>
       <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-chip text-[14px] font-bold text-fg">{initial}</span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-chip text-[14px] font-medium text-fg">{initial}</span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[13px] font-bold text-fg">{account.label}</span>
+            <span className="truncate text-sm font-medium text-fg">{account.label}</span>
             <ProviderBadge provider={provider} catalog={catalog} />
-            {account.active && <span className="rounded-full bg-fg px-2 py-0.5 text-[11.5px] md:text-[10px] font-bold text-bg">{t('launcher.account.active')}</span>}
-            <span className="rounded-full border border-hair px-2 py-0.5 text-[11.5px] md:text-[10px] text-fgdim">{typeKey ? t(typeKey) : account.type}</span>
+            {account.active && <Badge variant="solid">{t('launcher.account.active')}</Badge>}
+            <Badge variant="outline">{typeKey ? t(typeKey) : account.type}</Badge>
             <StateBadge account={account} usage={usage} />
           </div>
           {account.email || account.org || account.plan ? (
-            <div className="mt-0.5 text-[11px] text-fgdim">{[account.email, account.org, account.plan].filter(Boolean).join(' · ')}</div>
+            <div className="mt-0.5 text-xs text-fgdim">{[account.email, account.org, account.plan].filter(Boolean).join(' · ')}</div>
           ) : account.type === 'oauth-token' ? (
-            <div className="mt-0.5 text-[11.5px] md:text-[10.5px] text-fgdim">{t('launcher.account.browserToken')}</div>
+            <div className="mt-0.5 text-xs text-fgdim">{t('launcher.account.browserToken')}</div>
           ) : null}
         </div>
       </div>
@@ -97,7 +95,7 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
             <UsageBar label={windowLabel(t, provider, 'week', usage.week)} win={usage.week} sub />
           </>
         ) : (
-          <div className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
+          <div className="font-mono text-xs text-fgdim">
             {usage && !usage.available && usage.reason === 'api-key'
               ? t('launcher.account.apiKeyUsage')
               : usage && !usage.available && usage.reason === 'http-403'
@@ -110,12 +108,12 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
         {!account.active && (
           <button type="button" disabled={busy} onClick={() => onSetActive(account.id)} className={GHOST}>{t('launcher.account.setActive')}</button>
         )}
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-fgdim">
-          <input type="checkbox" checked={!!account.pool} disabled={busy} onChange={(e) => onSetPool(account.id, e.target.checked)} />
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fgdim">
+          <Checkbox checked={!!account.pool} disabled={busy} onCheckedChange={(v) => onSetPool(account.id, v === true)} />
           {t('launcher.account.inPool')}
         </label>
         {!local && (
-          <button type="button" disabled={busy} onClick={() => onRemove(account)} className="ms-auto rounded-[6px] border border-border px-2.5 py-1 text-[11.5px] text-[#B23B30] hover:border-[#B23B30] disabled:opacity-50">
+          <button type="button" disabled={busy} onClick={() => onRemove(account)} className={`${BTN_DANGER} ms-auto`}>
             {t('launcher.account.remove')}
           </button>
         )}
@@ -128,7 +126,7 @@ function AccountCard({ account, usage, busy, catalog, onSetActive, onSetPool, on
 export function AccountsFooter() {
   const t = useT();
   return (
-    <p className="mt-2 px-1 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
+    <p className="mt-2 px-1 text-xs leading-snug text-fgdim">
       <b>{t('launcher.account.footerActive')}</b> {t('launcher.account.footer1')} <b>{t('launcher.account.footerPool')}</b> {t('launcher.account.footer2')}
     </p>
   );
@@ -140,7 +138,7 @@ function ProviderPicker({ catalog, value, onChange }) {
   const ids = Object.keys(catalog);
   return (
     <div className="mt-2">
-      <div className="text-[11px] text-fgdim">{t('launcher.account.providerLabel')}</div>
+      <div className="text-xs text-fgdim">{t('launcher.account.providerLabel')}</div>
       <div role="radiogroup" className="mt-1 flex flex-wrap gap-2">
         {ids.map((id) => {
           const p = catalog[id];
@@ -153,7 +151,7 @@ function ProviderPicker({ catalog, value, onChange }) {
               aria-checked={on}
               data-provider-choice={id}
               onClick={() => onChange(id)}
-              className={`inline-flex items-center gap-2 rounded-[8px] border px-3 py-1.5 text-[12px] ${on ? 'border-ink bg-chip font-bold text-fg' : 'border-border text-fgdim hover:border-ink hover:text-fg'}`}
+              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm coarse:min-h-11 ${on ? 'border-input bg-muted font-medium text-fg' : 'border-hair text-fgdim hover:bg-muted hover:text-fg'}`}
             >
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: p.dot || '#888' }} />
               {p.label}
@@ -161,7 +159,7 @@ function ProviderPicker({ catalog, value, onChange }) {
           );
         })}
       </div>
-      <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('launcher.account.providerHint')}</p>
+      <p className="mt-1 text-xs leading-snug text-fgdim">{t('launcher.account.providerHint')}</p>
     </div>
   );
 }
@@ -263,12 +261,12 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
 
   return (
     <Section id="claude" title={t('settings.connections.claude')}>
-      <div className="mb-2 text-[11px] text-fgdim">{t('launcher.account.subtitle')}</div>
+      <div className="mb-2 text-xs text-fgdim">{t('launcher.account.subtitle')}</div>
       <ErrorLine>{err}</ErrorLine>
       {present.map((g) => (
         <div key={g.id} data-provider-group={g.id} className="mb-3">
           {present.length > 1 && (
-            <div className="mb-1.5 flex items-center gap-2 text-[11.5px] font-bold text-fg">
+            <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-fg">
               <span className="inline-block h-2 w-2 rounded-full" style={{ background: g.p.dot || '#888' }} />
               {t('launcher.account.groupHeading', { provider: g.p.label })}
             </div>
@@ -279,15 +277,15 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
         </div>
       ))}
       {accounts && list.length === 0 && (
-        <div className="mb-2 rounded-xl border border-hair bg-panel px-3 py-4 text-center text-[12px] text-fgdim">{t('launcher.account.emptyList')}</div>
+        <div className="mb-2 rounded-xl border border-hair bg-panel px-3 py-4 text-center text-sm text-fgdim">{t('launcher.account.emptyList')}</div>
       )}
       {accounts && list.length > 0 && groups.filter((g) => !g.items.length).map((g) => (
-        <div key={g.id} data-provider-empty={g.id} className="mb-2 text-[11px] text-fgdim">{t('launcher.account.noneForProvider', { provider: g.p.label })}</div>
+        <div key={g.id} data-provider-empty={g.id} className="mb-2 text-xs text-fgdim">{t('launcher.account.noneForProvider', { provider: g.p.label })}</div>
       ))}
 
       {addMode === null && (
         <div className="flex flex-wrap gap-2">
-          <button type="button" data-add-account onClick={() => setAddMode('choose')} className="rounded-xl border border-dashed border-border px-3 py-2 text-[12px] text-fgdim hover:border-ink hover:text-fg">
+          <button type="button" data-add-account onClick={() => setAddMode('choose')} className="rounded-xl border border-dashed border-input px-3 py-2 text-sm text-fgdim hover:bg-muted hover:text-fg coarse:min-h-11">
             {t('launcher.account.addAccount')}
           </button>
           {identity && onConnectAuto && (
@@ -298,9 +296,9 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
 
       {addMode === 'choose' && (
         <div className="rounded-xl border border-hair bg-panel p-3">
-          <div className="text-[12.5px] font-bold text-fg">{t('launcher.account.addHeading')}</div>
+          <div className="text-sm font-medium text-fg">{t('launcher.account.addHeading')}</div>
           <ProviderPicker catalog={catalog} value={provider} onChange={setProvider} />
-          <p className="mt-2 text-[11px] leading-snug text-fgdim">{provider === 'codex' ? t('launcher.account.codexAddBody') : t('launcher.account.addBody')}</p>
+          <p className="mt-2 text-xs leading-snug text-fgdim">{provider === 'codex' ? t('launcher.account.codexAddBody') : t('launcher.account.addBody')}</p>
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             {P.methods?.some((m) => m.id === 'browser') && (
@@ -313,22 +311,22 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
                 {provider === 'codex' ? t('launcher.account.codexPasteKey') : t('launcher.account.pasteInstead')}
               </button>
             )}
-            <button type="button" onClick={resetAdd} className="ms-auto text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
+            <button type="button" onClick={resetAdd} className="ms-auto text-xs text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
           </div>
         </div>
       )}
 
       {addMode === 'auth' && auth?.provider === 'codex' && (
         <div className="rounded-xl border border-hair bg-panel p-3" data-codex-device-flow data-state={auth.state}>
-          <div className="flex flex-wrap items-center gap-2 text-[12.5px] font-bold text-fg">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg">
             <ProviderBadge provider="codex" catalog={catalog} />
             {t('launcher.account.addAccountTitle')}{label ? ` · ${label}` : ''}
           </div>
-          {auth.state === 'starting' && <p className="mt-1.5 text-[11.5px] text-fgdim">{t('launcher.account.codexStarting')}</p>}
-          {auth.state === 'verifying' && <p className="mt-1.5 text-[11.5px] text-fgdim">{t('launcher.account.codexVerifying')}</p>}
+          {auth.state === 'starting' && <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexStarting')}</p>}
+          {auth.state === 'verifying' && <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexVerifying')}</p>}
           {auth.state === 'awaiting' && (
             <>
-              <ol className="mt-1.5 ms-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
+              <ol className="mt-1.5 ms-4 list-decimal text-xs leading-relaxed text-fgdim">
                 <li>
                   {t('launcher.account.codexStep1')}
                   {auth.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-info underline">{t('launcher.account.openSignIn')}</a></>}
@@ -345,27 +343,27 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
                 autoFocus
                 dir="ltr"
                 data-codex-callback
-                className={`${INPUT} font-mono text-[11.5px]`}
+                className={`${INPUT} font-mono text-xs`}
               />
-              <p className="mt-1.5 text-[11px] text-fgdim">{t('launcher.account.codexCallbackHint')}</p>
+              <p className="mt-1.5 text-xs text-fgdim">{t('launcher.account.codexCallbackHint')}</p>
             </>
           )}
-          {auth.state === 'error' && <p className="mt-1.5 text-[11.5px] text-[#B23B30]">{auth.error || t('launcher.account.startAuthError')}</p>}
+          {auth.state === 'error' && <p className="mt-1.5 text-xs text-err">{auth.error || t('launcher.account.startAuthError')}</p>}
           <div className="mt-2.5 flex items-center gap-2">
             {auth.state === 'awaiting' && <button type="button" disabled={busy || !code.trim()} onClick={submitCode} className={PRIMARY}>{busy ? t('launcher.account.finishing') : t('launcher.account.finish')}</button>}
             {auth.state === 'error' && <button type="button" disabled={busy} onClick={startAuth} className={PRIMARY}>{t('launcher.account.codexBrowser')}</button>}
-            <button type="button" onClick={cancelAuth} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
+            <button type="button" onClick={cancelAuth} className="text-xs text-fgdim hover:text-fg coarse:min-h-11">{t('launcher.account.cancel')}</button>
           </div>
         </div>
       )}
 
       {addMode === 'auth' && auth?.provider !== 'codex' && (
         <div className="rounded-xl border border-hair bg-panel p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[12.5px] font-bold text-fg">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg">
             <ProviderBadge provider="claude" catalog={catalog} />
             {t('launcher.account.addAccountTitle')}{label ? ` · ${label}` : ''}
           </div>
-          <ol className="mt-1.5 ms-4 list-decimal text-[11.5px] leading-relaxed text-fgdim">
+          <ol className="mt-1.5 ms-4 list-decimal text-xs leading-relaxed text-fgdim">
             <li>
               {t('launcher.account.step1a')}
               {auth?.url && <> — <a href={auth.url} target="_blank" rel="noreferrer" className="text-info underline">{t('launcher.account.openSignIn')}</a></>}
@@ -380,35 +378,35 @@ export default function Accounts({ initialAdd = false, identity, onConnectAuto, 
             placeholder={t('launcher.account.codePlaceholder')}
             spellCheck={false}
             autoFocus
-            className={`${INPUT} font-mono text-[11.5px]`}
+            className={`${INPUT} font-mono text-xs`}
           />
-          {auth?.state === 'error' && <p className="mt-1.5 text-[11.5px] text-[#B23B30]">{auth.error || t('launcher.account.exchangeFailedRetry')}</p>}
+          {auth?.state === 'error' && <p className="mt-1.5 text-xs text-err">{auth.error || t('launcher.account.exchangeFailedRetry')}</p>}
           <div className="mt-2.5 flex items-center gap-2">
             <button type="button" disabled={busy || !code.trim()} onClick={submitCode} className={PRIMARY}>{busy ? t('launcher.account.finishing') : t('launcher.account.finish')}</button>
-            <button type="button" onClick={cancelAuth} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.cancel')}</button>
+            <button type="button" onClick={cancelAuth} className="text-xs text-fgdim hover:text-fg coarse:min-h-11">{t('launcher.account.cancel')}</button>
           </div>
         </div>
       )}
 
       {addMode === 'paste' && (
         <div className="rounded-xl border border-hair bg-panel p-3" data-paste-flow data-provider={provider}>
-          <div className="flex flex-wrap items-center gap-2 text-[12.5px] font-bold text-fg">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fg">
             <ProviderBadge provider={provider} catalog={catalog} />
             {provider === 'codex' ? t('launcher.account.codexPasteTitle') : t('launcher.account.pasteTitle')}
           </div>
           {provider === 'codex' ? (
-            <p className="mt-1 text-[11px] leading-snug text-fgdim">{t('launcher.account.codexPasteBody')}</p>
+            <p className="mt-1 text-xs leading-snug text-fgdim">{t('launcher.account.codexPasteBody')}</p>
           ) : (
-            <p className="mt-1 text-[11px] leading-snug text-fgdim">
+            <p className="mt-1 text-xs leading-snug text-fgdim">
               {t('launcher.account.pasteBodyA')} <code className="rounded bg-chip px-1 font-mono">claude setup-token</code> {t('launcher.account.pasteBodyB')}{' '}
               <code className="font-mono">sk-ant-oat…</code> {t('launcher.account.pasteBodyC')}
             </p>
           )}
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('launcher.account.labelPlaceholder')} className={INPUT} />
-          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder={P.pasteHint || 'sk-…'} spellCheck={false} className={`${INPUT} font-mono text-[11.5px]`} dir="ltr" />
+          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder={P.pasteHint || 'sk-…'} spellCheck={false} className={`${INPUT} font-mono text-xs`} dir="ltr" />
           <div className="mt-2.5 flex items-center gap-2">
             <button type="button" disabled={busy || !token.trim()} onClick={add} className={PRIMARY}>{busy ? t('launcher.account.finishing') : t('launcher.account.addAccountBtn')}</button>
-            <button type="button" onClick={() => setAddMode('choose')} className="text-[11.5px] text-fgdim hover:text-fg">{t('launcher.account.back')}</button>
+            <button type="button" onClick={() => setAddMode('choose')} className="text-xs text-fgdim hover:text-fg coarse:min-h-11">{t('launcher.account.back')}</button>
           </div>
         </div>
       )}

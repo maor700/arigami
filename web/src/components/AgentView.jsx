@@ -34,16 +34,34 @@ import RoutinePanel, { untilTime, nextCronFor } from './RoutineList.jsx';
 import SessionView from './SessionView.jsx';
 import { deleteAgent } from './DelegatedLine.jsx';
 import { Overlay } from './Dialogs.jsx';
-import { GhostButton } from './ui.jsx';
+import { INPUT } from './settings/shared.jsx';
+import { Button } from './ui/button.jsx';
+import { Input, Textarea } from './ui/input.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { DialogTitle } from './ui/dialog.jsx';
+import { Popover, PopoverTrigger, PopoverContent } from './ui/popover.jsx';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu.jsx';
+import { Tip } from './ui/tooltip.jsx';
 import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject, faEllipsis, faBars, faCircleInfo } from '@fortawesome/free-solid-svg-icons';
 
 export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs'];
 const ICONS = { home: faComments, persona: faIdBadge, memory: faBrain, connections: faLink, routine: faClock, activity: faListCheck, runs: faDiagramProject };
 
-const input = 'w-full rounded-[7px] border-[1.5px] border-border bg-panel px-2.5 py-1.5 text-[12px] text-fg outline-none focus:border-ink';
-const lbl = 'mb-1 block font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase';
-const btn = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-chip disabled:opacity-40';
-const btnBrand = 'cursor-pointer rounded-lg border-[1.5px] border-ink bg-brand px-3 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] disabled:opacity-40 disabled:shadow-none';
+const input = `${INPUT} w-full`;
+const lbl = 'mb-1.5 block text-sm font-medium text-fg';
+const hint = 'mt-1.5 text-xs text-fgdim';
+const card = 'rounded-lg border border-hair p-4';
+const cbRow = 'flex cursor-pointer items-center gap-2 text-sm text-fg coarse:min-h-11';
+
+// A labelled checkbox (ui Checkbox, Radix) — `mono` for ids/paths.
+function CheckRow({ checked, onChange, mono, children }) {
+  return (
+    <label className={`${cbRow} ${mono ? 'text-xs' : ''}`}>
+      <Checkbox checked={checked} onCheckedChange={onChange} />
+      <span className={mono ? 'font-mono' : undefined} dir={mono ? 'ltr' : undefined}>{children}</span>
+    </label>
+  );
+}
 
 function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const t = useT();
@@ -82,32 +100,32 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const cancelDraft = () => onDeleted?.();
   return (
     <div className="flex flex-col gap-4">
-      <section className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.identity')}</div>
+      <section className={card}>
+        <div className="mb-3 text-xs font-medium text-fgdim">{t('agent.page.identity')}</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div><label className={lbl}>{t('agent.card.name')}</label><input dir="auto" value={form.name} onChange={set('name')} className={input} /></div>
+          <div><label className={lbl}>{t('agent.card.name')}</label><Input dir="auto" value={form.name} onChange={set('name')} /></div>
           <div className="grid grid-cols-[64px_1fr] gap-2">
-            <div><label className={lbl}>{t('agent.card.emoji')}</label><input value={form.emoji} onChange={set('emoji')} className={`${input} text-center`} /></div>
-            <div><label className={lbl}>{t('agent.card.color')}</label><input type="color" value={form.color} onChange={set('color')} className="h-[34px] w-full cursor-pointer rounded-[7px] border-[1.5px] border-border bg-panel p-0.5" /></div>
+            <div><label className={lbl}>{t('agent.card.emoji')}</label><Input value={form.emoji} onChange={set('emoji')} className="text-center" /></div>
+            <div><label className={lbl}>{t('agent.card.color')}</label><input type="color" value={form.color} onChange={set('color')} className="h-8 w-full cursor-pointer rounded-md border border-input bg-background p-0.5 coarse:h-11" /></div>
           </div>
           {isNew && (
             <div className="sm:col-span-2">
               <label className={lbl}>{t('agent.card.slug')}</label>
-              <input data-agent-field="slug" dir="ltr" value={form.slug} onChange={set('slug')} placeholder="marketing-lead" className={`${input} font-mono`} />
+              <Input data-agent-field="slug" dir="ltr" value={form.slug} onChange={set('slug')} placeholder="marketing-lead" className="font-mono" />
             </div>
           )}
         </div>
       </section>
-      <section className="rounded-[10px] border border-hair p-3">
+      <section className={card}>
         <label className={lbl}>{t('agent.card.persona')}</label>
-        <textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className={`${input} resize-y font-mono text-[11.5px] leading-relaxed`} />
+        <Textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className="font-mono text-xs" />
       </section>
-      <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
+      <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-fgdim hover:text-fg coarse:min-h-11" aria-expanded={advanced}>
         <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
       </button>
       {advanced && (
-      <section className="rounded-[10px] border border-hair p-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <section className={card}>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* the model list below is this engine's catalog; switching engines drops a model the new one lacks */}
           <EngineToggle
             data-agent-field="engine"
@@ -123,40 +141,40 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
               {agentModelOptions(form.engine, models, form.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>{t('agent.card.budget')}</label><input type="number" min="0" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className={input} /></div>
+          <div><label className={lbl}>{t('agent.card.budget')}</label><Input type="number" min="0" dir="ltr" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className="tabular-nums" /></div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.tools')}</label>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {TOOL_FAMILIES.map((id) => (
-                <label key={id} className="flex cursor-pointer items-center gap-1 text-[11.5px] text-fg"><input type="checkbox" checked={form.tools.includes(id)} onChange={() => toggle('tools', id)} /> {t(`agent.tool.${id}`)}</label>
+                <CheckRow key={id} checked={form.tools.includes(id)} onChange={() => toggle('tools', id)}>{t(`agent.tool.${id}`)}</CheckRow>
               ))}
               {form.tools.filter((x) => !TOOL_FAMILIES.includes(x)).map((x) => (
-                <label key={x} className="flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10.5px] text-fg"><input type="checkbox" checked onChange={() => toggle('tools', x)} /> {x}</label>
+                <CheckRow key={x} mono checked onChange={() => toggle('tools', x)}>{x}</CheckRow>
               ))}
             </div>
-            <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.card.toolsHint')}</div>
+            <div className={hint}>{t('agent.card.toolsHint')}</div>
           </div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.domains')}</label>
-            <input dir="ltr" value={form.domains} onChange={set('domains')} placeholder="example.com, *.notion.so" className={`${input} font-mono`} />
-            <div className="mt-1 text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.card.domainsHint')}</div>
+            <Input dir="ltr" value={form.domains} onChange={set('domains')} placeholder="example.com, *.notion.so" className="font-mono" />
+            <div className={hint}>{t('agent.card.domainsHint')}</div>
           </div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.autoApprove')}</label>
-            {form.autoApprove.length === 0 ? <span className="text-[11px] text-fgdim">{t('agent.card.autoApproveNone')}</span> : (
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {form.autoApprove.length === 0 ? <span className="text-xs text-fgdim">{t('agent.card.autoApproveNone')}</span> : (
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                 {form.autoApprove.map((k) => (
-                  <label key={k} className="flex cursor-pointer items-center gap-1 font-mono text-[11px] text-fg"><input type="checkbox" checked onChange={() => toggle('autoApprove', k)} /> {k}</label>
+                  <CheckRow key={k} mono checked onChange={() => toggle('autoApprove', k)}>{k}</CheckRow>
                 ))}
               </div>
             )}
           </div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.skills')}</label>
-            {skillNames.length === 0 ? <span className="text-[11px] text-fgdim">{t('agent.card.noSkills')}</span> : (
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {skillNames.length === 0 ? <span className="text-xs text-fgdim">{t('agent.card.noSkills')}</span> : (
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                 {skillNames.map((n) => (
-                  <label key={n} className="flex cursor-pointer items-center gap-1 font-mono text-[11px] text-fg"><input type="checkbox" checked={form.skills.includes(n)} onChange={() => toggle('skills', n)} /> {n}</label>
+                  <CheckRow key={n} mono checked={form.skills.includes(n)} onChange={() => toggle('skills', n)}>{n}</CheckRow>
                 ))}
               </div>
             )}
@@ -165,9 +183,9 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       </section>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" data-agent-save onClick={save} disabled={busy || !form.name.trim()} className={btnBrand}>{t(isNew ? 'agent.page.create' : 'agent.page.save')}</button>
-        {!isNew && <button type="button" onClick={onOpenHome} className={btn}><Icon icon={faComments} /> {t('agent.page.openHome')}</button>}
-        {isNew && <button type="button" data-agent-discard onClick={cancelDraft} className={`${btn} ms-auto`}>{t('agent.page.cancel')}</button>}
+        <Button variant="primary" data-agent-save onClick={save} disabled={busy || !form.name.trim()}>{t(isNew ? 'agent.page.create' : 'agent.page.save')}</Button>
+        {!isNew && <Button onClick={onOpenHome}><Icon icon={faComments} /> {t('agent.page.openHome')}</Button>}
+        {isNew && <Button data-agent-discard onClick={cancelDraft} className="ms-auto">{t('agent.page.cancel')}</Button>}
       </div>
     </div>
   );
@@ -185,21 +203,21 @@ function MemoryTab({ agent }) {
     if (!selected) return;
     api.get(`/memory/get?path=${encodeURIComponent(selected)}`).then((r) => setContent(r.content || '')).catch(() => setContent(''));
   }, [selected]);
-  if (files === null) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (files === null) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   const journal = files.filter((f) => f.path !== memPath);
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[11.5px] text-fgdim">{t('agent.page.memoryHint')}</div>
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 flex items-center gap-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
-          <button type="button" onClick={() => setSelected(memPath)} className={`cursor-pointer rounded px-1.5 py-0.5 ${selected === memPath ? 'bg-chip text-fg' : ''}`}>{t('agent.page.memoryDoc')}</button>
+      <div className="text-xs text-fgdim">{t('agent.page.memoryHint')}</div>
+      <div className={card}>
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium text-fgdim">
+          <button type="button" onClick={() => setSelected(memPath)} className={`cursor-pointer rounded-md px-1.5 py-0.5 coarse:min-h-11 ${selected === memPath ? 'bg-muted text-fg' : ''}`}>{t('agent.page.memoryDoc')}</button>
           <span>·</span>
           <span>{t('agent.page.journal')} · {journal.length}</span>
           {journal.map((f) => (
-            <button key={f.path} type="button" onClick={() => setSelected(f.path)} className={`cursor-pointer rounded px-1.5 py-0.5 normal-case tracking-normal ${selected === f.path ? 'bg-chip text-fg' : ''}`}>{f.path.split('/').pop()}</button>
+            <button key={f.path} type="button" onClick={() => setSelected(f.path)} className={`cursor-pointer rounded-md px-1.5 py-0.5 coarse:min-h-11 ${selected === f.path ? 'bg-muted text-fg' : ''}`}>{f.path.split('/').pop()}</button>
           ))}
         </div>
-        <pre dir="auto" className="thin-scroll max-h-[420px] min-h-[80px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-hair bg-bg p-2 text-[11px] leading-relaxed text-fg">
+        <pre dir="auto" className="thin-scroll max-h-[420px] min-h-[80px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-hair bg-bg p-2 font-mono text-xs leading-relaxed text-fg">
           {content || (selected === memPath ? t('brain.docEmpty') : t('agent.page.journalEmpty'))}
         </pre>
       </div>
@@ -208,7 +226,7 @@ function MemoryTab({ agent }) {
 }
 
 const RANGES = ['today', '7d', '30d'];
-const KIND_TONE = { session: 'text-fgdim', turn: 'text-fg', action: 'text-[#CE8324]', artifact: 'text-[#1F9C82]', policy: 'text-danger', budget: 'text-danger' };
+const KIND_TONE = { session: 'text-fgdim', turn: 'text-fg', action: 'text-warn', artifact: 'text-ok', policy: 'text-danger', budget: 'text-danger' };
 
 // A3: one ledger line — time · kind · what · tokens/cost.
 export function ActivityRow({ e, onOpenSession }) {
@@ -221,14 +239,14 @@ export function ActivityRow({ e, onOpenSession }) {
   if (e.kind === 'policy') what = e.reason || e.detail || '';
   if (e.kind === 'turn') what = e.model || '';
   return (
-    <div data-activity-kind={e.kind} className="flex items-baseline gap-2 border-b border-hair py-1 text-[11px] last:border-b-0">
-      <span className="w-[76px] shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{day} {hhmm}</span>
-      <span className={`w-[72px] shrink-0 font-mono text-[11.5px] md:text-[10px] uppercase ${KIND_TONE[e.kind] || 'text-fg'}`}>{t(`agent.activity.kind.${e.kind}`)}</span>
+    <div data-activity-kind={e.kind} className="flex items-baseline gap-2 border-b border-hair py-1 text-xs last:border-b-0">
+      <span className="w-[76px] shrink-0 font-mono text-xs text-fgdim" dir="ltr">{day} {hhmm}</span>
+      <span className={`w-[72px] shrink-0 text-xs font-medium ${KIND_TONE[e.kind] || 'text-fg'}`}>{t(`agent.activity.kind.${e.kind}`)}</span>
       <span dir="auto" className="min-w-0 flex-1 truncate text-fg">
-        {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-[11.5px] md:text-[10px] text-fgdim underline">{String(e.sessionId).slice(5, 11)}</button> : null}
+        {e.sessionId ? <button type="button" onClick={() => onOpenSession?.(e.sessionId)} className="cursor-pointer font-mono text-xs text-fgdim underline coarse:min-h-11">{String(e.sessionId).slice(5, 11)}</button> : null}
         {e.sessionId && what ? ' · ' : ''}{what}
       </span>
-      {e.kind === 'turn' && <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(e.tokens)} · {fmtCost(e.costUsd, t)}</span>}
+      {e.kind === 'turn' && <span className="shrink-0 text-xs text-fgdim tabular-nums" dir="ltr">{fmtTokens(e.tokens)} · {fmtCost(e.costUsd, t)}</span>}
     </div>
   );
 }
@@ -244,19 +262,19 @@ export function ActivityTotals({ totals, budget }) {
   return (
     <div data-activity-totals className="grid grid-cols-4 gap-2 sm:grid-cols-7">
       {cells.map(([k, v]) => (
-        <div key={k} className="rounded-[8px] border border-hair px-2 py-1.5">
-          <div className="font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{t(`agent.activity.${k}`)}</div>
-          <div className={`font-mono text-[13px] font-bold ${k === 'denied' && v ? 'text-danger' : 'text-fg'}`} dir="ltr">{v}</div>
+        <div key={k} className="rounded-md border border-hair px-2 py-1.5">
+          <div className="text-xs text-fgdim">{t(`agent.activity.${k}`)}</div>
+          <div className={`text-sm font-medium tabular-nums ${k === 'denied' && v ? 'text-danger' : 'text-fg'}`} dir="ltr">{v}</div>
         </div>
       ))}
-      <div data-activity-budget className="col-span-4 rounded-[8px] border border-hair px-2 py-1.5 sm:col-span-7">
-        <span className="font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.budget')} · </span>
+      <div data-activity-budget className="col-span-4 rounded-md border border-hair px-2 py-1.5 sm:col-span-7">
+        <span className="text-xs text-fgdim">{t('agent.activity.budget')} · </span>
         {budget?.cap ? (
-          <span className={`font-mono text-[11px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fg'}`} dir="ltr">
+          <span className={`text-xs tabular-nums ${budget.exceeded ? 'font-medium text-danger' : 'text-fg'}`} dir="ltr">
             {fmtTokens(budget.usedTokens)} / {fmtTokens(budget.cap)} ({Math.min(100, Math.round((budget.usedTokens / budget.cap) * 100))}%)
             {budget.exceeded ? ` — ${t('agent.activity.budgetExceeded', { at: hhmm })}` : ''}
           </span>
-        ) : <span className="font-mono text-[11px] text-fgdim">{t('agent.activity.budgetNone')}</span>}
+        ) : <span className="text-xs text-fgdim">{t('agent.activity.budgetNone')}</span>}
       </div>
     </div>
   );
@@ -278,40 +296,40 @@ function ActivityTab({ agent, onOpenSession }) {
     if (!ep) return;
     api.get(`/memory/get?path=${encodeURIComponent(ep)}`).then((r) => setEpText(r.content || '')).catch(() => setEpText(''));
   }, [ep]);
-  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (!data) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   const entries = data.entries || [];
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-1.5">
         {RANGES.map((r) => (
-          <button key={r} type="button" data-range={r} aria-pressed={range === r} onClick={() => setRange(r)} className={`cursor-pointer rounded-full border px-3 py-0.5 text-[11px] ${range === r ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim hover:text-fg'}`}>{t(`agent.activity.range.${r}`)}</button>
+          <button key={r} type="button" data-range={r} aria-pressed={range === r} onClick={() => setRange(r)} className={`cursor-pointer rounded-md px-3 py-1 text-xs font-medium coarse:min-h-11 ${range === r ? 'bg-muted text-fg shadow-[0_0_0_1px_var(--hb-hair)]' : 'text-fgdim hover:text-fg'}`}>{t(`agent.activity.range.${r}`)}</button>
         ))}
       </div>
       <ActivityTotals totals={data.totals} budget={data.budget} />
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.activity.ledger')} · {entries.length}</div>
-        {entries.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.activity.empty')}</div>}
+      <div className={card}>
+        <div className="mb-2 text-xs font-medium text-fgdim">{t('agent.activity.ledger')} · {entries.length}</div>
+        {entries.length === 0 && <div className="text-xs text-fgdim">{t('agent.activity.empty')}</div>}
         <div className="thin-scroll max-h-[420px] overflow-y-auto">
           {entries.map((e, i) => <ActivityRow key={`${e.ts}-${i}`} e={e} onOpenSession={onOpenSession} />)}
         </div>
       </div>
-      <button type="button" onClick={() => setShowEp((v) => !v)} className="flex cursor-pointer items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg">
+      <button type="button" onClick={() => setShowEp((v) => !v)} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-fgdim hover:text-fg">
         <Icon icon={showEp ? faCaretDown : faCaretRight} /> {showEp ? t('agent.activity.hideEpisodes') : t('agent.activity.showEpisodes')} · {data.episodes.length}
       </button>
       {showEp && (
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.page.episodes')} · {data.episodes.length}</div>
-        {data.episodes.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.page.noEpisodes')}</div>}
+      <div className="rounded-lg border border-hair p-3">
+        <div className="mb-2 text-xs font-medium text-fgdim">{t('agent.page.episodes')} · {data.episodes.length}</div>
+        {data.episodes.length === 0 && <div className="text-xs text-fgdim">{t('agent.page.noEpisodes')}</div>}
         {data.episodes.length > 0 && (
           <div className="flex gap-3">
             <div className="thin-scroll flex max-h-[260px] w-[200px] shrink-0 flex-col gap-0.5 overflow-y-auto">
               {data.episodes.map((e) => (
-                <button key={e.path} type="button" onClick={() => setEp(e.path)} className={`truncate rounded-[6px] px-2 py-1 text-start font-mono text-[11.5px] md:text-[10.5px] ${ep === e.path ? 'bg-chip text-fg' : 'text-fgdim hover:bg-chip/60'}`}>
+                <button key={e.path} type="button" onClick={() => setEp(e.path)} className={`truncate rounded-md px-2 py-1 text-start font-mono text-xs coarse:min-h-11 ${ep === e.path ? 'bg-muted text-fg' : 'text-fgdim hover:bg-muted'}`}>
                   {e.path.split('/').pop()}
                 </button>
               ))}
             </div>
-            <pre dir="auto" className="thin-scroll min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-hair bg-bg p-2 text-[11px] leading-relaxed text-fg">{epText}</pre>
+            <pre dir="auto" className="thin-scroll min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-hair bg-bg p-2 font-mono text-xs leading-relaxed text-fg">{epText}</pre>
           </div>
         )}
       </div>
@@ -346,8 +364,8 @@ function HomeTab({ agent, onOpenSession }) {
   }, [agent.slug]);
   const id = home?.id || agent.homeSessionId || null;
   const session = (id && (sessions || []).find((s) => s.id === id)) || home;
-  if (err) return <div data-home-error className="px-4 py-5 text-[12px] text-danger">{t('agent.surface.homeFailed', { err })}</div>;
-  if (!session) return <div className="px-4 py-5 text-[11.5px] text-fgdim">{t('agent.surface.homeOpening')}</div>;
+  if (err) return <div data-home-error className="px-4 py-5 text-sm text-danger">{t('agent.surface.homeFailed', { err })}</div>;
+  if (!session) return <div className="px-4 py-5 text-xs text-fgdim">{t('agent.surface.homeOpening')}</div>;
   // AGENT-PAGE: the home chat gets the SAME tab row a work session has (desktop,
   // artifacts, url tabs the agent opens) — SessionView in `homeAgent` mode
   // renders AgentHomeChat in the session pane and the shared TabBar above it.
@@ -374,17 +392,17 @@ export function RunsList({ sessions, onOpenSession }) {
   const runs = (sessions || []).filter((s) => !s.home);
   return (
     <div data-agent-runs className="flex flex-col gap-3">
-      <div className="text-[11.5px] text-fgdim">{t('agent.oneLiner')}</div>
-      <div className="rounded-[10px] border border-hair p-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">{t('agent.runs.title')} · {runs.length}</div>
-        {runs.length === 0 && <div className="text-[11px] text-fgdim">{t('agent.runs.empty', { oneLiner: t('agent.oneLiner') })}</div>}
+      <div className="text-xs text-fgdim">{t('agent.oneLiner')}</div>
+      <div className="rounded-lg border border-hair p-3">
+        <div className="mb-2 text-xs font-medium text-fgdim">{t('agent.runs.title')} · {runs.length}</div>
+        {runs.length === 0 && <div className="text-xs text-fgdim">{t('agent.runs.empty', { oneLiner: t('agent.oneLiner') })}</div>}
         {runs.map((s) => (
-          <button key={s.id} type="button" data-agent-run={s.id} onClick={() => onOpenSession(s.id)} className={`flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 text-start hover:bg-chip/60 ${s.archived ? 'opacity-60' : ''}`}>
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? '#CE8324' : '#c4c4c4' }} />
-            <span dir="auto" className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-bold text-fg">{s.title}</span>
-            {s.archived && <span className="shrink-0 rounded-full bg-chip px-1.5 py-px font-mono text-[11px] md:text-[9px] text-fgdim">{t('agent.runs.archived')}</span>}
-            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" dir="ltr">{fmtTokens(s.tokens)} · {fmtCost(s.costUsd, t)}</span>
-            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
+          <button key={s.id} type="button" data-agent-run={s.id} onClick={() => onOpenSession(s.id)} className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start hover:bg-muted coarse:min-h-11 ${s.archived ? 'opacity-60' : ''}`}>
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.claudeState === 'working' ? 'var(--hb-warn)' : 'var(--color-fgdim)' }} />
+            <span dir="auto" className="min-w-0 flex-1 truncate text-sm font-medium text-fg">{s.title}</span>
+            {s.archived && <span className="shrink-0 rounded-sm bg-muted px-1.5 py-px text-2xs text-fgdim">{t('agent.runs.archived')}</span>}
+            <span className="shrink-0 text-xs text-fgdim tabular-nums" dir="ltr">{fmtTokens(s.tokens)} · {fmtCost(s.costUsd, t)}</span>
+            <span className="shrink-0 text-xs text-fgdim">{[s.status, relTime(s.updatedAt)].filter(Boolean).join(' · ')}</span>
           </button>
         ))}
       </div>
@@ -404,7 +422,7 @@ export function RunsTab({ agent, onOpenSession }) {
       .catch(() => { if (!stop) setData({ sessions: [] }); });
     return () => { stop = true; };
   }, [agent.slug, agent.updatedAt]);
-  if (!data) return <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  if (!data) return <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   return <RunsList sessions={data.sessions} onOpenSession={onOpenSession} />;
 }
 
@@ -438,7 +456,7 @@ export function SurfaceStatus({ agent, sessions, triggers }) {
           ? t('rail.teamSession')
           : t('rail.teamSessions', { n: runs });
   return (
-    <span data-agent-status={working ? 'working' : nextCron ? 'next-run' : 'idle'} className="flex shrink-0 items-center gap-1.5 font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
+    <span data-agent-status={working ? 'working' : nextCron ? 'next-run' : 'idle'} className="flex shrink-0 items-center gap-1.5 text-xs text-fgdim">
       {working
         ? <span className="host-spinner h-[11px] w-[11px]" />
         : <span className="h-[7px] w-[7px] rounded-full" style={{ background: agent.color || '#c4c4c4', opacity: nextCron || runs ? 1 : 0.45 }} />}
@@ -450,14 +468,14 @@ export function SurfaceStatus({ agent, sessions, triggers }) {
 /** UX1 — today's token spend against the agent's daily cap (A3), as a bar. */
 export function BudgetBar({ budget }) {
   const t = useT();
-  if (!budget?.cap) return <span data-agent-budget="none" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.surface.budgetNone')}</span>;
+  if (!budget?.cap) return <span data-agent-budget="none" className="text-xs text-fgdim">{t('agent.surface.budgetNone')}</span>;
   const pct = Math.min(100, Math.round((budget.usedTokens / budget.cap) * 100));
   return (
     <span data-agent-budget={budget.exceeded ? 'exceeded' : 'ok'} className="flex min-w-0 shrink items-center gap-2">
-      <span className="h-[6px] w-[90px] shrink-0 overflow-hidden rounded-full bg-chip">
-        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: budget.exceeded ? 'var(--danger, #C0392B)' : '#1F9C82' }} />
+      <span className="h-1.5 w-[90px] shrink-0 overflow-hidden rounded-full bg-muted">
+        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: budget.exceeded ? 'var(--hb-err)' : 'var(--hb-ok)' }} />
       </span>
-      <span dir="ltr" className={`truncate font-mono text-[11.5px] md:text-[10.5px] ${budget.exceeded ? 'font-bold text-danger' : 'text-fgdim'}`}>
+      <span dir="ltr" className={`truncate text-xs tabular-nums ${budget.exceeded ? 'font-medium text-danger' : 'text-fgdim'}`}>
         {budget.exceeded
           ? t('agent.surface.budgetExceeded')
           : t('agent.surface.budget', { used: fmtTokens(budget.usedTokens), cap: fmtTokens(budget.cap) })}
@@ -472,51 +490,34 @@ export const NEW_AGENT_SLUG = '__new__';
 
 const DRAFT_COLOR = '#6A4FC4';
 
-/** Close a popover on an outside click or Escape (Escape is swallowed so the surface stays open). */
-function useDismiss(ref, open, onClose) {
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
-  }, [ref, open, onClose]);
-}
-
-const row = 'flex items-baseline gap-2 border-b border-hair py-1.5 text-[11.5px] last:border-b-0';
-const rowLbl = 'w-[88px] shrink-0 font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase';
+const row = 'flex items-baseline gap-3 border-b border-hair py-2 text-sm last:border-b-0';
+const rowLbl = 'w-[88px] shrink-0 text-xs text-fgdim';
 
 /**
  * AGENT-PAGE: everything that used to sit in the tall header — handle, persona
- * line, model, tools, domains, budget, skills, auto-approve — as a drawer under
- * the one-row header, opened from the name or the ⋯ menu.
+ * line, model, tools, domains, budget, skills, auto-approve — as a popover under
+ * the one-row header, opened from the name or the ⋯ menu. This is the popover's
+ * BODY (AgentView wraps it in a ui Popover anchored to the name button).
  */
 export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
   const t = useT();
-  const ref = useRef(null);
-  useDismiss(ref, true, onClose);
   const persona = personaLine(agent.persona);
   const tools = agent.tools || [];
   const line = (label, value, key) => (value ? <div key={key} className={row}><span className={rowLbl}>{label}</span><span dir="auto" className="min-w-0 flex-1 break-words text-fg">{value}</span></div> : null);
   return (
-    <div
-      ref={ref}
-      data-agent-details-drawer
-      role="dialog"
-      aria-label={t('agent.page.details')}
-      className="absolute top-full start-0 z-30 w-full max-h-[70vh] overflow-y-auto thin-scroll border-b-[1.5px] border-ink bg-panel px-4 py-3 shadow-[0_6px_0_rgba(42,42,42,0.12)] sm:start-3 sm:w-[440px] sm:rounded-b-[12px] sm:border-x-[1.5px]"
-    >
+    <div data-agent-details-drawer role="dialog" aria-label={t('agent.page.details')}>
       <div className="flex items-start gap-3">
         <AgentAvatar agent={agent} size={40} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span dir="auto" className="text-[15px] leading-tight font-bold text-fg">{agent.name}</span>
-            <span dir="ltr" className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">@{agent.slug}</span>
+            <span dir="auto" className="text-base leading-tight font-semibold text-fg">{agent.name}</span>
+            <span dir="ltr" className="text-xs text-fgdim">@{agent.slug}</span>
           </div>
-          {persona && <div dir="auto" className="mt-0.5 text-[11.5px] leading-snug text-fgdim">{persona}</div>}
+          {persona && <div dir="auto" className="mt-0.5 text-xs leading-snug text-fgdim">{persona}</div>}
         </div>
-        <button type="button" onClick={onClose} aria-label={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[14px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
+        <Tip label={t('chrome.settings.closeTitle')}>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('chrome.settings.closeTitle')}><Icon icon={faXmark} /></Button>
+        </Tip>
       </div>
       <div className="mt-3">
         <div className={row}><span className={rowLbl}>{t('agent.card.budget')}</span><span className="min-w-0 flex-1"><BudgetBar budget={budget} /></span></div>
@@ -529,8 +530,8 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
         {line('', agent.createdAt ? t('agent.page.created', { when: relTime(agent.createdAt) }) : null, 'created')}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button type="button" data-agent-details-edit onClick={onEditPersona} className={btn}><Icon icon={faIdBadge} /> {t('agent.page.editPersona')}</button>
-        <span className="text-[11.5px] md:text-[10.5px] text-fgdim">{t('agent.oneLiner')}</span>
+        <Button data-agent-details-edit onClick={onEditPersona}><Icon icon={faIdBadge} /> {t('agent.page.editPersona')}</Button>
+        <span className="text-xs text-fgdim">{t('agent.oneLiner')}</span>
       </div>
     </div>
   );
@@ -545,11 +546,11 @@ export function AgentDetailsDrawer({ agent, budget, onClose, onEditPersona }) {
  * name does all three.
  */
 export function DeleteAgentDialog({ agent, onClose, onDeleted }) {
-  return <Overlay onClose={onClose}><DeleteAgentForm agent={agent} onClose={onClose} onDeleted={onDeleted} /></Overlay>;
+  return <Overlay onClose={onClose} size="md"><DeleteAgentForm agent={agent} onClose={onClose} onDeleted={onDeleted} titleAs={DialogTitle} /></Overlay>;
 }
 
-/** The dialog's body (exported so it can be rendered without the portal). */
-export function DeleteAgentForm({ agent, onClose, onDeleted }) {
+/** The dialog's body (exported so it can be rendered without the portal; `titleAs` is the Dialog's title part when inside one). */
+export function DeleteAgentForm({ agent, onClose, onDeleted, titleAs: Title = 'div' }) {
   const t = useT();
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
@@ -564,58 +565,65 @@ export function DeleteAgentForm({ agent, onClose, onDeleted }) {
     if (ok) { onDeleted?.(); onClose(); }
   };
   return (
-      <div data-agent-delete-dialog className="w-[400px] max-w-full overflow-hidden rounded-xl border-2 border-danger bg-panel text-fg shadow-[5px_6px_0_rgba(178,59,48,0.25)]">
-        <div className="px-[18px] pt-4">
-          <div className="text-[17px] leading-tight font-bold text-danger">{t('agent.page.deleteTitle')}</div>
-          <p dir="auto" className="mt-2 text-[12px] leading-normal text-fgdim">{t('agent.page.deleteConfirm', { name: agent.name })}</p>
-          <label className="mt-3 block text-[12px] text-fg">
-            {t('agent.page.deleteTypeName')} <span dir="auto" className="font-mono font-bold select-all">{agent.name}</span>
-          </label>
-          <input
-            ref={ref}
-            data-agent-delete-name
-            dir="auto"
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') del(); }}
-            placeholder={agent.name}
-            autoComplete="off"
-            className="mt-1.5 w-full rounded-lg border-[1.5px] border-danger/50 bg-bg px-2.5 py-2 text-[12.5px] outline-none placeholder:text-fgdim/60 focus:border-danger"
-          />
-          {typed && !match && <div className="mt-1 text-[11.5px] md:text-[10.5px] text-danger">{t('agent.page.deleteNameMismatch')}</div>}
-        </div>
-        <div className="flex justify-end gap-[9px] p-[16px_18px]">
-          <GhostButton onClick={onClose}>{t('dialogs.cancel')}</GhostButton>
-          <button
-            type="button"
-            data-agent-delete-confirm
-            onClick={del}
-            disabled={!match || busy}
-            className="cursor-pointer rounded-lg border-2 border-danger bg-danger px-4 py-2 text-[12.5px] font-bold text-white shadow-[2px_2px_0_#7d2a23] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-          >
-            {busy ? t('agent.page.deleteBusy') : t('agent.page.deleteDo')}
-          </button>
-        </div>
+    <div data-agent-delete-dialog className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <Title className="text-base font-semibold text-destructive">{t('agent.page.deleteTitle')}</Title>
+        <p dir="auto" className="text-sm text-fgdim">{t('agent.page.deleteConfirm', { name: agent.name })}</p>
       </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="agent-delete-name" className="text-sm text-fg">
+          {t('agent.page.deleteTypeName')} <bdi dir="auto" className="font-medium select-all">{agent.name}</bdi>
+        </label>
+        <Input
+          id="agent-delete-name"
+          ref={ref}
+          data-agent-delete-name
+          dir="auto"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') del(); }}
+          placeholder={agent.name}
+          autoComplete="off"
+          aria-invalid={typed && !match ? true : undefined}
+        />
+        {typed && !match && <div className="text-xs text-danger">{t('agent.page.deleteNameMismatch')}</div>}
+      </div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="destructive" data-agent-delete-confirm onClick={del} disabled={!match || busy}>
+          {busy ? t('agent.page.deleteBusy') : t('agent.page.deleteDo')}
+        </Button>
+      </div>
+    </div>
   );
 }
 
+// Menu open-state lives in AgentView's `pop` so the page's Escape handler can
+// tell "a menu is open" from "bare surface". Functional update: an item's
+// onSelect may already have moved `pop` on (menu → details/delete) before the
+// menu reports that it closed.
+const popOpen = (setPop, id) => (o) => setPop((p) => (o ? id : p === id ? null : p));
+
 /** The ⋯ menu: details, and the delete — danger-styled, separated, last. */
-export function MoreMenu({ onClose, onDetails, onDelete }) {
+export function MoreMenu({ open, onOpenChange, onCloseAutoFocus, onDetails, onDelete }) {
   const t = useT();
-  const ref = useRef(null);
-  useDismiss(ref, true, onClose);
-  const item = 'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12px] hover:bg-chip';
   return (
-    <div ref={ref} data-agent-menu role="menu" className="absolute top-full end-2 z-30 mt-1 w-[200px] rounded-[10px] border-[1.5px] border-ink bg-panel p-1.5 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-      <button type="button" role="menuitem" data-agent-menu-details onClick={() => { onClose(); onDetails(); }} className={`${item} text-fg`}>
-        <span className="w-4 text-center text-[12px] text-fgdim"><Icon icon={faCircleInfo} /></span> {t('agent.page.details')}
-      </button>
-      <div className="my-1 border-t border-hair" />
-      <button type="button" role="menuitem" data-agent-delete onClick={() => { onClose(); onDelete(); }} className={`${item} text-danger hover:bg-danger/10`}>
-        <span className="w-4 text-center text-[12px]"><Icon icon={faTrash} /></span> {t('agent.page.delete')}…
-      </button>
-    </div>
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
+      <Tip label={t('agent.page.more')}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-sm" data-agent-more aria-label={t('agent.page.more')}><Icon icon={faEllipsis} /></Button>
+        </DropdownMenuTrigger>
+      </Tip>
+      <DropdownMenuContent data-agent-menu align="end" className="w-52" onCloseAutoFocus={onCloseAutoFocus}>
+        <DropdownMenuItem data-agent-menu-details onSelect={onDetails}>
+          <Icon icon={faCircleInfo} /> {t('agent.page.details')}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" data-agent-delete onSelect={onDelete}>
+          <Icon icon={faTrash} /> {t('agent.page.delete')}…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -670,33 +678,31 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
   const openSession = (id) => (id && id === agent?.homeSessionId ? setTab('home') : onOpenSession?.(id));
   const closePop = () => setPop(null);
 
-  const navItem = (id, { inMenu = false } = {}) => {
+  const navItem = (id) => {
     const disabled = isNew && id !== 'persona';
     const current = effectiveTab === id;
     return (
+      // native title (not Tip): a disabled button never receives the pointer events a tooltip needs
       <button
-        key={id}
-        type="button"
-        data-agent-tab={id}
-        disabled={disabled}
-        title={disabled ? t('agent.page.tabDisabledHint') : undefined}
-        onClick={() => { if (disabled) return; setTab(id); if (inMenu) closePop(); }}
-        aria-current={current ? 'page' : undefined}
-        className={inMenu
-          ? `flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-[12.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-chip'} ${current ? 'font-bold text-fg' : 'text-fgdim'}`
-          : `flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${current ? 'border-ink bg-panel font-bold text-fg' : 'border-transparent text-fgdim hover:text-fg'}`}
-        style={!inMenu && current ? { borderColor: color, background: `${color}1a` } : undefined}
-      >
-        <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[id]} /></span>
-        {t(`agent.page.tab.${id}`)}
-      </button>
+          key={id}
+          type="button"
+          data-agent-tab={id}
+          title={disabled ? t('agent.page.tabDisabledHint') : undefined}
+          disabled={disabled}
+          onClick={() => { if (!disabled) setTab(id); }}
+          aria-current={current ? 'page' : undefined}
+          className={`flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium whitespace-nowrap outline-none focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11 ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'} ${current ? 'bg-muted text-fg' : 'text-fgdim hover:text-fg'}`}
+        >
+          <span className="w-4 text-center"><Icon icon={ICONS[id]} /></span>
+          {t(`agent.page.tab.${id}`)}
+        </button>
     );
   };
 
   let body;
   if (isNew) body = <PersonaTab key="draft" agent={agent} isNew onSaved={(a) => onCreated?.(a)} onDeleted={onClose} />;
-  else if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-[12px] text-fgdim">{t('agent.page.notFound')}</div>;
-  else if (!agent) body = <div className="text-[11px] text-fgdim">{t('dialogs.loading')}</div>;
+  else if (missing || (!agent && fetched === null && agents?.length)) body = <div className="text-sm text-fgdim">{t('agent.page.notFound')}</div>;
+  else if (!agent) body = <div className="text-xs text-fgdim">{t('dialogs.loading')}</div>;
   else if (effectiveTab === 'home') body = <HomeTab agent={agent} onOpenSession={openSession} />;
   else if (effectiveTab === 'memory') body = <MemoryTab agent={agent} />;
   else if (effectiveTab === 'activity') body = <ActivityTab agent={agent} onOpenSession={openSession} />;
@@ -708,75 +714,78 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
   const title = agent?.name || (isNew ? t('agent.page.createTitle') : t('agent.page.title'));
   return (
     // AGENT-PAGE: ONE row — hamburger (mobile) · avatar · name · status · tab
-    // switcher · ⋯ · ✕. The accent wash keeps it reading as the agent's place;
-    // everything else (handle, persona line, budget, model, tools…) lives in
-    // the details drawer under the name.
+    // switcher · ⋯ · ✕. A faint wash of the agent's colour keeps it reading as
+    // the agent's place; everything else (handle, persona line, budget, model,
+    // tools…) lives in the details popover under the name.
     <div data-agent-page={slug} data-agent-surface={slug} className="flex min-h-0 flex-1 flex-col bg-panel">
-      <div data-agent-header className="relative z-20 flex h-11 shrink-0 items-center gap-2 border-b-[1.5px] px-3" style={{ background: `linear-gradient(180deg, ${color}26, ${color}0d)`, borderColor: `${color}66` }}>
-        <button
-          type="button"
+      <div data-agent-header className="relative z-20 flex h-11 shrink-0 items-center gap-2 border-b border-hair px-3" style={{ background: `linear-gradient(180deg, ${color}26, ${color}0d)` }}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
           aria-label={t('rail.openSessions')}
           onClick={() => window.dispatchEvent(new CustomEvent('host:open-rail'))}
-          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[7px] border-[1.5px] border-border bg-bg text-[13px] text-fg md:hidden"
+          className="md:hidden"
         >
           <Icon icon={faBars} />
-        </button>
+        </Button>
         {/* avatar + name = the details trigger (a draft has no details yet) */}
-        <button
-          type="button"
-          data-agent-details={isNew ? undefined : 'toggle'}
-          disabled={isNew || !agent}
-          title={isNew ? undefined : t('agent.page.detailsHint')}
-          aria-expanded={pop === 'details'}
-          onClick={() => setPop((p) => (p === 'details' ? null : 'details'))}
-          className="flex min-w-0 shrink cursor-pointer items-center gap-2 rounded-md py-0.5 pe-1.5 text-start disabled:cursor-default"
-        >
-          {agent ? <AgentAvatar agent={agent} size={26} /> : null}
-          <span dir="auto" className="min-w-0 truncate text-[14px] leading-tight font-bold text-fg">{title}</span>
-          {!isNew && agent && <span className="hidden shrink-0 text-[11.5px] md:text-[10px] text-fgdim sm:inline"><Icon icon={faCaretDown} /></span>}
-        </button>
+        <Popover open={pop === 'details' && !!agent && !isNew} onOpenChange={popOpen(setPop, 'details')}>
+          <Tip label={isNew ? undefined : t('agent.page.detailsHint')}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                data-agent-details={isNew ? undefined : 'toggle'}
+                disabled={isNew || !agent}
+                className="flex min-w-0 shrink cursor-pointer items-center gap-2 rounded-md py-0.5 pe-1.5 text-start outline-none focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default coarse:min-h-11"
+              >
+                {agent ? <AgentAvatar agent={agent} size={26} /> : null}
+                <span dir="auto" className="min-w-0 truncate text-sm leading-tight font-semibold text-fg">{title}</span>
+                {!isNew && agent && <span className="hidden shrink-0 text-xs text-fgdim sm:inline"><Icon icon={faCaretDown} /></span>}
+              </button>
+            </PopoverTrigger>
+          </Tip>
+          <PopoverContent align="start" className="thin-scroll max-h-[70vh] w-[min(27.5rem,calc(100vw-1rem))] overflow-y-auto p-4" onCloseAutoFocus={(e) => { if (popRef.current) e.preventDefault(); }}>
+            {agent && !isNew && <AgentDetailsDrawer agent={agent} budget={budget} onClose={closePop} onEditPersona={() => { closePop(); setTab('persona'); }} />}
+          </PopoverContent>
+        </Popover>
         {agent && !isNew && <SurfaceStatus agent={agent} sessions={sessions} triggers={triggers} />}
         <div className="ms-auto flex min-w-0 shrink items-center gap-1">
-          {/* sm+: the pills inline (scroll when tight); <sm: a switcher button */}
+          {/* sm+: the tabs inline (scroll when tight); <sm: a switcher button */}
           <div data-agent-tabs="pills" className="thin-scroll hidden min-w-0 items-center gap-1 overflow-x-auto sm:flex">{TABS.map((id) => navItem(id))}</div>
-          <button
-            type="button"
-            data-agent-tabs="switcher"
-            aria-label={t('agent.page.tabSwitcher')}
-            aria-expanded={pop === 'tabs'}
-            onClick={() => setPop((p) => (p === 'tabs' ? null : 'tabs'))}
-            className="flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] font-bold text-fg sm:hidden"
-            style={{ borderColor: color, background: `${color}1a` }}
-          >
-            <span className="w-4 text-center text-[12px]"><Icon icon={ICONS[effectiveTab]} /></span>
-            {t(`agent.page.tab.${effectiveTab}`)}
-            <span className="text-[11.5px] md:text-[10px] text-fgdim"><Icon icon={faCaretDown} /></span>
-          </button>
+          <DropdownMenu modal={false} open={pop === 'tabs'} onOpenChange={popOpen(setPop, 'tabs')}>
+            <DropdownMenuTrigger asChild>
+              <Button data-agent-tabs="switcher" size="sm" aria-label={t('agent.page.tabSwitcher')} className="sm:hidden">
+                <Icon icon={ICONS[effectiveTab]} />
+                {t(`agent.page.tab.${effectiveTab}`)}
+                <Icon icon={faCaretDown} className="text-fgdim" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent data-agent-tabs-menu aria-label={t('agent.page.tabSwitcher')} align="end" className="w-52">
+              {TABS.map((id) => {
+                const disabled = isNew && id !== 'persona';
+                return (
+                  <DropdownMenuItem key={id} data-agent-tab={id} disabled={disabled} aria-current={effectiveTab === id ? 'page' : undefined} className={effectiveTab === id ? 'bg-muted font-medium' : undefined} onSelect={() => setTab(id)}>
+                    <Icon icon={ICONS[id]} /> {t(`agent.page.tab.${id}`)}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {agent && !isNew && (
-          <button
-            type="button"
-            data-agent-more
-            aria-label={t('agent.page.more')}
-            aria-expanded={pop === 'menu'}
-            onClick={() => setPop((p) => (p === 'menu' ? null : 'menu'))}
-            className="shrink-0 cursor-pointer rounded px-1.5 py-1 text-[14px] text-fgdim hover:bg-chip hover:text-fg"
-          >
-            <Icon icon={faEllipsis} />
-          </button>
+          <MoreMenu
+            open={pop === 'menu'}
+            onOpenChange={popOpen(setPop, 'menu')}
+            onCloseAutoFocus={(e) => { if (popRef.current === 'details' || popRef.current === 'delete') e.preventDefault(); }}
+            onDetails={() => setPop('details')}
+            onDelete={() => setPop('delete')}
+          />
         )}
-        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="shrink-0 cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg">
-          <Icon icon={faXmark} />
-        </button>
-        {pop === 'tabs' && (
-          <TabMenu onClose={closePop}>{TABS.map((id) => navItem(id, { inMenu: true }))}</TabMenu>
-        )}
-        {pop === 'menu' && agent && !isNew && (
-          <MoreMenu onClose={closePop} onDetails={() => setPop('details')} onDelete={() => setPop('delete')} />
-        )}
-        {pop === 'details' && agent && !isNew && (
-          <AgentDetailsDrawer agent={agent} budget={budget} onClose={closePop} onEditPersona={() => { closePop(); setTab('persona'); }} />
-        )}
+        <Tip label={t('chrome.settings.closeTitle')}>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('chrome.settings.closeTitle')}>
+            <Icon icon={faXmark} />
+          </Button>
+        </Tip>
       </div>
       {pop === 'delete' && agent && !isNew && (
         <DeleteAgentDialog agent={agent} onClose={closePop} onDeleted={onClose} />
@@ -788,18 +797,6 @@ export default function AgentView({ slug, tab: wantTab, draftName, onTab, onClos
           <div key={effectiveTab} className="mx-auto w-full max-w-[720px] px-4 py-5 sm:px-7">{body}</div>
         </div>
       )}
-    </div>
-  );
-}
-
-/** The mobile tab switcher's popover. */
-function TabMenu({ onClose, children }) {
-  const t = useT();
-  const ref = useRef(null);
-  useDismiss(ref, true, onClose);
-  return (
-    <div ref={ref} data-agent-tabs-menu role="menu" aria-label={t('agent.page.tabSwitcher')} className="absolute top-full end-2 z-30 mt-1 w-[200px] rounded-[10px] border-[1.5px] border-ink bg-panel p-1.5 shadow-[3px_3px_0_rgba(42,42,42,0.18)]">
-      {children}
     </div>
   );
 }

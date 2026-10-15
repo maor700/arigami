@@ -18,8 +18,9 @@ import { Icon } from '../ChatIcon.jsx';
 import { serverText } from '../../lib/server-text.js';
 import * as setupApi from '../../lib/setup-api.js';
 import TokenStep from './TokenStep.jsx';
+import { Tip } from '../ui/tooltip.jsx';
 import { BTN, BTN2, INPUT, CARD, ErrorBox, Spinner, useAction } from './shared.jsx';
-import { faCheck } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons';
 
 const POLL_MS = 2500;
 
@@ -153,33 +154,33 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
       <div className="flex flex-col gap-2">
         {/* live state: what is happening now and what the person does next */}
         {err ? (
-          <div role="alert" dir="auto" className="rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-[13px] text-fg">
+          <div role="alert" dir="auto" className="rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">
             <div className="font-medium">{t('setup.oauth.failed')}</div>
             <div className="mt-0.5 text-xs">{serverText(String(err).replace(/^HTTP \d+ — /, ''))}</div>
           </div>
         ) : (
-          <div role="status" dir="auto" className="rounded-lg border border-info-line bg-info-bg px-3 py-2 text-[13px] font-semibold text-info">
+          <div role="status" dir="auto" className="rounded-md border border-hair bg-muted px-3 py-2 text-xs font-medium text-fg">
             <Spinner>{t(flow === 'device' ? 'setup.oauth.waiting' : 'setup.oauth.waitingSignIn')}</Spinner>
           </div>
         )}
-        {blocked && !err && <div className="text-xs text-warn">{t('setup.oauth.popupBlocked')}</div>}
+        {blocked && !err && <div className="text-xs text-fgdim">{t('setup.oauth.popupBlocked')}</div>}
         {link.url && (
           <div className="flex flex-wrap gap-2">
-            <a href={link.url} target="_blank" rel="noopener noreferrer" className={`${err ? BTN2 : BTN} inline-flex items-center`}>{t('setup.oauth.openLink')} ↗</a>
+            <a href={link.url} target="_blank" rel="noopener noreferrer" className={`${err || pasteBack ? BTN2 : BTN} inline-flex items-center no-underline`}>{t('setup.oauth.openLink')} <Icon icon={faArrowUpRightFromSquare} className="rtl:-scale-x-100" /></a>
             <button type="button" className={BTN2} onClick={copy}>{copied ? <Icon icon={faCheck} /> : t('setup.oauth.copyLink')}</button>
           </div>
         )}
         {link.url && (
           <details className="text-xs text-fgdim">
-            <summary className="cursor-pointer select-none py-1">{t('setup.oauth.showLink')}</summary>
-            <div dir="ltr" className="mt-1 max-h-[4.5rem] overflow-auto break-all rounded-md border border-hair bg-bg px-2 py-1.5 font-mono text-xs select-all">{link.url}</div>
+            <summary className="cursor-pointer select-none py-1 coarse:min-h-11">{t('setup.oauth.showLink')}</summary>
+            <div dir="ltr" className="mt-1 max-h-[4.5rem] overflow-auto break-all rounded-md border border-hair bg-muted px-2 py-1.5 font-mono text-xs select-all">{link.url}</div>
           </details>
         )}
         {flow === 'device' && (
           <div className={`${CARD} px-4 py-3`}>
             <div className="text-xs text-fgdim">{t('setup.oauth.deviceCode')}</div>
             {link.code ? (
-              <div dir="ltr" className="mt-2 inline-block rounded-md border border-border bg-background px-5 py-3 font-mono text-[22px] tracking-[0.2em] select-all">{link.code}</div>
+              <div dir="ltr" className="mt-2 inline-block rounded-md border border-hair bg-muted px-4 py-2.5 font-mono text-xl tracking-[0.2em] select-all">{link.code}</div>
             ) : (
               <div className="mt-2"><Spinner>{t('setup.oauth.gettingCode')}</Spinner></div>
             )}
@@ -200,7 +201,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
           {(err || slow) && <button type="button" className={BTN} disabled={busy} onClick={() => { cancel(true); start(); }}>{t('setup.oauth.tryAgain')}</button>}
           <button type="button" className={BTN2} onClick={() => cancel()}>{t('setup.cancel')}</button>
         </div>
-        {flow === 'pkce' && sessionId && <button type="button" className="cursor-pointer self-start py-1 text-xs text-fgdim underline hover:text-fg disabled:opacity-50" disabled={busy} onClick={readFromBrowser} title={t('setup.oauth.readBrowserHint')}>{t('setup.oauth.readBrowser')}</button>}
+        {flow === 'pkce' && sessionId && <Tip label={t('setup.oauth.readBrowserHint')}><button type="button" className="cursor-pointer self-start py-1 text-xs text-fgdim underline hover:text-fg disabled:opacity-50 coarse:min-h-11" disabled={busy} onClick={readFromBrowser}>{t('setup.oauth.readBrowser')}</button></Tip>}
       </div>
     );
 
@@ -214,7 +215,7 @@ export default function OAuthCodeStep({ capability, manual = {}, onDone, onCance
         {onCancel && <button type="button" className={BTN2} onClick={onCancel}>{t('setup.cancel')}</button>}
       </div>
       {err && (
-        <div role="alert" dir="auto" className="rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-[13px] text-fg">
+        <div role="alert" dir="auto" className="rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">
           <div className="font-medium">{t('setup.oauth.failed')}</div>
           <div className="mt-0.5 text-xs">{serverText(String(err).replace(/^HTTP \d+ — /, ''))}</div>
           <div className="mt-1 text-fgdim">{t('setup.oauth.retryHint')}</div>

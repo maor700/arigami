@@ -9,6 +9,7 @@ import { usePrefs, setPrefs } from '../lib/prefs.js';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { windowLabel } from '../lib/providers.js';
 import { useIsDesktop } from '../lib/useMedia.js';
+import { Tip } from './ui/tooltip.jsx';
 
 // Remaining-capacity color: green when there's plenty left, amber when getting
 // tight, red when nearly exhausted. `left` is a 0–100 percentage.
@@ -29,14 +30,14 @@ export function UsageBar({ label, win, sub }) {
   return (
     <div className={sub ? 'mt-2.5' : 'mt-3.5 first:mt-0'}>
       <div className="mb-1 flex items-baseline gap-2">
-        <span className={`flex-1 ${sub ? 'text-[11.5px] text-fgdim' : 'text-[12.5px] font-bold text-fg'}`}>
+        <span className={`flex-1 ${sub ? 'text-xs text-fgdim' : 'text-sm font-medium text-fg'}`}>
           {label}
         </span>
-        <span className="font-mono text-[11px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="text-xs font-medium tabular-nums" style={{ color: leftColor(left) }}>
           {t('dialogs.percentLeft', { pct: left })}
         </span>
         {reset && (
-          <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
+          <span className="text-xs text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
         )}
       </div>
       <div className={`w-full overflow-hidden rounded-full bg-hair ${sub ? 'h-1.5' : 'h-2.5'}`}>
@@ -58,10 +59,12 @@ export function UsageChip({ usage }) {
   if (!wins.length) return null;
   const left = Math.min(...wins.map((w) => 100 - Math.max(0, Math.min(100, w.pct ?? 0))));
   return (
-    <span className="flex items-center gap-1" title={t('dialogs.subscriptionUsageTitle')}>
-      <span className="h-2 w-2 rounded-full" style={{ background: leftColor(left) }} />
-      <span className="font-mono text-[11.5px] md:text-[10px] tabular-nums">{left}%</span>
-    </span>
+    <Tip label={t('dialogs.subscriptionUsageTitle')}>
+      <span className="flex items-center gap-1">
+        <span className="h-2 w-2 rounded-full" style={{ background: leftColor(left) }} />
+        <span className="text-xs tabular-nums">{left}%</span>
+      </span>
+    </Tip>
   );
 }
 
@@ -94,7 +97,7 @@ function MiniBar({ title, win }) {
           {used}%
         </span>
       </div>
-    </div>
+    </div></Tip>
   );
 }
 
@@ -156,14 +159,14 @@ export function UsageMini({ usage, provider = 'claude' }) {
 export default function Usage({ usage }) {
   const t = useT();
   if (!usage) {
-    return <div className="py-4 font-mono text-[11px] text-fgdim">{t('dialogs.checkingUsage')}</div>;
+    return <div className="py-4 text-xs text-fgdim">{t('dialogs.checkingUsage')}</div>;
   }
   if (!usage.available) {
     const why =
       usage.reason === 'no-credentials'
         ? t('dialogs.signInForUsage')
         : t('dialogs.usageUnavailable');
-    return <div className="py-4 text-[11.5px] text-fgdim">{why}</div>;
+    return <div className="py-4 text-xs text-fgdim">{why}</div>;
   }
   const extra = usage.extra;
   return (
@@ -175,8 +178,8 @@ export default function Usage({ usage }) {
       {extra && extra.limit > 0 && (
         <div className="mt-3.5 border-t border-hair pt-3">
           <div className="flex items-baseline gap-2">
-            <span className="flex-1 text-[12.5px] font-bold text-fg">{t('dialogs.extraUsageThisMonth')}</span>
-            <span className="font-mono text-[11px] text-fgdim tabular-nums">
+            <span className="flex-1 text-sm font-medium text-fg">{t('dialogs.extraUsageThisMonth')}</span>
+            <span className="text-xs text-fgdim tabular-nums">
               {extra.currency === 'USD' ? '$' : ''}{(extra.used / 100).toFixed(2)} / {extra.currency === 'USD' ? '$' : ''}{(extra.limit / 100).toFixed(2)}
             </span>
           </div>
@@ -189,7 +192,7 @@ export default function Usage({ usage }) {
         </div>
       )}
       {usage.fetchedAt && (
-        <div className="mt-3 font-mono text-[11px] md:text-[9.5px] text-fgdim">
+        <div className="mt-3 text-xs text-fgdim">
           {untilTime(usage.fetchedAt + 60000) === 'now' ? t('dialogs.updatedJustNow') : t('dialogs.updatedRecently')}
         </div>
       )}

@@ -14,7 +14,8 @@ import { usePrefs, setPrefs, PREF_LIMITS, UI_SCALE_IDS } from '../../lib/prefs.j
 import { DEFAULT_ACCENT } from '../../lib/logos.js';
 import { LANGS, LANG_IDS } from '../../lib/langs.js';
 import { useT } from '../../lib/i18n.js';
-import { Field, Segmented, Section, Advanced } from './shared.jsx';
+import { Field, Segmented, Section, Advanced, BTN_SM, INPUT } from './shared.jsx';
+import { Button } from '../ui/button.jsx';
 import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
@@ -44,7 +45,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
           <select
             value={prefs.language}
             onChange={(e) => setPrefs({ language: e.target.value })}
-            className="cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[0.71875rem] font-bold text-fg"
+            className={`${INPUT} cursor-pointer`}
           >
             <option value="auto">{t('settings.language.auto')}</option>
             {LANG_IDS.map((id) => (
@@ -60,24 +61,22 @@ export default function General({ section = '', voiceEnabled = false, recording,
           />
         </Field>
         <Field label={t('settings.fontSize')} hint={t('settings.fontSize.hint', { min: fontMin, max: fontMax })}>
-          <span className="flex items-center overflow-hidden rounded-lg border-[1.5px] border-ink">
-            <button
+          <span className="flex items-center gap-1">
+            <Button
               type="button"
               onClick={() => stepFont(-1)}
               disabled={prefs.termFontSize <= fontMin}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.6875rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
             >
               A−
-            </button>
-            <span className="border-x-[1.5px] border-ink bg-panel px-3 py-1.5 font-mono text-[0.71875rem] font-bold text-fg">{prefs.termFontSize}px</span>
-            <button
+            </Button>
+            <span className="min-w-12 text-center text-sm tabular-nums text-fg" dir="ltr">{prefs.termFontSize}px</span>
+            <Button
               type="button"
               onClick={() => stepFont(1)}
               disabled={prefs.termFontSize >= fontMax}
-              className="cursor-pointer bg-panel px-3 py-1.5 text-[0.8125rem] text-fg hover:bg-brand disabled:cursor-default disabled:opacity-40"
             >
               A+
-            </button>
+            </Button>
           </span>
         </Field>
       </Section>
@@ -94,7 +93,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id="accent" title={t('settings.appearance')}>
           <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
             <span className="flex items-center gap-2">
-              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer items-center justify-center overflow-hidden rounded-lg border-[1.5px] border-ink">
+              <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer items-center justify-center overflow-hidden rounded-md border border-input">
                 <span className="absolute inset-0" style={{ background: prefs.accent || DEFAULT_ACCENT }} />
                 <input
                   type="color"
@@ -104,13 +103,9 @@ export default function General({ section = '', voiceEnabled = false, recording,
                   aria-label={t('settings.accent')}
                 />
               </label>
-              <code className="font-mono text-[0.6875rem] text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
+              <code dir="ltr" className="font-mono text-xs text-fgdim">{prefs.accent || DEFAULT_ACCENT}</code>
               {prefs.accent ? (
-                <button
-                  type="button"
-                  onClick={() => setPrefs({ accent: '' })}
-                  className="cursor-pointer rounded-md border border-hair px-2 py-1 text-[0.6875rem] md:text-[0.65625rem] text-fgdim hover:border-ink hover:text-fg"
-                >
+                <button type="button" onClick={() => setPrefs({ accent: '' })} className={BTN_SM}>
                   {t('common.reset')}
                 </button>
               ) : null}
@@ -138,7 +133,7 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id={voiceEnabled ? 'voice-advanced' : 'voice'} title={t('chrome.voice.section')}>
           {!voiceEnabled && (
             <>
-              <div data-voice-off className="mb-1 text-[0.6875rem] text-fgdim">{t('settings.voice.off')}</div>
+              <div data-voice-off className="mb-1 text-xs text-fgdim">{t('settings.voice.off')}</div>
               <VoiceMain recording={recording} setRecording={setRecording} />
             </>
           )}

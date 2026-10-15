@@ -8,7 +8,8 @@
 import { useEffect, useState } from 'react';
 import { usePrefs, setPrefs } from '../../lib/prefs.js';
 import { useT } from '../../lib/i18n.js';
-import { Field, Segmented, Section, Toggle } from './shared.jsx';
+import { Field, Segmented, Section, Toggle, INPUT } from './shared.jsx';
+import { Button } from '../ui/button.jsx';
 import VoiceLangPicker from '../VoiceLangPicker.jsx';
 import { useIsDesktop } from '../../lib/useMedia.js';
 
@@ -49,13 +50,9 @@ function MicPicker({ value, onChange }) {
 
   if (needsPerm) {
     return (
-      <button
-        type="button"
-        onClick={grant}
-        className="shrink-0 cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] font-bold text-fg hover:bg-brand hover:text-[#1a1a1a]"
-      >
+      <Button type="button" onClick={grant}>
         {t('chrome.voice.mic.allow')}
-      </button>
+      </Button>
     );
   }
 
@@ -63,7 +60,7 @@ function MicPicker({ value, onChange }) {
     <select
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
-      className="max-w-[220px] cursor-pointer rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-[11.5px] text-fg outline-none focus:border-brand"
+      className={`${INPUT} max-w-[220px] cursor-pointer`}
     >
       <option value="">{t('chrome.voice.mic.systemDefault')}</option>
       {devices.map((d, i) => (
@@ -86,7 +83,7 @@ export function VoiceMain({ recording, setRecording }) {
   if (!desktop)
     return (
       <Field label={t('chrome.voice.hotkey')} hint={t('chrome.voice.hotkey.touchHint')}>
-        <span className="text-[11.5px] text-fgdim">{t('chrome.voice.hotkey.touch')}</span>
+        <span className="text-xs text-fgdim">{t('chrome.voice.hotkey.touch')}</span>
       </Field>
     );
   return (
@@ -98,17 +95,17 @@ export function VoiceMain({ recording, setRecording }) {
             value={recording ? t('chrome.voice.hotkey.pressKeys') : prefs.voiceHotkey}
             readOnly
             placeholder="Cmd+Shift+V"
-            className="w-[140px] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-1.5 text-center font-mono text-[11.5px] text-fg outline-none"
+            dir="ltr"
+            className={`${INPUT} w-[140px] text-center font-mono text-xs`}
           />
-          <button
+          <Button
             type="button"
+            variant={recording ? 'outline' : 'default'}
             onClick={() => setRecording((v) => !v)}
-            className={`shrink-0 cursor-pointer rounded-lg border-[1.5px] px-3 py-1.5 text-[11.5px] font-bold transition-colors ${
-              recording ? 'border-brand bg-brand text-[#1a1a1a]' : 'border-ink bg-panel text-fg hover:bg-brand hover:text-[#1a1a1a]'
-            }`}
+            className={recording ? 'border-ring bg-muted' : ''}
           >
             {recording ? t('chrome.voice.hotkey.listening') : t('chrome.voice.hotkey.record')}
-          </button>
+          </Button>
         </span>
       </Field>
       <Field label={t('chrome.voice.mode')} hint={t('chrome.voice.mode.hint')}>

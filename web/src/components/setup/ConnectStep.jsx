@@ -118,7 +118,7 @@ export default function ConnectStep({ capability, owner, sessionId, title, onDon
 
   const name = title || capability.replace(/^mcp:/, '');
   return (
-    <div className="flex flex-col gap-2 text-[13px]" data-connect-phase={phase}>
+    <div className="flex flex-col gap-3 text-sm" data-connect-phase={phase}>
       {phase === 'idle' && (
         <>
           <p className="text-xs leading-snug text-fgdim">{t('setup.connect.intro', { name })}</p>
@@ -131,13 +131,13 @@ export default function ConnectStep({ capability, owner, sessionId, title, onDon
         <div className="flex flex-wrap items-center gap-2 text-fgdim" data-connect-running>
           <Icon icon={faCircleNotch} spin />
           <span>{t('setup.connect.running', { name })}</span>
-          <button type="button" className="ms-auto cursor-pointer text-xs underline" onClick={() => { setPhase('person'); openVendor(); }}>{t('setup.connect.myself')}</button>
+          <button type="button" className="ms-auto cursor-pointer text-xs underline coarse:min-h-11" onClick={() => { setPhase('person'); openVendor(); }}>{t('setup.connect.myself')}</button>
         </div>
       )}
       {(phase === 'person' || phase === 'manual') && (
         <>
           {phase === 'person' && (
-            <div className="rounded-md border border-border bg-muted px-2.5 py-2 text-xs leading-snug text-fg" data-connect-needs-you>
+            <div className="rounded-md border border-hair bg-muted px-3 py-2 text-xs leading-snug text-fg" data-connect-needs-you>
               <b>{t('setup.connect.needsYou', { name })}</b>
               {reason ? ` ${reason}.` : ''}
             </div>
@@ -151,9 +151,9 @@ export default function ConnectStep({ capability, owner, sessionId, title, onDon
           </div>
           {opened && (
             <details className="text-xs text-fgdim">
-              <summary className="cursor-pointer">{t('setup.connect.pasteSummary')}</summary>
+              <summary className="cursor-pointer coarse:min-h-11">{t('setup.connect.pasteSummary')}</summary>
               <div className="mt-1.5 flex gap-2">
-                <input className={INPUT} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={t('setup.oauth.redirectPlaceholder')} spellCheck={false} />
+                <input className={INPUT} dir="ltr" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={t('setup.oauth.redirectPlaceholder')} spellCheck={false} />
                 <button type="button" className={BTN2} disabled={busy || !paste.trim()} onClick={finish}>{t('setup.connect.finish')}</button>
               </div>
             </details>

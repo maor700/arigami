@@ -5,42 +5,37 @@
 import { Icon } from '../ChatIcon.jsx';
 import { useT } from '../../lib/i18n.js';
 import { serverText } from '../../lib/server-text.js';
-import { faCheck, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
+import { Badge } from '../ui/badge.jsx';
+import { faTriangleExclamation, faCheck, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 
-import { buttonVariants } from '../ui/button.jsx';
-import { StatusDot } from '../ui/badge.jsx';
+const B = 'inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border text-sm font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50';
+export const BTN = `${B} min-h-9 border-transparent bg-primary px-4 py-1.5 text-primary-foreground hover:bg-[var(--accent-hover)] coarse:min-h-11`;
+export const BTN2 = `${B} min-h-9 border-input bg-card px-4 py-1.5 text-foreground hover:bg-muted coarse:min-h-11`;
+export const BTN_SM = `${B} h-7 border-transparent bg-primary px-2.5 text-xs text-primary-foreground hover:bg-[var(--accent-hover)] coarse:min-h-11`;
+export const BTN2_SM = `${B} h-7 border-input bg-card px-2.5 text-xs text-foreground hover:bg-muted coarse:min-h-11`;
+export const INPUT = 'h-9 w-full min-w-0 rounded-md border border-input bg-background px-2.5 text-sm text-fg outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 coarse:h-11';
+export const CARD = 'rounded-lg border border-hair bg-panel';
+export const BODY = 'text-sm leading-relaxed text-fgdim';
+export const OK = 'text-sm font-medium text-ok';
 
-// Buttons: BTN is THE primary action of its card (accent), BTN2 the neutral
-// secondary. Both are ui/Button classes, so 44px under a coarse pointer.
-export const BTN = `cursor-pointer ${buttonVariants({ variant: 'primary' })}`;
-export const BTN2 = `cursor-pointer ${buttonVariants({ variant: 'outline' })}`;
-export const BTN_SM = `cursor-pointer ${buttonVariants({ variant: 'primary', size: 'sm' })}`;
-export const BTN2_SM = `cursor-pointer ${buttonVariants({ variant: 'outline', size: 'sm' })}`;
-export const INPUT = 'w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] text-fg outline-none focus:border-ring coarse:min-h-11';
-export const CARD = 'rounded-lg border border-border bg-panel';
-export const BODY = 'text-[13px] leading-relaxed text-fgdim';
-export const OK = 'text-[13px] font-medium text-ok';
-
-// status → the dot colour of the neutral chip (colour lives in the dot only)
-const PILL_DOT = { ok: 'ok', done: 'ok', todo: 'warn', pending: 'warn', error: 'err', failed: 'err', blocked: 'idle', skipped: 'idle', timeout: 'idle', running: 'info', auto: 'info' };
-// kept for callers that read the old map (Wizard): neutral chip classes
-export const PILL = Object.fromEntries(Object.keys(PILL_DOT).map((k) => [k, 'border-transparent bg-muted text-muted-foreground']));
+// Kept for importers: status → text/border classes (neutral chip look).
+export const PILL = {
+  ok: 'border-hair bg-chip text-fgdim', done: 'border-hair bg-chip text-fgdim', todo: 'border-hair bg-chip text-fgdim', pending: 'border-hair bg-chip text-fgdim',
+  error: 'border-hair bg-chip text-fgdim', failed: 'border-hair bg-chip text-fgdim', blocked: 'border-hair bg-chip text-fgdim', skipped: 'border-hair bg-chip text-fgdim',
+  timeout: 'border-hair bg-chip text-fgdim', running: 'border-hair bg-chip text-fgdim', auto: 'border-hair bg-chip text-fgdim',
+};
+const PILL_DOT = { ok: 'ok', done: 'ok', todo: 'warn', pending: 'warn', error: 'err', failed: 'err', running: 'info', auto: 'info' };
 
 export function Pill({ status, label }) {
   const t = useT();
-  return (
-    <span data-pill={status} className="inline-flex shrink-0 items-center gap-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground uppercase">
-      <StatusDot status={PILL_DOT[status] || 'idle'} pulse={status === 'running' || status === 'auto'} />
-      {label ?? t(`setup.state.${status}`)}
-    </span>
-  );
+  return <Badge status={PILL_DOT[status] || 'idle'}>{label ?? t(`setup.state.${status}`)}</Badge>;
 }
 
 export function ErrorBox({ err }) {
   if (!err) return null;
   return (
-    <div dir="auto" className="mt-3 rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-2 text-xs text-fg"><span aria-hidden="true" className="me-2 inline-block size-1.5 rounded-full bg-err align-middle" />
-      {serverText(String(err).replace(/^HTTP \d+ — /, ''))}
+    <div dir="auto" className="mt-3 rounded-md border border-err-line bg-err-bg px-3 py-2 text-xs text-err">
+      <Icon icon={faTriangleExclamation} /> {serverText(String(err).replace(/^HTTP \d+ — /, ''))}
     </div>
   );
 }
@@ -50,7 +45,7 @@ export function OkLine({ children }) {
 }
 
 export function Spinner({ children }) {
-  return <div className="text-[13px] text-fgdim"><Icon icon={faCircleNotch} spin /> {children}</div>;
+  return <div className="text-xs text-fgdim"><Icon icon={faCircleNotch} spin /> {children}</div>;
 }
 
 // Shared async-action helper: `run(fn)` → busy flag + error string.
