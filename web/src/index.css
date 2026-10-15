@@ -399,6 +399,21 @@ body {
   animation: host-pulse-green 1.6s ease-in-out infinite;
 }
 
+/* "working…" label: a slow shimmer; static under reduced motion */
+@keyframes working-shimmer {
+  to { background-position: -200% 0; }
+}
+.working-shimmer {
+  background: linear-gradient(90deg, var(--term-dim) 35%, var(--term-strong) 50%, var(--term-dim) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: working-shimmer 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .working-shimmer { animation: none; background: none; color: var(--term-dim); }
+}
+
 @keyframes host-spin {
   to {
     transform: rotate(360deg);
@@ -478,15 +493,23 @@ body {
 
 /* Chat rows outside the viewport skip layout+paint entirely; `auto` keeps the
    real row size once rendered so scroll math stays stable. */
+.term-events {
+  max-width: 48rem;
+  margin-inline: auto;
+}
 .term-events > * {
   content-visibility: auto;
   contain-intrinsic-size: auto 32px;
 }
 
+.term {
+  font-family: var(--font-sans);
+}
 .md {
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.6;
   color: var(--term-fg);
+  font-family: var(--font-sans);
   word-wrap: break-word;
 }
 .md > :first-child {
@@ -527,7 +550,7 @@ body {
 }
 .md code {
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.87em;
   background: var(--term-codebg);
   border-radius: 4px;
   padding: 1px 4px;
@@ -535,15 +558,16 @@ body {
 .md pre {
   background: var(--term-codebg);
   border: 1px solid var(--term-border);
-  border-radius: 8px;
-  padding: 9px 11px;
+  border-radius: 6px;
+  padding: 10px 12px;
   overflow-x: auto;
-  margin: 0.55em 0;
+  margin: 0.6em 0;
 }
 .md pre code {
   background: transparent;
   padding: 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 .md a {
   color: var(--term-strong);
