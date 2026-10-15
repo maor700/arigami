@@ -412,7 +412,7 @@ export default function TermControls({ session }) {
           {pillOwns ? (
             <MenuRow
               label={t('rail.modelEffortPerm')}
-              value={effortValue && effortValue !== modelValue ? `${modelValue} · ${effortValue}` : modelValue}
+              value={modelValue}
               data-term-open-pill
               onSelect={() => setTimeout(openComposerPill, 0)}
             />

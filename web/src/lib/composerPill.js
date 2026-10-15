@@ -13,6 +13,7 @@ export const registerComposerPill = () => {
   emit();
   return () => { mounted -= 1; emit(); };
 };
+export const composerPillMounted = () => mounted > 0;
 export const openComposerPill = () => window.dispatchEvent(new CustomEvent('arigami:open-composer-pill'));
 export const useComposerPillMounted = () =>
   useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => mounted > 0, () => false);
