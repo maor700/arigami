@@ -233,6 +233,8 @@ export const strings = {
   'setup.repo.pick.private': 'פרטי',
   'setup.repo.pick.noMatch': 'אין מאגר שמתאים ל-“{q}”. אפשר להדביק את הכתובת שלו למטה.',
   'setup.repo.pick.empty': 'לא נמצאו מאגרים בחשבון ה-GitHub הזה.',
+  'setup.repo.pick.disconnected': 'GitHub לא מחובר, ולכן אי אפשר להציג את המאגרים שלך. אפשר להתחבר, או להדביק למטה כתובת של מאגר.',
+  'setup.repo.pick.connect': 'התחברות ל־GitHub',
   'setup.repo.pick.more': 'הצג עוד',
   'setup.repo.pick.error': 'לא הצלחנו לטעון את המאגרים שלך. הדבק את הכתובת למטה.',
   'setup.repo.pick.orPaste': 'או הדבק כתובת git (owner/repo) או תיקייה מקומית:',

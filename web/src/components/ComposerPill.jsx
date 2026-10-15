@@ -130,7 +130,7 @@ export default function ComposerPill({ session }) {
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPending(null); }}>
       <Tip label={t('rail.model') + ' · ' + t('rail.effort') + ' · ' + t('rail.permissionMode')}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" data-composer-pill aria-label={`${summary} · ${permLabel}`} className="max-w-[11rem] min-w-0 gap-1.5 px-2 font-normal">
+          <Button variant="ghost" size="sm" data-composer-pill aria-label={`${summary} · ${permLabel}`} className="max-w-[11rem] min-w-0 shrink gap-1.5 px-2 font-normal">
             {dot ? <StatusDot status={dot} /> : <SlidersHorizontalIcon className="size-3.5" />}
             <span dir="auto" className="truncate">{summary}</span>
             <ChevronDownIcon className="size-3 opacity-60" />

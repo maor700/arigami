@@ -247,6 +247,8 @@ export const strings = {
   'setup.repo.pick.private': 'private',
   'setup.repo.pick.noMatch': 'No repository matches “{q}”. You can paste its URL below.',
   'setup.repo.pick.empty': 'No repositories found for this GitHub account.',
+  'setup.repo.pick.disconnected': 'GitHub is not connected, so your repositories cannot be listed. Connect it, or paste a repository URL below.',
+  'setup.repo.pick.connect': 'Connect GitHub',
   'setup.repo.pick.more': 'Show more',
   'setup.repo.pick.error': 'Could not load your repositories. Paste the URL below instead.',
   'setup.repo.pick.orPaste': 'Or paste a git URL (owner/repo) or a local folder:',

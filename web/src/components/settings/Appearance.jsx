@@ -37,7 +37,11 @@ export default function General({ section = '', voiceEnabled = false, recording,
     <>
       <Section id="chrome" title={t('settings.appearance')} first>
         <Field label={t('settings.theme')} hint={t('settings.theme.hint')}>
-          <Segmented value={prefs.theme} onChange={(v) => setPrefs({ theme: v })} options={lightDark} />
+          <Segmented
+            value={prefs.themeMode}
+            onChange={(v) => setPrefs({ themeMode: v })}
+            options={[{ value: 'system', label: t('common.system') }, ...lightDark]}
+          />
         </Field>
         <Field label={t('settings.language')} hint={t('settings.language.hint')}>
           <select

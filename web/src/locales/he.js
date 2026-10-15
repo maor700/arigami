@@ -3,6 +3,7 @@ export const he = {
   // common
   'common.light': 'בהיר',
   'common.dark': 'כהה',
+  'common.system': 'מערכת',
   'common.auto': 'אוטומטי',
   'common.ltr': 'שמאל־לימין',
   'common.rtl': 'ימין־לשמאל',

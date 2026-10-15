@@ -4,6 +4,7 @@ export const en = {
   // common
   'common.light': 'Light',
   'common.dark': 'Dark',
+  'common.system': 'System',
   'common.auto': 'Auto',
   'common.ltr': 'LTR',
   'common.rtl': 'RTL',
