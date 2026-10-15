@@ -702,6 +702,30 @@ body {
   --sx-meta: #569cd6;
   --sx-regexp: #d16969;
 }
+/* Diff surface tokens — shared by the Changes tab (DiffView) and the chat
+   DiffCard. Alpha tints, so they sit on any surface (app light/dark, the
+   chat pane's own theme). Quiet on purpose: the sign + gutter carry the
+   meaning, the row tint only supports it. */
+:root {
+  --diff-add-bg: oklch(0.62 0.15 150 / 0.10);
+  --diff-del-bg: oklch(0.6 0.17 25 / 0.09);
+  --diff-add-gutter: oklch(0.62 0.15 150 / 0.20);
+  --diff-del-gutter: oklch(0.6 0.17 25 / 0.18);
+  --diff-add-mark: oklch(0.5 0.14 150);
+  --diff-del-mark: oklch(0.5 0.15 25);
+  --diff-gap-bg: oklch(0.5 0 0 / 0.06);
+  --diff-hunk-bg: oklch(0.55 0.04 250 / 0.08);
+}
+[data-theme="dark"] {
+  --diff-add-bg: oklch(0.7 0.14 150 / 0.11);
+  --diff-del-bg: oklch(0.7 0.15 25 / 0.11);
+  --diff-add-gutter: oklch(0.7 0.14 150 / 0.18);
+  --diff-del-gutter: oklch(0.7 0.15 25 / 0.18);
+  --diff-add-mark: oklch(0.78 0.13 150);
+  --diff-del-mark: oklch(0.78 0.13 25);
+  --diff-gap-bg: oklch(0.8 0 0 / 0.05);
+  --diff-hunk-bg: oklch(0.7 0.05 250 / 0.10);
+}
 /* The chat pane carries its own light/dark (.term-light), independent of the app theme. */
 .term-light .diff-syntax {
   --sx-comment: #008000; --sx-keyword: #0000ff; --sx-string: #a31515; --sx-number: #098658;
