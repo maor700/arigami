@@ -1,18 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
+import { ChevronDown, ChevronRight, Pin, Star, TriangleAlert, X, Zap, ArrowUp } from 'lucide-react';
 import { api, PALETTE } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { useLinearList } from '../lib/linearMeta.js';
-import { Icon } from '../lib/icons.js';
-import {
-  faArrowUp,
-  faBolt,
-  faCaretDown,
-  faStar,
-  faThumbtack,
-  faTriangleExclamation,
-  faXmark,
-} from '@fortawesome/free-solid-svg-icons';
 import {
   usePrefs,
   setPrefs,
@@ -29,13 +20,33 @@ import {
 import { useModels } from '../lib/models.js';
 import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
 import { extLauncherItems, findExtension } from '../lib/ext.js';
+import { cn } from '../lib/utils.js';
 import ExtLauncherPane from './ExtLauncherPane.jsx';
-import { EngineToggle } from './EngineToggle.jsx';
+import { EngineToggle, Hint, NativeSelect, Segmented } from './EngineToggle.jsx';
 // Re-exported so the tests that always imported it from here keep working.
 export { EngineToggle };
-import { Wave, Dot, YellowButton, tint } from './ui.jsx';
+import { Wave, Dot } from './ui.jsx';
+import { Button } from './ui/button.jsx';
+import { Badge, StatusDot } from './ui/badge.jsx';
+import { Checkbox } from './ui/checkbox.jsx';
+import { Input, Textarea } from './ui/input.jsx';
+import { Label } from './ui/label.jsx';
+import { Switch } from './ui/switch.jsx';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs.jsx';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog.jsx';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from './ui/alert-dialog.jsx';
 import { t, useT } from '../lib/i18n.js';
 import { fmtDateTime } from '../lib/time.js';
+
+// Shared launcher look. One section-label style (12px, medium, muted — no
+// uppercase/mono/tracking), one card, one inner padding so every pane lines up.
+const sectionLabel = 'text-xs font-medium text-muted-foreground';
+const hintText = 'text-xs leading-relaxed text-muted-foreground';
+const errText = 'text-xs text-destructive';
+const cardBox = 'rounded-lg border border-hair';
+// Content column of a form pane: roomy, never wider than a comfortable line.
+const paneCol = 'mx-auto w-full max-w-3xl';
 
 // [value, i18n key]; labels resolved with t() at render/summary time.
 const STATE_OPTS = [
@@ -179,43 +190,29 @@ function PasteField({ onPick, autoFocus }) {
     }
   };
   return (
-    <div className="flex items-center gap-[9px] rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] focus-within:shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
-      <span
-        className="h-[13px] w-[13px] shrink-0 rotate-45 rounded-[2px]"
-        style={{ background: '#5b62d6' }}
-      />
+    <div className="flex h-9 items-center gap-2.5 rounded-md border border-input bg-background px-3 transition-[border-color,box-shadow] duration-150 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/35 coarse:h-11">
+      <span aria-hidden="true" className="size-3 shrink-0 rotate-45 rounded-[2px] bg-muted-foreground" />
       <input
         ref={ref}
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && commit()}
         placeholder={t('launcher.paste.placeholder')}
-        className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-fgdim"
+        className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
       />
-      <span className="shrink-0 font-mono text-[11px] text-fgdim">ENG-16498</span>
+      <bdi className="shrink-0 text-xs text-muted-foreground tabular-nums">ENG-16498</bdi>
     </div>
   );
 }
 
-const selCls =
-  'cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-[3px] text-[11px] text-fg outline-none hover:border-fgdim focus:border-ink disabled:opacity-40';
-
 // Multi-select tag filter with an Any/All (OR/AND) operator. Linear's API only
 // takes one label, so the server (listIssuesByFacets) fans out OR into N calls
 // and resolves AND by intersection — here we just collect the selection + op.
+// A ui/Popover (a bottom-anchored panel clamped to the viewport on phones).
 function LabelPicker({ options, selected, op, onChange, disabled }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
 
   const toggle = (name) => {
     const has = selected.includes(name);
@@ -234,77 +231,54 @@ function LabelPicker({ options, selected, op, onChange, disabled }) {
   const filtered = q ? options.filter((l) => l.toLowerCase().includes(q.toLowerCase())) : options;
 
   return (
-    <span className="relative" ref={ref}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        title={t('launcher.labels.filterTitle')}
-        className={`${selCls} flex items-center gap-1 ${selected.length ? 'border-ink font-bold' : ''}`}
-      >
-        <span className="max-w-[120px] truncate">{summary}</span>
-        {selected.length > 1 && (
-          <span className="font-mono text-[11px] md:text-[9px] text-fgdim uppercase">{op}</span>
-        )}
-        <span className="text-[10px] md:text-[8px] text-fgdim"><Icon icon={faCaretDown} /></span>
-      </button>
-      {open && !disabled && (
-        <div className="absolute top-full left-0 z-30 mt-1 w-[220px] rounded-[9px] border-[1.5px] border-ink bg-panel p-2 shadow-[2px_2px_0_rgba(42,42,42,0.16)]">
-          <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.labels.match')}</span>
-            <span className="flex overflow-hidden rounded-[6px] border border-border">
-              {[
-                ['or', t('launcher.labels.opAny')],
-                ['and', t('launcher.labels.opAll')],
-              ].map(([v, l]) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => onChange({ labels: selected, labelOp: v })}
-                  className={`cursor-pointer px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
-                    op === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
-            </span>
-            {selected.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onChange({ labels: [], labelOp: op })}
-                className="ml-auto cursor-pointer text-[11.5px] md:text-[10.5px] text-fgdim hover:text-danger"
-              >
-                {t('launcher.labels.clear')}
-              </button>
-            )}
-          </div>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t('launcher.labels.searchPlaceholder')}
-            className="mb-1.5 w-full rounded-[6px] border border-border bg-bg px-2 py-[3px] text-[11px] outline-none focus:border-ink"
+    <Popover open={open && !disabled} onOpenChange={setOpen}>
+      <Hint label={t('launcher.labels.filterTitle')}>
+        <PopoverTrigger asChild>
+          <Button variant="default" disabled={disabled} className={cn('max-w-full', selected.length && 'border-foreground/40')}>
+            <span className="max-w-32 truncate">{summary}</span>
+            {selected.length > 1 && <span className="text-xs text-muted-foreground uppercase">{op}</span>}
+            <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+      </Hint>
+      <PopoverContent align="start" className="w-64 p-2.5">
+        <div className="mb-2.5 flex items-center gap-2">
+          <span className={sectionLabel}>{t('launcher.labels.match')}</span>
+          <Segmented
+            value={op}
+            options={[
+              ['or', t('launcher.labels.opAny')],
+              ['and', t('launcher.labels.opAll')],
+            ]}
+            onChange={(v) => onChange({ labels: selected, labelOp: v })}
+            label={t('launcher.labels.match')}
           />
-          <div className="thin-scroll max-h-[180px] overflow-y-auto">
-            {filtered.length === 0 && <div className="px-1 py-2 text-[11px] text-fgdim">{t('launcher.labels.none')}</div>}
-            {filtered.map((l) => (
-              <label
-                key={l}
-                className="flex cursor-pointer items-center gap-2 rounded-[6px] px-1.5 py-[3px] text-[11.5px] hover:bg-chip"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.includes(l)}
-                  onChange={() => toggle(l)}
-                  className="cursor-pointer"
-                />
-                <span className="min-w-0 truncate">{l}</span>
-              </label>
-            ))}
-          </div>
+          {selected.length > 0 && (
+            <Button variant="ghost" size="xs" className="ms-auto" onClick={() => onChange({ labels: [], labelOp: op })}>
+              {t('launcher.labels.clear')}
+            </Button>
+          )}
         </div>
-      )}
-    </span>
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('launcher.labels.searchPlaceholder')}
+          className="mb-2"
+        />
+        <div className="thin-scroll max-h-48 overflow-y-auto">
+          {filtered.length === 0 && <div className="px-1 py-2 text-xs text-muted-foreground">{t('launcher.labels.none')}</div>}
+          {filtered.map((l) => (
+            <label
+              key={l}
+              className="flex min-h-8 cursor-pointer items-center gap-2.5 rounded-md px-1.5 text-sm hover:bg-muted coarse:min-h-11"
+            >
+              <Checkbox checked={selected.includes(l)} onCheckedChange={() => toggle(l)} />
+              <span className="min-w-0 truncate">{l}</span>
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -319,6 +293,7 @@ function FilterBar({
   showHideOpen = true,
 }) {
   const t = useT();
+  const hideId = useId();
   const set = (patch) => onChange({ ...filters, ...patch });
   // Live workspace statuses when we have them; the state-type buckets as a
   // fallback (offline / not yet loaded).
@@ -326,35 +301,27 @@ function FilterBar({
     ? [['', t('launcher.state.any')], ...statuses.map((s) => [s.name, s.name])]
     : STATE_OPTS.map(([v, k]) => [v, t(k)]);
   return (
-    <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2">
-      <span className="flex overflow-hidden rounded-[7px] border border-border">
-        {[
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+      <Segmented
+        value={filters.assignee}
+        options={[
           ['me', t('launcher.filter.me')],
           ['any', t('launcher.filter.anyone')],
-        ].map(([v, l]) => (
-          <button
-            key={v}
-            type="button"
-            disabled={disabled}
-            onClick={() => set({ assignee: v })}
-            className={`cursor-pointer px-2.5 py-[3px] text-[11px] disabled:opacity-40 ${
-              filters.assignee === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
-            }`}
-          >
-            {l}
-          </button>
-        ))}
-      </span>
-      <select disabled={disabled} value={filters.state} onChange={(e) => set({ state: e.target.value })} className={selCls}>
+        ]}
+        onChange={(v) => set({ assignee: v })}
+        disabled={disabled}
+        label={t('launcher.meta.assignee')}
+      />
+      <NativeSelect disabled={disabled} value={filters.state} onChange={(e) => set({ state: e.target.value })}>
         {stateOpts.map(([v, l]) => (
           <option key={v} value={v}>{l}</option>
         ))}
-      </select>
-      <select disabled={disabled} value={filters.priority} onChange={(e) => set({ priority: e.target.value })} className={selCls}>
+      </NativeSelect>
+      <NativeSelect aria-label={t('launcher.meta.priority')} disabled={disabled} value={filters.priority} onChange={(e) => set({ priority: e.target.value })}>
         {PRIORITY_OPTS.map(([v, k]) => (
           <option key={v} value={v}>{t(k)}</option>
         ))}
-      </select>
+      </NativeSelect>
       <LabelPicker
         options={labels}
         selected={filters.labels}
@@ -363,46 +330,106 @@ function FilterBar({
         disabled={disabled}
       />
       {showSearch && (
-        <input
+        <Input
           disabled={disabled}
           value={filters.query}
           onChange={(e) => set({ query: e.target.value })}
           placeholder={t('launcher.filter.searchPlaceholder')}
-          className="min-w-[120px] flex-1 rounded-[7px] border border-border bg-panel px-2.5 py-[3px] text-[11px] outline-none focus:border-ink disabled:opacity-40"
+          aria-label={t('launcher.filter.searchPlaceholder')}
+          className="min-w-32 flex-1"
         />
       )}
-      <span className="flex overflow-hidden rounded-[7px] border border-border" title={t('launcher.filter.sortTitle')}>
-        {[
-          ['updatedAt', t('launcher.filter.updated')],
-          ['createdAt', t('launcher.filter.created')],
-        ].map(([v, l]) => (
-          <button
-            key={v}
-            type="button"
-            disabled={disabled}
-            onClick={() => set({ orderBy: v })}
-            className={`cursor-pointer px-2 py-[3px] text-[11px] disabled:opacity-40 ${
-              filters.orderBy === v ? 'bg-brand font-bold text-[#1a1a1a]' : 'bg-panel text-fgdim'
-            }`}
-          >
-            {l}
-          </button>
-        ))}
-      </span>
-      {showHideOpen && (
-        <button
-          type="button"
+      <Hint label={t('launcher.filter.sortTitle')}>
+        <Segmented
+          value={filters.orderBy}
+          options={[
+            ['updatedAt', t('launcher.filter.updated')],
+            ['createdAt', t('launcher.filter.created')],
+          ]}
+          onChange={(v) => set({ orderBy: v })}
           disabled={disabled}
-          onClick={() => set({ hideOpen: !filters.hideOpen })}
-          title={t('launcher.filter.hideOpenTitle')}
-          className={`flex cursor-pointer items-center gap-1 rounded-[7px] border px-2 py-[3px] text-[11px] disabled:opacity-40 ${
-            filters.hideOpen ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim hover:border-fgdim'
-          }`}
-        >
-          <span className="text-[11.5px] md:text-[10px]">{filters.hideOpen ? '☑' : '☐'}</span> {t('launcher.filter.hideOpen')}
-        </button>
+          label={t('launcher.filter.sortTitle')}
+        />
+      </Hint>
+      {showHideOpen && (
+        <Hint label={t('launcher.filter.hideOpenTitle')}>
+          <label htmlFor={hideId} className={cn('flex min-h-8 cursor-pointer items-center gap-2 text-sm text-muted-foreground coarse:min-h-11', disabled && 'cursor-not-allowed opacity-50')}>
+            <Checkbox id={hideId} disabled={disabled} checked={!!filters.hideOpen} onCheckedChange={(v) => set({ hideOpen: !!v })} />
+            {t('launcher.filter.hideOpen')}
+          </label>
+        </Hint>
       )}
     </div>
+  );
+}
+
+// ---- preset chips (shared by the ticket-filter and session-option bars) ----
+// A chip = one hairline-bordered group: apply button (with the label), then the
+// small icon actions. Active = neutral fill. Colour only on a set default star/pin.
+const chipCls = (active) =>
+  cn(
+    'inline-flex min-h-7 items-center rounded-md border text-xs transition-colors coarse:min-h-11',
+    active ? 'border-foreground/25 bg-muted text-foreground' : 'border-border bg-transparent text-muted-foreground',
+  );
+function PresetIconBtn({ tip, active, onClick, danger, children }) {
+  return (
+    <Hint label={tip}>
+      <button
+        type="button"
+        aria-label={tip}
+        aria-pressed={active == null ? undefined : !!active}
+        onClick={onClick}
+        className={cn(
+          'inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring coarse:size-11 [&_svg]:size-3.5',
+          active ? 'text-[var(--hb-warn)]' : 'text-muted-foreground',
+          danger && 'hover:text-destructive',
+        )}
+      >
+        {children}
+      </button>
+    </Hint>
+  );
+}
+function PresetApply({ onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-h-7 max-w-40 cursor-pointer truncate rounded-sm px-2 text-xs font-medium outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
+    >
+      {children}
+    </button>
+  );
+}
+// "+ Save current" → an inline name box. Blur or Enter commits, Esc cancels.
+function PresetSave({ onSave }) {
+  const t = useT();
+  const [naming, setNaming] = useState(false);
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    const name = draft.trim();
+    if (name) onSave(name);
+    setDraft('');
+    setNaming(false);
+  };
+  return naming ? (
+    <Input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
+      }}
+      placeholder={t('launcher.presets.namePlaceholder')}
+      aria-label={t('launcher.presets.namePlaceholder')}
+      className="h-7 w-36"
+    />
+  ) : (
+    <Button variant="ghost" size="xs" onClick={() => setNaming(true)}>
+      {t('launcher.presets.saveCurrent')}
+    </Button>
   );
 }
 
@@ -411,69 +438,29 @@ function FilterBar({
 function PresetBar({ presets, defaultId, current, onApply }) {
   const t = useT();
   const activeId = presets.find((p) => filtersEqual(p.filters, current))?.id || null;
-  const [naming, setNaming] = useState(false);
-  const [draft, setDraft] = useState('');
-  const commit = () => {
-    const name = draft.trim();
-    if (name) saveTicketPreset(name, current);
-    setDraft('');
-    setNaming(false);
-  };
   return (
-    <div className="flex flex-wrap items-center gap-1.5 px-[18px] pb-2.5">
-      <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+      <span className={sectionLabel}>{t('launcher.presets.title')}</span>
       {presets.map((p) => (
-        <span
-          key={p.id}
-          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
-            activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
-          }`}
-        >
-          <button
-            type="button"
+        <span key={p.id} className={chipCls(activeId === p.id)}>
+          <PresetIconBtn
+            tip={defaultId === p.id ? t('launcher.presets.unsetDefault') : t('launcher.presets.setDefault')}
+            active={defaultId === p.id}
             onClick={() => setDefaultTicketPreset(p.id)}
-            title={defaultId === p.id ? t('launcher.presets.unsetDefault') : t('launcher.presets.setDefault')}
-            className={`cursor-pointer ${defaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
           >
-            <Icon icon={faStar} className={defaultId === p.id ? undefined : 'opacity-30'} />
-          </button>
-          <button type="button" onClick={() => onApply(p.filters)} className="cursor-pointer">
+            <Star className={defaultId === p.id ? 'fill-current' : undefined} />
+          </PresetIconBtn>
+          <PresetApply onClick={() => onApply(p.filters)}>
             {p.builtin ? t('launcher.preset.myOpenWork') : p.name}
-          </button>
+          </PresetApply>
           {!p.builtin && (
-            <button
-              type="button"
-              onClick={() => deleteTicketPreset(p.id)}
-              title={t('launcher.presets.delete')}
-              className="cursor-pointer text-fgdim hover:text-danger"
-            >
-              <Icon icon={faXmark} />
-            </button>
+            <PresetIconBtn tip={t('launcher.presets.delete')} danger onClick={() => deleteTicketPreset(p.id)}>
+              <X />
+            </PresetIconBtn>
           )}
         </span>
       ))}
-      {naming ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
-          }}
-          placeholder={t('launcher.presets.namePlaceholder')}
-          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] outline-none placeholder:text-fgdim"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setNaming(true)}
-          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] font-bold text-fg hover:border-ink"
-        >
-          {t('launcher.presets.saveCurrent')}
-        </button>
-      )}
+      <PresetSave onSave={(name) => saveTicketPreset(name, current)} />
     </div>
   );
 }
@@ -513,35 +500,35 @@ export function FolderPicker({ value, onChange }) {
   const match = value ? names.find((n) => folderKey(n) === folderKey(value)) : '';
   const isNew = creating || (!!value && !match);
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
-      <select
-        value={isNew ? '__new' : match || ''}
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v === '__new') { setCreating(true); onChange(''); return; }
-          setCreating(false);
-          onChange(v);
-        }}
-        className={selCls}
-        aria-label={t('launcher.options.folder')}
-        title={t('launcher.options.folderHint')}
-      >
-        <option value="">{t('launcher.options.noFolder')}</option>
-        {names.map((n) => <option key={n} value={n}>{n}</option>)}
-        <option value="__new">{t('launcher.options.newFolder')}</option>
-      </select>
+    <span className="flex max-w-full flex-wrap items-center gap-2">
+      <Hint label={t('launcher.options.folderHint')}>
+        <NativeSelect
+          value={isNew ? '__new' : match || ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__new') { setCreating(true); onChange(''); return; }
+            setCreating(false);
+            onChange(v);
+          }}
+          aria-label={t('launcher.options.folder')}
+        >
+          <option value="">{t('launcher.options.noFolder')}</option>
+          {names.map((n) => <option key={n} value={n}>{n}</option>)}
+          <option value="__new">{t('launcher.options.newFolder')}</option>
+        </NativeSelect>
+      </Hint>
       {isNew && (
-        <input
+        <Input
           type="text"
           autoFocus={creating}
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
-          className={selCls}
+          className="w-44 max-w-full"
           placeholder={t('launcher.options.folder')}
           aria-label={t('launcher.options.folder')}
         />
       )}
-      {isNew && value && match && <span data-folder-exists className="text-[10px] text-fgdim">{t('launcher.options.folderExists')}</span>}
+      {isNew && value && match && <span data-folder-exists className="text-xs text-muted-foreground">{t('launcher.options.folderExists')}</span>}
     </span>
   );
 }
@@ -566,169 +553,113 @@ export function SessionOptionsPicker({ options, onChange, hideSkill = false }) {
   const set = (patch) => onChange({ ...options, ...patch });
   const setAndCoerce = (patch) => onChange(coerceSessionOptions({ ...options, ...patch }, claudeModels));
   return (
-    <div className="flex flex-wrap items-center gap-1.5 pb-2">
+    <div className="flex flex-wrap items-center gap-2 pb-3">
       <FolderPicker value={options.folderName} onChange={(folderName) => set({ folderName })} />
       {!hideSkill && (
-        <select
-          value={options.skill || ''}
-          onChange={(e) => set({ skill: e.target.value })}
-          className={selCls}
-          title={skills.find((s) => s.name === options.skill)?.description || ''}
-        >
-          <option value="">{t('launcher.options.noSkill')}</option>
-          {skills.map((s) => (
-            <option key={s.name} value={s.name}>{s.name}</option>
-          ))}
-        </select>
+        <Hint label={skills.find((s) => s.name === options.skill)?.description || ''}>
+          <NativeSelect
+            value={options.skill || ''}
+            onChange={(e) => set({ skill: e.target.value })}
+          >
+            <option value="">{t('launcher.options.noSkill')}</option>
+            {skills.map((s) => (
+              <option key={s.name} value={s.name}>{s.name}</option>
+            ))}
+          </NativeSelect>
+        </Hint>
       )}
-      <select
-        value={options.model || 'default'}
-        onChange={(e) => setAndCoerce({ model: e.target.value === 'default' ? '' : e.target.value })}
-        className={selCls}
-        title={modelOptions.find((o) => o.value === (options.model || 'default'))?.desc || ''}
-      >
-        {modelOptions.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      <select
+      <Hint label={modelOptions.find((o) => o.value === (options.model || 'default'))?.desc || ''}>
+        <NativeSelect
+          value={options.model || 'default'}
+          onChange={(e) => setAndCoerce({ model: e.target.value === 'default' ? '' : e.target.value })}
+        >
+          {modelOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </NativeSelect>
+      </Hint>
+      <NativeSelect
         value={options.effort || 'default'}
         onChange={(e) => set({ effort: e.target.value === 'default' ? '' : e.target.value })}
-        className={selCls}
         aria-label={t('rail.effort')}
       >
         {effortOptions.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
-      </select>
+      </NativeSelect>
     </div>
   );
 }
 
 // Saved skill/model/effort presets — same interaction as PresetBar (chip,
-// star = default, × = delete, + = save current).
+// star = default, pin = this tab's default, × = delete, + = save current).
 function SessionPresetBar({ presets, defaultId, defaultByMode, mode, current, onApply }) {
   const t = useT();
   const tabDefaultId = defaultByMode[mode];
   const activeId = presets.find((p) => sessionOptionsEqual(p, current))?.id || null;
-  const [naming, setNaming] = useState(false);
-  const [draft, setDraft] = useState('');
-  const commit = () => {
-    const name = draft.trim();
-    if (name) saveSessionPreset(name, current);
-    setDraft('');
-    setNaming(false);
-  };
   return (
-    <div className="flex flex-wrap items-center gap-1.5 pb-2.5">
-      <span className="text-[11.5px] md:text-[10px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.presets.title')}</span>
+    <div className="flex flex-wrap items-center gap-2 pb-3">
+      <span className={sectionLabel}>{t('launcher.presets.title')}</span>
       {presets.map((p) => (
-        <span
-          key={p.id}
-          className={`flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11.5px] md:text-[10.5px] ${
-            activeId === p.id ? 'border-ink bg-chip font-bold text-fg' : 'border-border bg-panel text-fgdim'
-          }`}
-        >
-          <button
-            type="button"
+        <span key={p.id} className={chipCls(activeId === p.id)}>
+          <PresetIconBtn
+            tip={defaultId === p.id ? t('launcher.presets.unsetGlobalDefault') : t('launcher.presets.setGlobalDefault')}
+            active={defaultId === p.id}
             onClick={() => setDefaultSessionPreset(p.id)}
-            title={defaultId === p.id ? t('launcher.presets.unsetGlobalDefault') : t('launcher.presets.setGlobalDefault')}
-            className={`cursor-pointer ${defaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
           >
-            <Icon icon={faStar} className={defaultId === p.id ? undefined : 'opacity-30'} />
-          </button>
-          <button
-            type="button"
+            <Star className={defaultId === p.id ? 'fill-current' : undefined} />
+          </PresetIconBtn>
+          <PresetIconBtn
+            tip={tabDefaultId === p.id ? t('launcher.presets.unsetTabDefault') : t('launcher.presets.setTabDefault')}
+            active={tabDefaultId === p.id}
             onClick={() => setModeDefaultSessionPreset(mode, p.id)}
-            title={tabDefaultId === p.id ? t('launcher.presets.unsetTabDefault') : t('launcher.presets.setTabDefault')}
-            className={`cursor-pointer ${tabDefaultId === p.id ? 'text-[#CE8324]' : 'text-fgdim hover:text-fg'}`}
           >
-            <Icon icon={faThumbtack} className={tabDefaultId === p.id ? undefined : 'opacity-30'} />
-          </button>
-          <button type="button" onClick={() => onApply(p)} className="cursor-pointer">
-            {p.name}
-          </button>
-          <button
-            type="button"
-            onClick={() => deleteSessionPreset(p.id)}
-            title={t('launcher.presets.delete')}
-            className="cursor-pointer text-fgdim hover:text-danger"
-          >
-            <Icon icon={faXmark} />
-          </button>
+            <Pin className={tabDefaultId === p.id ? 'fill-current' : undefined} />
+          </PresetIconBtn>
+          <PresetApply onClick={() => onApply(p)}>{p.name}</PresetApply>
+          <PresetIconBtn tip={t('launcher.presets.delete')} danger onClick={() => deleteSessionPreset(p.id)}>
+            <X />
+          </PresetIconBtn>
         </span>
       ))}
-      {naming ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') { setDraft(''); setNaming(false); }
-          }}
-          placeholder={t('launcher.presets.namePlaceholder')}
-          className="w-28 rounded-full border border-ink bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] outline-none placeholder:text-fgdim"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setNaming(true)}
-          className="cursor-pointer rounded-full border border-border bg-panel px-2 py-[2px] text-[11.5px] md:text-[10.5px] font-bold text-fg hover:border-ink"
-        >
-          {t('launcher.presets.saveCurrent')}
-        </button>
-      )}
+      <PresetSave onSave={(name) => saveSessionPreset(name, current)} />
     </div>
   );
 }
 
 function TicketRow({ ticket, selected, onPick, openSession }) {
   const t = useT();
-  // A ticket already in a host session: disabled (not selectable), tinted with
-  // the session colour, and badged "in session".
+  // A ticket already in a host session: disabled (not selectable), marked with
+  // the session colour dot, and badged "in session".
   if (openSession) {
     const color = openSession.color || '#c4c4c4';
     return (
-      <div
-        title={t('launcher.ticket.openSessionTitle', { name: openSession.title || openSession.id })}
-        className="mb-1 flex cursor-not-allowed items-center gap-[11px] rounded-[9px] border-2 border-transparent px-[11px] py-[9px] opacity-70"
-        style={{ background: tint(color, '14'), borderLeft: `3px solid ${color}` }}
-      >
-        <Dot color={color} size={10} />
-        <span className="shrink-0 font-mono text-[11.5px] font-bold text-fgdim">{ticket.id}</span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-fgdim">{ticket.title}</span>
-        <span
-          className="shrink-0 rounded-[5px] px-[7px] py-px text-[11.5px] md:text-[10px] font-bold text-fg"
-          style={{ background: tint(color, '2a') }}
-        >
-          {t('launcher.ticket.inSession')}
-        </span>
-      </div>
+      <Hint label={t('launcher.ticket.openSessionTitle', { name: openSession.title || openSession.id })}>
+        <div className="mb-0.5 flex min-h-9 cursor-not-allowed items-center gap-3 rounded-md px-3 py-1.5 opacity-70 coarse:min-h-11">
+          <Dot color={color} size={10} />
+          <bdi className="shrink-0 text-xs font-medium text-muted-foreground tabular-nums">{ticket.id}</bdi>
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{ticket.title}</span>
+          <Badge>{t('launcher.ticket.inSession')}</Badge>
+        </div>
+      </Hint>
     );
   }
   return (
     <div
       onClick={() => onPick(ticket)}
-      className={`mb-1 flex cursor-pointer items-center gap-[11px] rounded-[9px] px-[11px] py-[9px] ${
-        selected
-          ? 'border-2 border-ink bg-chip shadow-[2px_2px_0_rgba(42,42,42,0.16)]'
-          : 'border-2 border-transparent hover:bg-chip'
-      }`}
+      className={cn(
+        'mb-0.5 flex min-h-9 cursor-pointer items-center gap-3 rounded-md px-3 py-1.5 coarse:min-h-11',
+        selected ? 'row-selected' : 'hover:bg-muted',
+      )}
     >
       <PriorityGlyph priority={ticket.priority} />
-      <span className="shrink-0 font-mono text-[11.5px] font-bold">{ticket.id}</span>
-      <span className={`min-w-0 flex-1 truncate text-[12.5px] ${selected ? 'text-fg' : 'text-fgdim'}`}>
+      <bdi className="shrink-0 text-xs font-medium text-foreground tabular-nums">{ticket.id}</bdi>
+      <span className={cn('min-w-0 flex-1 truncate text-sm', selected ? 'text-foreground' : 'text-muted-foreground')}>
         {ticket.title}
       </span>
-      {ticket.status && (
-        <span className="shrink-0 rounded-[5px] border border-border px-[7px] py-px text-[11.5px] md:text-[10px] text-fgdim">
-          {ticket.status}
-        </span>
-      )}
+      {ticket.status && <Badge variant="outline">{ticket.status}</Badge>}
       {ticket.project && (
-        <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim">{ticket.project}</span>
+        <span className="hidden max-w-32 shrink-0 truncate text-xs text-muted-foreground sm:inline">{ticket.project}</span>
       )}
     </div>
   );
@@ -784,23 +715,19 @@ function ConnectLinear({ onConnected }) {
   };
 
   return (
-    <div className="mx-3 mb-3 rounded-[10px] border-[1.5px] border-ink bg-panel px-4 py-3.5 shadow-[2px_2px_0_rgba(42,42,42,0.12)]">
-      <div className="mb-1 text-[12.5px] font-bold">{t('launcher.connect.heading')}</div>
-      <div className="mb-3 text-[11px] leading-relaxed text-fgdim">
+    <div className={cn(cardBox, 'mx-4 mb-3 bg-card p-4')}>
+      <div className="mb-1 text-sm font-semibold">{t('launcher.connect.heading')}</div>
+      <div className={cn(hintText, 'mb-3')}>
         {t('launcher.connect.body')}
       </div>
-      <button
-        type="button"
-        onClick={connect}
-        disabled={busy}
-        className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] disabled:opacity-60"
-      >
+      {/* the Start/Create action of the view stays the one accent button */}
+      <Button variant="default" onClick={connect} disabled={busy}>
         {busy ? t('launcher.connect.waiting') : t('launcher.connect.button')}
-      </button>
-      {err && <div className="mt-2 text-[11.5px] md:text-[10.5px] text-danger">{err}</div>}
-      <div className="mt-2 text-[11.5px] md:text-[10.5px] leading-snug text-fgdim">
+      </Button>
+      {err && <div className={cn(errText, 'mt-2')}>{err}</div>}
+      <div className={cn(hintText, 'mt-3')}>
         {t('launcher.connect.agentsNote')}{' '}
-        <a href="#/settings/connections/mcp" className="underline hover:text-fg">{t('launcher.connect.agentsLink')}</a>
+        <a href="#/settings/connections/mcp" className="underline underline-offset-2 hover:text-foreground">{t('launcher.connect.agentsLink')}</a>
       </div>
     </div>
   );
@@ -874,13 +801,13 @@ function TicketPicker({ selected, onPick, sessions }) {
   );
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-hair md:border-r md:border-b-0">
-      <div className="flex items-center gap-2 px-[18px] pt-4 pb-2">
-        <span className="flex-1"><PasteField onPick={onPick} autoFocus /></span>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-hair max-md:flex-none md:border-e md:border-b-0">
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+        <span className="min-w-0 flex-1"><PasteField onPick={onPick} autoFocus /></span>
         {connected && (
-          <span className="flex shrink-0 items-center gap-1 text-[11.5px] md:text-[10px] text-fgdim" title={t('launcher.picker.liveTitle')}>
-            <span className="h-1.5 w-1.5 rounded-full bg-[#3C9A4E]" /> {t('launcher.picker.live')}
-          </span>
+          <Hint label={t('launcher.picker.liveTitle')}>
+            <Badge status="ok">{t('launcher.picker.live')}</Badge>
+          </Hint>
         )}
       </div>
       {showConnect && <ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} />}
@@ -891,26 +818,22 @@ function TicketPicker({ selected, onPick, sessions }) {
         current={filters}
         onApply={(f) => setFilters(sanitizeFilters(f))}
       />
-      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto border-t border-hair px-2 py-2 max-md:max-h-[45dvh]">
         {tickets === null && (
-          <div className="flex items-center gap-2 px-3 py-5 text-xs text-fgdim">
-            <span className="host-spinner h-3.5 w-3.5" /> {t('launcher.picker.loading')}
+          <div className="flex items-center gap-2 px-3 py-5 text-sm text-muted-foreground">
+            <span className="host-spinner size-3.5" /> {t('launcher.picker.loading')}
           </div>
         )}
         {tickets !== null && error && (
-          <div className="flex flex-col items-start gap-2 px-3 py-5 text-xs text-fgdim">
+          <div className="flex flex-col items-start gap-3 px-3 py-5 text-sm text-muted-foreground">
             <span>{t('launcher.picker.loadError')}</span>
-            <button
-              type="button"
-              onClick={() => setReloadKey((k) => k + 1)}
-              className="rounded border border-border px-2 py-1 text-[11px] hover:border-ink hover:text-fg"
-            >
+            <Button variant="outline" size="sm" onClick={() => setReloadKey((k) => k + 1)}>
               {t('launcher.picker.retry')}
-            </button>
+            </Button>
           </div>
         )}
         {tickets !== null && !error && !needsAuth && visible.length === 0 && (
-          <div className="px-3 py-5 text-xs text-fgdim">{t('launcher.picker.empty')}</div>
+          <div className="px-3 py-5 text-sm text-muted-foreground">{t('launcher.picker.empty')}</div>
         )}
         {visible.map((t) => (
           <TicketRow
@@ -970,13 +893,14 @@ function MetaRow({ label, children }) {
   if (!children) return null;
   return (
     <>
-      <span className="text-fgdim">{label}</span>
-      <span className="min-w-0 text-fg">{children}</span>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-foreground">{children}</span>
     </>
   );
 }
 
 // Full ticket details (description + comments + links) before you commit to it.
+// A ui/Dialog: Esc / outside-click / the corner X close it, focus is trapped and restored.
 function TicketDetailsModal({ id, onClose }) {
   const t = useT();
   const [data, setData] = useState(undefined); // undefined=loading, null=error
@@ -990,55 +914,37 @@ function TicketDetailsModal({ id, onClose }) {
     return () => { dead = true; };
   }, [id]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onMouseDown={onClose}>
-      <div
-        className="flex max-h-[85vh] w-[720px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex shrink-0 items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className="font-mono text-[12.5px] font-bold text-fg">{id}</span>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="flex max-h-[85dvh] w-[min(45rem,calc(100vw-1.5rem))] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 flex-row flex-wrap items-center gap-3 border-b border-hair px-5 py-3 pe-12">
+          <DialogTitle className="text-sm tabular-nums"><bdi>{id}</bdi></DialogTitle>
           {data?.status && (
-            <span
-              className="rounded-[5px] border px-[7px] py-px text-[11.5px] md:text-[10px]"
-              style={{ borderColor: data.statusColor, color: data.statusColor }}
-            >
+            <Badge variant="outline">
+              <span className="size-1.5 shrink-0 rounded-full" style={{ background: data.statusColor }} />
               {data.status}
-            </span>
+            </Badge>
           )}
           {data?.url && (
-            <a href={data.url} target="_blank" rel="noopener" className="text-[11px] text-fgdim underline hover:text-fg">
+            <a href={data.url} target="_blank" rel="noopener" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
               {t('launcher.details.openInLinear')}
             </a>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          >
-            <Icon icon={faXmark} />
-          </button>
-        </div>
+        </DialogHeader>
 
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {data === undefined && (
-            <div className="flex items-center gap-2 py-6 text-xs text-fgdim">
-              <span className="host-spinner h-3.5 w-3.5" /> {t('launcher.details.loading')}
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <span className="host-spinner size-3.5" /> {t('launcher.details.loading')}
             </div>
           )}
           {data === null && (
-            <div className="py-6 text-xs text-danger">{t('launcher.details.error')}</div>
+            <div className="py-6 text-sm text-destructive">{t('launcher.details.error')}</div>
           )}
           {data && (
             <>
-              <h2 className="mb-3 text-[16px] leading-snug font-bold text-fg">{data.title}</h2>
-              <div className="mb-4 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
+              <h2 className="mb-4 text-lg leading-snug font-semibold text-foreground">{data.title}</h2>
+              <div className="mb-5 grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-2 text-sm">
                 <MetaRow label={t('launcher.meta.assignee')}>{data.assignee}</MetaRow>
                 <MetaRow label={t('launcher.meta.priority')}>{data.priority}</MetaRow>
                 <MetaRow label={t('launcher.meta.project')}>{data.project}</MetaRow>
@@ -1046,15 +952,12 @@ function TicketDetailsModal({ id, onClose }) {
                 <MetaRow label={t('launcher.meta.creator')}>{data.creator}</MetaRow>
                 {data.labels.length > 0 && (
                   <MetaRow label={t('launcher.meta.labels')}>
-                    <span className="flex flex-wrap gap-1">
+                    <span className="flex flex-wrap gap-1.5">
                       {data.labels.map((l) => (
-                        <span
-                          key={l.name}
-                          className="rounded-[5px] border px-1.5 py-px text-[11.5px] md:text-[10px]"
-                          style={{ borderColor: l.color || '#cbd0d8', color: l.color || '#6b7280' }}
-                        >
+                        <Badge key={l.name} variant="outline">
+                          <span className="size-1.5 shrink-0 rounded-full" style={{ background: l.color || 'var(--hb-faint)' }} />
                           {l.name}
-                        </span>
+                        </Badge>
                       ))}
                     </span>
                   </MetaRow>
@@ -1066,15 +969,15 @@ function TicketDetailsModal({ id, onClose }) {
                   <Markdown>{data.description}</Markdown>
                 </div>
               ) : (
-                <div className="border-t border-hair pt-4 text-xs text-fgdim">{t('launcher.details.noDescription')}</div>
+                <div className="border-t border-hair pt-4 text-sm text-muted-foreground">{t('launcher.details.noDescription')}</div>
               )}
 
               {data.links.length > 0 && (
-                <div className="mt-4 border-t border-hair pt-3">
-                  <div className="mb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('launcher.details.links')}</div>
-                  <div className="flex flex-col gap-1">
+                <div className="mt-5 border-t border-hair pt-4">
+                  <div className={cn(sectionLabel, 'mb-2')}>{t('launcher.details.links')}</div>
+                  <div className="flex flex-col gap-1.5">
                     {data.links.map((a) => (
-                      <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-[11.5px] text-info hover:underline">
+                      <a key={a.url} href={a.url} target="_blank" rel="noopener" className="truncate text-sm text-foreground underline underline-offset-2 hover:decoration-2">
                         {a.title}
                       </a>
                     ))}
@@ -1083,15 +986,15 @@ function TicketDetailsModal({ id, onClose }) {
               )}
 
               {data.comments.length > 0 && (
-                <div className="mt-4 border-t border-hair pt-3">
-                  <div className="mb-2 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+                <div className="mt-5 border-t border-hair pt-4">
+                  <div className={cn(sectionLabel, 'mb-3')}>
                     {t('launcher.details.comments', { n: data.comments.length })}
                   </div>
                   <div className="flex flex-col gap-3">
                     {data.comments.map((c, i) => (
-                      <div key={i} className="rounded-md border border-hair bg-bg px-3 py-2">
-                        <div className="mb-1 text-[11.5px] md:text-[10.5px] font-bold text-fg">{c.author || t('launcher.details.someone')}</div>
-                        <div className="md-light text-[12px]"><Markdown>{c.body}</Markdown></div>
+                      <div key={i} className="rounded-md border border-hair bg-card px-3.5 py-3">
+                        <div className="mb-1 text-xs font-medium text-foreground">{c.author || t('launcher.details.someone')}</div>
+                        <div className="md-light text-sm"><Markdown>{c.body}</Markdown></div>
                       </div>
                     ))}
                   </div>
@@ -1100,63 +1003,66 @@ function TicketDetailsModal({ id, onClose }) {
             </>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function ProvisionRow({ label, children }) {
   return (
-    <div className="flex items-center gap-[9px] text-[11.5px]">
-      <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
-      <span className="text-fgdim">{label}</span>
-      <span className="ml-auto min-w-0 truncate text-right font-mono text-[11.5px] md:text-[10.5px] text-fg">
-        {children}
-      </span>
+    <div className="flex items-center gap-3 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <bdi className="ms-auto min-w-0 truncate text-foreground">{children}</bdi>
     </div>
+  );
+}
+
+// Permission modes are the SDK's own words; shared by the ticket and empty forms.
+function PermissionOptions({ defaultLabel }) {
+  return (
+    <>
+      <option value="default">{defaultLabel}</option>
+      <option value="acceptEdits">acceptEdits</option>
+      <option value="plan">plan</option>
+      <option value="bypassPermissions">bypassPermissions</option>
+    </>
   );
 }
 
 function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt, options, onOptions }) {
   const t = useT();
   const prefs = usePrefs();
+  const permId = useId();
+  const promptId = useId();
   const color = nextPaletteColor(sessions, config);
   return (
-    <div className="flex w-full shrink-0 flex-col bg-panel p-[16px_18px] md:w-[332px]">
-      <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
+    <div className="thin-scroll flex w-full shrink-0 flex-col bg-panel p-5 md:w-[22.5rem] md:overflow-y-auto">
+      <div className={cn(sectionLabel, 'mb-3')}>
         {t('launcher.plan.selectedTicket')}
       </div>
       {!ticket ? (
-        <div className="flex-1 pt-2 text-xs leading-relaxed text-fgdim">
+        <div className={cn(hintText, 'flex-1 pt-1 text-sm')}>
           {t('launcher.plan.pickHint')}
         </div>
       ) : (
         <>
-          <div className="mb-[5px] flex items-center gap-2">
-            <span className="font-mono text-[12.5px] font-bold">{ticket.id}</span>
-            {ticket.status && (
-              <span className="rounded-[5px] border border-border px-[7px] py-px text-[11.5px] md:text-[10px] text-fgdim">
-                {ticket.status}
-              </span>
-            )}
+          <div className="mb-1.5 flex items-center gap-2">
+            <bdi className="text-sm font-semibold tabular-nums">{ticket.id}</bdi>
+            {ticket.status && <Badge variant="outline">{ticket.status}</Badge>}
           </div>
-          <div className="mb-2 text-sm leading-snug text-fg">
+          <div className="mb-3 text-base leading-snug text-foreground">
             {ticket.title || t('launcher.plan.pastedTitle')}
           </div>
-          <button
-            type="button"
-            onClick={() => onViewDetails(ticket.id)}
-            className="mb-3 cursor-pointer self-start rounded-[7px] border border-border bg-bg px-2.5 py-1 text-[11px] font-bold text-fg hover:border-ink"
-          >
+          <Button variant="outline" size="sm" className="mb-4 self-start" onClick={() => onViewDetails(ticket.id)}>
             {t('launcher.plan.viewDetails')}
-          </button>
-          <div className="mb-3.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11.5px]">
-            <span className="text-fgdim">{t('launcher.meta.assignee')}</span>
-            <span className="text-fgdim">{ticket.assignee || t('launcher.plan.you')}</span>
+          </Button>
+          <div className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
+            <span className="text-muted-foreground">{t('launcher.meta.assignee')}</span>
+            <span className="text-foreground">{ticket.assignee || t('launcher.plan.you')}</span>
             {ticket.priority != null && (
               <>
-                <span className="text-fgdim">{t('launcher.meta.priority')}</span>
-                <span className="text-fgdim">
+                <span className="text-muted-foreground">{t('launcher.meta.priority')}</span>
+                <span className="text-foreground">
                   {{ 1: t('launcher.priority.urgent'), 2: t('launcher.priority.high'), 3: t('launcher.priority.medium'), 4: t('launcher.priority.low') }[ticket.priority] ||
                     String(ticket.priority)}
                 </span>
@@ -1164,44 +1070,43 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
             )}
             {ticket.project && (
               <>
-                <span className="text-fgdim">{t('launcher.meta.project')}</span>
-                <span className="text-fgdim">{ticket.project}</span>
+                <span className="text-muted-foreground">{t('launcher.meta.project')}</span>
+                <span className="text-foreground">{ticket.project}</span>
               </>
             )}
             {ticket.labels?.length > 0 && (
               <>
-                <span className="text-fgdim">{t('launcher.meta.labels')}</span>
-                <span className="text-fgdim">{ticket.labels.join(', ')}</span>
+                <span className="text-muted-foreground">{t('launcher.meta.labels')}</span>
+                <span className="text-foreground">{ticket.labels.join(', ')}</span>
               </>
             )}
           </div>
-          <div className="border-t border-dashed border-border pt-3">
-            <div className="mb-2.5 text-[13px] font-bold">{t('launcher.plan.provision')}</div>
-            <div className="flex flex-col gap-2">
+          <div className="border-t border-hair pt-4">
+            <div className="mb-3 text-sm font-semibold">{t('launcher.plan.provision')}</div>
+            <div className="flex flex-col gap-2.5">
               <ProvisionRow label="Worktree">app-worktrees/{ticket.id.toLowerCase()}</ProvisionRow>
               <ProvisionRow label="Branch">
-                feat/{slug(ticket.title) || ticket.id.toLowerCase()}
+                <Badge mono>feat/{slug(ticket.title) || ticket.id.toLowerCase()}</Badge>
               </ProvisionRow>
               <ProvisionRow label="Dev server">
                 :{config?.devServerPorts?.[0] ?? 'auto'}
               </ProvisionRow>
-              <div className="flex items-center gap-[9px] text-[11.5px]">
-                <span className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-border" />
-                <span className="text-fgdim">{t('launcher.plan.sessionColour')}</span>
-                <span className="ml-auto flex items-center gap-[5px]">
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-muted-foreground">{t('launcher.plan.sessionColour')}</span>
+                <span className="ms-auto flex items-center gap-1.5">
                   <Dot color={color} />
-                  <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">auto</span>
+                  <span className="text-muted-foreground">auto</span>
                 </span>
               </div>
             </div>
           </div>
         </>
       )}
-      {error && <div className="mt-3 text-[11px] text-danger">{error}</div>}
-      <div className="mt-auto flex flex-col gap-2 pt-3.5">
+      {error && <div className={cn(errText, 'mt-3')}>{error}</div>}
+      <div className="mt-auto flex flex-col gap-3 pt-5">
         {ticket && (
           <>
-            <EngineToggle options={options} onChange={onOptions} className="pb-2" />
+            <EngineToggle options={options} onChange={onOptions} />
             <SessionOptionsPicker options={options} onChange={onOptions} />
             <SessionPresetBar
               presets={prefs.sessionPresets}
@@ -1211,59 +1116,49 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
               current={options}
               onApply={onOptions}
             />
-            <div className="flex flex-col gap-1">
-              <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={promptId}>
                 {t('launcher.plan.extraInstructions')}
-              </span>
-              <textarea
+              </Label>
+              <Textarea
+                id={promptId}
                 value={prompt}
                 onChange={(e) => onPrompt(e.target.value)}
                 rows={4}
                 spellCheck={false}
                 placeholder={t('launcher.plan.extraInstructionsPlaceholder')}
-                className="w-full resize-y rounded-[7px] border border-border bg-panel px-2 py-1.5 font-mono text-[11.5px] md:text-[10.5px] leading-snug outline-none focus:border-ink"
               />
             </div>
           </>
         )}
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+        <div className="flex items-center gap-3">
+          <Label htmlFor={permId}>
             {t('launcher.plan.permissions')}
-          </span>
-          <select
-            value={mode}
-            onChange={(e) => onMode(e.target.value)}
-            className="min-w-0 flex-1 cursor-pointer rounded-[7px] border border-border bg-panel px-2 py-1 font-mono text-[11.5px] md:text-[10.5px] outline-none focus:border-ink"
-          >
-            <option value="default">{t('launcher.plan.permDefault')}</option>
-            <option value="acceptEdits">acceptEdits</option>
-            <option value="plan">plan</option>
-            <option value="bypassPermissions">bypassPermissions</option>
-          </select>
+          </Label>
+          <NativeSelect id={permId} value={mode} onChange={(e) => onMode(e.target.value)} wrapperClassName="flex-1" className="w-full">
+            <PermissionOptions defaultLabel={t('launcher.plan.permDefault')} />
+          </NativeSelect>
         </div>
-        <YellowButton
-          className="w-full rounded-[9px] py-2.5"
-          disabled={!ticket || busy}
-          onClick={onCreate}
-        >
+        <Button variant="primary" size="lg" className="w-full" disabled={!ticket || busy} onClick={onCreate}>
           {busy ? t('launcher.plan.creating') : t('launcher.plan.createSession')}
-        </YellowButton>
-        <button
-          type="button"
-          onClick={onLater}
-          disabled={!ticket || busy}
-          className="cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:opacity-40"
-        >
+        </Button>
+        <Button variant="outline" className="w-full" onClick={onLater} disabled={!ticket || busy}>
           {t('launcher.plan.doItLater')}
-        </button>
-        <button
-          type="button"
-          onClick={onEmptyInstead}
-          className="cursor-pointer p-1 text-xs text-fgdim hover:text-fg"
-        >
+        </Button>
+        <Button variant="ghost" className="w-full text-muted-foreground" onClick={onEmptyInstead}>
           {t('launcher.plan.emptyInstead')}
-        </button>
+        </Button>
       </div>
+    </div>
+  );
+}
+
+// A label + control pair of the form panes.
+function Field({ label, htmlFor, className, children }) {
+  return (
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
     </div>
   );
 }
@@ -1271,6 +1166,9 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
 function EmptyForm({ config, sessions, onCreated }) {
   const t = useT();
   const prefs = usePrefs();
+  const nameId = useId();
+  const cwdId = useId();
+  const permId = useId();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState(config?.defaultCwd || '');
   const [mode, setMode] = useState('bypassPermissions');
@@ -1349,9 +1247,9 @@ function EmptyForm({ config, sessions, onCreated }) {
 
   return (
     <div className="flex min-w-0 flex-1 justify-center overflow-y-auto">
-      <div className="w-full max-w-[440px] px-6 py-7">
-        <div className="mb-1.5 text-[13px] font-bold text-fg">{t('launcher.empty.promptFirst')}</div>
-        <textarea
+      <div className="w-full max-w-xl px-5 py-8 md:py-10">
+        <div className="mb-2 text-base font-semibold text-foreground">{t('launcher.empty.promptFirst')}</div>
+        <Textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); create(); } }}
@@ -1359,87 +1257,75 @@ function EmptyForm({ config, sessions, onCreated }) {
           autoFocus
           dir="auto"
           placeholder={t('launcher.firstRun.placeholder')}
-          className="mb-3 w-full resize-y rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] leading-snug outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+          aria-label={t('launcher.empty.promptFirst')}
+          className="mb-4 min-h-24 text-base"
         />
         <EngineToggle options={options} onChange={setOptions} className="mb-3" />
-        <button type="button" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced} className="mb-3 cursor-pointer text-[11.5px] font-semibold text-fgdim hover:text-fg">
-          {advanced ? '▾' : '▸'} {t('launcher.empty.advanced')} <span className="font-normal">· {t('launcher.empty.advancedHint')}</span>
-        </button>
+        <Button variant="ghost" size="sm" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced} className="mb-4 -ms-2.5 text-muted-foreground">
+          <ChevronRight aria-hidden="true" className={cn('transition-transform rtl:rotate-180', advanced && 'rotate-90 rtl:rotate-90')} />
+          {t('launcher.empty.advanced')} <span className="font-normal">· {t('launcher.empty.advancedHint')}</span>
+        </Button>
         <div className={advanced ? '' : 'hidden'}>
-        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          {t('launcher.empty.sessionName')}
+        <div className="mb-5 flex flex-col gap-5 border-s border-hair ps-4">
+          <Field label={t('launcher.empty.sessionName')} htmlFor={nameId}>
+            <Input
+              id={nameId}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && create()}
+              placeholder={t('launcher.empty.namePlaceholder')}
+            />
+            <div className={cn(hintText, 'flex flex-wrap items-center gap-1.5')}>
+              <span>{t('launcher.empty.leaveBlank')}</span>
+              <Badge mono variant="outline">{scratchN}</Badge>
+              <span>{t('launcher.empty.renamedBy')}</span>
+              <Badge mono variant="outline">host.set_title()</Badge>
+            </div>
+          </Field>
+
+          <Field label={t('launcher.empty.workingDir')} htmlFor={cwdId}>
+            <Input
+              id={cwdId}
+              value={cwd}
+              dir="ltr"
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder={config?.defaultCwd || '~/Desktop/repos'}
+              className="text-start font-mono"
+            />
+          </Field>
+
+          <Field label={t('launcher.empty.permMode')} htmlFor={permId}>
+            <NativeSelect id={permId} value={mode} onChange={(e) => setMode(e.target.value)} wrapperClassName="w-full" className="w-full">
+              <PermissionOptions defaultLabel="default" />
+            </NativeSelect>
+          </Field>
+
+          <div className="flex flex-col gap-1.5">
+            <span className={sectionLabel}>{t('launcher.options.title')}</span>
+            <SessionOptionsPicker options={options} onChange={setOptions} />
+            <SessionPresetBar
+              presets={prefs.sessionPresets}
+              defaultId={prefs.sessionDefaultPresetId}
+              defaultByMode={prefs.sessionDefaultPresetByMode}
+              mode="empty"
+              current={options}
+              onApply={setOptions}
+            />
+          </div>
         </div>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && create()}
-          placeholder={t('launcher.empty.namePlaceholder')}
-          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
-        />
-        <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-fgdim">
-          <span>{t('launcher.empty.leaveBlank')}</span>
-          <span className="rounded-[5px] border border-border bg-panel px-1.5 py-px font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-            {scratchN}
-          </span>
-          <span>{t('launcher.empty.renamedBy')}</span>
-          <span className="rounded-[5px] border border-warn-line bg-chip px-1.5 py-px font-mono text-[11.5px] md:text-[10px] text-fg">
-            host.set_title()
-          </span>
         </div>
 
-        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          {t('launcher.empty.workingDir')}
-        </div>
-        <input
-          value={cwd}
-          dir="ltr"
-          onChange={(e) => setCwd(e.target.value)}
-          placeholder={config?.defaultCwd || '~/Desktop/repos'}
-          className="mb-4 w-full text-start rounded-[9px] border-[1.5px] border-border px-3 py-[9px] font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
-        />
-
-        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          {t('launcher.empty.permMode')}
-        </div>
-        <select
-          value={mode}
-          onChange={(e) => setMode(e.target.value)}
-          className="mb-5 w-full cursor-pointer rounded-[9px] border-[1.5px] border-border bg-panel px-3 py-[9px] font-mono text-[11.5px] outline-none focus:border-ink"
-        >
-          <option value="default">default</option>
-          <option value="acceptEdits">acceptEdits</option>
-          <option value="plan">plan</option>
-          <option value="bypassPermissions">bypassPermissions</option>
-        </select>
-
-        <div className="mb-1.5 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
-          {t('launcher.options.title')}
-        </div>
-        <SessionOptionsPicker options={options} onChange={setOptions} />
-        <SessionPresetBar
-          presets={prefs.sessionPresets}
-          defaultId={prefs.sessionDefaultPresetId}
-          defaultByMode={prefs.sessionDefaultPresetByMode}
-          mode="empty"
-          current={options}
-          onApply={setOptions}
-        />
-
-        </div>
-
-        {error && <div className="mb-3 text-[11px] text-danger">{error}</div>}
-        <YellowButton className="w-full rounded-[9px] py-2.5" disabled={busy} onClick={create}>
+        {error && <div className={cn(errText, 'mb-3')}>{error}</div>}
+        <Button variant="primary" size="lg" className="w-full" disabled={busy} onClick={create}>
           {busy ? t('launcher.plan.creating') : t('launcher.empty.createEmpty')}
-        </YellowButton>
-        <button
-          type="button"
-          onClick={later}
-          disabled={busy || (!prompt.trim() && !options.skill)}
-          title={prompt.trim() || options.skill ? t('launcher.empty.addToPending') : t('launcher.empty.deferTitle')}
-          className="mt-2 w-full cursor-pointer rounded-[9px] border border-border py-2 text-xs font-bold text-fg hover:border-ink disabled:cursor-default disabled:opacity-40"
-        >
-          {t('launcher.plan.doItLater')}
-        </button>
+        </Button>
+        <Hint label={prompt.trim() || options.skill ? t('launcher.empty.addToPending') : t('launcher.empty.deferTitle')}>
+          <span className="mt-2 block">
+            <Button variant="outline" className="w-full" onClick={later} disabled={busy || (!prompt.trim() && !options.skill)}>
+              {t('launcher.plan.doItLater')}
+            </Button>
+          </span>
+        </Hint>
       </div>
     </div>
   );
@@ -1515,68 +1401,51 @@ export function TriggerLogModal({ triggerId, onClose }) {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail?.log?.length]);
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const log = detail?.log || [];
+  const statusText = detail?.enabled ? t(detail.type === 'cron' ? 'launcher.cron.scheduled' : 'launcher.trigger.polling') : t('launcher.trigger.disabled');
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-[72vh] w-[760px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2.5 border-b border-hair px-4 py-3">
-          <span className="text-[13px] leading-none"><Icon icon={faBolt} /></span>
-          <span className="font-mono text-[13px] font-bold text-fg">{detail?.name || t('launcher.trigger.defaultName')}</span>
-          <span className="font-mono text-[11.5px] md:text-[10.5px] text-fgdim">
-            {detail?.enabled ? t(detail.type === 'cron' ? 'launcher.cron.scheduled' : 'launcher.trigger.polling') : t('launcher.trigger.disabled')}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-hair text-fgdim hover:border-ink hover:text-fg"
-          >
-            <Icon icon={faXmark} />
-          </button>
-        </div>
-        <div className="grid max-h-[35vh] shrink-0 grid-cols-2 gap-x-4 gap-y-1 overflow-y-auto border-b border-hair px-4 py-2.5 font-mono text-[11.5px] md:text-[10px] text-fgdim">
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="flex h-[72dvh] w-[min(47.5rem,calc(100vw-1.5rem))] flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="flex-row items-center gap-2.5 border-b border-hair px-5 py-3 pe-12">
+          <Zap className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <DialogTitle className="min-w-0 truncate text-sm">{detail?.name || t('launcher.trigger.defaultName')}</DialogTitle>
+          <Badge status={detail?.enabled ? 'ok' : 'idle'}>{statusText}</Badge>
+        </DialogHeader>
+        <div className="grid max-h-[35dvh] shrink-0 grid-cols-1 gap-x-5 gap-y-1.5 overflow-y-auto border-b border-hair px-5 py-3 text-xs text-muted-foreground tabular-nums sm:grid-cols-2">
           {detail?.type === 'cron' ? <>
             <span>{t('launcher.cron.scheduleLabel')} {scheduleSummary(detail.schedule, t)}</span>
             <span>{t('launcher.cron.targetLabel')} {detail.sessionMode}</span>
             <span>{t('launcher.cron.metaLastRun')} {fmtAgo(detail.lastRun)}</span>
             <span>{t('launcher.cron.metaNextRun')} {detail.nextRunAt ? fmtDateTime(detail.nextRunAt) : '—'}</span>
             <span>{t('launcher.cron.runCount', { n: detail.runs?.length || 0 })}</span>
-            {detail.runs?.map((run, i) => <span key={i} className="col-span-2">
+            {detail.runs?.map((run, i) => <span key={i} className="sm:col-span-2">
               {fmtDateTime(run.at)} · {run.state} {run.summary}
-              {run.sessionId && <a className="underline" onClick={onClose} href={`#/session/${encodeURIComponent(run.sessionId)}`}> {run.sessionId}</a>}
+              {run.sessionId && <a className="underline underline-offset-2 hover:text-foreground" onClick={onClose} href={`#/session/${encodeURIComponent(run.sessionId)}`}> {run.sessionId}</a>}
             </span>)}
           </> : detail ? <>
-          <span>{t('launcher.trigger.metaFilter')} <span className="text-fg">{detail ? filterSummary(detail.filters) : '—'}</span></span>
-          <span>{t('launcher.trigger.metaPoll')} <span className="text-fg">{t('launcher.trigger.every60s')}</span></span>
-          <span>{t('launcher.trigger.metaLastPoll')} <span className="text-fg">{fmtAgo(detail?.lastPolledAt)}</span></span>
-          <span>{t('launcher.trigger.metaSpawned')} <span className="text-fg">{detail?.createdSessions?.length || 0}</span></span>
-          <span>{t('launcher.trigger.metaSeen')} <span className="text-fg">{t('launcher.trigger.ticketsSeen', { n: detail?.seen?.length || 0 })}</span></span>
-          <span>{t('launcher.trigger.metaPrimed')} <span className="text-fg">{detail?.primed ? t('launcher.common.yes') : t('launcher.common.no')}</span></span>
+          <span>{t('launcher.trigger.metaFilter')} <span className="text-foreground">{detail ? filterSummary(detail.filters) : '—'}</span></span>
+          <span>{t('launcher.trigger.metaPoll')} <span className="text-foreground">{t('launcher.trigger.every60s')}</span></span>
+          <span>{t('launcher.trigger.metaLastPoll')} <span className="text-foreground">{fmtAgo(detail?.lastPolledAt)}</span></span>
+          <span>{t('launcher.trigger.metaSpawned')} <span className="text-foreground">{detail?.createdSessions?.length || 0}</span></span>
+          <span>{t('launcher.trigger.metaSeen')} <span className="text-foreground">{t('launcher.trigger.ticketsSeen', { n: detail?.seen?.length || 0 })}</span></span>
+          <span>{t('launcher.trigger.metaPrimed')} <span className="text-foreground">{detail?.primed ? t('launcher.common.yes') : t('launcher.common.no')}</span></span>
           </> : null}
           {detail?.lastError && (
-            <span className="col-span-2 text-danger">{t('launcher.trigger.metaLastError')} {detail.lastError}</span>
+            <span className="text-destructive sm:col-span-2">{t('launcher.trigger.metaLastError')} {detail.lastError}</span>
           )}
         </div>
-        {loadError && <div role="alert" className="border-b border-hair px-4 py-2 text-xs text-danger">
+        {loadError && <div role="alert" className="flex flex-wrap items-center gap-x-2 border-b border-hair px-5 py-2 text-xs text-destructive">
           {loadError.terminal ? t('launcher.cron.deleted') : loadError.message}
           {lastLoaded && <span> {t('launcher.cron.lastLoaded', { time: fmtDateTime(lastLoaded) })}</span>}
-          {!loadError.terminal && <button type="button" className="ml-2 underline" onClick={() => setRetry((n) => n + 1)}>{t('launcher.picker.retry')}</button>}
+          {!loadError.terminal && <Button variant="outline" size="xs" onClick={() => setRetry((n) => n + 1)}>{t('launcher.picker.retry')}</Button>}
         </div>}
-        <div className="border-b border-hair px-4 py-1.5 font-mono text-[11px] md:text-[9.5px] tracking-wide text-fgdim uppercase">
+        <div className={cn(sectionLabel, 'border-b border-hair px-5 py-2')}>
           {t('launcher.trigger.activity')}
         </div>
         <pre
           ref={logRef}
           dir="ltr"
-          className="thin-scroll min-h-0 flex-1 overflow-auto bg-term px-3.5 py-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap"
+          className="thin-scroll min-h-0 flex-1 overflow-auto bg-term px-4 py-3 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap"
         >
           {detail == null ? (
             <span className="text-[#888]">{loadError ? loadError.message : t('launcher.trigger.loadingLog')}</span>
@@ -1591,74 +1460,59 @@ export function TriggerLogModal({ triggerId, onClose }) {
             ))
           )}
         </pre>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 // Shown when enabling autonomous mode on a trigger — spells out the blast radius.
+// An AlertDialog: it must be answered (Cancel / Enable), Esc cancels. Cancel is
+// focused first, so a stray Enter cannot enable unattended runs.
 function AutonomyWarningModal({ onConfirm, onCancel }) {
   const t = useT();
   const [dontShow, setDontShow] = useState(false);
+  const dontId = useId();
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6"
-      onMouseDown={onCancel}
-    >
-      <div
-        className="w-[460px] max-w-full rounded-[12px] border-[1.5px] border-ink bg-panel p-5 shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-[18px]"><Icon icon={faTriangleExclamation} /></span>
-          <span className="text-[14px] font-bold">{t('launcher.autonomy.title')}</span>
-        </div>
-        <div className="mb-4 text-[12px] leading-relaxed text-fgdim">
-          {t('launcher.autonomy.intro')} <b>{t('launcher.autonomy.autonomousMode')}</b>:
-          <ul className="mt-2 list-disc space-y-1 pl-4">
-            <li>
-              {t('launcher.autonomy.li1a')} <b>{t('launcher.autonomy.autoApproved')}</b>{t('launcher.autonomy.li1b')}
-            </li>
-            <li>
-              {t('launcher.autonomy.li2a')} <b>{t('launcher.autonomy.wontStop')}</b>{t('launcher.autonomy.li2b')}
-            </li>
-            <li>{t('launcher.autonomy.li3')}</li>
-          </ul>
-          <div className="mt-2">
-            {t('launcher.autonomy.warn')}
+    <AlertDialog open onOpenChange={(o) => !o && onCancel()}>
+      <AlertDialogContent className="w-[min(28.75rem,calc(100vw-1.5rem))]">
+        <AlertDialogHeader className="flex-row items-center gap-2 pe-0">
+          <TriangleAlert className="size-4 shrink-0 text-[var(--hb-warn)]" aria-hidden="true" />
+          <AlertDialogTitle>{t('launcher.autonomy.title')}</AlertDialogTitle>
+        </AlertDialogHeader>
+        <AlertDialogDescription asChild>
+          <div className="text-sm leading-relaxed">
+            {t('launcher.autonomy.intro')} <b>{t('launcher.autonomy.autonomousMode')}</b>:
+            <ul className="mt-2 list-disc space-y-1 ps-5">
+              <li>
+                {t('launcher.autonomy.li1a')} <b>{t('launcher.autonomy.autoApproved')}</b>{t('launcher.autonomy.li1b')}
+              </li>
+              <li>
+                {t('launcher.autonomy.li2a')} <b>{t('launcher.autonomy.wontStop')}</b>{t('launcher.autonomy.li2b')}
+              </li>
+              <li>{t('launcher.autonomy.li3')}</li>
+            </ul>
+            <div className="mt-3">
+              {t('launcher.autonomy.warn')}
+            </div>
           </div>
-        </div>
-        <label className="mb-4 flex cursor-pointer items-center gap-2 text-[11.5px] text-fgdim">
-          <input
-            type="checkbox"
-            checked={dontShow}
-            onChange={(e) => setDontShow(e.target.checked)}
-            className="cursor-pointer"
-          />
+        </AlertDialogDescription>
+        <label htmlFor={dontId} className="flex min-h-8 cursor-pointer items-center gap-2.5 text-xs text-muted-foreground coarse:min-h-11">
+          <Checkbox id={dontId} checked={dontShow} onCheckedChange={(v) => setDontShow(!!v)} />
           {t('launcher.autonomy.dontShow')}
         </label>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="cursor-pointer rounded-[8px] border border-border px-3 py-1.5 text-[12px] text-fg hover:border-ink"
-          >
-            {t('launcher.common.cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(dontShow)}
-            className="cursor-pointer rounded-[8px] border-[1.5px] border-danger bg-danger px-3 py-1.5 text-[12px] font-bold text-white"
-          >
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('launcher.common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={() => onConfirm(dontShow)}>
             {t('launcher.autonomy.enable')}
-          </button>
-        </div>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
-const CRON_RUN_COLOR = { started: '#9aa0a6', done: '#7ee787', blocked: '#e3b341', error: '#ff7b72', milestone: '#9aa0a6', held: '#e3b341' };
+// last-run state → the Badge's status dot (colour only in the dot)
+const CRON_RUN_STATUS = { started: 'idle', done: 'ok', blocked: 'warn', error: 'err', milestone: 'idle', held: 'warn' };
 
 function scheduleSummary(schedule, t) {
   if (!schedule) return '—';
@@ -1748,196 +1602,184 @@ export function CronSubPanel() {
   };
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="border-b border-hair px-[18px] pt-4 pb-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
+    <div className="thin-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+      <div className={cn(paneCol, 'border-b border-hair px-4 pt-5 pb-5')}>
+        <div className="mb-3 text-sm font-semibold">
           {t('launcher.cron.newJob')}
         </div>
-        <input
+        <div className="flex flex-col gap-2.5">
+        <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t('launcher.cron.namePlaceholder')}
-          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+          aria-label={t('launcher.cron.namePlaceholder')}
         />
-        <textarea
+        <Textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={t('launcher.cron.promptPlaceholder')}
+          aria-label={t('launcher.cron.promptPlaceholder')}
           rows={2}
-          className="mb-2 w-full resize-y rounded-[9px] border border-border bg-panel px-3 py-2 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
         />
-        <div className="mb-2 flex items-center gap-2">
-          <select
+        <div className="flex flex-wrap items-center gap-2">
+          <NativeSelect
             value={scheduleKind}
             onChange={(e) => setScheduleKind(e.target.value)}
-            className="rounded-[8px] border border-border bg-panel px-2 py-1.5 text-[11.5px] outline-none focus:border-ink"
+            aria-label={t('launcher.cron.scheduleLabel')}
           >
             <option value="cron">{t('launcher.cron.kindCron')}</option>
             <option value="interval">{t('launcher.cron.kindInterval')}</option>
             <option value="at">{t('launcher.cron.kindAt')}</option>
-          </select>
-          <input
+          </NativeSelect>
+          <Input
+            dir="ltr"
             value={scheduleValue}
             onChange={(e) => setScheduleValues({ ...scheduleValues, [scheduleKind]: e.target.value })}
             placeholder={
               scheduleKind === 'cron' ? '0 9 * * 1-5' : scheduleKind === 'interval' ? '30m' : '2026-09-01T09:00:00'
             }
-            className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+            aria-label={t('launcher.cron.scheduleLabel')}
+            className="min-w-40 flex-1 text-start font-mono"
           />
         </div>
-        <div className="mb-2 text-[11px] text-fgdim">
-          {scheduleKind === 'cron' && t('launcher.cron.stepHelp')}
-          {scheduleKind === 'at' && t('launcher.cron.atHelp')}
-        </div>
+        {(scheduleKind === 'cron' || scheduleKind === 'at') && (
+          <div className={hintText}>
+            {scheduleKind === 'cron' && t('launcher.cron.stepHelp')}
+            {scheduleKind === 'at' && t('launcher.cron.atHelp')}
+          </div>
+        )}
         {sessionMode === 'isolated' && <FolderPicker value={folderName} onChange={setFolderName} />}
-        {sessionMode === 'isolated' && <EngineToggle options={{ engine }} onChange={(o) => setEngine(o.engine || '')} className="mb-2" />}
-        <div className="mb-2 flex items-center gap-2">
-          <select
+        {sessionMode === 'isolated' && <EngineToggle options={{ engine }} onChange={(o) => setEngine(o.engine || '')} />}
+        <div className="flex flex-wrap items-center gap-2">
+          <NativeSelect
             value={sessionMode}
             onChange={(e) => setSessionMode(e.target.value)}
-            className="rounded-[8px] border border-border bg-panel px-2 py-1.5 text-[11.5px] outline-none focus:border-ink"
           >
             <option value="isolated">{t('launcher.cron.modeIsolated')}</option>
             <option value="existing">{t('launcher.cron.modeExisting')}</option>
-          </select>
+          </NativeSelect>
           {sessionMode === 'existing' && (
-            <select value={targetSessionId} onChange={(e) => setTargetSessionId(e.target.value)} className="min-w-0 flex-1 rounded-[8px] border border-border bg-panel px-2.5 py-1.5 text-[11px]">
+            <NativeSelect value={targetSessionId} onChange={(e) => setTargetSessionId(e.target.value)} wrapperClassName="min-w-0 flex-1" className="w-full">
               <option value="">{t('launcher.cron.selectTarget')}</option>
               {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
-            </select>
+            </NativeSelect>
           )}
         </div>
-        <div className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border p-2">
-          <span className="font-mono text-[11px] md:text-[9.5px] tracking-[0.08em] text-fgdim uppercase">{t('launcher.cron.deliver')}</span>
-          <label className="flex cursor-pointer items-center gap-2 text-[11.5px]">
-            <input type="checkbox" checked={deliverPush} onChange={(e) => setDeliverPush(e.target.checked)} className="cursor-pointer" />
+        <div className={cn(cardBox, 'flex flex-col gap-2.5 p-3')}>
+          <span className={sectionLabel}>{t('launcher.cron.deliver')}</span>
+          <label className="flex min-h-8 cursor-pointer items-center gap-2.5 text-sm coarse:min-h-11">
+            <Checkbox checked={deliverPush} onCheckedChange={(v) => setDeliverPush(!!v)} />
             {t('launcher.cron.deliverPush')}
           </label>
-          <input
+          <Input
             value={deliverMaster}
             onChange={(e) => setDeliverMaster(e.target.value)}
             placeholder={t('launcher.cron.deliverMasterPlaceholder')}
-            className="w-full rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
+            aria-label={t('launcher.cron.deliverMasterPlaceholder')}
+            dir="ltr"
+            className="text-start font-mono"
           />
-          <input
-            value={deliverWhatsapp}
-            onChange={(e) => setDeliverWhatsapp(e.target.value)}
-            placeholder={t('launcher.cron.deliverWhatsappPlaceholder')}
-            title={t('launcher.cron.deliverWhatsappTip')}
-            className="w-full rounded-[8px] border border-border bg-panel px-2.5 py-1.5 font-mono text-[11px] outline-none placeholder:text-fgdim focus:border-ink"
-          />
+          <Hint label={t('launcher.cron.deliverWhatsappTip')}>
+            <Input
+              value={deliverWhatsapp}
+              onChange={(e) => setDeliverWhatsapp(e.target.value)}
+              placeholder={t('launcher.cron.deliverWhatsappPlaceholder')}
+              aria-label={t('launcher.cron.deliverWhatsappPlaceholder')}
+              dir="ltr"
+              className="text-start font-mono"
+            />
+          </Hint>
         </div>
-        <label className="mb-2 flex cursor-pointer items-start gap-2 text-[11.5px]">
-          <input type="checkbox" checked={autonomous} onChange={(e) => onToggleAutonomous(e.target.checked)} className="mt-0.5 cursor-pointer" />
-          <span className={autonomous ? 'text-danger' : 'text-fgdim'}>
-            {autonomous && (
-              <span className="mr-1 cursor-help" title={t('launcher.trigger.autonomousTip')}>
-                <Icon icon={faTriangleExclamation} />
-              </span>
-            )}
-            {t('launcher.trigger.autonomousLabel')}
-          </span>
-        </label>
-        {error && <div className="mb-1 text-[11px] text-danger">{error}</div>}
+        <AutonomousCheck checked={autonomous} onChange={onToggleAutonomous} />
+        {error && <div className={errText}>{error}</div>}
         <div className="flex justify-end">
-          <YellowButton
-            className="shrink-0 rounded-[9px] px-3.5 py-1.5 text-[11.5px]"
+          <Button
+            variant="primary"
             disabled={busy || !prompt.trim() || !scheduleValue.trim() || (sessionMode === 'existing' && !targetSessionId.trim())}
             onClick={create}
           >
             {busy ? t('launcher.plan.creating') : t('launcher.cron.createJob')}
-          </YellowButton>
+          </Button>
+        </div>
         </div>
       </div>
-      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
+      <div className={cn(paneCol, 'px-4 py-5')}>
+        <div className={cn(sectionLabel, 'mb-3')}>
           {t('launcher.cron.listHeading', { n: cronJobs.length })}
         </div>
-        {cronJobs.length === 0 && <div className="py-4 text-xs text-fgdim">{t('launcher.cron.emptyList')}</div>}
+        {cronJobs.length === 0 && <div className="py-4 text-sm text-muted-foreground">{t('launcher.cron.emptyList')}</div>}
         {cronJobs.map((cj) => {
           const lastRunState = cj.runs?.length ? cj.runs[cj.runs.length - 1].state : null;
+          const op = operations[cj.id];
           return (
-            <div key={cj.id} className="mb-2 flex flex-col gap-1.5 rounded-[9px] border border-border px-3 py-2">
-              {cj.lastError && <div role="alert" className="text-xs text-danger">{cj.lastError} {cj.schedule.kind === 'at' && !cj.enabled && t('launcher.cron.repairRetry')}</div>}
-              {cj.sessionMode.startsWith('existing:') && <select
+            <div key={cj.id} className={cn(cardBox, 'mb-2.5 flex flex-col gap-2 p-3.5')}>
+              {cj.lastError && <div role="alert" className={errText}>{cj.lastError} {cj.schedule.kind === 'at' && !cj.enabled && t('launcher.cron.repairRetry')}</div>}
+              {cj.sessionMode.startsWith('existing:') && <NativeSelect
                 aria-label={t('launcher.cron.targetLabel')}
                 value={cj.sessionMode.slice('existing:'.length)}
-                disabled={operations[cj.id]?.pending}
+                disabled={op?.pending}
                 onChange={(e) => { const sessionMode = `existing:${e.target.value}`; operate(cj.id, () => api.patch(`/triggers/${cj.id}`, { sessionMode })); }}
-                className="rounded border border-border bg-panel text-xs"
+                wrapperClassName="w-full" className="w-full"
               >
                 {!sessions.some((session) => cj.sessionMode === `existing:${session.id}`) && <option value={cj.sessionMode.slice('existing:'.length)}>{t('launcher.cron.missingTarget')}</option>}
                 {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.id}</option>)}
-              </select>}
-              {operations[cj.id]?.pending && <div role="status" className="text-xs">{t('launcher.cron.pending')}</div>}
-              {operations[cj.id]?.error && <div role="alert" className="text-xs text-danger">
-                {operations[cj.id].error} <button type="button" className="underline" onClick={() => operate(cj.id, operations[cj.id].retry)}>{t('launcher.picker.retry')}</button>
+              </NativeSelect>}
+              {op?.pending && <div role="status" className="text-xs text-muted-foreground">{t('launcher.cron.pending')}</div>}
+              {op?.error && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+                {op.error} <Button variant="outline" size="xs" onClick={() => operate(cj.id, op.retry)}>{t('launcher.picker.retry')}</Button>
               </div>}
-              <div className="flex items-center gap-2">
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: cj.enabled ? '#3C9A4E' : '#d2d2d2' }}
-                  title={cj.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}
-                />
+              <div className="flex items-center gap-2.5">
+                <Hint label={cj.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}>
+                  <span className="inline-flex"><StatusDot status={cj.enabled ? 'ok' : 'idle'} className="size-2" /></span>
+                </Hint>
                 {cj.autonomous && (
-                  <span className="shrink-0 cursor-help text-[13px]" title={t('launcher.trigger.autonomousBadgeTip')}>
-                    <Icon icon={faTriangleExclamation} />
-                  </span>
+                  <Hint label={t('launcher.trigger.autonomousBadgeTip')}>
+                    <span className="inline-flex shrink-0 cursor-help text-[var(--hb-warn)]">
+                      <TriangleAlert className="size-4" aria-hidden="true" />
+                    </span>
+                  </Hint>
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-bold">{cj.name}</span>
-                  <span className="block truncate text-[11.5px] md:text-[10.5px] text-fgdim">{scheduleSummary(cj.schedule, t)}</span>
+                  <span className="block truncate text-sm font-medium">{cj.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{scheduleSummary(cj.schedule, t)}</span>
                 </span>
                 {lastRunState && (
-                  <span
-                    className="shrink-0 rounded-full px-1.5 py-[1px] text-[11px] md:text-[9.5px] font-bold text-white"
-                    style={{ background: CRON_RUN_COLOR[lastRunState] || '#9aa0a6' }}
-                  >
-                    {lastRunState}
-                  </span>
+                  <Badge status={CRON_RUN_STATUS[lastRunState] || 'idle'}>{lastRunState}</Badge>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-[11.5px] md:text-[10px] text-fgdim">
+              <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground tabular-nums">
                 <span>{t('launcher.cron.metaLastRun')} {fmtAgo(cj.lastRun)}</span>
-                <span>·</span>
+                <span aria-hidden="true">·</span>
                 <span>{t('launcher.cron.metaNextRun')} {cj.nextRunAt ? fmtDateTime(cj.nextRunAt) : '—'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={operations[cj.id]?.pending}
-                  onClick={() => operate(cj.id, () => api.post(`/triggers/${cj.id}/run`))}
-                  title={t('launcher.cron.runNowTitle')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
-                >
-                  {t('launcher.cron.runNow')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLogId(cj.id)}
-                  title={t('launcher.trigger.openLog')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
-                >
-                  <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
-                </button>
-                <button
-                  type="button"
-                  disabled={operations[cj.id]?.pending}
-                  onClick={() => operate(cj.id, () => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }))}
-                  title={cj.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
-                  className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
-                >
-                  {cj.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
-                </button>
-                <button
-                  type="button"
-                  disabled={operations[cj.id]?.pending}
-                  onClick={() => operate(cj.id, () => api.del(`/triggers/${cj.id}`))}
-                  title={t('launcher.trigger.deleteTitle')}
-                  className="ml-auto shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
-                >
-                  <Icon icon={faXmark} />
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Hint label={t('launcher.cron.runNowTitle')}>
+                  <Button variant="outline" size="sm" disabled={op?.pending} onClick={() => operate(cj.id, () => api.post(`/triggers/${cj.id}/run`))}>
+                    {t('launcher.cron.runNow')}
+                  </Button>
+                </Hint>
+                <Hint label={t('launcher.trigger.openLog')}>
+                  <Button variant="ghost" size="sm" onClick={() => setLogId(cj.id)}>
+                    <Zap /> {t('launcher.trigger.logs')}
+                  </Button>
+                </Hint>
+                <OnOffSwitch
+                  enabled={!!cj.enabled}
+                  disabled={op?.pending}
+                  onToggle={() => operate(cj.id, () => api.patch(`/triggers/${cj.id}`, { enabled: !cj.enabled }))}
+                />
+                <Hint label={t('launcher.trigger.deleteTitle')}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('launcher.trigger.deleteTitle')}
+                    disabled={op?.pending}
+                    onClick={() => operate(cj.id, () => api.del(`/triggers/${cj.id}`))}
+                    className="ms-auto hover:text-destructive"
+                  >
+                    <X />
+                  </Button>
+                </Hint>
               </div>
             </div>
           );
@@ -1958,6 +1800,44 @@ export function CronSubPanel() {
   );
 }
 
+// The "autonomous (unattended)" checkbox shared by the cron and Linear-trigger
+// forms. Turning it on is gated behind the warning dialog by the caller.
+function AutonomousCheck({ checked, onChange }) {
+  const t = useT();
+  const id = useId();
+  return (
+    <label htmlFor={id} className="flex cursor-pointer items-start gap-2.5 text-sm">
+      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(!!v)} className="mt-0.5" />
+      <span className={checked ? 'text-destructive' : 'text-muted-foreground'}>
+        {checked && (
+          <Hint label={t('launcher.trigger.autonomousTip')}>
+            <span className="me-1.5 inline-flex cursor-help align-text-bottom">
+              <TriangleAlert className="size-4" aria-hidden="true" />
+            </span>
+          </Hint>
+        )}
+        {t('launcher.trigger.autonomousLabel')}
+      </span>
+    </label>
+  );
+}
+
+// Enable/disable a standing trigger: a switch plus its On/Off word. The title
+// names the ACTION ("Disable (stop polling)" / "Enable").
+function OnOffSwitch({ enabled, disabled, onToggle }) {
+  const t = useT();
+  const id = useId();
+  const action = enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction');
+  return (
+    <Hint label={action}>
+      <label htmlFor={id} className={cn('inline-flex min-h-7 cursor-pointer items-center gap-2 px-1 text-xs text-muted-foreground coarse:min-h-11', disabled && 'cursor-not-allowed opacity-50')}>
+        <Switch id={id} aria-label={action} checked={enabled} disabled={disabled} onCheckedChange={onToggle} />
+        {enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
+      </label>
+    </Hint>
+  );
+}
+
 // The "From trigger" tab: a new-trigger form (reusing FilterBar) + the list of
 // standing triggers. Creating a trigger arms-and-primes it server-side; it then
 // drops matching tickets into the Pending queue. No session is born here.
@@ -1966,22 +1846,19 @@ export function CronSubPanel() {
 function TriggerKindSwitch({ subMode, onChange }) {
   const t = useT();
   return (
-    <div className="flex gap-1.5 border-b border-hair px-[18px] pt-3 pb-2">
-      {[
-        ['linear', 'launcher.cron.subTabLinear'],
-        ['cron', 'launcher.cron.subTabCron'],
-      ].map(([mode, key]) => (
-        <button
-          key={mode}
-          type="button"
-          onClick={() => onChange(mode)}
-          className={`cursor-pointer rounded-[7px] px-2.5 py-1 text-[11px] font-bold ${
-            subMode === mode ? 'bg-brand text-ink' : 'bg-panel text-fgdim hover:text-fg'
-          }`}
-        >
-          {t(key)}
-        </button>
-      ))}
+    <div className="flex shrink-0 border-b border-hair px-4 py-2.5">
+      <Tabs value={subMode} onValueChange={onChange}>
+        <TabsList variant="segmented" aria-label={t('launcher.header.fromTrigger')}>
+          {[
+            ['linear', 'launcher.cron.subTabLinear'],
+            ['cron', 'launcher.cron.subTabCron'],
+          ].map(([mode, key]) => (
+            <TabsTrigger key={mode} value={mode} className="coarse:h-10">
+              {t(key)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   );
 }
@@ -2060,28 +1937,32 @@ function TriggerTab() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <TriggerKindSwitch subMode={subMode} onChange={setSubMode} />
-      <div className="border-b border-hair px-[18px] pt-4 pb-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className={cn(paneCol, 'border-b border-hair px-4 pt-5 pb-5')}>
+        <div className="mb-3 text-sm font-semibold">
           {t('launcher.trigger.newTrigger')}
         </div>
-        <input
+        <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t('launcher.trigger.namePlaceholder')}
-          className="mb-2 w-full rounded-[9px] border-[1.5px] border-ink px-3 py-[9px] text-[12.5px] outline-none placeholder:text-fgdim focus:shadow-[2px_2px_0_rgba(42,42,42,0.16)]"
+          aria-label={t('launcher.trigger.namePlaceholder')}
+          className="mb-3"
         />
-        {showConnect && <ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} />}
-        <FilterBar
-          filters={filters}
-          onChange={setFilters}
-          labels={labels}
-          statuses={statuses}
-          disabled={showConnect}
-          showSearch={false}
-          showHideOpen={false}
-        />
+        {showConnect && <div className="-mx-4"><ConnectLinear onConnected={() => setReloadKey((k) => k + 1)} /></div>}
+        <div className="-mx-4">
+          <FilterBar
+            filters={filters}
+            onChange={setFilters}
+            labels={labels}
+            statuses={statuses}
+            disabled={showConnect}
+            showSearch={false}
+            showHideOpen={false}
+          />
+        </div>
 
-        <EngineToggle options={options} onChange={setOptions} className="pb-2" />
+        <EngineToggle options={options} onChange={setOptions} className="pb-3" />
         <SessionOptionsPicker options={options} onChange={setOptions} />
         <SessionPresetBar
           presets={prefs.sessionPresets}
@@ -2093,112 +1974,87 @@ function TriggerTab() {
         />
 
         {/* extra instructions injected into the task prompt on start */}
-        <textarea
+        <Textarea
           value={injectPrompt}
           onChange={(e) => setInjectPrompt(e.target.value)}
           placeholder={t('launcher.trigger.injectPlaceholder')}
+          aria-label={t('launcher.trigger.injectPlaceholder')}
           rows={2}
-          className="mt-2 w-full resize-y rounded-[9px] border border-border bg-panel px-3 py-2 text-[11.5px] outline-none placeholder:text-fgdim focus:border-ink"
+          className="mb-3"
         />
 
-        {/* autonomous (unattended) mode — gated behind the warning modal */}
-        <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11.5px]">
-          <input
-            type="checkbox"
-            checked={autonomous}
-            onChange={(e) => onToggleAutonomous(e.target.checked)}
-            className="mt-0.5 cursor-pointer"
-          />
-          <span className={autonomous ? 'text-danger' : 'text-fgdim'}>
-            {autonomous && (
-              <span
-                className="mr-1 cursor-help"
-                title={t('launcher.trigger.autonomousTip')}
-              >
-                <Icon icon={faTriangleExclamation} />
-              </span>
-            )}
-            {t('launcher.trigger.autonomousLabel')}
-          </span>
-        </label>
+        {/* autonomous (unattended) mode — gated behind the warning dialog */}
+        <AutonomousCheck checked={autonomous} onChange={onToggleAutonomous} />
 
-        {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
-        <div className="mt-2 flex items-center gap-3">
-          <span className="text-[11px] leading-snug text-fgdim">
+        {error && <div className={cn(errText, 'mt-2')}>{error}</div>}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className={cn(hintText, 'min-w-0 flex-1 basis-56')}>
             {t('launcher.trigger.firesBefore')} <em>{t('launcher.trigger.after')}</em> {t('launcher.trigger.firesAfter')}
           </span>
-          <YellowButton
-            className="ml-auto shrink-0 rounded-[9px] px-3.5 py-1.5 text-[11.5px]"
-            disabled={busy || showConnect}
-            onClick={create}
-          >
+          <Button variant="primary" className="ms-auto" disabled={busy || showConnect} onClick={create}>
             {busy ? t('launcher.plan.creating') : t('launcher.trigger.createTrigger')}
-          </YellowButton>
+          </Button>
         </div>
       </div>
-      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-[18px] py-3">
-        <div className="mb-2 font-mono text-[11.5px] md:text-[10px] tracking-[0.08em] text-fgdim uppercase">
+      <div className={cn(paneCol, 'px-4 py-5')}>
+        <div className={cn(sectionLabel, 'mb-3')}>
           {t('launcher.trigger.listHeading', { n: triggers.length })}
         </div>
         {triggers.length === 0 && (
-          <div className="py-4 text-xs text-fgdim">
+          <div className="py-4 text-sm text-muted-foreground">
             {t('launcher.trigger.emptyList')}
           </div>
         )}
         {triggers.map((trg) => (
           <div
             key={trg.id}
-            className="mb-2 flex items-center gap-2 rounded-[9px] border border-border px-3 py-2"
+            className={cn(cardBox, 'mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 p-3.5')}
           >
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: trg.enabled ? '#3C9A4E' : '#d2d2d2' }}
-              title={trg.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}
-            />
+            <Hint label={trg.enabled ? t('launcher.trigger.enabledTitle') : t('launcher.trigger.disabledTitle')}>
+              <span className="inline-flex"><StatusDot status={trg.enabled ? 'ok' : 'idle'} className="size-2" /></span>
+            </Hint>
             {trg.autonomous && (
-              <span
-                className="shrink-0 cursor-help text-[13px]"
-                title={t('launcher.trigger.autonomousBadgeTip')}
-              >
-                <Icon icon={faTriangleExclamation} />
-              </span>
+              <Hint label={t('launcher.trigger.autonomousBadgeTip')}>
+                <span className="inline-flex shrink-0 cursor-help text-[var(--hb-warn)]">
+                  <TriangleAlert className="size-4" aria-hidden="true" />
+                </span>
+              </Hint>
             )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12.5px] font-bold">{trg.name}</span>
-              <span className="block truncate text-[11.5px] md:text-[10.5px] text-fgdim">
+            <span className="min-w-0 flex-1 basis-40">
+              <span className="block truncate text-sm font-medium">{trg.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
                 {filterSummary(trg.filters)}
-                {trg.lastError ? <> · <Icon icon={faTriangleExclamation} /> {trg.lastError}</> : ''}
+                {trg.lastError ? <> · <TriangleAlert className="inline size-3.5 align-text-bottom" aria-hidden="true" /> {trg.lastError}</> : ''}
               </span>
             </span>
-            <span className="shrink-0 font-mono text-[11.5px] md:text-[10px] text-fgdim" title={t('launcher.trigger.spawnedTitle')}>
-              {trg.createdSessions?.length || 0}<Icon icon={faArrowUp} className="text-[10px] md:text-[8px]" />
-            </span>
-            <button
-              type="button"
-              onClick={() => setLogId(trg.id)}
-              title={t('launcher.trigger.openLog')}
-              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
-            >
-              <Icon icon={faBolt} /> {t('launcher.trigger.logs')}
-            </button>
-            <button
-              type="button"
-              onClick={() => api.patch(`/triggers/${trg.id}`, { enabled: !trg.enabled }).catch(() => {})}
-              title={trg.enabled ? t('launcher.trigger.disableAction') : t('launcher.trigger.enableAction')}
-              className="shrink-0 cursor-pointer rounded-[6px] border border-border px-2 py-[3px] text-[11.5px] md:text-[10.5px] text-fgdim hover:border-ink"
-            >
-              {trg.enabled ? t('launcher.trigger.on') : t('launcher.trigger.off')}
-            </button>
-            <button
-              type="button"
-              onClick={() => api.del(`/triggers/${trg.id}`).catch(() => {})}
-              title={t('launcher.trigger.deleteTitle')}
-              className="shrink-0 cursor-pointer px-1 text-[13px] text-fgdim hover:text-danger"
-            >
-              <Icon icon={faXmark} />
-            </button>
+            <Hint label={t('launcher.trigger.spawnedTitle')}>
+              <span className="inline-flex shrink-0 items-center text-xs text-muted-foreground tabular-nums">
+                {trg.createdSessions?.length || 0}<ArrowUp className="size-3" aria-hidden="true" />
+              </span>
+            </Hint>
+            <Hint label={t('launcher.trigger.openLog')}>
+              <Button variant="ghost" size="sm" onClick={() => setLogId(trg.id)}>
+                <Zap /> {t('launcher.trigger.logs')}
+              </Button>
+            </Hint>
+            <OnOffSwitch
+              enabled={!!trg.enabled}
+              onToggle={() => api.patch(`/triggers/${trg.id}`, { enabled: !trg.enabled }).catch(() => {})}
+            />
+            <Hint label={t('launcher.trigger.deleteTitle')}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('launcher.trigger.deleteTitle')}
+                onClick={() => api.del(`/triggers/${trg.id}`).catch(() => {})}
+                className="hover:text-destructive"
+              >
+                <X />
+              </Button>
+            </Hint>
           </div>
         ))}
+      </div>
       </div>
       {logId && <TriggerLogModal triggerId={logId} onClose={() => setLogId(null)} />}
       {warnOpen && (
@@ -2367,109 +2223,61 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-bg text-fg">
       {/* Launcher gate: fired when no repo is ready — offer Setup UI or chat onboarding */}
-      {gated && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-[420px] rounded-[12px] border-[1.5px] border-ink bg-panel p-5 shadow-xl">
-            <div className="text-[14px] font-bold text-fg">{t('launcher.gate.title')}</div>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-fgdim">
-              {t('launcher.gate.body')}
-            </p>
-            <div className="mt-4 flex flex-col gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={startChatOnboarding}
-                className="cursor-pointer rounded-[8px] border-[1.5px] border-ink bg-brand px-3 py-2 text-[12px] font-bold text-[#1a1a1a] disabled:opacity-50"
-              >
-                {busy ? t('launcher.gate.starting') : t('launcher.gate.setupChat')}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setGated(false); onNeedsSetup?.(); }}
-                className="cursor-pointer rounded-[8px] border border-border bg-bg px-3 py-2 text-[12px] font-semibold text-fg hover:border-ink"
-              >
-                {t('launcher.gate.openSetup')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setGated(false)}
-                className="cursor-pointer px-3 py-1 text-[11px] text-fgdim hover:text-fg"
-              >
-                {t('launcher.common.cancel')}
-              </button>
-            </div>
+      <Dialog open={gated} onOpenChange={(o) => !o && setGated(false)}>
+        <DialogContent aria-describedby={undefined} showClose={false} className="w-[min(26.25rem,calc(100vw-1.5rem))]">
+          <DialogHeader className="pe-0">
+            <DialogTitle>{t('launcher.gate.title')}</DialogTitle>
+            <DialogDescription>{t('launcher.gate.body')}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Button variant="primary" size="lg" disabled={busy} onClick={startChatOnboarding}>
+              {busy ? t('launcher.gate.starting') : t('launcher.gate.setupChat')}
+            </Button>
+            <Button variant="outline" size="lg" onClick={() => { setGated(false); onNeedsSetup?.(); }}>
+              {t('launcher.gate.openSetup')}
+            </Button>
+            <Button variant="ghost" onClick={() => setGated(false)} className="text-muted-foreground">
+              {t('launcher.common.cancel')}
+            </Button>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
       {/* header */}
-      <div className="flex h-11 shrink-0 items-center gap-[9px] border-b border-hair px-4">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-hair px-4 py-2 md:min-h-12 md:flex-nowrap md:py-0">
         <Wave />
-        <span className="text-sm font-bold">{t('launcher.header.title')}</span>
-        <span className="ml-3.5 flex overflow-hidden rounded-lg border-[1.5px] border-ink">
-          {linear && (
-          <button
-            type="button"
-            onClick={() => setMode('ticket')}
-            className={`cursor-pointer px-[11px] py-1 text-[11px] ${
-              mode === 'ticket' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
-            }`}
-          >
-            {t('launcher.header.fromTicket')}
-          </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setMode('empty')}
-            className={`cursor-pointer px-[11px] py-1 text-[11px] ${linear ? 'border-l-[1.5px] border-ink ' : ''}${
-              mode === 'empty' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
-            }`}
-          >
-            {t('launcher.header.emptySession')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('trigger')}
-            className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
-              mode === 'trigger' ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
-            }`}
-          >
-            {t('launcher.header.fromTrigger')}
-          </button>
-          {extModes.map((x) => (
-            <button
-              key={x.mode}
-              type="button"
-              onClick={() => setMode(x.mode)}
-              title={x.ext}
-              className={`cursor-pointer border-l-[1.5px] border-ink px-[11px] py-1 text-[11px] ${
-                mode === x.mode ? 'bg-brand font-bold' : 'bg-panel text-fgdim'
-              }`}
-            >
-              {x.title}
-            </button>
-          ))}
-        </span>
+        <span className="text-sm font-semibold">{t('launcher.header.title')}</span>
+        <Tabs value={mode} onValueChange={setMode} className="min-w-0 max-md:order-last max-md:w-full md:ms-3">
+          <TabsList variant="segmented" aria-label={t('launcher.header.title')} className="max-w-full overflow-x-auto">
+            {linear && (
+              <TabsTrigger value="ticket" className="coarse:h-10">{t('launcher.header.fromTicket')}</TabsTrigger>
+            )}
+            <TabsTrigger value="empty" className="coarse:h-10">{t('launcher.header.emptySession')}</TabsTrigger>
+            <TabsTrigger value="trigger" className="coarse:h-10">{t('launcher.header.fromTrigger')}</TabsTrigger>
+            {extModes.map((x) => (
+              <Hint key={x.mode} label={x.ext}>
+                <TabsTrigger value={x.mode} className="coarse:h-10">{x.title}</TabsTrigger>
+              </Hint>
+            ))}
+          </TabsList>
+        </Tabs>
         {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            title={t('launcher.header.closeTitle')}
-            className="ml-auto cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"
-          >
-            <Icon icon={faXmark} />
-          </button>
+          <Hint label={t('launcher.header.closeTitle')}>
+            <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('launcher.header.closeTitle')} className="ms-auto">
+              <X />
+            </Button>
+          </Hint>
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto md:flex-row">
         {extMode ? (
           <>
             <ExtLauncherPane item={extMode} onCreated={onCreated} getSessionOptions={() => extOptionsRef.current} />
-            <div className="shrink-0 border-t border-hair bg-panel px-[18px] py-3 md:w-[260px] md:border-t-0 md:border-l">
-              <div className="mb-2 font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-fgdim uppercase">
+            <div className="shrink-0 border-t border-hair bg-panel p-4 md:w-72 md:border-t-0 md:border-s">
+              <div className={cn(sectionLabel, 'mb-3')}>
                 {t('launcher.ext.sessionOptions')}
               </div>
-              <EngineToggle options={extOptions} onChange={setExtOptions} className="pb-2" />
+              <EngineToggle options={extOptions} onChange={setExtOptions} className="pb-3" />
               <SessionOptionsPicker options={extOptions} onChange={setExtOptions} hideSkill />
             </div>
           </>

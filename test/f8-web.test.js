@@ -60,7 +60,7 @@ test('FirstRun (he): the question and chips are Hebrew', () => {
 test('Launcher source: ticket tab gated on Linear, empty form has an Advanced fold, default tab is empty', () => {
   const src = fs.readFileSync(web('components/Launcher.jsx'), 'utf8');
   expect(src).toMatch(/useState\(initialMode \|\| 'empty'\)/);
-  expect(src).toMatch(/\{linear && \(\s*<button/);
+  expect(src).toMatch(/\{linear && \(\s*<TabsTrigger value="ticket"/);
   expect(src).toMatch(/launcher\.empty\.advanced/);
   expect(src).toMatch(/api\.get\('\/linear\/status'\)/);
 });
