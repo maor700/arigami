@@ -275,6 +275,8 @@ export const strings = {
   'chat.workerCountMany': '{n} עובדים',
   'chat.nodeCountOne': 'צומת {n}',
   'chat.nodeCountMany': '{n} צמתים',
+  'chat.orchProgress': '{done} מתוך {total} הושלמו',
+  'chat.orchOpen': 'פתח',
   'chat.otherWorkers': 'עובדים אחרים',
   'chat.workers': 'עובדים',
   'chat.noWorkers': 'אין עובדים עדיין. כאשר סשן זה ישלח עובדים הם יופיעו כאן.',

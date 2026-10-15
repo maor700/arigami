@@ -275,6 +275,8 @@ export const strings = {
   'chat.workerCountMany': '{n} workers',
   'chat.nodeCountOne': '{n} node',
   'chat.nodeCountMany': '{n} nodes',
+  'chat.orchProgress': '{done} of {total} done',
+  'chat.orchOpen': 'Open',
   'chat.otherWorkers': 'Other workers',
   'chat.workers': 'Workers',
   'chat.noWorkers': "No workers yet. When this session dispatches workers they'll appear here.",

@@ -10,18 +10,17 @@
 //                 the worktrees a delete refused to remove because they held
 //                 unpushed work.
 //
-// Sizes are rem so the UI-scale preference applies; colours are the rail's
-// own status colours, which read on both themes.
+// Sizes come from the type scale (rem), so the UI-scale preference applies.
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
 import { useStore } from '../lib/store.js';
+import { Button, StatusDot } from './ui/index.js';
 
-const GOOD = '#3C9A4E';
-const WARN = '#CE8324';
-const BAD = '#B23B30';
-const tone = (pct) => (pct == null ? null : pct >= 90 ? BAD : pct >= 75 ? WARN : GOOD);
-const PRESSURE = { ok: GOOD, busy: WARN, critical: BAD };
+// Pressure is carried by a status dot / the bar fill only; numbers stay neutral text.
+const tone = (pct) => (pct == null ? null : pct >= 90 ? 'err' : pct >= 75 ? 'warn' : 'ok');
+const PRESSURE = { ok: 'ok', busy: 'warn', critical: 'err' };
+const FILL = { ok: 'bg-ok', warn: 'bg-warn', err: 'bg-err' };
 
 /** Poll the snapshot while the page is visible. */
 function useResources(everyMs, top = 12) {
@@ -55,40 +54,19 @@ function useResources(everyMs, top = 12) {
 
 const fmtMb = (mb) => (mb == null ? '—' : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`);
 
-function Bar({ label, pct, detail }) {
-  const c = tone(pct);
-  return (
-    <div title={detail || undefined}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.04em] text-fgdim uppercase">
-          {label}
-        </span>
-        <span className="shrink-0 font-mono text-[0.6875rem] md:text-[0.59375rem] font-bold tabular-nums" style={{ color: c || undefined }}>
-          {pct == null ? '—' : `${Math.round(pct)}%`}
-        </span>
-      </div>
-      <div className="mt-[3px] h-1.5 overflow-hidden rounded-full bg-hair">
-        {pct != null && (
-          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${Math.min(100, pct)}%`, background: c }} />
-        )}
-      </div>
-    </div>
-  );
-}
-
 function swapPct(snap) {
   const s = snap?.swap;
   return s && s.totalMb > 0 ? Math.round((s.usedMb / s.totalMb) * 100) : null;
 }
 
-/** One metric's value in the mini strip: label, percent, coloured by pressure. */
+/** One metric's value in the mini strip: label, percent; a dot appears only under pressure. */
 function MiniStat({ label, pct, detail }) {
+  const c = tone(pct);
   return (
     <span className="flex items-baseline gap-1" title={detail || undefined}>
-      <span className="text-fgdim">{label}</span>
-      <span className="font-bold tabular-nums" style={{ color: tone(pct) || undefined }}>
-        {pct == null ? '—' : `${Math.round(pct)}%`}
-      </span>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-foreground tabular-nums">{pct == null ? '—' : `${Math.round(pct)}%`}</span>
+      {c && c !== 'ok' && <StatusDot status={c} className="self-center" />}
     </span>
   );
 }
@@ -108,10 +86,10 @@ export function MachineMini() {
         location.hash = '#/settings/host/resources';
       }}
       title={snap.why}
-      className="flex w-full cursor-pointer items-center gap-2 border-t border-hair px-[0.8125rem] py-2 text-start hover:bg-chip/40"
+      className="flex min-h-9 w-full cursor-pointer items-center gap-2 border-t border-border px-[0.8125rem] py-2 text-start hover:bg-muted coarse:min-h-11"
     >
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
-      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.02em]">
+      <StatusDot status={PRESSURE[snap.pressure] || 'ok'} className="size-2" />
+      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden text-2xs">
         <MiniStat label={t('machine.cpu')} pct={snap.cpu?.pct} />
         <MiniStat
           label={t('machine.memory')}
@@ -127,14 +105,20 @@ export function MachineMini() {
   );
 }
 
-function Stat({ label, value, sub, color }) {
+function Stat({ label, value, sub, tone: c }) {
   return (
-    <div className="min-w-[7rem] flex-1 rounded-lg border border-hair px-3 py-2">
-      <div className="font-mono text-[0.625rem] tracking-[0.06em] text-fgdim uppercase">{label}</div>
-      <div className="mt-0.5 font-mono text-[1rem] font-bold tabular-nums" style={{ color: color || undefined }}>
-        {value}
+    <div className="min-w-[7rem] flex-1 rounded-lg border border-border bg-card px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {c && c !== 'ok' && <StatusDot status={c} />}
+        {label}
       </div>
-      {sub && <div className="font-mono text-[0.6875rem] text-fgdim">{sub}</div>}
+      <div className="mt-0.5 text-lg font-semibold text-foreground tabular-nums">{value}</div>
+      {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+      {c && (
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+          <div className={`h-full rounded-full ${FILL[c]}`} style={{ width: `${parseFloat(String(value)) || 0}%` }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -157,51 +141,52 @@ export function MachinePanel() {
     if (sessions.some((s) => s.id === id)) location.hash = `#/session/${id}`;
   };
 
-  if (error && !snap) return <div className="text-[0.78125rem] text-danger">{error}</div>;
-  if (!snap) return <div className="font-mono text-[0.6875rem] text-fgdim">{t('machine.loading')}</div>;
+  if (error && !snap) return <div className="text-sm text-destructive">{error}</div>;
+  if (!snap) return <div className="text-xs text-muted-foreground">{t('machine.loading')}</div>;
 
   const sp = swapPct(snap);
   const load = snap.cpu?.load1 != null ? t('machine.load', { load: snap.cpu.load1.toFixed(2), cores: snap.cores }) : `${snap.cores} ${t('machine.cores')}`;
+  const head = 'mb-1.5 text-xs font-medium text-muted-foreground';
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-start gap-2 rounded-lg border border-hair px-3 py-2.5">
-        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
+    <div className="flex flex-col gap-5" data-machine-panel="">
+      <div className="flex items-start gap-2.5 rounded-lg border border-border bg-card px-3.5 py-3">
+        <StatusDot status={PRESSURE[snap.pressure] || 'ok'} className="mt-1.5 size-2" />
         <div className="min-w-0">
-          <div className="text-[0.8125rem] font-bold text-fg">{t(`machine.pressure.${snap.pressure}`)}</div>
-          <div className="text-[0.75rem] text-fgdim" dir="ltr">
+          <div className="text-sm font-medium text-foreground">{t(`machine.pressure.${snap.pressure}`)}</div>
+          <div className="text-xs text-muted-foreground" dir="ltr">
             {snap.why}
           </div>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2" dir="ltr">
-        <Stat label={t('machine.cpu')} value={snap.cpu?.pct == null ? '—' : `${snap.cpu.pct}%`} sub={load} color={tone(snap.cpu?.pct)} />
+        <Stat label={t('machine.cpu')} value={snap.cpu?.pct == null ? '—' : `${snap.cpu.pct}%`} sub={load} tone={tone(snap.cpu?.pct)} />
         <Stat
           label={t('machine.memory')}
           value={snap.memory?.usedPct == null ? '—' : `${snap.memory.usedPct}%`}
           sub={t('machine.memoryDetail', { avail: fmtMb(snap.memory?.availableMb), total: fmtMb(snap.memory?.totalMb) })}
-          color={tone(snap.memory?.usedPct)}
+          tone={tone(snap.memory?.usedPct)}
         />
         {snap.swap && snap.swap.totalMb > 0 && (
-          <Stat label={t('machine.swap')} value={`${sp}%`} sub={`${fmtMb(snap.swap.usedMb)} / ${fmtMb(snap.swap.totalMb)}`} color={tone(sp)} />
+          <Stat label={t('machine.swap')} value={`${sp}%`} sub={`${fmtMb(snap.swap.usedMb)} / ${fmtMb(snap.swap.totalMb)}`} tone={tone(sp)} />
         )}
         {snap.disk && (
           <Stat
             label={t('machine.disk')}
             value={`${snap.disk.usedPct}%`}
             sub={t('machine.diskFree', { free: fmtMb(snap.disk.freeMb) })}
-            color={tone(snap.disk.usedPct)}
+            tone={tone(snap.disk.usedPct)}
           />
         )}
       </div>
 
       <div>
-        <div className="mb-1.5 font-mono text-[0.625rem] tracking-[0.06em] text-fgdim uppercase">{t('machine.bySession')}</div>
+        <div className={head}>{t('machine.bySession')}</div>
         {snap.sessions?.length ? (
-          <table className="w-full text-[0.75rem]">
+          <table className="w-full text-sm">
             <thead>
-              <tr className="text-start font-mono text-[0.625rem] text-fgdim uppercase">
+              <tr className="text-xs text-muted-foreground">
                 <th className="py-1 text-start font-normal">{t('machine.session')}</th>
                 <th className="py-1 text-end font-normal">{t('machine.procs')}</th>
                 <th className="py-1 text-end font-normal">{t('machine.memory')}</th>
@@ -212,35 +197,35 @@ export function MachinePanel() {
               {snap.sessions.map((r) => {
                 const gone = !sessions.some((s) => s.id === r.session);
                 return (
-                  <tr key={r.session} className="border-t border-hair">
+                  <tr key={r.session} className="border-t border-border">
                     <td className="max-w-0 truncate py-1.5">
                       <button
                         type="button"
                         onClick={() => openSession(r.session)}
-                        className={gone ? 'cursor-default text-danger' : 'cursor-pointer text-fg hover:underline'}
+                        className={gone ? 'cursor-default text-destructive' : 'cursor-pointer text-foreground hover:underline'}
                         title={gone ? t('machine.orphanHint') : r.session}
                       >
                         {gone ? t('machine.orphan', { id: r.session }) : title(r.session)}
                       </button>
                     </td>
-                    <td className="py-1.5 text-end font-mono tabular-nums text-fgdim">{r.procs}</td>
-                    <td className="py-1.5 text-end font-mono tabular-nums">{fmtMb(r.rssMb)}</td>
-                    <td className="py-1.5 text-end font-mono tabular-nums text-fgdim">{Math.round(r.cpuPct)}%</td>
+                    <td className="py-1.5 text-end text-muted-foreground tabular-nums">{r.procs}</td>
+                    <td className="py-1.5 text-end tabular-nums">{fmtMb(r.rssMb)}</td>
+                    <td className="py-1.5 text-end text-muted-foreground tabular-nums">{Math.round(r.cpuPct)}%</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         ) : (
-          <div className="text-[0.75rem] text-fgdim">{t('machine.noSessionProcs')}</div>
+          <div className="text-sm text-muted-foreground">{t('machine.noSessionProcs')}</div>
         )}
       </div>
 
       <div>
-        <div className="mb-1.5 font-mono text-[0.625rem] tracking-[0.06em] text-fgdim uppercase">{t('machine.topProcs')}</div>
+        <div className={head}>{t('machine.topProcs')}</div>
         {/* table-fixed + explicit widths: under auto layout the two truncating
             columns (name, session) collapse to zero width. */}
-        <table className="w-full table-fixed text-[0.75rem]" dir="ltr">
+        <table className="w-full table-fixed text-sm" dir="ltr">
           <colgroup>
             <col className="w-[4.5rem]" />
             <col className="w-[30%]" />
@@ -250,12 +235,12 @@ export function MachinePanel() {
           </colgroup>
           <tbody>
             {(snap.processes || []).map((p) => (
-              <tr key={p.pid} className="border-t border-hair">
-                <td className="py-1 font-mono text-fgdim tabular-nums">{p.pid}</td>
-                <td className="truncate py-1 font-mono" title={p.name}>{p.name}</td>
-                <td className="truncate py-1 ps-2 text-fgdim">{p.session ? title(p.session) : ''}</td>
-                <td className="py-1 text-end font-mono tabular-nums">{fmtMb(p.rssMb)}</td>
-                <td className="py-1 text-end font-mono tabular-nums text-fgdim">{p.cpuPct == null ? '' : `${Math.round(p.cpuPct)}%`}</td>
+              <tr key={p.pid} className="border-t border-border">
+                <td className="py-1 font-mono text-xs text-muted-foreground tabular-nums">{p.pid}</td>
+                <td className="truncate py-1 font-mono text-xs" title={p.name}>{p.name}</td>
+                <td className="truncate py-1 ps-2 text-muted-foreground">{p.session ? title(p.session) : ''}</td>
+                <td className="py-1 text-end text-xs tabular-nums">{fmtMb(p.rssMb)}</td>
+                <td className="py-1 text-end text-xs text-muted-foreground tabular-nums">{p.cpuPct == null ? '' : `${Math.round(p.cpuPct)}%`}</td>
               </tr>
             ))}
           </tbody>
@@ -263,10 +248,11 @@ export function MachinePanel() {
       </div>
 
       <div>
-        <div className="mb-1.5 flex items-center font-mono text-[0.625rem] tracking-[0.06em] text-fgdim uppercase">
+        <div className="mb-1.5 flex items-center text-xs font-medium text-muted-foreground">
           <span className="flex-1">{t('machine.kept')}</span>
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             disabled={sweeping}
             onClick={async () => {
               setSweeping(true);
@@ -277,32 +263,31 @@ export function MachinePanel() {
                 setSweeping(false);
               }
             }}
-            className="cursor-pointer normal-case tracking-normal hover:text-fg disabled:opacity-50"
           >
             {sweeping ? t('machine.sweeping') : t('machine.sweep')}
-          </button>
+          </Button>
         </div>
         {swept && (
-          <div className="mb-1.5 text-[0.75rem] text-fgdim">
+          <div className="mb-1.5 text-sm text-muted-foreground">
             {t('machine.swept', { p: swept.processes, s: swept.scratch, c: swept.chrome, x: swept.transcripts, w: swept.worktrees ?? 0 })}
           </div>
         )}
         {kept?.length ? (
           <ul className="flex flex-col gap-1.5">
             {kept.map((k) => (
-              <li key={k.dir} className="rounded-lg border border-hair px-3 py-2">
-                <div className="text-[0.75rem] font-bold text-fg">{k.title}</div>
-                <div className="break-all font-mono text-[0.6875rem] text-fgdim" dir="ltr">
+              <li key={k.dir} className="rounded-lg border border-border bg-card px-3 py-2">
+                <div className="text-sm font-medium text-foreground">{k.title}</div>
+                <div className="break-all font-mono text-xs text-muted-foreground" dir="ltr">
                   {k.dir}
                 </div>
-                <div className="mt-0.5 text-[0.6875rem]" style={{ color: WARN }} dir="ltr">
-                  {k.reasons.join(' · ')}
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" dir="ltr">
+                  <StatusDot status="warn" /> {k.reasons.join(' · ')}
                 </div>
               </li>
             ))}
           </ul>
         ) : (
-          <div className="text-[0.75rem] text-fgdim">{t('machine.noKept')}</div>
+          <div className="text-sm text-muted-foreground">{t('machine.noKept')}</div>
         )}
       </div>
     </div>
