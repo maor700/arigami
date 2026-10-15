@@ -91,6 +91,7 @@ export const strings = {
   'dialogs.scNewEmptySession': 'New empty session (default settings)',
   'dialogs.scFocusComposer': 'Focus the message composer',
   'dialogs.scAddTab': 'Add a tab to the session',
+  'dialogs.scChatTextSize': 'Chat text size: larger / smaller / default (in the chat)',
   'dialogs.scVoiceControl': 'Voice control (push-to-talk)',
   'dialogs.scCloseOverlay': 'Close overlay · else interrupt the agent',
   'dialogs.scToggleCheatSheet': 'Toggle this cheat-sheet',

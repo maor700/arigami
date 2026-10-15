@@ -24,6 +24,7 @@ const buildGroups = (t) => [
       [[`${MOD}`, '⇧', 'N'], t('dialogs.scNewEmptySession')],
       [[`${MOD}`, '⇧', '↵'], t('dialogs.scFocusComposer')],
       [[`${MOD}`, 'T'], t('dialogs.scAddTab')],
+      [[`${MOD}`, '+ / − / 0'], t('dialogs.scChatTextSize')],
       [[`${MOD}`, '⇧', 'V'], t('dialogs.scVoiceControl')],
       [['Esc'], t('dialogs.scCloseOverlay')],
       [['?'], t('dialogs.scToggleCheatSheet')],

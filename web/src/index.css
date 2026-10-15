@@ -302,7 +302,7 @@ body,
 
 /* UI size (Settings › General): one factor on the root font-size. Everything
    sized in rem/em — the rail, tab bar, settings, dialogs — follows it; the
-   chat output keeps its own px size (termFontSize). prefs.applyBranding sets
+   chat output has its own size (chatTextSize). prefs.applyBranding sets
    --ui-scale on <html>; 100% keeps the browser's own default as the base. */
 html {
   font-size: calc(100% * var(--ui-scale, 1));
@@ -493,9 +493,28 @@ body {
 
 /* Chat rows outside the viewport skip layout+paint entirely; `auto` keeps the
    real row size once rendered so scroll math stays stable. */
+/* CHAT TEXT SIZE: prefs.applyBranding sets --chat-scale on <html> (= chat
+   text px / 15). The renderers are sized in px, so the transcript, the composer
+   field and the slash/mention menus scale as one unit with `zoom` — line-height
+   follows, and the separate --ui-scale (rem) is untouched. */
 .term-events {
   max-width: 48rem;
   margin-inline: auto;
+  zoom: var(--chat-scale, 1);
+}
+.chat-scaled {
+  zoom: var(--chat-scale, 1);
+}
+/* A floating menu keeps its 92vw cap after zoom: divide it back out. */
+.chat-scaled-pop {
+  zoom: var(--chat-scale, 1);
+  max-width: calc(92vw / var(--chat-scale, 1));
+}
+/* Phones: the composer field never drops under 16px (iOS auto-zoom), it only grows. */
+@media (pointer: coarse) {
+  .chat-scaled {
+    zoom: max(1, var(--chat-scale, 1));
+  }
 }
 .term-events > * {
   content-visibility: auto;

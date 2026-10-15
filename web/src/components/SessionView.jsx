@@ -18,10 +18,11 @@ import { ChatFooter } from './Composer.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
-import { currentTheme, usePrefs } from '../lib/prefs.js';
+import { currentTheme, usePrefs, setPrefs } from '../lib/prefs.js';
+import { CHAT_TEXT, stepChatText } from '../lib/chatText.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
-import { Archive, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { ALargeSmall, Archive, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
 import { Checkbox } from './ui/checkbox.jsx';
@@ -29,7 +30,7 @@ import { Label } from './ui/label.jsx';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
 import { Tip } from './ui/tooltip.jsx';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
 import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
@@ -338,6 +339,27 @@ export function ChatModeItems({ M, session, mode }) {
   );
 }
 
+// "Text size ▸ smaller / default / larger", the current px beside the label.
+// Smaller/larger keep the menu open so a few steps are one visit.
+function ChatTextSizeSub() {
+  const t = useT();
+  const px = usePrefs().chatTextSize;
+  const step = (dir) => (e) => { e.preventDefault(); setPrefs({ chatTextSize: stepChatText(px, dir) }); };
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-chat-text-size-menu>
+        <ALargeSmall /> {t('chat.textSize')}
+        <span dir="ltr" className="ms-auto text-xs tabular-nums text-muted-foreground">{px}px</span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuItem disabled={px <= CHAT_TEXT.min} onSelect={step('down')}>{t('chat.textSizeSmaller')}<DropdownMenuShortcut dir="ltr">⌘−</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem disabled={px === CHAT_TEXT.def} onSelect={() => setPrefs({ chatTextSize: CHAT_TEXT.def })}>{t('chat.textSizeDefault', { px: CHAT_TEXT.def })}<DropdownMenuShortcut dir="ltr">⌘0</DropdownMenuShortcut></DropdownMenuItem>
+        <DropdownMenuItem disabled={px >= CHAT_TEXT.max} onSelect={step('up')}>{t('chat.textSizeLarger')}<DropdownMenuShortcut dir="ltr">⌘+</DropdownMenuShortcut></DropdownMenuItem>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
 // The "…" menu: everything that is not state and not daily. Each item is two
 // clicks away (… then the item).
 function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddTabOpen }) {
@@ -381,6 +403,7 @@ function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddT
           session={session}
           mode={mode}
         />
+        <ChatTextSizeSub />
         {(session.archived ? onRestore : onArchive) && <DropdownMenuSeparator />}
         {session.archived
           ? onRestore && (

@@ -638,7 +638,7 @@ export function ChatFooter({ session }) {
               ? t('rail.replyPlaceholder', { engine: engineLabel(session.engine) })
               : t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })
           }
-          className="max-h-40 min-h-[2.5rem] w-full min-w-0 resize-none bg-transparent px-3.5 pt-3 pb-1 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground sm:text-[14px]"
+          className="max-h-40 min-h-[2.5rem] w-full min-w-0 resize-none bg-transparent px-3.5 pt-3 pb-1 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground sm:text-[14px] chat-scaled"
           style={{ fieldSizing: 'content' }}
         />
 

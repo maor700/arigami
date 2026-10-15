@@ -4,6 +4,7 @@ import App from './App.jsx';
 import { UiProvider } from './components/ui/direction.jsx';
 import { startStore } from './lib/store.js';
 import { installViewportTracking } from './lib/viewport.js';
+import { installChatTextShortcuts } from './lib/chatTextShortcuts.js';
 import '@fontsource-variable/inter/index.css'; // Latin UI face — self-hosted
 import '@fontsource-variable/rubik/index.css'; // Latin + Hebrew (variable) — self-hosted
 import './index.css';
@@ -19,6 +20,7 @@ window.addEventListener('hashchange', () => {
 if (!STYLEGUIDE) {
   startStore();
   installViewportTracking();
+  installChatTextShortcuts();
 }
 
 const Root = STYLEGUIDE ? React.lazy(() => import('./components/StyleGuide.jsx')) : App;

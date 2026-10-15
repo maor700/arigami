@@ -91,6 +91,7 @@ export const strings = {
   'dialogs.scNewEmptySession': 'סשן ריק חדש (הגדרות ברירת מחדל)',
   'dialogs.scFocusComposer': 'מיקוד בתיבת ההודעה',
   'dialogs.scAddTab': 'הוספת טאב לסשן',
+  'dialogs.scChatTextSize': 'גודל טקסט הצ׳אט: גדול / קטן / ברירת מחדל (בתוך הצ׳אט)',
   'dialogs.scVoiceControl': 'שליטה קולית (לחץ-ודבר)',
   'dialogs.scCloseOverlay': 'סגירת חלונית · אחרת הפרעה לסוכן',
   'dialogs.scToggleCheatSheet': 'הצגה/הסתרה של דף הקיצורים',

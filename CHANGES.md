@@ -134,7 +134,7 @@ Rule of the branch: **no feature disappears**. Everything below is a restyle unl
 - **Setup / connect cards** (`setup/*`, `EngineConnect`): neutral surface, status as a dot (`Pill`), the two engine cards are equal and neutral (no double accent), `BTN`/`BTN2` in `setup/shared.jsx` are `ui/Button` classes. Glyphs go through `ChatIcon.jsx` (FontAwesome constants resolve to lucide).
 - **Composer** — rounded card: textarea · attach · `@` · `/` (capabilities) · pill · context chip … Stop (while working) · Queue (while working) · mic · Send. Send is the only accent fill in the chat and only when there is something to send. Attachment chips, quote preview, drop zone, queue panel (count pill, auto-play switch, drag reorder, ▶ now, ✕), slash / mention palettes all kept and restyled (`SlashCommands.jsx`).
 - **Chat mode switch** (Simple | Terminal) — neutral segmented control.
-- **Chat text size** — the scale is now relative to the 16px default (was 12px), so the default pref gives 15px prose.
+- **Chat text size** — pref `chatTextSize` (px of prose, 12–20, default 15; replaces `termFontSize`, a custom legacy value migrates). `applyBranding` sets `--chat-scale` (= px/15) on `<html>`; the transcript (`.term-events`), the composer field and the slash/mention menus scale with `zoom`, so line-height follows and `--ui-scale` stays separate. Controls: Settings › General › "Chat text size" (A−/slider/A+, reset, he+en live preview), the session header "…" › Text size ▸, and ⌘/Ctrl + / − / 0 while focus is in the chat (`lib/chatText.js`, `lib/chatTextShortcuts.js`; a toast shows the size). On touch the composer field never drops under 16px.
 
 ### Not done / decisions
 - Syntax highlighting: **kept the existing lowlight highlighter** (not swapped to Shiki).

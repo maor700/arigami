@@ -78,7 +78,7 @@ export function SlashPalette({ items, active, onPick, onHover }) {
   const t = useT();
   if (!items.length) return null;
   return (
-    <div className="absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
+    <div className="chat-scaled-pop absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
       <div className="px-3 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         {t('dialogs.slashCommandsHint')}
       </div>
@@ -118,7 +118,7 @@ export function MentionPalette({ items, active, onPick, onHover }) {
   const t = useT();
   if (!items.length) return null;
   return (
-    <div data-mention-palette className="absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
+    <div data-mention-palette className="chat-scaled-pop absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
       <div className="px-3 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{t('dialogs.mentionHint')}</div>
       {items.map((a, i) => (
         <button
