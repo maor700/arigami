@@ -135,7 +135,7 @@ test('action: the sticky action card and the auto-approved receipt render throug
 test('artifact: title, version/size/files, host-relative path, buttons and warnings render through HostCard', () => {
   const html = pane(fx('artifact'));
   expect(html).toContain('OpenUI pilot — screenshots');
-  expect(html).toContain('v2 · 245 KB · 5 files');
+  expect(html).toContain('<bdi dir="ltr">v2</bdi> · <bdi dir="ltr">245 KB</bdi> · <bdi>5 files</bdi>');
   expect(html).toContain('/__artifacts/fQxvlBEmbVw/');
   expect(html).toContain('a root-absolute url was found');
   expect(html).not.toContain('localhost');

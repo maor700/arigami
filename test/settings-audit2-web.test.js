@@ -90,7 +90,7 @@ test('the nav is the settings pages; voice/automation are aliases onto General',
   expect(SettingsMod.resolveCategory('bogus')).toEqual({ cat: 'appearance', section: '' });
 });
 
-test('General: 4 fields on the page while voice is off; accent/terminal/voice/heartbeat/telemetry are in the closed drawer', () => {
+test('General: the Appearance block (theme, chat theme, language, sizes, accent) is on the page while voice is off; terminal/voice/heartbeat/telemetry are in the closed drawer', () => {
   prefs.setPrefs({ language: 'en' });
   const html = render(h(General, { voiceEnabled: false, recording: false, setRecording: () => {} }));
   const top = beforeDrawer(html);
@@ -98,14 +98,15 @@ test('General: 4 fields on the page while voice is off; accent/terminal/voice/he
   expect(top).toContain('Language');
   expect(top).toContain('Chat text size');
   expect(top).toContain('UI size');
-  expect(top).not.toContain('Accent');
+  expect(top).toContain('Accent');
+  expect(top).toContain('Chat theme');
   expect(top).not.toContain('Record hotkey');
   expect(top).not.toContain('Heartbeat');
   expect(drawerOpen(html)).toBe(false);
   expect(html).toContain('Advanced');
   expect(html).toContain('data-voice-off');
   expect(html).toContain('Accent');
-  expect(html).toContain('Terminal theme');
+  expect(html).toContain('Text direction');
   expect(html).toContain('Microphone');
   expect(html).toContain('anonymous usage milestones');
   // The payload preview / anonymous id rows are gone from the UI.
