@@ -1,12 +1,47 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  Archive,
+  Zap,
+  Bot,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  Folder,
+  FolderPlus,
+  FolderTree,
+  Globe,
+  GripVertical,
+  Info,
+  ListChecks,
+  ListFilter,
+  LogOut,
+  Monitor,
+  MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Puzzle,
+  RotateCcw,
+  RotateCw,
+  Search,
+  Settings as SettingsIcon,
+  Trash2,
+  TriangleAlert,
+  Wrench,
+  X,
+  Rows3,
+  Layers,
+} from 'lucide-react';
 import { statusLabel } from '../lib/status.js';
 import { relTime, fmtDateTime } from '../lib/time.js';
 import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
-import { Dot, tint, TriggerTag } from './ui.jsx';
+import { Dot, TriggerTag } from './ui.jsx';
 import { Logo } from './Logo.jsx';
 import { useShell, openMachines } from '../lib/shell.js';
 import {
@@ -27,38 +62,27 @@ import { snapshotUsage } from '../lib/providers.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import MicButton from './MicButton.jsx';
-import { Icon } from '../lib/icons.js';
+import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
+import { cn } from '../lib/utils.js';
+import { Button } from './ui/button.jsx';
+import { Input } from './ui/input.jsx';
+import { Kbd } from './ui/kbd.jsx';
+import { Tip } from './ui/tooltip.jsx';
 import {
-  faBars,
-  faBolt,
-  faBoxArchive,
-  faBrain,
-  faCaretDown,
-  faCaretRight,
-  faCircleInfo,
-  faDisplay,
-  faEye,
-  faFolder,
-  faFolderPlus,
-  faFolderTree,
-  faGear,
-  faGlobe,
-  faRightFromBracket,
-  faGripVertical,
-  faListCheck,
-  faPause,
-  faPen,
-  faPlay,
-  faPuzzlePiece,
-  faRotateLeft,
-  faRotateRight,
-  faTableCells,
-  faToolbox,
-  faTrash,
-  faTriangleExclamation,
-  faUserAstronaut,
-  faXmark,
-} from '@fortawesome/free-solid-svg-icons';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu.jsx';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from './ui/context-menu.jsx';
 
 const STATUS_ORDER = ['Booting', 'In Progress', 'In Review', 'Blocked', 'Completed'];
 
@@ -66,56 +90,53 @@ const STATUS_ORDER = ['Booting', 'In Progress', 'In Review', 'Blocked', 'Complet
 // "working" and "needs you"; what the dot adds is the two states nothing else
 // showed: a session the host is failing to recover (red) and one that has gone
 // quiet with work still owed (also red — it is not fine, it is stuck).
-const HEALTH_COLOR = { grey: '#9a9a9a', blue: '#2C6BD6', amber: '#CE8324', red: '#E0594F' };
+// The dot is one of the tiny status dots of the token layer: info / warn / err.
+const HEALTH_STATUS = { blue: 'info', amber: 'warn', red: 'err' };
+
 
 function HealthDot({ health }) {
   const t = useT();
   // Grey means "nothing to report" — a dot on every row was noise, so only the
   // states the dot exists for (blue/amber/red) render.
   if (!health || !health.dot || health.dot === 'grey') return null;
-  const color = HEALTH_COLOR[health.dot] || HEALTH_COLOR.grey;
+  const status = HEALTH_STATUS[health.dot];
+  if (!status) return null;
   // An escalated session is not one the host is still working on — it is one it
   // gave up on, which is a different thing to tell the human.
   const label = health.escalated ? t('waiting.what.system') : t(`rail.health.${health.state}`);
   return (
-    <span
-      title={`${label} · ${health.reason}`}
-      aria-label={label}
-      className="inline-block h-[0.375rem] w-[0.375rem] shrink-0 rounded-full align-middle"
-      style={{ background: color }}
-    />
+    <Tip label={`${label} · ${health.reason}`}>
+      <span aria-label={label} className="inline-flex shrink-0 items-center">
+        <StatusDot status={status} />
+      </span>
+    </Tip>
   );
 }
 
-// RES1 §4, toned down — and further, per direct feedback: no aggregated top
-// section at all, just the row itself. A waiting item is a small, static
-// badge on the row it actually belongs to: same size/shape/colour as the
-// "needs you" `?` and screen take-over badges below (find `needsAttention` /
-// `hasOpenScreenRequest`) — just without their pulse. Those two already cover
-// the 'action'/'screen' waiting kinds on a session row; this is what shows for
-// the rest (setup, review, merge, budget, system), for agent rows (which had
-// no indicator at all), and rolled up (hollow, count-only) onto a collapsed
-// folder or the collapsed Team header so nothing disappears behind a fold.
-// Shows the count only once there's more than one thing waiting.
+// RES1 §4 — a waiting item is a small, static badge on the row it actually
+// belongs to (agent rows, collapsed folders and the collapsed Team header roll
+// it up as a count). It covers the kinds a session row has no other indicator
+// for (setup, review, merge, budget, system). Neutral chip + an amber dot:
+// amber is the one colour reserved for "waiting for you". Shows the count only
+// once there is more than one thing waiting.
 function WaitingBadge({ items, t }) {
   if (!items?.length) return null;
   const title = items
     .map((w) => `${t(`waiting.what.${w.kind}`)} · ${t(`waiting.do.${w.unblock}`)}`)
     .join('\n');
   return (
-    <span
-      title={title}
-      className="flex h-[0.9375rem] min-w-[0.9375rem] shrink-0 items-center justify-center rounded-full border border-ink bg-brand px-1 font-mono text-[0.6875rem] md:text-[0.625rem] font-bold text-[#1a1a1a]"
-    >
-      {items.length > 1 ? items.length : '!'}
-    </span>
+    <Tip label={<span className="whitespace-pre-line">{title}</span>}>
+      <Badge status="warn" className="tabular-nums" data-waiting-badge="">
+        {items.length > 1 ? items.length : '!'}
+      </Badge>
+    </Tip>
   );
 }
 
 // RAIL1 — a per-child rollup that survives a collapsed folder: one dot per
 // kid (capped), coloured by its own state, so the header still answers "what's
-// happening in here" without opening it. `needsAttention`/waiting map to the
-// same amber as the row's own `?`/`!` badges; working reuses the brand blue.
+// happening in here" without opening it. Needs-attention is amber, working is
+// the info blue, anything else is the quiet idle dot.
 function StateDots({ kids }) {
   if (!kids?.length) return null;
   const shown = kids.slice(0, 8);
@@ -124,29 +145,21 @@ function StateDots({ kids }) {
       {shown.map((s) => {
         const attn = needsAttention(s);
         const working = ['working', 'restarting'].includes(s.claude?.state);
-        const color = attn ? '#CE8324' : working ? '#2C6BD6' : '#9a9a9a';
-        return (
-          <span
-            key={s.id}
-            className="h-[0.3125rem] w-[0.3125rem] shrink-0 rounded-full"
-            style={{ background: color }}
-          />
-        );
+        return <StatusDot key={s.id} status={attn ? 'warn' : working ? 'info' : 'idle'} className="size-[0.3125rem]" />;
       })}
     </span>
   );
 }
 
-// RAIL1 §4/§5 — "out of context, say the parent". A small pill naming
+// RAIL1 §4/§5 — "out of context, say the parent". A small chip naming
 // whichever folder/controller a session belongs to, shown wherever a row
-// renders OUTSIDE its own group's card (search, grouped-by-status, a PM
-// child sitting free at root) — `info` comes from `parentInfoFor`. Clicking
-// it selects the parent (a plain folder with no controller has nothing
-// selectable, so it renders as inert text instead of a button).
+// renders OUTSIDE its own group (search, grouped-by-status, a PM child sitting
+// free at root) — `info` comes from `parentInfoFor`. Clicking it selects the
+// parent (a plain folder with no controller has nothing selectable, so it
+// renders as inert text instead of a button).
 function ParentChip({ info, onSelect, t }) {
   if (!info) return null;
-  const cls =
-    'flex min-w-0 max-w-[8.125rem] shrink-0 items-center gap-1 truncate rounded-full border border-border px-1.5 py-px font-mono text-[0.6875rem] md:text-[0.5625rem] text-fgdim';
+  const cls = 'max-w-[8.125rem] cursor-default';
   const inner = (
     <>
       <Dot color={info.color} size={7} className="shrink-0" />
@@ -155,23 +168,25 @@ function ParentChip({ info, onSelect, t }) {
   );
   if (!info.targetId) {
     return (
-      <span className={cls} title={t('rail.parentOf', { name: info.label })}>
-        {inner}
-      </span>
+      <Tip label={t('rail.parentOf', { name: info.label })}>
+        <Badge className={cls}>{inner}</Badge>
+      </Tip>
     );
   }
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onSelect(info.targetId);
-      }}
-      title={t('rail.parentOf', { name: info.label })}
-      className={`${cls} cursor-pointer hover:text-fg`}
-    >
-      {inner}
-    </button>
+    <Tip label={t('rail.parentOf', { name: info.label })}>
+      <button
+        type="button"
+        aria-label={t('rail.parentOf', { name: info.label })}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(info.targetId);
+        }}
+        className={cn(badgeVariants(), 'max-w-[8.125rem] cursor-pointer hover:text-foreground')}
+      >
+        {inner}
+      </button>
+    </Tip>
   );
 }
 
@@ -200,84 +215,67 @@ function matches(s, q) {
   return hay.includes(q.toLowerCase());
 }
 
-function RowMenu({ session, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, onClose }) {
+// The session actions, once, for both surfaces: the row's ⋯ DropdownMenu and the
+// right-click ContextMenu. `M` carries the matching Item / Separator parts.
+function SessionMenuItems({ M, session, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder }) {
   const t = useT();
-  const ref = useRef(null);
-  useEffect(() => {
-    const onDown = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
-    };
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [onClose]);
-
   return (
-    <div
-      ref={ref}
-      data-row-menu
-      className="absolute top-7 right-1.5 z-20 min-w-[10.25rem] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        type="button"
-        onClick={onEdit}
-        className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-      >
-        <span className="text-[0.6875rem] text-fgdim"><Icon icon={faPen} /></span> {t('rail.editDetails')}
-      </button>
+    <>
+      <M.Item onSelect={() => onEdit(session)}>
+        <Pencil /> {t('rail.editDetails')}
+      </M.Item>
       {onRemoveFromFolder && (
-        <button
-          type="button"
-          onClick={onRemoveFromFolder}
-          className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-        >
-          <span className="text-[0.6875rem] text-fgdim"><Icon icon={faFolder} /></span> {t('rail.removeFromFolder')}
-        </button>
+        <M.Item onSelect={() => onRemoveFromFolder(session)}>
+          <Folder /> {t('rail.removeFromFolder')}
+        </M.Item>
       )}
+      <M.Separator />
       {session.archived ? (
-        <button
-          type="button"
-          onClick={onRestore}
-          className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-        >
-          <span className="text-[0.6875rem] text-fgdim"><Icon icon={faRotateLeft} /></span> {t('rail.restoreSession')}
-        </button>
+        <M.Item onSelect={() => onRestore(session)}>
+          <RotateCcw /> {t('rail.restoreSession')}
+        </M.Item>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={onRestart}
-            className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-          >
-            <span className="text-[0.6875rem] text-fgdim"><Icon icon={faRotateRight} /></span> {t('rail.restartSession')}
-          </button>
-          <button
-            type="button"
-            onClick={onArchive}
-            className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-          >
-            <span className="text-[0.6875rem] text-fgdim"><Icon icon={faBoxArchive} /></span> {t('rail.archiveSession')}
-          </button>
+          <M.Item onSelect={() => onRestart(session)}>
+            <RotateCw /> {t('rail.restartSession')}
+          </M.Item>
+          <M.Item onSelect={() => onArchive(session)}>
+            <Archive /> {t('rail.archiveSession')}
+          </M.Item>
         </>
       )}
-      <button
-        type="button"
-        onClick={onDelete}
-        className="flex w-full cursor-pointer items-center gap-2 bg-panel px-3 py-2 text-left text-xs text-danger hover:bg-danger/10"
-      >
-        <span className="text-[0.6875rem]"><Icon icon={faXmark} /></span> {t('rail.deletePermanently')}
-      </button>
-    </div>
+      <M.Separator />
+      <M.Item variant="destructive" onSelect={() => onDelete(session)}>
+        <Trash2 /> {t('rail.deletePermanently')}
+      </M.Item>
+    </>
+  );
+}
+const DD = { Item: DropdownMenuItem, Separator: DropdownMenuSeparator };
+const CM = { Item: ContextMenuItem, Separator: ContextMenuSeparator };
+
+// The ⋯ trigger every row / folder / agent carries: hidden until the row is
+// hovered or focused (always there on a touch screen, at 44px), and it stays put
+// while its menu is open.
+const MORE_CLS =
+  'shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 coarse:opacity-100';
+function MoreButton({ label, className = '', ...props }) {
+  return (
+    <Tip label={label}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={label}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          className={`${MORE_CLS} ${className}`}
+          {...props}
+        >
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+    </Tip>
   );
 }
 
@@ -319,7 +317,7 @@ function useHoverTip(text) {
   const tip = pos && text
     ? createPortal(
         <div
-          className="pointer-events-none fixed z-[70] max-w-[18.75rem] rounded-lg border-[1.5px] border-ink bg-panel px-3 py-2 text-[0.71875rem] leading-snug whitespace-pre-wrap text-fg shadow-[3px_3px_0_rgba(42,42,42,0.22)]"
+          className="pointer-events-none fixed z-[70] max-w-[18.75rem] rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-snug whitespace-pre-wrap text-popover-foreground shadow-pop"
           style={rtl ? { top: pos.top, right: window.innerWidth - pos.left + 8 } : { top: pos.top, left: pos.right + 8 }}
           dir="auto"
         >
@@ -331,53 +329,53 @@ function useHoverTip(text) {
   return { ref, show, hide, toggle, tip };
 }
 
-// RAILUI — shared row vocabulary (rail-items-A-variants.html A1 +
-// rail-h4-deep.html V2). One selected treatment for every kind of row: a
-// neutral 6% fill and a 3px bar in the row's own colour drawn by ::before, so
-// selecting never shifts the content the way a border did. The colour rides
-// in on `--rail-c`. Port / ··· stay hidden until hover (always shown on touch).
-const SEL_CLS =
-  "bg-sel before:pointer-events-none before:absolute before:start-0 before:top-2 before:bottom-2 before:w-[0.1875rem] before:rounded-[3px] before:bg-(--rail-c) before:content-['']";
-const HOVER_CLS = 'hover:bg-fg/[.035]';
-const REVEAL_CLS = 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100';
-const META_CLS = 'mt-[0.1875rem] flex items-center gap-1.5 text-[0.6875rem] leading-[1.3] text-fgdim';
-const TIME_CLS = 'ms-auto shrink-0 font-mono text-[0.6875rem] md:text-[0.625rem] text-fgdim';
-// H4 V2 — the children of a folder: 22px indent and one 1px vertical hairline
-// (hair colour, never the project's) running down their side, no glyphs; 8px of
-// air after each group (12px). Nest the same class again for depth 2 (+22px).
+// RAILUI — shared row vocabulary. One selected treatment for every kind of row
+// (`row-selected`: a neutral fill and a 2px accent bar on the start edge, drawn
+// by ::before so selecting never shifts the content). The row's own colour is
+// the identity dot / avatar; nothing else on a row is coloured except the amber
+// "needs you" dot. Hover reveals the ⋯ menu (always shown on touch).
+const ROW_CLS =
+  'group relative mb-px flex cursor-pointer items-start gap-2.5 rounded-md py-1.5 ps-2.5 pe-1.5 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring coarse:min-h-11';
+const META_CLS = 'mt-0.5 flex min-h-[1.125rem] min-w-0 items-center gap-1.5 text-2xs text-muted-foreground';
+// time and ⋯ share one cell on a pointer device (hover swaps them); on touch
+// both show, side by side.
+const TRAIL_CLS = 'grid shrink-0 items-center justify-items-end coarse:flex coarse:gap-0.5';
+const TIME_CLS =
+  'col-start-1 row-start-1 text-2xs tabular-nums text-muted-foreground group-hover:opacity-0 group-has-[[data-state=open]]:opacity-0 coarse:opacity-100! coarse:group-hover:opacity-100';
+// H4 V2 — the children of a folder: one 1px vertical hairline running down
+// their side, no glyphs, 12px of air after each group. Nest the same class
+// again for depth 2.
 const KIDS_CLS =
-  "relative mb-3 ps-[1.375rem] before:pointer-events-none before:absolute before:start-[0.9375rem] before:top-0.5 before:bottom-1.5 before:w-px before:bg-hair before:content-['']";
-// The row's ⋯ menu. It painted at 17×17 — a coin-flip under a fingertip — so
-// on a phone it keeps the same glyph and grows its padding to a ~32px box.
-const DOTS_CLS =
-  'shrink-0 cursor-pointer self-start rounded px-2 py-[0.4375rem] text-[0.8125rem] leading-none text-fgdim hover:text-fg md:px-0.5 md:py-0.5';
-// The status word stays quiet (fgdim) — per feedback the only colour a row
-// carries is its own dot/avatar; "needs you" and the working spinner are the
-// two exceptions. Custom statuses are free text — truncate, never overflow.
+  "relative mb-2 ps-[1.375rem] before:pointer-events-none before:absolute before:start-[0.9375rem] before:top-0.5 before:bottom-1.5 before:w-px before:bg-border before:content-['']";
+const TRAILING_BTN_CLS = 'col-start-1 row-start-1 -my-0.5';
+
+// The status word stays quiet — per feedback the only colour a row carries is
+// its own dot/avatar; "needs you" and the working spinner are the exceptions.
+// Custom statuses are free text — truncate, never overflow.
 function StatusWord({ children }) {
-  return <span className="min-w-0 truncate">{children}</span>;
+  return <span className="min-w-0 max-w-[65%] shrink-0 truncate">{children}</span>;
 }
 
-// "needs you" — the one loud element on a row (A1's pill). Same pulse and
-// colours the `?` / screen badges had; only the shape changed.
-function NeedsYouPill({ title, icon, children }) {
+// "needs you" — the one loud element on a row: neutral chip, pulsing amber dot.
+function NeedsYouPill({ title, icon: IconCmp, children }) {
   return (
-    <span
-      title={title}
-      className="pulse-yellow flex h-4 shrink-0 items-center gap-1 rounded-full border border-ink bg-brand px-1.5 font-sans text-[0.6875rem] md:text-[0.625rem] font-semibold leading-none text-[#1a1a1a]"
-    >
-      {icon && <Icon icon={icon} />}
-      {children}
-    </span>
+    <Tip label={title}>
+      <Badge status="warn" className="gap-1 text-foreground" data-needs-you="">
+        {IconCmp && <IconCmp />}
+        {children}
+      </Badge>
+    </Tip>
   );
 }
 
-function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting, muted }) {
+function Row({ session, selected, onSelect, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder, watch, health, waiting, muted, pinned }) {
   const t = useT();
   const color = session.color || '#c4c4c4';
   const label = session.metadata?.ticket || session.title || session.id;
   const showTitle = session.title && session.title !== label;
   const port = session.metadata?.port;
+  const branch = session.metadata?.branch;
+  const pr = session.metadata?.prNumber || session.metadata?.pr;
   const attention = needsAttention(session) && !selected;
   // request_screen pending — "needs you" (shown even on the selected row: the
   // machine is waiting on a human, not just on a click).
@@ -394,7 +392,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
   // already the session color — stamped at creation).
   const { agents } = useStore();
   const agent = session.metadata?.agent ? (agents || []).find((a) => a.slug === session.metadata.agent) : null;
-  // One meta line (A1): a single status word, coloured, picked by priority —
+  // One meta line: a single status word, picked by priority —
   // archived › screen take-over › working/restarting › the session's status.
   const statusWord = session.archived
     ? t('rail.archived')
@@ -405,157 +403,192 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
         : working
           ? t('rail.working')
           : statusLabel(session.status);
-  // The title behind a ticket label folds into the meta line; the description
-  // stays out of the rail altogether (it lives in the session's details).
-  const secondary = showTitle ? session.title : null;
-  // Child rows (inside a folder, `muted`) sit one step lighter than free rows:
-  // 12.5/400 in fg2 with a 16px avatar; the selected child steps back up.
-  const titleCls = muted
-    ? selected
-      ? 'text-[0.8125rem] font-medium text-fg'
-      : 'text-[0.78125rem] font-normal text-fg2'
-    : 'text-[0.8125rem] font-medium text-fg';
+  const titleCls = muted && !selected ? 'text-sm font-normal text-foreground/85' : 'text-sm font-medium text-foreground';
+  const menuProps = { session, onArchive, onRestore, onRestart, onDelete, onEdit, onRemoveFromFolder };
   return (
-    <div
-      ref={tip.ref}
-      data-session-row={session.id}
-      {...hoverProps}
-      onClick={() => onSelect(session.id)}
-      className={`group relative mb-[0.1875rem] grid cursor-pointer items-center gap-x-2 rounded-lg px-2 ${
-        muted ? 'min-h-[2.5rem] grid-cols-[16px_1fr_auto] py-[0.4375rem]' : 'min-h-[2.875rem] grid-cols-[20px_1fr_auto] py-2'
-      } ${selected ? SEL_CLS : HOVER_CLS}`}
-      style={{ '--rail-c': color }}
-    >
-      {tip.tip}
-      {agent ? (
-        <AgentAvatar agent={{ ...agent, color }} size={muted ? 16 : 20} className="justify-self-center" />
-      ) : (
-        <Dot color={color} size={muted ? 8 : 9} className="justify-self-center" />
-      )}
-      <span className="min-w-0">
-        <span className="flex items-center gap-2">
-          <Truncate text={label} dir={dirOf(label)} className={`min-w-0 flex-1 text-left font-sans leading-tight [[dir=rtl]_&]:text-right ${titleCls}`} />
-          {port != null && (
-            <span className={`shrink-0 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim ${REVEAL_CLS}`}>:{port}</span>
-          )}
-          <span className="flex shrink-0 items-center gap-1.5">
-            {watch && (
-              <span
-                title={
-                  watch.errored
-                    ? t('rail.listenerErrored')
-                    : (watch.count > 1
-                        ? t('rail.watchingSources', { n: watch.count })
-                        : t('rail.watchingSource', { n: watch.count })) +
-                      (watch.fired ? t('rail.firedSuffix', { n: watch.fired }) : '')
-                }
-                className={`flex items-center gap-0.5 font-mono text-[0.6875rem] md:text-[0.625rem] leading-none ${
-                  watch.errored ? 'pulse-yellow text-danger' : 'text-fgdim'
-                }`}
-              >
-                <span className="text-[0.6875rem]"><Icon icon={watch.errored ? faTriangleExclamation : faEye} /></span>
-                {watch.count}
-              </span>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={tip.ref}
+          {...(pinned ? { 'data-needs-row': session.id } : { 'data-session-row': session.id })}
+          role="button"
+          tabIndex={0}
+          aria-current={selected ? 'true' : undefined}
+          {...hoverProps}
+          onClick={() => onSelect(session.id)}
+          onKeyDown={(e) => {
+            if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault();
+              onSelect(session.id);
+            }
+          }}
+          className={`${ROW_CLS} ${selected ? 'row-selected' : 'hover:bg-muted'}`}
+        >
+          {tip.tip}
+          <span className="mt-[0.3125rem] flex w-4 shrink-0 justify-center">
+            {agent ? (
+              <AgentAvatar agent={{ ...agent, color }} size={muted ? 16 : 18} />
+            ) : (
+              <Dot color={color} size={muted ? 8 : 9} />
             )}
-            {!isDesktop && session.statusSummary?.tldr && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); tip.toggle(); }}
-                title={t('rail.summary')}
-                className="-my-2 flex h-[1.75rem] w-[1.75rem] shrink-0 items-center justify-center text-[0.6875rem] text-fgdim"
-              >
-                <Icon icon={faCircleInfo} />
-              </button>
-            )}
-            {/* LADDER1: quietly says the session is on a weaker rung (server-derived claude.ladder). */}
-            <LadderBadge session={session} compact />
-            {/* One indicator, by priority: needs you (pill) › waiting (badge) › working (spinner, on the meta line) › status word. */}
-            {screenReq ? (
-              <NeedsYouPill title={t('rail.screenNeedsYou')} icon={faDisplay}>{t('rail.screenNeedsYouShort')}</NeedsYouPill>
-            ) : attention ? (
-              <NeedsYouPill title={t('rail.needsYourInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
-            ) : waiting?.length > 0 ? (
-              <WaitingBadge items={waiting} t={t} />
-            ) : null}
           </span>
-        </span>
-        {/* The meta line, in scan order: RES1's health dot, the (spinner +)
-            status word, UX1's agent button ("whose job this is" — a click
-            target, so it sits outside the truncating span), the folded
-            secondary text, the trigger bolt, and the time pinned to the end. */}
-        <span className={META_CLS}>
-          <HealthDot health={health} />
-          {(working || restarting) && (
-            <span title={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')} className="host-spinner h-[0.625rem] w-[0.625rem] shrink-0" />
-          )}
-          {statusWord && <StatusWord>{statusWord}</StatusWord>}
-          {/* UX1: born from an agent — the row wears its face AND says whose job
-              this is, so a work session never reads as "the agent itself". */}
-          {agent && (
-            <button
-              type="button"
-              data-row-agent={agent.slug}
-              title={t('session.bornFromTitle', { name: agent.name })}
-              onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
-              className="shrink-0 cursor-pointer py-1.5 text-[0.6875rem] hover:underline md:py-0 md:text-[0.65625rem]"
-              style={{ color: agent.color || undefined }}
-            >
-              · {agent.name}
-            </button>
-          )}
-          {secondary && <Truncate as="span" text={`· ${secondary}`} dir={dirOf(secondary)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
-          {session.metadata?.fromTriggerName && (
-            <TriggerTag name={session.metadata.fromTriggerName} showName={false} className="shrink-0 text-[0.6875rem] md:text-[0.625rem]" />
-          )}
-          <span className={TIME_CLS}>{relTime(session.updatedAt || session.createdAt)}</span>
-        </span>
-      </span>
-      <button
-        type="button"
-        title={t('rail.sessionActions')}
-        onClick={(e) => {
-          e.stopPropagation();
-          setMenuFor(menuOpen ? null : session.id);
-        }}
-        className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
-      >
-        ···
-      </button>
-      {menuOpen && (
-        <RowMenu
-          session={session}
-          onClose={() => setMenuFor(null)}
-          onRemoveFromFolder={
-            onRemoveFromFolder
-              ? () => {
-                  setMenuFor(null);
-                  onRemoveFromFolder(session);
-                }
-              : undefined
-          }
-          onEdit={() => {
-            setMenuFor(null);
-            onEdit(session);
-          }}
-          onArchive={() => {
-            setMenuFor(null);
-            onArchive(session);
-          }}
-          onRestore={() => {
-            setMenuFor(null);
-            onRestore(session);
-          }}
-          onRestart={() => {
-            setMenuFor(null);
-            onRestart(session);
-          }}
-          onDelete={() => {
-            setMenuFor(null);
-            onDelete(session);
-          }}
-        />
-      )}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              {showTitle && session.metadata?.ticket && (
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{session.metadata.ticket}</span>
+              )}
+              <Truncate
+                text={showTitle && session.metadata?.ticket ? session.title : label}
+                dir={dirOf(label)}
+                className={`min-w-0 flex-1 text-start leading-tight ${titleCls}`}
+              />
+              <span className="flex shrink-0 items-center gap-1.5">
+                {watch && (
+                  <Tip
+                    label={
+                      watch.errored
+                        ? t('rail.listenerErrored')
+                        : (watch.count > 1
+                            ? t('rail.watchingSources', { n: watch.count })
+                            : t('rail.watchingSource', { n: watch.count })) +
+                          (watch.fired ? t('rail.firedSuffix', { n: watch.fired }) : '')
+                    }
+                  >
+                    <span
+                      className={`flex items-center gap-0.5 text-2xs leading-none tabular-nums ${
+                        watch.errored ? 'pulse-yellow text-destructive' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {watch.errored ? <TriangleAlert className="size-3" /> : <Eye className="size-3" />}
+                      {watch.count}
+                    </span>
+                  </Tip>
+                )}
+                {!isDesktop && session.statusSummary?.tldr && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(e) => { e.stopPropagation(); tip.toggle(); }}
+                    aria-label={t('rail.summary')}
+                    className="text-muted-foreground"
+                  >
+                    <Info />
+                  </Button>
+                )}
+                {/* LADDER1: quietly says the session is on a weaker rung (server-derived claude.ladder). */}
+                <LadderBadge session={session} compact />
+                {/* One indicator, by priority: needs you (pill) › waiting (badge) › working (spinner, on the meta line) › status word. */}
+                {screenReq ? (
+                  <NeedsYouPill title={t('rail.screenNeedsYou')} icon={Monitor}>{t('rail.screenNeedsYouShort')}</NeedsYouPill>
+                ) : attention ? (
+                  <NeedsYouPill title={t('rail.needsYourInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
+                ) : waiting?.length > 0 ? (
+                  <WaitingBadge items={waiting} t={t} />
+                ) : null}
+              </span>
+            </span>
+            {/* The meta line, in scan order: RES1's health dot, the (spinner +)
+                status word, the branch and PR chips, UX1's agent button ("whose
+                job this is" — a click target, so it sits outside the truncating
+                span), the port and the trigger bolt. */}
+            <span className={META_CLS}>
+              <HealthDot health={health} />
+              {(working || restarting) && (
+                <Tip label={restarting ? t('rail.restartingEllipsis') : t('rail.workingEllipsis')}>
+                  <span className="host-spinner size-2.5 shrink-0" />
+                </Tip>
+              )}
+              {statusWord && <StatusWord>{statusWord}</StatusWord>}
+              {branch && (
+                <Badge mono dir="ltr" className="min-w-0 max-w-[7.5rem] shrink truncate" data-row-branch="">
+                  <bdi className="truncate">{branch}</bdi>
+                </Badge>
+              )}
+              {pr && (
+                <Badge mono className="tabular-nums" data-row-pr="">
+                  #{String(pr).replace(/^#/, '')}
+                </Badge>
+              )}
+              {/* UX1: born from an agent — the row wears its face AND says whose job
+                  this is, so a work session never reads as "the agent itself". */}
+              {agent && (
+                <Tip label={t('session.bornFromTitle', { name: agent.name })}>
+                  <button
+                    type="button"
+                    data-row-agent={agent.slug}
+                    onClick={(e) => { e.stopPropagation(); openAgent(agent.slug); }}
+                    className="shrink-0 cursor-pointer text-2xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    {agent.name}
+                  </button>
+                </Tip>
+              )}
+              {port != null && <span className="shrink-0 tabular-nums">:{port}</span>}
+              {session.metadata?.fromTriggerName && (
+                <TriggerTag name={session.metadata.fromTriggerName} showName={false} className="shrink-0 text-2xs" />
+              )}
+            </span>
+          </span>
+          <span className={TRAIL_CLS}>
+            <span className={TIME_CLS}>{relTime(session.updatedAt || session.createdAt)}</span>
+            <DropdownMenu>
+              <MoreButton label={t('rail.sessionActions')} className={TRAILING_BTN_CLS} />
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()} data-row-menu="">
+                <SessionMenuItems M={DD} {...menuProps} />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent data-row-menu="">
+        <SessionMenuItems M={CM} {...menuProps} />
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+// A collapsible section header (Team, Archived, Pending tasks): chevron + label
+// + count, quiet, sentence case — the rail's own sections are not shouty.
+function SectionToggle({ label, count, open, onToggle, title, className = '', children, ...props }) {
+  return (
+    <div className={`flex w-full items-center gap-1 pe-1 ${className}`}>
+      <Tip label={title}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring coarse:min-h-11"
+          {...props}
+        >
+          <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? 'rotate-90' : 'rtl:rotate-180'}`} />
+          <span className="min-w-0 truncate">{label}</span>
+          <span className="tabular-nums text-muted-foreground/80">{count}</span>
+        </button>
+      </Tip>
+      {children}
     </div>
+  );
+}
+
+// The agent menu items, shared by the row's ⋯ menu; `M` carries the parts so a
+// test can render them without a Radix menu around them.
+export function AgentMenuItems({ M, agent, onOpenAgent, t }) {
+  return (
+    <>
+      <M.Item data-agent-menu-home onSelect={() => onOpenAgent?.(agent.slug, 'home')}>
+        <Play /> {t('rail.teamHomeChat')}
+      </M.Item>
+      <M.Item data-agent-menu-runs onSelect={() => onOpenAgent?.(agent.slug, 'runs')}>
+        <ListChecks /> {t('agent.page.tab.runs')}
+      </M.Item>
+      <M.Item onSelect={() => onOpenAgent?.(agent.slug, 'persona')}>
+        <Bot /> {t('rail.teamOpenPage')}
+      </M.Item>
+      <M.Separator />
+      <M.Item variant="destructive" data-agent-menu-delete onSelect={() => deleteAgentConfirmed(agent, t)}>
+        <Trash2 /> {t('agent.page.delete')}
+      </M.Item>
+    </>
   );
 }
 
@@ -569,7 +602,7 @@ function Row({ session, selected, onSelect, menuOpen, setMenuFor, onArchive, onR
 // and "open a session" stopped looking like the same act. ⋯ still offers both
 // doors explicitly (Home / the persona page).
 export { nextCronFor };
-export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, menuFor, setMenuFor, waitingByAgent }) {
+export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgent, agentOpen, open, onToggle, waitingByAgent }) {
   const t = useT();
   const list = agents || [];
   const byAgent = new Map();
@@ -580,42 +613,37 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
     byAgent.set(s.metadata.agent, l);
   }
   // RES1 §4: a collapsed Team section hides every per-agent waiting badge —
-  // roll the total up onto the header count, same hollow idiom as a folder.
+  // roll the total up onto the header count, same idiom as a folder.
   const hiddenWaiting = open
     ? 0
     : [...(waitingByAgent?.values() || [])].reduce((n, items) => n + items.length, 0);
   return (
-    <div data-rail-team className="mt-2">
-      <div className="flex w-full items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1">
-        <button
-          type="button"
-          onClick={onToggle}
-          title={hiddenWaiting ? t('rail.waitingInsideClick', { n: hiddenWaiting }) : t('agent.oneLiner')}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem] py-1.5 md:py-0"
-        >
-          <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
-          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">{t('rail.team')}</span>
-          <span className={`font-mono text-[0.6875rem] md:text-[0.59375rem] ${hiddenWaiting ? 'font-bold text-fg' : 'text-fgdim'}`}>
-            {list.length}
-            {hiddenWaiting ? ` · !${hiddenWaiting > 1 ? hiddenWaiting : ''}` : ''}
-          </span>
-          <span className="h-px flex-1 bg-hair" />
-        </button>
-        <button
-          type="button"
-          data-rail-team-new
-          onClick={onNewAgent}
-          title={t('rail.teamNewAgent')}
-          className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-2 font-mono text-[0.6875rem] leading-none text-fgdim hover:border-ink hover:text-fg md:py-[0.1875rem] md:text-[0.625rem]"
-        >
-          {t('rail.teamNewAgent')}
-        </button>
-      </div>
+    <div data-rail-team className="mt-3">
+      <SectionToggle
+        label={t('rail.team')}
+        count={`${list.length}${hiddenWaiting ? ` · !${hiddenWaiting > 1 ? hiddenWaiting : ''}` : ''}`}
+        open={open}
+        onToggle={onToggle}
+        title={hiddenWaiting ? t('rail.waitingInsideClick', { n: hiddenWaiting }) : t('agent.oneLiner')}
+      >
+        <Tip label={t('rail.teamNewAgent')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            data-rail-team-new
+            aria-label={t('rail.teamNewAgent')}
+            onClick={onNewAgent}
+            className="text-muted-foreground"
+          >
+            <Plus />
+          </Button>
+        </Tip>
+      </SectionToggle>
       {open && list.length === 0 && (
-        <div className="px-2 py-1.5 text-[0.6875rem] md:text-[0.625rem] text-fgdim italic">{t('rail.teamEmpty')}</div>
+        <div className="px-2.5 py-1.5 text-2xs text-muted-foreground">{t('rail.teamEmpty')}</div>
       )}
       {open && list.length > 0 && (
-        <div className="px-2 pb-1 text-[0.6875rem] md:text-[0.59375rem] leading-tight text-fgdim italic">{t('agent.oneLiner')}</div>
+        <div className="px-2.5 pb-1 text-2xs leading-snug text-muted-foreground">{t('agent.oneLiner')}</div>
       )}
       {open &&
         list.map((a) => {
@@ -625,67 +653,54 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
           const runs = mine.filter((s) => !s.metadata?.agentHome);
           const nextCron = runs.length === 0 ? nextCronFor(a.slug, triggers) : null;
           const surfaceOpen = agentOpen === a.slug;
-          const menuOpen = menuFor === `agent:${a.slug}`;
           const mineWaiting = waitingByAgent?.get(a.slug) || [];
           return (
             <div
               key={a.slug}
               data-rail-agent={a.slug}
+              role="button"
+              tabIndex={0}
               onClick={() => onOpenAgent?.(a.slug, 'home')}
+              onKeyDown={(e) => {
+                if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  onOpenAgent?.(a.slug, 'home');
+                }
+              }}
               // The skills list left the row (detail); it lives in the tooltip now.
               title={a.skills?.length ? a.skills.join(' · ') : t('agent.oneLiner')}
-              className={`group relative mb-[0.1875rem] grid min-h-[2.875rem] cursor-pointer grid-cols-[20px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${surfaceOpen ? SEL_CLS : HOVER_CLS}`}
-              style={{ '--rail-c': a.color }}
+              className={`${ROW_CLS} ${surfaceOpen ? 'row-selected' : 'hover:bg-muted'}`}
             >
-              <AgentAvatar agent={a} size={20} className="justify-self-center" />
-              <span className="min-w-0">
+              <span className="mt-px flex w-4 shrink-0 justify-center">
+                <AgentAvatar agent={a} size={18} />
+              </span>
+              <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2">
-                  <Truncate text={a.name} dir={dirOf(a.name)} className="min-w-0 flex-1 text-left font-sans text-[0.8125rem] font-medium leading-tight text-fg [[dir=rtl]_&]:text-right" />
+                  <Truncate text={a.name} dir={dirOf(a.name)} className="min-w-0 flex-1 text-start text-sm font-medium leading-tight text-foreground" />
                   {mineWaiting.length > 0 && <WaitingBadge items={mineWaiting} t={t} />}
                 </span>
                 <span className={META_CLS}>
                   {working ? (
                     <>
-                      <span title={t('rail.teamWorking')} className="host-spinner h-[0.625rem] w-[0.625rem] shrink-0" />
+                      <span className="host-spinner size-2.5 shrink-0" />
                       <StatusWord>{t('rail.teamWorking')}</StatusWord>
                     </>
                   ) : (
                     <span className="flex shrink-0 items-center gap-1.5" {...(nextCron ? { 'data-agent-next-cron': String(nextCron), title: t('rail.teamNextCronTitle', { when: fmtDateTime(nextCron) }) } : {})}>
-                      <span className="h-[0.4375rem] w-[0.4375rem] rounded-full" style={{ background: runs.length || nextCron ? a.color : '#c4c4c4', opacity: runs.length ? 1 : nextCron ? 0.55 : 1 }} />
+                      <StatusDot status={runs.length ? 'ok' : 'idle'} />
                       {nextCron ? t('rail.teamNextCron', { when: untilTime(nextCron, t) }) : runs.length === 0 ? t('rail.teamIdle') : runs.length === 1 ? t('rail.teamSession') : t('rail.teamSessions', { n: runs.length })}
                     </span>
                   )}
                 </span>
               </span>
-              <button
-                type="button"
-                title={t('rail.teamActions')}
-                onClick={(e) => { e.stopPropagation(); setMenuFor(menuOpen ? null : `agent:${a.slug}`); }}
-                className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
-              >
-                ···
-              </button>
-              {menuOpen && (
-                <div onClick={(e) => e.stopPropagation()} className="absolute end-1 top-8 z-20 min-w-[9.375rem] rounded-[8px] border border-border bg-panel p-1 shadow-[3px_3px_0_#2a2a2a]">
-                  <button type="button" data-agent-menu-home onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'home'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[0.71875rem] text-fg hover:bg-chip">
-                    <span className="w-4 text-center text-fgdim"><Icon icon={faPlay} /></span> {t('rail.teamHomeChat')}
-                  </button>
-                  <button type="button" data-agent-menu-runs onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'runs'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[0.71875rem] text-fg hover:bg-chip">
-                    <span className="w-4 text-center text-fgdim"><Icon icon={faListCheck} /></span> {t('agent.page.tab.runs')}
-                  </button>
-                  <button type="button" onClick={() => { setMenuFor(null); onOpenAgent?.(a.slug, 'persona'); }} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-start text-[0.71875rem] text-fg hover:bg-chip">
-                    <span className="w-4 text-center text-fgdim"><Icon icon={faUserAstronaut} /></span> {t('rail.teamOpenPage')}
-                  </button>
-                  <button
-                    type="button"
-                    data-agent-menu-delete
-                    onClick={async () => { setMenuFor(null); await deleteAgentConfirmed(a, t); }}
-                    className="mt-1 flex w-full cursor-pointer items-center gap-2 rounded border-t border-hair px-2 py-1.5 pt-2 text-start text-[0.71875rem] text-danger hover:bg-danger/10"
-                  >
-                    <span className="w-4 text-center"><Icon icon={faTrash} /></span> {t('agent.page.delete')}
-                  </button>
-                </div>
-              )}
+              <span className={TRAIL_CLS}>
+                <DropdownMenu>
+                  <MoreButton label={t('rail.teamActions')} className="coarse:col-auto" />
+                  <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()} data-agent-menu="">
+                    <AgentMenuItems M={DD} agent={a} onOpenAgent={onOpenAgent} t={t} />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </span>
             </div>
           );
         })}
@@ -697,18 +712,18 @@ export function TeamSection({ agents, sessions, triggers, onOpenAgent, onNewAgen
 // so it reads as "space for the dragged item".
 const GAP = 24;
 
-// Notion-style insertion indicator: a thin brand line with a leading dot,
-// centered inside the gap the neighbouring rows opened for it (or hugging the
-// edge when no gap animation is in play, e.g. the Pending list).
+// Insertion indicator: a thin neutral line with a leading dot, centered inside
+// the gap the neighbouring rows opened for it (or hugging the edge when no gap
+// animation is in play, e.g. the Pending list).
 function DropLine({ pos, gap = 0 }) {
-  const offset = gap ? gap / 2 - 1.25 : -2.5;
+  const offset = gap ? gap / 2 - 1 : -2;
   return (
     <span
       className="pointer-events-none absolute inset-x-1 z-10 flex items-center"
       style={pos === 'before' ? { top: offset } : { bottom: offset }}
     >
-      <span className="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full border-2 border-brand bg-rail" />
-      <span className="h-[0.15625rem] flex-1 rounded-full bg-brand" />
+      <span className="size-1.5 shrink-0 rounded-full bg-foreground" />
+      <span className="h-0.5 flex-1 rounded-full bg-foreground" />
     </span>
   );
 }
@@ -741,75 +756,39 @@ export function insertAt(ids, from, target, zone) {
 
 function GroupHeader({ label, count }) {
   return (
-    <div className="flex items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1">
-      <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
-        {label}
-      </span>
-      <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{count}</span>
-      <span className="h-px flex-1 bg-hair" />
+    <div className="flex items-center gap-1.5 px-2.5 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+      <span className="min-w-0 truncate">{label}</span>
+      <span className="tabular-nums text-muted-foreground/80">{count}</span>
     </div>
   );
 }
 
-function FolderMenu({ onRename, onMakeProject, onDelete, onClose }) {
+// Folder actions, once for the ⋯ menu and the right-click menu.
+function FolderMenuItems({ M, onRename, onMakeProject, onDelete }) {
   const t = useT();
-  const ref = useRef(null);
-  useEffect(() => {
-    const onDown = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
-    };
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [onClose]);
-
   return (
-    <div
-      ref={ref}
-      className="absolute top-7 right-1.5 z-20 min-w-[10.25rem] overflow-hidden rounded-lg border-[1.5px] border-ink bg-panel shadow-[3px_3px_0_rgba(42,42,42,0.18)]"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        type="button"
-        onClick={onRename}
-        className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-      >
-        <span className="text-[0.6875rem] text-fgdim"><Icon icon={faPen} /></span> {t('rail.renameFolder')}
-      </button>
+    <>
+      <M.Item onSelect={onRename}>
+        <Pencil /> {t('rail.renameFolder')}
+      </M.Item>
       {onMakeProject && (
-        <button
-          type="button"
-          onClick={onMakeProject}
-          className="flex w-full cursor-pointer items-center gap-2 border-b border-hair bg-panel px-3 py-2 text-left text-xs text-fg hover:bg-chip"
-        >
-          <span className="text-[0.6875rem] text-fgdim"><Icon icon={faFolderTree} /></span> {t('rail.makeProjectFolder')}
-        </button>
+        <M.Item onSelect={onMakeProject}>
+          <FolderTree /> {t('rail.makeProjectFolder')}
+        </M.Item>
       )}
-      <button
-        type="button"
-        onClick={onDelete}
-        className="flex w-full cursor-pointer items-center gap-2 bg-panel px-3 py-2 text-left text-xs text-danger hover:bg-danger/10"
-      >
-        <span className="text-[0.6875rem]"><Icon icon={faXmark} /></span> {t('rail.deleteFolder')}
-      </button>
-    </div>
+      <M.Separator />
+      <M.Item variant="destructive" onSelect={onDelete}>
+        <Trash2 /> {t('rail.deleteFolder')}
+      </M.Item>
+    </>
   );
 }
 
 // Folder header row. Badge language (decision record §6): indicators next to
 // the NAME belong to the folder's own session — in a PROJECT folder the header
 // IS the controller (clicking the name selects it; the chevron collapses) —
-// while delegated child indicators are hollow / unfilled and live on the count
-// chip at the far edge, surfacing only while the folder is collapsed.
+// while delegated child indicators are rolled up on the count chip at the far
+// edge, surfacing only while the folder is collapsed.
 function FolderRow({
   folder,
   kids,
@@ -819,8 +798,6 @@ function FolderRow({
   watchFor,
   waitingBySession,
   over,
-  menuOpen,
-  setMenuFor,
   onToggle,
   onExpand,
   onRename,
@@ -835,8 +812,8 @@ function FolderRow({
     ? kids.filter((s) => needsAttention(s) && s.id !== selectedId).length
     : 0;
   // RES1 §4: a waiting badge hidden behind a collapsed folder would otherwise
-  // vanish entirely — roll it up onto the count chip, same hollow idiom as
-  // the needsAttention rollup below.
+  // vanish entirely — roll it up onto the count chip, same idiom as the
+  // needsAttention rollup below.
   const waitingHidden = collapsed
     ? kids.reduce((n, s) => n + (waitingBySession?.get(s.id)?.length || 0), 0)
     : 0;
@@ -887,152 +864,142 @@ function FolderRow({
   // the same hover tip a normal session row gets.
   const tip = useHoverTip(controller?.statusSummary?.tldr);
   const hot = !!(attention || waitingHidden);
+  const menuProps = { onRename, onMakeProject: isProject ? undefined : onMakeProject, onDelete };
 
   return (
-    <div
-      ref={tip.ref}
-      onMouseEnter={tip.show}
-      onMouseLeave={tip.hide}
-      data-rowbody
-      onClick={() => (isProject ? onSelect(controller.id) : onToggle())}
-      className={`group relative mb-[0.1875rem] grid min-h-[2.875rem] cursor-pointer grid-cols-[12px_22px_1fr_auto] items-center gap-x-2 rounded-lg px-2 py-2 ${
-        ctlSelected ? SEL_CLS : HOVER_CLS
-      } ${over?.zone === 'into' ? 'ring-1 ring-brand ring-inset' : ''}`}
-      // RAIL2 — the group's colour lives only here, in the header (avatar
-      // tint + selected bar); the children below carry a neutral hairline.
-      style={{ '--rail-c': ctlColor }}
-    >
-      {tip.tip}
-      <button
-        type="button"
-        title={collapsed ? t('rail.expandFolder') : t('rail.collapseFolder')}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className="-mx-1.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center text-[0.6875rem] leading-none text-fgdim hover:text-fg md:h-6 md:w-6 md:text-[0.625rem]"
-      >
-        <span className={collapsed ? 'mirror-rtl' : undefined}>
-          <Icon icon={collapsed ? faCaretRight : faCaretDown} />
-        </span>
-      </button>
-      {isProject ? (
-        ctlAgent ? (
-          <span title={t('rail.projectFolderHint')} className="flex">
-            <AgentAvatar agent={{ ...ctlAgent, color: ctlColor }} size={22} />
-          </span>
-        ) : (
-          <span
-            className="flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-full text-[0.6875rem]"
-            style={{ background: `${ctlColor}22`, border: `1.5px solid ${ctlColor}`, color: ctlColor }}
-            title={t('rail.projectFolderHint')}
-            aria-hidden="true"
-          >
-            <Icon icon={faFolderTree} />
-          </span>
-        )
-      ) : (
-        <span className="justify-self-center text-[0.9375rem] text-fgdim" aria-hidden="true">
-          <Icon icon={faFolder} />
-        </span>
-      )}
-      <span className="min-w-0">
-        <span className="flex items-center gap-2">
-          <Truncate
-            text={folder.name}
-            dir={dirOf(folder.name)}
-            className={`min-w-0 flex-1 text-left font-sans text-[0.875rem] leading-tight [[dir=rtl]_&]:text-right ${isProject ? 'font-semibold text-fg' : 'font-medium text-fg2'}`}
-          />
-          <span className="flex shrink-0 items-center gap-1.5">
-            {/* Per-kid dots exist to survive a fold — so they show only on a
-                collapsed folder, and not when the rollup chip already says
-                "N · ? · !" (redundant, and it starves the title of width). */}
-            {collapsed && !hot && <StateDots kids={kids} />}
-            {ctlAttention ? (
-              <NeedsYouPill title={t('rail.controllerNeedsInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
-            ) : ctlWaiting.length > 0 ? (
-              <WaitingBadge items={ctlWaiting} t={t} />
-            ) : null}
-            {errored && (
-              <span
-                title={t('rail.folderListenerErrored')}
-                className="text-[0.6875rem] text-danger opacity-80"
-              >
-                <Icon icon={faTriangleExclamation} />
-              </span>
-            )}
-            {!attention && working && (
-              <span title={t('rail.folderSessionWorking')} className="host-spinner h-[0.625rem] w-[0.625rem]" />
-            )}
-            <button
-              type="button"
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={tip.ref}
+          onMouseEnter={tip.show}
+          onMouseLeave={tip.hide}
+          data-rowbody
+          onClick={() => (isProject ? onSelect(controller.id) : onToggle())}
+          className={`group relative mb-px flex min-h-[2.25rem] cursor-pointer items-start gap-1.5 rounded-md py-1.5 ps-0.5 pe-1.5 coarse:min-h-11 ${
+            ctlSelected ? 'row-selected' : 'hover:bg-muted'
+          } ${over?.zone === 'into' ? 'ring-1 ring-foreground/40 ring-inset' : ''}`}
+        >
+          {tip.tip}
+          <Tip label={collapsed ? t('rail.expandFolder') : t('rail.collapseFolder')}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={collapsed ? t('rail.expandFolder') : t('rail.collapseFolder')}
+              aria-expanded={!collapsed}
               onClick={(e) => {
                 e.stopPropagation();
-                onExpand();
+                onToggle();
               }}
-              title={[
-                count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count }),
-                attention ? t('rail.needsInputClick', { n: attention }) : null,
-                waitingHidden ? t('rail.waitingInsideClick', { n: waitingHidden }) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-              className={`shrink-0 cursor-pointer rounded-full px-2 py-1.5 font-mono text-[0.6875rem] leading-4 md:px-1.5 md:py-0 md:text-[0.625rem] ${
-                hot ? 'border border-brand bg-transparent font-semibold text-fg' : 'text-fgdim'
-              }`}
+              className="text-muted-foreground"
             >
-              {count}
-              {attention ? ` · ?${attention > 1 ? attention : ''}` : ''}
-              {waitingHidden ? ` · !${waitingHidden > 1 ? waitingHidden : ''}` : ''}
-            </button>
+              <ChevronRight className={`size-3.5 transition-transform ${collapsed ? 'rtl:rotate-180' : 'rotate-90'}`} />
+            </Button>
+          </Tip>
+          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
+            {isProject ? (
+              ctlAgent ? (
+                <Tip label={t('rail.projectFolderHint')}>
+                  <span className="flex">
+                    <AgentAvatar agent={{ ...ctlAgent, color: ctlColor }} size={20} />
+                  </span>
+                </Tip>
+              ) : (
+                <Tip label={t('rail.projectFolderHint')}>
+                  <span
+                    className="flex size-5 items-center justify-center rounded-md"
+                    style={{ background: `color-mix(in oklab, ${ctlColor} 18%, transparent)`, color: ctlColor }}
+                  >
+                    <FolderTree className="size-3.5" />
+                  </span>
+                </Tip>
+              )
+            ) : (
+              <Folder className="size-4 text-muted-foreground" aria-hidden="true" />
+            )}
           </span>
-        </span>
-        <span className={META_CLS}>
-          {(ctlWorking || ctlRestarting) && (
-            <span
-              title={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}
-              className="host-spinner h-[0.625rem] w-[0.625rem] shrink-0"
-            />
-          )}
-          {isProject && <span className="shrink-0">{t('rail.managerChip')} ·</span>}
-          {statusWord && <StatusWord>{statusWord}</StatusWord>}
-          {descLine && <Truncate as="span" text={`· ${descLine}`} dir={dirOf(descLine)} className="min-w-0 text-left [[dir=rtl]_&]:text-right" />}
-          {time && <span className={TIME_CLS}>{time}</span>}
-        </span>
-      </span>
-      <button
-        type="button"
-        title={t('rail.folderActions')}
-        onClick={(e) => {
-          e.stopPropagation();
-          setMenuFor(menuOpen ? null : folder.id);
-        }}
-        className={`${DOTS_CLS} ${menuOpen ? '' : REVEAL_CLS}`}
-      >
-        ···
-      </button>
-      {menuOpen && (
-        <FolderMenu
-          onClose={() => setMenuFor(null)}
-          onRename={() => {
-            setMenuFor(null);
-            onRename();
-          }}
-          onMakeProject={
-            isProject
-              ? undefined
-              : () => {
-                  setMenuFor(null);
-                  onMakeProject();
-                }
-          }
-          onDelete={() => {
-            setMenuFor(null);
-            onDelete();
-          }}
-        />
-      )}
-    </div>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <Truncate
+                text={folder.name}
+                dir={dirOf(folder.name)}
+                className={`min-w-0 flex-1 text-start text-sm leading-tight ${isProject ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}
+              />
+              <span className="flex shrink-0 items-center gap-1.5">
+                {/* Per-kid dots exist to survive a fold — so they show only on a
+                    collapsed folder, and not when the rollup chip already says
+                    "N · ? · !" (redundant, and it starves the title of width). */}
+                {collapsed && !hot && <StateDots kids={kids} />}
+                {ctlAttention ? (
+                  <NeedsYouPill title={t('rail.controllerNeedsInput')}>{t('rail.needsYouPill')}</NeedsYouPill>
+                ) : ctlWaiting.length > 0 ? (
+                  <WaitingBadge items={ctlWaiting} t={t} />
+                ) : null}
+                {errored && (
+                  <Tip label={t('rail.folderListenerErrored')}>
+                    <span className="text-destructive"><TriangleAlert className="size-3.5" /></span>
+                  </Tip>
+                )}
+                {!attention && working && (
+                  <Tip label={t('rail.folderSessionWorking')}>
+                    <span className="host-spinner size-2.5" />
+                  </Tip>
+                )}
+                <Tip
+                  label={[
+                    count === 1 ? t('rail.oneSession', { n: count }) : t('rail.nSessions', { n: count }),
+                    attention ? t('rail.needsInputClick', { n: attention }) : null,
+                    waitingHidden ? t('rail.waitingInsideClick', { n: waitingHidden }) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onExpand();
+                    }}
+                    className={cn(
+                      badgeVariants({ variant: hot ? 'outline' : 'default' }),
+                      'cursor-pointer tabular-nums',
+                      hot && 'text-foreground',
+                      !hot && 'bg-transparent',
+                    )}
+                  >
+                    {hot && <StatusDot status="warn" />}
+                    {count}
+                    {attention ? ` · ?${attention > 1 ? attention : ''}` : ''}
+                    {waitingHidden ? ` · !${waitingHidden > 1 ? waitingHidden : ''}` : ''}
+                  </button>
+                </Tip>
+              </span>
+            </span>
+            <span className={META_CLS}>
+              {(ctlWorking || ctlRestarting) && (
+                <Tip label={ctlRestarting ? t('rail.controllerRestarting') : t('rail.controllerWorking')}>
+                  <span className="host-spinner size-2.5 shrink-0" />
+                </Tip>
+              )}
+              {isProject && <span className="shrink-0">{t('rail.managerChip')} ·</span>}
+              {statusWord && <StatusWord>{statusWord}</StatusWord>}
+              {descLine && <Truncate as="span" text={`· ${descLine}`} dir={dirOf(descLine)} className="min-w-0 text-start" />}
+              {time && <span className="ms-auto shrink-0 tabular-nums">{time}</span>}
+            </span>
+          </span>
+          <span className={TRAIL_CLS}>
+            <DropdownMenu>
+              <MoreButton label={t('rail.folderActions')} />
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <FolderMenuItems M={DD} {...menuProps} />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <FolderMenuItems M={CM} {...menuProps} />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -1076,45 +1043,36 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
   return (
     <div
       draggable
+      data-pending-row={item.id}
       onDragStart={(e) => onDragStart(e, item.id)}
       onDragEnd={onDragEnd}
       onDragOver={(e) => onDragOver(e, item.id)}
       onDrop={(e) => onDrop(e, item.id)}
       onClick={() => onPreview(isEmpty ? `pending:${item.id}` : item.ticket)}
       title={isEmpty ? t('rail.clickPreviewItem') : t('rail.clickPreviewTicket')}
-      className="group relative mb-0.5 flex cursor-pointer items-center gap-1.5 rounded-[7px] border border-dashed border-border px-2 py-1.5 hover:bg-chip"
+      className="group relative mb-px flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md ps-1 pe-0.5 hover:bg-muted coarse:min-h-11"
     >
       {over && <DropLine pos={over} />}
-      <span className="shrink-0 cursor-grab text-[0.6875rem] md:text-[0.625rem] leading-none text-fgdim" title={t('rail.dragToReorder')}>
-        <Icon icon={faGripVertical} />
-      </span>
-      <span className="shrink-0 font-mono text-[0.6875rem] font-bold text-fgdim">
+      <Tip label={t('rail.dragToReorder')}>
+        <span className="shrink-0 cursor-grab text-muted-foreground/70"><GripVertical className="size-3.5" /></span>
+      </Tip>
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
         {isEmpty ? '◇' : item.ticket}
       </span>
-      <Truncate text={item.title} className="min-w-0 flex-1 text-[0.71875rem] text-fgdim" />
-      <span
-        title={t('rail.fromX', { x: item.triggerName })}
-        className="max-w-[4.25rem] shrink-0 truncate rounded-[4px] bg-chip px-1.5 py-px text-[0.6875rem] md:text-[0.5625rem] text-fgdim"
-      >
-        {item.triggerName}
-      </span>
-      <button
-        type="button"
-        onClick={start}
-        disabled={busy}
-        title={t('rail.startNow')}
-        className="shrink-0 cursor-pointer rounded px-1 text-[0.75rem] leading-none text-[#3C9A4E] hover:bg-chip disabled:opacity-40"
-      >
-        <Icon icon={faPlay} />
-      </button>
-      <button
-        type="button"
-        onClick={dismiss}
-        title={t('rail.dismiss')}
-        className="shrink-0 cursor-pointer rounded px-1 text-[0.75rem] leading-none text-fgdim hover:text-danger"
-      >
-        <Icon icon={faXmark} />
-      </button>
+      <Truncate text={item.title} className="min-w-0 flex-1 text-start text-sm text-foreground/85" />
+      <Tip label={t('rail.fromX', { x: item.triggerName })}>
+        <Badge className="max-w-[4.5rem] truncate">{item.triggerName}</Badge>
+      </Tip>
+      <Tip label={t('rail.startNow')}>
+        <Button variant="ghost" size="icon-xs" onClick={start} disabled={busy} aria-label={t('rail.startNow')} className="text-foreground">
+          <Play className="size-3.5" />
+        </Button>
+      </Tip>
+      <Tip label={t('rail.dismiss')}>
+        <Button variant="ghost" size="icon-xs" onClick={dismiss} aria-label={t('rail.dismiss')} className="text-muted-foreground hover:text-destructive">
+          <X className="size-3.5" />
+        </Button>
+      </Tip>
     </div>
   );
 }
@@ -1126,8 +1084,8 @@ function PendingRow({ item, onPreview, onDragStart, onDragEnd, onDragOver, onDro
 // Machines, which opens the same window this chip does.
 //
 // Deliberately quiet: a dot in the machine's colour and the name in the dim
-// foreground, not a filled brand-coloured pill. The 3px strip the shell paints
-// across the top of the window is the loud signal; this is the label for it.
+// foreground, not a filled pill. The 3px strip the shell paints across the top
+// of the window is the loud signal; this is the label for it.
 function MachineChip() {
   const t = useT();
   const shell = useShell();
@@ -1135,20 +1093,19 @@ function MachineChip() {
   if (!shell || machines.length < 2) return null;
   const cur = machines.find((m) => m.id === shell.current) || machines[0];
   return (
-    <button
-      type="button"
-      onClick={openMachines}
-      title={t('rail.machines.switch')}
-      aria-label={t('rail.machines.switch')}
-      className="ms-auto flex min-w-0 max-w-[8rem] cursor-pointer items-center gap-1.5 rounded-[5px] border border-border px-1.5 py-0.5 text-[0.6875rem] text-fgdim hover:border-ink hover:text-fg"
-    >
-      <span
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: shell.color || '#9CA3AF' }}
-      />
-      <span className="truncate">{cur?.name || ''}</span>
-      <span aria-hidden="true" className="shrink-0 opacity-60">⌄</span>
-    </button>
+    <Tip label={t('rail.machines.switch')}>
+      <Button
+        variant="ghost"
+        size="xs"
+        onClick={openMachines}
+        aria-label={t('rail.machines.switch')}
+        className="ms-auto max-w-[8rem] min-w-0 text-muted-foreground"
+      >
+        <Dot color={shell.color || '#9CA3AF'} size={6} />
+        <span className="truncate">{cur?.name || ''}</span>
+        <ChevronDown aria-hidden="true" />
+      </Button>
+    </Tip>
   );
 }
 
@@ -1211,58 +1168,56 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
   };
 
   return (
-    <div className="shrink-0 border-t border-hair bg-rail">
-      <div className="flex items-center gap-[0.4375rem] px-2 py-1.5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-[0.4375rem] py-1.5 md:py-0"
+    <div className="shrink-0 border-t border-border bg-rail" data-rail-pending>
+      <div className="flex items-center gap-0.5 px-1.5 py-1">
+        <SectionToggle
+          label={t('rail.pendingTasks')}
+          count={pending.length}
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
           title={open ? t('rail.collapse') : t('rail.expand')}
-        >
-          <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${open ? '' : 'mirror-rtl'}`}><Icon icon={open ? faCaretDown : faCaretRight} /></span>
-          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
-            {t('rail.pendingTasks')}
+          className="min-w-0 flex-1 !pe-0"
+        />
+        <Tip label={t('rail.manageTriggers')}>
+          <Button variant="ghost" size="icon-sm" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
+            <Zap />
+          </Button>
+        </Tip>
+        <Tip label={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleAutoplay}
+            aria-pressed={!!queue.autoplay}
+            aria-label={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}
+            className={queue.autoplay ? 'bg-muted text-foreground' : 'text-muted-foreground'}
+          >
+            {queue.autoplay ? <Pause /> : <Play />}
+          </Button>
+        </Tip>
+        <Tip label={t('rail.maxConcurrent')}>
+          <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
+            <span aria-hidden="true">×</span>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              aria-label={t('rail.maxConcurrent')}
+              value={maxDraft}
+              onChange={(e) => setMaxDraft(e.target.value)}
+              onBlur={commitMax}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              className="h-6 w-9 rounded-md border border-input bg-background px-1 text-center text-xs tabular-nums text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35 coarse:h-11 coarse:w-12"
+            />
           </span>
-          <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{pending.length}</span>
-        </button>
-        <button
-          type="button"
-          onClick={onOpenTriggers}
-          title={t('rail.manageTriggers')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 py-1.5 text-[0.6875rem] text-fgdim hover:border-ink md:py-[0.125rem] md:text-[0.59375rem]"
-        >
-          <Icon icon={faBolt} /> {t('rail.triggers')}
-        </button>
-        <button
-          type="button"
-          onClick={toggleAutoplay}
-          title={queue.autoplay ? t('rail.autoplayOnPause') : t('rail.autoplayOffStart')}
-          className={`flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[5px] border text-[0.6875rem] leading-none md:h-5 md:w-5 md:text-[0.625rem] ${
-            queue.autoplay ? 'border-ink bg-brand text-[#1a1a1a]' : 'border-border bg-panel text-fgdim hover:border-ink'
-          }`}
-        >
-          <Icon icon={queue.autoplay ? faPause : faPlay} />
-        </button>
-        <span title={t('rail.maxConcurrent')} className="flex shrink-0 items-center gap-0.5 text-[0.6875rem] md:text-[0.59375rem] text-fgdim">
-          <span>×</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            value={maxDraft}
-            onChange={(e) => setMaxDraft(e.target.value)}
-            onBlur={commitMax}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-            }}
-            className="w-8 rounded-[4px] border border-border bg-panel px-1 py-px text-center font-mono text-[0.6875rem] md:text-[0.625rem] outline-none focus:border-ink"
-          />
-        </span>
+        </Tip>
       </div>
       {open && (
-        <div className="thin-scroll max-h-[38vh] overflow-y-auto px-[0.4375rem] pb-2">
+        <div className="thin-scroll max-h-[38vh] overflow-y-auto px-1.5 pb-2">
           {pending.length === 0 ? (
-            <div className="px-2 py-2.5 text-center text-[0.6875rem] text-fgdim">
+            <div className="px-2 py-2 text-center text-2xs text-muted-foreground">
               {t('rail.noPendingTasks')}{' '}
               {queue.autoplay ? t('rail.autoplayIsOn') : t('rail.autoplayIsOff')}
             </div>
@@ -1310,93 +1265,40 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
     await api.post('/auth/logout').catch(() => {});
     signOut();
   };
-  const [open, setOpen] = useState(false);
-  const [rect, setRect] = useState(null);
-  const ref = useRef(null); // trigger wrapper
-  const btnRef = useRef(null); // trigger button
-  const menuRef = useRef(null); // portaled menu
-  useEffect(() => {
-    if (!open) return undefined;
-    // The menu is portaled to <body>, so outside-click must accept clicks in
-    // either the trigger or the menu itself.
-    const onDoc = (e) => {
-      if (ref.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-      setOpen(false);
-    };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, [open]);
-
-  const toggle = () => {
-    if (!open && btnRef.current) setRect(btnRef.current.getBoundingClientRect());
-    setOpen((v) => !v);
-  };
-
   const label = active?.label || t('rail.noAccount');
   const initial = (label.trim()[0] || '?').toUpperCase();
-  const act = (fn) => () => { setOpen(false); fn?.(); };
-
-  const Item = ({ icon, children, onClick }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[0.75rem] text-fg hover:bg-chip"
-    >
-      <span className="w-4 shrink-0 text-center text-[0.8125rem]"><Icon icon={icon} /></span>
-      <span className="min-w-0 truncate">{children}</span>
-    </button>
-  );
-
-  const MENU_W = 208; // w-52
-  const menu = open && rect
-    ? createPortal(
-        <div
-          ref={menuRef}
-          dir="auto"
-          className="fixed z-[70] w-52 overflow-hidden rounded-[8px] border border-border bg-panel py-1 text-fg shadow-lg"
-          style={{
-            bottom: Math.round(window.innerHeight - rect.top + 6),
-            left: Math.round(Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8))),
-          }}
-        >
-          <div className="border-b border-hair px-2.5 pb-1 pt-1 text-[0.6875rem] md:text-[0.5625rem] tracking-[0.08em] text-fgdim uppercase">
-            {t('rail.runningAs')}
-          </div>
-          <div className="flex items-center gap-2 border-b border-hair px-2.5 py-1.5">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-chip text-[0.6875rem] font-bold text-fg">{initial}</span>
-            <span className="min-w-0 truncate text-[0.75rem] font-bold text-fg">{label}</span>
-          </div>
-          <Item icon={faPuzzlePiece} onClick={act(onOpenSkills)}>{t('rail.skills')}</Item>
-          <Item icon={faBrain} onClick={act(onOpenBrain)}>{t('rail.brain')}</Item>
-          <Item icon={faToolbox} onClick={act(onOpenSetup)}>{t('rail.setup')}</Item>
-          <Item icon={faGlobe} onClick={act(openMyBrowser)}>{t('rail.myBrowser')}</Item>
-          <Item icon={faGear} onClick={act(onOpenSettings)}>{t('rail.settings')}</Item>
-          {canLogout && (
-            <div className="mt-1 border-t border-hair pt-1">
-              <Item icon={faRightFromBracket} onClick={act(logout)}>{t('auth.settings.logout')}</Item>
-            </div>
-          )}
-        </div>,
-        document.body
-      )
-    : null;
-
   return (
-    <div ref={ref} className="relative me-auto">
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={toggle}
-        title={t('rail.profileSettings')}
-        className="flex items-center gap-1.5 rounded-[6px] border border-border px-1.5 py-1 text-fgdim hover:border-ink hover:text-fg"
-      >
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-chip text-[0.6875rem] md:text-[0.625rem] font-bold text-fg">{initial}</span>
-        <span className="max-w-[5.25rem] truncate text-[0.6875rem] md:text-[0.65625rem]">{label}</span>
-        <span className="text-[0.6875rem] md:text-[0.5625rem]"><Icon icon={faCaretDown} /></span>
-      </button>
-      {menu}
+    <div className="min-w-0 flex-1">
+      <DropdownMenu>
+        <Tip label={t('rail.profileSettings')}>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" aria-label={t('rail.profileSettings')} data-profile-menu className="w-full min-w-0 justify-start gap-2 px-1.5 text-muted-foreground">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-foreground">{initial}</span>
+              <span className="min-w-0 flex-1 truncate text-start text-xs">{label}</span>
+              <ChevronDown className="size-3.5 shrink-0" />
+            </Button>
+          </DropdownMenuTrigger>
+        </Tip>
+        <DropdownMenuContent side="top" align="start" className="w-56">
+          <DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">{t('rail.runningAs')}</DropdownMenuLabel>
+          <div className="flex items-center gap-2 px-2 pb-1.5">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-foreground">{initial}</span>
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">{label}</span>
+          </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => onOpenSkills?.()}><Puzzle /> {t('rail.skills')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenBrain?.()}><Brain /> {t('rail.brain')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenSetup?.()}><Wrench /> {t('rail.setup')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={openMyBrowser}><Globe /> {t('rail.myBrowser')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenSettings?.()}><SettingsIcon /> {t('rail.settings')}</DropdownMenuItem>
+          {canLogout && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={logout}><LogOut /> {t('auth.settings.logout')}</DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -1430,7 +1332,6 @@ export default function Rail({
   const t = useT();
   const [q, setQ] = useState('');
   const [mode, setMode] = useState('flat'); // 'flat' | 'grouped'
-  const [menuFor, setMenuFor] = useState(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(true); // A1: the Team section
   const [folderDialog, setFolderDialog] = useState(null); // {type:'create'|'new'|'rename'|'delete', …}
@@ -1620,6 +1521,13 @@ export default function Rail({
     return () => { if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, selectedRowMounted]);
+
+  // D3 (C): "Needs you" pinned on top of the flat list — sessions waiting for the
+  // human (a question, a permission, a take-over request). Not while searching
+  // and not in the status grouping; the selected row is already open.
+  const needsList = mode === 'flat' && !q
+    ? allActive.filter((s) => s.id !== selectedRow && (needsAttention(s) || hasOpenScreenRequest(s)))
+    : [];
 
   // Flat-mode drag-to-reorder (disabled while searching — the list is filtered).
   const canDragSessions = mode === 'flat' && !q;
@@ -1832,8 +1740,6 @@ export default function Rail({
     session: s,
     selected: s.id === selectedRow,
     onSelect,
-    menuOpen: menuFor === s.id,
-    setMenuFor,
     onArchive,
     onRestore,
     onRestart,
@@ -1865,7 +1771,7 @@ export default function Rail({
         onDragEnd={onSDragEnd}
         onDragOver={canDragSessions ? (e) => onSDragOver(e, s) : undefined}
         onDrop={canDragSessions ? (e) => onSDrop(e, s) : undefined}
-        className={`relative rounded-[8px] ${zone === 'into' ? 'ring-1 ring-brand ring-inset' : ''}`}
+        className={`relative rounded-md ${zone === 'into' ? 'ring-1 ring-foreground/40 ring-inset' : ''}`}
         style={{
           paddingTop: before ? GAP : 0,
           paddingBottom: after ? GAP : 0,
@@ -1883,7 +1789,7 @@ export default function Rail({
           {...(mark ? { 'data-rail-child': '' } : {})}
         >
           {parent && (
-            <div className="px-2 pt-1">
+            <div className="px-2.5 pt-1">
               <ParentChip info={parent} onSelect={onSelect} t={t} />
             </div>
           )}
@@ -1907,56 +1813,46 @@ export default function Rail({
           // that opens it sits on. `left-0`/`-translate-x-full` were physical,
           // so in Hebrew (RTL) the button was top-RIGHT and the drawer still
           // slid in from the LEFT, across the whole screen.
-          : `fixed inset-y-0 start-0 z-50 w-[82%] max-w-[20rem] ${
+          : `fixed inset-y-0 start-0 z-50 w-[82%] max-w-[20rem] shadow-pop ${
               mobileOpen ? 'translate-x-0' : rtl ? 'translate-x-full' : '-translate-x-full'
             }`
       }`}
       // The stored width is at UI size medium; it follows --ui-scale like the rows do.
       style={isDesktop ? { width: `calc(${railWidth}px * var(--ui-scale, 1))` } : undefined}
+      data-rail
     >
       {/* drag handle on the rail's inner edge (desktop only) */}
       {isDesktop && (
         <div
           onMouseDown={startDrag}
           title={t('rail.dragToResize')}
-          className={`absolute top-0 z-30 h-full w-1 cursor-col-resize ${
+          className={`absolute top-0 z-30 h-full w-1 cursor-col-resize transition-colors ${
             rtl ? 'left-0' : 'right-0'
-          } ${dragging ? 'bg-brand' : 'hover:bg-brand/60'}`}
+          } ${dragging ? 'bg-foreground/25' : 'hover:bg-foreground/15'}`}
           style={{ transform: rtl ? 'translateX(-2px)' : 'translateX(2px)' }}
         />
       )}
-      {/* brand row: the origami mark + wordmark (the tab bar's glyph moved here),
-          and — desktop shell only, and only once a second machine exists — the
-          machine switcher, end-justified against the wordmark. */}
-      <div className="flex items-center gap-2 px-[0.8125rem] pt-3 pb-1">
+      {/* brand row: the origami mark + wordmark and — desktop shell only, and
+          only once a second machine exists — the machine switcher, end-justified
+          against the wordmark; the phone drawer's close button sits at the end. */}
+      <div className="flex items-center gap-2 px-3 pt-3 pb-1">
         <Logo size="1.25rem" />
-        <span className="text-[0.8125rem] font-bold tracking-wide text-fg">Arigami</span>
+        <span className="text-sm font-semibold tracking-tight text-foreground">Arigami</span>
         <MachineChip />
+        {!isDesktop && (
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('rail.closeSessions')} className="ms-auto text-muted-foreground">
+            <X />
+          </Button>
+        )}
       </div>
-      {/* new session (+ mobile drawer close) + search */}
-      <div className="border-b border-hair px-[0.8125rem] pt-2 pb-3">
-        <div className="flex items-stretch gap-2">
-          <button
-            type="button"
-            onClick={onNew}
-            className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-ink bg-brand px-2.5 py-2 text-[0.8125rem] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a]"
-          >
-            <span className="text-base leading-none">+</span> {t('rail.newSession')}
-          </button>
-          {!isDesktop && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={t('rail.closeSessions')}
-              className="flex w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border-[1.5px] border-border bg-panel text-[0.8125rem] text-fgdim"
-            >
-              <Icon icon={faXmark} />
-            </button>
-          )}
-        </div>
-        <div className="mt-2.5 flex items-center gap-[0.4375rem] rounded-[7px] border-[1.5px] border-border bg-panel px-2 py-1.5 focus-within:border-fgdim">
-          <span className="h-[0.6875rem] w-[0.6875rem] shrink-0 rounded-full border-[1.5px] border-fgdim" />
-          <input
+      {/* new session + search */}
+      <div className="flex flex-col gap-2 px-3 pt-2 pb-2">
+        <Button variant="default" onClick={onNew} data-rail-new className="w-full justify-start gap-2 text-foreground">
+          <Plus /> {t('rail.newSession')}
+        </Button>
+        <div className="relative">
+          <Search aria-hidden="true" className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
             ref={searchRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -1966,53 +1862,51 @@ export default function Rail({
                 e.currentTarget.blur();
               }
             }}
+            aria-label={t('rail.searchSessions')}
             placeholder={t('rail.searchSessions')}
-            className="min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-fgdim sm:text-xs"
+            className="ps-8 pe-8 text-base sm:text-sm"
           />
-          <span className="shrink-0 rounded-[3px] border border-border px-1 py-px font-mono text-[0.6875rem] md:text-[0.625rem] text-fgdim">
-            /
-          </span>
+          <Kbd className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 coarse:hidden">/</Kbd>
         </div>
       </div>
 
-      {/* header row + flat/grouped toggle */}
-      <div className="flex items-center gap-2 px-[0.8125rem] pt-[0.5625rem] pb-1">
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] md:text-[0.65625rem] tracking-[0.08em] text-fgdim uppercase">
+      {/* header row + new folder + flat/grouped toggle */}
+      <div className="flex items-center gap-1.5 ps-4 pe-3 pt-2 pb-1">
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
           {mode === 'grouped' ? t('rail.groupedByStatus') : t('rail.activeCount', { n: active.length })}
         </span>
         {mode === 'flat' && (
-          <button
-            type="button"
-            title={t('rail.newFolder')}
-            onClick={() => setFolderDialog({ type: 'new' })}
-            className="shrink-0 cursor-pointer rounded-md border border-border bg-panel px-[0.4375rem] py-2 text-[0.6875rem] leading-none text-fgdim hover:border-ink hover:text-fg md:py-[0.1875rem]"
-          >
-            <Icon icon={faFolderPlus} />
-          </button>
+          <Tip label={t('rail.newFolder')}>
+            <Button variant="ghost" size="icon-sm" aria-label={t('rail.newFolder')} onClick={() => setFolderDialog({ type: 'new' })} className="text-muted-foreground">
+              <FolderPlus />
+            </Button>
+          </Tip>
         )}
-        <span className="flex shrink-0 overflow-hidden rounded-md border border-border">
+        <span role="group" aria-label={t('rail.flatList')} className="flex shrink-0 items-center gap-0.5 rounded-md bg-muted p-0.5">
           {[
-            ['flat', faBars, t('rail.flatList')],
-            ['grouped', faTableCells, t('rail.groupByStatus')],
-          ].map(([key, glyph, title], i) => (
-            <button
-              key={key}
-              type="button"
-              title={title}
-              onClick={() => setMode(key)}
-              className={`cursor-pointer px-[0.5625rem] py-2 text-[0.6875rem] leading-none md:py-[0.1875rem] ${
-                i ? 'border-s border-border' : ''
-              } ${mode === key ? 'bg-ink text-white' : 'bg-panel text-fgdim'}`}
-            >
-              <Icon icon={glyph} />
-            </button>
+            ['flat', Rows3, t('rail.flatList')],
+            ['grouped', Layers, t('rail.groupByStatus')],
+          ].map(([key, Glyph, title]) => (
+            <Tip key={key} label={title}>
+              <button
+                type="button"
+                aria-label={title}
+                aria-pressed={mode === key}
+                onClick={() => setMode(key)}
+                className={`flex size-6 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-ring coarse:size-9 ${
+                  mode === key ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Glyph className="size-3.5" />
+              </button>
+            </Tip>
           ))}
         </span>
       </div>
 
       {/* rows */}
       <div
-        className="thin-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-[0.4375rem] py-0.5"
+        className="thin-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 py-0.5"
         onDragOver={onListDragOver}
         onDrop={onListDrop}
       >
@@ -2032,17 +1926,15 @@ export default function Rail({
               .map((f) => (
                 <div
                   key={f.id}
-                  className="mb-0.5 flex items-center gap-[0.4375rem] rounded-[7px] p-2"
+                  className="mb-px flex items-center gap-2 rounded-md px-2.5 py-1.5"
                 >
-                  <span className="text-[0.75rem] text-fgdim">
-                    <Icon icon={faFolder} />
-                  </span>
+                  <Folder className="size-4 text-muted-foreground" aria-hidden="true" />
                   <Truncate
                     text={f.name}
                     dir={dirOf(f.name)}
-                    className="min-w-0 flex-1 text-left font-sans text-[0.875rem] font-medium leading-tight text-fg2 [[dir=rtl]_&]:text-right"
+                    className="min-w-0 flex-1 text-start text-sm font-medium leading-tight text-foreground/90"
                   />
-                  <span className="shrink-0 px-1.5 font-mono text-[0.6875rem] md:text-[0.625rem] leading-4 text-fgdim">
+                  <span className="shrink-0 px-1.5 text-2xs tabular-nums leading-4 text-muted-foreground">
                     {(folderKids.get(f.id) || []).length}
                   </span>
                 </div>
@@ -2051,6 +1943,23 @@ export default function Rail({
           </>
         ) : (
           <>
+            {/* D3: what needs you is pinned on top — the same sessions stay in
+                their own folder / place below (nothing moves, nothing is lost). */}
+            {needsList.length > 0 && (
+              <div data-rail-needs className="mb-1">
+                <GroupHeader label={t('rail.needsYouGroup')} count={needsList.length} />
+                {needsList.map((s) => (
+                  <div key={`needs-${s.id}`}>
+                    {parentInfoFor(s) && (
+                      <div className="px-2.5 pt-1">
+                        <ParentChip info={parentInfoFor(s)} onSelect={onSelect} t={t} />
+                      </div>
+                    )}
+                    <Row {...rowProps(s)} pinned />
+                  </div>
+                ))}
+              </div>
+            )}
             {rootEntries.map((entry) => {
               if (entry.type !== 'folder')
                 return sessionRowEl(entry.session, { parent: parentInfoFor(entry.session) });
@@ -2069,7 +1978,8 @@ export default function Rail({
               return (
                 <div
                   key={entry.id}
-                  className={`rounded-[10px] ${intoWhole ? 'ring-2 ring-brand ring-inset' : ''}`}
+                  data-rail-folder={entry.id}
+                  className={`rounded-md ${intoWhole ? 'ring-1 ring-foreground/40 ring-inset' : ''}`}
                 >
                   <div
                     draggable
@@ -2099,8 +2009,6 @@ export default function Rail({
                       watchFor={watchFor}
                       waitingBySession={waitingBySession}
                       over={sOver?.id === entry.id ? sOver : null}
-                      menuOpen={menuFor === entry.id}
-                      setMenuFor={setMenuFor}
                       onToggle={() =>
                         api
                           .patch(`/folders/${entry.id}`, { collapsed: !entry.folder.collapsed })
@@ -2126,7 +2034,7 @@ export default function Rail({
                     <div className={KIDS_CLS}>
                       {kids.map((s) => sessionRowEl(s, { mark: true }))}
                       {kids.length === 0 && (
-                        <div className="px-2 py-1.5 text-[0.6875rem] md:text-[0.625rem] text-fgdim italic">
+                        <div className="px-2.5 py-1.5 text-2xs text-muted-foreground">
                           {t('rail.emptyFolderDrop')}
                         </div>
                       )}
@@ -2151,7 +2059,7 @@ export default function Rail({
           </>
         )}
         {active.length === 0 && (
-          <div className="px-2 py-4 text-center text-[0.6875rem] text-fgdim">
+          <div className="px-2 py-4 text-center text-xs text-muted-foreground">
             {q ? t('rail.noSessionsMatch') : t('rail.noActiveSessions')}
           </div>
         )}
@@ -2166,8 +2074,6 @@ export default function Rail({
             onOpenAgent={onOpenAgent}
             open={teamOpen}
             onToggle={() => setTeamOpen((v) => !v)}
-            menuFor={menuFor}
-            setMenuFor={setMenuFor}
             waitingByAgent={waitingByAgent}
             // UX2: no interview session — the button opens the same agent surface
             // an existing agent uses, just in create mode (AgentView, slug '__new__').
@@ -2178,24 +2084,17 @@ export default function Rail({
         {/* archived: collapsed group at the bottom */}
         {archived.length > 0 && (
           <div className="mt-2">
-            <button
-              type="button"
-              onClick={() => setArchivedOpen((v) => !v)}
-              className="flex w-full cursor-pointer items-center gap-[0.4375rem] px-1.5 pt-[0.5625rem] pb-1 max-md:py-2.5"
-            >
-              <span className={`text-[0.6875rem] md:text-[0.5625rem] text-fgdim ${archivedOpen ? '' : 'mirror-rtl'}`}><Icon icon={archivedOpen ? faCaretDown : faCaretRight} /></span>
-              <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.06em] text-fgdim uppercase">
-                {t('rail.archived')}
-              </span>
-              <span className="font-mono text-[0.6875rem] md:text-[0.59375rem] text-fgdim">{archived.length}</span>
-              <span className="h-px flex-1 bg-hair" />
-            </button>
+            <SectionToggle
+              label={t('rail.archived')}
+              count={archived.length}
+              open={archivedOpen}
+              onToggle={() => setArchivedOpen((v) => !v)}
+              data-rail-archived
+            />
             {archivedOpen &&
               archived.map((s) => (
-                // Dim the row's content, never the wrapper: an opacity on the wrapper would
-                // fade the ⋯ menu with it and make it a stacking context that sinks the
-                // menu under the next row.
-                <div key={s.id} className="[&>div>*:not([data-row-menu])]:opacity-70">
+                // Dimmed: archived rows read as history (their menus are portaled, so they stay full strength).
+                <div key={s.id} className="opacity-70">
                   <Row {...rowProps(s)} />
                 </div>
               ))}
@@ -2220,51 +2119,44 @@ export default function Rail({
       {/* what the machine is doing — the snapshot sessions read via host_resources — under the usage */}
       <MachineMini />
 
-      {/* footer */}
-      <div className="flex items-center gap-1.5 border-t border-hair px-[0.8125rem] py-2.5 font-mono text-[0.6875rem] md:text-[0.65625rem] text-fgdim">
-        <span
-          className="h-2 w-2 rounded-full"
-          style={{ background: proxyUp ? '#3C9A4E' : conn === 'open' ? '#CE8324' : '#d2d2d2' }}
-        />
-        <span className="min-w-0 flex-1 truncate">
-          {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
-        </span>
-        {/* VOICE1: voice COMMANDS (switch/create sessions, settings…) — the
-            composer mic dictates; this one goes through the router. */}
-        <MicButton
-          mode="command"
-          className="flex h-8 w-9 items-center justify-center rounded-[5px] border text-[0.6875rem] md:h-[1.375rem] md:w-[1.625rem]"
-        />
-        {screenAvailable && (
-          <button
-            type="button"
-            onClick={() => setScreenModal(true)}
-            title={t('rail.screen')}
-            aria-label={t('rail.screen')}
-            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-2 leading-[1.75rem] text-fgdim hover:border-ink hover:text-fg md:px-1.5 md:leading-[1.125rem]"
-          >
-            <Icon icon={faDisplay} />
-          </button>
-        )}
-        {/* Keyboard shortcuts: nothing to press on a phone — desktop only. */}
-        {onOpenShortcuts && isDesktop && (
-          <button
-            type="button"
-            onClick={onOpenShortcuts}
-            title={t('rail.keyboardShortcutsTitle')}
-            aria-label={t('rail.keyboardShortcuts')}
-            className="shrink-0 cursor-pointer rounded-[5px] border border-border px-2 leading-[1.75rem] text-fgdim hover:border-ink hover:text-fg md:px-1.5 md:leading-[1.125rem]"
-          >
-            ?
-          </button>
-        )}
-        <ProfileMenu
-          active={(accounts?.accounts || []).find((a) => a.active) || null}
-          onOpenSkills={onOpenSkills}
-          onOpenBrain={onOpenBrain}
-          onOpenSetup={onOpenSetup}
-          onOpenSettings={onOpenSettings}
-        />
+      {/* footer: proxy status line, then the profile menu with the small utilities */}
+      <div className="border-t border-border px-2 pt-1 pb-2">
+        <div className="flex items-center gap-1.5 px-1.5 py-1 text-2xs text-muted-foreground" data-rail-proxy>
+          <StatusDot status={proxyUp ? 'ok' : conn === 'open' ? 'warn' : 'idle'} />
+          <span className="min-w-0 flex-1 truncate">
+            {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
+          </span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <ProfileMenu
+            active={(accounts?.accounts || []).find((a) => a.active) || null}
+            onOpenSkills={onOpenSkills}
+            onOpenBrain={onOpenBrain}
+            onOpenSetup={onOpenSetup}
+            onOpenSettings={onOpenSettings}
+          />
+          {/* VOICE1: voice COMMANDS (switch/create sessions, settings…) — the
+              composer mic dictates; this one goes through the router. */}
+          <MicButton
+            mode="command"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs text-muted-foreground hover:bg-muted hover:text-foreground coarse:size-11"
+          />
+          {screenAvailable && (
+            <Tip label={t('rail.screen')}>
+              <Button variant="ghost" size="icon-sm" onClick={() => setScreenModal(true)} aria-label={t('rail.screen')} className="text-muted-foreground">
+                <Monitor />
+              </Button>
+            </Tip>
+          )}
+          {/* Keyboard shortcuts: nothing to press on a phone — desktop only. */}
+          {onOpenShortcuts && isDesktop && (
+            <Tip label={t('rail.keyboardShortcutsTitle')}>
+              <Button variant="ghost" size="icon-sm" onClick={onOpenShortcuts} aria-label={t('rail.keyboardShortcuts')} className="text-muted-foreground">
+                <span aria-hidden="true">?</span>
+              </Button>
+            </Tip>
+          )}
+        </div>
       </div>
 
       {/* folder dialogs */}

@@ -6,8 +6,7 @@
 import { untilTime } from '../lib/time.js';
 import { useT } from '../lib/i18n.js';
 import { usePrefs, setPrefs } from '../lib/prefs.js';
-import { Icon } from '../lib/icons.js';
-import { faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { windowLabel } from '../lib/providers.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 
@@ -66,8 +65,12 @@ export function UsageChip({ usage }) {
   );
 }
 
+// Rail bars are neutral while there is plenty left; they pick up the warning /
+// danger tone only when the window is getting tight (<= 30% left).
+const barTone = (left) => (left <= 30 ? leftColor(left) : 'var(--hb-faint)');
+
 // One tiny labeled bar for the rail panel: title at the start, reset time at the
-// end, then a thin track with the "% left" after it. Direction follows the app
+// end, then a thin track with the "% used" after it. Direction follows the app
 // (RTL in Hebrew, LTR in English); numeric tokens (the % and the reset duration)
 // are LTR runs the bidi algorithm isolates automatically, so they read correctly
 // inside RTL labels instead of being mangled by a forced dir.
@@ -79,19 +82,15 @@ function MiniBar({ title, win }) {
   const reset = untilTime(win.resetsAt);
   return (
     <div title={`${t('dialogs.spentPct', { title, pct: used })}${reset ? ` · ${t('dialogs.resetsIn', { t: reset })}` : ''}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="min-w-0 truncate font-mono text-[11px] md:text-[9.5px] tracking-[0.04em] text-fgdim uppercase">
-          {title}
-        </span>
-        {reset && (
-          <span className="shrink-0 font-mono text-[11px] md:text-[9px] text-fgdim">{t('dialogs.resetsIn', { t: reset })}</span>
-        )}
+      <div className="flex items-baseline justify-between gap-2 text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate">{title}</span>
+        {reset && <span className="shrink-0 tabular-nums">{t('dialogs.resetsIn', { t: reset })}</span>}
       </div>
-      <div className="mt-[3px] flex items-center gap-1.5">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hair">
-          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: leftColor(left) }} />
+      <div className="mt-1 flex items-center gap-1.5">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${used}%`, background: barTone(left) }} />
         </div>
-        <span className="shrink-0 font-mono text-[11px] md:text-[9.5px] font-bold tabular-nums" style={{ color: leftColor(left) }}>
+        <span className="shrink-0 text-2xs font-medium tabular-nums" style={{ color: left <= 30 ? leftColor(left) : undefined }}>
           {used}%
         </span>
       </div>
@@ -118,18 +117,18 @@ export function UsageMini({ usage, provider = 'claude' }) {
     const win = usage.session || usage.week;
     const used = Math.max(0, Math.min(100, win.pct ?? 0));
     return (
-      <div className="border-t border-hair px-[13px] py-1.5" data-usage-mini-phone>
-        <button type="button" onClick={toggle} aria-expanded={expanded} className="flex w-full cursor-pointer items-center gap-2 py-1 font-mono text-[11px] text-fgdim hover:text-fg">
-          <span className="shrink-0 font-bold text-fg">{provider === 'codex' ? 'Codex' : 'Claude'}</span>
-          <span className="shrink-0 tracking-[0.06em] uppercase">{t('dialogs.usageShort')}</span>
-          <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-hair" title={label(usage.session ? 'session' : 'week')}>
-            <span className="block h-full rounded-full" style={{ width: `${used}%`, background: leftColor(100 - used) }} />
+      <div className="border-t border-border px-3 py-1" data-usage-mini-phone>
+        <button type="button" onClick={toggle} aria-expanded={expanded} className="flex min-h-11 w-full cursor-pointer items-center gap-2 text-2xs text-muted-foreground hover:text-foreground">
+          <span className="shrink-0 font-medium text-foreground">{provider === 'codex' ? 'Codex' : 'Claude'}</span>
+          <span className="shrink-0">{t('dialogs.usageShort')}</span>
+          <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted" title={label(usage.session ? 'session' : 'week')}>
+            <span className="block h-full rounded-full" style={{ width: `${used}%`, background: barTone(100 - used) }} />
           </span>
-          <span className="shrink-0 font-bold tabular-nums" style={{ color: leftColor(100 - used) }}>{used}%</span>
-          <Icon icon={expanded ? faChevronUp : faChevronDown} />
+          <span className="shrink-0 font-medium tabular-nums" style={{ color: 100 - used <= 30 ? leftColor(100 - used) : undefined }}>{used}%</span>
+          {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
         </button>
         {expanded && (
-          <div className="mt-1.5 flex flex-col gap-2">
+          <div className="mt-1 mb-1.5 flex flex-col gap-2">
             {usage.session && <MiniBar title={label('session')} win={usage.session} />}
             <MiniBar title={label('week')} win={usage.week} />
           </div>
@@ -138,14 +137,15 @@ export function UsageMini({ usage, provider = 'claude' }) {
     );
   }
   return (
-    <div className="flex flex-col gap-2 border-t border-hair px-[13px] py-2.5">
+    <div className="flex flex-col gap-2 border-t border-border px-3 py-2">
       <button
         type="button"
         onClick={toggle}
-        className="flex cursor-pointer items-center gap-1.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] tracking-[0.08em] text-fgdim uppercase hover:text-fg md:py-0 md:text-[9px]"
+        aria-expanded={expanded}
+        className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
       >
         <span className="flex-1 text-start">{t('dialogs.usageSpent')}</span>
-        <Icon icon={expanded ? faChevronUp : faChevronDown} />
+        {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
       </button>
       <MiniBar title={label('session')} win={usage.session} />
       {(expanded || !usage.session) && <MiniBar title={label('week')} win={usage.week} />}

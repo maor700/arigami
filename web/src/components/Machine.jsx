@@ -81,12 +81,13 @@ function swapPct(snap) {
   return s && s.totalMb > 0 ? Math.round((s.usedMb / s.totalMb) * 100) : null;
 }
 
-/** One metric's value in the mini strip: label, percent, coloured by pressure. */
+/** One metric's value in the mini strip: label, percent — neutral, tinted only under pressure. */
 function MiniStat({ label, pct, detail }) {
+  const hot = pct != null && pct >= 75;
   return (
     <span className="flex items-baseline gap-1" title={detail || undefined}>
-      <span className="text-fgdim">{label}</span>
-      <span className="font-bold tabular-nums" style={{ color: tone(pct) || undefined }}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium tabular-nums" style={{ color: hot ? tone(pct) : undefined }}>
         {pct == null ? '—' : `${Math.round(pct)}%`}
       </span>
     </span>
@@ -108,10 +109,11 @@ export function MachineMini() {
         location.hash = '#/settings/host/resources';
       }}
       title={snap.why}
-      className="flex w-full cursor-pointer items-center gap-2 border-t border-hair px-[0.8125rem] py-2 text-start hover:bg-chip/40"
+      data-machine-mini
+      className="flex w-full cursor-pointer items-center gap-2 border-t border-border px-3 py-2 text-start hover:bg-muted/60 coarse:min-h-11"
     >
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
-      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden font-mono text-[0.6875rem] md:text-[0.59375rem] tracking-[0.02em]">
+      <span className="size-1.5 shrink-0 rounded-full" style={{ background: PRESSURE[snap.pressure] || GOOD }} />
+      <span className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-2xs tracking-normal">
         <MiniStat label={t('machine.cpu')} pct={snap.cpu?.pct} />
         <MiniStat
           label={t('machine.memory')}

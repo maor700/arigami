@@ -97,9 +97,9 @@ test('a folder with kids renders as one card: header and both children fall insi
     { id: 's2', title: 'Child B', color: '#CE8324', folderId: 'f1', metadata: {}, claude: { state: 'idle' } },
   ];
   const out = await renderRail(sessions);
-  // the card wrapper (rounded-[10px]) opens once, before the folder name,
+  // the card wrapper (data-rail-folder) opens once, before the folder name,
   // and both children's titles land before its next sibling closes it.
-  expect(out).toMatch(/rounded-\[10px\][\s\S]*?My Project[\s\S]*?Child A[\s\S]*?Child B/);
+  expect(out).toMatch(/data-rail-folder[\s\S]*?My Project[\s\S]*?Child A[\s\S]*?Child B/);
   // the controller has no row of its own (the card header IS it)
   expect(out).not.toContain('Controller<');
   // child count chip on the header
@@ -124,7 +124,7 @@ test('a collapsed folder keeps the card, the child count and per-child state dot
   expect(out).not.toContain('data-rail-child');
   expect(out).toMatch(/Dots Folder[\s\S]*?>2</);
   // one state dot per kid
-  const dots = out.match(/h-\[0\.3125rem\] w-\[0\.3125rem\] shrink-0 rounded-full/g) || []; // 5px, in rem (BRAND: the rail scales with --ui-scale)
+  const dots = out.match(/size-\[0\.3125rem\]/g) || []; // 5px, in rem (BRAND: the rail scales with --ui-scale)
   expect(dots.length).toBe(2);
 });
 
@@ -134,7 +134,7 @@ test('a plain folder (no controller) still gets the card treatment, just without
     { id: 's1', title: 'Only child', folderId: 'f2', metadata: {}, claude: { state: 'idle' } },
   ];
   const out = await renderRail(sessions);
-  expect(out).toMatch(/rounded-\[10px\][\s\S]*?Plain Folder[\s\S]*?Only child/);
+  expect(out).toMatch(/data-rail-folder[\s\S]*?Plain Folder[\s\S]*?Only child/);
   expect(out).not.toContain('Manager');
 });
 
@@ -147,7 +147,7 @@ test('a PM child with no folder of its own gets a chip naming its master, linkin
   // the chip's tooltip is built from the parent's name — it can only appear
   // once this specific chip renders.
   expect(out).toContain('Part of PM Session');
-  expect(out).toMatch(/<button[^>]*title="Part of PM Session"[^>]*>/);
+  expect(out).toMatch(/<button[^>]*aria-label="Part of PM Session"[^>]*>/);
 });
 
 test('a PM child whose master session no longer exists gets no chip (no dangling reference)', async () => {
