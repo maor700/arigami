@@ -123,7 +123,6 @@ export default function ContextModal({ session, usage, onClose }) {
               type="number"
               min={50}
               max={95}
-              dir="ltr"
               value={autoCompactPct}
               disabled={!enabled}
               aria-label={t('dialogs.autoCompactWhenReaches')}

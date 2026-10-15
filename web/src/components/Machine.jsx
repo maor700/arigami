@@ -80,7 +80,6 @@ export function MachineMini() {
   if (!snap) return null;
   const sp = swapPct(snap);
   return (
-    <Tip label={snap.why}>
     <button
       type="button"
       onClick={() => {
@@ -104,7 +103,6 @@ export function MachineMini() {
         )}
       </span>
     </button>
-    </Tip>
   );
 }
 
