@@ -206,3 +206,27 @@ Branch `redesign/redesign-changes-vuh0`. Rule of the branch: **no feature disapp
 - Accent now only on each view's primary button (+ logo bars in the wizard header).
 - Native `<select>` kept where tests inspect options (Connections owner, AgentView model/kind/share days, language/mic selects), restyled with the INPUT class.
 - Tests adjusted (behaviour unchanged): agent-page ⋯ menu, settings-audit2 Connections, f8, mcp-native, theme-tokens hero.
+
+## QA round 1 (astra-ux / astra-mobile / astra-rtl)
+
+Finding numbers: UX = astra-ux.md, M = astra-mobile.md, R = astra-rtl.md.
+
+**Fixed**
+- UX4 request changes left Approve/Merge on (also on master): the local verdict now replaces the approval with `review.state = changes-requested`; merge is refused even when forced; the pill reads "Changes requested". Test in `test/merge.test.js`.
+- M9 history stopped at ~700 of 2,000 (also on master): `getChatPage` widens its read window until a full page before the cursor exists. `test/chat-pagination.test.js`.
+- M1 Send clipped with large Hebrew UI: the composer pill shrinks, Send keeps its box.
+- UX1 disconnected GitHub picker vanished: it stays with "Connect GitHub" (→ Settings › Connections).
+- M10 system light ignored: Theme is System / Light / Dark (System default); chat theme has "Follow app" (also answers UX8: the Settings label explains app vs chat theme; single Appearance block now holds theme, chat theme, UI size, chat text size, accent).
+- UX10, M2 unnamed controls: Field labels name their control; palette, composer, agent forms, secrets, search boxes, radio groups named (audit script: 67 unnamed → 0 over 13 routes).
+- UX5, M6, M7 composer popover and segmented groups: named dialog, radio groups with arrow keys / Home / End (RTL-aware), one tab stop, focus lands on the current model and returns to the pill.
+- UX6, M3, M4 contrast: `--term-faint`, `--term-dim`, `--term-accent-dim`, diff line numbers, syntax type colour ≥ 4.5:1; light focus ring = accent mixed 30% toward black (≥ 3:1), dark unchanged.
+- M5 tap targets: switch/checkbox hit areas 44px, coarse min-width on text buttons, settings segmented/tab controls, refresh, diff "+" comment, tab bar.
+- R1 clipped settings fields: rows wrap on phones. R2 card shell follows UI direction. R3/R4/R5 skill lists get markers and tables render in their own start edge. R6 code strings/comments isolate each Hebrew run. R7 context ratio LTR unit. R8 agent connections name/detail split. R9 artifact/screenshot units and clock isolated. R10 gear values translated. R11 A+/A− stay Latin.
+- M8 initial JS: noVNC, highlighter, Settings, Launcher, Setup, Skills, Brain, Agents, palette, shortcuts, dialogs load on demand.
+- UX7 gear shows chat view + text size + direction + chat theme (shortcuts kept); UX9 "VS Code" visible button in Changes; UX11 Triggers / New agent show text; UX12 "Find a setting" jump list in Settings, accent beside theme; UX13 orchestration section renamed "Needs attention" with a scope hint; UX2/UX3 local repo adds say "copying", optional steps read "waiting" / "no env files needed", no double "+".
+
+**Not reproducible / already fixed on this branch**
+- R3 English inheriting RTL in Brain and Orchestration rows (Md per-block direction landed earlier); R12 duplicate mobile titles (documented in the integration report; left).
+
+**Left as decisions**
+- UX7/D10 gear vs pill consolidation; D9 Simple/Terminal in the header menu; M "Skills" title translation gap (R12).
