@@ -13,6 +13,8 @@
 import { useEffect, useState } from 'react';
 import { setPrefs } from '../lib/prefs.js';
 import { Wave } from './ui.jsx';
+import { Button } from './ui/button.jsx';
+import { Tip } from './ui/tooltip.jsx';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { useStore } from '../lib/store.js';
@@ -93,10 +95,10 @@ export default function Settings({ category = 'appearance', section = '', initia
       onClick={() => onCategory?.(id)}
       aria-current={cat === id ? 'page' : undefined}
       className={desktop
-        ? `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-start text-[0.78125rem] ${cat === id ? 'bg-chip font-bold text-fg' : 'text-fgdim hover:bg-chip/60 hover:text-fg'}`
-        : `flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[0.71875rem] ${cat === id ? 'border-ink bg-chip font-bold text-fg' : 'border-hair text-fgdim'}`}
+        ? `flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-start text-sm outline-none focus-visible:outline-2 focus-visible:outline-ring ${cat === id ? 'row-selected font-medium text-fg' : 'text-fgdim hover:bg-muted hover:text-fg'}`
+        : `relative flex h-11 shrink-0 cursor-pointer items-center gap-1.5 px-3 text-sm outline-none after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full ${cat === id ? 'font-medium text-fg after:bg-foreground' : 'text-fgdim after:bg-transparent'}`}
     >
-      <span className="w-4 text-center text-[0.75rem]"><Icon icon={ICONS[id]} /></span>
+      <span className="w-4 text-center text-xs"><Icon icon={ICONS[id]} /></span>
       {t(`settings.cat.${id}`)}
     </button>
   );
@@ -109,24 +111,26 @@ export default function Settings({ category = 'appearance', section = '', initia
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-panel">
-      <div className="flex h-11 shrink-0 items-center gap-[0.5625rem] border-b border-hair px-4">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hair px-4">
         <Wave />
-        <span className="text-sm font-bold text-fg">{t('settings.title')}</span>
-        <span className="text-[0.75rem] text-fgdim">/ {t(`settings.cat.${cat}`)}</span>
-        <button type="button" onClick={onClose} title={t('chrome.settings.closeTitle')} className="ms-auto cursor-pointer px-1 text-[0.9375rem] text-fgdim hover:text-fg">
-          <Icon icon={faXmark} />
-        </button>
+        <span className="text-sm font-semibold text-fg">{t('settings.title')}</span>
+        <span className="text-xs text-fgdim">/ {t(`settings.cat.${cat}`)}</span>
+        <Tip label={t('chrome.settings.closeTitle')}>
+          <Button variant="ghost" size="icon-sm" className="ms-auto" onClick={onClose} aria-label={t('chrome.settings.closeTitle')}>
+            <Icon icon={faXmark} />
+          </Button>
+        </Tip>
       </div>
 
       {!desktop && (
-        <div className="thin-scroll flex shrink-0 gap-1.5 overflow-x-auto border-b border-hair px-3 py-2">
+        <div className="thin-scroll flex shrink-0 overflow-x-auto border-b border-hair px-2">
           {SETTINGS_NAV.map(navItem)}
         </div>
       )}
 
       <div className="flex min-h-0 flex-1">
         {desktop && (
-          <nav className="flex w-[11.25rem] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">
+          <nav className="flex w-[13rem] shrink-0 flex-col gap-0.5 border-e border-hair px-2 py-3">
             {SETTINGS_NAV.map(navItem)}
           </nav>
         )}
