@@ -406,8 +406,8 @@ export default function TermControls({ session }) {
             onSelect={openModal('context')}
           />
           <DropdownMenuSeparator />
-          <MenuRow label={t('rail.direction')} value={view.dir} onSelect={openModal('dir')} />
-          <MenuRow label={t('rail.theme')} value={view.theme} onSelect={openModal('theme')} />
+          <MenuRow label={t('rail.direction')} value={t(`common.${view.dir}`)} onSelect={openModal('dir')} />
+          <MenuRow label={t('rail.theme')} value={t(`common.${view.theme}`)} onSelect={openModal('theme')} />
           <DropdownMenuSeparator />
           {pillOwns ? (
             <MenuRow

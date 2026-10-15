@@ -700,6 +700,17 @@ body {
   margin: 0.5em 0;
   padding-inline-start: 1.5em;
 }
+/* Tailwind's preflight strips list styles; the skill/content panes need their bullets and numbers
+   (the marker sits on the list's own side — Md.jsx gives every list its own dir) */
+.md-light ul {
+  list-style: disc;
+}
+.md-light ol {
+  list-style: decimal;
+}
+.md-light li::marker {
+  color: var(--color-fgdim);
+}
 .md-light code {
   font-family: var(--font-mono);
   font-size: 0.9em;
@@ -742,6 +753,7 @@ body {
 .md-light table {
   border-collapse: collapse;
   margin: 0.6em 0;
+  margin-inline-end: auto; /* sits on its OWN start edge (its dir comes from its text), not the app's */
 }
 .md-light th,
 .md-light td {

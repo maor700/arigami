@@ -6,6 +6,8 @@
 //   ReceiptLine the dashed one-liner (auto-approved, delegated, adopted…)
 //   ErrorNote   the "answer failed" line
 //   AgentAvatar the emoji-in-a-ring every agent surface uses
+import { usePrefs } from '../lib/prefs.js';
+import { langDir } from '../lib/langs.js';
 import { forwardRef } from 'react';
 import { dirOf } from '../lib/i18n.js';
 import { buttonVariants } from '../components/ui/button.jsx';
@@ -42,9 +44,13 @@ export const CardFrame = forwardRef(function CardFrame({ tone = 'accent', live, 
   const pad = dense ? 'px-3 py-2.5' : 'p-3.5';
   const my = dense ? 'my-1.5' : 'my-3';
   const strong = ACCENT.strong;
+  // The card shell follows the UI language, not the first words of the conversation
+  // (the chat area is dir="auto"): header, dot and buttons keep their order; each
+  // text block inside orders itself.
+  const uiDir = langDir(usePrefs().language);
   const dot = live ? 'bg-warn pulse-yellow' : TONE_DOT[tone] || TONE_DOT.accent;
   return (
-    <div ref={ref} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
+    <div ref={ref} dir={uiDir} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
       {(label || right || live) && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {(live || ((tone === 'ok' || tone === 'danger') && !icon)) && <span aria-hidden="true" data-card-dot className={`size-1.5 shrink-0 rounded-full ${dot}`} />}

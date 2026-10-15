@@ -98,7 +98,7 @@ export function Field({ label, hint, children, wrap = false }) {
   const control = native ? cloneElement(children, { id: controlId, ...(hint ? { 'aria-describedby': `${uid}-h` } : {}) }) : children;
   return (
     <FieldCtx.Provider value={{ labelId }}>
-      <div className={`flex items-center gap-x-4 gap-y-2 border-b border-hair py-3 last:border-b-0 max-sm:flex-wrap${wrap ? ' flex-wrap' : ''}`}>
+      <div className={`flex items-center gap-x-4 gap-y-2 border-b border-hair py-3  last:border-b-0 max-sm:flex-wrap ${wrap ? 'flex-wrap' : ''}`}>
         <div className="min-w-[9rem] flex-1 max-sm:basis-full">
           {native ? (
             <label id={labelId} htmlFor={controlId} className="block text-sm font-medium text-fg">{label}</label>
