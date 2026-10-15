@@ -198,9 +198,9 @@ test('local sources say "copying", GitHub ones "downloading"; optional steps are
 
 function oklch(L, C, hue) {
   const a = C * Math.cos((hue * Math.PI) / 180), b = C * Math.sin((hue * Math.PI) / 180);
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b, m_ = L - 0.1055613458 * a - 0.0638541728 * b, s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l_ = L + 0.396338 * a + 0.215804 * b, m_ = L - 0.105561 * a - 0.063854 * b, s_ = L - 0.089484 * a - 1.291486 * b;
   const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
-  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s].map((v) => Math.min(1, Math.max(0, v)));
+  return [4.076742 * l - 3.307712 * m + 0.230970 * s, -1.268438 * l + 2.609757 * m - 0.341319 * s, -0.004196 * l - 0.703419 * m + 1.707615 * s].map((v) => Math.min(1, Math.max(0, v)));
 }
 const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
@@ -222,11 +222,11 @@ test('muted/faint chat text reaches 4.5:1 on the chat and card surfaces in both 
   // light ring: the default mint #6eceb7 mixed 70/30 with black in oklab (L, a, b all scale by 0.7)
   const lin = [0x6e, 0xce, 0xb7].map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
   const [r, g, bl] = lin;
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * bl), s2 = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * bl);
-  const lab = [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s2, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s2, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s2].map((v) => v * 0.7);
+  const l = Math.cbrt(0.412221 * r + 0.536333 * g + 0.051446 * bl), m = Math.cbrt(0.211903 * r + 0.680700 * g + 0.107397 * bl), s2 = Math.cbrt(0.088302 * r + 0.281719 * g + 0.629979 * bl);
+  const lab = [0.210454 * l + 0.793618 * m - 0.004072 * s2, 1.977998 * l - 2.428592 * m + 0.450594 * s2, 0.025904 * l + 0.782772 * m - 0.808676 * s2].map((v) => v * 0.7);
   const [L, A, B] = lab;
-  const l2 = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3, m2 = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3, s3 = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
-  const ring = [4.0767416621 * l2 - 3.3077115913 * m2 + 0.2309699292 * s3, -1.2684380046 * l2 + 2.6097574011 * m2 - 0.3413193965 * s3, -0.0041960863 * l2 - 0.7034186147 * m2 + 1.707614701 * s3];
+  const l2 = (L + 0.396338 * A + 0.215804 * B) ** 3, m2 = (L - 0.105561 * A - 0.063854 * B) ** 3, s3 = (L - 0.089484 * A - 1.291486 * B) ** 3;
+  const ring = [4.076742 * l2 - 3.307712 * m2 + 0.230970 * s3, -1.268438 * l2 + 2.609757 * m2 - 0.341319 * s3, -0.004196 * l2 - 0.703419 * m2 + 1.707615 * s3];
   expect(ratio(ring, [1, 1, 1])).toBeGreaterThanOrEqual(3);
   expect(ratio(lin, [1, 1, 1])).toBeLessThan(3); // the raw accent is what failed (1.9:1)
   expect(css).toMatch(/\[data-theme="dark"\] \{[^}]*--ring: var\(--color-brand\);/s);
