@@ -16,6 +16,7 @@
 // run/pairing-code). `createAuth()` is the factory the tests use with a tmp
 // dir; the default export `auth` is the singleton the server wires in.
 import fs from 'node:fs';
+import { maybeRedirectToSso } from './sso-redirect.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isInboundWebhookPath } from './webhooks.js';
@@ -467,6 +468,9 @@ export function createAuth(opts: AuthOptions) {
       res.end(JSON.stringify({ error: refused }));
       return true;
     }
+    // Orchestrated tenant (ARIGAMI_SSO_URL): a browser opening a page with no session goes through the control
+    // plane's SSO and the handoff instead of the pairing screen (server/sso-redirect.ts).
+    if (!p && maybeRedirectToSso(req, res, isHttps(req))) return true;
     if (p || isPublicPath(pathname)) return false;
     // K2: a signed share token opens ONE artifact without a cookie. Only
     // consulted when there is no principal, only on the artifacts route.

@@ -3381,7 +3381,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, u: URL, p: 
       res.writeHead(r.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(
         `<!doctype html><title>Arigami — sign-in failed</title><body style="font-family:system-ui;padding:40px">` +
-          `<h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/">Continue to this workspace</a></p>`,
+          `<h1>Sign-in failed</h1><p>${escapeHtml(r.error)}</p><p><a href="/__host/?pair=1">Continue to this workspace</a></p>`,
       );
       return;
     }

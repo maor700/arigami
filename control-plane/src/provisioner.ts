@@ -79,6 +79,11 @@ export function tierOverlay(cfg: Config, t: Tenant): TierOverlay | null {
  * The full `helm upgrade --install` argv. Layering, lowest to highest: chart defaults < the --set flags below <
  * CP_HELM_EXTRA_VALUES (-f) < the tier overlay (-f, `tierFile`). Helm applies -f files in order, later wins.
  */
+/** Where a tenant sends a browser that arrives without a session: the control-plane entry that ends in the handoff. */
+export function ssoUrl(cfg: Config, t: Tenant): string {
+  return t.kind === 'shared' && t.name ? `${cfg.publicUrl}/workspaces/${encodeURIComponent(t.name)}/open` : `${cfg.publicUrl}/workspace`;
+}
+
 export function buildHelmArgs(cfg: Config, t: Tenant, tierFile?: string): string[] {
   const args = [
     'helm', 'upgrade', '--install', t.release, cfg.helmChartPath,
@@ -122,6 +127,9 @@ export function buildHelmArgs(cfg: Config, t: Tenant, tierFile?: string): string
   // Shared org workspace (src/shared.ts): the chart's `sharedWorkspace` / `orgHost` values become
   // ARIGAMI_SHARED_WORKSPACE=1 / ARIGAMI_ORG_HOST=1. Kept in the row, so every later upgrade re-renders them.
   args.push(...sharedHelmArgs(t));
+  // Direct visits (bookmark, typed URL): the tenant sends a browser that has no session of its own back through the
+  // control plane, which signs it in with the org SSO and returns it through the handoff (server/sso-redirect.ts).
+  args.push('--set-string', `env.ARIGAMI_SSO_URL=${ssoUrl(cfg, t)}`);
   if (cfg.helmExtraValuesFile) args.push('-f', cfg.helmExtraValuesFile);
   if (tierFile) args.push('-f', tierFile);
   return args;

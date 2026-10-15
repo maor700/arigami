@@ -775,6 +775,19 @@ How it is built (`src/gate.ts`, the `/auth/verify` route in `src/server.ts`):
   the OIDC round-trip (short-circuiting on a session the gate could not see would bounce forever).
 - **Handoff still works.** `/` → `302 u-<id>…/__api/auth/handoff?t=…` → the edge asks `/auth/verify` → the
   cookie the user just got is there → 200 → the tenant redeems the token. Unchanged code on both sides.
+- **Direct visits (bookmark, typed URL, a pasted link).** The edge lets the person through on their control-plane
+  cookie, but the pod has no session of its own for that browser and used to show its pairing screen. Each tenant
+  now gets `ARIGAMI_SSO_URL` (chart value `env.ARIGAMI_SSO_URL`, passed by `buildHelmArgs` on every provision,
+  upgrade and re-provision; default empty = nothing changes for a standalone host): `<CP_PUBLIC_URL>/workspace` for a
+  personal tenant, `<CP_PUBLIC_URL>/workspaces/<name>/open` for a shared one. When it is set, the tenant
+  (`server/sso-redirect.ts`, called from `auth.gate`) answers an unauthenticated browser *navigation* (GET, `Accept:
+  text/html`, `Sec-Fetch-Mode: navigate`, a page document) with a 302 there; the control plane signs the person in
+  (`/workspace` without a session goes through `/auth/login?rd=/workspace`) and returns them via the handoff. Never
+  redirected: non-GET, non-HTML, API / MCP / websocket / webhook / health / artifact / asset requests (so the handoff
+  route and the control plane's callbacks are untouched), and `?pair=1` (operators' way to the pairing screen; the
+  handoff failure page links there). Loop guards: a 60 s `arigami_sso_try` cookie makes a second session-less page
+  request show the pairing screen instead of bouncing again; someone who is not a member gets the control plane's
+  normal 403 (no redirect back). Tests: `test/sso-redirect.test.ts`, `control-plane/test/sso-url.test.ts`.
 - **Websockets** pass: forward_auth's subrequest carries the upgrade headers, the control plane answers a
   plain 200, and the edge then proxies the real upgrade to the pod. A 403/302 refuses the upgrade.
 - **Inbound webhooks skip the gate** — `^/__api/webhooks/(sms|slack|github|custom/<id>)$`, mirrored from

@@ -192,6 +192,8 @@ export function createApp(cfg: Config, store: Store, provisioner: Provisioner, l
     // An org-admin has no workspace of their own by default (they land on /admin); /workspace gives them — or any
     // signed-in user — the same "get me into my workspace" flow as /.
     if (url.pathname === '/' || url.pathname === '/workspace') {
+      // /workspace is where a tenant sends a browser that opened it directly (ARIGAMI_SSO_URL): sign in, come back here.
+      if (!principal && url.pathname === '/workspace') return redirect(`/auth/login?rd=${encodeURIComponent('/workspace')}`);
       if (!principal) return html(tpl.loginPage(cfg.orgDomain));
       if (principal.role === 'admin' && url.pathname === '/') return redirect('/admin');
       store.touchLastSeen(principal.subject);

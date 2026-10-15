@@ -98,6 +98,10 @@ spec:
             - name: ARIGAMI_BUNDLE_REF
               value: {{ .Values.env.ARIGAMI_BUNDLE_REF | quote }}
             {{- end }}
+            {{- if .Values.env.ARIGAMI_SSO_URL }}
+            - name: ARIGAMI_SSO_URL
+              value: {{ .Values.env.ARIGAMI_SSO_URL | quote }}
+            {{- end }}
             {{- if .Values.sharedWorkspace }}
             # Several org members sign in here (control-plane shared workspace): handoffs must name a role and
             # sessions are short-lived (server/org-access.ts).
