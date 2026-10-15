@@ -23,7 +23,7 @@ export function Overlay({ onClose, children }) {
   // (same issue Rail.jsx's useHoverTip already works around the same way).
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(20,20,22,0.45)] p-5"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-5 animate-in fade-in-0 duration-150"
       onClick={onClose}
     >
       <div onClick={(e) => e.stopPropagation()}>{children}</div>

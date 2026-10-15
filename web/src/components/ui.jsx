@@ -1,7 +1,9 @@
 // Tiny shared primitives for the host chrome.
+import { forwardRef } from 'react';
 import { t } from '../lib/i18n.js';
 
 import { Logo } from './Logo.jsx';
+import { Button } from './ui/button.jsx';
 
 // The brand glyph in every chrome header (tab bar, Settings, launcher). It was
 // four ascending bars ("wave"); it is the origami star mark now — the name
@@ -18,37 +20,31 @@ export function Dot({ color, size = 12, className = '' }) {
       style={{
         width: size,
         height: size,
-        background: color || '#c4c4c4',
-        border: '1.5px solid rgba(0,0,0,0.25)',
+        background: color || 'var(--hb-faint)',
+        border: '1px solid var(--hb-border)',
       }}
     />
   );
 }
 
-// Primary host button: yellow, 2px ink border, hard shadow.
-export function YellowButton({ children, className = '', ...rest }) {
+// Primary host button — now a thin wrapper over ui/Button (variant primary: the
+// ONE accent action of a view). Same props as before; className is merged.
+export const YellowButton = forwardRef(function YellowButton({ children, className = '', ...rest }, ref) {
   return (
-    <button
-      type="button"
-      className={`cursor-pointer rounded-lg border-2 border-ink bg-brand px-4 py-2 text-[0.8125rem] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a] transition-transform active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0_#2a2a2a] disabled:cursor-default disabled:opacity-50 ${className}`}
-      {...rest}
-    >
+    <Button ref={ref} variant="primary" className={`px-4 ${className}`} {...rest}>
       {children}
-    </button>
+    </Button>
   );
-}
+});
 
-export function GhostButton({ children, className = '', ...rest }) {
+// Secondary host button — ui/Button outline.
+export const GhostButton = forwardRef(function GhostButton({ children, className = '', ...rest }, ref) {
   return (
-    <button
-      type="button"
-      className={`cursor-pointer rounded-lg border-[1.5px] border-border bg-panel px-3.5 py-2 text-[0.78125rem] text-fgdim hover:bg-hair ${className}`}
-      {...rest}
-    >
+    <Button ref={ref} variant="outline" className={`px-3.5 text-muted-foreground ${className}`} {...rest}>
       {children}
-    </button>
+    </Button>
   );
-}
+});
 
 // Small solid bolt — marks a session that a trigger started. Muted by default;
 // pass a className to size/recolor. `name` is the trigger's name.
