@@ -1,89 +1,199 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 /* FontAwesome base CSS inside layer(base) so Tailwind utilities always win
    over it (unlayered CSS would beat @layer utilities in Tailwind v4). */
 @import "@fortawesome/fontawesome-svg-core/styles.css" layer(base);
 
-/* ------- semantic surface tokens (flip on [data-theme]) ------- */
+/* =====================================================================
+   Arigami design tokens  (redesign foundation)
+   =====================================================================
+   One token layer, three vocabularies that all resolve to the same values:
+
+     1. --hb-*      the app's original surface/status names. KEPT, never renamed:
+                    hundreds of components use them (bg-panel, text-fgdim,
+                    border-border, bg-chip, text-ok …). They now hold the new
+                    neutral oklch ramps.
+     2. shadcn      --background --foreground --card --popover --primary
+                    --secondary --muted --accent --destructive --border --input
+                    --ring --radius … read by web/src/components/ui/*.
+                    They are aliases of (1) — never a second palette.
+     3. --term-*    the chat pane's own light/dark palette (.term/.term-light).
+
+   ACCENT BUDGET (mint — the user's accent pref still rebrands it via
+   --color-brand). Accent colour is allowed ONLY on:
+     a. the ONE primary action of a view (<Button variant="primary">),
+     b. focus rings (--ring),
+     c. the logo / favicon,
+     d. a thin (2px) selected-row indicator (.row-selected / --accent-line),
+     e. progress / "working" affordances that are not buttons (tiny).
+   EVERYTHING ELSE is neutral: buttons (default/outline/ghost), tabs, chips,
+   badges (neutral + a tiny status dot), links (text colour + underline),
+   selected fills (--hb-sel), toggles' knobs. Status colours (ok/warn/err/info)
+   are for tiny dots and the occasional tinted notice — never for chrome.
+   Colour is never the only carrier of a status: pair it with a glyph or word.
+
+   TYPE SCALE (px at 100% UI scale, rem-based so Settings › UI size follows):
+     11 caption/kbd · 12 secondary · 13 UI body (default) · 14 emphasis/title
+     16 section title · 20 page title. Chat text keeps its own prefs size.
+     Nothing below 11px (a floor rule below lifts the legacy 8–10.5px classes).
+   Weights 400/500/600 (font-bold is mapped to 600). Numbers: .tabular-nums.
+   Fonts: Inter (Latin) + Rubik (Hebrew); mono ONLY for code / terminal / diff.
+
+   SPACING: Tailwind's 4px grid (p-1 = 4px … ) — use 4/8/12/16/24.
+   RADII: 4 (kbd, chips) · 6 (buttons, inputs, rows) · 8 (menus, cards) ·
+          12 (dialogs, sheets). Pills only for avatars and dots.
+   ELEVATION: hairline border + a very soft shadow on overlays. No offset
+   ("hard") shadows, no 2px ink outlines — legacy classes that still carry them
+   (border-2, border-ink, shadow-[2px_2px_0…]) are neutralised below.
+   MOTION: 100/150/200ms, one waiting pulse, honours prefers-reduced-motion.
+   RTL: use logical utilities (ms-/me-/ps-/pe-/start-/end-/text-start) only;
+   code / paths / URLs are isolated LTR (dir="ltr" or <bdi>); Radix gets its
+   direction from <Direction.Provider> (ui/direction.jsx, fed by the language).
+   ===================================================================== */
+
+/* ---- neutral ramps (light) -------------------------------------------- */
 :root {
-  --hb-bg: #ffffff; /* main content background */
-  --hb-panel: #fcfcfb; /* launcher/settings/dialog panels */
-  --hb-fg: #1a1a1a; /* primary text */
-  --hb-fgdim: #777777; /* secondary text */
-  --hb-border: #e2e2e0; /* chrome borders */
-  --hb-rail: #fafafa; /* left rail */
-  --hb-hair: #ececec; /* hairline dividers */
-  --hb-chip: color-mix(in srgb, var(--color-brand) 16%, #ffffff); /* accent chip fill */
-  --hb-fg2: #3d3d42; /* one step under primary: folder names, child rows (rail) */
-  --hb-sel: rgba(0, 0, 0, 0.055); /* selected rail row fill (6% ink) */
-  /* Auto-review / imported suggestion cards. Theme-flipped like everything
-     else here: the card used to hardcode a near-white fill in BOTH themes
-     while its body text followed --hb-fg, which is near-white in the dark
-     theme — 1.09:1, invisible. A card that opts out of the palette has to opt
-     out of all four values, not one. */
-  --hb-suggest: #fffdf2; /* card fill */
-  --hb-suggest-fg: #3a3426; /* card body text */
-  --hb-suggest-line: #cdbb66; /* card border */
-  --hb-suggest-label: #8a6d1f; /* the "SUGGESTION" label */
-  /* Status tones: a soft fill, its border, and the text that sits on it (or
-     on the plain panel). Light = the pastel boxes the UI always had; dark =
-     the same hue as a low-luminance tint with a lifted text colour. Use these
-     instead of hex pastels — a hardcoded #FBF3E0 is a cream card in a dark
-     page with near-white headings on it. */
-  --hb-ok: #2f7d4f;
-  --hb-ok-bg: #eaf6ef;
-  --hb-ok-line: #bfe3cf;
-  --hb-warn: #82671b;
-  --hb-warn-bg: #fbf3e0;
-  --hb-warn-line: #e7d3a8;
-  --hb-err: #9c3b33;
-  --hb-err-bg: #fbecea;
-  --hb-err-line: #e2c4c0;
-  --hb-info: #2763c8;
-  --hb-info-bg: #eaf1fb;
-  --hb-info-line: #bcd4ee;
-  --hb-violet: #5a3aa6;
-  --hb-violet-bg: #f3eefc;
-  --hb-violet-line: #cdb9ea;
+  color-scheme: light;
+  --hb-bg: oklch(1 0 175); /* main content background */
+  --hb-panel: oklch(0.985 0.002 175); /* raised surfaces: dialogs, menus, cards */
+  --hb-rail: oklch(0.975 0.003 175); /* left rail */
+  --hb-hover: oklch(0.955 0.003 175); /* hover fill */
+  --hb-sel2: oklch(0.93 0.004 175); /* pressed / strongly selected fill */
+  --hb-fg: oklch(0.22 0.005 175); /* primary text */
+  --hb-fg2: oklch(0.42 0.005 175); /* one step under primary */
+  --hb-fgdim: oklch(0.5 0.004 175); /* secondary text (5.9:1 on bg) */
+  --hb-faint: oklch(0.68 0.003 175); /* decorative / disabled only */
+  --hb-hair: oklch(0.2 0 0 / 0.09); /* hairline dividers + default borders */
+  --hb-border: oklch(0.2 0 0 / 0.16); /* control borders */
+  --hb-sel: oklch(0.2 0 0 / 0.055); /* selected-row fill */
+  --hb-chip: var(--hb-hover); /* chip / badge / quiet fill (was accent-tinted) */
+  --hb-ink: oklch(0.22 0.005 175); /* solid ink (tooltip fill, switch knob) */
+
+  /* accent, derived from the user's --color-brand so prefs.accent rebrands it */
+  --accent-fill: var(--color-brand);
+  --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
+  --accent-strong: color-mix(in oklab, var(--color-brand) 52%, black); /* accent as TEXT on light */
+  --accent-tint: color-mix(in oklab, var(--color-brand) 14%, var(--hb-bg));
+  --on-accent: oklch(0.22 0.03 175);
+  --accent-line: var(--color-brand); /* selected-row indicator */
+
+  /* Auto-review / imported suggestion cards (theme-flipped like everything). */
+  --hb-suggest: oklch(0.985 0.012 95);
+  --hb-suggest-fg: oklch(0.34 0.03 90);
+  --hb-suggest-line: oklch(0.78 0.08 95);
+  --hb-suggest-label: oklch(0.5 0.1 85);
+
+  /* Status tones: soft fill, its border, and the text that sits on it. */
+  --hb-ok: oklch(0.5 0.14 150);
+  --hb-ok-bg: color-mix(in oklab, var(--hb-ok) 12%, var(--hb-bg));
+  --hb-ok-line: color-mix(in oklab, var(--hb-ok) 28%, var(--hb-bg));
+  --hb-warn: oklch(0.48 0.12 80);
+  --hb-warn-bg: color-mix(in oklab, var(--hb-warn) 12%, var(--hb-bg));
+  --hb-warn-line: color-mix(in oklab, var(--hb-warn) 28%, var(--hb-bg));
+  --hb-err: oklch(0.5 0.14 25);
+  --hb-err-bg: color-mix(in oklab, var(--hb-err) 12%, var(--hb-bg));
+  --hb-err-line: color-mix(in oklab, var(--hb-err) 28%, var(--hb-bg));
+  --hb-info: oklch(0.5 0.14 255);
+  --hb-info-bg: color-mix(in oklab, var(--hb-info) 12%, var(--hb-bg));
+  --hb-info-line: color-mix(in oklab, var(--hb-info) 28%, var(--hb-bg));
+  --hb-violet: oklch(0.5 0.14 300);
+  --hb-violet-bg: color-mix(in oklab, var(--hb-violet) 12%, var(--hb-bg));
+  --hb-violet-line: color-mix(in oklab, var(--hb-violet) 28%, var(--hb-bg));
+
+  /* ---- shadcn semantic tokens (aliases of the above) ---- */
+  --background: var(--hb-bg);
+  --foreground: var(--hb-fg);
+  --card: var(--hb-panel);
+  --card-foreground: var(--hb-fg);
+  --popover: var(--hb-panel);
+  --popover-foreground: var(--hb-fg);
+  /* primary = the accent action (the ONE per view); default buttons are neutral */
+  --primary: var(--accent-fill);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--hb-hover);
+  --secondary-foreground: var(--hb-fg);
+  --muted: var(--hb-hover);
+  --muted-foreground: var(--hb-fgdim);
+  /* shadcn "accent" = the neutral hover/selected fill, NOT the brand colour */
+  --accent: var(--hb-hover);
+  --accent-foreground: var(--hb-fg);
+  --destructive: var(--hb-err);
+  --destructive-foreground: var(--hb-bg);
+  --border: var(--hb-hair);
+  --input: var(--hb-border);
+  --ring: var(--color-brand);
+  --sidebar: var(--hb-rail);
+  --sidebar-foreground: var(--hb-fg);
+  --sidebar-border: var(--hb-hair);
+
+  /* ---- shape / elevation / motion ---- */
+  --radius: 0.5rem; /* shadcn base; --radius-sm..xl below are the 4/6/8/12 scale */
+  --elev-pop: 0 4px 16px rgb(0 0 0 / 0.1), 0 0 0 1px var(--hb-hair);
+  --elev-dialog: 0 16px 48px rgb(0 0 0 / 0.16), 0 0 0 1px var(--hb-hair);
+  --elev-card: 0 1px 2px rgb(0 0 0 / 0.05);
+  --dur-fast: 100ms;
+  --dur-base: 150ms;
+  --dur-panel: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ctl: 2rem; /* default control height (32px) */
+  --ctl-sm: 1.75rem; /* 28px */
+  --hit: 2.75rem; /* touch target (44px) */
 }
 
-/* Dark = the landing page's palette (arigami-site global.css: --bg/--bg-2/--bg-3, --line, --fg). */
+/* ---- neutral ramps (dark) ---------------------------------------------- */
 [data-theme="dark"] {
-  --hb-bg: #0b0d10;
-  --hb-panel: #111418;
-  --hb-fg: #e8eaee;
-  --hb-fgdim: #8e96a4;
-  --hb-border: #303743;
-  --hb-rail: #111418;
-  --hb-hair: #262b33;
-  --hb-chip: color-mix(in srgb, var(--color-brand) 24%, #0b0d10);
-  --hb-fg2: #c9ced6;
-  --hb-sel: rgba(255, 255, 255, 0.06);
-  /* Same card, dark: an amber-tinted near-black rather than a light card
-     dropped into a dark page, so it reads as "set apart" and not as "broken". */
-  --hb-suggest: #1c1a12;
-  --hb-suggest-fg: #e7e1cd;
-  --hb-suggest-line: #5c5024;
-  --hb-suggest-label: #d5b866;
-  --hb-ok: #7fcf9c;
-  --hb-ok-bg: #12211a;
-  --hb-ok-line: #2b5039;
-  --hb-warn: #e0bd6a;
-  --hb-warn-bg: #1f1a0f;
-  --hb-warn-line: #5a4a24;
-  --hb-err: #f08f86;
-  --hb-err-bg: #261413;
-  --hb-err-line: #6a302b;
-  --hb-info: #84b2f2;
-  --hb-info-bg: #111b2a;
-  --hb-info-line: #2d4a70;
-  --hb-violet: #b9a3f2;
-  --hb-violet-bg: #1b1629;
-  --hb-violet-line: #4a3a78;
+  color-scheme: dark;
+  --hb-bg: oklch(0.155 0.006 175);
+  --hb-panel: oklch(0.215 0.007 175);
+  --hb-rail: oklch(0.185 0.006 175);
+  --hb-hover: oklch(0.235 0.007 175);
+  --hb-sel2: oklch(0.27 0.008 175);
+  --hb-fg: oklch(0.965 0.003 175);
+  --hb-fg2: oklch(0.8 0.004 175);
+  --hb-fgdim: oklch(0.68 0.004 175);
+  --hb-faint: oklch(0.5 0.004 175);
+  --hb-hair: oklch(1 0 0 / 0.09);
+  --hb-border: oklch(1 0 0 / 0.16);
+  --hb-sel: oklch(1 0 0 / 0.07);
+  --hb-ink: oklch(0.965 0.003 175);
+  --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
+  --accent-strong: var(--color-brand);
+  --accent-tint: color-mix(in oklab, var(--color-brand) 18%, var(--hb-bg));
+  --hb-suggest: oklch(0.23 0.02 95);
+  --hb-suggest-fg: oklch(0.88 0.03 95);
+  --hb-suggest-line: oklch(0.42 0.06 95);
+  --hb-suggest-label: oklch(0.8 0.1 90);
+  --hb-ok: oklch(0.78 0.13 150);
+  --hb-warn: oklch(0.78 0.13 80);
+  --hb-err: oklch(0.78 0.13 25);
+  --hb-info: oklch(0.78 0.13 255);
+  --hb-violet: oklch(0.78 0.13 300);
+  --destructive-foreground: var(--hb-bg);
+  --elev-pop: 0 4px 16px rgb(0 0 0 / 0.4), 0 0 0 1px var(--hb-hair);
+  --elev-dialog: 0 16px 48px rgb(0 0 0 / 0.5), 0 0 0 1px var(--hb-hair);
+  --elev-card: 0 1px 2px rgb(0 0 0 / 0.3);
 }
+
+/* shadcn's dark: variant follows the app switch (prefs.theme), not the OS */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* coarse pointer (a finger): the 44px touch rule keys off this, not viewport width */
+@custom-variant coarse (@media (pointer: coarse));
+/* Radix state attributes. The generated shadcn classes use data-open: etc.
+   (defined in the `shadcn` package's tailwind.css; copied so there is no
+   runtime dependency on the CLI). */
+@custom-variant data-open { &:where([data-state="open"]), &:where([data-open]:not([data-open="false"])) { @slot; } }
+@custom-variant data-closed { &:where([data-state="closed"]), &:where([data-closed]:not([data-closed="false"])) { @slot; } }
+@custom-variant data-checked { &:where([data-state="checked"]), &:where([data-checked]:not([data-checked="false"])) { @slot; } }
+@custom-variant data-unchecked { &:where([data-state="unchecked"]), &:where([data-unchecked]:not([data-unchecked="false"])) { @slot; } }
+@custom-variant data-active { &:where([data-state="active"]), &:where([data-active]:not([data-active="false"])) { @slot; } }
+@custom-variant data-disabled { &:where([data-disabled="true"]), &:where([data-disabled]:not([data-disabled="false"])) { @slot; } }
+@custom-variant data-horizontal { &:where([data-orientation="horizontal"]) { @slot; } }
+@custom-variant data-vertical { &:where([data-orientation="vertical"]) { @slot; } }
 
 @theme {
   --color-brand: #6eceb7; /* app accent, mint (prefs.accent overrides on :root) */
-  --color-ink: #2a2a2a;
+  --color-brand-ink: var(--accent-strong); /* accent as text (rare) */
+  --color-ink: var(--hb-ink);
   --color-chip: var(--hb-chip);
   --color-hair: var(--hb-hair);
   --color-suggest: var(--hb-suggest);
@@ -106,24 +216,81 @@
   --color-violet-bg: var(--hb-violet-bg);
   --color-violet-line: var(--hb-violet-line);
   --color-rail: var(--hb-rail);
-  --color-term: #1b1b1d;
-  --color-danger: #b23b30;
-  --color-diffadd: #5fb56a;
-  --color-diffdel: #d98078;
-  /* flippable semantic tokens */
+  --color-term: oklch(0.155 0.006 175);
+  --color-danger: var(--hb-err);
+  --color-diffadd: var(--hb-ok);
+  --color-diffdel: var(--hb-err);
+  /* flippable semantic tokens (legacy names) */
   --color-bg: var(--hb-bg);
   --color-panel: var(--hb-panel);
   --color-fg: var(--hb-fg);
   --color-fgdim: var(--hb-fgdim);
+  --color-faint: var(--hb-faint);
   --color-border: var(--hb-border);
   --color-fg2: var(--hb-fg2);
   --color-sel: var(--hb-sel);
-  /* Latin renders in Inter (first with Latin glyphs); Hebrew has no Inter
-     coverage so it falls through to Rubik Variable (Latin + Hebrew). Same idea
-     for mono: the monospace faces lack Hebrew, so Hebrew picks up Rubik. */
-  --font-sans: Inter, "Rubik Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* shadcn names → utilities (bg-background, text-muted-foreground, ring-ring …) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-hover: var(--hb-hover);
+  --color-on-accent: var(--on-accent);
+  /* radii 4/6/8/12 */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  /* type scale 11/12/13/14/16/20 (rem → follows the UI size setting) */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.0625rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  /* elevation */
+  --shadow-pop: var(--elev-pop);
+  --shadow-dialog: var(--elev-dialog);
+  --shadow-card: var(--elev-card);
+  /* motion */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-out);
+  /* Latin renders in Inter; Hebrew has no Inter coverage so it falls through
+     to Rubik Variable. Under RTL Rubik leads (below) so Latin and Hebrew match.
+     Mono is for code only. */
+  --font-sans: "Inter Variable", Inter, "Rubik Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
     "Rubik Variable", monospace;
+}
+html[dir="rtl"] {
+  --font-sans: "Rubik Variable", "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 html,
@@ -156,6 +323,11 @@ html {
 
 body {
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
   color: var(--hb-fg);
   background: var(--hb-bg);
 }
@@ -164,14 +336,46 @@ body {
   background: color-mix(in srgb, var(--color-brand) 35%, transparent);
 }
 
-/* yellow status pulse (chips, tab dots) */
+@layer base {
+  /* hairline by default: a bare `border` is a 1px alpha line, not currentColor */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+  /* the 2px mint focus ring on everything focusable (proto: V9) */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button,
+  [role="button"],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: default;
+  }
+  code,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    direction: ltr; /* code is never RTL */
+  }
+  h1, h2, h3, h4 {
+    font-weight: 600;
+  }
+}
+
+/* the one waiting pulse (amber = waiting for you) — chips, tab dots */
 @keyframes host-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 30%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--hb-warn) 30%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-brand) 12%, transparent);
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--hb-warn) 12%, transparent);
   }
 }
 .pulse-yellow {
@@ -201,7 +405,7 @@ body {
   }
 }
 .host-spinner {
-  border: 2px solid #ce8324;
+  border: 2px solid var(--hb-warn);
   border-top-color: transparent;
   border-radius: 50%;
   animation: host-spin 0.9s linear infinite;
@@ -234,41 +438,42 @@ body {
 /* ------- markdown (dark terminal variant) ------- */
 /* ------- terminal (chat) palette — flips per-terminal via .term-light ------- */
 .term {
-  --term-bg: #1b1b1d;
-  --term-fg: #d2d2d6;
-  --term-strong: #ffffff;
-  --term-dim: #9a9aa0;
-  --term-faint: #55555a;
-  --term-userbg: color-mix(in srgb, var(--color-brand) 15%, #1b1b1d); /* accent "you" bubble */
-  --term-userborder: color-mix(in srgb, var(--color-brand) 34%, #1b1b1d);
-  --term-userfg: color-mix(in srgb, var(--color-brand) 55%, #ffffff);
-  --term-codebg: #121214;
-  --term-border: #2e2e32;
-  --term-hover: #232327;
-  /* accent cards (questions / permissions / actions) */
-  --term-accent-bg: color-mix(in srgb, var(--color-brand) 13%, #1b1b1d);
-  --term-accent-border: color-mix(in srgb, var(--color-brand) 30%, #1b1b1d);
-  --term-accent-fg: color-mix(in srgb, var(--color-brand) 58%, #ffffff);
-  --term-accent-strong: color-mix(in srgb, var(--color-brand) 30%, #ffffff);
-  --term-accent-dim: color-mix(in srgb, var(--color-brand) 60%, #1b1b1d);
+  --term-bg: oklch(0.155 0.006 175);
+  --term-fg: oklch(0.86 0.004 175);
+  --term-strong: oklch(0.985 0.002 175);
+  --term-dim: oklch(0.68 0.004 175);
+  --term-faint: oklch(0.45 0.004 175);
+  --term-userbg: oklch(0.235 0.007 175); /* "you" bubble: neutral fill, no accent */
+  --term-userborder: oklch(1 0 0 / 0.1);
+  --term-userfg: oklch(0.965 0.003 175);
+  --term-codebg: oklch(0.125 0.005 175);
+  --term-border: oklch(1 0 0 / 0.1);
+  --term-hover: oklch(0.215 0.007 175);
+  /* cards (questions / permissions / actions): neutral surface, hairline;
+     the ONE primary button inside carries the accent */
+  --term-accent-bg: oklch(0.2 0.007 175);
+  --term-accent-border: oklch(1 0 0 / 0.14);
+  --term-accent-fg: oklch(0.9 0.004 175);
+  --term-accent-strong: oklch(0.985 0.002 175);
+  --term-accent-dim: oklch(0.68 0.004 175);
 }
 .term-light {
-  --term-bg: #ffffff;
-  --term-fg: #26262b;
-  --term-strong: #0c0c0e;
-  --term-dim: #6a6a72;
-  --term-faint: #b2b2ba;
-  --term-userbg: color-mix(in srgb, var(--color-brand) 12%, #ffffff); /* accent "you" bubble */
-  --term-userborder: color-mix(in srgb, var(--color-brand) 36%, #ffffff);
-  --term-userfg: color-mix(in srgb, var(--color-brand) 72%, #000000);
-  --term-codebg: #f3f3f6;
-  --term-border: #e4e4e9;
-  --term-hover: #f1f1f4;
-  --term-accent-bg: color-mix(in srgb, var(--color-brand) 10%, #ffffff);
-  --term-accent-border: color-mix(in srgb, var(--color-brand) 36%, #ffffff);
-  --term-accent-fg: color-mix(in srgb, var(--color-brand) 75%, #000000);
-  --term-accent-strong: color-mix(in srgb, var(--color-brand) 88%, #000000);
-  --term-accent-dim: color-mix(in srgb, var(--color-brand) 60%, #000000);
+  --term-bg: oklch(1 0 175);
+  --term-fg: oklch(0.28 0.005 175);
+  --term-strong: oklch(0.15 0.005 175);
+  --term-dim: oklch(0.5 0.004 175);
+  --term-faint: oklch(0.72 0.003 175);
+  --term-userbg: oklch(0.96 0.003 175);
+  --term-userborder: oklch(0.2 0 0 / 0.09);
+  --term-userfg: oklch(0.22 0.005 175);
+  --term-codebg: oklch(0.965 0.003 175);
+  --term-border: oklch(0.2 0 0 / 0.09);
+  --term-hover: oklch(0.955 0.003 175);
+  --term-accent-bg: oklch(0.975 0.003 175);
+  --term-accent-border: oklch(0.2 0 0 / 0.14);
+  --term-accent-fg: oklch(0.3 0.005 175);
+  --term-accent-strong: oklch(0.15 0.005 175);
+  --term-accent-dim: oklch(0.5 0.004 175);
 }
 
 /* Chat rows outside the viewport skip layout+paint entirely; `auto` keeps the
@@ -279,7 +484,7 @@ body {
 }
 
 .md {
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.65;
   color: var(--term-fg);
   word-wrap: break-word;
@@ -298,7 +503,7 @@ body {
 .md h3,
 .md h4 {
   color: var(--term-strong);
-  font-weight: 700;
+  font-weight: 600;
   margin: 0.9em 0 0.35em;
   line-height: 1.3;
 }
@@ -341,7 +546,7 @@ body {
   font-size: 11.5px;
 }
 .md a {
-  color: var(--color-brand);
+  color: var(--term-strong);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -394,7 +599,7 @@ body {
    Named for where it started (a white pane); it now follows the theme, since
    the panes it sits in (skills, content tabs, launcher ticket) do. */
 .md-light {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.65;
   color: var(--color-fg);
 }
@@ -408,7 +613,7 @@ body {
 .md-light h2,
 .md-light h3,
 .md-light h4 {
-  font-weight: 700;
+  font-weight: 600;
   margin: 1em 0 0.4em;
   line-height: 1.3;
 }
@@ -434,8 +639,8 @@ body {
   padding: 1px 4px;
 }
 .md-light pre {
-  background: #1b1b1d;
-  color: #cfcfcf;
+  background: oklch(0.17 0.006 175);
+  color: oklch(0.86 0.004 175);
   border-radius: 8px;
   padding: 10px 12px;
   overflow-x: auto;
@@ -448,7 +653,7 @@ body {
   font-size: 12px;
 }
 .md-light a {
-  color: var(--color-info);
+  color: var(--color-fg);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -609,4 +814,113 @@ samp {
    ("טרמי נל"); labels (not code, not dir=ltr values) use the sans face instead. */
 :lang(he) [class~='font-mono']:not(code):not(pre):not(kbd):not([dir='ltr']) {
   font-family: var(--font-sans);
+}
+
+/* =====================================================================
+   Legacy neutralisers  (redesign foundation)
+   =====================================================================
+   The pre-redesign screens are built from Tailwind classes that spell out the
+   old brutalist look (2px ink outlines, hard offset shadows, bold mono labels,
+   9–10.5px type). Rewriting hundreds of call sites is Phase 2's job, screen by
+   screen; until each is migrated these unlayered rules (they beat @layer
+   utilities) quiet the look globally. They are deliberately small and
+   attribute-based so they can be deleted once no class carries the old look.
+   New code never relies on them: use the ui/ components and tokens. */
+
+/* 1px hairline instead of 2px / 1.5px outlines */
+.border-2,
+[class*="border-[1.5px]"],
+[class*="border-[2px]"] {
+  border-width: 1px;
+}
+/* ink outlines → control hairline; ink hover/focus → a darker hairline */
+.border-ink,
+[class*="border-ink/"] {
+  border-color: var(--hb-border);
+}
+.hover\:border-ink:hover,
+.focus\:border-ink:focus,
+.focus-within\:border-ink:focus-within {
+  border-color: var(--hb-fgdim);
+}
+/* "selected segment" fills that were solid ink with white text → a pressed neutral */
+.bg-ink {
+  background-color: var(--hb-sel2);
+}
+.bg-ink.text-white,
+.bg-ink.text-panel,
+.bg-ink.text-bg {
+  color: var(--hb-fg);
+}
+
+/* hard offset shadows → none (small) / hairline card (3px) / soft overlay (4–5px) */
+[class*="px_0_"] {
+  --tw-shadow: 0 0 #0000;
+}
+[class*="shadow-[3px_"] {
+  --tw-shadow: var(--elev-card);
+}
+[class*="shadow-[4px_"],
+[class*="shadow-[5px_"] {
+  --tw-shadow: var(--elev-pop);
+}
+
+/* type: sans for chrome (mono stays on code, pre-wrapped output, diffs);
+   600 is the heaviest chrome weight */
+.font-mono:not(.whitespace-pre):not(.whitespace-pre-wrap):not(.diff-syntax):not([data-diff-body]):not(code):not(pre):not(kbd):not(samp):not([data-code]) {
+  font-family: var(--font-sans);
+}
+.font-bold {
+  font-weight: 600;
+}
+/* 11px floor: legacy 8–10.5px classes (unprefixed everywhere, md: only on desktop,
+   where they used to shrink) are lifted to the caption size */
+:is(
+    [class^="text-[8"], [class*=" text-[8"],
+    [class^="text-[9"], [class*=" text-[9"],
+    [class^="text-[10"], [class*=" text-[10"],
+    [class^="text-[0.5"], [class*=" text-[0.5"],
+    [class^="text-[0.6"], [class*=" text-[0.6"]
+  ) {
+  font-size: var(--text-2xs);
+}
+@media (min-width: 768px) {
+  :is([class*="md:text-[8"], [class*="md:text-[9"], [class*="md:text-[10"], [class*="md:text-[0.5"], [class*="md:text-[0.6"]) {
+    font-size: var(--text-2xs);
+  }
+}
+
+/* numbers that line up */
+.num,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The thin selected-row indicator (the only accent a list row may carry).
+   Put `row-selected` on a position:relative row; it is 2px, logical (start edge). */
+.row-selected {
+  position: relative;
+  background: var(--hb-sel);
+}
+.row-selected::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.4375rem;
+  bottom: 0.4375rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-line);
+}
+
+/* Motion: honour the OS setting. Spinners keep turning (they are state, not decoration). */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.host-spinner):not(.animate-spin),
+  *:not(.host-spinner):not(.animate-spin)::before,
+  *:not(.host-spinner):not(.animate-spin)::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
