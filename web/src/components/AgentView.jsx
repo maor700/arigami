@@ -16,7 +16,7 @@
 //   activity     A3: the agent's activity ledger with cost (today / 7d / 30d)
 //                (+ episodes, collapsed) — GET /__api/agents/:slug/activity?range=
 //   runs         UX1: every session born from the agent, with state and cost
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
@@ -64,6 +64,7 @@ function CheckRow({ checked, onChange, mono, children }) {
 }
 
 function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
+  const uid = useId();
   const t = useT();
   const { models } = useModels();
   const [skillNames, setSkillNames] = useState([]);
@@ -103,22 +104,22 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       <section className={card}>
         <div className="mb-3 text-xs font-medium text-fgdim">{t('agent.page.identity')}</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div><label className={lbl}>{t('agent.card.name')}</label><Input dir="auto" value={form.name} onChange={set('name')} /></div>
+          <div><label htmlFor={`${uid}-name`} className={lbl}>{t('agent.card.name')}</label><Input id={`${uid}-name`} dir="auto" value={form.name} onChange={set('name')} /></div>
           <div className="grid grid-cols-[64px_1fr] gap-2">
-            <div><label className={lbl}>{t('agent.card.emoji')}</label><Input value={form.emoji} onChange={set('emoji')} className="text-center" /></div>
-            <div><label className={lbl}>{t('agent.card.color')}</label><input type="color" value={form.color} onChange={set('color')} className="h-8 w-full cursor-pointer rounded-md border border-input bg-background p-0.5 coarse:h-11" /></div>
+            <div><label htmlFor={`${uid}-emoji`} className={lbl}>{t('agent.card.emoji')}</label><Input id={`${uid}-emoji`} value={form.emoji} onChange={set('emoji')} className="text-center" /></div>
+            <div><label htmlFor={`${uid}-color`} className={lbl}>{t('agent.card.color')}</label><input id={`${uid}-color`} type="color" value={form.color} onChange={set('color')} className="h-8 w-full cursor-pointer rounded-md border border-input bg-background p-0.5 coarse:h-11" /></div>
           </div>
           {isNew && (
             <div className="sm:col-span-2">
-              <label className={lbl}>{t('agent.card.slug')}</label>
-              <Input data-agent-field="slug" dir="ltr" value={form.slug} onChange={set('slug')} placeholder="marketing-lead" className="font-mono" />
+              <label htmlFor={`${uid}-slug`} className={lbl}>{t('agent.card.slug')}</label>
+              <Input id={`${uid}-slug`} data-agent-field="slug" dir="ltr" value={form.slug} onChange={set('slug')} placeholder="marketing-lead" className="font-mono" />
             </div>
           )}
         </div>
       </section>
       <section className={card}>
-        <label className={lbl}>{t('agent.card.persona')}</label>
-        <Textarea dir="auto" rows={10} value={form.persona} onChange={set('persona')} className="font-mono text-xs" />
+        <label htmlFor={`${uid}-persona`} className={lbl}>{t('agent.card.persona')}</label>
+        <Textarea id={`${uid}-persona`} dir="auto" rows={10} value={form.persona} onChange={set('persona')} className="font-mono text-xs" />
       </section>
       <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-fgdim hover:text-fg coarse:min-h-11" aria-expanded={advanced}>
         <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
@@ -135,13 +136,13 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
             onChange={(o) => setForm((c) => ({ ...c, engine: o.engine || '', model: o.model || '' }))}
           />
           <div>
-            <label className={lbl}>{t('agent.card.model')}</label>
-            <select data-agent-field="model" value={form.model} onChange={set('model')} className={input}>
+            <label htmlFor={`${uid}-model`} className={lbl}>{t('agent.card.model')}</label>
+            <select id={`${uid}-model`} data-agent-field="model" value={form.model} onChange={set('model')} className={input}>
               <option value="">{t('agent.card.modelDefault')}</option>
               {agentModelOptions(form.engine, models, form.model).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>{t('agent.card.budget')}</label><Input type="number" min="0" dir="ltr" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className="tabular-nums" /></div>
+          <div><label htmlFor={`${uid}-budget`} className={lbl}>{t('agent.card.budget')}</label><Input id={`${uid}-budget`} type="number" min="0" dir="ltr" value={form.budget} onChange={set('budget')} placeholder={t('agent.card.budgetNone')} className="tabular-nums" /></div>
           <div className="sm:col-span-2">
             <label className={lbl}>{t('agent.card.tools')}</label>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
@@ -155,8 +156,8 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
             <div className={hint}>{t('agent.card.toolsHint')}</div>
           </div>
           <div className="sm:col-span-2">
-            <label className={lbl}>{t('agent.card.domains')}</label>
-            <Input dir="ltr" value={form.domains} onChange={set('domains')} placeholder="example.com, *.notion.so" className="font-mono" />
+            <label htmlFor={`${uid}-domains`} className={lbl}>{t('agent.card.domains')}</label>
+            <Input id={`${uid}-domains`} dir="ltr" value={form.domains} onChange={set('domains')} placeholder="example.com, *.notion.so" className="font-mono" />
             <div className={hint}>{t('agent.card.domainsHint')}</div>
           </div>
           <div className="sm:col-span-2">

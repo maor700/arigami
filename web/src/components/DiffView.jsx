@@ -73,7 +73,7 @@ function toSplitRows(lines) {
 
 const Gutter = ({ n, compact, tint }) => (
   <span
-    className={`inline-block shrink-0 select-none border-e border-border/60 text-end text-faint tabular-nums ${compact ? 'w-8 pe-1.5' : 'w-11 pe-2'}`}
+    className={`inline-block shrink-0 select-none border-e border-border/60 text-end text-muted-foreground tabular-nums ${compact ? 'w-8 pe-1.5' : 'w-11 pe-2'}`}
     style={tint ? { background: tint.gutter } : undefined}
   >
     {n ?? ''}

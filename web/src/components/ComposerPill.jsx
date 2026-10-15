@@ -3,7 +3,7 @@
 // gear (POST /sessions/:id/model | /effort | /permission-mode) and keeps the
 // same rule: while a turn is running a change must be confirmed, because it
 // stops and resumes the session.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckIcon, ChevronDownIcon, RefreshCwIcon, SlidersHorizontalIcon } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useT } from '../lib/i18n.js';
@@ -32,24 +32,44 @@ function prettyModel(m) {
   return codexModel(String(m))?.label || String(m);
 }
 
+// Arrow keys move focus between the options of one group (Home/End jump);
+// Enter / Space activates, like any button. One tab stop per group (roving).
+function onGroupKey(e) {
+  const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
+  if (!keys.includes(e.key)) return;
+  const items = [...e.currentTarget.querySelectorAll('[role=radio]:not(:disabled)')];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  let j = i;
+  if (e.key === 'Home') j = 0;
+  else if (e.key === 'End') j = items.length - 1;
+  else j = (Math.max(i, 0) + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  e.preventDefault();
+  items[j].focus();
+}
+
+// the option that holds the group's tab stop: the selected one, else the first
+const stopIndex = (opts, isSel) => Math.max(0, opts.findIndex(isSel));
+
 function Section({ title, children, extra }) {
   return (
-    <div className="py-1" role="group" aria-label={title}>
+    <div className="py-1">
       <div className="flex items-center justify-between gap-2 px-2 pt-1 pb-1">
         <span className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{title}</span>
         {extra}
       </div>
-      {children}
+      <div role="radiogroup" aria-label={title} onKeyDown={onGroupKey}>{children}</div>
     </div>
   );
 }
 
-function Option({ selected, label, desc, danger, onClick }) {
+function Option({ selected, tab, label, desc, danger, onClick }) {
   return (
     <button
       type="button"
-      role="menuitemradio"
+      role="radio"
       aria-checked={selected}
+      tabIndex={tab ? 0 : -1}
       data-selected={selected ? '' : undefined}
       onClick={onClick}
       className="flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-muted focus-visible:bg-muted coarse:min-h-11"
@@ -68,6 +88,8 @@ export default function ComposerPill({ session }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(null); // { kind, value, label } awaiting "this will stop it" confirm
   const [busy, setBusy] = useState(false);
+  const triggerRef = useRef(null);
+  const contentRef = useRef(null);
   useEffect(() => {
     const un = registerComposerPill();
     const onOpen = () => setOpen(true);
@@ -130,14 +152,24 @@ export default function ComposerPill({ session }) {
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPending(null); }}>
       <Tip label={t('rail.model') + ' · ' + t('rail.effort') + ' · ' + t('rail.permissionMode')}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" data-composer-pill aria-label={`${summary} · ${permLabel}`} className="max-w-[11rem] min-w-0 shrink gap-1.5 px-2 font-normal">
+          <Button ref={triggerRef} variant="ghost" size="sm" data-composer-pill aria-label={`${summary} · ${permLabel}`} className="max-w-[11rem] min-w-0 shrink gap-1.5 px-2 font-normal">
             {dot ? <StatusDot status={dot} /> : <SlidersHorizontalIcon className="size-3.5" />}
             <span dir="auto" className="truncate">{summary}</span>
             <ChevronDownIcon className="size-3 opacity-60" />
           </Button>
         </PopoverTrigger>
       </Tip>
-      <PopoverContent side="top" align="start" className="w-80 p-1.5" data-composer-pill-menu>
+      <PopoverContent
+        ref={contentRef}
+        side="top"
+        align="start"
+        className="w-80 p-1.5"
+        data-composer-pill-menu
+        aria-label={`${t('rail.model')} · ${t('rail.effort')} · ${t('rail.permissionMode')}`}
+        // land on the current model, not on the Refresh button; Escape / pick returns focus to the pill
+        onOpenAutoFocus={(e) => { const el = contentRef.current?.querySelector('[role=radio][tabindex="0"]'); if (el) { e.preventDefault(); el.focus(); } }}
+        onCloseAutoFocus={(e) => { const el = triggerRef.current; if (el) { e.preventDefault(); el.focus(); } }}
+      >
         {pending ? (
           <div className="p-2" role="alertdialog" aria-label={t('rail.stopAndSwitch')}>
             <p className="text-sm text-foreground">
@@ -167,19 +199,19 @@ export default function ComposerPill({ session }) {
                 </span>
               )}
             >
-              {modelOpts.map((o) => (
-                <Option key={o.value} selected={o.value === modelChoice} label={o.label} desc={o.desc} onClick={() => pick('model', o.value, o.label, modelChoice)} />
+              {modelOpts.map((o, i) => (
+                <Option key={o.value} selected={o.value === modelChoice} tab={i === stopIndex(modelOpts, (x) => x.value === modelChoice)} label={o.label} desc={o.desc} onClick={() => pick('model', o.value, o.label, modelChoice)} />
               ))}
             </Section>
             <Section title={t('rail.effort')}>
-              {effortOpts.map((o) => (
-                <Option key={o.value} selected={o.value === effort} label={o.label} desc={o.desc} onClick={() => pick('effort', o.value, o.label, effort)} />
+              {effortOpts.map((o, i) => (
+                <Option key={o.value} selected={o.value === effort} tab={i === stopIndex(effortOpts, (x) => x.value === effort)} label={o.label} desc={o.desc} onClick={() => pick('effort', o.value, o.label, effort)} />
               ))}
             </Section>
             <Section title={t('rail.permissionMode')}>
               {hasPermissionModes(session.engine) ? (
-                permOpts.map((o) => (
-                  <Option key={o.value} selected={o.value === perm} label={o.label} desc={o.desc} danger={o.danger} onClick={() => pick('perm', o.value, o.label, perm)} />
+                permOpts.map((o, i) => (
+                  <Option key={o.value} selected={o.value === perm} tab={i === stopIndex(permOpts, (x) => x.value === perm)} label={o.label} desc={o.desc} danger={o.danger} onClick={() => pick('perm', o.value, o.label, perm)} />
                 ))
               ) : (
                 <p className="px-2 pb-1 text-xs leading-snug text-muted-foreground">{t('rail.noPermissionModes', { engine })}</p>

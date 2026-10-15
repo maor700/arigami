@@ -627,6 +627,7 @@ export function ChatFooter({ session }) {
         <textarea
           ref={taRef}
           data-composer
+          aria-label={t('rail.replyPlaceholderShort', { engine: engineLabel(session.engine) })}
           rows={1}
           dir={fieldDir(text)}
           value={text}

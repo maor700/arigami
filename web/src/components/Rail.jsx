@@ -562,7 +562,7 @@ function SectionToggle({ label, count, open, onToggle, title, className = '', ch
         >
           <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? 'rotate-90' : 'rtl:rotate-180'}`} />
           <span className="min-w-0 truncate">{label}</span>
-          <span className="tabular-nums text-muted-foreground/80">{count}</span>
+          <span className="tabular-nums text-muted-foreground">{count}</span>
         </button>
       </Tip>
       {children}
@@ -758,7 +758,7 @@ function GroupHeader({ label, count }) {
   return (
     <div className="flex items-center gap-1.5 px-2.5 pt-3 pb-1 text-xs font-medium text-muted-foreground">
       <span className="min-w-0 truncate">{label}</span>
-      <span className="tabular-nums text-muted-foreground/80">{count}</span>
+      <span className="tabular-nums text-muted-foreground">{count}</span>
     </div>
   );
 }

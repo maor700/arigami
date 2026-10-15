@@ -62,7 +62,7 @@
   --hb-fg: oklch(0.22 0.005 175); /* primary text */
   --hb-fg2: oklch(0.42 0.005 175); /* one step under primary */
   --hb-fgdim: oklch(0.5 0.004 175); /* secondary text (5.9:1 on bg) */
-  --hb-faint: oklch(0.68 0.003 175); /* decorative / disabled only */
+  --hb-faint: oklch(0.68 0.003 175); /* decorative / disabled only — never body text (2.9:1) */
   --hb-hair: oklch(0.2 0 0 / 0.09); /* hairline dividers + default borders */
   --hb-border: oklch(0.2 0 0 / 0.16); /* control borders */
   --hb-sel: oklch(0.2 0 0 / 0.055); /* selected-row fill */
@@ -121,7 +121,9 @@
   --destructive-foreground: var(--hb-bg);
   --border: var(--hb-hair);
   --input: var(--hb-border);
-  --ring: var(--color-brand);
+  /* light surfaces: the raw mint is 1.9:1 on white, so the ring is the accent pulled 30% toward black
+     (≈4:1, WCAG 1.4.11 asks 3:1); dark surfaces keep the accent as is */
+  --ring: color-mix(in oklab, var(--color-brand) 70%, black);
   --sidebar: var(--hb-rail);
   --sidebar-foreground: var(--hb-fg);
   --sidebar-border: var(--hb-hair);
@@ -156,6 +158,7 @@
   --hb-border: oklch(1 0 0 / 0.16);
   --hb-sel: oklch(1 0 0 / 0.07);
   --hb-ink: oklch(0.965 0.003 175);
+  --ring: var(--color-brand);
   --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
   --accent-strong: var(--color-brand);
   --accent-tint: color-mix(in oklab, var(--color-brand) 18%, var(--hb-bg));
@@ -467,7 +470,7 @@ body {
   --term-fg: oklch(0.86 0.004 175);
   --term-strong: oklch(0.985 0.002 175);
   --term-dim: oklch(0.68 0.004 175);
-  --term-faint: oklch(0.45 0.004 175);
+  --term-faint: oklch(0.63 0.004 175); /* ≥4.5:1 on the chat bg and the 'you' bubble: timestamps, tool context */
   --term-userbg: oklch(0.235 0.007 175); /* "you" bubble: neutral fill, no accent */
   --term-userborder: oklch(1 0 0 / 0.1);
   --term-userfg: oklch(0.965 0.003 175);
@@ -486,8 +489,8 @@ body {
   --term-bg: oklch(1 0 175);
   --term-fg: oklch(0.28 0.005 175);
   --term-strong: oklch(0.15 0.005 175);
-  --term-dim: oklch(0.5 0.004 175);
-  --term-faint: oklch(0.72 0.003 175);
+  --term-dim: oklch(0.47 0.004 175);
+  --term-faint: oklch(0.52 0.004 175); /* ≥4.5:1 on white and on the tinted surfaces */
   --term-userbg: oklch(0.96 0.003 175);
   --term-userborder: oklch(0.2 0 0 / 0.09);
   --term-userfg: oklch(0.22 0.005 175);
@@ -498,7 +501,7 @@ body {
   --term-accent-border: oklch(0.2 0 0 / 0.14);
   --term-accent-fg: oklch(0.3 0.005 175);
   --term-accent-strong: oklch(0.15 0.005 175);
-  --term-accent-dim: oklch(0.5 0.004 175);
+  --term-accent-dim: oklch(0.45 0.004 175);
 }
 
 /* Chat rows outside the viewport skip layout+paint entirely; `auto` keeps the
@@ -755,7 +758,7 @@ body {
   --sx-string: #a31515;
   --sx-number: #098658;
   --sx-title: #795e26;   /* functions */
-  --sx-type: #267f99;    /* types, classes, built-ins */
+  --sx-type: #1f7088;    /* types, classes, built-ins */
   --sx-variable: #0070c1;
   --sx-tag: #800000;
   --sx-attr: #e50000;
@@ -802,7 +805,7 @@ body {
 /* The chat pane carries its own light/dark (.term-light), independent of the app theme. */
 .term-light .diff-syntax {
   --sx-comment: #008000; --sx-keyword: #0000ff; --sx-string: #a31515; --sx-number: #098658;
-  --sx-title: #795e26; --sx-type: #267f99; --sx-variable: #0070c1; --sx-tag: #800000;
+  --sx-title: #795e26; --sx-type: #1f7088; --sx-variable: #0070c1; --sx-tag: #800000;
   --sx-attr: #e50000; --sx-meta: #0000ff; --sx-regexp: #811f3f;
 }
 .term:not(.term-light) .diff-syntax {
