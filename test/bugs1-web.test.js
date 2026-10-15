@@ -75,9 +75,9 @@ test('B5: the rail scrolls the selected session row into view', () => {
 });
 
 test('B26: phone-sized inputs are 16px (no iOS auto-zoom), desktop keeps the compact size', () => {
-  const sv = src('components/SessionView.jsx');
-  expect(sv).toMatch(/resize-none bg-transparent text-\[16px\][^"]*sm:text-\[11\.5px\]/);
-  expect(sv).not.toMatch(/resize-none bg-transparent text-\[11\.5px\]/);
+  const sv = src('components/Composer.jsx'); // the composer moved out of SessionView (chat redesign)
+  expect(sv).toMatch(/resize-none bg-transparent[^"]*text-\[16px\][^"]*sm:text-\[14px\]/);
+  expect(sv).not.toMatch(/resize-none bg-transparent[^"]*text-\[11\.5px\]/);
   const rail = src('components/Rail.jsx');
   expect(rail).toMatch(/className="ps-8 pe-8 text-base sm:text-sm"/); // the rail search field: 16px on a phone
 });

@@ -8,17 +8,23 @@
 //   AgentAvatar the emoji-in-a-ring every agent surface uses
 import { forwardRef } from 'react';
 import { dirOf } from '../lib/i18n.js';
+import { buttonVariants } from '../components/ui/button.jsx';
 
-// tone → frame colours. accent = the host's "needs you / did something" cards,
-// panel = neutral (agent blocks, extension cards), code = artifacts/screenshots,
-// ok / danger = merge outcomes.
+// tone → frame colours. Every card is a neutral surface with a hairline; the
+// tone only picks the small status dot / icon colour (accent budget: no mint
+// fills here — the ONE primary Btn inside a card carries the accent).
+// accent = the host's "needs you / did something" cards, panel = neutral (agent
+// blocks, extension cards), code = artifacts/screenshots, ok / danger = merge
+// outcomes.
 export const TONES = {
   accent: 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)]',
-  panel: 'border-hair bg-panel',
+  panel: 'border-[var(--term-border)] bg-[var(--term-accent-bg)]',
   code: 'border-[var(--term-border)] bg-[var(--term-codebg)]',
-  ok: 'border-ok-line bg-ok-bg text-ok',
-  danger: 'border-err-line bg-danger/10 text-danger',
+  ok: 'border-[var(--term-border)] bg-[var(--term-accent-bg)]',
+  danger: 'border-[var(--term-border)] bg-[var(--term-accent-bg)]',
 };
+// status dot per tone (live = waiting for the human → amber, pulsing)
+const TONE_DOT = { accent: 'bg-warn', panel: 'bg-faint', code: 'bg-faint', ok: 'bg-ok', danger: 'bg-err' };
 // text colours on the accent tone
 export const ACCENT = {
   strong: 'text-[var(--term-accent-strong)]',
@@ -27,22 +33,23 @@ export const ACCENT = {
 };
 
 /**
- * The card. `label` is the bold header text (an icon may precede it), `live`
- * adds the pulsing dot, `right` renders at the header's end, `dense` trims the
+ * The card. `label` is the header text (an icon may precede it), `live`
+ * adds the pulsing amber dot, `right` renders at the header's end, `dense` trims the
  * padding (small cards: ext-card, artifact). Extra `data-*`/`dir` go straight
  * through via ...rest.
  */
 export const CardFrame = forwardRef(function CardFrame({ tone = 'accent', live, icon, label, labelClass, meta, right, dense, className = '', children, ...rest }, ref) {
-  const pad = dense ? 'px-3 py-2.5' : 'p-3';
-  const my = dense ? 'my-1.5' : tone === 'ok' || tone === 'danger' ? 'my-2' : 'my-2.5';
-  const strong = tone === 'accent' ? ACCENT.strong : tone === 'ok' || tone === 'danger' ? '' : 'text-[var(--term-fg)]';
+  const pad = dense ? 'px-3 py-2.5' : 'p-3.5';
+  const my = dense ? 'my-1.5' : 'my-3';
+  const strong = ACCENT.strong;
+  const dot = live ? 'bg-warn pulse-yellow' : TONE_DOT[tone] || TONE_DOT.accent;
   return (
-    <div ref={ref} className={`${my} rounded-[10px] border ${TONES[tone] || TONES.accent} ${pad} ${className}`} {...rest}>
+    <div ref={ref} className={`${my} rounded-lg border ${TONES[tone] || TONES.accent} ${pad} font-sans ${className}`} {...rest}>
       {(label || right || live) && (
-        <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
-          {live && <span className="pulse-yellow h-[7px] w-[7px] shrink-0 rounded-full bg-brand" />}
-          {icon && <span className={tone === 'code' ? 'text-[var(--term-dim)]' : ''}>{icon}</span>}
-          {label && <span dir="auto" className={`min-w-0 font-bold ${labelClass || strong}`}>{label}</span>}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {(live || ((tone === 'ok' || tone === 'danger') && !icon)) && <span aria-hidden="true" data-card-dot className={`size-1.5 shrink-0 rounded-full ${dot}`} />}
+          {icon && <span className="text-[var(--term-dim)]">{icon}</span>}
+          {label && <span dir="auto" className={`min-w-0 font-medium ${labelClass || strong}`}>{label}</span>}
           {meta}
           {right && <span className="ms-auto flex shrink-0 items-center gap-1.5">{right}</span>}
         </div>
@@ -54,20 +61,23 @@ export const CardFrame = forwardRef(function CardFrame({ tone = 'accent', live, 
 
 // Small uppercase eyebrow ("EXTENSION · hello", "UI BLOCK") — the light cards' header.
 export function Eyebrow({ children }) {
-  return <div className="mb-1 font-mono text-[11px] md:text-[9px] tracking-[0.08em] text-fgdim uppercase">{children}</div>;
+  return <div className="mb-1 text-2xs font-medium tracking-wide text-fgdim uppercase">{children}</div>;
 }
 
+// One button family, built on the ui/ Button. primary = THE accent action of a
+// card (one per card); secondary/option = neutral bordered; quiet = ghost;
+// danger = soft destructive; chip/pill/tag = small inline affordances.
 const BTN = {
-  primary: 'rounded-[7px] border-[1.5px] border-ink bg-brand px-3.5 py-1.5 text-[11.5px] font-bold text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]',
-  secondary: 'rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-fg)] hover:bg-[var(--term-accent-border)]',
-  quiet: 'rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-3.5 py-1.5 text-[11.5px] text-[var(--term-accent-dim)] hover:bg-[var(--term-accent-bg)]',
-  danger: 'rounded-[7px] border-[1.5px] border-danger bg-danger px-3.5 py-1.5 text-[11.5px] font-bold text-white',
-  option: 'rounded-[7px] border-[1.5px] border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] px-3.5 py-1.5 text-[11.5px] font-bold text-[var(--term-accent-strong)] hover:border-brand',
-  chip: 'inline-flex items-center gap-1 rounded-[6px] border border-[var(--term-border)] px-2 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-fg)] hover:bg-[var(--term-hover,rgba(127,127,127,0.15))]',
-  pill: 'rounded-lg border-[1.5px] border-ink bg-panel px-2.5 py-1 text-[11px] text-fg hover:bg-brand',
+  primary: buttonVariants({ variant: 'primary', size: 'sm' }),
+  secondary: buttonVariants({ variant: 'outline', size: 'sm' }),
+  quiet: buttonVariants({ variant: 'ghost', size: 'sm' }),
+  danger: buttonVariants({ variant: 'destructive', size: 'sm' }),
+  option: buttonVariants({ variant: 'outline', size: 'sm' }),
+  chip: 'inline-flex items-center gap-1 rounded-md border border-[var(--term-border)] px-2 py-0.5 text-xs text-[var(--term-fg)] hover:bg-[var(--term-hover)] coarse:min-h-11',
+  pill: 'inline-flex items-center gap-1 rounded-md border border-[var(--term-border)] bg-[var(--term-accent-bg)] px-2.5 py-1 text-xs text-[var(--term-fg)] hover:bg-[var(--term-hover)] coarse:min-h-11',
   tag: 'rounded bg-[var(--term-accent-border)] px-1.5 hover:opacity-80',
 };
-export const btnClass = (variant = 'primary', extra = '') => `cursor-pointer ${BTN[variant] || BTN.primary} disabled:opacity-50 ${extra}`;
+export const btnClass = (variant = 'primary', extra = '') => `cursor-pointer ${BTN[variant] || BTN.primary} ${extra}`;
 
 export const Btn = forwardRef(function Btn({ variant = 'primary', className = '', type = 'button', children, ...rest }, ref) {
   return (
@@ -80,7 +90,7 @@ export const Btn = forwardRef(function Btn({ variant = 'primary', className = ''
 /** Dashed accent one-liner: a receipt of something the host did. */
 export function ReceiptLine({ className = '', children, ...rest }) {
   return (
-    <div className={`my-1.5 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-dashed border-[var(--term-accent-border)] px-2.5 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)] ${className}`} {...rest}>
+    <div className={`my-1.5 flex flex-wrap items-center gap-1.5 rounded-md border border-[var(--term-border)] px-2.5 py-1.5 text-xs text-[var(--term-accent-dim)] ${className}`} {...rest}>
       {children}
     </div>
   );
@@ -89,8 +99,8 @@ export function ReceiptLine({ className = '', children, ...rest }) {
 /** "Answer failed · <reason>" — red, bold prefix, monospace reason. */
 export function ErrorNote({ label, children, className = '', ...rest }) {
   return (
-    <div dir="auto" className={`mt-2.5 text-[11px] font-bold text-err ${className}`} {...rest}>
-      {label} <span className="font-mono font-normal">{children}</span>
+    <div dir="auto" className={`mt-2.5 text-xs font-medium text-err ${className}`} {...rest}>
+      {label} <span className="font-normal">{children}</span>
     </div>
   );
 }
@@ -98,7 +108,7 @@ export function ErrorNote({ label, children, className = '', ...rest }) {
 /** Settled-state line under a card ("✓ allowed", "✕ denied (timed out)"). */
 export function SettledLine({ children, className = '', ...rest }) {
   return (
-    <div className={`font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)] ${className}`} {...rest}>
+    <div className={`text-xs text-[var(--term-accent-dim)] ${className}`} {...rest}>
       {children}
     </div>
   );
@@ -107,7 +117,7 @@ export function SettledLine({ children, className = '', ...rest }) {
 /** A prose line on an accent card (the prompt / question text). */
 export function Prose({ children, className = '', dim, ...rest }) {
   return (
-    <div dir="auto" className={`text-[12px] leading-snug ${dim ? 'text-[var(--term-accent-dim)] text-[11.5px]' : 'text-[var(--term-accent-fg)]'} ${className}`} {...rest}>
+    <div dir="auto" className={`text-sm leading-snug ${dim ? 'text-[var(--term-accent-dim)] text-xs' : 'text-[var(--term-accent-fg)]'} ${className}`} {...rest}>
       {children}
     </div>
   );
@@ -120,7 +130,7 @@ export function AgentAvatar({ agent, size = 22, className = '' }) {
     <span
       data-agent-avatar={agent?.slug}
       className={`inline-flex shrink-0 items-center justify-center rounded-full ${className}`}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.58), background: `${color}22`, border: `1.5px solid ${color}`, lineHeight: 1 }}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.58), background: `${color}22`, border: `1px solid ${color}`, lineHeight: 1 }}
       aria-hidden="true"
     >
       {agent?.emoji || '🤖'}

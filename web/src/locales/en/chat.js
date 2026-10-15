@@ -93,6 +93,7 @@ export const strings = {
   'chat.showFull': 'show full ({kb} KB)',
   'chat.noMessages': 'No messages yet — say something below.',
   'chat.working': 'working…',
+  'chat.plan': 'Plan',
   'chat.jumpToLatest': 'Jump to latest',
 
   // --- ChangesTab: header / navigation ---

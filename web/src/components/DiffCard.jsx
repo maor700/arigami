@@ -5,17 +5,19 @@
 import { useEffect, useState } from 'react';
 import { buildCards } from '../lib/editDiff.js';
 import { loadFullChatEvent } from '../lib/store.js';
-import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
-import { faCheck, faChevronDown, faChevronUp, faCopy } from '@fortawesome/free-solid-svg-icons';
+import { CheckIcon, ChevronDownIcon, CopyIcon, FileDiffIcon } from 'lucide-react';
+import { Button, Tip, TooltipProvider } from './ui/index.js';
 
 export const PREVIEW_LINES = 14;
 export const MAX_RENDER = 400;
 
-const ADD_BG = 'rgba(95,181,106,0.16)';
-const DEL_BG = 'rgba(217,128,120,0.16)';
-const GAP_BG = 'rgba(128,128,128,0.08)';
-const TAP = 'max-md:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]';
+const ADD_BG = 'color-mix(in oklab, var(--hb-ok) 14%, transparent)';
+const DEL_BG = 'color-mix(in oklab, var(--hb-err) 14%, transparent)';
+const GAP_BG = 'color-mix(in oklab, var(--term-faint) 10%, transparent)';
+const ADD_FG = 'var(--hb-ok)';
+const DEL_FG = 'var(--hb-err)';
+const TAP = 'coarse:min-h-11';
 
 // rows → the slice to draw for `limit` code lines (gaps are free).
 export function visibleRows(rows, limit) {
@@ -34,18 +36,21 @@ function CopyPath({ path }) {
   const t = useT();
   const [done, setDone] = useState(false);
   return (
-    <button
-      type="button"
-      title={t('chat.diff.copyPath')}
-      aria-label={t('chat.diff.copyPath')}
-      onClick={async (e) => {
-        e.stopPropagation();
-        try { await navigator.clipboard.writeText(path); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* denied */ }
-      }}
-      className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded text-[11px] text-[var(--term-faint)] hover:text-[var(--term-fg)] max-md:h-[44px] max-md:w-[44px] [@media(pointer:coarse)]:h-[44px] [@media(pointer:coarse)]:w-[44px]"
-    >
-      <Icon icon={done ? faCheck : faCopy} />
-    </button>
+    <TooltipProvider>
+    <Tip label={t('chat.diff.copyPath')}>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={t('chat.diff.copyPath')}
+        onClick={async (e) => {
+          e.stopPropagation();
+          try { await navigator.clipboard.writeText(path); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* denied */ }
+        }}
+      >
+        {done ? <CheckIcon /> : <CopyIcon />}
+      </Button>
+    </Tip>
+    </TooltipProvider>
   );
 }
 
@@ -57,12 +62,12 @@ function Tokens({ tokens, text }) {
 export function DiffBody({ rows, path, tokens }) {
   const t = useT();
   return (
-    <div dir="ltr" className="diff-syntax thin-scroll overflow-x-auto font-mono text-[11.5px] md:text-[10.5px] leading-[1.55]" data-diff-body>
+    <div dir="ltr" className="diff-syntax thin-scroll overflow-x-auto font-mono text-xs leading-[1.6]" data-diff-body>
       <div className="w-max min-w-full">
         {rows.map((r, i) => {
           if (r.t === 'gap') {
             return (
-              <div key={i} className="px-2 py-px text-[10px] text-[var(--term-faint)] select-none" style={{ background: GAP_BG }}>
+              <div key={i} className="px-2 py-px text-2xs text-[var(--term-faint)] select-none" style={{ background: GAP_BG }}>
                 {r.count ? `⋯ ${t('chat.diff.unchanged', { n: r.count })}` : '⋯'}
               </div>
             );
@@ -70,9 +75,9 @@ export function DiffBody({ rows, path, tokens }) {
           const bg = r.t === 'add' ? ADD_BG : r.t === 'del' ? DEL_BG : undefined;
           const num = r.t === 'del' ? r.o : r.n;
           return (
-            <div key={i} data-row={r.t} className="flex" style={{ background: bg, boxShadow: r.t === 'ctx' ? undefined : `inset 2px 0 0 ${r.t === 'add' ? '#5fb56a' : '#d98078'}` }}>
+            <div key={i} data-row={r.t} className="flex" style={{ background: bg, boxShadow: r.t === 'ctx' ? undefined : `inset 2px 0 0 ${r.t === 'add' ? ADD_FG : DEL_FG}` }}>
               <span className="sticky left-0 z-[1] w-9 shrink-0 pe-1.5 text-right text-[var(--term-faint)] tabular-nums select-none" style={{ background: bg ? `linear-gradient(${bg},${bg}), var(--term-codebg)` : 'var(--term-codebg)' }}>{num ?? ''}</span>
-              <span className="w-3 shrink-0 text-center select-none" style={{ color: r.t === 'add' ? '#5fb56a' : r.t === 'del' ? '#d98078' : 'transparent' }}>{r.t === 'add' ? '+' : r.t === 'del' ? '−' : ' '}</span>
+              <span className="w-3 shrink-0 text-center select-none" style={{ color: r.t === 'add' ? ADD_FG : r.t === 'del' ? DEL_FG : 'transparent' }}>{r.t === 'add' ? '+' : r.t === 'del' ? '−' : ' '}</span>
               <span className={`whitespace-pre pe-3 ${r.t === 'ctx' ? 'text-[var(--term-dim)]' : 'text-[var(--term-fg)]'}`}><Tokens tokens={tokens?.get(i)} text={r.text} /></span>
             </div>
           );
@@ -121,37 +126,38 @@ function Card({ c, sessionId }) {
     <div
       data-diff-card={c.path}
       data-not-applied={c.notApplied ? '1' : undefined}
-      className={`my-1.5 min-w-0 overflow-hidden rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] ${c.notApplied ? 'opacity-70' : ''}`}
+      className={`my-2 min-w-0 overflow-hidden rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] ${c.notApplied ? 'opacity-70' : ''}`}
     >
-      <div className="flex min-w-0 items-center gap-2 border-b border-[var(--term-border)] ps-2.5 pe-1 py-0.5 font-mono text-[11.5px] md:text-[11px]">
+      <div className="flex min-w-0 items-center gap-2 border-b border-[var(--term-border)] ps-3 pe-1.5 py-1 text-xs">
+        <FileDiffIcon className="size-3.5 shrink-0 text-[var(--term-faint)]" />
         <span dir="ltr" className="flex min-w-0 flex-1 items-baseline overflow-hidden whitespace-nowrap" title={c.path}>
           {c.dir && <span className="min-w-0 truncate text-[var(--term-faint)]">{c.dir}</span>}
-          <bdi dir="ltr" className="shrink-0 font-bold text-[var(--term-fg)]">{c.base || c.path}</bdi>
+          <bdi dir="ltr" className="shrink-0 font-medium text-[var(--term-fg)]">{c.base || c.path}</bdi>
         </span>
-        {isNew && <span className="shrink-0 rounded border border-[var(--term-border)] px-1 text-[10px] text-[var(--term-dim)]">{t('chat.diff.newFile')}</span>}
-        <span dir="ltr" className={`shrink-0 whitespace-nowrap ${c.notApplied ? 'line-through opacity-60' : ''}`}>
+        {isNew && <span className="shrink-0 rounded-sm bg-[var(--term-hover)] px-1.5 text-2xs text-[var(--term-dim)]">{t('chat.diff.newFile')}</span>}
+        <span dir="ltr" className={`shrink-0 whitespace-nowrap tabular-nums ${c.notApplied ? 'line-through opacity-60' : ''}`}>
           <span className="text-diffadd">+{c.add}</span>
           <span className="ms-1.5 text-diffdel">−{c.del}</span>
         </span>
         <CopyPath path={c.path} />
       </div>
       {c.notApplied && (
-        <div className="border-b border-[var(--term-border)] px-2.5 py-1 text-[11px] text-[var(--term-dim)]" data-not-applied-note>
+        <div className="border-b border-[var(--term-border)] px-3 py-1.5 text-xs text-[var(--term-dim)]" data-not-applied-note>
           {t('chat.diff.notApplied')}
           <span dir="auto" className="mx-1.5 text-[var(--term-faint)]">{c.notApplied.length > 120 ? `${c.notApplied.slice(0, 120)}…` : c.notApplied}</span>
         </div>
       )}
       {c.rows.length === 0 && !c.notApplied && (
-        <div className="px-2.5 py-1.5 text-[11px] text-[var(--term-faint)]">{t('chat.diff.noChange')}</div>
+        <div className="px-3 py-1.5 text-xs text-[var(--term-faint)]">{t('chat.diff.noChange')}</div>
       )}
       {rows.length > 0 && <DiffBody rows={rows} path={c.path} tokens={tokens} />}
       {tooLarge && (
-        <div className="flex flex-wrap items-center gap-x-3 border-t border-[var(--term-border)] px-2.5 py-1 text-[11px] text-[var(--term-dim)]">
+        <div className="flex flex-wrap items-center gap-x-3 border-t border-[var(--term-border)] px-3 py-1.5 text-xs text-[var(--term-dim)]">
           <span>{t('chat.diff.tooLarge', { shown: MAX_RENDER, total })}</span>
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('host:open-changes', { detail: { sessionId } }))}
-            className={`cursor-pointer text-[var(--term-accent-fg)] underline ${TAP}`}
+            className={`cursor-pointer text-[var(--term-fg)] underline underline-offset-2 ${TAP}`}
           >
             {t('chat.diff.openChanges')}
           </button>
@@ -162,9 +168,9 @@ function Card({ c, sessionId }) {
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
-          className={`flex w-full cursor-pointer items-center gap-1.5 border-t border-[var(--term-border)] px-2.5 py-1 text-start font-mono text-[11px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] ${TAP}`}
+          className={`flex w-full cursor-pointer items-center justify-center gap-1.5 border-t border-[var(--term-border)] px-3 py-1.5 text-xs text-[var(--term-dim)] hover:bg-[var(--term-hover)] hover:text-[var(--term-fg)] ${TAP}`}
         >
-          <Icon icon={expanded ? faChevronUp : faChevronDown} className="text-[9px]" />
+          <ChevronDownIcon className={`size-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
           {toggleLabel}
         </button>
       )}
@@ -182,8 +188,8 @@ export default function DiffCard({ event, result, sessionId }) {
   if (!model) return null;
   if (event.clipped) {
     return (
-      <div className="my-1.5 rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] px-2.5 py-1.5 font-mono text-[11px] text-[var(--term-faint)]" data-diff-loading>
-        <span className="host-spinner me-1.5 inline-block h-2.5 w-2.5" />
+      <div className="my-2 rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] px-3 py-2 text-xs text-[var(--term-faint)]" data-diff-loading>
+        <span className="host-spinner me-1.5 inline-block size-3" />
         <bdi dir="ltr" className="text-[var(--term-dim)]">{model.cards[0]?.path}</bdi> {t('chat.diff.loading')}
       </div>
     );

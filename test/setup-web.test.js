@@ -130,7 +130,7 @@ test('SetupCard: pending(auto) → auto-running → done with evidence; failed �
   expect(done).toContain('data-setup-phase="done"');
   expect(done).toContain('gmail (via Composio) connected');
   expect(done).toContain('href="/__artifacts/ev1/"'); // relative — works from the phone
-  expect(done).not.toContain('http://');
+  expect(done.replace(/xmlns="[^"]*"/g, '')).not.toContain('http://'); // SVG namespaces are not links
   expect(done).not.toContain('role="radiogroup"');
 
   const failed = render(h(SetupCard, { sessionId: 's1', event: { ...base, state: 'failed', detail: 'consent page timed out' } }));

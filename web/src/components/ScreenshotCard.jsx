@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../lib/i18n.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { faCamera, faXmark, faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, any, z } from '../openui/define.js';
 import { CardFrame } from '../openui/primitives.jsx';
@@ -40,16 +40,16 @@ function Lightbox({ shots, index, onClose, onStep }) {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose, onStep]);
   if (!shot) return null;
-  const btn = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-[1.5px] border-ink bg-panel text-fg hover:bg-chip disabled:opacity-30';
+  const btn = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-popover-foreground hover:bg-muted disabled:opacity-30';
   return createPortal(
     <div data-lightbox="" className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 p-3 md:p-6" onMouseDown={onClose}>
       <div className="flex max-h-full max-w-full flex-col items-center gap-2" onMouseDown={(e) => e.stopPropagation()}>
         <img
           src={shot.url}
           alt={shot.caption || t('chat.screenshot')}
-          className="max-h-[82vh] max-w-full rounded-[10px] border-[1.5px] border-ink bg-black object-contain shadow-[4px_4px_0_rgba(0,0,0,0.35)]"
+          className="max-h-[82vh] max-w-full rounded-lg border border-border bg-black object-contain shadow-pop"
         />
-        <div className="flex w-full items-center gap-2 font-mono text-[11px] text-white">
+        <div className="flex w-full items-center gap-2 font-mono text-xs text-white">
           {shots.length > 1 && (
             <button type="button" className={btn} disabled={index === 0} onClick={() => onStep(-1)} aria-label="previous">
               <Icon icon={faChevronLeft} />
@@ -81,7 +81,7 @@ function Thumb({ shot, onClick, className = '' }) {
       type="button"
       onClick={onClick}
       title={t('chat.screenshotOpen')}
-      className={`block cursor-zoom-in overflow-hidden rounded-[7px] border border-[var(--term-border)] bg-black ${className}`}
+      className={`block cursor-zoom-in overflow-hidden rounded-md border border-[var(--term-border)] bg-black ${className}`}
     >
       <img src={shot.url} alt={shot.caption || t('chat.screenshot')} loading="lazy" className="block h-full w-full object-cover" />
     </button>
@@ -107,7 +107,7 @@ function ScreenshotCardView({ props }) {
     body = (
       <div className="mt-1.5 flex gap-3">
         <Thumb shot={last} onClick={() => setOpen(0)} className="h-[110px] w-[176px] shrink-0" />
-        {last.caption && <div dir="auto" className="min-w-0 self-center text-[12px] leading-snug text-[var(--term-fg)]">{last.caption}</div>}
+        {last.caption && <div dir="auto" className="min-w-0 self-center text-[13px] leading-snug text-[var(--term-fg)]">{last.caption}</div>}
       </div>
     );
   } else if (!expanded) {
@@ -123,12 +123,12 @@ function ScreenshotCardView({ props }) {
       >
         {/* phase 3: wraps on a narrow (390px, RTL) pane instead of clipping the first thumbs and pushing "more" out */}
         {tail.map((s, i) => (
-          <div key={s.id || s.url} className="h-[64px] w-[102px] shrink-0 overflow-hidden rounded-[6px] border border-[var(--term-border)] bg-black" style={{ opacity: 0.55 + (0.45 * (i + 1)) / tail.length }}>
+          <div key={s.id || s.url} className="h-[64px] w-[102px] shrink-0 overflow-hidden rounded-md border border-[var(--term-border)] bg-black" style={{ opacity: 0.55 + (0.45 * (i + 1)) / tail.length }}>
             <img src={s.url} alt="" loading="lazy" className="block h-full w-full object-cover" />
           </div>
         ))}
-        {last.caption && <span dir="auto" className="ms-1 min-w-0 flex-1 truncate text-[11.5px] text-[var(--term-dim)]">{last.caption}</span>}
-        <span className="ms-auto shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.more')} ›</span>
+        {last.caption && <span dir="auto" className="ms-1 min-w-0 flex-1 truncate text-xs text-[var(--term-dim)]">{last.caption}</span>}
+        <span className="ms-auto shrink-0 text-xs text-[var(--term-faint)]">{t('chat.more')} ›</span>
       </button>
     );
   } else {
@@ -138,13 +138,13 @@ function ScreenshotCardView({ props }) {
           {shots.map((s, i) => (
             <div key={s.id || s.url} className="w-[102px]">
               <Thumb shot={s} onClick={() => setOpen(i)} className="h-[64px] w-full" />
-              <div dir="auto" className="mt-0.5 truncate font-mono text-[11px] md:text-[9.5px] text-[var(--term-faint)]" title={s.caption || ''}>
+              <div dir="auto" className="mt-0.5 truncate text-xs text-[var(--term-faint)]" title={s.caption || ''}>
                 {clock(s.ts)}{s.caption ? ` · ${s.caption}` : ''}
               </div>
             </div>
           ))}
         </div>
-        <button type="button" onClick={() => setExpanded(false)} className="mt-1 cursor-pointer font-mono text-[11.5px] md:text-[10px] text-[var(--term-faint)] hover:text-[var(--term-fg)]">
+        <button type="button" onClick={() => setExpanded(false)} className="mt-1 cursor-pointer text-xs text-[var(--term-faint)] hover:text-[var(--term-fg)]">
           ‹ {t('chat.less')}
         </button>
       </div>
@@ -158,7 +158,7 @@ function ScreenshotCardView({ props }) {
       icon={<Icon icon={faCamera} />}
       label={shots.length > 1 ? t('chat.screenshotsN', { n: shots.length }) : t('chat.screenshot')}
       labelClass="text-[var(--term-fg)]"
-      right={<span className="text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</span>}
+      right={<span className="text-xs text-[var(--term-faint)]">{shots.length > 1 ? `${clock(shots[0].ts)} – ${clock(last.ts)}` : clock(last.ts)}</span>}
     >
       {body}
       {open >= 0 && <Lightbox shots={shots} index={open} onClose={() => setOpen(-1)} onStep={step} />}

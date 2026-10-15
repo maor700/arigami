@@ -109,7 +109,7 @@ test('Rail source: "+ סוכן חדש" opens the agent surface in create mode �
 });
 
 test('SessionView source: "/agent new" opens the create-mode surface (not the agent-card chat route); "/adopt" posts adopt-agent', () => {
-  const src = fs.readFileSync(web('components/SessionView.jsx'), 'utf8');
+  const src = fs.readFileSync(web('components/Composer.jsx'), 'utf8'); // composer moved out of SessionView
   const agentNew = /if \(r\.type === 'agent-new'\) \{([\s\S]*?)\n\s*\}/.exec(src);
   expect(agentNew).toBeTruthy();
   expect(agentNew[1]).toMatch(/openAgent\('__new__'/);

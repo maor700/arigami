@@ -5,7 +5,7 @@
 // live) and every focus, keyboard, stale and "answer failed" rule is as it was.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { useT } from '../lib/i18n.js';
 import { keysBlocked } from '../openui/keys.js';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -138,15 +138,15 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
         return (
           <div key={qi} className="mt-3 first:mt-2.5">
             {q.header && (
-              <div className="mb-0.5 font-mono text-[11.5px] md:text-[10px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
+              <div className="mb-0.5 text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
                 {q.header}
               </div>
             )}
             {q.question && (
-              <div className="mb-2 text-[12px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
+              <div className="mb-2 text-[13px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
             )}
             {wasSkipped ? (
-              <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
+              <span className="text-xs text-[var(--term-accent-dim)]"><Icon icon={faXmark} /> {t('chat.skipped')}</span>
             ) : (
               <>
             <div className="flex flex-col gap-1.5">
@@ -162,26 +162,26 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
                     data-opt={qi === activeQi && !closed ? '' : undefined}
                     disabled={busy || settled}
                     onClick={() => choose(qi, label)}
-                    className={`cursor-pointer rounded-[7px] border-[1.5px] px-3 py-2 text-left outline-none transition-shadow focus-visible:border-brand focus-visible:shadow-[0_0_0_2px_var(--term-accent-strong)] disabled:cursor-default ${
+                    className={`cursor-pointer rounded-md border px-3 py-2 text-start outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:cursor-default coarse:min-h-11 ${
                       isChosen
-                        ? 'border-ink bg-brand text-[#1a1a1a] shadow-[2px_2px_0_#2a2a2a]'
+                        ? 'border-[var(--term-accent-strong)] bg-[var(--term-hover)]'
                         : settled
                           ? 'border-[var(--term-accent-border)] bg-transparent opacity-40'
-                          : 'border-[var(--term-accent-border)] bg-[var(--term-accent-bg)] hover:border-brand'
+                          : 'border-[var(--term-accent-border)] bg-transparent hover:bg-[var(--term-hover)]'
                     }`}
                   >
                     <span
-                      className={`block text-[12px] font-bold ${isChosen ? 'text-[#1a1a1a]' : 'text-[var(--term-accent-strong)]'}`}
+                      className="block text-[13px] font-medium text-[var(--term-accent-strong)]"
                     >
                       {oi < 9 && !settled && (
-                        <span className="mr-1.5 font-mono text-[11.5px] md:text-[10px] text-[var(--term-accent-dim)]">{oi + 1}</span>
+                        <span className="me-1.5 text-xs text-[var(--term-accent-dim)]">{oi + 1}</span>
                       )}
                       {label}
-                      {isChosen && <Icon icon={faCheck} className="ml-1" />}
+                      {isChosen && <Icon icon={faCheck} className="ms-1" />}
                     </span>
                     {description && (
                       <span
-                        className={`mt-0.5 block text-[11px] leading-snug ${isChosen ? 'text-[#4a3f12]' : 'text-[var(--term-accent-dim)]'}`}
+                        className="mt-0.5 block text-xs leading-snug text-[var(--term-accent-dim)]"
                       >
                         {description}
                       </span>
@@ -195,7 +195,7 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
                 type="button"
                 disabled={busy}
                 onClick={() => skip(qi)}
-                className="mt-1.5 cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
+                className="mt-1.5 cursor-pointer text-xs text-[var(--term-accent-dim)] underline-offset-2 hover:underline disabled:cursor-default disabled:opacity-50"
               >
                 {t('chat.skipThisQuestion')}
               </button>
@@ -209,10 +209,10 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
         <ErrorNote data-question-error label={t('chat.answerFailed')}>{outcome.error}</ErrorNote>
       )}
       {outcome === 'message' && (
-        <div data-question-note dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
+        <div data-question-note dir="auto" className="mt-2.5 text-xs text-[var(--term-accent-dim)]">{t('chat.answerSentAsMessage')}</div>
       )}
       {closed && !outcome && !Object.keys(picked).length && (
-        <div data-question-closed dir="auto" className="mt-2.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
+        <div data-question-closed dir="auto" className="mt-2.5 text-xs text-[var(--term-accent-dim)]">{t('chat.questionClosed')}</div>
       )}
     </CardFrame>
   );

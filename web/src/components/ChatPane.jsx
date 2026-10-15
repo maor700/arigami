@@ -11,24 +11,35 @@ import { HostCard } from '../openui/host.jsx';
 import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
-import { Icon } from '../lib/icons.js';
 import { useT, dirOf } from '../lib/i18n.js';
 import { prettyInput } from '../lib/pretty-input.js';
 import {
-  faArrowDown,
-  faArrowRotateRight,
-  faBoxArchive,
-  faCheck,
-  faChevronDown,
-  faChevronUp,
-  faCircle,
-  faCopy,
-  faFile,
-  faImage,
-  faReply,
-  faWandMagicSparkles,
-  faXmark,
-} from '@fortawesome/free-solid-svg-icons';
+  ArchiveIcon,
+  ArrowDownIcon,
+  ChevronUpIcon,
+  BotIcon,
+  BrainIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CopyIcon,
+  CornerUpLeftIcon,
+  FileIcon,
+  FileTextIcon,
+  GlobeIcon,
+  ImageIcon,
+  ListChecksIcon,
+  LoaderCircleIcon,
+  PencilIcon,
+  PlugIcon,
+  RotateCcwIcon,
+  SearchIcon,
+  TerminalIcon,
+  WrenchIcon,
+  XIcon,
+} from 'lucide-react';
+import { Button, Collapsible, CollapsibleContent, CollapsibleTrigger, Tip, TooltipProvider } from './ui/index.js';
 
 // Re-render tick so the humanized "2m ago" stamps on chat lines stay fresh.
 function useNow(intervalMs) {
@@ -84,30 +95,40 @@ function toolSummary(e) {
 
 /* ---------- per-kind renderers ------------------------------------------- */
 
+// One small icon button for the hover actions under a message (copy / quote).
+// Shown on hover on desktop, always on touch (no hover there). The parent
+// must carry `group`.
+function RowAction({ label, onClick, children, className = '' }) {
+  return (
+    <Tip label={label}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        className={`inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-[var(--term-faint)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--term-hover)] hover:text-[var(--term-fg)] focus-visible:opacity-100 coarse:size-11 coarse:opacity-100 [&_svg]:size-3.5 ${className}`}
+      >
+        {children}
+      </button>
+    </Tip>
+  );
+}
+
 // Fires a custom event that ChatFooter listens for to populate the quote
 // preview above the composer. Decoupled: ChatPane doesn't import ChatFooter.
-function QuoteButton({ event, className = '' }) {
+function QuoteButton({ event }) {
   const t = useT();
   const onClick = (e) => {
     e.stopPropagation();
     window.dispatchEvent(new CustomEvent('host:quote', { detail: { event } }));
   };
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={t('chat.quote') || 'Quote'}
-      aria-label={t('chat.quote') || 'Quote'}
-      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:px-1.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:opacity-100 ${className}`}
-    >
-      <Icon icon={faReply} />
-    </button>
+    <RowAction label={t('chat.quote') || 'Quote'} onClick={onClick}>
+      <CornerUpLeftIcon className="rtl:-scale-x-100" />
+    </RowAction>
   );
 }
 
-// Small hover-revealed copy button — shown outright on touch devices (no
-// hover there). Parent must set `group` for the hover reveal to work.
-function CopyButton({ text, className = '' }) {
+function CopyButton({ text }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const onCopy = async (e) => {
@@ -121,15 +142,20 @@ function CopyButton({ text, className = '' }) {
     }
   };
   return (
-    <button
-      type="button"
-      onClick={onCopy}
-      title={copied ? t('chat.copied') : t('chat.copy')}
-      aria-label={t('chat.copy')}
-      className={`cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 hover:text-[var(--term-fg)] [@media(pointer:coarse)]:px-1.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:opacity-100 ${className}`}
-    >
-      <Icon icon={copied ? faCheck : faCopy} />
-    </button>
+    <RowAction label={copied ? t('chat.copied') : t('chat.copy')} onClick={onCopy}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </RowAction>
+  );
+}
+
+// The quiet meta line under a message: time + copy + quote.
+function MsgMeta({ event, text }) {
+  return (
+    <div className="mt-0.5 flex items-center gap-0.5 text-2xs text-[var(--term-faint)] tabular-nums">
+      {event.ts && <span className="me-1">{agoTime(event.ts)}</span>}
+      <CopyButton text={text} />
+      <QuoteButton event={event} />
+    </div>
   );
 }
 
@@ -140,38 +166,32 @@ function UserMsg({ event }) {
   const d = dirOf(text); // the bubble's side follows the prompt's own language
   useNow(30_000); // Event is memoized, so each stamp refreshes itself
   return (
-    // Align the bubble to the side that matches its text — Hebrew/RTL → right,
+    // Align the block to the side that matches its text — Hebrew/RTL → right,
     // English/LTR → left — regardless of the app language. Setting the row's dir
     // to the text direction makes `items-start` resolve to that physical side.
-    <div dir={d} className="group my-2.5 flex flex-col items-start">
-      <span className="ms-1 mb-0.5 flex items-center gap-1 font-mono text-[8.5px] font-bold tracking-[0.12em] text-[var(--term-userborder)] uppercase">
-        <span className="h-[5px] w-[5px] rounded-full bg-brand" /> {t('chat.you')}
-        {event.ts && (
-          <span className="font-normal tracking-normal normal-case opacity-70">· {agoTime(event.ts)}</span>
-        )}
-        <CopyButton text={text} className="text-[11.5px] md:text-[10px]" />
-        <QuoteButton event={event} className="text-[11.5px] md:text-[10px]" />
-      </span>
+    <div dir={d} data-user-msg className="group my-4 flex flex-col items-start">
+      <span className="sr-only">{t('chat.you')}</span>
       <div
         dir={d}
-        className={`max-w-[85%] rounded-[13px] border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 font-mono text-[12px] leading-relaxed font-medium whitespace-pre-wrap text-[var(--term-userfg)] shadow-[0_1px_3px_rgba(0,0,0,0.12)] ${d === 'rtl' ? 'rounded-tr-[4px]' : 'rounded-tl-[4px]'}`}
+        className="max-w-[85%] rounded-lg border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap text-[var(--term-userfg)]"
       >
         {text}
         {atts.length > 0 && (
-          <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-1.5' : ''}`}>
+          <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-2' : ''}`}>
             {atts.map((a, i) => {
               // ZIP3: entriesTotal > entryCount with no hard error means a
               // partial extraction — show "N/M", not a bare count that reads
               // as a clean success.
               const partial = a.archive && !a.archive.error && a.archive.entriesTotal > 0 && a.archive.entriesTotal !== a.archive.entryCount;
               const problem = a.archive && (a.archive.error || partial);
+              const AttIcon = a.archive ? ArchiveIcon : a.isImage ? ImageIcon : FileIcon;
               return (
                 <span
                   key={i}
                   title={a.archive?.dir || undefined}
-                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11.5px] md:text-[10px] ${problem ? 'border-danger text-danger' : 'border-[var(--term-userborder)]'} bg-black/10`}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs [&_svg]:size-3 ${problem ? 'border-danger text-danger' : 'border-[var(--term-userborder)] text-[var(--term-dim)]'}`}
                 >
-                  <Icon icon={a.archive ? faBoxArchive : a.isImage ? faImage : faFile} /> {a.name}
+                  <AttIcon /> <bdi dir="ltr">{a.name}</bdi>
                   {a.archive && !a.archive.error && !partial && ` (${a.archive.entryCount})`}
                   {partial && ` (${a.archive.entryCount}/${a.archive.entriesTotal})`}
                   {a.archive?.error && ` (${t('chat.archiveExtractFailed')})`}
@@ -181,25 +201,20 @@ function UserMsg({ event }) {
           </div>
         )}
       </div>
+      <MsgMeta event={event} text={text} />
     </div>
   );
 }
 
 function AssistantMsg({ event, recap }) {
-  // The turn's final message gets a faint tint only — no border — so it reads
-  // as gently set apart without shouting. Content is unchanged.
+  // Assistant prose is plain text on the page — no bubble. The turn's final
+  // message (the "recap") is not tinted any more; only the content matters.
   const text = textOf(event);
   useNow(30_000); // Event is memoized, so each stamp refreshes itself
   return (
-    <div className={`group md my-1.5${recap ? ' rounded-[6px] bg-brand/[0.03] px-2 py-1' : ''}`}>
+    <div className="group md my-3" data-recap={recap ? '1' : undefined}>
       <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
-      {event.ts && (
-        <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] md:text-[9.5px] text-[var(--term-faint)]">
-          <span className="opacity-70">{agoTime(event.ts)}</span>
-          <CopyButton text={text} />
-          <QuoteButton event={event} />
-        </div>
-      )}
+      {event.ts && <MsgMeta event={event} text={text} />}
     </div>
   );
 }
@@ -208,35 +223,89 @@ function Thinking({ event }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
-    <div className="my-1">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="cursor-pointer font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)] italic hover:text-[var(--term-dim)]"
-      >
-        <Icon icon={faWandMagicSparkles} /> {t('chat.thinking')}{open ? '' : '…'}
-      </button>
-      {open && (
-        <div className="mt-1 border-l-2 border-[var(--term-border)] pl-2.5 text-[11.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)] italic">
+    <Collapsible open={open} onOpenChange={setOpen} className="my-1">
+      <CollapsibleTrigger className="group/t flex min-h-6 cursor-pointer items-center gap-1.5 rounded-md px-1 text-xs text-[var(--term-faint)] italic hover:text-[var(--term-dim)] coarse:min-h-11 [&_svg]:size-3.5">
+        <BrainIcon /> {t('chat.thinking')}{open ? '' : '…'}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div dir="auto" className="mt-1 border-s border-[var(--term-border)] ps-3 text-[13px] leading-relaxed whitespace-pre-wrap text-[var(--term-dim)] italic">
           {textOf(event)}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
-// A code/diff slab — always LTR (code never flips for RTL prose) with a thin
-// add/del/plain tint.
+// A code/diff slab — always LTR monospace (code never flips for RTL prose)
+// with a thin add/del/plain tint.
 function CodeBlock({ text, sign }) {
-  const bg = sign === '+' ? 'rgba(95,181,106,0.14)' : sign === '-' ? 'rgba(217,128,120,0.14)' : 'var(--term-codebg)';
+  const bg = sign === '+' ? 'color-mix(in oklab, var(--hb-ok) 12%, transparent)' : sign === '-' ? 'color-mix(in oklab, var(--hb-err) 12%, transparent)' : 'var(--term-codebg)';
   return (
     <pre
       dir="ltr"
-      className="thin-scroll max-h-72 overflow-auto rounded-md px-2.5 py-1.5 text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap text-[var(--term-fg)]"
+      data-code
+      className="thin-scroll max-h-72 overflow-auto rounded-md px-2.5 py-1.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-[var(--term-fg)]"
       style={{ background: bg }}
     >
       {String(text ?? '')}
     </pre>
+  );
+}
+
+// The lucide glyph for a tool name (thin outline set).
+export function toolIcon(name) {
+  const n = String(name || '');
+  if (/^bash$|shell|command|exec/i.test(n)) return TerminalIcon;
+  if (/edit|write|create|notebook|patch/i.test(n)) return PencilIcon;
+  if (/read|view|cat/i.test(n)) return FileTextIcon;
+  if (/grep|glob|search|find|ls$/i.test(n)) return SearchIcon;
+  if (/web|fetch|browser/i.test(n)) return GlobeIcon;
+  if (/todo|plan/i.test(n)) return ListChecksIcon;
+  if (/^task$|agent/i.test(n)) return BotIcon;
+  if (/^mcp__|__/i.test(n)) return PlugIcon;
+  return WrenchIcon;
+}
+
+// A todo / plan list (Claude's TodoWrite): status glyph + text, done struck
+// through. `todos` = [{content, status, activeForm}].
+export function TodoList({ todos }) {
+  return (
+    <ul className="flex flex-col gap-1" data-todo-list>
+      {todos.map((td, i) => {
+        const st = td?.status || 'pending';
+        const Glyph = st === 'completed' ? CircleCheckIcon : st === 'in_progress' ? LoaderCircleIcon : CircleDashedIcon;
+        const label = st === 'in_progress' && td?.activeForm ? td.activeForm : td?.content ?? '';
+        return (
+          <li key={i} data-todo-status={st} className="flex items-start gap-2 text-[13px] leading-snug">
+            <Glyph className={`mt-0.5 size-3.5 shrink-0 ${st === 'completed' ? 'text-ok' : st === 'in_progress' ? 'text-[var(--term-fg)]' : 'text-[var(--term-faint)]'}`} />
+            <span dir="auto" className={st === 'completed' ? 'text-[var(--term-faint)] line-through' : st === 'in_progress' ? 'text-[var(--term-strong)]' : 'text-[var(--term-dim)]'}>{label}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export const todosOf = (e) => {
+  const name = String(e.name ?? e.tool ?? e.toolName ?? '');
+  const todos = e.input?.todos;
+  return /todo/i.test(name) && Array.isArray(todos) && todos.length ? todos : null;
+};
+
+// The plan card — a TodoWrite call shown as "Plan 2/4" with its checklist.
+function PlanCard({ event }) {
+  const t = useT();
+  const todos = todosOf(event);
+  const done = todos.filter((x) => x?.status === 'completed').length;
+  return (
+    <div data-plan-card className="my-2.5 rounded-lg border border-[var(--term-border)] bg-[var(--term-accent-bg)] px-3.5 py-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-[var(--term-accent-strong)]">
+        <ListChecksIcon className="size-3.5 text-[var(--term-dim)]" />
+        {t('chat.plan')}
+        <span className="font-normal text-[var(--term-dim)] tabular-nums">{done}/{todos.length}</span>
+      </div>
+      <TodoList todos={todos} />
+    </div>
   );
 }
 
@@ -245,6 +314,8 @@ function CodeBlock({ text, sign }) {
 function ToolDetail({ event }) {
   const name = String(event.name ?? event.tool ?? event.toolName ?? '');
   const input = event.input || {};
+  const todos = todosOf(event);
+  if (todos) return <TodoList todos={todos} />;
   if (/multiedit/i.test(name) && Array.isArray(input.edits)) {
     return (
       <div className="flex flex-col gap-2">
@@ -273,6 +344,8 @@ function ToolDetail({ event }) {
   return <CodeBlock sign="" text={prettyInput(input)} />;
 }
 
+// One tool call: a muted row (thin icon, name, target, +N −M) that expands to
+// the call's detail. Radix Collapsible so keyboard/aria come for free.
 function ToolUse({ event, sessionId }) {
   const [open, setOpen] = useState(false);
   // CHATWS: the wire row may carry clipped input (a big Write) — pull the full
@@ -283,34 +356,32 @@ function ToolUse({ event, sessionId }) {
   const name = event.name ?? event.tool ?? event.toolName ?? 'tool';
   const stats = diffStats(event);
   const summary = toolSummary(event);
-  const isWrite = /edit|write|create/i.test(String(name));
+  const Glyph = toolIcon(name);
   return (
-    <div className="my-0.5 font-mono text-[11px]">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded px-1 py-0.5 text-left whitespace-nowrap hover:bg-[var(--term-hover)]"
-      >
-        <span style={{ color: isWrite ? '#5fb56a' : '#5fa8d6' }}><Icon icon={faCircle} className="text-[7px]" /></span>
-        <span className="shrink-0 font-bold text-[var(--term-fg)]">{name}</span>
-        {summary && <span dir="ltr" className="truncate text-[var(--term-dim)]">{summary}</span>}
+    <Collapsible open={open} onOpenChange={setOpen} className="my-px" data-tool-row>
+      <CollapsibleTrigger className="flex min-h-7 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-md px-1.5 text-start text-xs whitespace-nowrap text-[var(--term-dim)] hover:bg-[var(--term-hover)] coarse:min-h-11">
+        <Glyph className="size-3.5 shrink-0 text-[var(--term-faint)]" />
+        <span dir="ltr" className="shrink-0 font-medium text-[var(--term-fg)]">{name}</span>
+        {summary && <span dir="ltr" className="min-w-0 truncate font-mono text-[var(--term-faint)]">{summary}</span>}
         {stats && (
-          <span className="ml-1 shrink-0">
+          <span dir="ltr" className="ms-1 shrink-0 tabular-nums">
             {stats.add != null && <span className="text-diffadd">+{stats.add}</span>}
-            {stats.del != null && <span className="ml-1.5 text-diffdel">−{stats.del}</span>}
+            {stats.del != null && <span className="ms-1.5 text-diffdel">−{stats.del}</span>}
           </span>
         )}
-        <span className="ml-auto shrink-0 text-[11px] md:text-[9px] text-[var(--term-faint)]"><Icon icon={open ? faChevronUp : faChevronDown} /></span>
-      </button>
-      {open && (
-        <div className="mt-1 mb-1.5 rounded-lg border border-[var(--term-border)] bg-[var(--term-codebg)] p-1.5">
+        <ChevronDownIcon className={`ms-auto size-3.5 shrink-0 text-[var(--term-faint)] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 mb-1.5 ms-1.5 rounded-md border border-[var(--term-border)] bg-[var(--term-codebg)] p-1.5">
           <ToolDetail event={event} />
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
+// Command / tool output: a quiet LTR mono block, truncated to a few lines with
+// "more" (clipped rows fetch the full body first).
 function ToolResult({ event, sessionId }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -338,8 +409,9 @@ function ToolResult({ event, sessionId }) {
   return (
     <div
       dir="ltr"
-      className={`my-0.5 pl-4 font-mono text-[11.5px] md:text-[10.5px] leading-relaxed whitespace-pre-wrap ${
-        isError ? 'text-diffdel' : 'text-[var(--term-dim)]'
+      data-tool-result
+      className={`my-0.5 ms-1.5 border-s ps-3 font-mono text-xs leading-relaxed whitespace-pre-wrap ${
+        isError ? 'border-diffdel text-diffdel' : 'border-[var(--term-border)] text-[var(--term-dim)]'
       }`}
     >
       {shown}
@@ -348,9 +420,9 @@ function ToolResult({ event, sessionId }) {
           type="button"
           onClick={toggle}
           disabled={fetching}
-          className="ml-1.5 cursor-pointer text-[var(--term-faint)] underline hover:text-[var(--term-dim)] disabled:opacity-50"
+          className="ms-2 inline-flex min-h-6 cursor-pointer items-center font-sans text-[var(--term-faint)] underline underline-offset-2 hover:text-[var(--term-dim)] disabled:opacity-50 coarse:min-h-11"
         >
-          {fetching ? <span className="host-spinner inline-block h-2.5 w-2.5" /> : open ? t('chat.less') : moreLabel}
+          {fetching ? <span className="host-spinner inline-block size-3" /> : open ? t('chat.less') : moreLabel}
         </button>
       )}
     </div>
@@ -370,23 +442,25 @@ function ResultLine({ event }) {
       event.costUsd ? `$${Number(event.costUsd).toFixed(3)}` : null,
     ].filter(Boolean).join(' · ');
     return (
-      <div className="my-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)]">
-        <span className="text-diffadd"><Icon icon={faCheck} /></span> {t('chat.done')}{meta ? ` · ${meta}` : ''}
+      <div className="my-2 flex items-center gap-1.5 text-xs text-[var(--term-faint)] tabular-nums">
+        <CheckIcon className="size-3.5 text-ok" /> {t('chat.done')}{meta ? ` · ${meta}` : ''}
       </div>
     );
   }
   const text = textOf(event) || t('chat.errored');
   return (
-    <div dir="auto" className="my-2 font-mono text-[11.5px] whitespace-pre-wrap text-diffdel">
-      <span className="text-diffdel"><Icon icon={faXmark} /></span> {text.length > 400 ? `${text.slice(0, 400)}…` : text}
+    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--term-accent-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
+      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-err" aria-hidden="true" />
+      <span className="min-w-0">{text.length > 400 ? `${text.slice(0, 400)}…` : text}</span>
     </div>
   );
 }
 
 function ErrorLine({ event }) {
   return (
-    <div className="my-1.5 font-mono text-[11px] whitespace-pre-wrap text-diffdel">
-      <Icon icon={faXmark} /> {textOf(event)}
+    <div dir="auto" role="alert" className="my-2 flex items-start gap-2 rounded-md border border-[var(--hb-err-line)] bg-[var(--term-accent-bg)] px-3 py-2 text-[13px] whitespace-pre-wrap text-[var(--term-fg)]">
+      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-err" aria-hidden="true" />
+      <span className="min-w-0">{textOf(event)}</span>
     </div>
   );
 }
@@ -396,13 +470,16 @@ function ErrorLine({ event }) {
 // neutral status, not alarms.
 function SystemLine({ event }) {
   return (
-    <div className="my-1.5 font-mono text-[11px] whitespace-pre-wrap text-[var(--term-dim)]">
-      <Icon icon={faArrowRotateRight} /> {textOf(event)}
+    <div dir="auto" className="my-2 flex items-start gap-1.5 text-xs whitespace-pre-wrap text-[var(--term-dim)]">
+      <RotateCcwIcon className="mt-0.5 size-3.5 shrink-0 text-[var(--term-faint)]" /> <span className="min-w-0">{textOf(event)}</span>
     </div>
   );
 }
 
 /* ---------- Simple mode: the folded "behind the scenes" line --------------- */
+
+// The muted summary row shared by "Edited N files" and the tool-call fold.
+const SUMMARY_ROW = 'flex min-h-7 w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-start text-xs text-[var(--term-dim)] hover:bg-[var(--term-hover)] hover:text-[var(--term-fg)] coarse:min-h-11 [&_svg]:size-3.5';
 
 // SIMPLE1: one assistant turn's tool calls / results / thinking / status lines,
 // folded into a muted line that expands inline to the terminal rendering.
@@ -423,21 +500,19 @@ function EditSummary({ sessionId, group, results }) {
   if (!sum.files) return null;
   const label = sum.files === 1 ? t('chat.diff.editedOne') : t('chat.diff.editedN', { n: sum.files });
   return (
-    <div className="my-1" data-edit-summary={sum.files}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] max-md:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]"
-      >
-        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[11px] md:text-[9px]" />
+    <Collapsible open={open} onOpenChange={setOpen} className="my-px" data-edit-summary={sum.files}>
+      <CollapsibleTrigger className={SUMMARY_ROW}>
+        <ChevronDownIcon className={`shrink-0 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
+        <PencilIcon className="text-[var(--term-faint)]" />
         <span>{label}</span>
-        <span dir="ltr" className="whitespace-nowrap"><span className="text-diffadd">+{sum.add}</span> <span className="text-diffdel">−{sum.del}</span></span>
-      </button>
-      {open && edits.map((e) => (
-        <DiffCard key={e.id || e.toolUseId || e.seq || e.ts} event={e} result={results.get(e.toolUseId)} sessionId={sessionId} />
-      ))}
-    </div>
+        <span dir="ltr" className="whitespace-nowrap tabular-nums"><span className="text-diffadd">+{sum.add}</span> <span className="text-diffdel">−{sum.del}</span></span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {edits.map((e) => (
+          <DiffCard key={e.id || e.toolUseId || e.seq || e.ts} event={e} result={results.get(e.toolUseId)} sessionId={sessionId} />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -447,29 +522,33 @@ function BehindScenes({ sessionId, group, streaming, results }) {
   if (!groupHasSubstance(group.events)) return null;
   const n = group.events.filter(isAction).length;
   const label = n === 0 ? t('chat.behindScenes') : n === 1 ? t('chat.behindScenesOne') : t('chat.behindScenesN', { n });
+  // a glyph per distinct kind of call in the group (max 4), like the summary row of a CLI
+  const kinds = [];
+  group.events.filter(isAction).forEach((e) => {
+    const g = toolIcon(e.name ?? e.tool ?? e.toolName);
+    if (!kinds.includes(g) && kinds.length < 4) kinds.push(g);
+  });
   return (
-    <div className="my-1" data-behind-scenes={group.events.length} data-actions={n}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)] hover:bg-[var(--term-hover)] hover:text-[var(--term-dim)]"
-      >
-        <Icon icon={open ? faChevronUp : faChevronDown} className="text-[11px] md:text-[9px]" />
+    <Collapsible open={open} onOpenChange={setOpen} className="my-1.5" data-behind-scenes={group.events.length} data-actions={n}>
+      <CollapsibleTrigger className={SUMMARY_ROW}>
+        <ChevronDownIcon className={`shrink-0 transition-transform ${open ? '' : '-rotate-90 rtl:rotate-90'}`} />
         <span>{label}</span>
-        {streaming && <span className="host-spinner h-2.5 w-2.5" />}
-      </button>
+        <span className="flex items-center gap-1 text-[var(--term-faint)]" aria-hidden="true">
+          {kinds.map((K, i) => <K key={i} />)}
+        </span>
+        {streaming && <span className="host-spinner size-3" />}
+      </CollapsibleTrigger>
       <EditSummary sessionId={sessionId} group={group} results={results} />
-      {open && (
-        <div className="mt-1 mb-1.5 border-s-2 border-[var(--term-border)] ps-2.5">
+      <CollapsibleContent>
+        <div className="mt-1 mb-1.5 border-s border-[var(--term-border)] ps-2.5">
           {group.rows.map((r) => (
             <div key={r.key} data-event-id={r.event.id || r.key}>
               <Event sessionId={sessionId} event={r.event} recap={r.recap} result={results.get(r.event.toolUseId)} />
             </div>
           ))}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -490,13 +569,13 @@ function ChatSkeleton({ label }) {
       {rows.map((r, i) => (
         <div key={i} className={`flex ${r.me ? 'justify-end' : 'justify-start'}`}>
           <div
-            className="h-3.5 animate-pulse rounded-md bg-[var(--term-hover)] opacity-70"
+            className="h-3.5 animate-pulse rounded-md bg-[var(--term-hover)]"
             style={{ width: r.w, animationDelay: `${i * 0.12}s` }}
           />
         </div>
       ))}
-      <div className="pt-1 text-center font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-faint)]">
-        <span className="host-spinner inline-block h-2.5 w-2.5" /> {label}
+      <div className="pt-1 text-center text-xs text-[var(--term-faint)]">
+        <span className="host-spinner inline-block size-3" /> {label}
       </div>
     </div>
   );
@@ -521,6 +600,7 @@ const Event = memo(function Event({ sessionId, event, live, stale, recap, result
       if (name === 'AskUserQuestion')
         return <HostCard name="QuestionCard" props={{ sessionId, event, live, stale }} />;
       if (isEditEvent(event)) return <DiffCard event={event} result={result} sessionId={sessionId} />;
+      if (todosOf(event)) return <PlanCard event={event} />;
       return <ToolUse event={event} sessionId={sessionId} />;
     }
     case 'tool-result':
@@ -715,10 +795,11 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
   }, [shown]);
 
   // The renderers use fixed-px Tailwind classes, so scale the whole output via
-  // CSS zoom relative to the 12px default (clean, overrides fixed sizes).
-  const scale = (termFontSize || 12) / 12;
+  // CSS zoom relative to the 16px default (clean, overrides fixed sizes).
+  const scale = (termFontSize || 16) / 16;
 
   return (
+    <TooltipProvider>
     <div className="relative min-h-0 flex-1">
     <div
       ref={scrollRef}
@@ -730,24 +811,19 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
       <div className="term-events" style={scale === 1 ? undefined : { zoom: scale }}>
         {(hiddenCount > 0 || serverHasMore) && (
           <div className="pb-2 text-center">
-            <button
-              type="button"
-              onClick={revealEarlier}
-              disabled={loadingOlder}
-              className="cursor-pointer rounded-md border border-[var(--term-border)] px-2.5 py-1 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-dim)] hover:bg-[var(--term-hover)] disabled:opacity-50"
-            >
+            <Button variant="ghost" size="sm" onClick={revealEarlier} disabled={loadingOlder}>
               {loadingOlder
-                ? <><span className="host-spinner inline-block h-3 w-3" /> {t('chat.loadingTranscript')}</>
-                : <><Icon icon={faChevronUp} /> {hiddenCount > 0 ? t('chat.showEarlier', { n: hiddenCount }) : t('chat.loadEarlier') || 'Load earlier messages'}</>
+                ? <><span className="host-spinner inline-block size-3" /> {t('chat.loadingTranscript')}</>
+                : <><ChevronUpIcon /> {hiddenCount > 0 ? t('chat.showEarlier', { n: hiddenCount }) : t('chat.loadEarlier') || 'Load earlier messages'}</>
               }
-            </button>
+            </Button>
           </div>
         )}
         {events.length === 0 &&
           (loading ? (
             <ChatSkeleton label={t('chat.loadingTranscript')} />
           ) : (
-            <div className="py-6 text-center font-mono text-[11px] text-[var(--term-faint)]">
+            <div className="py-6 text-center text-xs text-[var(--term-faint)]">
               {t('chat.noMessages')}
             </div>
           ))}
@@ -882,8 +958,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
                   {liveAction ? (
                     <HostCard name="ActionCard" props={{ sessionId, action: liveAction }} />
                   ) : (
-                    <div data-action-record className="my-1.5 font-mono text-[11px] text-[var(--term-dim)]">
-                      ↳ {t('chat.actionRecord')}: {e.prompt}
+                    <div data-action-record dir="auto" className="my-1.5 flex items-start gap-1.5 text-xs text-[var(--term-dim)]">
+                      <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-[var(--term-faint)]" /> <span className="min-w-0">{t('chat.actionRecord')}: {e.prompt}</span>
                     </div>
                   )}
                 </div>
@@ -901,8 +977,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
                   {liveOffer ? (
                     <HostCard name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />
                   ) : (
-                    <div data-merge-offer-record className="my-1.5 font-mono text-[11px] text-[var(--term-dim)]">
-                      ↳ {t('chat.mergeOfferRecord')}
+                    <div data-merge-offer-record className="my-1.5 flex items-center gap-1.5 text-xs text-[var(--term-dim)]">
+                      <CheckIcon className="size-3.5 shrink-0 text-[var(--term-faint)]" /> {t('chat.mergeOfferRecord')}
                     </div>
                   )}
                 </div>
@@ -921,24 +997,27 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           return out;
         })()}
         {working && (
-          <div className="my-2 flex items-center gap-2 font-mono text-[11px] text-[var(--term-dim)]">
-            <span className="host-spinner h-3 w-3" />
-            {t('chat.working')}
+          <div className="my-3 flex items-center gap-2 text-xs text-[var(--term-dim)]" data-working role="status">
+            <span className="host-spinner size-3" />
+            <span className="working-shimmer">{t('chat.working')}</span>
           </div>
         )}
       </div>
     </div>
     {away && (
-      <button
-        type="button"
-        onClick={jumpToBottom}
-        title={t('chat.jumpToLatest')}
-        aria-label={t('chat.jumpToLatest')}
-        className="absolute bottom-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full border-[1.5px] border-ink bg-panel text-[13px] text-fg shadow-[2px_2px_0_rgba(42,42,42,0.35)] hover:bg-chip"
-      >
-        <Icon icon={faArrowDown} />
-      </button>
+      <Tip label={t('chat.jumpToLatest')}>
+        <Button
+          variant="default"
+          size="icon-sm"
+          onClick={jumpToBottom}
+          aria-label={t('chat.jumpToLatest')}
+          className="absolute bottom-3 start-1/2 z-10 -translate-x-1/2 rounded-full shadow-card rtl:translate-x-1/2"
+        >
+          <ArrowDownIcon />
+        </Button>
+      </Tip>
     )}
     </div>
+    </TooltipProvider>
   );
 }

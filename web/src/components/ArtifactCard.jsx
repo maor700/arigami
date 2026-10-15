@@ -9,7 +9,7 @@
 // history except when publish itself asked for share:true); Revoke = DELETE.
 import { useState } from 'react';
 import { useT } from '../lib/i18n.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { api } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { HOST_ORIGIN } from '../lib/hostUrl.js';
@@ -125,13 +125,13 @@ function ArtifactCardView({ props: { sessionId, event } }) {
       label={event.title || t('chat.artifact')}
       labelClass="truncate text-[var(--term-fg)]"
       meta={
-        <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">
+        <span className="shrink-0 text-xs text-[var(--term-faint)]">
           v{event.version} · {fmtBytes(event.bytes)} · {t('chat.artifactFiles', { n: event.files })}
         </span>
       }
-      right={<span className="text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{clock(event.ts)}</span>}
+      right={<span className="text-xs text-[var(--term-faint)]">{clock(event.ts)}</span>}
     >
-      <div dir="ltr" className="mt-1 truncate font-mono text-[11.5px] md:text-[10px] text-[var(--term-dim)]" title={abs}>{path}</div>
+      <div dir="ltr" className="mt-1 truncate font-mono text-xs text-[var(--term-dim)]" title={abs}>{path}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <Btn variant="chip" onClick={openTab} disabled={opening} title={t('chat.artifactOpenTabHint')}>
           <Icon icon={faArrowUpRightFromSquare} /> {t('chat.artifactOpenTab')}
@@ -152,7 +152,7 @@ function ArtifactCardView({ props: { sessionId, event } }) {
             <select
               value={shareDays}
               onChange={(e) => setShareDays(Number(e.target.value))}
-              className="rounded-[6px] border border-[var(--term-border)] bg-transparent px-1 py-0.5 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-fg)]"
+              className="rounded-md border border-[var(--term-border)] bg-transparent px-1 py-0.5 text-xs text-[var(--term-fg)]"
               aria-label={t('chat.artifactShareDays', { n: shareDays })}
             >
               {[1, 7, 30].map((n) => (
@@ -163,13 +163,13 @@ function ArtifactCardView({ props: { sessionId, event } }) {
         )}
       </div>
       {share && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-[6px] border border-dashed border-[var(--term-border)] px-2 py-1">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md border border-dashed border-[var(--term-border)] px-2 py-1">
           <span className="text-[var(--term-dim)]"><Icon icon={faShareNodes} /></span>
-          <span dir="ltr" className="min-w-0 flex-1 truncate font-mono text-[11.5px] md:text-[10px] text-[var(--term-dim)]" title={absolutize(share.url)}>
+          <span dir="ltr" className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--term-dim)]" title={absolutize(share.url)}>
             {absolutize(share.url)}
           </span>
           {share.exp && (
-            <span className="shrink-0 text-[11.5px] md:text-[10px] text-[var(--term-faint)]">{t('chat.artifactShareExpires', { when: fmtExpiry(share.exp) })}</span>
+            <span className="shrink-0 text-xs text-[var(--term-faint)]">{t('chat.artifactShareExpires', { when: fmtExpiry(share.exp) })}</span>
           )}
           <Btn variant="chip" onClick={copyShare} title={t('chat.artifactShareCopy')}>
             <Icon icon={shareCopied ? faCheck : faLink} /> {shareCopied ? t('chat.copied') : t('chat.artifactShareCopy')}
@@ -179,12 +179,12 @@ function ArtifactCardView({ props: { sessionId, event } }) {
           </Btn>
         </div>
       )}
-      {shareErr && <div dir="auto" className="mt-1 text-[11.5px] md:text-[10.5px] text-red-500">{shareErr}</div>}
+      {shareErr && <div dir="auto" className="mt-1 text-xs text-red-500">{shareErr}</div>}
       {warnings.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5 text-[11.5px] md:text-[10.5px] text-[var(--term-dim)]">
+        <ul className="mt-1.5 space-y-0.5 text-xs text-[var(--term-dim)]">
           {warnings.map((w, i) => (
             <li key={i} dir="auto" className="flex gap-1">
-              <span className="shrink-0 text-amber-500"><Icon icon={faTriangleExclamation} /></span>
+              <span className="shrink-0 text-[var(--hb-warn)]"><Icon icon={faTriangleExclamation} /></span>
               <span className="min-w-0">{w}</span>
             </li>
           ))}

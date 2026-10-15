@@ -78,8 +78,8 @@ export function SlashPalette({ items, active, onPick, onHover }) {
   const t = useT();
   if (!items.length) return null;
   return (
-    <div className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
-      <div className="px-3 pt-1 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">
+    <div className="absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[420px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
+      <div className="px-3 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">
         {t('dialogs.slashCommandsHint')}
       </div>
       {items.map((it, i) => (
@@ -88,23 +88,23 @@ export function SlashPalette({ items, active, onPick, onHover }) {
           type="button"
           onMouseDown={(e) => { e.preventDefault(); onPick(it); }}
           onMouseEnter={() => onHover(i)}
-          className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left ${
-            i === active ? 'bg-chip' : ''
+          className={`flex w-full cursor-pointer items-baseline gap-2 px-3 py-1.5 text-start coarse:min-h-11 ${
+            i === active ? 'bg-muted' : ''
           }`}
         >
-          <span className="font-mono text-[11.5px] font-bold text-fg">/{it.name}{it.argumentHint && it.host ? <span className="ms-1 font-normal text-fgdim">{it.argumentHint}</span> : null}</span>
+          <span dir="ltr" className="shrink-0 font-mono text-xs font-medium whitespace-nowrap text-foreground">/{it.name}{it.argumentHint && it.host ? <span className="ms-1 font-normal text-fgdim">{it.argumentHint}</span> : null}</span>
           {it.host ? (
-            <span className="rounded-full bg-brand/30 px-1.5 text-[8.5px] font-bold text-fgdim">host</span>
+            <span className="rounded-sm bg-muted px-1.5 text-2xs text-muted-foreground">host</span>
           ) : it.skill ? (
-            <span data-slash-skill={it.skill} className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">{it.command}</span>
+            <span data-slash-skill={it.skill} className="rounded-sm bg-muted px-1.5 text-2xs text-muted-foreground">{it.command}</span>
           ) : (
             it.name.includes(':') && (
-              <span className="rounded-full border border-hair px-1.5 text-[8.5px] text-fgdim">
+              <span className="rounded-sm bg-muted px-1.5 text-2xs text-muted-foreground">
                 {nsOf(it.name)}
               </span>
             )
           )}
-          {it.desc && <span className="truncate text-[11.5px] md:text-[10.5px] text-fgdim">{it.desc}</span>}
+          {it.desc && <span dir="auto" className="truncate text-xs text-muted-foreground">{it.desc}</span>}
         </button>
       ))}
     </div>
@@ -118,8 +118,8 @@ export function MentionPalette({ items, active, onPick, onHover }) {
   const t = useT();
   if (!items.length) return null;
   return (
-    <div data-mention-palette className="absolute bottom-full left-0 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-[10px] border-[1.5px] border-ink bg-panel py-1 shadow-[3px_3px_0_rgba(0,0,0,0.18)] thin-scroll">
-      <div className="px-3 pt-1 pb-1.5 text-[11px] md:text-[9.5px] font-bold tracking-wide text-fgdim uppercase">{t('dialogs.mentionHint')}</div>
+    <div data-mention-palette className="absolute bottom-full start-0 z-30 mb-1.5 max-h-72 w-[360px] max-w-[92vw] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-pop thin-scroll">
+      <div className="px-3 pt-1 pb-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{t('dialogs.mentionHint')}</div>
       {items.map((a, i) => (
         <button
           key={a.slug}
@@ -127,11 +127,11 @@ export function MentionPalette({ items, active, onPick, onHover }) {
           data-mention-item={a.slug}
           onMouseDown={(e) => { e.preventDefault(); onPick(a); }}
           onMouseEnter={() => onHover(i)}
-          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${i === active ? 'bg-chip' : ''}`}
+          className={`flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-start coarse:min-h-11 ${i === active ? 'bg-muted' : ''}`}
         >
           <AgentAvatar agent={a} size={18} />
-          <span className="font-mono text-[11.5px] font-bold text-fg">@{a.slug}</span>
-          <span className="truncate text-[11.5px] md:text-[10.5px] text-fgdim">{a.name}{a.skills?.length ? ` · ${a.skills.join(', ')}` : ''}</span>
+          <span dir="ltr" className="font-mono text-xs font-medium text-foreground">@{a.slug}</span>
+          <span dir="auto" className="truncate text-xs text-muted-foreground">{a.name}{a.skills?.length ? ` · ${a.skills.join(', ')}` : ''}</span>
         </button>
       ))}
     </div>
@@ -175,7 +175,7 @@ export function TeamPanel({ agents, sessions, onClose, onMention }) {
   };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center md:p-6" onMouseDown={onClose}>
-      <div data-team-panel className="flex max-h-[80vh] w-[520px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]" onMouseDown={(e) => e.stopPropagation()}>
+      <div data-team-panel className="flex max-h-[80vh] w-[520px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-pop" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
           <span className="font-mono text-[13px] font-bold text-fg">{t('dialogs.teamTitle')}</span>
           <span className="font-mono text-[11.5px] md:text-[10px] text-fgdim">{rows.length}</span>
@@ -430,7 +430,7 @@ function CapBody({ caps, session, initialTab, onClose, onPickCommand }) {
       onMouseDown={onClose}
     >
       <div
-        className="flex max-h-[80vh] w-[680px] max-w-full flex-col overflow-hidden rounded-[12px] border-[1.5px] border-ink bg-panel shadow-[4px_4px_0_rgba(0,0,0,0.25)]"
+        className="flex max-h-[80vh] w-[680px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-pop"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-hair px-4 py-3">

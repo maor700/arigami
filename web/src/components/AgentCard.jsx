@@ -10,7 +10,7 @@
 // links only — the card must work from a phone).
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
-import { Icon } from '../lib/icons.js';
+import { Icon } from './ChatIcon.jsx';
 import { useT } from '../lib/i18n.js';
 import { useModels } from '../lib/models.js';
 import { toastError } from '../lib/toast.js';
@@ -23,8 +23,8 @@ import { defineHostComponent, loose, str, any, z } from '../openui/define.js';
 // A3: families are expanded + ENFORCED by the host (server/agent-policy.ts FAMILIES).
 export const TOOL_FAMILIES = ['desktop', 'browser', 'whatsapp', 'gmail', 'calendar', 'drive', 'git', 'sessions', 'triggers', 'web', 'publish'];
 
-const field = 'w-full rounded-[6px] border-[1.5px] border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-[11px] text-[var(--term-accent-strong)] outline-none focus:border-[var(--term-accent-fg)]';
-const label = 'mb-0.5 block font-mono text-[11px] md:text-[9.5px] tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';
+const field = 'w-full rounded-md border border-[var(--term-accent-border)] bg-transparent px-2 py-1 font-mono text-xs text-[var(--term-accent-strong)] outline-none focus:border-[var(--term-accent-fg)]';
+const label = 'mb-0.5 block text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase';
 
 // The emoji-in-a-ring avatar every agent surface uses (rail row, card, page) — lives in the primitives now.
 export { AgentAvatar };
@@ -42,11 +42,11 @@ function useSkillNames() {
 function Pill({ state }) {
   const t = useT();
   const cls = state === 'created' || state === 'updated'
-    ? 'border-ok-line bg-ok-bg text-ok'
+    ? 'border-transparent bg-muted text-[var(--term-accent-fg)]'
     : state === 'cancelled'
       ? 'border-[var(--term-accent-border)] text-[var(--term-accent-dim)]'
-      : 'border-warn-line bg-chip/60 text-fgdim';
-  return <span data-agent-card-state={state} className={`rounded-full border px-2 py-0.5 font-mono text-[11px] md:text-[9.5px] font-bold ${cls}`}>{t(`agent.card.${state}`)}</span>;
+      : 'border-transparent bg-muted text-[var(--term-accent-dim)]';
+  return <span data-agent-card-state={state} className={`rounded-md border px-2 py-0.5 text-xs font-medium ${cls}`}>{t(`agent.card.${state}`)}</span>;
 }
 
 // OPENUI phase 2: a host library component on CardFrame/Btn; ChatPane renders it through HostCard.
@@ -140,7 +140,7 @@ function AgentCardView({ props: { sessionId, event } }) {
             <label className={label}>{t('agent.card.persona')}</label>
             <textarea data-agent-field="persona" dir="auto" rows={5} value={draft.persona} onChange={set('persona')} className={`${field} resize-y leading-relaxed`} />
           </div>
-          <button type="button" data-agent-advanced onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] sm:col-span-2">
+          <button type="button" data-agent-advanced onClick={() => setAdvanced((v) => !v)} className="flex cursor-pointer items-center gap-1 text-xs text-[var(--term-accent-dim)] hover:text-[var(--term-accent-strong)] sm:col-span-2">
             <Icon icon={advanced ? faCaretDown : faCaretRight} /> {t('agent.card.advanced')}
           </button>
           {advanced && (
@@ -171,7 +171,7 @@ function AgentCardView({ props: { sessionId, event } }) {
                 <label className={label}>{t('agent.card.tools')}</label>
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
                   {TOOL_FAMILIES.map((id) => (
-                    <label key={id} className="flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
+                    <label key={id} className="flex cursor-pointer items-center gap-1 text-xs text-[var(--term-accent-fg)]">
                       <input type="checkbox" checked={draft.tools.includes(id)} onChange={() => toggle('tools', id)} /> {t(`agent.tool.${id}`)}
                     </label>
                   ))}
@@ -180,13 +180,13 @@ function AgentCardView({ props: { sessionId, event } }) {
               <div className="sm:col-span-2">
                 <label className={label}>{t('agent.card.skills')}</label>
                 {skillNames === null ? (
-                  <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]"><Icon icon={faCircleNotch} spin /></span>
+                  <span className="text-xs text-[var(--term-accent-dim)]"><Icon icon={faCircleNotch} spin /></span>
                 ) : skillNames.length === 0 ? (
-                  <span className="font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">{t('agent.card.noSkills')}</span>
+                  <span className="text-xs text-[var(--term-accent-dim)]">{t('agent.card.noSkills')}</span>
                 ) : (
                   <div className="flex max-h-[96px] flex-wrap gap-x-3 gap-y-1 overflow-y-auto thin-scroll">
                     {skillNames.map((n) => (
-                      <label key={n} className="flex cursor-pointer items-center gap-1 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-fg)]">
+                      <label key={n} className="flex cursor-pointer items-center gap-1 text-xs text-[var(--term-accent-fg)]">
                         <input type="checkbox" checked={draft.skills.includes(n)} onChange={() => toggle('skills', n)} /> {n}
                       </label>
                     ))}
@@ -195,7 +195,7 @@ function AgentCardView({ props: { sessionId, event } }) {
               </div>
             </>
           )}
-          {err && <div dir="auto" className="rounded-[8px] border border-err-line bg-err-bg px-3 py-1.5 font-mono text-[11.5px] md:text-[10.5px] text-err sm:col-span-2">{err}</div>}
+          {err && <div dir="auto" className="rounded-md border border-[var(--hb-err-line)] bg-[var(--hb-err-bg)] px-3 py-1.5 text-xs text-[var(--term-accent-fg)] sm:col-span-2">{err}</div>}
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <Btn variant="primary" data-agent-confirm onClick={confirm} disabled={busy || !draft.name.trim()}>
               {busy ? t('agent.card.creating') : t('agent.card.confirm')}
@@ -206,7 +206,7 @@ function AgentCardView({ props: { sessionId, event } }) {
       )}
 
       {state !== 'pending' && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11.5px] md:text-[10.5px] text-[var(--term-accent-dim)]">
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--term-accent-dim)]">
           <span className={state === 'cancelled' ? '' : 'text-ok'}>
             <Icon icon={state === 'cancelled' ? faXmark : faCheck} />{' '}
             {state === 'created' && t('agent.card.createdLine', { name: agent?.name || draft.name })}
@@ -224,7 +224,7 @@ function AgentCardView({ props: { sessionId, event } }) {
         </div>
       )}
       {state !== 'pending' && agent?.persona && (
-        <pre dir="auto" className="mt-1.5 max-h-[140px] overflow-auto whitespace-pre-wrap rounded-[8px] border border-[var(--term-accent-border)] px-2.5 py-1.5 text-[11.5px] md:text-[10.5px] leading-relaxed text-[var(--term-accent-fg)] thin-scroll">{agent.persona}</pre>
+        <pre dir="auto" className="mt-1.5 max-h-[140px] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--term-accent-border)] px-2.5 py-1.5 text-xs leading-relaxed text-[var(--term-accent-fg)] thin-scroll">{agent.persona}</pre>
       )}
     </CardFrame>
   );

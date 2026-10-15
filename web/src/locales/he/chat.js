@@ -93,6 +93,7 @@ export const strings = {
   'chat.showFull': 'הצג הכל ({kb} KB)',
   'chat.noMessages': 'אין הודעות עדיין — כתוב משהו למטה.',
   'chat.working': 'עובד…',
+  'chat.plan': 'תוכנית',
   'chat.jumpToLatest': 'קפוץ לאחרון',
 
   // --- ChangesTab: header / navigation ---
