@@ -61,16 +61,16 @@ export default function ScreenView({
       {status === 'connected' && viewScope === 'browser' && !viewOnly && (
         <div
           title={t('rail.screenBrowserScopeHint')}
-          className="pointer-events-none absolute end-2 top-2 rounded-full border border-white/20 bg-black/60 px-2 py-[2px] font-mono text-[9.5px] font-bold uppercase tracking-wide text-white/70"
+          className="pointer-events-none absolute end-2 top-2 rounded-sm border border-white/20 bg-black/60 px-1.5 py-0.5 text-2xs font-medium text-white/70"
         >
           {t('rail.screenBrowserScope')}
         </div>
       )}
       {status !== 'connected' && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-          <div className="max-w-[420px] rounded-[10px] border border-white/15 bg-black/70 px-4 py-3 text-center font-mono text-[12px] text-white/80">
+          <div className="max-w-[420px] rounded-lg border border-white/15 bg-black/70 px-4 py-3 text-center text-sm text-white/80">
             {statusLabel}
-            {detail && <div className="mt-1 text-[11px] text-white/60">{detail}</div>}
+            {detail && <div className="mt-1 text-xs text-white/60">{detail}</div>}
           </div>
         </div>
       )}
