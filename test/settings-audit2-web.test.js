@@ -100,13 +100,13 @@ test('General: the Appearance block (theme, chat theme, language, sizes, accent)
   expect(top).toContain('UI size');
   expect(top).toContain('Accent');
   expect(top).toContain('Chat theme');
+  expect(top).toContain('Text direction');
   expect(top).not.toContain('Record hotkey');
   expect(top).not.toContain('Heartbeat');
   expect(drawerOpen(html)).toBe(false);
   expect(html).toContain('Advanced');
   expect(html).toContain('data-voice-off');
   expect(html).toContain('Accent');
-  expect(html).toContain('Text direction');
   expect(html).toContain('Microphone');
   expect(html).toContain('anonymous usage milestones');
   // The payload preview / anonymous id rows are gone from the UI.

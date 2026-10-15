@@ -20,7 +20,7 @@ import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
 
-export const GENERAL_ADVANCED_IDS = ['terminal', 'voice-advanced', 'heartbeat', 'telemetry'];
+export const GENERAL_ADVANCED_IDS = ['voice-advanced', 'heartbeat', 'telemetry'];
 
 export default function General({ section = '', voiceEnabled = false, recording, setRecording }) {
   const prefs = usePrefs();
@@ -70,6 +70,17 @@ export default function General({ section = '', voiceEnabled = false, recording,
           />
         </Field>
         <ChatTextSize />
+        <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
+          <Segmented
+            value={prefs.termDir}
+            onChange={(v) => setPrefs({ termDir: v })}
+            options={[
+              { value: 'auto', label: t('common.auto') },
+              { value: 'ltr', label: t('common.ltr') },
+              { value: 'rtl', label: t('common.rtl') },
+            ]}
+          />
+        </Field>
         <Field label={t('settings.accent')} hint={t('settings.accent.hint')}>
           <span className="flex items-center gap-2">
             <label className="relative flex h-[1.625rem] w-[2.375rem] cursor-pointer coarse:h-11 coarse:w-11 items-center justify-center overflow-hidden rounded-md border border-input">
@@ -101,20 +112,6 @@ export default function General({ section = '', voiceEnabled = false, recording,
       )}
 
       <Advanced section={section} ids={advIds}>
-
-        <Section id="terminal" title={t('settings.terminal')}>
-          <Field label={t('settings.textDir')} hint={t('settings.textDir.hint')}>
-            <Segmented
-              value={prefs.termDir}
-              onChange={(v) => setPrefs({ termDir: v })}
-              options={[
-                { value: 'auto', label: t('common.auto') },
-                { value: 'ltr', label: t('common.ltr') },
-                { value: 'rtl', label: t('common.rtl') },
-              ]}
-            />
-          </Field>
-        </Section>
 
         <Section id={voiceEnabled ? 'voice-advanced' : 'voice'} title={t('chrome.voice.section')}>
           {!voiceEnabled && (

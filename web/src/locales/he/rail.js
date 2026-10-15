@@ -218,6 +218,8 @@ export const strings = {
   'rail.switchEffortWarnAfter': ' יעצור את הריצה הנוכחית וימשיך את אותה שיחה בטרמינל הזה עם רמת המאמץ החדשה.',
   'rail.clearConversation': 'ניקוי שיחה',
   'rail.readingControls': 'תצוגת הצ׳אט — מצב, גודל טקסט, ערכת נושא, כיוון',
+  'rail.thisChat': 'צ׳אט זה',
+  'rail.chatDisplay': 'תצוגה לצ׳אט זה',
   'rail.chatTheme': 'ערכת נושא לצ׳אט',
   'rail.terminalControls': 'בקרות טרמינל',
   'rail.context': 'הקשר',

@@ -171,7 +171,8 @@ test('General page: System/Light/Dark theme, chat theme "Follow app", accent in 
   const main = src.slice(0, src.indexOf('<Advanced'));
   expect(main).toContain("t('settings.accent')");
   expect(main).toContain('<ChatTextSize />');
-  expect(src).toContain("GENERAL_ADVANCED_IDS = ['terminal'");
+  expect(src).toContain("GENERAL_ADVANCED_IDS = ['voice-advanced'");
+  expect(main).toContain("t('settings.textDir')");
 });
 
 // ---- repo add wording -------------------------------------------------------------------------------
@@ -271,6 +272,11 @@ test('heavy, rarely used parts are code-split: noVNC, highlighter, settings, lau
 
 test('the terminal gear carries the reading group: chat view, text size, direction, chat theme (values translated)', () => {
   const src = read('components/TermControls.jsx');
+  // D10: the header no longer has a gear — only the agent home (no composer) keeps TermControls
+  expect(read('components/SessionView.jsx')).toContain('<ContextChip session={session} />');
+  expect(read('components/SessionView.jsx').match(/<TermControls/g).length).toBe(1);
+  expect(read('components/SessionView.jsx')).toContain("restartSession(session)");
+  expect(src).toContain('export function ChatDisplayItems');
   expect(src).toContain('<ChatModeItems');
   expect(src).toContain('<ChatTextSizeSub />');
   expect(src).toContain("value={t(`common.${view.dir}`)}");

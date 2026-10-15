@@ -221,6 +221,8 @@ export const strings = {
   'rail.switchEffortWarnAfter': ' will stop the current run and resume the same conversation in this terminal with the new effort level.',
   'rail.clearConversation': 'Clear conversation',
   'rail.readingControls': 'Chat display — view, text size, theme, direction',
+  'rail.thisChat': 'this chat',
+  'rail.chatDisplay': 'Display for this chat',
   'rail.chatTheme': 'Chat theme',
   'rail.terminalControls': 'Terminal controls',
   'rail.context': 'Context',

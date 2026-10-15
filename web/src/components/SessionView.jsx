@@ -4,7 +4,7 @@ import { api } from '../lib/api.js';
 import { relTime } from '../lib/time.js';
 import { toastError } from '../lib/toast.js';
 import { errText } from '../lib/errors.js';
-import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention } from '../lib/store.js';
+import { useStore, listenersForSession, fullCapabilities, ensureFullCapabilities, getDraft, setDraft, setLastSent, interruptSession, openScreenRequest, screenPanelOpen, setScreenPanel, setChatMode, needsAttention, restartSession, clearSessionConversation } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { chatModeOf } from '../lib/chatMode.js';
 import { ChatModeItems, ChatTextSizeSub } from './ChatReadingMenu.jsx';
@@ -22,7 +22,7 @@ import { currentTheme, usePrefs, setPrefs } from '../lib/prefs.js';
 import { CHAT_TEXT, stepChatText } from '../lib/chatText.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
-import { ALargeSmall, Archive, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { ALargeSmall, Archive, Eraser, Check, CircleUser, Eye, ListChecks, Monitor, MoreHorizontal, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { Badge, StatusDot, badgeVariants } from './ui/badge.jsx';
 import { Button } from './ui/button.jsx';
 import { Checkbox } from './ui/checkbox.jsx';
@@ -40,7 +40,7 @@ import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
-import TermControls from './TermControls.jsx';
+import TermControls, { ContextChip, ChatDisplayItems } from './TermControls.jsx';
 import LadderBadge from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -372,6 +372,26 @@ function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddT
           mode={mode}
         />
         <ChatTextSizeSub />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger data-chat-display-menu>{t('rail.chatDisplay')}</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <ChatDisplayItems
+              M={{ Group: DropdownMenuGroup, Label: DropdownMenuLabel, RadioGroup: DropdownMenuRadioGroup, RadioItem: DropdownMenuRadioItem }}
+              session={session}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {!session.archived && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={session.claude?.state === 'restarting'} onSelect={() => restartSession(session)}>
+              <RefreshCw /> {session.claude?.state === 'restarting' ? t('rail.restartingEllipsis') : t('rail.restartSession')}
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" disabled={session.claude?.state === 'restarting'} onSelect={() => clearSessionConversation(session)}>
+              <Eraser /> {t('rail.clearConversation')}
+            </DropdownMenuItem>
+          </>
+        )}
         {(session.archived ? onRestore : onArchive) && <DropdownMenuSeparator />}
         {session.archived
           ? onRestore && (
@@ -420,7 +440,7 @@ function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
-        <TermControls session={session} />
+        <ContextChip session={session} />
         <HeaderMenu session={session} mode={mode} meta={meta} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
       </div>
       {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}
