@@ -157,19 +157,20 @@ function PriorityGlyph({ priority }) {
     const c = high ? '#CE8324' : '#A7A9B0';
     const dim = high ? '#CE8324' : '#d8d8d8';
     return (
-      <span className="flex shrink-0 flex-col gap-[1.5px]" aria-hidden="true">
-        <span style={{ width: 4, height: 5, background: dim }} />
-        <span style={{ width: 4, height: 8, background: c }} />
-        <span style={{ width: 4, height: 11, background: high ? c : dim }} />
+      <span className="flex h-3 w-3 shrink-0 items-end justify-center gap-px" aria-hidden="true">
+        <span className="rounded-[1px]" style={{ width: 3, height: 5, background: c }} />
+        <span className="rounded-[1px]" style={{ width: 3, height: 8, background: c }} />
+        <span className="rounded-[1px]" style={{ width: 3, height: 11, background: high ? c : dim }} />
       </span>
     );
   }
   return (
     <span
-      className="shrink-0 rounded-[2px]"
-      style={{ width: 11, height: 4, background: '#d5d8e0' }}
+      className="flex w-3 shrink-0 justify-center"
       aria-hidden="true"
-    />
+    >
+      <span className="rounded-[2px]" style={{ width: 11, height: 4, background: '#d5d8e0' }} />
+    </span>
   );
 }
 
@@ -1086,7 +1087,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
             <div className="flex flex-col gap-2.5">
               <ProvisionRow label="Worktree">app-worktrees/{ticket.id.toLowerCase()}</ProvisionRow>
               <ProvisionRow label="Branch">
-                <Badge mono>feat/{slug(ticket.title) || ticket.id.toLowerCase()}</Badge>
+                <Badge mono className="min-w-0"><span className="truncate">feat/{slug(ticket.title) || ticket.id.toLowerCase()}</span></Badge>
               </ProvisionRow>
               <ProvisionRow label="Dev server">
                 :{config?.devServerPorts?.[0] ?? 'auto'}
