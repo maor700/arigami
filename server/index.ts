@@ -214,6 +214,10 @@ function serveHost(pathname: string, res: ServerResponse): void {
 
 const server = http.createServer(
   (req: IncomingMessage, res: ServerResponse) => {
+    // Baseline hardening headers on every response of this origin (artifacts add their own CSP on top).
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'same-origin');
+    res.setHeader('x-frame-options', 'SAMEORIGIN');
     const pathname = (req.url || '/').split('?')[0];
     // C1: auth gate before ANY routing. Sets req.auth (the principal) and
     // answers 401/302 itself for everything outside the small public allowlist
@@ -284,6 +288,13 @@ const server = http.createServer(
       try {
         pinned = !!hasTarget(req);
       } catch {}
+      // `/` is public so a fresh visitor reaches the login. A pinned proxy target (?__target= / X-Poc-Target) makes the
+      // host fetch an arbitrary URL for the caller — that is for a signed-in user only, never anonymous (SSRF).
+      if (pinned && !(req as any).auth) {
+        res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
+        return;
+      }
       if (!pinned) {
         res.writeHead(302, { location: '/__host/' });
         res.end();

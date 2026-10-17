@@ -249,8 +249,8 @@ test('gate + serve: a share token opens ONE artifact at ONE version, cookie-less
   expect(o.tampered.body).toContain('Link expired');
   expect(o.redirect.status).toBe(302);
   expect(o.redirect.loc).toBe(`/__artifacts/${o.rec.id}/?t=${o.withTok.body.match(/~t\/([^/]+)\//)[1]}`);
-  expect(o.traversal).toBe(403);
-  expect(o.traversalEnc).toBe(403);
+  expect(o.traversal).toBe(400); // refused by the gate before any routing (path tricks are ambiguous)
+  expect(o.traversalEnc).toBe(400);
   expect(o.warnings.some((w) => w.includes('ARIGAMI_PUBLIC_URL'))).toBe(true); // relative link, no public url
   expect(o.rec.shareVersion).toBe(1);
   expect(o.rec.shareExp).toMatch(/^\d{4}-/);

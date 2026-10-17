@@ -158,9 +158,8 @@ themselves (see `docs/SECURITY.md` → Webhooks for the exact schemes).
   secret **once**; the sender signs `"<ts>.<nonce>.<body>"` with it.
 - **Events.** `GET /__api/webhooks/events?kind=&since=&limit=` for any
   principal; the bus broadcasts `{type:'webhook', kind, id}` on arrival.
-- **Legacy.** `/__api/sms/inbound` keeps working unauthenticated for one
-  release with a `Deprecation` header and a log warning — repoint the phone,
-  then it goes away.
+- **Legacy.** `/__api/sms/inbound` is no longer public: it answers 401 without a
+  credential. Repoint the phone at the signed `/__api/webhooks/sms` URL.
 - **Public internet.** Settings → Webhooks → *Funnel* exposes only
   `/__api/webhooks` via `tailscale funnel --set-path` (`GET|POST
   /__api/remote/funnel`). Everything else stays tailnet-only.
