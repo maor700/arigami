@@ -18,7 +18,7 @@ import { ChatFooter } from './Composer.jsx';
 import { HARD_CAP, shouldStream, fileToBase64, uploadAttachment, pendingAttachment, applyUploadEvent, isAlreadyAttached } from '../lib/attachments.js';
 import { Dot, TriggerTag } from './ui.jsx';
 import { t, useT, dirOf, currentLang } from '../lib/i18n.js';
-import { currentTheme, usePrefs, setPrefs } from '../lib/prefs.js';
+import { currentTheme, usePrefs, setPrefs, termViewFrom } from '../lib/prefs.js';
 import { CHAT_TEXT, stepChatText } from '../lib/chatText.js';
 import { statusLabel } from '../lib/status.js';
 import { Icon } from '../lib/icons.js';
@@ -75,6 +75,19 @@ export function resolveTabs(session, hasChildren = false) {
 
 // The ONE status indicator of the header: a neutral chip with a status dot —
 // amber (pulsing) when it is waiting for you, green working, red dead, grey idle.
+// The chat has its own light/dark (per session, "follow app" by default); the composer under it must wear the SAME
+// theme, otherwise a dark transcript sits on a light footer. `data-theme` re-resolves every app token for the
+// subtree (custom properties inherit), and `contents` keeps the layout untouched.
+function ChatThemeScope({ sessionId, children }) {
+  const prefs = usePrefs();
+  const theme = termViewFrom(prefs, sessionId).theme;
+  return (
+    <div data-theme={theme} data-chat-theme-scope className="contents">
+      {children}
+    </div>
+  );
+}
+
 function StatusChip({ session }) {
   const t = useT();
   const cState = session.claude?.state;
@@ -1020,7 +1033,9 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
           <Icon icon={faListCheck} /> {tt(isDesktop ? 'agent.surface.homeHint' : 'agent.surface.homeHintTouch')}
         </button>
       </div>
-      {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+      <ChatThemeScope sessionId={session.id}>
+        {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+      </ChatThemeScope>
     </div>
   );
 }
@@ -1168,7 +1183,9 @@ export default function SessionView({ session, events, chatLoading, addTabOpen, 
                     action={session.action}
                     mode={chatModeOf(session, isDesktop)}
                   />
-                  {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+                  <ChatThemeScope sessionId={session.id}>
+                    {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
+                  </ChatThemeScope>
                 </>
               ) : tab.type === 'changes' ? (
                 <ChangesTab key={session.id} session={session} active={active} />

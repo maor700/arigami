@@ -54,3 +54,13 @@ test('accent budget: no mint fills / text / borders outside logo, wizard logo ba
   }
   expect(bad).toEqual([]);
 });
+
+// The composer wears the chat's theme, not the app's: a dark transcript must not sit on a light footer.
+test('both chat footers are wrapped in ChatThemeScope, which re-resolves tokens with the session chat theme', () => {
+  const sv = src('components/SessionView.jsx');
+  expect(sv).toMatch(/function ChatThemeScope[\s\S]*termViewFrom\(prefs, sessionId\)\.theme[\s\S]*data-theme=\{theme\}/);
+  const wrapped = sv.match(/<ChatThemeScope sessionId=\{session\.id\}>\s*\{session\.archived \? <ArchivedFooter session=\{session\} \/> : <ChatFooter session=\{session\} \/>\}\s*<\/ChatThemeScope>/g) || [];
+  expect(wrapped.length).toBe(2);
+  // no bare footer left
+  expect(sv.replace(/<ChatThemeScope[\s\S]*?<\/ChatThemeScope>/g, '')).not.toContain('<ChatFooter');
+});
