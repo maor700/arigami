@@ -2229,6 +2229,9 @@ export function chatModePrefix(metadata) {
 // Exported: server/codex.ts calls it too — the text is composed once, engine-agnostically, and only then encoded into each CLI's wire format.
 export function composeTurnText(p, text) {
   let txt = text || '';
+  // A slash command (/compact, /context…) only runs when it is the very first thing in the message: any prefix turns it into plain text the model answers.
+  // The one-shot preamble/bootstrap stay queued for the next real message.
+  if (/^\/[a-z][\w:-]*(\s|$)/i.test(txt)) return txt;
   if (!p.resume && !p.sent.length) txt = memoryBootstrapPrefix(p) + txt;
   // LADDER1: one-shot preamble in front of the next message only, never persisted in the chat log.
   if (p.preamble) {

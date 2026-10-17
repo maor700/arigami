@@ -74,3 +74,12 @@ test('composeTurnText prepends the reminder per turn (source-level: after the fi
   // the proc record carries the session id so the metadata is re-read live
   expect(src).toMatch(/const p = \{\n\s+id: s\.id,/);
 });
+
+test('a slash command is sent bare: no reminder/bootstrap/preamble in front of it (else /compact is plain text)', () => {
+  const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/claude.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function composeTurnText('), src.indexOf('function writeUserMessage('));
+  const guard = fn.indexOf('return txt;');
+  expect(guard).toBeGreaterThan(-1);
+  expect(guard).toBeLessThan(fn.indexOf('memoryBootstrapPrefix(p)'));
+  expect(fn.slice(0, guard)).toContain('^\\/[a-z]');
+});
