@@ -1054,6 +1054,7 @@ samp {
    the aliases on the scope makes them resolve against the scope's own --hb-* again. Generated from the :root/@theme
    alias lines above — keep it in sync when an alias is added. */
 [data-chat-theme-scope] {
+  color: var(--hb-fg); /* inherited text (the composer's textarea sets no colour) follows the chat theme, not the root's */
   --accent-fill: var(--color-brand);
   --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
   --accent-strong: color-mix(in oklab, var(--color-brand) 52%, black);

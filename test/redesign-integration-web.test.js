@@ -75,3 +75,9 @@ test('index.css re-declares the alias tokens on the chat theme scope', () => {
   expect(scope).toContain('--background: var(--hb-bg)');
   expect(scope).toContain('[data-chat-theme-scope][data-theme="dark"]');
 });
+
+test('the composer text takes the chat theme colour, not the root one', () => {
+  const css = src('index.css');
+  expect(css.slice(css.indexOf('[data-chat-theme-scope] {'))).toContain('color: var(--hb-fg)');
+  expect(src('components/Composer.jsx')).toMatch(/bg-transparent text-foreground \[unicode-bidi:plaintext\]/);
+});
