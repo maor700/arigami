@@ -37,7 +37,7 @@ import * as orgAccess from './org-access.js';
  */
 export function pathIsAmbiguous(rawPath: string): boolean {
   if (!rawPath.startsWith('/')) return true; // absolute-form ("http://host/..") or garbage
-  if (/[\\\u0000-\u001f\u007f]/.test(rawPath)) return true; // backslash, control chars
+  if (/[\\\u0000-\u001f\u007f#]/.test(rawPath)) return true; // backslash, control chars, fragment
   if (/%(?:2f|5c|00|0[0-9a-f]|1[0-9a-f]|7f)/i.test(rawPath)) return true; // encoded slash / backslash / control
   for (const seg of rawPath.split('/')) {
     let d = seg;
@@ -53,7 +53,7 @@ export function pathIsAmbiguous(rawPath: string): boolean {
 
 /** `{ path, ambiguous }` for a raw `req.url` — `path` is what every router and the gate must use. */
 export function requestPath(rawUrl: string | undefined): { path: string; ambiguous: boolean } {
-  const raw = (rawUrl || '/').split('?')[0].split('#')[0];
+  const raw = (rawUrl || '/').split('?')[0];
   return { path: raw, ambiguous: pathIsAmbiguous(raw) };
 }
 

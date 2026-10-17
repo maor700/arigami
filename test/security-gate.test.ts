@@ -29,6 +29,9 @@ describe('request path reading', () => {
       '/__api/auth%2f..%2fsessions',
       '/__api/auth/%00/../sessions',
       '/__api/auth/%zz',
+      '/#',
+      '/__health#',
+      '/__ws#x',
       'http://evil.example/__api/sessions',
       '__api/sessions',
     ]) {
@@ -41,7 +44,8 @@ describe('request path reading', () => {
     }
   });
   test('requestPath drops the query and fragment', () => {
-    expect(requestPath('/a/b?x=1#h')).toEqual({ path: '/a/b', ambiguous: false });
+    expect(requestPath('/a/b?x=1')).toEqual({ path: '/a/b', ambiguous: false });
+    expect(requestPath('/a/b#h').ambiguous).toBe(true); // a fragment never reaches a server — a client that sends one is probing
     expect(requestPath(undefined)).toEqual({ path: '/', ambiguous: false });
     expect(requestPath('/__api/auth/../x?y=1').ambiguous).toBe(true);
   });
@@ -132,6 +136,22 @@ describe('auth gate (real host, authentication ON)', () => {
     const b = await raw('/', { 'x-poc-target': `http://127.0.0.1:${port}/__health` });
     expect(b.status).toBe(401);
     expect(b.body).not.toContain('busySessions');
+  });
+  test('a fragment in the request target cannot hide the path from the gate (reviewer finding)', async () => {
+    const a = await raw('/#', { 'x-poc-target': `http://127.0.0.1:${port}/__health` });
+    expect(a.status).toBe(400);
+    expect(a.body).not.toContain('busySessions');
+    expect((await raw('/__health#')).status).toBe(400);
+    const c = await raw('/', { cookie: `poc_target=${encodeURIComponent(`http://127.0.0.1:${port}`)}` });
+    expect([401, 302]).toContain(c.status);
+    expect(c.body).not.toContain('busySessions');
+  });
+  test('no anonymous request reaches the dev-server proxy on any other path either', async () => {
+    for (const p of ['/some/page', '/app.js', '/__proxy-probe']) {
+      const r = await raw(p, { 'x-poc-target': `http://127.0.0.1:${port}/__health` });
+      expect([401, 302]).toContain(r.status);
+      expect(r.body).not.toContain('busySessions');
+    }
   });
   test('the legacy SMS inbound is no longer public', async () => {
     expect((await raw('/__api/sms/inbound?from=x&text=y')).status).toBe(401);
