@@ -75,7 +75,7 @@ COPY --from=oven/bun:1-debian /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx && bun --version
 
 # --- Claude Code CLI (pinned to match local; bin → /usr/local/bin/claude) ---
-RUN npm install -g @anthropic-ai/claude-code@2.1.196 && claude --version \
+RUN npm install -g @anthropic-ai/claude-code@2.1.302 && claude --version \
     && npm cache clean --force && rm -rf /root/.npm
 
 # --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs).
