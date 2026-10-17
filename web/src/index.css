@@ -1047,3 +1047,108 @@ samp {
     scroll-behavior: auto !important;
   }
 }
+
+/* ------- scoped theme (the chat's composer wears the chat's theme) -------
+   `--color-*` and the shadcn tokens are ALIASES (`--color-panel: var(--hb-panel)`) declared on :root, so a descendant
+   that only re-declares `--hb-*` (a nested [data-theme]) would keep the root's already-resolved values. Re-declaring
+   the aliases on the scope makes them resolve against the scope's own --hb-* again. Generated from the :root/@theme
+   alias lines above — keep it in sync when an alias is added. */
+[data-chat-theme-scope] {
+  --accent-fill: var(--color-brand);
+  --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
+  --accent-strong: color-mix(in oklab, var(--color-brand) 52%, black);
+  --accent-tint: color-mix(in oklab, var(--color-brand) 14%, var(--hb-bg));
+  --accent-line: var(--color-brand);
+  --background: var(--hb-bg);
+  --foreground: var(--hb-fg);
+  --card: var(--hb-panel);
+  --card-foreground: var(--hb-fg);
+  --popover: var(--hb-panel);
+  --popover-foreground: var(--hb-fg);
+  --primary: var(--accent-fill);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--hb-hover);
+  --secondary-foreground: var(--hb-fg);
+  --muted: var(--hb-hover);
+  --muted-foreground: var(--hb-fgdim);
+  --accent: var(--hb-hover);
+  --accent-foreground: var(--hb-fg);
+  --destructive: var(--hb-err);
+  --destructive-foreground: var(--hb-bg);
+  --border: var(--hb-hair);
+  --input: var(--hb-border);
+  --ring: color-mix(in oklab, var(--color-brand) 70%, black);
+  --sidebar: var(--hb-rail);
+  --sidebar-foreground: var(--hb-fg);
+  --sidebar-border: var(--hb-hair);
+  --elev-pop: 0 4px 16px rgb(0 0 0 / 0.1), 0 0 0 1px var(--hb-hair);
+  --elev-dialog: 0 16px 48px rgb(0 0 0 / 0.16), 0 0 0 1px var(--hb-hair);
+  --color-brand-ink: var(--accent-strong);
+  --color-ink: var(--hb-ink);
+  --color-chip: var(--hb-chip);
+  --color-hair: var(--hb-hair);
+  --color-suggest: var(--hb-suggest);
+  --color-suggest-fg: var(--hb-suggest-fg);
+  --color-suggest-line: var(--hb-suggest-line);
+  --color-suggest-label: var(--hb-suggest-label);
+  --color-ok: var(--hb-ok);
+  --color-ok-bg: var(--hb-ok-bg);
+  --color-ok-line: var(--hb-ok-line);
+  --color-warn: var(--hb-warn);
+  --color-warn-bg: var(--hb-warn-bg);
+  --color-warn-line: var(--hb-warn-line);
+  --color-err: var(--hb-err);
+  --color-err-bg: var(--hb-err-bg);
+  --color-err-line: var(--hb-err-line);
+  --color-info: var(--hb-info);
+  --color-info-bg: var(--hb-info-bg);
+  --color-info-line: var(--hb-info-line);
+  --color-violet: var(--hb-violet);
+  --color-violet-bg: var(--hb-violet-bg);
+  --color-violet-line: var(--hb-violet-line);
+  --color-rail: var(--hb-rail);
+  --color-danger: var(--hb-err);
+  --color-diffadd: var(--hb-ok);
+  --color-diffdel: var(--hb-err);
+  --color-bg: var(--hb-bg);
+  --color-panel: var(--hb-panel);
+  --color-fg: var(--hb-fg);
+  --color-fgdim: var(--hb-fgdim);
+  --color-faint: var(--hb-faint);
+  --color-border: var(--hb-border);
+  --color-fg2: var(--hb-fg2);
+  --color-sel: var(--hb-sel);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-hover: var(--hb-hover);
+  --color-on-accent: var(--on-accent);
+  --shadow-pop: var(--elev-pop);
+  --shadow-dialog: var(--elev-dialog);
+  --shadow-card: var(--elev-card);
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-out);
+}
+[data-chat-theme-scope][data-theme="dark"] {
+  --ring: var(--color-brand);
+  --accent-hover: color-mix(in oklab, var(--color-brand) 92%, black);
+  --accent-strong: var(--color-brand);
+  --accent-tint: color-mix(in oklab, var(--color-brand) 18%, var(--hb-bg));
+  --destructive-foreground: var(--hb-bg);
+  --elev-pop: 0 4px 16px rgb(0 0 0 / 0.4), 0 0 0 1px var(--hb-hair);
+  --elev-dialog: 0 16px 48px rgb(0 0 0 / 0.5), 0 0 0 1px var(--hb-hair);
+}

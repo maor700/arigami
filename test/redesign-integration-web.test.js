@@ -64,3 +64,14 @@ test('both chat footers are wrapped in ChatThemeScope, which re-resolves tokens 
   // no bare footer left
   expect(sv.replace(/<ChatThemeScope[\s\S]*?<\/ChatThemeScope>/g, '')).not.toContain('<ChatFooter');
 });
+
+// `--color-*` / shadcn tokens are aliases resolved on :root; a nested [data-theme] only re-resolves them if the alias
+// lines are re-declared on the scope (verified in a real browser: dark panel inside a light page).
+test('index.css re-declares the alias tokens on the chat theme scope', () => {
+  const css = src('index.css');
+  const scope = css.slice(css.indexOf('[data-chat-theme-scope] {'));
+  expect(scope).toContain('--color-panel: var(--hb-panel)');
+  expect(scope).toContain('--color-bg: var(--hb-bg)');
+  expect(scope).toContain('--background: var(--hb-bg)');
+  expect(scope).toContain('[data-chat-theme-scope][data-theme="dark"]');
+});
