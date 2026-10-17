@@ -792,7 +792,7 @@ How it is built (`src/gate.ts`, the `/auth/verify` route in `src/server.ts`):
   plain 200, and the edge then proxies the real upgrade to the pod. A 403/302 refuses the upgrade.
 - **Inbound webhooks skip the gate** — `^/__api/webhooks/(sms|slack|github|custom/<id>)$`, mirrored from
   `server/webhooks.ts INBOUND_RE`. They come from machines with no session and each verifies its own HMAC/token
-  in the tenant. Everything else, including the legacy unauthenticated `/__api/sms/inbound` and shared-artifact
+  in the tenant. Everything else, including the legacy `/__api/sms/inbound` (no longer public) and shared-artifact
   links (`/__artifacts/…?t=`), now needs the owner's session: a share link only opens for its owner.
 - **Admin POSTs check `Origin`.** Every tenant host is same-site with the control plane, so `SameSite=Lax`
   never stopped a page served from a tenant posting to `/admin/…`; a POST with a foreign `Origin` is now 403.

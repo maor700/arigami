@@ -29,7 +29,7 @@ import * as artifacts from './artifacts.js';
 import * as extServe from './ext-serve.js';
 import { setDrainHandler, healthBody } from './host-control.js';
 import { validateAuthBind } from './lib/config.js';
-import { auth } from './auth.js';
+import { auth, requestPath } from './auth.js';
 // K2: share-token gate for cookie-less artifact links (see auth.ts ShareGate).
 auth.setShareGate(artifacts.shareGate);
 // EXT3: the same gate for an extension tab's own assets — the sandboxed page
@@ -214,7 +214,11 @@ function serveHost(pathname: string, res: ServerResponse): void {
 
 const server = http.createServer(
   (req: IncomingMessage, res: ServerResponse) => {
-    const pathname = (req.url || '/').split('?')[0];
+    // Baseline hardening headers on every response of this origin (artifacts add their own CSP on top).
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'same-origin');
+    res.setHeader('x-frame-options', 'SAMEORIGIN');
+    const pathname = requestPath(req.url).path;
     // C1: auth gate before ANY routing. Sets req.auth (the principal) and
     // answers 401/302 itself for everything outside the small public allowlist
     // (auth.ts isPublicPath). The proxy, host pages and /__artifacts (A1/K2)
@@ -284,11 +288,25 @@ const server = http.createServer(
       try {
         pinned = !!hasTarget(req);
       } catch {}
+      // `/` is public so a fresh visitor reaches the login. A pinned proxy target (?__target= / X-Poc-Target) makes the
+      // host fetch an arbitrary URL for the caller — that is for a signed-in user only, never anonymous (SSRF).
+      if (pinned && !(req as any).auth) {
+        res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
+        return;
+      }
       if (!pinned) {
         res.writeHead(302, { location: '/__host/' });
         res.end();
         return;
       }
+    }
+    // Past this point is the dev-server proxy / host pages: never for an anonymous caller (the only public path
+    // that may reach here is the service-worker script itself).
+    if (!(req as any).auth && pathname !== '/__poc-sw.js') {
+      res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: 'unauthorized', login: '/__host/' }));
+      return;
     }
     try {
       if (handlePage(req, res)) return;
@@ -313,7 +331,7 @@ server.on(
     // A throw in this handler is an uncaught exception on the 'upgrade' event
     // and kills the process (with it, every running Claude session). Guard it.
     try {
-      const pathname = (req.url || '').split('?')[0];
+      const pathname = requestPath(req.url).path;
       // C1: /__ws, /__vnc, /__screencast and the SW proxy's websockets all
       // need the cookie (or an internal bearer) — an anonymous upgrade is
       // answered 401 + closed.

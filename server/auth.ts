@@ -27,6 +27,36 @@ import { secret } from './lib/secrets.js';
 import * as orgAccess from './org-access.js';
 
 // 'viewer' only ever comes from a shared workspace's handoff/roster (server/org-access.ts): it can look, not act.
+/**
+ * The ONE way the host reads a request's path. The auth gate decided on `req.url.split('?')[0]` while the API router
+ * used `new URL(req.url).pathname` — and the URL parser collapses dot segments, so `/__api/auth/../sessions` was a
+ * public path to the gate and `/__api/sessions` to the router: every API route without a credential. Now the gate
+ * REFUSES any path whose meaning depends on normalisation (dot segments in any encoding, backslashes, encoded
+ * slashes, NUL/control characters, an absolute-form target) and the rest is, by construction, identical in both
+ * readings. Nothing legitimate sends any of these.
+ */
+export function pathIsAmbiguous(rawPath: string): boolean {
+  if (!rawPath.startsWith('/')) return true; // absolute-form ("http://host/..") or garbage
+  if (/[\\\u0000-\u001f\u007f#]/.test(rawPath)) return true; // backslash, control chars, fragment
+  if (/%(?:2f|5c|00|0[0-9a-f]|1[0-9a-f]|7f)/i.test(rawPath)) return true; // encoded slash / backslash / control
+  for (const seg of rawPath.split('/')) {
+    let d = seg;
+    try {
+      d = decodeURIComponent(seg);
+    } catch {
+      return true; // malformed percent-encoding
+    }
+    if (d === '.' || d === '..') return true;
+  }
+  return false;
+}
+
+/** `{ path, ambiguous }` for a raw `req.url` — `path` is what every router and the gate must use. */
+export function requestPath(rawUrl: string | undefined): { path: string; ambiguous: boolean } {
+  const raw = (rawUrl || '/').split('?')[0];
+  return { path: raw, ambiguous: pathIsAmbiguous(raw) };
+}
+
 export type Role = 'admin' | 'user' | 'viewer';
 
 export interface ApiToken {
@@ -449,9 +479,8 @@ export function createAuth(opts: AuthOptions) {
     // The control-plane's profile rollout: verifies its own operator token
     // (server/handoff.ts verifyOperator) and refuses everything else.
     if (pathname === '/__api/profiles/rollout') return true;
-    // Pre-C3 phone webhook, unauthenticated for ONE more release (deprecation
-    // warning in the log; see docs/SECURITY.md). Remove with the legacy handler.
-    if (pathname === '/__api/sms/inbound' || pathname.startsWith('/__api/sms/inbound/')) return true;
+    // The pre-C3 phone webhook (/__api/sms/inbound) used to be public with no credential at all: anyone could feed
+    // text into the agent's SMS sink. It now needs a normal principal; the signed route is /__api/webhooks/sms.
     if (pathname.startsWith('/__artifacts/')) return false; // K2: ?t= share tokens handled in gate() via shareGate
     if (pathname.startsWith('/__ext/')) return false; // EXT3: ~t/ asset tokens handled in gate() via extGate
     return false;
@@ -459,7 +488,13 @@ export function createAuth(opts: AuthOptions) {
 
   // Returns true when the request was answered (401/302) and must not be routed.
   function gate(req: IncomingMessage, res: ServerResponse): boolean {
-    const pathname = (req.url || '/').split('?')[0];
+    const rp = requestPath(req.url);
+    if (rp.ambiguous) {
+      res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ error: 'bad request path' }));
+      return true;
+    }
+    const pathname = rp.path;
     const p = principal(req);
     (req as any).auth = p;
     const refused = orgAccess.refusal(req, p, pathname, { publicUrl: opts.publicUrl });
@@ -502,9 +537,17 @@ export function createAuth(opts: AuthOptions) {
 
   // WebSocket upgrades (/__ws, /__vnc, SW proxy): cookie or bearer, else 401 + close.
   function gateUpgrade(req: IncomingMessage, socket: { write: (s: string) => void; destroy: () => void }): boolean {
+    const rp = requestPath(req.url);
+    if (rp.ambiguous) {
+      try {
+        socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        socket.destroy();
+      } catch {}
+      return true;
+    }
     const p = principal(req);
     (req as any).auth = p;
-    const refused = orgAccess.refusal(req, p, (req.url || '').split('?')[0], { publicUrl: opts.publicUrl, upgrade: true });
+    const refused = orgAccess.refusal(req, p, rp.path, { publicUrl: opts.publicUrl, upgrade: true });
     if (p && !refused) return false;
     try {
       socket.write(refused ? 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');

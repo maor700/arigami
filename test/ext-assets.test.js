@@ -117,7 +117,7 @@ const BODY = `
   srv.close();emit(out);
 `;
 
-test('EXT3: the SDK is public; a sandboxed tab loads its own assets through an extension-scoped token; forged/expired/other-ext/disabled → 401; traversal → 403', () => {
+test('EXT3: the SDK is public; a sandboxed tab loads its own assets through an extension-scoped token; forged/expired/other-ext/disabled → 401; traversal → 400', () => {
   const dir = tmp();
   makeExt(dir);
   makeTabless(dir);
@@ -170,8 +170,8 @@ test('EXT3: the SDK is public; a sandboxed tab loads its own assets through an e
   expect(o.garbage).toBe(401);
 
   // 7 — traversal
-  expect(o.traversal).toBe(403);
-  expect(o.traversalEnc).toBe(403);
+  expect(o.traversal).toBe(400); // refused by the gate before any routing (path tricks are ambiguous)
+  expect(o.traversalEnc).toBe(400);
   expect(o.traversalAuthed).toBe(404); // normalized away by fetch before it ships
 
   // 8 — the trailing-slash redirect keeps the query
