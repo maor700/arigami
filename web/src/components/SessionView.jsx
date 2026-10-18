@@ -31,14 +31,14 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dial
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
 import { Tip } from './ui/tooltip.jsx';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
-import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faListCheck, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUp, faBoxArchive, faCaretDown, faCaretUp, faCheck, faCircleUser, faDisplay, faEye, faFile, faGripVertical, faHourglassHalf, faImage, faPaperclip, faPlay, faReply, faRotateRight, faStop, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import TabBar from './TabBar.jsx';
 import ChatPane from './ChatPane.jsx';
 import ChangesTab from './ChangesTab.jsx';
 import OrchestrationTab from './OrchestrationTab.jsx';
 import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
-import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems, lastHumanText } from '../lib/composer.js';
+import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls, { ContextChip, ChatDisplayItems } from './TermControls.jsx';
 import LadderBadge from './LadderBadge.jsx';
@@ -982,29 +982,10 @@ function ContentTab({ tab }) {
  * The same transcript and composer a session has, minus the session chrome (no
  * tab bar, no "claude-code" terminal header): this is a DM with the agent, not a
  * job. It is no longer reachable as a rail row — the surface owns it.
- *
- * The hint chip above the composer is the bridge to the other half of the model:
- * one click turns the human's last message into a real work session born from
- * the agent (`/as` under the hood), which then lives in the Sessions section.
  */
 export function AgentHomeChat({ session, events, loading, agent, onOpenSession }) {
   const tt = useT();
   const isDesktop = useIsDesktop();
-  const [busy, setBusy] = useState(false);
-  const ask = lastHumanText(events);
-  const toWork = async () => {
-    if (busy) return;
-    if (!ask) return toastError(tt('agent.surface.homeHintEmpty'));
-    setBusy(true);
-    try {
-      const r = await api.post(`/sessions/${session.id}/delegate`, { agent: agent.slug, text: ask, mode: 'as' });
-      if (r?.target) onOpenSession?.(r.target);
-    } catch (e) {
-      toastError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <div data-agent-home={agent.slug} className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-end gap-1.5 border-b border-hair px-3.5 py-1">
@@ -1021,18 +1002,6 @@ export function AgentHomeChat({ session, events, loading, agent, onOpenSession }
         action={session.action}
         mode={chatModeOf(session, isDesktop)}
       />
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-hair bg-panel px-3.5 pt-1.5 text-[11.5px] md:text-[10.5px] text-fgdim">
-        <button
-          type="button"
-          data-home-to-work
-          disabled={busy}
-          title={tt('agent.surface.homeHintAction')}
-          onClick={toWork}
-          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2 py-0.5 font-mono text-[11.5px] md:text-[10px] hover:border-ink hover:text-fg disabled:opacity-50"
-        >
-          <Icon icon={faListCheck} /> {tt(isDesktop ? 'agent.surface.homeHint' : 'agent.surface.homeHintTouch')}
-        </button>
-      </div>
       <ChatThemeScope sessionId={session.id}>
         {session.archived ? <ArchivedFooter session={session} /> : <ChatFooter session={session} />}
       </ChatThemeScope>

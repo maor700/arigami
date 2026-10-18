@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'web/src');
-const css = fs.readFileSync(path.join(SRC, 'index.css'), 'utf8');
+const css = fs.readFileSync(path.join(SRC, 'index.css'), 'utf8').replaceAll(':root,\n[data-theme="light"] {', ':root {'); // the light blocks also open a light chat-theme scope
 
 const sources = (dir = SRC) =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {

@@ -1,6 +1,7 @@
 // Desktop control: engine-neutral screenshot + pointer/keyboard tools on the session's own desktop.
 // The display-free parts are tested here: argv mapping for xinput.py, validation, and the MCP image block.
 import { test, expect } from 'bun:test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,4 +43,14 @@ test('toMcpContent: an __image result becomes a real image block + JSON text; a 
   expect(JSON.parse(img[1].text)).toEqual({ ok: true, width: 10 }); // the image bytes are not repeated in the text
   expect(toMcpContent({ ok: true })).toEqual([{ type: 'text', text: '{"ok":true}' }]);
   expect(toMcpContent(undefined)).toEqual([{ type: 'text', text: '{"ok":true}' }]);
+});
+
+// Regression: the session `desktop/*` catch-all used to answer desktop/type|clipboard|selection with
+// "unknown desktop op" before their own routes ran, so pasting into a session's screen always failed.
+test('api: the desktop control route claims only its own ops (paste/copy routes stay reachable)', () => {
+  const src = fs.readFileSync(new URL('../server/api.ts', import.meta.url), 'utf8');
+  expect(src).not.toMatch(/sub\.startsWith\('desktop\/'\)/);
+  const gate = src.indexOf("/^desktop\\/(screenshot|act|launch|quit)$/");
+  expect(gate).toBeGreaterThan(-1);
+  for (const op of ['type', 'clipboard', 'selection']) expect(src.indexOf(`sub === 'desktop/${op}'`)).toBeGreaterThan(-1);
 });

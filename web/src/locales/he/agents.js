@@ -212,12 +212,7 @@ export const strings = {
   'agent.surface.homeTitle': 'צ׳אט הבית',
   'agent.surface.homeOpening': 'פותח את צ׳אט הבית…',
   'agent.surface.homeFailed': 'לא הצלחתי לפתוח את צ׳אט הבית: {err}',
-  'agent.surface.homeHint': 'רוצה שיבצע משימה? כתוב /as או גרור לתיקייה',
   // מובייל: אין גרירה באצבע — הרמז נשאר רק על מה שאפשר לעשות במגע
-  'agent.surface.homeHintTouch': 'רוצה שיבצע משימה? כתוב /as',
-  'agent.surface.homeHintAction': 'הפוך את ההודעה האחרונה לסשן עבודה',
-  'agent.surface.homeHintEmpty': 'קודם כתוב משהו — סשן העבודה מתחיל מההודעה האחרונה שלך.',
-  'agent.surface.homeHintDone': 'נוצר סשן עבודה',
   'agent.runs.title': 'סשנים שנולדו מהסוכן הזה',
   'agent.runs.empty': 'עוד אין סשני עבודה. {oneLiner}',
   'agent.runs.turns': '{n} תורות',

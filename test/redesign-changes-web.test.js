@@ -56,7 +56,7 @@ test('diff: split columns are pinned LTR (old left, new right) so Hebrew does no
 });
 
 test('diff: the tokens exist in light and dark', () => {
-  const css = read('index.css');
+  const css = read('index.css').replaceAll(':root,\n[data-theme="light"] {', ':root {'); // the light blocks also open a light chat-theme scope
   const light = css.slice(css.indexOf(':root {\n  --diff-add-bg'), css.indexOf('[data-theme="dark"] {\n  --diff-add-bg'));
   const dark = css.slice(css.indexOf('[data-theme="dark"] {\n  --diff-add-bg'));
   for (const name of ['--diff-add-bg', '--diff-del-bg', '--diff-add-gutter', '--diff-del-gutter', '--diff-add-mark', '--diff-del-mark', '--diff-gap-bg', '--diff-hunk-bg']) {

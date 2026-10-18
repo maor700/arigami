@@ -10,7 +10,7 @@ isolate();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const web = (p) => path.join(ROOT, 'web/src', p);
-const css = fs.readFileSync(web('index.css'), 'utf8');
+const css = fs.readFileSync(web('index.css'), 'utf8').replaceAll(':root,\n[data-theme="light"] {', ':root {'); // the light blocks also open a light chat-theme scope
 
 // the declarations of every rule whose selector is exactly `sel`
 const decls = (sel) => {

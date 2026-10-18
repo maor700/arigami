@@ -6347,7 +6347,9 @@ export async function handle(
     // capture_screen: one frame of the shared desktop → screenshot chat event.
     // DESKTOP CONTROL (engine-neutral; MCP tools desktop_* call these): a fresh screenshot returned as data,
     // and pointer/keyboard actions on the session's OWN desktop. Linux/x11 today.
-    if (sub.startsWith('desktop/') && m === 'POST') {
+    // Only the ops handled here: desktop/type, /clipboard and /selection (the paste/copy path) have their own routes
+    // further down — a catch-all here answered them "unknown desktop op" and broke paste into the session screen.
+    if (/^desktop\/(screenshot|act|launch|quit)$/.test(sub) && m === 'POST') {
       if (!cfg.screen?.enabled) return json(res, { ok: false, error: 'screen share disabled', ...caps.needsSetup('desktop', 'control the desktop') });
       const op = sub.slice('desktop/'.length);
       const body = ((await readBody(req).catch(() => ({}))) || {}) as any;

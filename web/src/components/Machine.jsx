@@ -74,10 +74,12 @@ function MiniStat({ label, pct, detail }) {
 // One row, not the full panel's stacked sliders — the rail has no room for
 // three 2-line bars, especially on mobile where this sits above the usage
 // strip and footer.
-export function MachineMini() {
+// `quiet` (the phone rail): only show up when the machine is under pressure — otherwise it is Settings' business.
+export function MachineMini({ quiet = false }) {
   const t = useT();
   const { snap } = useResources(15_000, 1);
   if (!snap) return null;
+  if (quiet && (PRESSURE[snap.pressure] || 'ok') === 'ok') return null;
   const sp = swapPct(snap);
   return (
     <button

@@ -68,7 +68,8 @@ test('Launcher source: ticket tab gated on Linear, empty form has an Advanced fo
 
 test('Rail source: Pending/Triggers and Usage are hidden until a session exists', () => {
   const src = fs.readFileSync(web('components/Rail.jsx'), 'utf8');
-  expect(src).toMatch(/\{\(serverCount > 0 \|\| \(pending \|\| \[\]\)\.length > 0\) && \(\s*<PendingSection/);
+  // a phone shows Pending only when something is queued (the rail's height belongs to the sessions)
+  expect(src).toMatch(/\{\(\(isDesktop && serverCount > 0\) \|\| \(pending \|\| \[\]\)\.length > 0\) && \(\s*<PendingSection/);
   expect(src).toMatch(/\{serverCount > 0 && <UsageMini/);
 });
 

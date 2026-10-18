@@ -52,7 +52,9 @@
    ===================================================================== */
 
 /* ---- neutral ramps (light) -------------------------------------------- */
-:root {
+/* [data-theme="light"]: a light chat scope inside a dark app re-declares the light ramp (custom props inherit the root's dark otherwise) */
+:root,
+[data-theme="light"] {
   color-scheme: light;
   --hb-bg: oklch(1 0 175); /* main content background */
   --hb-panel: oklch(0.985 0.002 175); /* raised surfaces: dialogs, menus, cards */
@@ -805,7 +807,8 @@ body {
    DiffCard. Alpha tints, so they sit on any surface (app light/dark, the
    chat pane's own theme). Quiet on purpose: the sign + gutter carry the
    meaning, the row tint only supports it. */
-:root {
+:root,
+[data-theme="light"] {
   --diff-add-bg: oklch(0.62 0.15 150 / 0.10);
   --diff-del-bg: oklch(0.6 0.17 25 / 0.09);
   --diff-add-gutter: oklch(0.62 0.15 150 / 0.20);

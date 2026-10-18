@@ -808,7 +808,9 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
 
   return (
     <TooltipProvider>
-    <div className="relative min-h-0 flex-1">
+    {/* The transcript wears the chat's theme for the app tokens too (buttons, badges, cards read --foreground/--card…),
+        not just --term-*; otherwise a light-app button sits in a dark chat (text invisible until hover). */}
+    <div data-theme={view.theme} data-chat-theme-scope className="relative min-h-0 flex-1">
     <div
       ref={scrollRef}
       onScroll={onScroll}

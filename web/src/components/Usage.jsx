@@ -102,7 +102,7 @@ function MiniBar({ title, win }) {
 // nothing when usage isn't available so the rail stays clean. Collapsible:
 // collapsed (default) shows only the 5h session line; expanded adds the 7d
 // week window too. State persists across sessions via prefs.
-export function UsageMini({ usage, provider = 'claude' }) {
+export function UsageMini({ usage, provider = 'claude', chip = false }) {
   const t = useT();
   const prefs = usePrefs();
   const desktop = useIsDesktop();
@@ -112,27 +112,25 @@ export function UsageMini({ usage, provider = 'claude' }) {
   const label = (which) => provider === 'codex' ? windowLabel(t, provider, which, usage[which]) : t(which === 'session' ? 'dialogs.sessionWindow5h' : 'dialogs.weekWindow7d');
   const toggle = () => setPrefs({ usageExpanded: !expanded });
   if (!desktop) {
-    // Phone: ONE line — engine, title, the session bar with its %, and the expander. The week window
-    // opens below it only when expanded.
+    // Phone: the rail is for sessions — usage is a small "N%" chip in the footer row (`chip`), and the bars open
+    // above the footer (the default render) only while expanded.
     const win = usage.session || usage.week;
     const used = Math.max(0, Math.min(100, win.pct ?? 0));
-    return (
-      <div className="border-t border-border px-3 py-1" data-usage-mini-phone>
-        <button type="button" onClick={toggle} aria-expanded={expanded} className="flex min-h-11 w-full cursor-pointer items-center gap-2 text-2xs text-muted-foreground hover:text-foreground">
-          <span className="shrink-0 font-medium text-foreground">{provider === 'codex' ? 'Codex' : 'Claude'}</span>
-          <span className="shrink-0">{t('dialogs.usageShort')}</span>
-          <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted" title={label(usage.session ? 'session' : 'week')}>
+    if (chip) {
+      return (
+        <button type="button" onClick={toggle} aria-expanded={expanded} aria-label={`${provider === 'codex' ? 'Codex' : 'Claude'} ${t('dialogs.usageShort')} ${used}%`} data-usage-mini-phone title={label(usage.session ? 'session' : 'week')} className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-2xs text-muted-foreground hover:bg-muted hover:text-foreground">
+          <span className="h-1 w-8 overflow-hidden rounded-full bg-muted">
             <span className="block h-full rounded-full" style={{ width: `${used}%`, background: barTone(100 - used) }} />
           </span>
-          <span className="shrink-0 font-medium tabular-nums" style={{ color: 100 - used <= 30 ? leftColor(100 - used) : undefined }}>{used}%</span>
-          {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          <span className="font-medium tabular-nums" style={{ color: 100 - used <= 30 ? leftColor(100 - used) : undefined }}>{used}%</span>
         </button>
-        {expanded && (
-          <div className="mt-1 mb-1.5 flex flex-col gap-2">
-            {usage.session && <MiniBar title={label('session')} win={usage.session} />}
-            <MiniBar title={label('week')} win={usage.week} />
-          </div>
-        )}
+      );
+    }
+    if (!expanded) return null;
+    return (
+      <div className="flex flex-col gap-2 border-t border-border px-3 py-2" data-usage-mini-phone-bars>
+        {usage.session && <MiniBar title={label('session')} win={usage.session} />}
+        <MiniBar title={label('week')} win={usage.week} />
       </div>
     );
   }

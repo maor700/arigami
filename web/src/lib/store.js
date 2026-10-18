@@ -399,6 +399,14 @@ export async function loadFolders() {
   }
 }
 
+// Fold/unfold a rail folder. Optimistic: the round-trip (PATCH → folders-updated broadcast) made the chevron feel
+// dead on a phone; flip it locally now, and put it back if the server refuses.
+export function setFolderCollapsed(id, collapsed) {
+  const flip = (v) => setState({ folders: state.folders.map((f) => (f.id === id ? { ...f, collapsed: v } : f)) });
+  flip(collapsed);
+  return api.patch(`/folders/${id}`, { collapsed }).catch(() => flip(!collapsed));
+}
+
 // A1: the team. Cheap (a directory of small JSON files); refreshed on every
 // 'agents-updated' broadcast too.
 export async function loadAgents() {

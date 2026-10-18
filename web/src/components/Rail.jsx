@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { statusLabel } from '../lib/status.js';
 import { relTime, fmtDateTime } from '../lib/time.js';
-import { hasOpenScreenRequest, needsAttention, setScreenModal, signOut, useStore } from '../lib/store.js';
+import { hasOpenScreenRequest, needsAttention, setFolderCollapsed, setScreenModal, signOut, useStore } from '../lib/store.js';
 import { usePrefs, setPrefs, PREF_LIMITS } from '../lib/prefs.js';
 import { api } from '../lib/api.js';
 import { toast, toastError } from '../lib/toast.js';
@@ -256,9 +256,10 @@ const CM = { Item: ContextMenuItem, Separator: ContextMenuSeparator };
 
 // The ⋯ trigger every row / folder / agent carries: hidden until the row is
 // hovered or focused (always there on a touch screen, at 44px), and it stays put
-// while its menu is open.
+// while its menu is open. The glyph box is 24px but the hit area is 40px (the
+// ::after), so a slightly-off click opens the menu instead of selecting the row.
 const MORE_CLS =
-  'shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 coarse:opacity-100';
+  'relative shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 coarse:opacity-100 after:absolute after:-inset-2 after:content-[""]';
 function MoreButton({ label, className = '', ...props }) {
   return (
     <Tip label={label}>
@@ -1179,6 +1180,8 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
           title={open ? t('rail.collapse') : t('rail.expand')}
           className="min-w-0 flex-1 !pe-0"
         />
+        {/* Phone: folded = just the label + count; the queue controls come with the open list. */}
+        {(isDesktop || open) && <>
         <Tip label={t('rail.manageTriggers')}>
           <Button variant="ghost" size="xs" onClick={onOpenTriggers} aria-label={t('rail.manageTriggers')} data-rail-triggers className="text-muted-foreground">
             <Zap /> <span className="capitalize">{t('rail.triggers')}</span>
@@ -1214,9 +1217,10 @@ function PendingSection({ pending, queue, onPreview, onOpenTriggers }) {
             />
           </span>
         </Tip>
+        </>}
       </div>
       {open && (
-        <div className="thin-scroll max-h-[38vh] overflow-y-auto px-1.5 pb-2">
+        <div className="thin-scroll max-h-[38vh] overflow-y-auto px-1.5 pb-2 max-md:max-h-[28vh]">
           {pending.length === 0 ? (
             <div className="px-2 py-2 text-center text-2xs text-muted-foreground">
               {t('rail.noPendingTasks')}{' '}
@@ -1501,7 +1505,7 @@ export default function Rail({
   useEffect(() => {
     const sel = sessions.find((s) => s.id === selectedId);
     const f = sel?.folderId ? (folders || []).find((x) => x.id === sel.folderId) : null;
-    if (f?.collapsed) api.patch(`/folders/${f.id}`, { collapsed: false }).catch(() => {});
+    if (f?.collapsed) setFolderCollapsed(f.id, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
   // B5: keep the selected row visible — a session created from the launcher
@@ -2004,14 +2008,8 @@ export default function Rail({
                       watchFor={watchFor}
                       waitingBySession={waitingBySession}
                       over={sOver?.id === entry.id ? sOver : null}
-                      onToggle={() =>
-                        api
-                          .patch(`/folders/${entry.id}`, { collapsed: !entry.folder.collapsed })
-                          .catch(() => {})
-                      }
-                      onExpand={() =>
-                        api.patch(`/folders/${entry.id}`, { collapsed: false }).catch(() => {})
-                      }
+                      onToggle={() => setFolderCollapsed(entry.id, !entry.folder.collapsed)}
+                      onExpand={() => setFolderCollapsed(entry.id, false)}
                       onRename={() => setFolderDialog({ type: 'rename', folder: entry.folder })}
                       onMakeProject={() => {
                         // Prefill: the members' most common cwd (server falls
@@ -2097,8 +2095,8 @@ export default function Rail({
         )}
       </div>
 
-      {/* Pending tasks — stuck to the bottom, always visible (autoplay control) */}
-      {(serverCount > 0 || (pending || []).length > 0) && (
+      {/* Pending tasks — stuck to the bottom, always visible (autoplay control). On a phone only when something is queued. */}
+      {((isDesktop && serverCount > 0) || (pending || []).length > 0) && (
       <PendingSection
         pending={pending || []}
         queue={queue || { autoplay: false, maxConcurrent: 3 }}
@@ -2111,17 +2109,18 @@ export default function Rail({
           active account (see activeUsage above). F8: hidden until the first
           session exists — a percentage without context on the first screen. */}
       {serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} />}
-      {/* what the machine is doing — the snapshot sessions read via host_resources — under the usage */}
-      <MachineMini />
+      {/* what the machine is doing — the snapshot sessions read via host_resources — under the usage. On a phone
+          the rail's height belongs to the sessions: shown only under pressure. */}
+      <MachineMini quiet={!isDesktop} />
 
       {/* footer: proxy status line, then the profile menu with the small utilities */}
       <div className="border-t border-border px-2 pt-1 pb-2">
-        <div className="flex items-center gap-1.5 px-1.5 py-1 text-2xs text-muted-foreground" data-rail-proxy>
+        {(isDesktop || !proxyUp) && <div className="flex items-center gap-1.5 px-1.5 py-1 text-2xs text-muted-foreground" data-rail-proxy>
           <StatusDot status={proxyUp ? 'ok' : conn === 'open' ? 'warn' : 'idle'} />
           <span className="min-w-0 flex-1 truncate">
             {proxyUp ? t('rail.proxyUp', { n: serverCount }) : t('rail.proxyUnreachable')}
           </span>
-        </div>
+        </div>}
         <div className="flex items-center gap-0.5">
           <ProfileMenu
             active={(accounts?.accounts || []).find((a) => a.active) || null}
@@ -2130,6 +2129,7 @@ export default function Rail({
             onOpenSetup={onOpenSetup}
             onOpenSettings={onOpenSettings}
           />
+          {!isDesktop && serverCount > 0 && <UsageMini usage={activeUsage} provider={activeEngine} chip />}
           {/* VOICE1: voice COMMANDS (switch/create sessions, settings…) — the
               composer mic dictates; this one goes through the router. */}
           <MicButton
