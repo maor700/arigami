@@ -2095,8 +2095,8 @@ export default function Rail({
         )}
       </div>
 
-      {/* Pending tasks — stuck to the bottom, always visible (autoplay control). On a phone only when something is queued. */}
-      {((isDesktop && serverCount > 0) || (pending || []).length > 0) && (
+      {/* Pending tasks — stuck to the bottom, always visible (autoplay control). On a phone it starts folded to one line. */}
+      {(serverCount > 0 || (pending || []).length > 0) && (
       <PendingSection
         pending={pending || []}
         queue={queue || { autoplay: false, maxConcurrent: 3 }}
