@@ -33,6 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq \
     && rm -rf /var/lib/apt/lists/*
 
+# --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
+#     bzip2, zstd), file, network debugging (ss/ip, nc, dig), rsync, the
+#     sqlite3 shell, patch and nano. ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      unzip zip xz-utils bzip2 zstd file iproute2 netcat-openbsd dnsutils rsync sqlite3 patch nano \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- GitHub CLI (optional; sessions use it for PRs) ---
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
