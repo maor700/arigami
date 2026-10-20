@@ -10,6 +10,7 @@ import { usePrefs } from '../lib/prefs.js';
 import { langDir } from '../lib/langs.js';
 import { forwardRef } from 'react';
 import { dirOf } from '../lib/i18n.js';
+import BidiText from '../components/BidiText.jsx';
 import { buttonVariants } from '../components/ui/button.jsx';
 
 // tone → frame colours. Every card is a neutral surface with a hairline; the
@@ -122,8 +123,10 @@ export function SettledLine({ children, className = '', ...rest }) {
 
 /** A prose line on an accent card (the prompt / question text). */
 export function Prose({ children, className = '', dim, ...rest }) {
+  const cls = `text-sm leading-snug ${dim ? 'text-[var(--term-accent-dim)] text-xs' : 'text-[var(--term-accent-fg)]'} ${className}`;
+  if (typeof children === 'string') return <BidiText text={children} lines className={cls} {...rest} />;
   return (
-    <div dir="auto" className={`text-sm leading-snug ${dim ? 'text-[var(--term-accent-dim)] text-xs' : 'text-[var(--term-accent-fg)]'} ${className}`} {...rest}>
+    <div dir="auto" className={cls} {...rest}>
       {children}
     </div>
   );
