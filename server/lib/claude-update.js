@@ -99,12 +99,20 @@ export function updateArgs(bin, canWrite = (dir) => { try { fs.accessSync(dir, f
   return canWrite(path.dirname(real)) ? ['update'] : ['install', 'latest'];
 }
 
+// The official native installer: drops the latest build into ~/.local (bin → ~/.local/bin/claude).
+export const INSTALL_SCRIPT_URL = 'https://claude.ai/install.sh';
+export const INSTALL_COMMAND = `set -o pipefail; curl -fsSL ${INSTALL_SCRIPT_URL} | bash -s latest`;
+/** claude-bin.js answers the bare name 'claude' when nothing resolves. */
+export const isMissing = (bin) => !bin || bin === 'claude';
+
 // Real runner: `claude update` (or install, see updateArgs) under the host, output captured, killed on timeout.
+// With no CLI at all (the container image ships none) it runs the native installer instead.
 function runClaudeUpdate({ timeoutMs = APPLY_TIMEOUT_MS } = {}) {
   return new Promise(async (resolve) => {
     const { claudeBin } = await import('./claude-bin.js');
     const bin = claudeBin({ force: true });
-    execFile(bin, updateArgs(bin), { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, CI: '1' } }, (err, stdout, stderr) => {
+    const [cmd, args] = isMissing(bin) ? ['bash', ['-c', INSTALL_COMMAND]] : [bin, updateArgs(bin)];
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, CI: '1' } }, (err, stdout, stderr) => {
       const output = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim();
       resolve({ code: err ? (err.code === undefined || typeof err.code === 'string' ? 1 : err.code) : 0, timedOut: !!err?.killed, output, error: err ? err.message : null });
     });
@@ -326,11 +334,44 @@ export async function claudeUpdater() {
   return singleton;
 }
 
-/** index.ts: arm the daily check + auto-apply loop — only when a claude binary resolves. */
+/** index.ts: arm the daily check + auto-apply loop — and, where allowed, install a missing claude first. */
 export async function startClaudeUpdater({ bin } = {}) {
   const resolved = bin ?? (await import('./claude-bin.js')).claudeBin({ force: true });
-  if (!resolved || resolved === 'claude') { console.log('[claude-update] no claude binary — daily check not started'); return null; }
+  if (isMissing(resolved)) {
+    const { autoInstallAllowed } = await import('./engine-install.js');
+    if (!autoInstallAllowed('claude')) { console.log('[claude-update] no claude binary — daily check not started'); return null; }
+    const u = await claudeUpdater();
+    void bootstrapClaude(u);
+    return u;
+  }
   const u = await claudeUpdater();
   u.start();
   return u;
+}
+
+// Retry delays for a failed first install (offline boot, registry hiccup): 1, 5, 15 minutes, then hourly.
+export const BOOTSTRAP_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+
+/**
+ * First boot with no claude: install it (apply reason 'install' — the cockpit toasts "installing…", then the
+ * outcome), run ARIGAMI_CLAUDE_POSTINSTALL when set (the image registers its Playwright MCP there), then arm the
+ * normal update loop. A failure is retried with backoff rather than leaving the host without its default engine.
+ */
+export async function bootstrapClaude(u, { sleep = (ms) => new Promise((r) => setTimeout(r, ms).unref?.()), postInstall = runPostInstall, retries = BOOTSTRAP_RETRY_MS } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    let r;
+    try { r = await u.apply({ reason: 'install' }); } catch (e) { r = { ok: false, error: e.message }; }
+    if (r?.ok) {
+      await postInstall().catch(() => {});
+      u.start({ bootDelayMs: 0 });
+      return r;
+    }
+    await sleep(retries[Math.min(attempt, retries.length - 1)]);
+  }
+}
+
+function runPostInstall() {
+  const cmd = process.env.ARIGAMI_CLAUDE_POSTINSTALL;
+  if (!cmd) return Promise.resolve();
+  return new Promise((resolve) => execFile('sh', ['-c', cmd], { timeout: 60_000 }, () => resolve()));
 }

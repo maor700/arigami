@@ -90,9 +90,11 @@ ENV CHROME_BIN=/usr/local/bin/arigami-chrome
 COPY --from=oven/bun:1-debian /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx && bun --version
 
-# --- Claude Code CLI (pinned to match local; bin → /usr/local/bin/claude) ---
-RUN npm install -g @anthropic-ai/claude-code@2.1.302 && claude --version \
-    && npm cache clean --force && rm -rf /root/.npm
+# --- Engine CLIs are NOT in the image. Claude Code installs into ~/.local on
+#     the volume at first boot (the official native installer, latest release;
+#     server/lib/claude-update.js), codex the first time a Codex account is added
+#     (server/lib/engine-install.ts). Both then update in place there, so they
+#     follow their own release channel instead of the image's. ---
 
 # --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs).
 #     No bundled Playwright Chromium: the MCP is registered by the entrypoint
@@ -180,7 +182,10 @@ ENV HOME=/data/home \
 #     drops to `node` via gosu. ---
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/register-playwright-mcp.sh /usr/local/bin/arigami-register-playwright-mcp
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/arigami-register-playwright-mcp
+# Run right after the host's first-boot claude install (claude-update.js).
+ENV ARIGAMI_CLAUDE_POSTINSTALL=/usr/local/bin/arigami-register-playwright-mcp
 
 VOLUME ["/data"]
 EXPOSE 3099

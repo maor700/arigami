@@ -353,3 +353,27 @@ test('updateArgs: `update` where the install dir is writable, `install latest` w
   expect(updateArgs(link, () => false)).toEqual(['install', 'latest']);
   expect(updateArgs(link)).toEqual(['update']);
 });
+
+// First boot with no CLI (the container image ships none): install, post-install hook, then the normal loop.
+import { bootstrapClaude, isMissing, INSTALL_COMMAND } from '../server/lib/claude-update.js';
+
+test('isMissing: the bare name claude-bin falls back to means nothing resolved', () => {
+  expect(isMissing('claude')).toBe(true);
+  expect(isMissing(null)).toBe(true);
+  expect(isMissing('/home/u/.local/bin/claude')).toBe(false);
+  expect(INSTALL_COMMAND).toMatch(/install\.sh \| bash -s latest$/);
+});
+
+test('bootstrapClaude: retries a failed install with backoff, then runs the post-install hook and starts the loop', async () => {
+  const outcomes = [{ ok: false, error: 'offline' }, { deferred: true }, { ok: true, from: null, to: '2.1.304' }];
+  const calls: string[] = [];
+  const slept: number[] = [];
+  const u = {
+    apply: async ({ reason }: any) => { calls.push(`apply:${reason}`); return outcomes.shift(); },
+    start: (o: any) => calls.push(`start:${o.bootDelayMs}`),
+  };
+  const r = await bootstrapClaude(u, { sleep: async (ms: number) => { slept.push(ms); }, postInstall: async () => { calls.push('post'); }, retries: [1, 2] });
+  expect(r).toMatchObject({ ok: true, to: '2.1.304' });
+  expect(calls).toEqual(['apply:install', 'apply:install', 'apply:install', 'post', 'start:0']);
+  expect(slept).toEqual([1, 2]);
+});

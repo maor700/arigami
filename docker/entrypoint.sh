@@ -108,15 +108,8 @@ if [ -z "$(git config --global user.name || true)" ]; then
   git config --global user.name "${GIT_NAME:-Arigami}"
 fi
 
-# Register the Playwright MCP for sessions (headless + no-sandbox for a non-root
-# container, driving the image's Chrome/Chromium via CHROME_BIN — the image
-# ships no separate Playwright browser) — once, at user scope so every session
-# inherits it. The `playwright-mcp` bin comes from the global
-# @playwright/mcp install, so no network is needed on first use.
-if ! grep -q '"playwright"' "$HOME/.claude.json" 2>/dev/null; then
-  claude mcp add --scope user playwright -- \
-    playwright-mcp --headless --no-sandbox --isolated \
-      --executable-path "${CHROME_BIN:-/usr/local/bin/arigami-chrome}" >/dev/null 2>&1 || true
-fi
+# Register the Playwright MCP for sessions (once; skipped until claude is
+# installed — the host installs it on first boot and runs this again then).
+/usr/local/bin/arigami-register-playwright-mcp || true
 
 exec "$@"

@@ -2,10 +2,12 @@
 
 arigami ships as one image — `ghcr.io/maor700/arigami` (amd64 + arm64) — with
 everything a session needs: the Bun host serving the cockpit/proxy/control
-plane, the `claude` CLI, `git`/`gh`, a VNC desktop (Xvfb + openbox + x11vnc),
+plane, `git`/`gh`, a VNC desktop (Xvfb + openbox + x11vnc),
 Chrome, Playwright, and the WhatsApp bridge. **All writable state is redirected
 onto one mounted volume (`/data`)** via env vars — the image layer itself is
-read-only, so upgrading is `pull` + `up`.
+read-only, so upgrading is `pull` + `up`. The engine CLIs (`claude`, `codex`)
+are not in the image: they install into `~/.local` on the volume when first
+needed (below).
 
 ## Run
 
@@ -96,7 +98,6 @@ plus `ARIGAMI_CODEX_BIN` in `.env`.
 |-------|-----|
 | `node:22-bookworm-slim` base | `node`/`npm` for the dev servers sessions spawn |
 | Bun `1.3` | the host's own runtime (`bun server/index.ts`) |
-| `@anthropic-ai/claude-code` | the `claude` binary the host spawns per session |
 | `git`, `gh`, `ripgrep`, `python3` | worktrees/diffs, PRs, file search, the pty bridge for logins |
 | `xvfb x11vnc openbox tint2 lxterminal x11-utils fonts-noto(+emoji) dbus-x11` | the desktop the agent drives (`request_screen`, `machine-work`), with a terminal ([DESKTOP.md](DESKTOP.md#a-terminal-on-the-x11-desktops)) |
 | Google Chrome (amd64) / Chromium (arm64) → `CHROME_BIN` | the agent's browser on that desktop |
@@ -104,10 +105,15 @@ plus `ARIGAMI_CODEX_BIN` in `.env`.
 | whatsapp-mcp at `/opt/whatsapp-mcp` (+ `tsx`) | the Baileys bridge behind the WhatsApp listener/MCP |
 | `web/dist` (built in stage 1) | the cockpit UI |
 
-Claude Code updates itself in a container too: the image's copy is a root-owned
-npm install the host can't replace, so the updater runs `claude install latest`
-instead, which puts a native build in `~/.local` on the volume — first on `PATH`,
-so it wins from then on and survives image upgrades (it keeps updating itself).
+**Engine CLIs live on the volume, not in the image.** At first boot the host
+finds no `claude` and runs the official native installer (latest release) into
+`~/.local` — the cockpit toasts "Installing Claude Code…" and then the outcome;
+a failure (offline boot) is retried after 1, 5 and 15 minutes, then hourly.
+Right after it, `ARIGAMI_CLAUDE_POSTINSTALL` registers the Playwright MCP.
+`codex` installs the same way (`npm i -g --prefix ~/.local @openai/codex@latest`)
+the first time a Codex account is added. Both then update in place through
+Settings › Host / the daily check, and survive image upgrades.
+`ARIGAMI_CLAUDE_AUTOINSTALL=0` / `ARIGAMI_CODEX_AUTOINSTALL=0` turn this off.
 
 No sudo/apt at runtime, and the root filesystem resets on restart: a missing
 tool goes into `~/.local` on the volume (`pip install --user`, `python3 -m venv`,
