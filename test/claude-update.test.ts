@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { compareVersions, parseVersion, isNewer, createUpdater, DEFAULT_MIN_FREE_MB, updateArgs } from '../server/lib/claude-update.js';
+import { tmpDir } from './_tmp.js';
 
 // ---- version compare ------------------------------------------------------------
 
@@ -150,7 +151,7 @@ test('exactly the floor is enough; a meminfo failure (null) never blocks', async
 // ---- apply against the stub runner ------------------------------------------------------
 
 test('apply: success → lastUpdate{from,to,ok,log}, host event, push, and the models cache is refetched', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cu-'));
+  const dir = tmpDir('arigami-cu-');
   const store = path.join(dir, 'claude-update.json');
   const h = harness({ store });
   await h.u.check();
@@ -254,7 +255,7 @@ setTimeout(() => process.exit(0), 5000);
 }
 
 test('after a successful update the picker sees the new CLI\'s models without a restart (passive GET, inside the memo)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-cu-models-'));
+  const dir = tmpDir('arigami-cu-models-');
   const bin = path.join(dir, 'bin');
   writeStub(bin, '2.1.251', ['claude-opus-5', 'claude-fable-5']);
   const stubPath = path.join(bin, 'claude');
@@ -341,7 +342,7 @@ test('startClaudeUpdater does not arm the daily check when no claude binary reso
 // A binary the host can't write (the image's root-owned npm install) is replaced by a native install in ~/.local.
 
 test('updateArgs: `update` where the install dir is writable, `install latest` where it is not (follows symlinks)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upd-'));
+  const dir = tmpDir('arigami-upd-');
   const real = path.join(dir, 'versions', '2.1.0');
   fs.mkdirSync(path.dirname(real), { recursive: true });
   fs.writeFileSync(real, '');

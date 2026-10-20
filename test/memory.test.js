@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-mem-'));
+const tmp = () => tmpDir('arigami-mem-');
 
 test('sanitize refuses credentials, private keys and prompt-injection phrasing but accepts plain facts', () => {
   const dir = tmp();

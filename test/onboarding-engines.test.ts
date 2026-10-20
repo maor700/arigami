@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const env = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-eng-'));
+  const dir = tmpDir('arigami-eng-');
   return { ARIGAMI_DIR: dir, ARIGAMI_FUNNEL_QUIET: '1', HOME: path.join(dir, 'home'), CODEX_HOME: '', ARIGAMI_CODEX_HOME: path.join(dir, 'no-codex') };
 };
 

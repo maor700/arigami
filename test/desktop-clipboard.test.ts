@@ -7,13 +7,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { findChromeBin } from '../server/lib/platform.ts';
+import { tmpDir } from './_tmp.js';
 
 const chrome = findChromeBin();
 let out: any = null;
 
 beforeAll(() => {
   if (!chrome) return;
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'clip-'));
+  const sandbox = tmpDir('clip-');
   const prof = path.join(sandbox, 'profile');
   const r = runInChild(
     `const dc = await import('./server/lib/desktop-clipboard.ts');

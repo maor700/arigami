@@ -10,9 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(import.meta.dir, '..');
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-f2-'));
+const tmp = () => tmpDir('arigami-f2-');
 const SKILL = (body) => `---\ndescription: f2 test skill\n---\n\n# T\n\n${body}\n`;
 const env = (dir) => ({ ARIGAMI_DIR: dir, ARIGAMI_PORT: '' });
 const gitSkillsStatus = () =>

@@ -12,8 +12,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-skp-'));
+const tmp = () => tmpDir('arigami-skp-');
 
 // Builds a child script that creates a throwaway skill dir, runs `body`
 // (which may reference `skillName` and `skillDir` in scope), then always

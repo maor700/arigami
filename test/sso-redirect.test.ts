@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAuth, COOKIE } from '../server/auth.ts';
 import { ssoRedirectTarget, SSO_TRY_COOKIE } from '../server/sso-redirect.ts';
+import { tmpDir } from './_tmp.js';
 
 const SSO = 'https://lab.example.com/workspace';
 const ENV = { ARIGAMI_SSO_URL: SSO } as unknown as NodeJS.ProcessEnv;
@@ -37,7 +38,7 @@ describe('ssoRedirectTarget', () => {
 });
 
 describe('through auth.gate', () => {
-  const mk = () => createAuth({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-sso-')), auth: { mode: 'pairing', cookieDays: 30 }, log() {} });
+  const mk = () => createAuth({ dir: tmpDir('arigami-sso-'), auth: { mode: 'pairing', cookieDays: 30 }, log() {} });
   const run = (a: any, url: string, headers: Record<string, string> = HTML) => {
     const out: any = { status: 0, headers: {} };
     const res: any = { writeHead: (s: number, h: any) => ((out.status = s), (out.headers = h || {})), end() {} };

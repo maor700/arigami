@@ -7,9 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const FAKE_CLAUDE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '_fake-claude.js');
-const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wiztok-'));
+const fresh = (): string => tmpDir('arigami-wiztok-');
 const env = (dir: string, extra: Record<string, string> = {}) => ({
   ARIGAMI_DIR: dir, ARIGAMI_PORT: '', ARIGAMI_FUNNEL_QUIET: '1', HOME: path.join(dir, 'home'), ARIGAMI_CLAUDE_BIN: FAKE_CLAUDE, ...extra,
 });

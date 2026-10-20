@@ -18,6 +18,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -81,7 +82,7 @@ afterAll(() => {
  * config IS the driver's entire notion of "the machine's VNC service".
  */
 function inChild(body: string, port: number) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-winvnc-'));
+  const dir = tmpDir('arigami-winvnc-');
   const r = runInChild(body, {
     ARIGAMI_DIR: dir,
     ARIGAMI_PORT: '',
@@ -100,7 +101,7 @@ function inChild(body: string, port: number) {
 // ---- selection --------------------------------------------------------------
 
 test('pickDriver: winvnc is opt-in on win32, never inferred — a Windows box without the service keeps browser-window control', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-winvnc-pick-'));
+  const dir = tmpDir('arigami-winvnc-pick-');
   const r = runInChild(
     "const {pickDriver}=await import('./server/lib/screen-driver.ts');" +
     "emit({" +

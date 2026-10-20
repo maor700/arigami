@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { MCP_CATALOG } from '../server/mcp-catalog.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SKILLS = path.join(ROOT, 'skills');
@@ -119,7 +120,7 @@ test('shared helpers exist, are executable and parse', () => {
 
 test('connect.sh allowlist: exact + subdomain match only, refuses empty list and look-alikes', () => {
   const sh = path.join(LIB, 'connect.sh');
-  const env = { ...process.env, ARIGAMI_SESSION_ID: 'sess_test', ARIGAMI_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'connect-')) };
+  const env = { ...process.env, ARIGAMI_SESSION_ID: 'sess_test', ARIGAMI_DIR: tmpDir('connect-') };
   const run = (allow, url) => spawnSync('bash', [sh, 'allowed', url], { env: { ...env, CONNECT_ALLOW: allow }, encoding: 'utf8' }).status;
   expect(run('accounts.google.com google.com', 'https://accounts.google.com/signin')).toBe(0);
   expect(run('google.com', 'https://myaccount.google.com/')).toBe(0);

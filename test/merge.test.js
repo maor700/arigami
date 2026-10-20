@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const { provisionChildWorktree, removeWorktree } = await import('../server/git.js');
 const { mergeBranch, baseStatus, mergeMessage, deleteBranch } = await import('../server/merge.js');
@@ -24,7 +25,7 @@ const commit = (dir, file, content, msg) => {
 
 let repos, repo;
 beforeAll(() => {
-  repos = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-repos-'));
+  repos = tmpDir('f7-repos-');
   repo = path.join(repos, 'proj');
   fs.mkdirSync(repo);
   sh(repo, 'git', 'init', '-q', '-b', 'master');
@@ -62,7 +63,7 @@ test('provisionChildWorktree: explicit dir/branch/prefix/base + non-repo failure
   expect(d.branch).toBe('dispatch/y');
   await removeWorktree(repo, r.dir);
   await removeWorktree(repo, d.dir);
-  const bad = await provisionChildWorktree({ parentDir: fs.mkdtempSync(path.join(os.tmpdir(), 'norepo-')), subtask: 'q' });
+  const bad = await provisionChildWorktree({ parentDir: tmpDir('norepo-'), subtask: 'q' });
   expect(bad.ok).toBe(false);
   expect(bad.error).toMatch(/not a git repository/);
 });
@@ -149,7 +150,7 @@ test('mergeBranch conflict: aborted, base clean, conflicting files listed', asyn
 test('markApproved stamps the reviewed SHA and repository only on sessions that own a real branch ≠ base', async () => {
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'approve', reposDir: repos, suffix: 'a1' });
   commit(wt.dir, 'approved.txt', 'reviewed', 'reviewed');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-state-'));
+  const dir = tmpDir('f7-state-');
   const r = runInChild(
     "const st=await import('./server/state.ts');const api=await import('./server/api.js');" +
       `const a=st.createSession({title:"a",cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:"master"}});` +
@@ -175,7 +176,7 @@ test('markApproved stamps the reviewed SHA and repository only on sessions that 
 });
 
 test('mayMerge: admin, the master, or the folder controller — never the child itself or a stranger', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-guard-'));
+  const dir = tmpDir('f7-guard-');
   const r = runInChild(
     "const st=await import('./server/state.ts');const api=await import('./server/api.js');" +
       "const master=st.createSession({title:'m'});const child=st.createSession({title:'c',metadata:{master:master.id,branch:'child/x-1'}});" +
@@ -210,7 +211,7 @@ test('mergeBranch refuses a changed tip and merges only the approved SHA for bot
 test('mergeSession rejects a changed commit even with force; legacy approval needs a new review', async () => {
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'stale-review', reposDir: repos });
   commit(wt.dir, 'stale.txt', 'reviewed', 'reviewed');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-stale-'));
+  const dir = tmpDir('f7-stale-');
   const before = sh(repo, 'git', 'rev-parse', 'HEAD');
   const r = runInChild(`
     const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
@@ -238,7 +239,7 @@ test('a commit added during a merge gate is refused; gates receive the approved 
   commit(wt.dir, 'gate.txt', 'reviewed', 'reviewed');
   const approvedSha = sh(wt.dir, 'git', 'rev-parse', 'HEAD');
   const before = sh(repo, 'git', 'rev-parse', 'HEAD');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-gate-'));
+  const dir = tmpDir('f7-gate-');
   const extension = path.join(dir, 'fixture');
   fs.mkdirSync(extension);
   fs.writeFileSync(path.join(extension, 'manifest.json'), JSON.stringify({ name: 'gate-test', version: '0.1.0', apiVersion: 1, title: 'Gate test', hooks: { module: 'hooks.ts', gates: ['merge.before'] } }));
@@ -262,7 +263,7 @@ test('a commit added during a merge gate is refused; gates receive the approved 
 test('concurrent merge requests recheck metadata inside the repository lock', async () => {
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'locked', reposDir: repos });
   commit(wt.dir, 'locked.txt', 'reviewed', 'reviewed');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-lock-'));
+  const dir = tmpDir('f7-lock-');
   const r = runInChild(`
     const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
     const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
@@ -280,7 +281,7 @@ test('concurrent merge requests recheck metadata inside the repository lock', as
 test('request-changes withdraws an approval: no merge (not even forced) until a fresh approve', async () => {
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'changes-requested', reposDir: repos });
   commit(wt.dir, 'cr.txt', 'reviewed', 'reviewed');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-cr-'));
+  const dir = tmpDir('f7-cr-');
   const before = sh(repo, 'git', 'rev-parse', 'HEAD');
   const r = runInChild(`
     const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
@@ -313,7 +314,7 @@ test('request-changes withdraws an approval: no merge (not even forced) until a 
 test('approveSession: one path for card and Changes tab — local stamp, one message, then already-approved (no second send)', async () => {
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'unified', reposDir: repos });
   commit(wt.dir, 'u.txt', 'reviewed', 'reviewed');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-unified-'));
+  const dir = tmpDir('f7-unified-');
   const r = runInChild(`
     const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
     const sent=[]; const send=(id,m)=>sent.push(m);
@@ -349,7 +350,7 @@ test('approveSession on a PR: someone else\'s → an APPROVE review handed to th
   const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'pr-modes', reposDir: repos });
   commit(wt.dir, 'p.txt', 'reviewed', 'reviewed');
   const head = sh(wt.dir, 'git', 'rev-parse', 'HEAD');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-prmodes-'));
+  const dir = tmpDir('f7-prmodes-');
   const r = runInChild(`
     const st=await import('./server/state.ts'); const api=await import('./server/api.ts'); const ra=await import('./server/lib/review-approval.ts');
     let author='bob', down=false; const ghCalls=[];

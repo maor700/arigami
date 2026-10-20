@@ -16,6 +16,7 @@ import net from 'node:net';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -58,10 +59,10 @@ const argvOf = async (sid: string): Promise<string[]> => until(async () => {
 });
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-A5-host-'));
+  dir = tmpDir('arigami-A5-host-');
   argvDir = path.join(dir, 'argv');
   fs.mkdirSync(argvDir, { recursive: true });
-  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-A5-ws-'));
+  ws = tmpDir('arigami-A5-ws-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

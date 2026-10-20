@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isOutbound, cardPrompt, describe as describeOut } from '../server/lib/outbound.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -47,7 +48,7 @@ async function mcpCall(env: Record<string, string>, modulePath: string, tool: st
 }
 
 test('ext-mcp: an agent calling a sender files a request instead of sending', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-ext-'));
+  const dir = tmpDir('outbound-ext-');
   const sent = path.join(dir, 'sent.txt');
   const mod = path.join(dir, 'tools', 'module.js');
   fs.mkdirSync(path.dirname(mod), { recursive: true });

@@ -9,11 +9,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('enabling Funnel on a tailnet that never answers gives up at the deadline, with the reason', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-timeout-'));
+  const dir = tmpDir('ts-timeout-');
   const stub = path.join(dir, 'tailscale');
   fs.writeFileSync(
     stub,

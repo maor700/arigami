@@ -42,6 +42,8 @@ export interface KeptWorktree {
   title: string;
   reasons: string[];
   at: string;
+  /** The session's PR, so a later sweep can ask GitHub the same question. */
+  hints?: wt.ReapHints;
 }
 
 export interface ReapReport {
@@ -160,7 +162,8 @@ export async function reapSession(
   if (worktree) {
     const owned = await ownedWorktree(s);
     if (owned) {
-      report.worktree = wt.reap(owned.dir);
+      const hints = wt.hintsFrom(s.metadata);
+      report.worktree = await wt.reap(owned.dir, { hints });
       if (report.worktree.outcome === 'kept') {
         const rows = readKept().filter((r) => r.dir !== owned.dir);
         rows.push({
@@ -169,6 +172,7 @@ export async function reapSession(
           title: String(s.title || s.id),
           reasons: report.worktree.reasons || [],
           at: new Date().toISOString(),
+          hints,
         });
         writeKept(rows);
       }
@@ -192,7 +196,7 @@ export async function reapSession(
 /** What a delete WOULD do — for the confirmation dialog. Changes nothing. */
 export async function preview(s: any): Promise<{
   processes: { pid: number }[] | null;
-  worktree: (ReturnType<typeof wt.inspect> & { dir: string }) | null;
+  worktree: wt.WorktreeVerdict | null;
   scratch: string | null;
 }> {
   const rows = procs.list();
@@ -206,7 +210,7 @@ export async function preview(s: any): Promise<{
   }
   return {
     processes: rows ? procs.ofSession(rows, s.id, procs.HOST_MARK).map((r) => ({ pid: r.pid })) : null,
-    worktree: owned ? wt.inspect(owned.dir) : null,
+    worktree: owned ? await wt.inspect(owned.dir, { hints: wt.hintsFrom(s?.metadata) }) : null,
     scratch: scratchDir,
   };
 }
@@ -256,16 +260,20 @@ export async function sweep(): Promise<SweepReport> {
   }
   // A worktree a delete refused to remove may have become safe since (committed
   // and pushed, or its stray edit dropped): ask the same conservative rule again.
+  // Also re-asked: whether GitHub has it in a PR (merged since, say).
   const rows2 = readKept();
   if (rows2.length) {
-    const left = rows2.filter((r) => {
-      if (live.has(r.sessionId)) return true;
-      const res = wt.reap(r.dir);
-      if (res.outcome === 'kept' || res.outcome === 'failed') return true;
-      if (res.outcome === 'removed') out.worktrees++;
-      return false;
-    });
-    if (left.length !== rows2.length) writeKept(left);
+    const left: KeptWorktree[] = [];
+    for (const r of rows2) {
+      if (live.has(r.sessionId)) {
+        left.push(r);
+        continue;
+      }
+      const res = await wt.reap(r.dir, { hints: r.hints });
+      if (res.outcome === 'kept' || res.outcome === 'failed') left.push(res.reasons ? { ...r, reasons: res.reasons } : r);
+      else if (res.outcome === 'removed') out.worktrees++;
+    }
+    if (left.length !== rows2.length || left.some((r, i) => r !== rows2[i])) writeKept(left);
   }
   return out;
 }

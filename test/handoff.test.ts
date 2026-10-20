@@ -9,9 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as ho from '../server/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const SECRET = 'a-test-secret-at-least-16-chars';
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-handoff-'));
+const tmp = () => tmpDir('arigami-handoff-');
 
 test('disabled unless a long-enough secret is configured', () => {
   expect(ho.enabled({} as NodeJS.ProcessEnv)).toBe(false);

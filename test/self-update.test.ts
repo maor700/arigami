@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createSelfUpdater, isNewer, shouldAnnounce, CHECK_EVERY_MS } from '../server/lib/self-update.ts';
+import { tmpDir } from './_tmp.js';
 
 const version = (over: Record<string, any> = {}) => ({
   version: '0.1.0', tag: null, commit: 'abc1234', commitDate: null, branch: 'master', upstream: 'origin/master',
@@ -173,7 +174,7 @@ test('a failing version probe is recorded, not thrown, and does not announce', a
 });
 
 test('the announcement survives a restart: what was already said is not said twice', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-selfupd-'));
+  const dir = tmpDir('arigami-selfupd-');
   const store = path.join(dir, 'self-update.json');
   const v = async () => version({ updateAvailable: true, ahead: 4, available: { version: '0.2.0', tag: 'v0.2.0', release: null } });
 

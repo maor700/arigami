@@ -12,8 +12,9 @@ import { createAuth, emailAllowed, generatePairingCode, parseCookies, COOKIE } f
 import { validateAuthBind, isLoopbackBind } from '../server/lib/config.ts';
 import { rewriteSetCookie } from '../server/proxy.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-auth-'));
+const tmp = () => tmpDir('arigami-auth-');
 const mk = (over = {}) =>
   createAuth({ dir: tmp(), auth: { mode: 'pairing', cookieDays: 30 }, log: () => {}, ...over });
 

@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'deploy/systemd/arigami-healthcheck');
@@ -21,7 +22,7 @@ let calls = '';
 let state = '';
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'healthcheck-'));
+  dir = tmpDir('healthcheck-');
   calls = path.join(dir, 'systemctl.log');
   state = path.join(dir, 'fails');
   const fake = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });

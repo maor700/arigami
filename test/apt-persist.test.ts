@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { tmpDir } from './_tmp.js';
 
 const SCRIPT = path.resolve(import.meta.dir, '../docker/apt-persist.sh');
 const hasDpkg = spawnSync('sh', ['-c', 'command -v dpkg-deb && command -v dpkg-query && dpkg-query -W bash']).status === 0;
@@ -21,7 +22,7 @@ function makeDeb(dir: string, pkg: string, a = 'all'): string {
 }
 
 function setup() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-apt-'));
+  const dir = tmpDir('arigami-apt-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'apt-get'), `#!/bin/sh\necho "$*" >> "${dir}/apt.log"\n[ -f "${dir}/apt.fail" ] && [ "$1" = install ] && { rm -f "${dir}/apt.fail"; exit 100; }\nexit 0\n`, { mode: 0o755 });

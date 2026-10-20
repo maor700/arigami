@@ -9,6 +9,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir, tmpPath } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -63,10 +64,10 @@ const lastUserText = (sid: string): string | null => {
 };
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ZIP-host-'));
+  dir = tmpDir('arigami-ZIP-host-');
   stdinLogDir = path.join(dir, 'stdin-log');
   fs.mkdirSync(stdinLogDir, { recursive: true });
-  ws = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ZIP-ws-'));
+  ws = tmpDir('arigami-ZIP-ws-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');
@@ -251,7 +252,7 @@ sys.stdout.buffer.write(buf.getvalue())
 });
 
 test('ZIP2: DELETE .../attachments refuses a path outside this session\'s upload dir', async () => {
-  const outside = path.join(os.tmpdir(), `arigami-zip2-outside-${Date.now()}.txt`);
+  const outside = tmpPath(`arigami-zip2-outside-${Date.now()}.txt`);
   fs.writeFileSync(outside, 'do not delete me');
   const del = await fetch(`${base}/__api/sessions/${sid}/attachments?path=${encodeURIComponent(outside)}`, { method: 'DELETE' });
   expect(del.status).toBe(200);
@@ -306,7 +307,7 @@ describe('ZIP3: end-to-end on a dedicated isolated host (real attachment size ca
     // hostlock. Same `stub` binary and `stdinLogDir` as the shared host
     // above (both absolute paths baked in at creation time), so the same
     // stdin-log inspection helpers work unchanged.
-    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ZIP3-host2-'));
+    const dir2 = tmpDir('arigami-ZIP3-host2-');
     const home2 = path.join(dir2, 'home');
     fs.mkdirSync(home2, { recursive: true });
     const stub2 = path.join(dir, 'claude-stub.js');

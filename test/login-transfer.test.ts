@@ -16,6 +16,7 @@ import path from 'node:path';
 import { runInChild } from './_child.js';
 import * as sites from '../server/lib/login-sites.ts';
 import { findChromeBin } from '../server/lib/platform.ts';
+import { tmpDir } from './_tmp.js';
 
 const chrome = findChromeBin();
 
@@ -84,7 +85,7 @@ let e2e: any = null;
 
 beforeAll(() => {
   if (!chrome) return;
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'login-e2e-'));
+  const sandbox = tmpDir('login-e2e-');
   const vault = path.join(sandbox, 'vault');
   const target = path.join(sandbox, 'target');
 

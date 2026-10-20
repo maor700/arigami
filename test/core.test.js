@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-test-'));
+const tmp = tmpDir('arigami-test-');
 process.env.ARIGAMI_STATE_FILE = path.join(tmp, 'state.json');
 process.env.ARIGAMI_CHAT_DIR = path.join(tmp, 'chat');
 

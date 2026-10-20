@@ -15,9 +15,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { inputToCdp } from '../server/screencast.js';
+import { tmpDir } from './_tmp.js';
 
 function inChild(body: string, env: Record<string, string> = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wrp-'));
+  const dir = tmpDir('arigami-wrp-');
   const r = runInChild(body, {
     ARIGAMI_DIR: dir,
     ARIGAMI_PORT: '',

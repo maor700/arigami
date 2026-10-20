@@ -13,6 +13,7 @@ import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { pathIsAmbiguous, requestPath } from '../server/auth.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,7 +77,7 @@ function raw(pathStr: string, headers: Record<string, string> = {}): Promise<{ s
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-sec-'));
+  dir = tmpDir('arigami-sec-');
   port = await freePort();
   fs.mkdirSync(path.join(dir, 'home'), { recursive: true });
   host = spawn('bun', ['server/index.ts'], {

@@ -12,10 +12,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { tmpDir } from './_tmp.js';
 
 const tar = await import('../server/lib/tar.ts');
 
-const tmp = (p = 'tarjs-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'tarjs-') => tmpDir(p);
 const sysTarList = (f: string) => spawnSync('tar', ['-tzf', f], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
 
 // ---- exclude-glob matching, verified against real GNU tar ---------------------------

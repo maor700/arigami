@@ -11,11 +11,12 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 // Same reason as test/host-control.test.ts: config.js/state.js bind their
 // store paths from ARIGAMI_DIR at import time.
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-'));
+const scratch = tmpDir('arigami-ub-');
 process.env.ARIGAMI_DIR = scratch;
 process.env.ARIGAMI_STATE_FILE = path.join(scratch, 'state.json');
 const hc = await import('../server/host-control.ts');
@@ -24,7 +25,7 @@ const { upgradePlan, detectManager, ALLOW_ERROR, DIRTY_ERROR, NOT_FF_ERROR } = h
 const { pickBackend } = ub;
 
 function gitRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-repo-'));
+  const repo = tmpDir('arigami-ub-repo-');
   const g = (...a: string[]) => spawnSync('git', a, { cwd: repo, stdio: 'ignore' });
   g('init', '-q'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(repo, 'a.txt'), '1\n');
@@ -66,7 +67,7 @@ test('git backend plan() is exactly upgradePlan(root) — the "zero semantic cha
 });
 
 test('git backend preflight(): host.allowUpgrade=false blocks before anything else', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-dir-'));
+  const dir = tmpDir('arigami-ub-dir-');
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ host: { allowUpgrade: false } }));
   const repo = gitRepo();
   const r = runInChild(
@@ -82,7 +83,7 @@ test('git backend preflight(): host.allowUpgrade=false blocks before anything el
 });
 
 test('git backend preflight(): a dirty checkout blocks, with the tracked files listed as blockers', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-dir-'));
+  const dir = tmpDir('arigami-ub-dir-');
   const repo = gitRepo();
   fs.writeFileSync(path.join(repo, 'a.txt'), '2\n'); // dirty (tracked)
   fs.writeFileSync(path.join(repo, 'untracked.txt'), 'x\n'); // must NOT show up in blockers
@@ -99,8 +100,8 @@ test('git backend preflight(): a dirty checkout blocks, with the tracked files l
 });
 
 test('git backend preflight(): no shared merge-base with upstream blocks (the realign case); a clean repo with NO upstream at all is NOT blocked by it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-dir-'));
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-base-'));
+  const dir = tmpDir('arigami-ub-dir-');
+  const base = tmpDir('arigami-ub-base-');
   const up = path.join(base, 'up');
   const local = path.join(base, 'local');
   const g = (cwd: string, ...a: string[]) => {
@@ -124,7 +125,7 @@ test('git backend preflight(): no shared merge-base with upstream blocks (the re
   // Two separate child processes on purpose: version.ts's getVersion() cache is
   // keyed by TTL only, not by root — calling it twice for different roots in
   // the same process would silently reuse the first root's stale result.
-  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ub-dir-'));
+  const dir2 = tmpDir('arigami-ub-dir-');
   const rApart = runInChild(
     `
     const ub = await import('./server/lib/update-backend.ts');

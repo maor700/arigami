@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromeCandidates, findChromeBin } from '../server/lib/platform.ts';
+import { tmpDir } from './_tmp.js';
 
 test('chromeCandidates: CHROME_BIN then ARIGAMI_CHROME_BIN always come first, on every platform', () => {
   const env = { CHROME_BIN: '/custom/chrome', ARIGAMI_CHROME_BIN: '/other/chrome' };
@@ -40,7 +41,7 @@ test('chromeCandidates: win32 tries Program Files locations, then bare "chrome"/
 });
 
 test('findChromeBin: resolves an absolute CHROME_BIN override that exists on disk', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-chrome-'));
+  const dir = tmpDir('arigami-chrome-');
   const fake = path.join(dir, 'my-chrome');
   fs.writeFileSync(fake, '#!/bin/sh\n');
   expect(findChromeBin({ CHROME_BIN: fake }, 'linux')).toBe(fake);
@@ -54,7 +55,7 @@ test('findChromeBin: an absolute candidate that does not exist is skipped, not r
 });
 
 test('findChromeBin: falls through in order — a missing CHROME_BIN does not block ARIGAMI_CHROME_BIN', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-chrome-'));
+  const dir = tmpDir('arigami-chrome-');
   const fake = path.join(dir, 'fallback-chrome');
   fs.writeFileSync(fake, '#!/bin/sh\n');
   const found = findChromeBin({ CHROME_BIN: '/nope/nope/nope', ARIGAMI_CHROME_BIN: fake }, 'linux');

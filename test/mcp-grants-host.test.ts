@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'mcp-grants-host-test-secret-32chars!';
@@ -163,7 +164,7 @@ const text = (r: any) => String((r.content || []).map((c: any) => c.text).join('
 
 beforeAll(async () => {
   startVendor();
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-grants-'));
+  dir = tmpDir('arigami-grants-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

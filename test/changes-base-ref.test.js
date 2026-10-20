@@ -2,10 +2,10 @@
 // stale local main once made a PR review show 225 files vs GitHub's 14 — and
 // accept an explicit user-chosen base.
 import { test, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { changesFor, changeDiff, listBaseRefs, prStatus } = await import(path.join(ROOT, 'server/git.ts'));
@@ -17,7 +17,7 @@ const run = (cwd, cmd) => {
 
 // origin has main = A,B ; local main is stale at A ; feature branches off B.
 function fixture() {
-  const root = mkdtempSync(path.join(tmpdir(), 'chgbase-'));
+  const root = tmpDir('chgbase-');
   const origin = path.join(root, 'origin.git');
   const work = path.join(root, 'work');
   run(root, `git init -q --bare -b main ${origin} && git clone -q ${origin} work`);

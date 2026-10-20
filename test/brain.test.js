@@ -14,9 +14,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function isolatedEnv() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-brain-'));
+  const dir = tmpDir('arigami-brain-');
   return { dir, env: { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_PORT: '' } };
 }
 

@@ -17,9 +17,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function sandbox() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-ui-'));
+  const dir = tmpDir('engine-ui-');
   return {
     ARIGAMI_DIR: dir,
     ARIGAMI_STATE_FILE: path.join(dir, 'state.json'),

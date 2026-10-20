@@ -11,10 +11,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
 import { resolvePlan, planBelongsTo, planFileFor } from '../server/orchestration.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const isolated = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-BUGS1-'));
+  const dir = tmpDir('arigami-BUGS1-');
   return { dir, env: { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), HOME: dir } };
 };
 
@@ -33,7 +34,7 @@ test('B32: planBelongsTo — owner fields, folder, children, or no hint', () => 
 });
 
 test('B32: resolvePlan — per-session file first; the shared file only when attributable', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B32-'));
+  const dir = tmpDir('arigami-B32-');
   const me = { id: 'sess_me', folderId: 'fld_me' };
   // the audit's situation: another controller's plan in the shared cwd
   fs.writeFileSync(path.join(dir, 'ORCHESTRATION.json'), JSON.stringify({ project: 'לאפיין את המשתמש', folderId: 'fld_sreFlms5wUc', nodes: [{ id: 'scan-whatsapp', session: 'sess_znWTFL3pnlA' }] }));
@@ -59,7 +60,7 @@ test('B32: resolvePlan — per-session file first; the shared file only when att
   expect((r4.plan as any).task).toBe('own file');
   expect(r4.file).toBe(path.join(dir, 'ORCHESTRATION.sess_me.json'));
   // nothing there
-  expect(resolvePlan(fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B32e-')), me, {})).toEqual({ plan: null, planError: 'no ORCHESTRATION.json yet' });
+  expect(resolvePlan(tmpDir('arigami-B32e-'), me, {})).toEqual({ plan: null, planError: 'no ORCHESTRATION.json yet' });
 });
 
 test('B33: cron triggers broadcast over WS carry nextRunAt (what the launcher renders as "ריצה הבאה")', () => {

@@ -13,6 +13,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as cp from '../control-plane/src/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'shared-host-test-secret-32-chars!';
@@ -72,7 +73,7 @@ function upgradeStatus(p: string, headers: Record<string, string>): Promise<numb
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-shared-host-'));
+  dir = tmpDir('arigami-shared-host-');
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

@@ -14,10 +14,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const pf = await import('../server/profiles.ts');
 const ROOT = path.resolve(import.meta.dir, '..');
-const tmp = (p = 'arigami-pf-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-pf-') => tmpDir(p);
 
 function writeBundle(dir: string, opts: { name?: string; skill?: { name: string; content: string }; memory?: string; user?: string; cron?: unknown; manifest?: Record<string, unknown> } = {}) {
   fs.mkdirSync(dir, { recursive: true });
