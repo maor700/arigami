@@ -70,8 +70,7 @@ export function ensureSessionProfile(sessionId: string): string {
     const seed = profileSeedFor(sessionId);
     if (seed.owner !== 'global') {
       ensureBase(seed.dir); // an agent's first-ever profile starts empty and is created here
-      // Caches are what makes a profile hundreds of MB; they are not identity.
-      fs.cpSync(seed.dir, dir, { recursive: true, filter: (src) => !CACHE_DIRS.has(path.basename(src)) });
+      cloneProfile(seed.dir, dir);
     } else {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -79,7 +78,25 @@ export function ensureSessionProfile(sessionId: string): string {
   return dir;
 }
 
-const CACHE_DIRS = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'GrShaderCache', 'ShaderCache', 'Service Worker', 'blob_storage', 'Crashpad']);
+// Caches and Chrome's own downloads are what make a profile hundreds of MB;
+// none of them is identity, and Chrome rebuilds each on demand. What a login
+// lives in — Cookies, Local Storage, Session Storage, IndexedDB, Login Data,
+// Web Data, Preferences — is always copied.
+export const CLONE_EXCLUDE = new Set([
+  // HTTP / JS / GPU caches (per profile, under Default/)
+  'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GrShaderCache', 'GraphiteDawnCache', 'ShaderCache',
+  // service-worker scripts and their CacheStorage; sites re-register them
+  'Service Worker', 'CacheStorage', 'blob_storage',
+  // component-updater downloads and on-device models (user-data-dir level)
+  'optimization_guide_model_store', 'component_crx_cache', 'extensions_crx_cache', 'WasmTtsEngine', 'OnDeviceHeadSuggestModel', 'Safe Browsing',
+  // crash dumps, metrics spill files, the profile lock of a running Chrome
+  'Crashpad', 'BrowserMetrics', 'BrowserMetrics-spare.pma', 'SingletonLock', 'SingletonSocket', 'SingletonCookie',
+]);
+
+/** Copy a Chrome profile without what Chrome can rebuild (CLONE_EXCLUDE). Never writes `src`. */
+export function cloneProfile(src: string, dest: string): void {
+  fs.cpSync(src, dest, { recursive: true, filter: (p) => !CLONE_EXCLUDE.has(path.basename(p)) });
+}
 
 const running = new Map<string, ChildProcess>();
 
@@ -115,18 +132,25 @@ export function isChromeRunning(sessionId: string): boolean {
   return !!(p && p.exitCode === null && !p.killed);
 }
 
-/** Open (or report already-open) this session's Chrome, on its own desktop and profile copy. */
-export async function openChrome(sessionId: string, url?: string): Promise<{ display: string; pid: number; alreadyRunning: boolean }> {
-  const s = state.getSession(sessionId);
-  if (!s) throw new Error(`unknown session: ${sessionId}`);
-  const driver = pickDriver();
-  const handle = await driver.ensure(sessionId);
-  const display = String(handle.display);
-  const existing = running.get(sessionId);
-  if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
+// Chrome downloads ~130 MB of on-device models and components into EVERY new
+// profile within minutes of first launch — optimization_guide_model_store
+// (history-embedding and page-hint models, ~46 MB), component_crx_cache,
+// WasmTtsEngine, OnDeviceHeadSuggestModel — measured on a fresh temp profile.
+// An agent's browser uses none of these features. Chrome reads only the LAST
+// --disable-features switch, so this must stay the only one passed.
+export const LEAN_PROFILE_FEATURES_OFF = [
+  'OptimizationTargetPrediction',
+  'OptimizationHintsFetching',
+  'OptimizationHints',
+  'OptimizationGuideOnDeviceModel',
+  'HistoryEmbeddings',
+  'PassageEmbeddings',
+  'SegmentationPlatform',
+];
 
-  const profileDir = ensureSessionProfile(sessionId);
-  const args = [
+/** Command line of a session's Chrome (before driver / sandbox flags). */
+export function sessionChromeArgs(profileDir: string, url?: string): string[] {
+  return [
     `--user-data-dir=${profileDir}`,
     '--password-store=basic',
     '--no-first-run',
@@ -141,8 +165,22 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
     '--restore-last-session',
     // A long-lived session profile otherwise grows its cache without bound.
     '--disk-cache-size=52428800',
+    `--disable-features=${LEAN_PROFILE_FEATURES_OFF.join(',')}`,
     ...(url ? [url] : []),
   ];
+}
+
+/** Open (or report already-open) this session's Chrome, on its own desktop and profile copy. */
+export async function openChrome(sessionId: string, url?: string): Promise<{ display: string; pid: number; alreadyRunning: boolean }> {
+  const s = state.getSession(sessionId);
+  if (!s) throw new Error(`unknown session: ${sessionId}`);
+  const driver = pickDriver();
+  const handle = await driver.ensure(sessionId);
+  const display = String(handle.display);
+  const existing = running.get(sessionId);
+  if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
+
+  const args = sessionChromeArgs(ensureSessionProfile(sessionId), url);
   const { env, extraArgs } = await driver.browserLaunch(sessionId);
   const child = spawn(chromeBin(), chromeExtraFlags().concat(extraArgs, args), {
     env,
