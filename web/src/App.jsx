@@ -355,6 +355,11 @@ function Cockpit() {
   const [railOpen, setRailOpen] = useState(false); // mobile drawer
   // B27: any navigation (row tap, hash change, deep link, ⌘K) closes the drawer.
   useEffect(() => { setRailOpen(false); }, [selectedId, settingsOpen, skillsOpen, brainOpen, agentOpen, setupOpen, launcher, previewTicket]);
+  // The machine modal opened from the drawer's footer: the drawer is a modal
+  // sheet too and would otherwise sit on top, swallowing every tap meant for
+  // Take control / close.
+  const screenModalOpen = !!storeState.screen.modal;
+  useEffect(() => { if (screenModalOpen) setRailOpen(false); }, [screenModalOpen]);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const searchRef = useRef(null);

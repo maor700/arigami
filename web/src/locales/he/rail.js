@@ -11,6 +11,8 @@ export const strings = {
   'rail.summary': 'הקישו לתקציר',
   'rail.screen': 'המכונה המשותפת',
   'rail.screenConnecting': 'מתחבר…',
+  'rail.screenIdle': 'המסך ריק',
+  'rail.screenIdleDetail': 'מחובר — עדיין לא נפתח כלום במכונה הזו.',
   'rail.screenDisconnected': 'מנותק',
   'rail.screenError': 'ההתחברות נכשלה',
   'rail.screenNeedsYou': 'המכונה ממתינה לך — פתחו את הסשן',

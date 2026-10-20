@@ -235,7 +235,7 @@ test('question + permission: settled cards freeze, live cards offer buttons, and
   expect(hostLib.components.QuestionCard.props.safeParse({ sessionId: 's1', event: qs[1] }).success).toBe(true);
 });
 
-test('screen request: answered freezes to a line (no viewer, no buttons); live shows the viewer + take-over/cancel', () => {
+test('screen request: answered freezes to a line (no viewer, no buttons); live shows the viewer + done/take-over/cancel', () => {
   const [done, live] = fx('screen-request');
   const a = pane([done]);
   expect(a).toContain('data-screen-request="answered"');
@@ -244,5 +244,8 @@ test('screen request: answered freezes to a line (no viewer, no buttons); live s
   const b = pane([live], { awaiting: true });
   expect(b).toContain('data-screen-request="open"');
   expect(b).toContain('Take over');
+  // the hint agents write ("click Done") has a Done button on the card itself
+  expect(b).toContain('data-screen-done');
+  expect(a).not.toContain('data-screen-done');
   expect(b).toContain('the code is on your phone');
 });

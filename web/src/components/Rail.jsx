@@ -1261,7 +1261,7 @@ function ProfileMenu({ active, onOpenSkills, onOpenBrain, onOpenSetup, onOpenSet
   const openMyBrowser = async () => {
     try {
       const r = await api.post('/browser/vault/open', {});
-      if (r?.display) setScreenModal(true);
+      if (r?.display) setScreenModal({ control: true });
     } catch (e) {
       toastError(t('rail.myBrowserFailed', { error: e.message || e }));
     }

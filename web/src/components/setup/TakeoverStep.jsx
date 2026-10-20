@@ -28,7 +28,7 @@ export default function TakeoverStep({ capability = 'identity', sessionId, reque
   // the only way to skip.
   const open = () => {
     if (req) openScreenTakeover(sessionId, req.requestId);
-    else setScreenModal(sessionId ? { sessionId, setupId: requestId || null, capability } : true);
+    else setScreenModal(sessionId ? { sessionId, setupId: requestId || null, capability } : { control: true });
   };
   const verify = () =>
     run(async () => {

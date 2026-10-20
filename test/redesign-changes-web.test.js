@@ -137,9 +137,9 @@ test('ChangesTab keeps every control: review verdicts, explain, auto review, wor
   expect(src).toContain('const mergeReady = !!reviewStatus?.offer?.show');
 });
 
-test('screen panel keeps take over, cancel, enlarge, collapse; modal keeps type-into, note, done, fullscreen', () => {
+test('screen panel keeps take over (via enlarge), enlarge, collapse; modal keeps type-into, note, done, fullscreen', () => {
   const panel = read('components/ScreenSidePanel.jsx');
-  for (const needle of ['takeOver', 'cancel', 'enlarge', 'setScreenPanel(false)', "t('screen.viewShared')", 'allocate']) expect(panel).toContain(needle);
+  for (const needle of ['takeOver', 'enlarge', 'setScreenPanel(false)', "t('screen.viewShared')", 'allocate']) expect(panel).toContain(needle);
   const modal = read('components/ScreenModal.jsx');
   for (const needle of ['typeIt', 'done', 'cancel', 'toggleFullscreen', 'setupDone', "e.key === 'Escape' && !document.fullscreenElement"]) expect(modal).toContain(needle);
 });

@@ -11,6 +11,8 @@ export const strings = {
   'rail.summary': 'Tap for summary',
   'rail.screen': 'Shared machine',
   'rail.screenConnecting': 'Connecting…',
+  'rail.screenIdle': 'Desktop is idle',
+  'rail.screenIdleDetail': 'Connected — nothing is open on this machine yet.',
   'rail.screenDisconnected': 'Disconnected',
   'rail.screenError': 'Connection failed',
   'rail.screenNeedsYou': 'The machine is waiting for you — open the session',
