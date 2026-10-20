@@ -51,6 +51,21 @@ if [ -d "$WA_DIR" ] && [ ! -L "$WA_DIR/auth_info" ]; then
   ln -s "$WA_STATE/auth_info" "$WA_DIR/auth_info"
 fi
 
+# Reinstall the packages the owner added with `sudo apt-get install` before the
+# last restart (docker/apt-persist.sh keeps their .debs on the volume). In the
+# background, logged: a slow mirror must not hold the host back.
+replay_apt() {
+  [ -z "$ARIGAMI_APT_REPLAYED" ] || return 0 # the root pass already did, before the gosu drop
+  export ARIGAMI_APT_REPLAYED=1
+  [ -x /usr/local/lib/arigami/apt-persist ] || return 0
+  ls "$ARIGAMI_DIR"/apt/debs/*.deb >/dev/null 2>&1 || return 0
+  if [ "$(id -u)" = "0" ]; then set -- /usr/local/lib/arigami/apt-persist replay
+  elif sudo -n true 2>/dev/null; then set -- sudo -n /usr/local/lib/arigami/apt-persist replay
+  else return 0
+  fi
+  ( "$@" >>"$ARIGAMI_DIR/logs/apt-replay.log" 2>&1 & ) || true
+}
+
 if [ "$(id -u)" = "0" ]; then
   # A system dbus so Chrome/openbox don't log bus errors. Root-only, and
   # purely cosmetic — a non-root start just skips it.
@@ -66,6 +81,7 @@ if [ "$(id -u)" = "0" ]; then
     touch /data/.chowned
   fi
   chown node:node "$WA_STATE" "$WA_STATE/auth_info" "$WA_STATE/data" 2>/dev/null || true
+  replay_apt
   # gosu resets HOME to the target user's passwd home (/home/node); force the
   # intended HOME (/data/home, on the volume) so git creds, claude config, and
   # the Playwright MCP registration persist across recreates instead of landing
@@ -90,6 +106,8 @@ if [ ! -w "$ARIGAMI_DIR" ]; then
   echo "  Docker:     start as root once, or chown the volume before mounting." >&2
   exit 1
 fi
+replay_apt
+
 # Trust the worktrees the agent creates.
 git config --global --add safe.directory '*' || true
 

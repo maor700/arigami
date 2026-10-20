@@ -115,10 +115,24 @@ the first time a Codex account is added. Both then update in place through
 Settings › Host / the daily check, and survive image upgrades.
 `ARIGAMI_CLAUDE_AUTOINSTALL=0` / `ARIGAMI_CODEX_AUTOINSTALL=0` turn this off.
 
-No sudo/apt at runtime, and the root filesystem resets on restart: a missing
-tool goes into `~/.local` on the volume (`pip install --user`, `python3 -m venv`,
-`npm i -g --prefix ~/.local`, or a static binary in `~/.local/bin`, which is
-first on `PATH`). Agents are told so in the host MCP's instructions.
+### Admin (sudo)
+
+The workspace owner is admin in their own container: `node` has passwordless
+`sudo`, so `sudo apt-get update && sudo apt-get install <pkg>` (or a local
+`./pkg.deb`) works. The root filesystem is the image's and resets on every
+restart, so installs are made to stick: an apt hook
+(`/etc/apt/apt.conf.d/90arigami-persist` → `docker/apt-persist.sh`) copies every
+.deb dpkg installs — dependencies included — to `$ARIGAMI_DIR/apt/debs` on the
+volume, and drops it again when the package is removed. At the next start the
+entrypoint reinstalls the cached packages that are missing, in the background
+(log: `$ARIGAMI_DIR/logs/apt-replay.log`); a package the image already ships is
+never downgraded. Under Kubernetes the chart's `containerSecurityContext`
+permits the privilege escalation sudo needs (deploy/helm/README.md).
+
+Besides apt, user-level installs persist on their own: `~/.local` is on the
+volume and `~/.local/bin` is first on `PATH` (`pip install --user`,
+`python3 -m venv`, `npm i -g --prefix ~/.local`, or a static binary). Agents are
+told all this in the host MCP's instructions.
 
 Not in the image: Tailscale. Run it on the Docker host, or add the official
 `tailscale/tailscale` sidecar.

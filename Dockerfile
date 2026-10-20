@@ -28,15 +28,16 @@ ARG TARGETARCH
 #              hand under `docker compose exec -it` still works, since that has
 #              a real TTY and needs no bridge.
 #   jq       : JSON in shell skills (queue scripts, PR context, upload URLs)
+#   sudo     : the workspace owner is admin in their own container (below)
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
 #     bzip2, zstd), file, network debugging (ss/ip, nc, dig), rsync, the
-#     sqlite3 shell, patch and nano. pip/venv: there is no sudo/apt at runtime,
-#     so a missing tool is installed per user into ~/.local (see PATH below). ---
+#     sqlite3 shell, patch and nano. pip/venv for user-level Python installs
+#     into ~/.local (see PATH below). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip zip xz-utils bzip2 zstd file iproute2 netcat-openbsd dnsutils rsync sqlite3 patch nano \
       python3-pip python3-venv \
@@ -154,7 +155,8 @@ ENV ARIGAMI_IMAGE=${ARIGAMI_IMAGE} \
 # non-ASCII paths and terminals show raw bytes; C.UTF-8 ships with libc.
 # PATH: ~/.local/bin (on the /data volume) first — the only place a user-level
 # install (`pip install --user`, `npm i -g --prefix ~/.local`, a static binary)
-# survives a restart, since there's no sudo and the root fs is reset.
+# survives a restart besides apt packages (see apt-persist below): the root fs
+# is reset.
 # PIP_BREAK_SYSTEM_PACKAGES lets `pip install --user` past Debian's PEP 668
 # guard; --user never touches the system's own packages.
 ENV HOME=/data/home \
@@ -184,6 +186,20 @@ ENV HOME=/data/home \
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/register-playwright-mcp.sh /usr/local/bin/arigami-register-playwright-mcp
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/arigami-register-playwright-mcp
+
+# --- The workspace owner is admin in their own container: passwordless sudo
+#     for `node`, so `sudo apt-get install` works (the Helm chart allows the
+#     privilege escalation sudo needs; docs/DOCKER.md "Admin (sudo)"). The root
+#     fs resets on restart, so apt-persist copies every installed .deb to the
+#     volume and the entrypoint reinstalls missing ones at the next start. ---
+COPY docker/apt-persist.sh /usr/local/lib/arigami/apt-persist
+RUN chmod 0755 /usr/local/lib/arigami/apt-persist \
+    && printf 'node ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/arigami-node \
+    && chmod 0440 /etc/sudoers.d/arigami-node && visudo -cf /etc/sudoers.d/arigami-node \
+    && printf '%s\n' \
+      'DPkg::Pre-Install-Pkgs { "/usr/local/lib/arigami/apt-persist cache"; };' \
+      'DPkg::Post-Invoke { "/usr/local/lib/arigami/apt-persist prune || true"; };' \
+      > /etc/apt/apt.conf.d/90arigami-persist
 # Run right after the host's first-boot claude install (claude-update.js).
 ENV ARIGAMI_CLAUDE_POSTINSTALL=/usr/local/bin/arigami-register-playwright-mcp
 
