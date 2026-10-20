@@ -104,6 +104,11 @@ plus `ARIGAMI_CODEX_BIN` in `.env`.
 | whatsapp-mcp at `/opt/whatsapp-mcp` (+ `tsx`) | the Baileys bridge behind the WhatsApp listener/MCP |
 | `web/dist` (built in stage 1) | the cockpit UI |
 
+No sudo/apt at runtime, and the root filesystem resets on restart: a missing
+tool goes into `~/.local` on the volume (`pip install --user`, `python3 -m venv`,
+`npm i -g --prefix ~/.local`, or a static binary in `~/.local/bin`, which is
+first on `PATH`). Agents are told so in the host MCP's instructions.
+
 Not in the image: Tailscale. Run it on the Docker host, or add the official
 `tailscale/tailscale` sidecar.
 

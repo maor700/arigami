@@ -35,9 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- Everyday CLI tools agents reach for (~30MB): archives (unzip/zip, xz,
 #     bzip2, zstd), file, network debugging (ss/ip, nc, dig), rsync, the
-#     sqlite3 shell, patch and nano. ---
+#     sqlite3 shell, patch and nano. pip/venv: there is no sudo/apt at runtime,
+#     so a missing tool is installed per user into ~/.local (see PATH below). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip zip xz-utils bzip2 zstd file iproute2 netcat-openbsd dnsutils rsync sqlite3 patch nano \
+      python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # --- GitHub CLI (optional; sessions use it for PRs) ---
@@ -153,7 +155,14 @@ ENV ARIGAMI_IMAGE=${ARIGAMI_IMAGE} \
     ARIGAMI_SUPERVISOR=docker
 # LANG/LC_ALL: the slim base leaves the locale at POSIX, so git octal-escapes
 # non-ASCII paths and terminals show raw bytes; C.UTF-8 ships with libc.
+# PATH: ~/.local/bin (on the /data volume) first — the only place a user-level
+# install (`pip install --user`, `npm i -g --prefix ~/.local`, a static binary)
+# survives a restart, since there's no sudo and the root fs is reset.
+# PIP_BREAK_SYSTEM_PACKAGES lets `pip install --user` past Debian's PEP 668
+# guard; --user never touches the system's own packages.
 ENV HOME=/data/home \
+    PATH=/data/home/.local/bin:$PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     ARIGAMI_PORT=3099 \
