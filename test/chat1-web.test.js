@@ -22,6 +22,7 @@ const h = (...a) => React.createElement(...a);
 let posts = [];
 let origFetch;
 let failNext = null; // {status, error} → the next fetch rejects like api.js does
+let mergeStatusReply = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
 
 beforeAll(async () => {
   const mem = new Map();
@@ -40,6 +41,10 @@ beforeAll(async () => {
       const f = failNext;
       failNext = null;
       return { ok: false, status: f.status, url: String(url), json: async () => ({ error: f.error }), text: async () => JSON.stringify({ error: f.error }), headers: { get: () => 'application/json' } };
+    }
+    if (String(url).includes('/merge/status')) {
+      const st = mergeStatusReply;
+      return { ok: true, status: 200, url: String(url), json: async () => st, text: async () => JSON.stringify(st), headers: { get: () => 'application/json' } };
     }
     const body = init.body ? JSON.parse(init.body) : {};
     const reply = body.toolUseId === 'tu_gone' ? { ok: true, delivered: 'message' } : { ok: true, delivered: 'tool' };
@@ -226,16 +231,27 @@ test('action card: a current action with no record in the transcript is still an
 // ---- the merge offer is part of the conversation too, and dismissable --------------------------
 
 const APPROVED = { id: 'sess_t', metadata: { chatMode: 'full', branch: 'feat/x', base: 'main', review: { state: 'approved', at: 'T1', by: 'me' } }, claude: { state: 'idle' } };
-const mergePane = (events) => render(h(ChatPane, { sessionId: 'sess_t', events, chatLoaded: true }));
+// The merge control renders once the host's merge/status says this viewer can merge — so these
+// render in a DOM (effects run) rather than to a static string.
+async function mergePane(events, extra = {}) {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(h(ChatPane, { sessionId: 'sess_t', events, chatLoaded: true, ...extra })); await new Promise((r) => setTimeout(r, 20)); });
+  const html = host.innerHTML;
+  await act(async () => root.unmount());
+  return html;
+}
 const offer = { id: 'mo1', kind: 'merge-offer', approvedAt: 'T1', branch: 'feat/x', ts: 2 };
 
 test('merge offer: live inline with a dismiss button while approved; a one-line record once dismissed or merged', async () => {
+  if (!createRoot) return;
   const store = await import(web('lib/store.js'));
   const seed = (md) => { store.getState().sessions = [{ ...APPROVED, metadata: { ...APPROVED.metadata, ...md } }]; };
   const sess = () => store.getState().sessions[0];
 
   seed({});
-  let html = mergePane([user('u1', 'MSG-BEFORE', 1), offer, user('u2', 'MSG-AFTER', 3)]);
+  let html = await mergePane([user('u1', 'MSG-BEFORE', 1), offer, user('u2', 'MSG-AFTER', 3)]);
   expect(html).toContain('data-merge-panel');
   expect(html).toContain('data-merge-dismiss');
   expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('MSG-BEFORE'));
@@ -243,22 +259,94 @@ test('merge offer: live inline with a dismiss button while approved; a one-line 
   expect(html.split('data-merge-panel').length - 1).toBe(1); // once
 
   seed({ mergeOfferDismissedAt: 'T1' });
-  html = mergePane([user('u1', 'MSG-BEFORE', 1), offer]);
+  html = await mergePane([user('u1', 'MSG-BEFORE', 1), offer]);
   expect(html).not.toContain('data-merge-panel');
   expect(html).toContain('data-merge-offer-record');
 
   seed({ merged: { sha: 'abc1234', base: 'main', at: 'T2' } });
-  html = mergePane([offer]);
+  html = await mergePane([offer]);
   expect(html).not.toContain('data-merge-panel');
   expect(html).toContain('data-merge-offer-record');
 
   // approved before offers were recorded: still offered (last), still dismissable
   seed({});
-  html = mergePane([user('u1', 'old chat', 1)]);
+  html = await mergePane([user('u1', 'old chat', 1)]);
   expect(html).toContain('data-merge-panel');
   expect(html.indexOf('data-merge-panel')).toBeGreaterThan(html.indexOf('old chat'));
   seed({ mergeOfferDismissedAt: 'T1' });
-  expect(mergePane([user('u1', 'old chat', 1)])).not.toContain('data-merge-panel');
+  expect(await mergePane([user('u1', 'old chat', 1)])).not.toContain('data-merge-panel');
+});
+
+test('merge offer: when this viewer cannot merge (someone else\'s PR) it is a passive line — no Merge button', async () => {
+  if (!createRoot) return;
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ ...APPROVED }];
+  mergeStatusReply = { kind: 'pr', mode: 'pr-review', base: 'main', canMerge: false, reason: 'not-your-pr', offer: { show: false, reason: 'not-your-pr' } };
+  try {
+    const html = await mergePane([user('u1', 'hi', 1), offer]);
+    expect(html).toContain('data-merge-passive="not-your-pr"');
+    expect(html).toContain('its author merges it');
+    expect(html).not.toContain('data-merge-target');
+    expect(html).not.toMatch(/>Merge</);
+  } finally {
+    mergeStatusReply = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
+  }
+});
+
+test('cold load: no live action / merge card while the transcript is loading — it appears once, in place, after', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ ...APPROVED }];
+  const events = [user('u1', 'hi', 1), { id: 'ar1', kind: 'action-request', actionId: 'act_7', prompt: 'Ship it?', ts: 2 }];
+  const loading = render(h(ChatPane, { sessionId: 'sess_t', events, action: ACT, loading: true }));
+  expect(loading).not.toContain('Ship it?'); // neither the card nor a misleading "answered" record
+  const fallback = render(h(ChatPane, { sessionId: 'sess_t', events: [user('u1', 'hi', 1)], action: ACT, loading: true }));
+  expect(fallback).not.toContain('Ship it?');
+  const loaded = render(h(ChatPane, { sessionId: 'sess_t', events, action: ACT, loading: false }));
+  expect(loaded.split('Ship it?').length - 1).toBe(1);
+});
+
+// ---- the review card: THE approve action, one label, already-approved state ------------------
+
+const REVIEW = (o = {}) => ({ id: 'act_r', at: '2026-01-01T00:00:00Z', kind: 'review', prompt: 'Review my change', buttons: [{ label: 'Request changes', value: 'request-changes' }, { label: '✓ Verified', value: 'verified', style: 'primary' }], ...o });
+
+test('review card: Approve (same label as the Changes tab, even on an old "Verified" card) says what it will do', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x' } }];
+  const local = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1', branch: 'feat/x', base: 'main' } }) }));
+  expect(local).toContain('Approve');
+  expect(local).not.toContain('Verified');
+  expect(local).toContain('Approves feat/x — then it can be merged into main.');
+  const pr = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ buttons: [{ label: 'Approve', value: 'approve', style: 'primary' }], approval: { mode: 'pr-review', sha: 'h1', pr: 42 } }) }));
+  expect(pr).toContain('Posts an approving review to PR #42 on GitHub.');
+  // a plain (non-review) card keeps its own labels
+  expect(render(h(ActionCard, { sessionId: 'sess_t', action: ACT }))).not.toContain('data-approve');
+});
+
+test('review card: already approved at this commit → "Approved", disabled, nothing to send; a new commit re-enables it', async () => {
+  const store = await import(web('lib/store.js'));
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x', review: { state: 'approved', at: '2026-01-01T00:00:01Z', sha: 'a1' } } }];
+  const done = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1' } }) }));
+  expect(done).toContain('data-approve="approved"');
+  expect(done).toMatch(/<button[^>]*disabled=""[^>]*data-approve="approved"/);
+  expect(done).toContain('Approved');
+  const moved = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a2' } }) }));
+  expect(moved).not.toContain('data-approve="approved"');
+  // a local stamp is not a posted GitHub approval
+  const pr = render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'pr-review', sha: 'a1', pr: 1 } }) }));
+  expect(pr).not.toContain('data-approve="approved"');
+  if (!createRoot) return;
+  // the click answers the card with the approve value — one request, nothing else
+  store.getState().sessions = [{ id: 'sess_t', metadata: { branch: 'feat/x' } }];
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => root.render(h(ActionCard, { sessionId: 'sess_t', action: REVIEW({ approval: { mode: 'local', sha: 'a1' } }) })));
+  posts = [];
+  const btn = host.querySelector('[data-approve]');
+  await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 20)); });
+  expect(posts.map((p) => p.url.replace(/^.*\/__api/, ''))).toEqual(['/sessions/sess_t/action/answer']);
+  expect(posts[0].body).toMatchObject({ actionId: 'act_r', value: 'verified' });
+  await act(async () => root.unmount());
 });
 
 // ---- usage in the rail: one line on a phone, with the engine's name ---------------------------
