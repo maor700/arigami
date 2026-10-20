@@ -27,9 +27,10 @@ ARG TARGETARCH
 #              buttons fail with a spawn ENOENT — `claude setup-token` run by
 #              hand under `docker compose exec -it` still works, since that has
 #              a real TTY and needs no bridge.
+#   jq       : JSON in shell skills (queue scripts, PR context, upload URLs)
 #   gh        comes from the apt repo below
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu \
+      git curl ca-certificates ripgrep procps lsof python3-minimal less openssh-client gnupg gosu jq \
     && rm -rf /var/lib/apt/lists/*
 
 # --- GitHub CLI (optional; sessions use it for PRs) ---
