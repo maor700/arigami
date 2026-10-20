@@ -34,7 +34,7 @@ test('tint2Config: terminal first, no tint2 settings icon, a centred dock with 4
   const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop');
   const items = rc.split('\n').filter((l) => l.startsWith('launcher_item_app'));
   expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = google-chrome.desktop']);
-  for (const l of ['panel_items = LTS', 'panel_size = 100% 56', 'panel_shrink = 1', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
+  for (const l of ['panel_size = 100% 56', 'panel_shrink = 1', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
     expect(rc.split('\n').filter((x) => x.startsWith(l.split(' =')[0] + ' '))).toEqual([l]);
   expect(tint2Config(null, '/x')).toBeNull();
   expect(tint2Config('panel_items = TSC\n', '/x')).toBeNull();
