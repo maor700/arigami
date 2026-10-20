@@ -36,8 +36,19 @@ chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 # that at the volume so the WhatsApp login survives image upgrades. The
 # checkout is chowned to `node` at build time, so uid 1000 can do this too.
 if [ -d "$WA_DIR" ] && [ ! -L "$WA_DIR/auth_info" ]; then
-  rm -rf "$WA_DIR/auth_info" 2>/dev/null || true
-  ln -s "$WA_STATE/auth_info" "$WA_DIR/auth_info" 2>/dev/null || true
+  # Preserve an existing pairing when moving from a checkout to the volume.
+  # Never discard credentials silently on an upgrade.
+  if [ -d "$WA_DIR/auth_info" ]; then
+    if [ -n "$(ls -A "$WA_DIR/auth_info")" ]; then
+      if [ -n "$(ls -A "$WA_STATE/auth_info")" ]; then
+        echo "WhatsApp pairing exists in both checkout and volume; resolve before starting" >&2
+        exit 1
+      fi
+      cp -a "$WA_DIR/auth_info/." "$WA_STATE/auth_info/"
+    fi
+    mv "$WA_DIR/auth_info" "$WA_DIR/auth_info.pre-volume-$(date +%s)"
+  fi
+  ln -s "$WA_STATE/auth_info" "$WA_DIR/auth_info"
 fi
 
 if [ "$(id -u)" = "0" ]; then

@@ -128,6 +128,8 @@ export const strings = {
   'setup.oauth.readBrowserMissing': 'הדפדפן של הסוכן עדיין לא הגיע לדף ה-callback — אשר קודם ואז נסה שוב.',
   'setup.oauth.noUrl': 'המכונה לא החזירה קישור התחברות.',
 
+  'setup.qr.missing': 'רכיב WhatsApp חסר. יש להריץ בשרת bash scripts/install-whatsapp.sh מתיקיית Arigami ולנסות שוב.',
+  'setup.qr.failed': 'חיבור WhatsApp נכשל ({reason}). נסה שוב להציג QR; אם התקלה חוזרת, בדוק את יומן השרת.',
   'setup.qr.connect': 'הצג קוד QR',
   'setup.qr.starting': 'מפעיל את גשר WhatsApp…',
   'setup.qr.scanHint': 'WhatsApp ← מכשירים מקושרים ← קישור מכשיר, ואז סרוק.',

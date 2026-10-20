@@ -219,3 +219,16 @@ test('store: setup-update lines replace when the host sends the full list, appen
   const card = store.getState().chats[sid].find((e) => e.requestId === 'L1');
   expect(card.lines).toEqual(['a', 'b', 'c']);
 });
+
+test('WhatsApp QR shows install and startup failures instead of a silent retry button', () => {
+  const C = setup.stepFor('qr');
+  for (const language of ['en', 'he']) {
+    prefs.setPrefs({ language });
+    const missing = render(h(C, { initial: { status: 'disconnected', reason: 'not-installed' } }));
+    expect(missing).toContain('scripts/install-whatsapp.sh');
+    expect(missing).not.toContain('<img');
+    const failed = render(h(C, { initial: { status: { data: { status: 'disconnected', reason: 'crash-loop' } } } }));
+    expect(failed).toContain('crash-loop');
+    expect(failed).not.toContain('setup.qr.');
+  }
+});

@@ -123,3 +123,34 @@ screenshot moments and the hand-over protocol.
    `report_setup`, retro (`skill_propose`).
 3. Register `playbook: 'connect-<provider>'` and `autoCapable: true` in
    `server/capabilities.ts`.
+
+## WhatsApp: one linked device per host
+
+Native install and update run `scripts/install-whatsapp.sh`; the Docker image
+runs that same pinned-source installer at build time. Existing native installs
+can run it from the Arigami checkout after installing Node >=22 and npm. It
+preserves `auth_info` and `data`, and retries an incomplete dependency install.
+No package download is needed when the bridge starts.
+
+All authorized sessions use the host's single managed bridge and pairing, not a
+separate browser login. Native pairing lives in
+`~/.local/lib/whatsapp-mcp/auth_info`; Docker links it to
+`$ARIGAMI_DIR/whatsapp/auth_info` on the persistent volume. Do not remove that
+volume during upgrades. Revoked/logged-out devices still need a new scan.
+The setup card displays a local QR PNG and reports missing-install/crash reasons.
+
+`whatsapp` tool `download_media` takes `{chat_jid, message_id}` from message
+history and returns `{path, mime_type, bytes}`. It supports received/synced
+images (including those without captions), video, audio, stickers and documents.
+Metadata is stored in the shared message database; files land in its `media/`
+directory with private permissions. Downloads are explicit and capped at 50 MiB;
+expired/unavailable WhatsApp media can fail even when metadata is retained.
+Historical messages without stored media metadata cannot be downloaded until
+WhatsApp syncs them again. Use `publish_artifact` to show a downloaded file to
+the human; don't expose a server-local filesystem path as a web link.
+
+Validation: `bun test test/whatsapp-install.test.ts test/whatsapp-media.test.ts
+test/bugs1-whatsapp.test.ts test/setup-web.test.js test/install.test.ts` covers
+repair/idempotence, preserved pairing/data, process restart, media scope/limits,
+and QR/error presentation. A real QR scan and a Docker-volume restart remain
+release smoke checks requiring a linked test device and a Docker runtime.

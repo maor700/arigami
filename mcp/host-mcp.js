@@ -862,8 +862,8 @@ export async function createArigamiServer(env = process.env) {
       name: 'whatsapp',
       description:
         'Read or send WhatsApp on the human\'s own account (linked-device bridge on the host). ' +
-        'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | send_message; ' +
-        'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; send_message {recipient, message}). ' +
+        'tool: list_chats | list_messages | search_contacts | search_messages | get_chat | get_message_context | get_recent_messages | download_media | send_message; ' +
+        'args: that tool\'s arguments (e.g. list_chats {limit, query}; list_messages {chat_jid, limit}; search_contacts {query}; download_media {chat_jid, message_id} returns a local file path (50 MiB limit); send_message {recipient, message}). ' +
         'If WhatsApp is not connected yet the result is {needs_setup:"whatsapp", why, hint} — do NOT say you have no access: call request_setup({capability:"whatsapp", why}) so the human gets the QR card in the chat, then retry. ' +
         'send_message is NOT sent by this call: the owner gets a card with the recipient and your exact text, and the host sends it only if they press Send — you get {pending:true}; stop and wait for the "[host] …" message. Write the message exactly as it should go out. ' +
         'Returns {ok:true, result} (the MCP content blocks) or {ok:false, error}.',

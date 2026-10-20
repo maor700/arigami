@@ -13,7 +13,7 @@ import { needsSetup, type NeedsSetup } from './capabilities.js';
 
 export { whatsappMcpInstalled };
 
-export const WA_TOOLS = ['list_chats', 'list_messages', 'search_contacts', 'search_messages', 'get_chat', 'get_message_context', 'get_recent_messages', 'send_message'] as const;
+export const WA_TOOLS = ['list_chats', 'list_messages', 'search_contacts', 'search_messages', 'get_chat', 'get_message_context', 'get_recent_messages', 'download_media', 'send_message'] as const;
 export type WaTool = (typeof WA_TOOLS)[number];
 
 /**

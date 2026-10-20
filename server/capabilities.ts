@@ -559,6 +559,7 @@ function staticCapabilities(p: CapabilityProbes, owner: Owner = GLOBAL_OWNER): C
           : {
               ok: false,
               detail: w.status === 'qr' ? 'scan the QR code with WhatsApp'
+                : w.reason === 'not-installed' ? 'WhatsApp bridge missing — run bash scripts/install-whatsapp.sh from the Arigami installation, then Show QR'
                 : w.reason === 'logged-out' ? 'WhatsApp unlinked this device — Show QR to pair again'
                 : w.reason === 'creds-corrupt' ? 'the saved WhatsApp pairing is damaged (creds.json empty) — Show QR to pair again'
                 : w.reason === 'crash-loop' ? 'the WhatsApp process keeps exiting — see the host log, then Show QR'

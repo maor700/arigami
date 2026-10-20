@@ -52,7 +52,11 @@ const STDERR_MAX_LINES = 200; // of the child's stderr forwarded per spawn
 
 // How the checkout is run: `npx tsx <main.ts>` natively and in the image (tsx is
 // global there). Tests point this at `bun` with a fake main.ts.
-const RUNNER = (process.env.ARIGAMI_WA_RUNNER || 'npx tsx').trim().split(/\s+/);
+const RUNNER = process.env.ARIGAMI_WA_RUNNER
+  ? process.env.ARIGAMI_WA_RUNNER.trim().split(/\s+/)
+  : fs.existsSync(path.join(WA_MCP_DIR, 'node_modules/.bin/tsx'))
+    ? [path.join(WA_MCP_DIR, 'node_modules/.bin/tsx')]
+    : ['npx', '--no-install', 'tsx'];
 
 // Restart policy. A process that dies within FAST_EXIT_MS of its spawn is a
 // "fast exit" (logged-out creds → 401 → exit 1; a conflict with a foreign

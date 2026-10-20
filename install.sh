@@ -183,7 +183,9 @@ do_update() {
   fi
   as_user git -C "$INSTALL_DIR" fetch --quiet --prune
   as_user git -C "$INSTALL_DIR" pull --ff-only --quiet
+  install_node
   build_repo
+  install_whatsapp
   step "restart"
   if [ "$NO_SERVICE" = 1 ]; then warn "--no-service: not restarting"; return 0; fi
   if [ "$HAVE_SYSTEMD" = 1 ] && systemctl cat arigami >/dev/null 2>&1; then
@@ -334,6 +336,11 @@ clone_or_pull() {
   ok "cloned $REPO_URL ($BRANCH)"
 }
 
+install_whatsapp() {
+  step "WhatsApp bridge (pairing data preserved)"
+  as_user bash "$INSTALL_DIR/scripts/install-whatsapp.sh"
+}
+
 build_repo() {
   step "dependencies + web build"
   local log="${TMPDIR:-/tmp}/arigami-install-build.log"
@@ -480,6 +487,7 @@ main() {
   install_desktop
   clone_or_pull
   build_repo
+  install_whatsapp
   write_env
   install_service
   apply_profile

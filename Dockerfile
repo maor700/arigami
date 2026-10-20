@@ -92,21 +92,9 @@ RUN npm install -g playwright @playwright/mcp \
 #     installed globally so the first bridge start needs no network. The
 #     checkout's auth_info/ is symlinked onto /data by the entrypoint (upstream
 #     hardcodes it next to src/); the message DB goes to ARIGAMI_WA_DATA_DIR. ---
-ARG WHATSAPP_MCP_REPO=https://github.com/jlucaso1/whatsapp-mcp-ts
-ARG WHATSAPP_MCP_REF=ce9b144a2327d44f4288ee400503e2dc06c7d2d5
-RUN set -eux; \
-    git init -q /opt/whatsapp-mcp; \
-    cd /opt/whatsapp-mcp; \
-    git remote add origin "$WHATSAPP_MCP_REPO"; \
-    git fetch -q --depth 1 origin "$WHATSAPP_MCP_REF"; \
-    git checkout -q FETCH_HEAD; \
-    rm -rf .git; \
-    npm install --omit=dev --no-audit --no-fund --ignore-scripts=false --engine-strict=false; \
-    npm cache clean --force; \
-    npm install -g tsx; \
-    npm cache clean --force; rm -rf /root/.npm; \
-    rm -rf auth_info data; \
-    chown -R node:node /opt/whatsapp-mcp
+COPY scripts/install-whatsapp.sh scripts/prepare-whatsapp.mjs scripts/whatsapp-status.ts scripts/whatsapp-media.ts /opt/arigami-whatsapp-setup/
+RUN ARIGAMI_WA_MCP_DIR=/opt/whatsapp-mcp bash /opt/arigami-whatsapp-setup/install-whatsapp.sh \
+    && chown -R node:node /opt/whatsapp-mcp
 
 WORKDIR /app
 

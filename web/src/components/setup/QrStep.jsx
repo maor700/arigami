@@ -45,6 +45,9 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
   // while the bare bridge answers {status:'qr'|…}. Read the bridge state from
   // whichever shape arrived — otherwise a live QR never reaches the <img>.
   const state = typeof st?.status === 'string' ? st.status : st?.status?.data?.status;
+  const reason = st?.reason || st?.status?.data?.reason;
+  const failure = state === 'disconnected' && reason
+    ? t(reason === 'not-installed' ? 'setup.qr.missing' : 'setup.qr.failed', { reason }) : null;
   const user = st?.user ?? st?.status?.data?.user;
 
   if (state === 'connected') return <OkLine>{t('setup.qr.connected', { user: user || '…' })}</OkLine>;
@@ -60,7 +63,7 @@ export default function QrStep({ capability = 'whatsapp', onDone, initial = null
       ) : (
         <button type="button" className={BTN2} disabled={busy} onClick={connect}>{t('setup.qr.connect')}</button>
       )}
-      <ErrorBox err={err} />
+      <ErrorBox err={err || failure} />
     </div>
   );
 }

@@ -137,6 +137,8 @@ export const strings = {
   'setup.oauth.noUrl': 'The host did not return a sign-in link.',
 
   // QrStep
+  'setup.qr.missing': 'The WhatsApp bridge is missing. On the server, run bash scripts/install-whatsapp.sh from the Arigami installation, then retry.',
+  'setup.qr.failed': 'WhatsApp could not connect ({reason}). Retry Show QR code; if it fails again, check the host logs.',
   'setup.qr.connect': 'Show QR code',
   'setup.qr.starting': 'Starting the WhatsApp bridge…',
   'setup.qr.scanHint': 'WhatsApp → Linked devices → Link a device, then scan.',
