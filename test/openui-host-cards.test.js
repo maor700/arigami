@@ -173,9 +173,26 @@ test('merge: merged / conflict records and the approved-session merge panel rend
   expect(html).toContain('53ba82c');
   expect(html).toContain('data-merge-event="conflict"');
   expect(html).toContain('server/api.ts, web/src/App.jsx');
-  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session: { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'reviewer' } } } } }));
+  const session = { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'reviewer' } } };
+  const can = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
+  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session, status: can } }));
   expect(panel).toContain('data-merge-panel');
   expect(panel).toContain('child/x');
+  expect(panel).toContain('data-merge-target="main"');
+  // the dense (Changes tab) face names the base and the no-gates warning too
+  const dense = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: can } }));
+  expect(dense).toContain('Merge child/x into main');
+  expect(dense).toContain('data-merge-hint');
+  // a remote PR names the PR and its base
+  const pr = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: { ...can, kind: 'pr', base: 'develop', pr: { number: 42 } } } }));
+  expect(pr).toContain('Merge PR #42 into develop');
+  // the viewer can't merge here: no button — a passive line saying why
+  const passive = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: { kind: 'pr', offer: { show: false, reason: 'not-your-pr' } } } }));
+  expect(passive).toContain('data-merge-passive="not-your-pr"');
+  expect(passive).not.toContain('data-merge-button');
+  expect(passive).not.toContain('data-merge-target');
+  // status not known yet → nothing (no control flashing in)
+  expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session } }))).toBe('');
   // not approved / already merged → nothing
   expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, session: { id: 's1', metadata: { branch: 'child/x', merged: { sha: 'abc' } } } } }))).toBe('');
 });
@@ -218,7 +235,7 @@ test('question + permission: settled cards freeze, live cards offer buttons, and
   expect(hostLib.components.QuestionCard.props.safeParse({ sessionId: 's1', event: qs[1] }).success).toBe(true);
 });
 
-test('screen request: answered freezes to a line (no viewer, no buttons); live shows the viewer + take-over/cancel', () => {
+test('screen request: answered freezes to a line (no viewer, no buttons); live shows the viewer + done/take-over/cancel', () => {
   const [done, live] = fx('screen-request');
   const a = pane([done]);
   expect(a).toContain('data-screen-request="answered"');
@@ -227,5 +244,8 @@ test('screen request: answered freezes to a line (no viewer, no buttons); live s
   const b = pane([live], { awaiting: true });
   expect(b).toContain('data-screen-request="open"');
   expect(b).toContain('Take over');
+  // the hint agents write ("click Done") has a Done button on the card itself
+  expect(b).toContain('data-screen-done');
+  expect(a).not.toContain('data-screen-done');
   expect(b).toContain('the code is on your phone');
 });

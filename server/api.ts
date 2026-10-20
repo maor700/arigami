@@ -28,6 +28,7 @@ import * as desktops from './lib/desktops.js';
 import { pickDriver } from './lib/screen-driver.js';
 import * as chrome from './lib/chrome.js';
 import * as reap from './reap.js';
+import * as ticketProvision from './ticket-provision.js';
 import * as browserActions from './lib/browser-actions.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
@@ -46,6 +47,7 @@ import {
   provisionChildWorktree,
 } from './git.js';
 import { mergeBranch, baseStatus, mergeMessage } from './merge.js';
+import * as approval from './lib/review-approval.js';
 import fs from 'node:fs';
 
 const PERMISSION_TIMEOUT_MS = Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) > 0 ? Number(process.env.ARIGAMI_PERMISSION_TIMEOUT_MS) : 10 * 60 * 1000; // env: tests only
@@ -2850,6 +2852,8 @@ function allocatePort(): number | null {
       .map((s: any) => Number(s.metadata?.port))
       .filter((n) => Number.isFinite(n) && n > 0)
   );
+  // a port a ticket launcher is showing right now is spoken for too
+  for (const p of ticketProvision.reservedPorts()) used.add(p);
   for (let p = lo; p <= hi; p++) if (!used.has(p)) return p;
   return null;
 }
@@ -3025,7 +3029,7 @@ async function wireFullChild(masterId: string, body: any): Promise<WireResult> {
 
 // ---- F7: approval + host-executed merge ----
 // The child never merges. A human approval (local review verdict `approve`, or
-// the ✓ Verified button of request_review) on a session that owns a branch
+// the Approve button of request_review — one action, see approveSession) on a session that owns a branch
 // stamps metadata.review with the repository, branch, and reviewed SHA; from there the merge is
 // one click (web) or one tool call (merge_session) — executed by the HOST.
 function principalLabel(me: any): string {
@@ -3066,6 +3070,67 @@ export function markApproved(id: string, by: string, expected?: { sha: string; r
   // EXT domain event (the WS only ever carried this as a session-updated).
   try { emitLocal('review.approved', { sessionId: id, by, branch: md.branch }); } catch {}
   return true;
+}
+
+// ---- ONE approve action (docs/REVIEW-AND-MERGE.md) ----
+// The review card's Approve, the Changes tab's Approve, and review/submit
+// verdict "approve" all land here. The session decides what approving means
+// (lib/review-approval.ts): a local stamp, or an APPROVE review posted to
+// someone else's PR. Approving what is already approved is a no-op.
+export async function approvalContext(s: any, o: { fresh?: boolean } = {}) {
+  const md: any = s.metadata || {};
+  const ref = approval.prRefOf(md);
+  const facts = ref ? await approval.fetchPrFacts(ref, { fresh: o.fresh }) : null;
+  const mode = approval.approvalMode(md, facts);
+  const sha = mode === 'pr-review' ? facts?.headSha || null : reviewedCommit(s)?.sha || null;
+  const actionAt = (s.action as any)?.kind === 'review' ? String((s.action as any).at || '') : null;
+  return { ref, facts, mode, sha, current: approval.approvalCurrent(md, { sha, mode, actionAt }) };
+}
+
+export async function approveSession(
+  id: string,
+  by: string,
+  o: { summary?: string; expected?: { sha: string; repo: string; branch: string } | null; send?: (id: string, text: string) => void } = {}
+): Promise<{ ok: true; already?: boolean; mode: string; pr?: number } | { error: string; status: number }> {
+  const s = state.getSession(id);
+  if (!s) return { error: 'no such session', status: 404 };
+  const md: any = s.metadata || {};
+  const ctx = await approvalContext(s, { fresh: true });
+  const pending = (s as any).action?.kind === 'review' ? (s as any).action : null;
+  const closeCard = () => { if (pending) { state.patchSession(id, { action: null }); claude.kickAutoPlay(id); } };
+  if (ctx.mode === 'unknown')
+    return { error: `Couldn't reach GitHub to check PR #${ctx.ref?.number} (${ctx.facts?.error || 'unknown'}). Nothing was approved — try again.`, status: 502 };
+  if (ctx.current) {
+    closeCard();
+    return { ok: true, already: true, mode: ctx.mode, ...(ctx.ref ? { pr: ctx.ref.number } : {}) };
+  }
+  let msg: string;
+  if (ctx.mode === 'pr-review') {
+    msg = formatRemoteReview(s, 'approve', o.summary || '');
+    state.patchSession(id, {
+      metadata: { review: { state: 'approved', at: new Date().toISOString(), by, target: 'github', pr: ctx.ref!.number, sha: ctx.sha }, mergeConflict: null },
+    });
+    try { emitLocal('review.approved', { sessionId: id, by, pr: ctx.ref!.number }); } catch {}
+  } else {
+    if (md.branch && !md.merged && !(md.base && md.branch === md.base)) {
+      if (!markApproved(id, by, o.expected || undefined))
+        return { error: 'The reviewed commit has changed. Request a new review.', status: 409 };
+    } else {
+      // no branch of its own: the stamp still records the decision (and the
+      // already-approved state), with no SHA and nothing to merge
+      state.patchSession(id, { metadata: { review: { state: 'approved', at: new Date().toISOString(), by, target: 'local' } } });
+    }
+    msg = formatReview(s, 'approve', o.summary || '');
+  }
+  try {
+    (o.send || claude.sendMessage)(id, msg);
+  } catch (e) {
+    return { error: (e as Error).message, status: 500 };
+  }
+  state.clearReview(id);
+  state.patchSession(id, { status: 'Approved' });
+  closeCard();
+  return { ok: true, mode: ctx.mode, ...(ctx.ref ? { pr: ctx.ref.number } : {}) };
 }
 
 // A local "request changes" verdict withdraws any earlier approval: the stamp is
@@ -3125,7 +3190,50 @@ export function mayMerge(me: any, s: any): boolean {
   return false;
 }
 
-export async function mergeStatus(s: any) {
+// Can THIS viewer merge THIS session right now? `offer.show` gates the Merge
+// control everywhere (chat card, Changes tab, Orchestration); otherwise
+// `offer.reason` is shown as a passive line. A session with a pull request is
+// merged on GitHub (only its own PR, only with merge rights, only when
+// mergeable); a branch without one is merged by the host into its local base.
+export async function mergeStatus(s: any, me?: any) {
+  const md: any = s.metadata || {};
+  const ref = approval.prRefOf(md);
+  if (ref) {
+    const ctx = await approvalContext(s);
+    const f = ctx.facts;
+    const out: any = {
+      kind: 'pr',
+      pr: { number: ref.number, url: ref.url, state: f?.state || null, mergeable: f?.mergeable || null, author: f?.author || null, permission: f?.permission || null },
+      mode: ctx.mode,
+      branch: md.branch || null,
+      base: f?.base || md.prBase || md.base || null,
+      approved: ctx.current,
+      approvedSha: ctx.current ? ctx.sha : null,
+      review: md.review || null,
+      merged: md.merged || null,
+      conflict: md.mergeConflict || null,
+    };
+    // a GitHub merge is a person's click — never a session's tool call
+    const offer = approval.mergeOffer({ approved: ctx.current, merged: !!md.merged, viewerMayMerge: me === undefined || (me?.kind !== 'session' && mayMerge(me, s)), kind: 'pr', mode: ctx.mode, facts: f });
+    out.offer = offer;
+    out.canMerge = offer.show;
+    out.reason = offer.reason || (ctx.current ? null : 'not-approved');
+    return out;
+  }
+  const out = await localMergeStatus(s);
+  const ctxSha = reviewedCommit(s)?.sha || null;
+  const current = approval.approvalCurrent(md, { sha: ctxSha, mode: 'local', actionAt: (s.action as any)?.kind === 'review' ? String((s.action as any).at || '') : null });
+  out.kind = 'local';
+  out.mode = 'local';
+  out.offer = md.branch
+    ? approval.mergeOffer({ approved: out.approved, merged: !!out.merged, viewerMayMerge: me === undefined || mayMerge(me, s), kind: 'local', localReason: out.reason })
+    : { show: false, reason: null };
+  // a branchless session can still be approved (no merge): report it as current
+  if (!md.branch) out.approved = current;
+  return out;
+}
+
+async function localMergeStatus(s: any) {
   const md: any = s.metadata || {};
   const root = await baseRepoRootFor(s);
   const base = md.base ? String(md.base) : root ? await defaultBaseFor(root) : 'main';
@@ -3166,8 +3274,10 @@ const mergeLocks = new Map<string, Promise<void>>();
 export async function mergeSession(
   s: any,
   o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean; force?: boolean },
-  by: string
+  by: string,
+  me?: any
 ): Promise<any> {
+  if (approval.prRefOf(s.metadata)) return mergePrSession(s, o, by, me);
   const root = await baseRepoRootFor(s);
   if (!root) return { error: 'could not resolve the base repository', status: 400 };
   const key = fs.realpathSync(root);
@@ -3198,7 +3308,7 @@ async function mergeSessionLocked(
   if (st.reason === 'changes-requested')
     return { error: 'changes were requested — approve again after the review', status: 409, reason: 'changes-requested' };
   if (st.reason === 'not-approved' && !o.force)
-    return { error: 'not approved — the human approves first (review verdict approve / ✓ Verified)', status: 409, reason: 'not-approved' };
+    return { error: 'not approved — the human approves first (Approve)', status: 409, reason: 'not-approved' };
   if (st.reason && st.reason !== 'not-approved')
     return { error: st.reason === 'dirty' ? `base worktree is dirty (${(st.dirtyFiles || []).join(', ')})` : st.reason, status: 409, reason: st.reason, files: st.dirtyFiles };
   const approvedSha = st.approvedSha || (o.force ? reviewedCommit(s)?.sha : null);
@@ -3252,6 +3362,30 @@ async function mergeSessionLocked(
     try { cleanup = await runCleanup(s); } catch (e) { cleanup = { error: (e as Error).message }; }
   }
   return { ok: true, sha: r.sha, strategy, branch: st.branch, base: st.base, hint: HINT, ...(cleanup !== undefined ? { cleanup } : {}) };
+}
+
+// A session with a pull request merges on GitHub — its own PR, with merge
+// rights, mergeable, and exactly the approved head (gh --match-head-commit).
+async function mergePrSession(s: any, o: { strategy?: string; deleteBranch?: boolean; runCleanup?: boolean }, by: string, me?: any): Promise<any> {
+  const ref = approval.prRefOf(s.metadata)!;
+  if (me?.kind === 'session') return { error: 'a pull request is merged by a person, not by a session', status: 403, reason: 'no-permission' };
+  approval.clearPrFactsCache();
+  const st = await mergeStatus(state.getSession(s.id) || s, me);
+  if (!st.offer?.show) return { error: st.offer?.reason || st.reason || 'cannot merge', status: 409, reason: st.offer?.reason || st.reason };
+  const strategy = o.strategy === 'squash' ? 'squash' : 'no-ff';
+  const r = await approval.mergePr(ref, { strategy, sha: st.approvedSha });
+  if (!r.ok) return { error: r.error, status: 409, reason: 'github' };
+  approval.clearPrFactsCache();
+  const merged = { sha: st.approvedSha, at: new Date().toISOString(), by, strategy, base: st.base, pr: ref.number };
+  state.patchSession(s.id, { metadata: { merged, mergeConflict: null } });
+  const card = { kind: 'merge', state: 'merged', sha: st.approvedSha, branch: st.branch || `#${ref.number}`, base: st.base, strategy, by, pr: ref.number, text: `merged PR #${ref.number} → ${st.base} (${String(st.approvedSha).slice(0, 7)}, ${strategy})` };
+  claude.appendChat(s.id, card);
+  try { emitLocal('merge.done', { sessionId: s.id, branch: st.branch, base: st.base, sha: st.approvedSha, strategy, by, pr: ref.number }); } catch {}
+  let cleanup: unknown;
+  if (o.deleteBranch || o.runCleanup) {
+    try { cleanup = await runCleanup(s); } catch (e) { cleanup = { error: (e as Error).message }; }
+  }
+  return { ok: true, sha: st.approvedSha, strategy, branch: st.branch, base: st.base, pr: ref.number, ...(cleanup !== undefined ? { cleanup } : {}) };
 }
 
 // A session that spawns children controls a project folder. First spawn
@@ -4635,6 +4769,7 @@ export async function handle(
       }
       if (!body.ticket) return badRequest(res, 'ticket or kind:"empty" required');
       const item = t.deferTicket(String(body.ticket), body.title, body.prompt, {
+        permissionMode: body.permissionMode,
         skill: body.skill,
         model: body.model,
         effort: body.effort,
@@ -5524,6 +5659,14 @@ export async function handle(
       const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
       return json(res, full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived }));
     }
+    // The ticket launcher's plan panel: the worktree, branch and (reserved) port a
+    // `provision` launch will get. Re-post with the returned `reservation` to keep
+    // the same port across re-plans (e.g. a repo change).
+    if (p === '/__api/ticket-plan' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body?.ticket) return badRequest(res, 'ticket required');
+      return json(res, await ticketProvision.planTicket({ ticket: String(body.ticket), title: body.title, repo: body.repo, reservation: body.reservation }));
+    }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
       // A1: born from an agent — inherit its model (unless overridden), its
@@ -5564,6 +5707,29 @@ export async function handle(
         body.permissionMode = wired.permissionMode;
         body.metadata = { ...(body.metadata || {}), ...wired.metadata };
       }
+      // Ticket launch with `provision`: the host makes the worktree + claims the
+      // port the plan panel showed, whatever skill runs — so the session starts
+      // in its worktree with $PORT set, and the first chat event says what happened.
+      let provisioned: ticketProvision.TicketProvision | null = null;
+      const provTicket = body.metadata?.ticket ? String(body.metadata.ticket) : '';
+      if (provTicket && body.provision && !(body.master && kind)) {
+        const pv = typeof body.provision === 'object' ? body.provision : {};
+        provisioned = await ticketProvision.provisionTicket({ ticket: provTicket, title: body.title, repo: pv.repo, reservation: pv.reservation });
+        body.metadata = {
+          ...(body.metadata || {}),
+          ...(provisioned.port != null ? { port: provisioned.port } : {}),
+          ...(provisioned.ok
+            ? {
+                worktree: provisioned.dir,
+                branch: provisioned.branch,
+                base: provisioned.base,
+                repo: provisioned.repo,
+                ...(provisioned.reused ? {} : { cleanup: defaultCleanupCmds(provisioned.dir, provisioned.branch) }),
+              }
+            : {}),
+        };
+        if (provisioned.ok) body.cwd = provisioned.dir;
+      }
       // S1: cwd names a registered repo that isn't cloned (or a path that
       // doesn't exist) → ask for `repo:<name>` instead of spawning claude in
       // a missing directory.
@@ -5598,6 +5764,8 @@ export async function handle(
         folderId: body.folderId,
         folderName: body.master && kind ? undefined : body.folderName,
       });
+      // The provisioning result is the session's first chat event (before the spawn).
+      if (provisioned) claude.appendChat(s.id, { kind: 'system', text: ticketProvision.provisionReport(provisioned), provision: provisioned });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into
       // the session's env from the start. Not fatal — a failed allocation
@@ -5611,10 +5779,13 @@ export async function handle(
       // something to build from — leaves the dispatch/worker path (which
       // always sends its own explicit task prompt) untouched.
       const ticketId = body.metadata?.ticket ? String(body.metadata.ticket) : undefined;
-      const prompt =
+      let prompt =
         body.skill || body.prompt || ticketId
           ? buildFirstPrompt({ skill: body.skill, prompt: body.prompt, ticket: ticketId })
           : null;
+      if (provisioned) {
+        prompt = `${prompt || ''}\n\n${ticketProvision.provisionPromptBlock(provisioned)}`.trim();
+      }
       if (prompt) {
         try {
           claude.sendMessage(s.id, prompt);
@@ -6175,7 +6346,13 @@ export async function handle(
       if (kind && !agents.ACTION_KIND_RE.test(kind)) return badRequest(res, `invalid kind: ${kind} — lowercase letters, digits, :._- (max 40)`);
       const ag = sessionAgent(s) ? agents.getAgent(sessionAgent(s)!) : null;
       const action: Record<string, unknown> = { id: 'act_' + nano(), at: new Date().toISOString(), prompt, buttons, ...(kind ? { kind } : {}) };
-      if (kind === 'review') action.reviewCommit = reviewedCommit(s);
+      if (kind === 'review') {
+        action.reviewCommit = reviewedCommit(s);
+        // what Approve will do here, so the card says it up front (and renders
+        // already-approved without a round-trip)
+        const ctx = await approvalContext(s);
+        action.approval = { mode: ctx.mode, sha: ctx.sha, ...(ctx.ref ? { pr: ctx.ref.number } : {}), branch: (s.metadata as any)?.branch || null, base: ctx.facts?.base || (s.metadata as any)?.prBase || (s.metadata as any)?.base || null };
+      }
       if (ag) action.agent = { slug: ag.slug, name: ag.name, emoji: ag.emoji, color: ag.color };
       if (ag && kind !== 'review' && kind && (ag.autoApprove || []).includes(kind)) {
         const pick = buttons.find((b: any) => b?.style === 'primary') || buttons[0];
@@ -6209,9 +6386,21 @@ export async function handle(
       const cardKind = cur.kind;
       if ([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session')
         return json(res, { error: 'only a person can answer this card' }, 403);
-      if (cardKind === 'review' && value === 'verified' && (cur.reviewCommit || state.getSession(id)?.metadata?.branch) &&
-          (!cur.reviewCommit || !markApproved(id, principalLabel((req as any).auth), cur.reviewCommit)))
-        return json(res, { error: 'The reviewed commit has changed. Request a new review.' }, 409);
+      // The review card's Approve ('verified' = cards raised before the rename)
+      // is THE approve action — same path as the Changes tab's.
+      if (cardKind === 'review' && (value === 'approve' || value === 'verified')) {
+        if (state.getSession(id)?.metadata?.branch && !cur.reviewCommit && (cur.approval?.mode || 'local') !== 'pr-review')
+          return json(res, { error: 'The reviewed commit has changed. Request a new review.' }, 409);
+        const by = principalLabel((req as any).auth);
+        const r = await approveSession(id, by, { expected: (cur.approval?.mode || 'local') === 'pr-review' ? null : cur.reviewCommit });
+        if ('error' in r) return json(res, { error: r.error }, r.status);
+        const agSlug = sessionAgent(s);
+        if (agSlug) ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: 'review', value: 'approve', auto: false, by });
+        state.patchSession(id, { action: null });
+        try { emitLocal('action.answered', { sessionId: id, actionId: cur.id, kind: 'review', value: 'approve' }); } catch {}
+        return json(res, r);
+      }
+      if (cardKind === 'review' && value === 'request-changes') markChangesRequested(id, principalLabel((req as any).auth));
       const agSlug = sessionAgent(s);
       if (agSlug && cur) {
         ledger.appendActivity(agSlug, { kind: 'action', sessionId: id, detail: String(cur.prompt || '').slice(0, 200), actionKind: cur.kind || null, value: String(value), auto: false, by: principalLabel((req as any).auth) });
@@ -7006,7 +7195,7 @@ export async function handle(
     }
     // ---- F7: merge after approval (executed by the host) ----
     if (sub === 'merge/status' && m === 'GET') {
-      return json(res, await mergeStatus(s));
+      return json(res, await mergeStatus(s, (req as any).auth));
     }
     if (sub === 'merge' && m === 'POST') {
       const me = (req as any).auth;
@@ -7021,7 +7210,8 @@ export async function handle(
           runCleanup: body.runCleanup === true,
           force: body.force === true && auth.isAdmin(me),
         },
-        principalLabel(me)
+        principalLabel(me),
+        me
       );
       const { status, ...payload } = r;
       return json(res, payload, status || 200);
@@ -7338,6 +7528,15 @@ export async function handle(
           : 'comment';
         const target = body.target === 'remote' ? 'remote' : 'local';
         const summary = body.summary ? String(body.summary) : '';
+        if (verdict === 'approve') {
+          // THE approve action — the session decides local stamp vs GitHub post;
+          // the local/remote toggle only routes comments and change requests.
+          const r = await approveSession(id, principalLabel((req as any).auth), { summary });
+          if ('error' in r) return json(res, { error: r.error }, r.status);
+          const sessTab = (s as any).tabs.find((t: any) => t.type === 'session') || (s as any).tabs[0];
+          if (sessTab && !r.already) state.activateTab(id, sessTab.id);
+          return json(res, r);
+        }
         const msg =
           target === 'remote'
             ? formatRemoteReview(s, verdict, summary)
@@ -7349,10 +7548,6 @@ export async function handle(
           return json(res, { error: error.message }, 500);
         }
         state.clearReview(id);
-        if (target === 'local' && verdict === 'approve') {
-          state.patchSession(id, { status: 'Approved' });
-          markApproved(id, principalLabel((req as any).auth)); // F7
-        }
         if (target === 'local' && verdict === 'request-changes') {
           if ((s as any).status === 'Approved') state.patchSession(id, { status: 'In Progress' });
           markChangesRequested(id, principalLabel((req as any).auth));

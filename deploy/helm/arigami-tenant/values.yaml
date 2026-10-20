@@ -40,8 +40,7 @@ fullnameOverride: ""
 # and drops to uid 1000 via gosu) and a direct non-root start (docker/
 # entrypoint.sh "prelude"). Kubernetes should always use the second: fsGroup
 # makes the kubelet hand the volume over already owned, so no root pass is
-# needed and the pod satisfies the `restricted` Pod Security Standard — which
-# a hardened cluster enforces and a root-starting pod simply cannot pass.
+# needed and the pod starts unprivileged (sudo below is the only way up).
 #
 # Set podSecurityContext to {} to go back to the root-then-gosu start (a
 # cluster with no fsGroup support, or a stub image in CI).
@@ -56,10 +55,25 @@ podSecurityContext:
   fsGroupChangePolicy: OnRootMismatch
   seccompProfile:
     type: RuntimeDefault
+# The workspace owner is admin in their own container: the image gives `node`
+# passwordless sudo (docs/DOCKER.md "Admin (sudo)"). sudo is a setuid binary, so
+# it needs allowPrivilegeEscalation (no_new_privs off), and what it runs as root
+# needs a handful of capabilities for apt/dpkg to work: SETUID/SETGID (sudo
+# switches user, apt drops to its sandbox user), CHOWN/FOWNER/DAC_OVERRIDE
+# (dpkg unpacking, writing the .deb cache on the node-owned volume). These are
+# a subset of the container runtime's own defaults and land only in the
+# BOUNDING set: the host and the agents run as uid 1000 with no effective
+# capabilities until something goes through sudo. Still dropped: NET_RAW,
+# MKNOD, SYS_CHROOT, KILL, … and no privileged mode, no hostPath. This is the
+# `baseline` Pod Security Standard, not `restricted`.
+# For a locked-down tenant (no sudo), go back to:
+#   allowPrivilegeEscalation: false
+#   capabilities: { drop: ["ALL"] }
 containerSecurityContext:
-  allowPrivilegeEscalation: false
+  allowPrivilegeEscalation: true
   capabilities:
     drop: ["ALL"]
+    add: ["SETUID", "SETGID", "CHOWN", "FOWNER", "DAC_OVERRIDE"]
 
 # Arigami is a STATEFUL SINGLETON (server/state.ts: the listeners scheduler,
 # session registry and git worktrees all live on the one PVC) — never run two

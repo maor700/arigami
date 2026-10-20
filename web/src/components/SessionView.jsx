@@ -240,7 +240,7 @@ function SummaryChip({ session }) {
           ) : busy && !summary.text ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="host-spinner size-3" /> {t('rail.generating')}</div>
           ) : (
-            <div className="md text-sm" dir="auto">
+            <div className="md text-sm" dir={dirOf(summary.text || '')}>
               <Md>{summary.text || '…'}</Md>
             </div>
           )}

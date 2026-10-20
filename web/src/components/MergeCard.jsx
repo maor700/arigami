@@ -56,40 +56,77 @@ export function MergePill({ session, compact }) {
   return null;
 }
 
-// Can this session be merged right now? Polls the host's merge/status while
-// the panel is mounted (cheap: one git status). Returns {st, refresh}.
-function useMergeStatus(sessionId, enabled) {
+// What the host says about approving/merging this session for THIS viewer
+// (GET merge/status: {kind, mode, approved, base, pr, offer:{show, reason}}).
+// Re-read when `key` changes; returns {st, refresh}.
+export function useMergeStatus(sessionId, enabled, key = '') {
   const [st, setSt] = useState(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !sessionId) return;
     let stop = false;
     api.get(`/sessions/${sessionId}/merge/status`).then((r) => { if (!stop) setSt(r); }).catch((e) => { if (!stop) setSt({ error: e?.message || String(e) }); });
     return () => { stop = true; };
-  }, [sessionId, enabled, tick]);
+  }, [sessionId, enabled, tick, key]);
   return { st, refresh: () => setTick((n) => n + 1) };
 }
 
-// The control. Shown for the human (and in the master's view of a child).
+// The control. Shown ONLY when the host says this viewer can merge now
+// (status.offer.show): a local child branch the host can merge into its base,
+// or the viewer's own PR they have merge rights on and GitHub calls mergeable.
+// Otherwise, once approved, a passive line says why — no button.
 // `session` may be the wire form (metadata only) — everything else is fetched.
 // `dark` = render on the terminal (chat) surface with the term accent vars.
+// `status`/`onRefresh`: a status the parent already holds (Changes tab).
 // OPENUI phase 2: a host library component; in the chat (dark) it sits on the
 // shared CardFrame, in the Changes/Orchestration tabs it keeps its panel look.
-function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dense, dark } }) {
+function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dense, dark, status, onRefresh } }) {
   const t = useT();
   const id = sessionId || session?.id;
   const md = session?.metadata || {};
-  const approved = md.review?.state === 'approved' && !!md.branch && !md.merged;
-  const { st, refresh } = useMergeStatus(id, approved);
+  const approved = md.review?.state === 'approved' && !md.merged;
+  const own = useMergeStatus(id, approved && !status, `${md.review?.at || ''}`);
+  const st = status || own.st;
+  const refresh = onRefresh || own.refresh;
   const [strategy, setStrategy] = useState('no-ff');
   const [del, setDel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-  if (!approved) return null;
+  if (!approved || !st) return null;
 
-  const reason = st?.error ? st.error : st ? st.reason : null;
-  const canMerge = !!st?.canMerge && !busy;
-  const reasonText = reason ? (t(`chat.mergeReason.${reason}`) !== `chat.mergeReason.${reason}` ? t(`chat.mergeReason.${reason}`) : String(reason)) : '';
+  const reasonOf = (reason) => (reason ? (t(`chat.mergeReason.${reason}`) !== `chat.mergeReason.${reason}` ? t(`chat.mergeReason.${reason}`) : String(reason)) : '');
+  const fgP = dark ? 'text-[var(--term-dim)]' : 'text-muted-foreground';
+  if (!st.offer?.show) {
+    const why = st.error ? String(st.error) : reasonOf(st.offer?.reason);
+    if (!why) return null;
+    // passive: the approval stands, merging isn't something this viewer can do here
+    return (
+      <div data-merge-panel="" data-merge-passive={st.offer?.reason || 'error'} className={`flex items-center gap-1.5 text-xs ${fgP} ${dense ? 'my-0.5' : 'my-1.5'}`}>
+        <CheckIcon className="size-3.5 shrink-0" />
+        <span className="min-w-0" dir="auto">{t('chat.mergeUnavailable', { reason: why })}</span>
+        <Hint dark={dark} label={t('chat.mergeRefresh')}>
+          <Button variant="ghost" size="icon-sm" onClick={refresh} aria-label={t('chat.mergeRefresh')} className={dark ? fgP : undefined}>
+            <RotateCwIcon className="size-3.5" />
+          </Button>
+        </Hint>
+        {onDismiss && (
+          <Hint dark={dark} label={t('chat.mergeDismiss')}>
+            <Button variant="ghost" size="icon-sm" data-merge-dismiss onClick={onDismiss} aria-label={t('chat.mergeDismiss')} className={dark ? fgP : undefined}>
+              <XIcon className="size-3.5" />
+            </Button>
+          </Hint>
+        )}
+      </div>
+    );
+  }
+
+  const isPr = st.kind === 'pr';
+  const base = st.base || md.base || '…';
+  const reason = st.reason;
+  const canMerge = !!st.canMerge && !busy;
+  const reasonText = reasonOf(reason);
+  const hint = isPr ? t('chat.mergePrHint') : t('chat.mergeHint');
+  const title = isPr ? t('chat.mergePrInto', { n: st.pr?.number, base }) : t('chat.mergeInto', { branch: md.branch, base });
 
   const merge = async () => {
     setBusy(true);
@@ -97,7 +134,7 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
     try {
       const r = await api.post(`/sessions/${id}/merge`, { strategy, deleteBranch: del });
       setResult(r);
-      toastSuccess(t('chat.mergeDone', { branch: r.branch, base: r.base, sha: short(r.sha) }));
+      toastSuccess(r.pr ? t('chat.mergePrDone', { n: r.pr, base: r.base }) : t('chat.mergeDone', { branch: r.branch, base: r.base, sha: short(r.sha) }));
       onMerged?.(r);
     } catch (e) {
       // 409 bodies carry {conflict, files} or {error, reason} — surface them
@@ -126,11 +163,9 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
   const reasonCls = 'basis-full text-xs text-destructive';
   return (
     <Frame data-merge-panel="" {...frameProps}>
-      {!dense && (
-        <span className={`flex items-center gap-1.5 text-sm font-medium ${fg}`}>
-          <CheckIcon className="size-4" /> <bdi dir="ltr" className="font-mono text-xs">{t('chat.mergeInto', { branch: md.branch, base: st?.base || md.base || '…' })}</bdi>
-        </span>
-      )}
+      <span className={`flex items-center gap-1.5 font-medium ${dense ? 'text-xs' : 'text-sm'} ${fg}`} data-merge-target={base}>
+        <CheckIcon className="size-4" /> <bdi dir="ltr" className="font-mono text-xs">{title}</bdi>
+      </span>
       {!dense && md.review?.by && <span className={`text-xs ${dim}`}>{t('chat.mergeApprovedBy', { by: md.review.by })}</span>}
       <span className="ms-auto flex flex-wrap items-center gap-x-3 gap-y-2">
         {dark ? (
@@ -156,7 +191,7 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
           {t('chat.mergeDeleteBranch')}
         </label>
         <span className="flex items-center gap-1.5">
-          <Hint dark={dark} label={canMerge ? t('chat.mergeHint') : reasonText || t('chat.loading')}>
+          <Hint dark={dark} label={canMerge ? hint : reasonText || t('chat.loading')}>
             {/* span keeps the tooltip reachable while the button is disabled */}
             <span>
               {dark ? (
@@ -186,18 +221,18 @@ function MergePanelView({ props: { session, sessionId, onMerged, onDismiss, dens
       </span>
       {!canMerge && reasonText && !busy && <span className={reasonCls}>{reasonText}</span>}
       {result?.conflict && <span className={reasonCls}>{t('chat.mergeConflictFiles', { files: (result.files || []).join(', ') })}</span>}
-      {!dense && <span className={`basis-full text-2xs ${dim}`}>{t('chat.mergeHint')}</span>}
+      <span className={`basis-full text-2xs ${dim}`} data-merge-hint="">{hint}</span>
     </Frame>
   );
 }
 export const MergePanelDef = defineHostComponent({
   name: 'MergePanel',
   description: 'Host: approved → merge control (strategy, delete branch) — the host runs the merge',
-  props: loose({ session: any, sessionId: str, onMerged: any, onDismiss: any, dense: bool, dark: bool }),
+  props: loose({ session: any, sessionId: str, onMerged: any, onDismiss: any, dense: bool, dark: bool, status: any, onRefresh: any }),
   component: MergePanelView,
 });
-export function MergePanel({ session, sessionId, onMerged, onDismiss, dense, dark }) {
-  return <MergePanelView props={{ session, sessionId, onMerged, onDismiss, dense, dark }} />;
+export function MergePanel({ session, sessionId, onMerged, onDismiss, dense, dark, status, onRefresh }) {
+  return <MergePanelView props={{ session, sessionId, onMerged, onDismiss, dense, dark, status, onRefresh }} />;
 }
 
 // A `{kind:'merge'}` chat event — the durable record in the child and the master.

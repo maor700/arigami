@@ -11,6 +11,7 @@ import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
 import { useT, dirOf } from '../lib/i18n.js';
+import BidiText from './BidiText.jsx';
 import { prettyInput } from '../lib/pretty-input.js';
 import {
   ArchiveIcon,
@@ -174,7 +175,7 @@ function UserMsg({ event }) {
         dir={d}
         className="max-w-[85%] rounded-lg border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-[var(--term-userfg)]"
       >
-        {text}
+        <BidiText as="div" text={text} lines dir={d} />
         {atts.length > 0 && (
           <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-2' : ''}`}>
             {atts.map((a, i) => {
@@ -962,13 +963,15 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
             if (e.kind === 'action-request') {
               // The action card lives in the transcript, where it was raised — it scrolls
               // up with the conversation. Live only while it is still the current action.
-              const liveAction = action && action.id === e.actionId ? action : null;
+              // Not while the transcript is still loading: history landing above would move the
+              // card under a thumb already aimed at it — it appears once, in its final place.
+              const liveAction = !loading && action && action.id === e.actionId ? action : null;
               if (liveAction) actionRendered = true;
               out.push(
                 <div key={keys[i]} data-event-id={e.id || keys[i]}>
                   {liveAction ? (
                     <HostCard name="ActionCard" props={{ sessionId, action: liveAction }} />
-                  ) : (
+                  ) : loading && action?.id === e.actionId ? null : (
                     <div data-action-record dir="auto" className="my-1.5 flex items-start gap-1.5 text-xs text-[var(--term-dim)]">
                       <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-[var(--term-faint)]" /> <span className="min-w-0">{t('chat.actionRecord')}: {e.prompt}</span>
                     </div>
@@ -981,7 +984,7 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
               // After approval the merge is one click — recorded in the transcript where the human
               // approved, live while it still applies, and dismissable.
               const rv = session?.metadata?.review;
-              const liveOffer = mergeOfferLive && rv?.at === e.approvedAt;
+              const liveOffer = !loading && mergeOfferLive && rv?.at === e.approvedAt;
               if (liveOffer) mergeOfferRendered = true;
               out.push(
                 <div key={keys[i]} data-event-id={e.id || keys[i]}>
@@ -1001,10 +1004,10 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           }
           // A current action with no record in the visible transcript (raised before cards were
           // recorded, or scrolled out of the window) still has to be answerable: show it last.
-          if (action && !actionRendered) out.push(<HostCard key="action-fallback" name="ActionCard" props={{ sessionId, action }} />);
+          if (action && !actionRendered && !loading) out.push(<HostCard key="action-fallback" name="ActionCard" props={{ sessionId, action }} />);
           // An approval with no record in the visible transcript (approved before offers were recorded,
           // or scrolled out of the window) still offers the merge — last, and dismissable.
-          if (mergeOfferLive && !mergeOfferRendered) out.push(<HostCard key="merge-fallback" name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />);
+          if (mergeOfferLive && !mergeOfferRendered && !loading) out.push(<HostCard key="merge-fallback" name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />);
           return out;
         })()}
         {working && (

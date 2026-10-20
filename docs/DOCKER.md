@@ -2,10 +2,12 @@
 
 arigami ships as one image — `ghcr.io/maor700/arigami` (amd64 + arm64) — with
 everything a session needs: the Bun host serving the cockpit/proxy/control
-plane, the `claude` CLI, `git`/`gh`, a VNC desktop (Xvfb + openbox + x11vnc),
+plane, `git`/`gh`, a VNC desktop (Xvfb + openbox + x11vnc),
 Chrome, Playwright, and the WhatsApp bridge. **All writable state is redirected
 onto one mounted volume (`/data`)** via env vars — the image layer itself is
-read-only, so upgrading is `pull` + `up`.
+read-only, so upgrading is `pull` + `up`. The engine CLIs (`claude`, `codex`)
+are not in the image: they install into `~/.local` on the volume when first
+needed (below).
 
 ## Run
 
@@ -96,13 +98,41 @@ plus `ARIGAMI_CODEX_BIN` in `.env`.
 |-------|-----|
 | `node:22-bookworm-slim` base | `node`/`npm` for the dev servers sessions spawn |
 | Bun `1.3` | the host's own runtime (`bun server/index.ts`) |
-| `@anthropic-ai/claude-code` | the `claude` binary the host spawns per session |
 | `git`, `gh`, `ripgrep`, `python3` | worktrees/diffs, PRs, file search, the pty bridge for logins |
-| `xvfb x11vnc openbox tint2 x11-utils fonts-noto(+emoji) dbus-x11` | the desktop the agent drives (`request_screen`, `machine-work`) |
+| `xvfb x11vnc openbox tint2 lxterminal x11-utils fonts-noto(+emoji) dbus-x11` | the desktop the agent drives (`request_screen`, `machine-work`), with a terminal ([DESKTOP.md](DESKTOP.md#a-terminal-on-the-x11-desktops)) |
 | Google Chrome (amd64) / Chromium (arm64) → `CHROME_BIN` | the agent's browser on that desktop |
 | Playwright MCP (driving `CHROME_BIN`) + ffmpeg | screenshot/GIF skills; no second browser in the image |
 | whatsapp-mcp at `/opt/whatsapp-mcp` (+ `tsx`) | the Baileys bridge behind the WhatsApp listener/MCP |
 | `web/dist` (built in stage 1) | the cockpit UI |
+
+**Engine CLIs live on the volume, not in the image.** At first boot the host
+finds no `claude` and runs the official native installer (latest release) into
+`~/.local` — the cockpit toasts "Installing Claude Code…" and then the outcome;
+a failure (offline boot) is retried after 1, 5 and 15 minutes, then hourly.
+Right after it, `ARIGAMI_CLAUDE_POSTINSTALL` registers the Playwright MCP.
+`codex` installs the same way (`npm i -g --prefix ~/.local @openai/codex@latest`)
+the first time a Codex account is added. Both then update in place through
+Settings › Host / the daily check, and survive image upgrades.
+`ARIGAMI_CLAUDE_AUTOINSTALL=0` / `ARIGAMI_CODEX_AUTOINSTALL=0` turn this off.
+
+### Admin (sudo)
+
+The workspace owner is admin in their own container: `node` has passwordless
+`sudo`, so `sudo apt-get update && sudo apt-get install <pkg>` (or a local
+`./pkg.deb`) works. The root filesystem is the image's and resets on every
+restart, so installs are made to stick: an apt hook
+(`/etc/apt/apt.conf.d/90arigami-persist` → `docker/apt-persist.sh`) copies every
+.deb dpkg installs — dependencies included — to `$ARIGAMI_DIR/apt/debs` on the
+volume, and drops it again when the package is removed. At the next start the
+entrypoint reinstalls the cached packages that are missing, in the background
+(log: `$ARIGAMI_DIR/logs/apt-replay.log`); a package the image already ships is
+never downgraded. Under Kubernetes the chart's `containerSecurityContext`
+permits the privilege escalation sudo needs (deploy/helm/README.md).
+
+Besides apt, user-level installs persist on their own: `~/.local` is on the
+volume and `~/.local/bin` is first on `PATH` (`pip install --user`,
+`python3 -m venv`, `npm i -g --prefix ~/.local`, or a static binary). Agents are
+told all this in the host MCP's instructions.
 
 Not in the image: Tailscale. Run it on the Docker host, or add the official
 `tailscale/tailscale` sidecar.
@@ -113,7 +143,8 @@ Nothing to configure. On boot the host (`ARIGAMI_SCREEN_ENABLED=1`,
 `ARIGAMI_GLOBAL_DESKTOP=1`, `DISPLAY=:99` — all set in the image) starts `Xvfb :99`, openbox, tint2 and
 `x11vnc` on `127.0.0.1:5900`, supervised like any other child process; per-
 session desktops are allocated on demand on top. `request_screen` in the cockpit
-shows it. The host, the desktop and Chrome run as the unprivileged `node` user
+shows it; its panel's first icon (and the right-click menu's "Terminal") opens a
+terminal as the same user. The host, the desktop and Chrome run as the unprivileged `node` user
 (uid 1000): the entrypoint starts as root only to own the `/data` volume, then
 drops via `gosu` — `docker compose exec arigami ps -eo user,comm` shows `node`
 for `bun`/`Xvfb`/`x11vnc`. Note that a plain `docker compose exec` shell is

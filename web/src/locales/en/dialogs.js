@@ -93,7 +93,7 @@ export const strings = {
   'dialogs.scAddTab': 'Add a tab to the session',
   'dialogs.scChatTextSize': 'Chat text size: larger / smaller / default (in the chat)',
   'dialogs.scVoiceControl': 'Voice control (push-to-talk)',
-  'dialogs.scCloseOverlay': 'Close overlay · else interrupt the agent',
+  'dialogs.scCloseOverlay': 'Close overlay · Esc twice interrupts the agent',
   'dialogs.scToggleCheatSheet': 'Toggle this cheat-sheet',
   'dialogs.scAllowPermission': 'Allow a permission request',
   'dialogs.scDenyPermission': 'Deny a permission request',

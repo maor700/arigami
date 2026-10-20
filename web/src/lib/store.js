@@ -52,9 +52,10 @@ let state = {
   //     interactive modal is open for it, auto-snapshots paused); null = no
   //     takeover in progress. Keyed by request so a stale takeover never
   //     leaks into the next request.
-  //   panel — side-panel visibility: null = auto (open while the selected
-  //     session has an open screen-request), true/false = user override.
-  //     Reset to auto whenever a new screen-request arrives.
+  //   panel — side-panel visibility: null = closed until the human opens it
+  //     (header chip), true/false = their choice. A screen-request does NOT
+  //     open it: the request renders once, as the chat card — a second copy
+  //     in the panel only narrowed the chat and doubled the live view.
   //   modal — the interactive ScreenModal: false = closed; {} = the plain
   //     global view (rail icon); {sessionId, requestId} = opened by "Take
   //     over" on a request_screen card, so the modal shows Done / Cancel.
@@ -342,11 +343,6 @@ function appendChat(sessionId, event) {
     return;
   }
   if (event.kind === 'setup') setState({ setupTick: Date.now() });
-  // A fresh screen-request re-arms the side panel's auto-open (a manual close
-  // applies to the request that was open at the time, not forever).
-  if (event.kind === 'screen-request' && state.screen.panel !== null) {
-    setState({ screen: { ...state.screen, panel: null } });
-  }
   const last = cur[cur.length - 1];
   let next;
   if (event.partial) {
@@ -679,10 +675,10 @@ export function hasOpenScreenRequest(session) {
   return !!session?.claude?.screenRequest?.requestId;
 }
 
-// Whether the side panel should be showing for `sessionId` (auto or override).
-export function screenPanelOpen(s, sessionId) {
-  if (s.screen.panel !== null) return s.screen.panel;
-  return !!openScreenRequest(s, sessionId);
+// Whether the side panel should be showing — only when the human asked for it.
+// (`sessionId` kept for callers; the answer no longer depends on a request.)
+export function screenPanelOpen(s, _sessionId) {
+  return s.screen.panel === true;
 }
 
 export function setScreenPanel(open) {
@@ -690,7 +686,9 @@ export function setScreenPanel(open) {
 }
 
 // `open`: false, or true (plain GLOBAL view — rail icon only, no sessionId
-// means the shared :99/5900 desktop), or {sessionId} (a session's own
+// means the shared :99/5900 desktop; opens in Watch, view-only — pass
+// {control:true} to open it already in control, e.g. "My browser" where the
+// human clicked in order to drive it), or {sessionId} (a session's own
 // machine — side panel "enlarge", no open request), or {sessionId,
 // requestId} (Take over, same as {sessionId} plus the request context/
 // Done/Cancel footer — see ScreenModal.jsx).
@@ -1202,6 +1200,15 @@ function handleEvent(msg) {
       const ev = payload?.event || payload;
       if (ev?.kind) setState({ hostEvent: { ...ev, at: Date.now() } });
       // UPD1: the `claude` CLI updater's outcome — one line, wherever you are.
+      // A first-boot / first-use install (reason 'install', server/lib/engine-install.ts) says so in its own words.
+      if (ev?.reason === 'install' && /^(claude|codex)-update-(started|done|failed)$/.test(ev.kind)) {
+        const [engine, , phase] = ev.kind.split('-');
+        const key = `host.install.${phase}`;
+        const name = engine === 'codex' ? 'Codex CLI' : 'Claude Code';
+        if (phase === 'failed') toastError(t(key, { name, error: ev.error || '?' }));
+        else toast(t(key, { name, to: ev.to || '' }));
+        return;
+      }
       if (ev?.kind === 'claude-update-done') toast(t('host.cli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
       else if (ev?.kind === 'claude-update-failed') toastError(t('host.cli.failedToast', { error: ev.error || '?' }));
       else if (ev?.kind === 'codex-update-done') toast(t('host.codexCli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));

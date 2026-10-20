@@ -135,7 +135,7 @@ context thin is the whole point.
    - **Integrate.** A worker never merges its own branch. When a wave's
      mutating branches are all `done`, either (a) — the default when a human
      is in the loop — wait for the human's approval on each branch
-     (`metadata.review.state === "approved"`, set by their ✓ Verified /
+     (`metadata.review.state === "approved"`, set by their Approve on the review card /
      review-approve) and then merge it with **one call, `merge_session({
      session_id, strategy?, delete_branch? })`** — the HOST runs the git merge
      into your checkout, refuses dirty/unapproved bases, and returns

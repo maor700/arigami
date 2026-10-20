@@ -123,17 +123,23 @@ test('ChangesTab keeps every control: review verdicts, explain, auto review, wor
   const src = read('components/ChangesTab.jsx');
   for (const needle of [
     "submit('request-changes')", "submit('comment')", "submit('approve')",
-    'runExplain', 'runReview', "'work', 'uncommitted', 'pr'", '<MergePanel session={session} dense />',
+    'runExplain', 'runReview', "'work', 'uncommitted', 'pr'", '<MergePanel session={session} dense status={reviewStatus} onRefresh={refreshReviewStatus} />',
     '<BasePicker', 'openEditor', 'saveDefaultBase', 'setSwitchOffer', 'setFullscreen', 'navigate({ kind: \'feature\'',
     "t('chat.commentOnFileBtn')", 'acceptSwitchOffer',
   ]) expect(src).toContain(needle);
   // Merge and Approve never both claim the accent
-  expect(src).toContain("variant={mergeReady ? 'default' : 'primary'}");
+  expect(src).toContain("variant={mergeReady || approved ? 'default' : 'primary'}");
+  // ONE approve action: one label whatever the target, its effect in the hint, Approved once current
+  expect(src).not.toContain('chat.approvePr');
+  expect(src).toContain("approved ? t('chat.approved') : t('chat.approve')");
+  expect(src).toContain('t(...approveEffect(approval))');
+  // the merge strip appears only when the host says this viewer can merge (or passively says why not)
+  expect(src).toContain('const mergeReady = !!reviewStatus?.offer?.show');
 });
 
-test('screen panel keeps take over, cancel, enlarge, collapse; modal keeps type-into, note, done, fullscreen', () => {
+test('screen panel keeps take over (via enlarge), enlarge, collapse; modal keeps type-into, note, done, fullscreen', () => {
   const panel = read('components/ScreenSidePanel.jsx');
-  for (const needle of ['takeOver', 'cancel', 'enlarge', 'setScreenPanel(false)', "t('screen.viewShared')", 'allocate']) expect(panel).toContain(needle);
+  for (const needle of ['takeOver', 'enlarge', 'setScreenPanel(false)', "t('screen.viewShared')", 'allocate']) expect(panel).toContain(needle);
   const modal = read('components/ScreenModal.jsx');
   for (const needle of ['typeIt', 'done', 'cancel', 'toggleFullscreen', 'setupDone', "e.key === 'Escape' && !document.fullscreenElement"]) expect(modal).toContain(needle);
 });

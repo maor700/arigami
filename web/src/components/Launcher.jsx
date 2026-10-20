@@ -19,7 +19,7 @@ import {
   setModeDefaultSessionPreset,
 } from '../lib/prefs.js';
 import { useModels } from '../lib/models.js';
-import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine } from '../lib/engines.js';
+import { modelOptionsFor, effortOptionsFor, coerceSessionOptions, resolveEngine, permissionModesFor, normalizeEngine } from '../lib/engines.js';
 import { extLauncherItems, findExtension } from '../lib/ext.js';
 import { cn } from '../lib/utils.js';
 import ExtLauncherPane from './ExtLauncherPane.jsx';
@@ -87,21 +87,14 @@ export function extractTicketId(raw) {
   return m ? m[1].toUpperCase() : null;
 }
 
-function slug(title) {
-  return String(title || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 28)
-    .replace(/-+$/, '');
-}
-
 // The session's first message is built server-side from `skill` (+ ticket id)
 // so the absolute $SKILL_DIR path never has to be known client-side — see
 // server/api.ts's buildFirstPrompt. `prompt` here is just the optional extra
 // instructions merged in after the skill's own prompt (or used verbatim if no
 // skill is picked).
-export function buildTicketPayload(ticket, config, sessions, permissionMode, promptOverride, sessionOpts) {
+// `provision` ({ repo, reservation } from POST /ticket-plan) asks the host to
+// make the worktree + claim the reserved port itself; omitted = no host setup.
+export function buildTicketPayload(ticket, config, sessions, permissionMode, promptOverride, sessionOpts, provision) {
   const id = ticket.id;
   return {
     title: ticket.title && ticket.title !== id ? ticket.title : id,
@@ -114,6 +107,9 @@ export function buildTicketPayload(ticket, config, sessions, permissionMode, pro
     skill: sessionOpts?.skill || undefined,
     model: sessionOpts?.model || undefined,
     effort: sessionOpts?.effort || undefined,
+    ...(provision
+      ? { provision: { ...(provision.repo ? { repo: provision.repo } : {}), ...(provision.reservation ? { reservation: provision.reservation } : {}) } }
+      : {}),
   };
 }
 
@@ -1017,22 +1013,113 @@ function ProvisionRow({ label, children }) {
   );
 }
 
-// Permission modes are the SDK's own words; shared by the ticket and empty forms.
-function PermissionOptions({ defaultLabel }) {
+// Permission modes in human words, one line each — the same labels the
+// composer pill uses. Bypass runs everything without asking, so it carries the
+// danger styling; it is never a silent default.
+export const LAUNCH_PERMISSION_MODES = [
+  { value: 'default', label: 'rail.permDefault', desc: 'rail.permDefaultDesc' },
+  { value: 'acceptEdits', label: 'rail.permAcceptEdits', desc: 'rail.permAcceptEditsDesc' },
+  { value: 'plan', label: 'rail.permPlan', desc: 'rail.permPlanDesc' },
+  { value: 'bypassPermissions', label: 'rail.permBypass', desc: 'rail.permBypassDesc', danger: true },
+];
+export const LAUNCH_PERMISSION_FALLBACK = 'acceptEdits';
+
+// The mode a fresh launcher opens on: the owner's last pick, else acceptEdits.
+export function initialPermissionMode(prefs) {
+  const v = prefs?.launcherPermissionMode;
+  return LAUNCH_PERMISSION_MODES.some((m) => m.value === v) ? v : LAUNCH_PERMISSION_FALLBACK;
+}
+
+// What is actually sent for this engine: a pick the engine doesn't offer falls
+// back to its first mode (ask). An engine with no modes keeps the pick as-is.
+export function permissionModeForEngine(mode, engine) {
+  const allowed = permissionModesFor(engine);
+  return !allowed.length || allowed.includes(mode) ? mode : allowed[0];
+}
+
+// Remember the pick as the next launcher's default.
+function pickPermissionMode(set) {
+  return (v) => {
+    set(v);
+    setPrefs({ launcherPermissionMode: v });
+  };
+}
+
+export function PermissionPicker({ value, onChange, engine, label }) {
+  const t = useT();
+  const name = useId();
+  const allowed = permissionModesFor(engine);
+  if (!allowed.length) return null; // the engine has no modes to pick from
+  const codex = normalizeEngine(engine) === 'codex';
+  const current = permissionModeForEngine(value, engine);
+  return (
+    <fieldset className="flex min-w-0 flex-col gap-1.5">
+      <legend className="mb-1.5 text-sm font-medium">{label}</legend>
+      <div role="radiogroup" aria-label={label} className={cn(cardBox, 'flex flex-col gap-0.5 p-1')}>
+        {LAUNCH_PERMISSION_MODES.filter((o) => allowed.includes(o.value)).map((o) => {
+          const on = o.value === current;
+          const desc = codex ? (o.value === 'default' ? 'rail.permCodexAskDesc' : 'rail.permCodexBypassDesc') : o.desc;
+          return (
+            <label
+              key={o.value}
+              data-perm={o.value}
+              data-danger={o.danger ? '' : undefined}
+              className={cn('flex cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted coarse:min-h-11', on && 'bg-muted')}
+            >
+              <input type="radio" name={name} value={o.value} checked={on} onChange={() => onChange(o.value)} className="mt-1 shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className={cn('flex items-center gap-1.5 text-sm', o.danger ? 'text-destructive' : 'text-foreground')}>
+                  {o.danger && <StatusDot status="err" />}
+                  {t(o.label)}
+                </span>
+                <span className="block text-xs leading-snug text-muted-foreground">{t(desc)}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+const lastSeg = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+
+// Exactly what the host will set up — from POST /ticket-plan, so the port shown
+// is one the host already reserved. Off = no promise at all.
+export function ProvisionPlan({ provision, plan, skill, onRepo }) {
+  const t = useT();
+  if (!provision)
+    return <div className={hintText}>{skill ? t('launcher.plan.provisionBySkill', { skill }) : t('launcher.plan.provisionOff')}</div>;
+  if (!plan) return <div className={hintText}>{t('launcher.plan.provisionLoading')}</div>;
+  if (!plan.repo) return <div className={errText}>{t('launcher.plan.provisionNoRepo')}</div>;
   return (
     <>
-      <option value="default">{defaultLabel}</option>
-      <option value="acceptEdits">acceptEdits</option>
-      <option value="plan">plan</option>
-      <option value="bypassPermissions">bypassPermissions</option>
+      <ProvisionRow label={t('launcher.plan.repo')}>
+        {plan.repos?.length > 1 ? (
+          <NativeSelect aria-label={t('launcher.plan.repo')} value={plan.repo} onChange={(e) => onRepo?.(e.target.value)} className="h-7 text-xs">
+            {plan.repos.map((r) => <option key={r} value={r}>{r}</option>)}
+          </NativeSelect>
+        ) : (
+          plan.repo
+        )}
+      </ProvisionRow>
+      <ProvisionRow label={t('launcher.plan.worktree')}>
+        <span title={plan.dir} dir="ltr">{lastSeg(plan.dir)}</span>
+        {plan.reuse && <span className="text-muted-foreground"> · {t('launcher.plan.reused')}</span>}
+      </ProvisionRow>
+      <ProvisionRow label={t('launcher.plan.branch')}>
+        <Badge mono className="min-w-0"><span className="truncate" dir="ltr">{plan.branch}</span></Badge>
+      </ProvisionRow>
+      <ProvisionRow label={t('launcher.plan.devServer')}>
+        {plan.port != null ? <span dir="ltr">:{plan.port}</span> : <span className="text-destructive">{t('launcher.plan.noFreePort')}</span>}
+      </ProvisionRow>
     </>
   );
 }
 
-function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt, options, onOptions }) {
+function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater, busy, error, mode, onMode, onViewDetails, prompt, onPrompt, options, onOptions, provision, onProvision, plan, onPlanRepo }) {
   const t = useT();
   const prefs = usePrefs();
-  const permId = useId();
   const promptId = useId();
   const color = nextPaletteColor(sessions, config);
   return (
@@ -1082,20 +1169,17 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
             )}
           </div>
           <div className="border-t border-hair pt-4">
-            <div className="mb-3 text-sm font-semibold">{t('launcher.plan.provision')}</div>
+            <div className="mb-3 flex items-center gap-3">
+              <span className="text-sm font-semibold">{t('launcher.plan.provision')}</span>
+              <Switch className="ms-auto" checked={provision} onCheckedChange={onProvision} aria-label={t('launcher.plan.provisionToggle')} />
+            </div>
             <div className="flex flex-col gap-2.5">
-              <ProvisionRow label="Worktree">app-worktrees/{ticket.id.toLowerCase()}</ProvisionRow>
-              <ProvisionRow label="Branch">
-                <Badge mono className="min-w-0"><span className="truncate">feat/{slug(ticket.title) || ticket.id.toLowerCase()}</span></Badge>
-              </ProvisionRow>
-              <ProvisionRow label="Dev server">
-                :{config?.devServerPorts?.[0] ?? 'auto'}
-              </ProvisionRow>
+              <ProvisionPlan provision={provision} plan={plan} skill={options?.skill} onRepo={onPlanRepo} />
               <div className="flex items-center gap-3 text-xs">
                 <span className="text-muted-foreground">{t('launcher.plan.sessionColour')}</span>
                 <span className="ms-auto flex items-center gap-1.5">
                   <Dot color={color} />
-                  <span className="text-muted-foreground">auto</span>
+                  <span className="text-muted-foreground">{t('launcher.plan.colourAuto')}</span>
                 </span>
               </div>
             </div>
@@ -1131,14 +1215,7 @@ function PlanPanel({ ticket, config, sessions, onCreate, onEmptyInstead, onLater
             </div>
           </>
         )}
-        <div className="flex items-center gap-3">
-          <Label htmlFor={permId}>
-            {t('launcher.plan.permissions')}
-          </Label>
-          <NativeSelect id={permId} value={mode} onChange={(e) => onMode(e.target.value)} wrapperClassName="flex-1" className="w-full">
-            <PermissionOptions defaultLabel={t('launcher.plan.permDefault')} />
-          </NativeSelect>
-        </div>
+        {ticket && <PermissionPicker value={mode} onChange={onMode} engine={options?.engine} label={t('launcher.plan.permissions')} />}
         <Button variant="primary" size="lg" className="w-full" disabled={!ticket || busy} onClick={onCreate}>
           {busy ? t('launcher.plan.creating') : t('launcher.plan.createSession')}
         </Button>
@@ -1168,10 +1245,9 @@ function EmptyForm({ config, sessions, onCreated }) {
   const prefs = usePrefs();
   const nameId = useId();
   const cwdId = useId();
-  const permId = useId();
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState(config?.defaultCwd || '');
-  const [mode, setMode] = useState('bypassPermissions');
+  const [mode, setMode] = useState(() => initialPermissionMode(prefs));
   const [prompt, setPrompt] = useState('');
   const [options, setOptions] = useState(() => defaultSessionOptions(prefs, 'empty'));
   const [busy, setBusy] = useState(false);
@@ -1198,7 +1274,7 @@ function EmptyForm({ config, sessions, onCreated }) {
       const session = await api.post('/sessions', {
         ...(name.trim() ? { title: name.trim() } : {}),
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-        permissionMode: mode,
+        permissionMode: permissionModeForEngine(mode, options.engine),
         ...(prompt.trim() ? { prompt } : {}),
         engine: options.engine || undefined,
         folderName: options.folderName || undefined,
@@ -1230,7 +1306,7 @@ function EmptyForm({ config, sessions, onCreated }) {
         kind: 'empty',
         title: name.trim() || scratchN,
         ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-        permissionMode: mode,
+        permissionMode: permissionModeForEngine(mode, options.engine),
         ...(prompt.trim() ? { prompt } : {}),
         engine: options.engine || undefined,
         folderName: options.folderName || undefined,
@@ -1294,11 +1370,7 @@ function EmptyForm({ config, sessions, onCreated }) {
             />
           </Field>
 
-          <Field label={t('launcher.empty.permMode')} htmlFor={permId}>
-            <NativeSelect id={permId} value={mode} onChange={(e) => setMode(e.target.value)} wrapperClassName="w-full" className="w-full">
-              <PermissionOptions defaultLabel="default" />
-            </NativeSelect>
-          </Field>
+          <PermissionPicker value={mode} onChange={pickPermissionMode(setMode)} engine={options.engine} label={t('launcher.empty.permMode')} />
 
           <div className="flex flex-col gap-1.5">
             <span className={sectionLabel}>{t('launcher.options.title')}</span>
@@ -2119,7 +2191,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     if (mode.startsWith('ext:') && !extMode) setModeRaw('empty');
   }, [mode, extMode]);
   const [selected, setSelected] = useState(null);
-  const [permMode, setPermMode] = useState('bypassPermissions');
+  const [permMode, setPermMode] = useState(() => initialPermissionMode(prefs));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [detailsId, setDetailsId] = useState(null);
@@ -2134,6 +2206,39 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
   useEffect(() => {
     setTicketPrompt('');
   }, [selected?.id]);
+  // Host setup (worktree + branch + port): on by default with no skill; a picked
+  // skill may set up its own workspace, so it starts off then — either way the
+  // panel promises only what the host will really do.
+  const [provision, setProvision] = useState(() => !sessionOpts.skill);
+  useEffect(() => {
+    setProvision(!sessionOpts.skill);
+  }, [sessionOpts.skill]);
+  const [plan, setPlan] = useState(null);
+  const [planRepo, setPlanRepo] = useState('');
+  const planRef = useRef(null);
+  useEffect(() => {
+    if (!selected || !provision || mode !== 'ticket') {
+      setPlan(null);
+      return;
+    }
+    let alive = true;
+    setPlan(null);
+    api
+      .post('/ticket-plan', {
+        ticket: selected.id,
+        title: selected.title,
+        ...(planRepo ? { repo: planRepo } : {}),
+        ...(planRef.current?.reservation ? { reservation: planRef.current.reservation } : {}),
+      })
+      .then((r) => {
+        planRef.current = r;
+        if (alive) setPlan(r);
+      })
+      .catch(() => alive && setPlan({ repo: null }));
+    return () => {
+      alive = false;
+    };
+  }, [selected?.id, selected?.title, provision, planRepo, mode]);
 
   const createFromTicket = async () => {
     if (!selected) return;
@@ -2167,7 +2272,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     try {
       const session = await api.post(
         '/sessions',
-        buildTicketPayload(selected, config, sessions, permMode, ticketPrompt, sessionOpts),
+        buildTicketPayload(selected, config, sessions, permissionModeForEngine(permMode, sessionOpts.engine), ticketPrompt, sessionOpts, provision ? { repo: plan?.repo || planRepo, reservation: plan?.reservation } : null),
       );
       onCreated(session);
     } catch (e) {
@@ -2186,7 +2291,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         title: 'Onboarding',
         prompt:
           'Run the arigami:onboarding skill to provision a workspace so I can work on tickets. Follow that skill exactly — ask me which repo to add if it is not obvious.',
-        permissionMode: 'bypassPermissions',
+        permissionMode: permMode,
       });
       setGated(false);
       onCreated(s);
@@ -2206,6 +2311,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
       await api.post('/pending', {
         ticket: selected.id,
         title: selected.title || selected.id,
+        permissionMode: permissionModeForEngine(permMode, sessionOpts.engine),
         ...(ticketPrompt.trim() ? { prompt: ticketPrompt } : {}),
         engine: sessionOpts.engine || undefined,
         folderName: sessionOpts.folderName || undefined,
@@ -2294,12 +2400,16 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
               onEmptyInstead={() => setMode('empty')}
               onLater={deferSelected}
               mode={permMode}
-              onMode={setPermMode}
+              onMode={pickPermissionMode(setPermMode)}
               onViewDetails={setDetailsId}
               prompt={ticketPrompt}
               onPrompt={setTicketPrompt}
               options={sessionOpts}
               onOptions={setSessionOpts}
+              provision={provision}
+              onProvision={setProvision}
+              plan={plan}
+              onPlanRepo={setPlanRepo}
             />
           </>
         ) : mode === 'trigger' ? (

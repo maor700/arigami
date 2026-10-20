@@ -31,7 +31,9 @@ import { resourceRoot } from './lib/resource-root.js';
 import { broadcast } from './bus.js';
 import { addCodexAccount, codexHomeOfAccount, getAccount, CODEX_ACCOUNTS_DIR } from './accounts.js';
 
-const codexBin = (): string => process.env.ARIGAMI_CODEX_BIN || 'codex';
+import { ensureCodexCli, findCodex } from './lib/engine-install.js';
+
+const codexBin = (): string => findCodex() || 'codex';
 // `codex login --device-auth` block-buffers stdout when it is not a terminal:
 // the URL and code only reach a pipe when the process EXITS (measured — 20s of
 // nothing after the first warning line). Under a pty they arrive in 0.1s. So
@@ -387,8 +389,16 @@ export function startBrowserLogin({ label }: { label?: string } = {}) {
   const id = 'cdx_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   const f: Flow = { id, provider: 'codex', state: 'starting', label: (label || '').trim(), dir: '', url: null, oauthState: null, error: null, account: null, buf: '' };
   flows.set(id, f);
+  // First Codex account on a fresh container: the CLI installs into ~/.local first (engine-install.ts); the flow
+  // stays 'starting' meanwhile and fails with the install's own error if that goes wrong.
+  ensureCodexCli().then(() => spawnBrowserLogin(f), (e) => fail(f, (e as Error).message));
+  return publicView(f);
+}
+
+function spawnBrowserLogin(f: Flow): void {
+  if (f.state !== 'starting') return; // cancelled while codex was installing
   try {
-    f.dir = pendingDir(id);
+    f.dir = pendingDir(f.id);
     const [bin, ...args] = ptyArgs(BRIDGE, [codexBin(), 'login']);
     const child = spawn(bin, args, {
       env: { ...process.env, CODEX_HOME: f.dir, NO_COLOR: '1', BROWSER: 'true' }, // BROWSER=true: never try to open a browser on the host
@@ -421,7 +431,6 @@ export function startBrowserLogin({ label }: { label?: string } = {}) {
   } catch (e) {
     fail(f, `could not start codex login: ${(e as Error).message}`);
   }
-  return publicView(f);
 }
 
 /**
@@ -477,6 +486,7 @@ export async function addApiKeyAccount({ label, key }: { label?: string; key: st
   if (!/^sk-/.test(k)) throw new Error('that does not look like an OpenAI API key (sk-…)');
   const validity = await validateApiKey(k);
   if (validity === 'invalid') throw new Error('OpenAI rejected this API key (401) — check it and try again');
+  await ensureCodexCli().catch(() => {}); // a missing CLI still gets the hand-written auth.json below
   const id = 'cdx_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   const dir = pendingDir(id);
   const written = await new Promise<boolean>((resolve) => {

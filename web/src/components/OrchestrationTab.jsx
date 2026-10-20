@@ -9,6 +9,7 @@ import { Truncate } from './Truncate.jsx';
 import { MergePill, MergePanel } from './MergeCard.jsx';
 import { Badge, Button, StatusDot } from './ui/index.js';
 import { useT } from '../lib/i18n.js';
+import BidiText from './BidiText.jsx';
 import { relTime } from '../lib/time.js';
 
 // Built-in Orchestration tab (decision 18). Renders GET /sessions/:id/orchestration
@@ -93,11 +94,9 @@ function NodeCard({ node, worker, nodeStateById, masterId, onKill, onRetry }) {
 
       {result && (
         <div className="mt-2.5 border-s border-border ps-3">
-          {result.note && <div className="text-sm font-medium text-foreground">{result.note}</div>}
+          {result.note && <BidiText text={result.note} className="text-sm font-medium text-foreground" />}
           {result.summary && (
-            <div className="mt-0.5 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {result.summary}
-            </div>
+            <BidiText text={result.summary} lines className="mt-0.5 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground" />
           )}
           {!!(result.artifacts && result.artifacts.length) && (
             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -147,7 +146,7 @@ function NeedRow({ n, first, last }) {
             <b className="font-medium">{pending.tool}</b>{pending.summary ? <> · <bdi dir="ltr" className="font-mono">{pending.summary}</bdi></> : null}
           </span>
         )}
-        {pending?.type === 'question' && pending.text && <span className="block truncate text-xs text-foreground" dir="auto">{pending.text}</span>}
+        {pending?.type === 'question' && pending.text && <BidiText as="span" text={pending.text} className="block truncate text-xs text-foreground" />}
         {!pending && n.reason && <span className="block truncate text-xs text-muted-foreground">{n.reason}</span>}
         {done && <span className="block text-xs text-muted-foreground">{t(done === 'allow' ? 'chat.orchApproved' : 'chat.orchDenied')}</span>}
       </span>

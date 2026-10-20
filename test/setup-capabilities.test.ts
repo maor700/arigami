@@ -21,7 +21,7 @@ const NONE =
   "const probes={identity:()=>null,claude:()=>({cli:true,authed:false}),codex:()=>({cli:true,authed:false}),git:()=>({authed:false,gh:false})," +
   "repos:()=>[{name:'app',present:false,dir:'/x/app',source:'https://example.invalid/app.git'}]," +
   "whatsapp:()=>({status:'disconnected',qr:null,user:null}),desktop:()=>({enabled:false,display:null,up:false})," +
-  "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),telemetry:()=>({enabled:false,reason:'config'})," +
+  "push:()=>false,remote:()=>({available:false,reason:'Tailscale is not installed'}),container:()=>false,telemetry:()=>({enabled:false,reason:'config'})," +
   'composioKey:()=>false,composioConnected:async()=>null};';
 // Everything connected.
 const ALL =
@@ -58,6 +58,21 @@ test('registry: every spec id resolves; statics + repos + known toolkits are lis
   expect(all).toContain('repo:app');
   expect(all).toContain('composio:gmail');
   expect(bad).toEqual([null, null, false]);
+});
+
+test('registry: in a container without a tailscale CLI, `remote` is not listed (but still resolves for a direct ask)', () => {
+  const r = runInChild(
+    `const c=await import('./server/capabilities.js');${NONE}` +
+      'const pod={...probes,container:()=>true};' +
+      "emit({pod:c.listCapabilities(pod).map(x=>x.id),withCli:c.listCapabilities({...pod,remote:()=>({available:true,loggedIn:false})}).map(x=>x.id),direct:!!c.getCapability('remote',pod)});",
+    env(fresh())
+  );
+  if (!r.ok) throw new Error(r.error);
+  const { pod, withCli, direct } = r.out[0];
+  expect(pod).not.toContain('remote');
+  expect(pod).toContain('desktop');
+  expect(withCli).toContain('remote');
+  expect(direct).toBe(true);
 });
 
 test('check(): nothing connected → all not ok with a human detail; everything connected → all ok; defaultMode follows identity+autoCapable', () => {

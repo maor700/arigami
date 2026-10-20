@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { createUpdater, parseVersion, DEFAULT_MIN_FREE_MB, APPLY_TIMEOUT_MS } from './claude-update.js';
+import { findCodex, isUserInstall, codexNpmArgs, runNpm } from './engine-install.js';
 
 export const RELEASES_URL = 'https://api.github.com/repos/openai/codex/releases/latest';
-
-const codexBin = () => process.env.ARIGAMI_CODEX_BIN || 'codex';
+const codexBin = () => findCodex() || 'codex';
 
 function run(args, timeoutMs) {
   return new Promise((resolve) => {
@@ -59,7 +59,8 @@ export async function codexUpdater() {
     store: path.join(cfg.configDir, 'codex-update.json'),
     installed: codexInstalled,
     fetchLatest: () => codexLatest(),
-    run: () => run(['update'], APPLY_TIMEOUT_MS),
+    // A copy the host installed into ~/.local (engine-install.ts) updates the same way it was installed.
+    run: () => (isUserInstall(findCodex()) ? runNpm(codexNpmArgs(), APPLY_TIMEOUT_MS) : run(['update'], APPLY_TIMEOUT_MS)),
     minFreeMb: Number(cfg.host?.claudeUpdateMinFreeMb) > 0 ? Number(cfg.host.claudeUpdateMinFreeMb) : DEFAULT_MIN_FREE_MB,
     auto: () => false,
     emit: (event) => bus.broadcast({ type: 'host', event }),

@@ -173,7 +173,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'merge_session',
       description:
         'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any agent turn. ' +
-        'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
+        'Rules: the child never merges; the HUMAN approves (Approve — on the review card or in the Changes tab, one action — stamps metadata.review.state="approved"); ' +
         'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
         'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
         'aborted and you get {conflict:true, files:[…]} (plus a chat line) — resolve with the human, never force. ' +
@@ -685,7 +685,7 @@ export async function createArigamiServer(env = process.env) {
     },
     {
       name: 'request_review',
-      description: 'Sugar: set status to "In Review" and show a review action bar (Request changes / Verified).',
+      description: 'Sugar: set status to "In Review" and show a review card (Request changes / Approve). Approve is the one approval action (same as the Changes tab\'s): for your own work it stamps metadata.review.state="approved" (a child branch then becomes mergeable by the host); for someone else\'s PR it posts an APPROVE review. Already approved and unchanged → the card shows Approved. The answer arrives as a message.',
       inputSchema: obj({ summary: { type: 'string' }, ...SID_PROP }),
       run: async (a) => {
         const id = sid(a);
@@ -695,7 +695,7 @@ export async function createArigamiServer(env = process.env) {
           kind: 'review',
           buttons: [
             { label: 'Request changes', value: 'request-changes' },
-            { label: '✓ Verified', value: 'verified', style: 'primary' },
+            { label: 'Approve', value: 'approve', style: 'primary' },
           ],
         });
       },
@@ -1253,6 +1253,10 @@ export async function createArigamiServer(env = process.env) {
     'Your browser starts with no logins. Before signing in to any site, call browser_logins / request_login: the owner may already be signed in and can hand that one site over. Never ask for a password in the chat — a fresh sign-in is request_screen, with the owner typing.',
     'Nothing you send to a person leaves on your call: WhatsApp messages, Slack messages, emails and comments through Arigami\'s tools become a card with your exact text, and the host sends them only when the owner presses Send. Write the final text, then stop and wait for the "[host] …" outcome. Never look for another way to send.',
     'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
+    // A container (Docker image / Kubernetes tenant): sudo works, but only apt installs and $HOME survive a restart.
+    ...(env.ARIGAMI_SUPERVISOR === 'docker'
+      ? ['This host runs in a container where you have passwordless sudo. Its root filesystem resets on restart, except that packages installed with `sudo apt-get install` (after `sudo apt-get update`) are kept on the volume and reinstalled at start. Anything else installed outside $HOME is lost — for those, install per user: `pip install --user <pkg>` or `python3 -m venv`, `npm i -g --prefix ~/.local <pkg>`, or a static binary into ~/.local/bin (first on PATH, persistent).']
+      : []),
   ].join('\n');
 
   const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });

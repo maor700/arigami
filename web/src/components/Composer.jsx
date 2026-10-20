@@ -685,7 +685,7 @@ export function ChatFooter({ session }) {
           )}
           <span className="ms-auto flex shrink-0 items-center gap-0.5">
             {working && (
-              <Tip label={t('rail.interruptClaude', { engine: engineLabel(session.engine) })} shortcut="Esc">
+              <Tip label={t('rail.interruptClaude', { engine: engineLabel(session.engine) })} shortcut="Esc Esc">
                 <Button variant="outline" size="icon-sm" data-composer-stop aria-label={t('rail.interruptClaude', { engine: engineLabel(session.engine) })} onClick={interrupt} className="text-destructive">
                   <SquareIcon className="size-3.5 fill-current" />
                 </Button>

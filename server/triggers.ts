@@ -107,7 +107,7 @@ export interface PendingItem {
   addedAt: string;
   ticket?: string; // kind 'ticket' — identifier, e.g. ENG-123 (uppercase)
   cwd?: string; // kind 'empty'
-  permissionMode?: string; // kind 'empty'
+  permissionMode?: string; // the launcher's pick (both kinds); unset → the start path's default
   prompt?: string; // custom starting prompt (overrides the default on start)
   skill?: string; // skill dir name to run; '' = plain prompt
   model?: string; // engine model value; '' = engine default
@@ -391,7 +391,7 @@ export function deferTicket(
   ticket: string,
   title?: string,
   prompt?: string,
-  opts?: { skill?: string; model?: string; effort?: string; engine?: string; folderId?: string | null; folderName?: string | null }
+  opts?: { skill?: string; model?: string; effort?: string; engine?: string; folderId?: string | null; folderName?: string | null; permissionMode?: string }
 ): PendingItem | null {
   const up = String(ticket || '').toUpperCase();
   if (!up) return null;
@@ -409,6 +409,7 @@ export function deferTicket(
     engine: opts?.engine,
     folderId: opts?.folderId,
     folderName: opts?.folderName,
+    ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
   });
   persist();
   emitPending();
@@ -507,6 +508,7 @@ export async function startPending(
     model: item.model ?? t?.model,
     effort: item.effort ?? t?.effort,
     engine: item.engine ?? t?.engine,
+    permissionMode: item.permissionMode,
     folderId: folder?.folderId,
     folderName: folder?.folderName,
     metadata: {

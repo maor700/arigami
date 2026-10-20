@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pickDriver } from './screen-driver.js';
+import { chromeExtraFlags } from './chrome.js';
 import { SKILLS_DIR } from '../skills.js';
 
 export const XINPUT = path.join(SKILLS_DIR, '_lib', 'xinput.py');
@@ -125,6 +126,17 @@ export async function desktopScreenshot(sessionId: string): Promise<DesktopShot>
 
 const launched = new Map<string, Map<number, { cmd: string }>>(); // session → pid → record
 
+const CHROME_RE = /(?:^|\/)(?:google-chrome(?:-stable|-beta|-unstable)?|chrome|chromium(?:-browser)?|arigami-chrome)$/;
+
+/**
+ * Chrome/Chromium args with the container flags (chrome.ts chromeExtraFlags — `--no-sandbox` & co. in a pod, where the
+ * sandbox can't start and a launch would die silently) added when missing. Anything else is returned as is. Pure.
+ */
+export function launchArgs(command: string, args: string[], flags: string[]): string[] {
+  if (!CHROME_RE.test(command)) return args;
+  return [...flags.filter((f) => !args.includes(f)), ...args];
+}
+
 /**
  * Start a program on the session's own desktop, detached (it must outlive this call — a background process
  * that dies with its launching shell is how a first-use test lost its Chrome). Returns its pid.
@@ -132,7 +144,7 @@ const launched = new Map<string, Map<number, { cmd: string }>>(); // session →
 export async function desktopLaunch(sessionId: string, command: string, args: string[] = []): Promise<{ pid: number }> {
   if (!command || /[\s;&|`$<>]/.test(command)) throw new Error('command must be a single program name or path (put its arguments in args)');
   const { display } = await ownDesktop(sessionId);
-  const child = spawn(command, args.map(String), {
+  const child = spawn(command, launchArgs(command, args.map(String), chromeExtraFlags()), {
     env: { ...process.env, DISPLAY: display },
     detached: true,
     stdio: 'ignore',

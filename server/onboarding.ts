@@ -950,15 +950,20 @@ export function ready(repoName: string): boolean {
 // fully ready. Triggers check this before firing so an autonomous run never
 // dead-ends on an unprovisioned workspace. Same logic as the launcher gate.
 export function workspaceReady(): boolean {
+  return readyRepos().length > 0;
+}
+
+/** Repos that are fully ready (every repo step ok), given the global gates pass; [] otherwise. */
+export function readyRepos(): string[] {
   const { steps } = status();
   const globalsOk = steps
     .filter((s) => s.scope === 'global' && s.required !== false)
     .every((s) => s.status === 'ok');
-  if (!globalsOk) return false;
+  if (!globalsOk) return [];
   const names = [
     ...new Set(steps.filter((s) => s.scope.startsWith('repo:')).map((s) => s.scope.slice(5))),
   ];
-  return names.some((n) =>
+  return names.filter((n) =>
     steps.filter((s) => s.scope === `repo:${n}`).every((s) => s.status === 'ok')
   );
 }

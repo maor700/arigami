@@ -32,9 +32,10 @@ const isErr = (e) => !!(e.isError ?? e.is_error ?? e.subtype === 'error');
 export function hiddenInSimple(e) {
   if (!e || typeof e !== 'object') return false;
   switch (e.kind) {
+    case 'system':
+      return !e.provision; // a ticket session's workspace report is news for the human — keep it
     case 'thinking':
     case 'tool-result':
-    case 'system':
     case 'action-auto':
     case 'delegated':
     case 'agent-adopt':

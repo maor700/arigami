@@ -306,6 +306,8 @@ export interface CapabilityProbes {
   push: () => boolean;
   remote: () => { available: boolean; loggedIn?: boolean; serving?: boolean; httpsUrl?: string | null; reason?: string };
   telemetry: () => { enabled: boolean; reason: string };
+  // Running in a container (Docker image / Kubernetes tenant): `remote` is not offered there without a tailscale CLI.
+  container: () => boolean;
   composioKey: () => boolean;
   // Connected toolkits (ACTIVE connected accounts). null = unknown (no key / offline).
   // Entries: '<toolkit>' for the host's accounts (user_id 'default'), and
@@ -451,6 +453,7 @@ export const defaultProbes: CapabilityProbes = {
     }
   },
   telemetry: () => ob.defaultProbes.telemetry(),
+  container: () => ob.detectEnv().container,
   composioKey: () => !!(cfg.composioApiKey || process.env.COMPOSIO_API_KEY),
   composioConnected: fetchComposioConnected,
   mcp: () => mcpConn.readMcpState(),
@@ -779,7 +782,10 @@ export function listCapabilities(probes: Partial<CapabilityProbes> = {}, owner: 
   // EXT: the MERGED catalog — core rows plus the user's own mcp-catalog.json,
   // so a service the user declared gets a capability card like any other.
   const native = mcpCatalog().map((sv) => mcpCapability(sv.slug, p, owner));
-  return [...staticCapabilities(p, owner), ...repos, ...native, ...toolkits];
+  // A container reaches the world through its own ingress, and can't run tailscaled (no TUN, no caps): offering
+  // `remote` there is a card nobody can complete.
+  const statics = staticCapabilities(p, owner).filter((c) => c.id !== 'remote' || !p.container() || p.remote().available);
+  return [...statics, ...repos, ...native, ...toolkits];
 }
 
 // Toolkits somebody asked about (request_setup / check) join the listing.
