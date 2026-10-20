@@ -6,7 +6,9 @@ import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
 import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
-import { useT, currentLang } from './lib/i18n.js';
+import { useT, currentLang, t as tNow } from './lib/i18n.js';
+import { toast, dismissToast } from './lib/toast.js';
+import { ESC_INTERRUPT_MS, escInterruptStep, overlayOpen } from './lib/esc-interrupt.js';
 import { Icon } from './lib/icons.js';
 import Rail from './components/Rail.jsx';
 import SessionView, { resolveTabs, CHANGES_TAB_ID } from './components/SessionView.jsx';
@@ -635,7 +637,8 @@ function Cockpit() {
 
   // keyboard: '/' search, cmd+1..9 sessions, cmd+t tab popover, esc closes
   const keyCtx = useRef({});
-  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, sessionCount: sessions.length };
+  keyCtx.current = { active, dialog, launcher, selected, settingsOpen, addTabOpen, railOpen, quickSwitcherOpen, shortcutsOpen, sessionCount: sessions.length };
+  const escArm = useRef(null); // the first Esc of an Esc-Esc interrupt: {id, at, toast}
   const pttActive = useRef(false); // push-to-talk: recording while the hotkey is held
   useEffect(() => {
     const onKey = (e) => {
@@ -643,14 +646,21 @@ function Cockpit() {
       if (e.key === 'Escape') {
         // B27: the mobile drawer is the top-most thing when open.
         if (ctx.railOpen) { e.preventDefault(); setRailOpen(false); return; }
-        // dialogs/popovers/settings handle their own esc via capture listeners.
-        // Esc-to-interrupt: only when there's nothing to close AND the selected
-        // session is working AND the user isn't typing in an input.
+        // dialogs/popovers/menus/the palette handle their own Esc first (Radix
+        // layers mark it defaultPrevented when they close) — that Esc is spent.
+        // Esc-to-interrupt: only when there's nothing to close, the selected
+        // session is working, the user isn't typing — and it takes a SECOND
+        // Esc within ESC_INTERRUPT_MS; the first one only shows the hint.
         const nothingOpen =
-          !ctx.dialog && !ctx.launcher && !ctx.settingsOpen && !ctx.addTabOpen;
+          !e.defaultPrevented && !ctx.dialog && !ctx.launcher && !ctx.settingsOpen && !ctx.addTabOpen &&
+          !ctx.quickSwitcherOpen && !ctx.shortcutsOpen && !overlayOpen();
         if (nothingOpen && !isTyping(e) && ctx.selected?.claude?.state === 'working') {
           e.preventDefault();
-          interruptSession(ctx.selected.id);
+          const prev = escArm.current;
+          if (prev) dismissToast(prev.toast);
+          const { fire, arm } = escInterruptStep(prev, ctx.selected.id, Date.now());
+          escArm.current = arm && { ...arm, toast: toast(tNow('chat.escAgainToInterrupt'), { ttl: ESC_INTERRUPT_MS }) };
+          if (fire) interruptSession(ctx.selected.id);
           return;
         }
         // Match the ✕ button's predicate (any session, incl. archived) so Esc
