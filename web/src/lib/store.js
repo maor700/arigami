@@ -1200,6 +1200,15 @@ function handleEvent(msg) {
       const ev = payload?.event || payload;
       if (ev?.kind) setState({ hostEvent: { ...ev, at: Date.now() } });
       // UPD1: the `claude` CLI updater's outcome — one line, wherever you are.
+      // A first-boot / first-use install (reason 'install', server/lib/engine-install.ts) says so in its own words.
+      if (ev?.reason === 'install' && /^(claude|codex)-update-(started|done|failed)$/.test(ev.kind)) {
+        const [engine, , phase] = ev.kind.split('-');
+        const key = `host.install.${phase}`;
+        const name = engine === 'codex' ? 'Codex CLI' : 'Claude Code';
+        if (phase === 'failed') toastError(t(key, { name, error: ev.error || '?' }));
+        else toast(t(key, { name, to: ev.to || '' }));
+        return;
+      }
       if (ev?.kind === 'claude-update-done') toast(t('host.cli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
       else if (ev?.kind === 'claude-update-failed') toastError(t('host.cli.failedToast', { error: ev.error || '?' }));
       else if (ev?.kind === 'codex-update-done') toast(t('host.codexCli.updatedToast', { from: ev.from || '?', to: ev.to || '?' }));
