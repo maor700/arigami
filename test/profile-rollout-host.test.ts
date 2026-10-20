@@ -22,6 +22,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'profile-rollout-host-secret-32ch';
@@ -67,7 +68,7 @@ const call = (method: 'GET' | 'POST', headers: Record<string, string> = {}) =>
 const op = (action: ho.OperatorAction, claims: { ref?: string; commit?: string } = {}) => ({ 'x-arigami-operator': ho.mintOperator(SECRET, { action, ...claims }) });
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rollout-host-'));
+  dir = tmpDir('arigami-rollout-host-');
   work = path.join(dir, 'work');
   bare = path.join(dir, 'org-profile.git');
   fs.mkdirSync(work);
@@ -212,7 +213,7 @@ test('an unknown commit is a clean failure, not a crash', async () => {
 });
 
 test('a busy host refuses, and the source is always ARIGAMI_BUNDLE (never the caller\'s)', () => {
-  const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-rollout-unit-'));
+  const adir = tmpDir('arigami-rollout-unit-');
   const r = runInChild(
     `const ro = await import('./server/profile-rollout.ts');
      emit(await ro.apply({ commit: '${commits.v1}' }, { busySessions: () => 2, env: { ARIGAMI_BUNDLE: '${bare}' } }));

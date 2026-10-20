@@ -14,8 +14,9 @@ import path from 'node:path';
 import { runInChild } from './_child.js';
 import { parseExtUrl, EXT_CSP } from '../server/ext-serve.ts';
 import { injectBase, rewriteBaseForToken, rewriteAbsoluteRefs, stripTokenSegment } from '../server/lib/asset-base.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ext3-'));
+const tmp = () => tmpDir('arigami-ext3-');
 
 // A tab extension whose page has exactly the sub-resources that used to 401:
 // the host SDK (root-absolute), its own script/stylesheet (relative), an image

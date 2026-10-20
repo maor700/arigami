@@ -9,10 +9,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 let dir: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-simple1-'));
+  dir = tmpDir('arigami-simple1-');
 });
 afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });

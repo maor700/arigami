@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { tmpDir } from './_tmp.js';
 
 const root = path.resolve(import.meta.dir, '..');
 test('native repair preserves pairing/data, retries failed dependencies, and is offline-idempotent', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-install-'));
+  const tmp = tmpDir('wa-install-');
   const wa = path.join(tmp, 'wa');
   const bin = path.join(tmp, 'bin');
   fs.mkdirSync(bin);

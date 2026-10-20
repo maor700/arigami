@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('flush() before the scheduler has loaded does not overwrite triggers.json', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-trig-'));
+  const dir = tmpDir('arigami-trig-');
   const storeFile = path.join(dir, 'triggers.json');
   const realData = JSON.stringify({
     triggers: [{ id: 'trig_1', type: 'linear-filter', name: 'keep me', seen: ['ENG-1'] }],

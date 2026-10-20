@@ -12,9 +12,10 @@ import { runInChild } from './_child.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir } from './_tmp.js';
 
 function sandbox() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inbox-'));
+  const dir = tmpDir('inbox-');
   return { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json'), ARIGAMI_CLAUDE_BIN: '/bin/true' };
 }
 

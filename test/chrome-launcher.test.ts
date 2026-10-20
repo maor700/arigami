@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { withChromeFlags, ensureChromeLauncherFlags } from '../server/lib/chrome-launcher.ts';
+import { tmpDir } from './_tmp.js';
 
 const DESKTOP = ['[Desktop Entry]', 'Name=Google Chrome', 'Exec=/usr/bin/google-chrome-stable %U', '', '[Desktop Action new-window]', 'Exec=/usr/bin/google-chrome-stable', '[Desktop Action incognito]', 'Exec=/usr/bin/google-chrome-stable --incognito', 'TryExec=/usr/bin/google-chrome-stable'].join('\n');
 
@@ -15,7 +16,7 @@ test('every Chrome Exec line gets the flag once; other lines are untouched', () 
 });
 
 test('in a pod the launcher is shadowed in the user data dir; on a native host nothing is written', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-'));
+  const root = tmpDir('cl-');
   const sys = path.join(root, 'google-chrome.desktop');
   fs.writeFileSync(sys, DESKTOP);
   const home = path.join(root, 'home');

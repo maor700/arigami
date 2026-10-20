@@ -12,6 +12,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SETUP_TIMEOUT_MS = 6000;
@@ -95,7 +96,7 @@ async function stopHost(): Promise<void> {
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-F6-host-'));
+  dir = tmpDir('arigami-F6-host-');
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
   await startHost();

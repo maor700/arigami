@@ -11,8 +11,9 @@ import { createShareTokens, clampDays } from '../server/share-token.ts';
 import { rewriteAbsoluteRefs } from '../server/artifacts.ts';
 import { parseArtifactUrl, rewriteBaseForShare } from '../server/artifacts.ts';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p) => tmpDir(p);
 const DAY = 86_400_000;
 
 function mk(over = {}) {

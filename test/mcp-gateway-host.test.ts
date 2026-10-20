@@ -12,6 +12,7 @@ import net from 'node:net';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'mcp-gateway-host-test-secret-32chars';
@@ -56,7 +57,7 @@ async function mcp(name: string, token: string) {
 const text = (r: any) => String((r.content || []).map((c: any) => c.text).join(''));
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-gateway-'));
+  dir = tmpDir('arigami-gateway-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

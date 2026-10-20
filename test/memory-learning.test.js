@@ -21,8 +21,9 @@ import {
   nextRun,
   buildPrompt,
 } from '../server/lib/memory-triage.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-learn-'));
+const tmp = () => tmpDir('arigami-learn-');
 const H = 3600_000;
 
 // ---- deterministic pre-pass ---------------------------------------------------------

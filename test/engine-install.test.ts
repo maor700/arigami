@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { autoInstallAllowed, inContainerEnv, codexNpmArgs, isUserInstall, ensureCodexCli } from '../server/lib/engine-install.ts';
+import { tmpDir } from './_tmp.js';
 
 test('autoInstallAllowed: on in a container, off on a bare host, knobs override both ways', () => {
   expect(autoInstallAllowed('claude', {}, true)).toBe(true);
@@ -16,7 +17,7 @@ test('autoInstallAllowed: on in a container, off on a bare host, knobs override 
 });
 
 test('codex installs/updates into the user prefix; isUserInstall follows symlinks into it', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-engine-'));
+  const root = tmpDir('arigami-engine-');
   const prefix = path.join(root, '.local');
   expect(codexNpmArgs(prefix)).toEqual(['install', '-g', '--prefix', prefix, '@openai/codex@latest']);
   const real = path.join(prefix, 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');

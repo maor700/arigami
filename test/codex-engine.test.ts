@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const FIX = path.resolve(import.meta.dir, 'fixtures/codex-stream');
 const fixture = (prefix: string): string => {
@@ -27,7 +28,7 @@ const fixture = (prefix: string): string => {
 let dir: string;
 let codexHome: string;
 beforeAll(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexdrv-'));
+  dir = tmpDir('arigami-codexdrv-');
   // A stand-in for a real `codex login`: prepare() only ever symlinks this file.
   codexHome = path.join(dir, 'real-codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
@@ -439,7 +440,7 @@ else if(j.method==='model/list')process.stdout.write(JSON.stringify({id:j.id,res
 }
 
 test('codexModels(): the engine\'s model/list for the ACTIVE login, its models_cache.json only until that lands, never a hardcoded list', () => {
-  const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-codexmodels-'));
+  const adir = tmpDir('arigami-codexmodels-');
   try {
     const home = path.join(adir, 'machine-home');
     fs.mkdirSync(home, { recursive: true });
@@ -661,7 +662,7 @@ test('a session with no agent policy gets no hooks.json and no hook-trust flag',
 
 test('P1-7: composio-mcp from the host reaches config.toml with its own env; absent when not configured or not allowed', () => {
   const run = (claudeJson: unknown, tools: string[] | null) => {
-    const adir = fs.mkdtempSync(path.join(dir, 'composio-'));
+    const adir = tmpDir('composio-');
     const cdir = path.join(adir, 'claude');
     fs.mkdirSync(cdir);
     if (claudeJson) fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify(claudeJson));

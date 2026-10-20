@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { parseMarkers, parsePsEww, ofSession, orphans } from '../server/lib/session-procs.ts';
 import * as wt from '../server/lib/worktree-reap.ts';
+import { tmpDir } from './_tmp.js';
 
 const isWin = process.platform === 'win32';
 
@@ -25,7 +26,7 @@ function sh(cwd: string, cmd: string): string {
 
 /** origin (bare) + a main clone with one pushed commit. Returns the clone. */
 function repo(): { root: string; main: string } {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-')));
+  const root = fs.realpathSync(tmpDir('reap-'));
   sh(root, 'git init -q --bare origin.git');
   sh(root, 'git clone -q origin.git main 2>/dev/null');
   const main = path.join(root, 'main');
@@ -153,7 +154,7 @@ beforeAll(() => {
   sh(main, `git worktree add -q -b ticket ${dir} && cd ${dir} && git push -q origin ticket`);
   const dirtyDir = path.join(root, 'wt-dirty-session');
   sh(main, `git worktree add -q -b wip ${dirtyDir} && echo wip >> ${dirtyDir}/a.txt`);
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-host-'));
+  const sandbox = tmpDir('reap-host-');
   const envOut = path.join(root, 'env.txt');
   const pidOut = path.join(root, 'detached.pid');
   const fake = path.resolve(import.meta.dir, '_fake-claude-detach.sh');
@@ -240,7 +241,7 @@ test.skipIf(isWin)('delete keeps a worktree with uncommitted work and lists it',
 });
 
 test.skipIf(isWin)('sweep removes leftovers of deleted sessions and nothing else', () => {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-sweep-'));
+  const sandbox = tmpDir('reap-sweep-');
   const r = runInChild(
     `const state = await import('./server/state.js');
      const reap = await import('./server/reap.js');
@@ -287,7 +288,7 @@ test.skipIf(isWin)('sweep removes leftovers of deleted sessions and nothing else
 
 test.skipIf(isWin)('sweep retries kept worktrees: removes the one that became clean, keeps the dirty one', () => {
   const { main } = repo();
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-kept-'));
+  const sandbox = tmpDir('reap-kept-');
   const clean = path.join(path.dirname(main), 'wt-clean');
   const dirty = path.join(path.dirname(main), 'wt-dirty');
   sh(main, `git worktree add -q -b b-clean ${clean} main && git worktree add -q -b b-dirty ${dirty} main`);

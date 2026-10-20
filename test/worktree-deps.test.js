@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isolate } from './_isolate.js';
+import { tmpPath } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const { addWorktree, removeWorktree } = await import('../server/git.js');
@@ -25,7 +26,7 @@ afterEach(async () => {
 });
 
 function newWorktreeDir(tag) {
-  const dir = path.join(os.tmpdir(), `wt-deps-${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+  const dir = tmpPath(`wt-deps-${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
   created.push(dir);
   return dir;
 }

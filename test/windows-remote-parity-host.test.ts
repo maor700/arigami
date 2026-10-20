@@ -23,6 +23,7 @@ import { WebSocket as WsClient } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -78,7 +79,7 @@ async function until<T>(fn: () => Promise<T | null | undefined | false>, ms = 30
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wrp-host-'));
+  dir = tmpDir('arigami-wrp-host-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

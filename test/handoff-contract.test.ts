@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as host from '../server/handoff.ts';
 import * as cp from '../control-plane/src/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const SECRET = cp.newSecret();
 
@@ -68,7 +69,7 @@ test("a token minted for one tenant's secret is worthless against another's", ()
 
 test('a control-plane operator token verifies on the host, claims intact', () => {
   const commit = 'a'.repeat(40);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-contract-'));
+  const dir = tmpDir('op-contract-');
   const r = host.verifyOperator(cp.mintOperator(SECRET, { action: 'profile-apply', ref: 'v2', commit }), 'profile-apply', { secret: SECRET, dir });
   expect(r.ok).toBe(true);
   expect((r as any).payload).toMatchObject({ kind: 'operator', action: 'profile-apply', ref: 'v2', commit });

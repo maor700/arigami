@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('older pages stay reachable down to seq 1 in a 2,000-event transcript', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pg-'));
+  const dir = tmpDir('pg-');
   const r = runInChild(
     `
     const st=await import('./server/state.ts'); const claude=await import('./server/claude.js');

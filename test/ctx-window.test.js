@@ -10,9 +10,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function freshDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ctxwin-'));
+  return tmpDir('arigami-ctxwin-');
 }
 
 function resolve(model, env = {}) {

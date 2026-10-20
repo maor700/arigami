@@ -7,9 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function inChild(body, env = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-desktops-'));
+  const dir = tmpDir('arigami-desktops-');
   return runInChild("const {allocatePort}=await import('./server/lib/desktops.ts');" + body, {
     ARIGAMI_DIR: dir,
     ARIGAMI_PORT: '',

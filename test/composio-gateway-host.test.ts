@@ -16,6 +16,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'composio-gateway-host-test-secret-32';
@@ -91,7 +92,7 @@ beforeAll(async () => {
       return new Response('no', { status: 404 });
     },
   });
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-composio-gw-'));
+  dir = tmpDir('arigami-composio-gw-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(dir, 'home');

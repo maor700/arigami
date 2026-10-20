@@ -24,6 +24,7 @@ import { WebSocket as WsClient } from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -104,7 +105,7 @@ function host(key: string, env: Record<string, string>): Promise<string> {
 
 /** Boot an isolated host with the given screen env; returns its base URL. */
 async function startHost(env: Record<string, string>): Promise<string> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wrpv-host-'));
+  const dir = tmpDir('arigami-wrpv-host-');
   dirs.push(dir);
   const port = await freePort();
   const home = path.join(dir, 'home');

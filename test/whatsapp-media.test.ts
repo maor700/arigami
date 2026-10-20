@@ -3,9 +3,10 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { tmpDir } from './_tmp.js';
 
 test('media survives process restart, retains captionless images, scopes lookup to chat and downloads safely', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-media-'));
+  const tmp = tmpDir('wa-media-');
   const source = fs.readFileSync(path.resolve(import.meta.dir, '../scripts/whatsapp-media.ts'), 'utf8');
   fs.writeFileSync(path.join(tmp, 'media.ts'), source);
   fs.writeFileSync(path.join(tmp, 'database.ts'), `import {Database} from 'bun:sqlite'; const db=new Database(${JSON.stringify(path.join(tmp,'media.db'))}); export function initializeDatabase(){return db;}`);

@@ -8,8 +8,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-wire-'));
+const tmp = () => tmpDir('arigami-wire-');
 
 test('listSessionsForWire slims capabilities and caps finished summaries; the full record stays intact', () => {
   const dir = tmp();

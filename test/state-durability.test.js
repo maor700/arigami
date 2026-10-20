@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 function fixture(run) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'state-durability-'));
+  const dir = tmpDir('state-durability-');
   const file = path.join(dir, 'state.json');
   try { run(file, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: file }); }
   finally { fs.rmSync(dir, { recursive: true, force: true }); }

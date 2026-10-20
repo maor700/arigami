@@ -15,11 +15,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STUB = path.join(ROOT, 'test', 'fixtures', 'claude-mcp-stub.sh');
-const state = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-mcpauth-'));
+const state = tmpDir('arigami-mcpauth-');
 
 // The stub writes the same two files the real CLI owns, into a throwaway config
 // dir — nothing here can touch the developer's own ~/.claude.

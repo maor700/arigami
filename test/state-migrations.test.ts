@@ -20,8 +20,9 @@ import {
   type StateSchema, type Doc,
 } from '../server/lib/schema-version.ts';
 import { STATE_SCHEMA, CONFIG_SCHEMA, TRIGGERS_SCHEMA, EXTENSIONS_SCHEMA, ALL_SCHEMAS } from '../server/lib/state-schemas.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p = 'arigami-sv-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-sv-') => tmpDir(p);
 const quiet = { log: () => {} };
 const readJson = (f: string) => JSON.parse(fs.readFileSync(f, 'utf8'));
 

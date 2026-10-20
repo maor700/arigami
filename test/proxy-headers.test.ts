@@ -9,6 +9,7 @@ import { createAuth, COOKIE } from '../server/auth.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir } from './_tmp.js';
 
 const req = (headers: Record<string, string | string[]>, remoteAddress?: string) => ({ headers, socket: { remoteAddress } });
 const ON = { trustProxy: true };
@@ -95,7 +96,7 @@ describe('config.resolveTrustProxy', () => {
 
 describe('auth cookies behind a proxy', () => {
   const mk = (over: Record<string, unknown> = {}) =>
-    createAuth({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-c2-')), auth: { mode: 'pairing', cookieDays: 30 }, log: () => {}, ...over } as any);
+    createAuth({ dir: tmpDir('arigami-c2-'), auth: { mode: 'pairing', cookieDays: 30 }, log: () => {}, ...over } as any);
   test('Secure only for a trusted forwarded https (or https publicUrl)', () => {
     const a = mk({ trustProxy: true });
     expect(a.cookieHeader('t', 10)).not.toContain('Secure');

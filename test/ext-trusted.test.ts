@@ -14,8 +14,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-ext-trust-'));
+const tmp = () => tmpDir('arigami-ext-trust-');
 
 /** Two extensions: one asks for the tier, one does not. */
 function makeExts(dir: string) {

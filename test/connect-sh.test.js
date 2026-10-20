@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SH = path.join(ROOT, 'skills/_lib/connect.sh');
@@ -44,7 +45,7 @@ afterEach(() => {
 });
 
 async function fakeHost(initial = { status: 200, body: { ok: true } }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'connect-sh-host-'));
+  const dir = tmpDir('connect-sh-host-');
   const log = path.join(dir, 'calls.log');
   const respFile = path.join(dir, 'resp.json');
   fs.writeFileSync(respFile, JSON.stringify(initial));
@@ -64,7 +65,7 @@ async function fakeHost(initial = { status: 200, body: { ok: true } }) {
 }
 
 function sandbox(port, extraEnv = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'connect-sh-'));
+  const dir = tmpDir('connect-sh-');
   const run = (...args) =>
     spawnSync('bash', [SH, ...args], {
       encoding: 'utf8',

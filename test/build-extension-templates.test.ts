@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 const REPO = path.resolve(import.meta.dir, '..');
 const SKILL = path.join(REPO, 'skills', 'build-extension');
@@ -63,7 +64,7 @@ const validate = (root: string, dir: string) => {
   return r.out[0] as { ok: boolean; errors: string[]; warnings: string[]; manifest: any };
 };
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-tpl-'));
+const tmp = () => tmpDir('arigami-tpl-');
 
 // ---------------------------------------------------------------------------
 // the four templates

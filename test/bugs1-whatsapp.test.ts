@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,7 +47,7 @@ if (!IN_CHILD) {
 }
 
 if (IN_CHILD) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-B20-'));
+  const tmp = tmpDir('arigami-B20-');
   const MCP_DIR = path.join(tmp, 'wa-mcp');
   const DATA_DIR = path.join(tmp, 'wa-data');
   const SPAWN_LOG = path.join(tmp, 'spawns.log');

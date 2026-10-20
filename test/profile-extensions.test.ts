@@ -13,9 +13,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { gitAuthEnv } from '../server/lib/git-auth.ts';
+import { tmpDir } from './_tmp.js';
 
 const pf = await import('../server/profiles.ts');
-const tmp = (p = 'arigami-pfx-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-pfx-') => tmpDir(p);
 
 // ---- git auth ------------------------------------------------------------------
 

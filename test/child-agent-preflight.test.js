@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
 test('unknown and over-budget agents cannot provision mutating or full child worktrees', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'child-preflight-'));
+  const dir = tmpDir('child-preflight-');
   const r = runInChild(`
     const fs=await import('node:fs');
     const path=await import('node:path');

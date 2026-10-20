@@ -10,8 +10,9 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir } from './_tmp.js';
 
-process.env.ARIGAMI_DIR ||= fs.mkdtempSync(path.join(os.tmpdir(), 'consent-runner-'));
+process.env.ARIGAMI_DIR ||= tmpDir('consent-runner-');
 const HAVE_CHROME = (() => {
   try {
     return !!require('../server/lib/chrome.ts').chromeBin();
@@ -24,7 +25,7 @@ const { runConsent } = await import('../server/lib/consent-runner.ts');
 let vendor: ReturnType<typeof Bun.serve>;
 let vbase = '';
 const REDIRECT = 'https://arigami.test.example/__api/mcp-oauth/callback';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'consent-profile-'));
+const profile = tmpDir('consent-profile-');
 
 const page = (body: string) => new Response(`<!doctype html><meta charset="utf-8"><body style="font:15px system-ui">${body}</body>`, { headers: { 'content-type': 'text/html' } });
 

@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
 import { codexMcpArgs } from '../server/mcp-auth.js';
+import { tmpDir } from './_tmp.js';
 
-const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'codex-quota-recovery-mcp-'));
+const fresh = (): string => tmpDir('codex-quota-recovery-mcp-');
 const env = (dir: string) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_FUNNEL_QUIET: '1',

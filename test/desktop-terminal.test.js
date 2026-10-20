@@ -6,12 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureDesktopConfig, tint2Config, tint2ClockConfig, openboxRc, openboxMenu, terminalScript } from '../server/lib/desktop-terminal.ts';
+import { tmpDir } from './_tmp.js';
 
 const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
 const STOCK_OPENBOX = '<openbox_config>\n<menu>\n  <file>/var/lib/openbox/debian-menu.xml</file>\n  <file>menu.xml</file>\n</menu>\n</openbox_config>\n';
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-desktop-terminal-'));
+  return tmpDir('arigami-desktop-terminal-');
 }
 
 function fixture() {

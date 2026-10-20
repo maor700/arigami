@@ -14,6 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as ho from '../server/handoff.ts';
 import { runInChild } from './_child.js';
+import { tmpDir, tmpPath } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = 'login-flow-host-test-secret-32chars';
@@ -71,7 +72,7 @@ function seedVault(vaultDir: string) {
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-login-flow-'));
+  dir = tmpDir('arigami-login-flow-');
   seedVault(path.join(dir, 'chrome-base'));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
@@ -125,9 +126,9 @@ setInterval(()=>{},1e6);
   let err = '';
   host.stderr!.on('data', (d) => {
     err += d;
-    fs.appendFileSync(path.join(os.tmpdir(), 'login-flow-host.log'), String(d));
+    fs.appendFileSync(tmpPath('login-flow-host.log'), String(d));
   });
-  host.stdout!.on('data', (d) => fs.appendFileSync(path.join(os.tmpdir(), 'login-flow-host.log'), String(d)));
+  host.stdout!.on('data', (d) => fs.appendFileSync(tmpPath('login-flow-host.log'), String(d)));
   await until(async () => {
     try {
       return (await fetch(base + '/__health', { signal: AbortSignal.timeout(2000) })).ok;
@@ -219,7 +220,7 @@ test("'my browser' is a person's: a session can neither list it nor open it", as
 });
 
 test("a plain session's browser profile starts empty; an agent's starts from the agent's own", () => {
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'login-profile-'));
+  const sandbox = tmpDir('login-profile-');
   const r = runInChild(
     `const fs = await import('node:fs'); const path = await import('node:path');
      const state = await import('./server/state.js');

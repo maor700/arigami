@@ -19,8 +19,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (tag) => fs.mkdtempSync(path.join(os.tmpdir(), `arigami-models-${tag}-`));
+const tmp = (tag) => tmpDir(`arigami-models-${tag}-`);
 
 // A `claude` stand-in: answers `--version` and the stream-json `initialize`
 // handshake (the only two things server/models.js asks of the CLI) from

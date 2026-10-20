@@ -30,6 +30,7 @@ import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostDiag } from './_host-diag.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let host: ChildProcess;
@@ -91,7 +92,7 @@ async function askQuestion(sid: string): Promise<{ toolUseId: string; requestId:
 }
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-CHAT1-host-'));
+  dir = tmpDir('arigami-CHAT1-host-');
   stubDir = path.join(dir, 'stub');
   fs.mkdirSync(stubDir, { recursive: true });
   const port = await freePort();

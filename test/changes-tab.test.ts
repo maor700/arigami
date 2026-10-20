@@ -11,6 +11,7 @@ import { test, expect, beforeAll, afterAll } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tmpDir } from './_tmp.js';
 
 const { changesFor, changeDiff, changeIdentity, prStatus, safeMode, provisionChildWorktree, removeWorktree } =
   await import('../server/git.js');
@@ -40,7 +41,7 @@ function initRepo(dir: string, branch = 'master') {
 let repos: string, origin: string, main: string;
 
 beforeAll(() => {
-  repos = fs.mkdtempSync(path.join(os.tmpdir(), 'chg1-'));
+  repos = tmpDir('chg1-');
   origin = path.join(repos, 'origin');
   initRepo(origin);
   commit(origin, 'README.md', '# hi\n', 'init');
@@ -230,14 +231,14 @@ test('no worktree: distinct error and emptyReason, no git ever runs', async () =
 });
 
 test('not a git repository: distinct from "no worktree"', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chg1-plain-'));
+  const dir = tmpDir('chg1-plain-');
   const r = await changesFor(sessionFor(dir), 'uncommitted');
   expect(r.error).toBe('not a git repository');
   expect(r.emptyReason).toBe('no-repo');
 });
 
 test('unborn branch (no commits yet): distinct from "clean" for uncommitted, work, and pr', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chg1-unborn-'));
+  const dir = tmpDir('chg1-unborn-');
   initRepo(dir);
   const s = sessionFor(dir, 'master');
 
@@ -261,7 +262,7 @@ test('unborn branch (no commits yet): distinct from "clean" for uncommitted, wor
 });
 
 test('a repo with no remote at all still resolves a local default branch for pr/work', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chg1-noremote-'));
+  const dir = tmpDir('chg1-noremote-');
   initRepo(dir, 'main');
   commit(dir, 'README.md', '# hi\n', 'init');
   sh(dir, 'checkout', '-q', '-b', 'work-branch');

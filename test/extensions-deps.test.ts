@@ -17,8 +17,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
+import { tmpDir } from './_tmp.js';
 
-const tmp = (p = 'arigami-extdeps-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-extdeps-') => tmpDir(p);
 const env = (dir: string, extra: Record<string, string> = {}) => ({
   ARIGAMI_DIR: dir,
   ARIGAMI_PORT: '',

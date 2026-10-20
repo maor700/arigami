@@ -16,6 +16,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runInChild } from './_child.js';
 import { ticketBranch, ticketWorktreeDir, pickFreePort, portFree, provisionReport, provisionPromptBlock } from '../server/ticket-provision.js';
+import { tmpDir } from './_tmp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -53,7 +54,7 @@ test('report: the first chat line and the prompt block say what really happened'
 });
 
 function isolatedEnv() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-TPROV-'));
+  const dir = tmpDir('arigami-TPROV-');
   const repos = path.join(dir, 'repos');
   fs.mkdirSync(repos, { recursive: true });
   return {
@@ -164,7 +165,7 @@ async function api(method: string, p: string, body?: unknown): Promise<any> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  hostDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-TPROV-host-'));
+  hostDir = tmpDir('arigami-TPROV-host-');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   const home = path.join(hostDir, 'home');

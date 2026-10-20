@@ -13,10 +13,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInChild } from './_child.js';
 import { isolate } from './_isolate.js';
+import { tmpDir } from './_tmp.js';
 isolate(); // restore globalThis/process.env after this file (bun test shares them)
 
 const bk = await import('../server/backup.ts');
-const tmp = (p = 'arigami-bk-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = (p = 'arigami-bk-') => tmpDir(p);
 const tarList = (f: string) => spawnSync('tar', ['-tzf', f], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean).map((e) => e.replace(/^\.\//, ''));
 
 const SKILL = '---\ndescription: a throwaway exported skill\n---\n\n# Exported\n\nbody\n';

@@ -8,8 +8,9 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createAuth } from '../server/auth.ts';
 import * as oa from '../server/org-access.ts';
+import { tmpDir } from './_tmp.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-org-access-'));
+const tmp = () => tmpDir('arigami-org-access-');
 const mk = (dir = tmp()) => ({ dir, auth: createAuth({ dir, auth: { mode: 'pairing', cookieDays: 30 }, log: () => {} }) });
 const ORCH = { ARIGAMI_HANDOFF_SECRET: 'x'.repeat(32) } as NodeJS.ProcessEnv;
 const req = (method: string, headers: Record<string, string> = {}) => ({ method, headers }) as any;
