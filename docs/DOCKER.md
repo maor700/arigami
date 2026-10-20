@@ -98,7 +98,7 @@ plus `ARIGAMI_CODEX_BIN` in `.env`.
 | Bun `1.3` | the host's own runtime (`bun server/index.ts`) |
 | `@anthropic-ai/claude-code` | the `claude` binary the host spawns per session |
 | `git`, `gh`, `ripgrep`, `python3` | worktrees/diffs, PRs, file search, the pty bridge for logins |
-| `xvfb x11vnc openbox tint2 x11-utils fonts-noto(+emoji) dbus-x11` | the desktop the agent drives (`request_screen`, `machine-work`) |
+| `xvfb x11vnc openbox tint2 lxterminal x11-utils fonts-noto(+emoji) dbus-x11` | the desktop the agent drives (`request_screen`, `machine-work`), with a terminal ([DESKTOP.md](DESKTOP.md#a-terminal-on-the-x11-desktops)) |
 | Google Chrome (amd64) / Chromium (arm64) → `CHROME_BIN` | the agent's browser on that desktop |
 | Playwright MCP (driving `CHROME_BIN`) + ffmpeg | screenshot/GIF skills; no second browser in the image |
 | whatsapp-mcp at `/opt/whatsapp-mcp` (+ `tsx`) | the Baileys bridge behind the WhatsApp listener/MCP |
@@ -113,7 +113,8 @@ Nothing to configure. On boot the host (`ARIGAMI_SCREEN_ENABLED=1`,
 `ARIGAMI_GLOBAL_DESKTOP=1`, `DISPLAY=:99` — all set in the image) starts `Xvfb :99`, openbox, tint2 and
 `x11vnc` on `127.0.0.1:5900`, supervised like any other child process; per-
 session desktops are allocated on demand on top. `request_screen` in the cockpit
-shows it. The host, the desktop and Chrome run as the unprivileged `node` user
+shows it; its panel's first icon (and the right-click menu's "Terminal") opens a
+terminal as the same user. The host, the desktop and Chrome run as the unprivileged `node` user
 (uid 1000): the entrypoint starts as root only to own the `/data` volume, then
 drops via `gosu` — `docker compose exec arigami ps -eo user,comm` shows `node`
 for `bun`/`Xvfb`/`x11vnc`. Note that a plain `docker compose exec` shell is

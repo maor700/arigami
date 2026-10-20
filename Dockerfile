@@ -44,9 +44,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 #     (server/lib/desktops.ts) spawns Xvfb :99 + openbox + tint2 + x11vnc on
 #     loopback at boot, and per-session desktops on demand. No supervisord,
 #     no systemd — the host process owns them. dbus-x11 gives Chrome a session
-#     bus; fonts-noto(+emoji) cover the scripts/emoji the agent screenshots. ---
+#     bus; fonts-noto(+emoji) cover the scripts/emoji the agent screenshots.
+#     lxterminal is the desktop's terminal (panel icon + right-click "Terminal",
+#     wired by server/lib/desktop-terminal.ts): VTE-based, so Hebrew/Arabic get
+#     real BiDi, and ~+3MB because Chrome already pulls in GTK3 (xterm costs the
+#     same and has no BiDi). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 \
+      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal \
       fonts-noto-core fonts-noto-color-emoji fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 

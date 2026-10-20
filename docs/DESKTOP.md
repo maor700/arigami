@@ -1065,3 +1065,49 @@ does leave the sidecar behind.
 
   Still unexercised: `wait_local_ready()`'s 60s local timeout — every local
   start in testing came up in well under a second.
+
+## A terminal on the X11 desktops
+
+Separate from the packaging above: the X11 desktops the host spawns — the
+global `:99` and every per-session desktop (`server/lib/desktops.ts`) — run
+openbox + tint2 and open a terminal from two places:
+
+- **the panel**: the first tint2 launcher icon (a `>_` glyph, tooltip "Terminal");
+- **the right-click menu** on the desktop background: "Terminal" (then "Reconfigure").
+
+Both run `<ARIGAMI_DIR>/desktop/arigami-terminal`, which
+`server/lib/desktop-terminal.ts` (re)writes at every desktop start. The script
+picks, in order: `$ARIGAMI_TERMINAL` (any command), the system's
+`x-terminal-emulator`, then lxterminal / xfce4-terminal / gnome-terminal /
+konsole / mate-terminal / tilix / kitty / alacritty, then xterm (UTF-8, Xft
+monospace, 10k lines of scrollback), then urxvt — and shows an `xmessage` when
+none is installed. It forces a UTF-8 locale (`C.UTF-8`) when the inherited one
+isn't, and starts in the session's working directory on a per-session desktop
+(`ARIGAMI_TERMINAL_CWD`, with `ARIGAMI_SESSION_ID` set) or in `$HOME` on `:99`.
+It runs as the host's own user — in the image, the unprivileged `node` user.
+
+**In the Docker image** the terminal is `lxterminal` (it registers itself as
+`x-terminal-emulator`). Why it and not xterm: both add ~2.7 MB installed,
+because Chrome already brings GTK3, but lxterminal's VTE does real BiDi, so
+Hebrew/Arabic read in the right order; it also has Ctrl+Shift+C/V and a
+right-click Copy/Paste menu, tabs and a scrollbar out of the box. Its defaults
+come from `~/.config/lxterminal/lxterminal.conf`, written once only if absent:
+`Monospace 11` (Pango falls back to the Noto fonts for Hebrew/Arabic), 10,000
+lines of scrollback, 100×30.
+
+**Your own config wins.** The panel and menu entries come from generated
+configs (`<ARIGAMI_DIR>/desktop/tint2rc`, `openbox-rc.xml` + `openbox-menu.xml`
+— the stock `/etc/xdg` files with the terminal added) passed to tint2 with `-c`
+and to openbox with `--config-file` — and only when the user has no
+`~/.config/tint2/tint2rc` or `~/.config/openbox/{rc,menu}.xml` of their own.
+On a bare-VM install with a hand-tuned desktop nothing changes; the stock
+Debian openbox menu already has "Terminal emulator" → `x-terminal-emulator`.
+Missing stock files (non-Debian layouts) just mean no generated config — the
+desktop starts as before.
+
+Live-verified on a scratch display with a fresh `$HOME` (the image's
+situation): the panel shows the icon first; a click opens lxterminal in `$HOME`
+with `LANG=C.UTF-8`, rendering mixed Hebrew/English output in the right order;
+the right-click menu shows "Terminal" and opens a second window; a per-session
+desktop gets openbox + tint2 with the session's cwd and id, and
+`releaseDesktop()` takes them down with Xvfb/x11vnc.

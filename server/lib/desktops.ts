@@ -15,12 +15,16 @@
 // (same, plus the Chrome profile copy — see chrome.ts). The global :99/5900
 // desktop is untouched — it's not something this module owns.
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cfg } from './config.js';
 import { supervise, killTree } from './children.js';
 import { portFree } from './hostlock.js';
 import { ensureChromeLauncherFlags } from './chrome-launcher.js';
+import { ensureDesktopConfig } from './desktop-terminal.js';
+import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 
 export interface DesktopInfo {
@@ -33,7 +37,7 @@ export interface DesktopInfo {
 // recorded in a session's metadata but absent here (e.g. after a host
 // restart) is treated as dead — its port is free to reallocate; any leftover
 // Xvfb/x11vnc pid was already caught by children.ts's startup sweep.
-const alive = new Map<string, { xvfb: ChildProcess; x11vnc: ChildProcess }>();
+const alive = new Map<string, { xvfb: ChildProcess; x11vnc: ChildProcess; extras: ChildProcess[] }>();
 const pending = new Map<string, Promise<DesktopInfo>>();
 
 function usedPorts(): Set<number> {
@@ -129,6 +133,33 @@ export function desktopUnsupportedReason(platform: NodeJS.Platform = process.pla
   return `per-session desktop is unsupported on ${platform} — Xvfb/x11vnc only run on Linux, so screen-share and in-session browser features are unavailable on this host`;
 }
 
+/** Generated tint2/openbox configs + terminal launcher live here (see desktop-terminal.ts). */
+const DESKTOP_CONFIG_DIR = path.join(ARIGAMI_DIR, 'desktop');
+
+/**
+ * openbox + tint2 on `display`, when installed — so a desktop has a right-click menu and a panel, both of which open a
+ * terminal (desktop-terminal.ts). Shared by the global and the per-session desktops.
+ */
+function spawnShell(display: string, label: string, opts: { which: (bin: string) => string | null; spawnFn: typeof spawn; env: NodeJS.ProcessEnv; configDir: string }): ChildProcess[] {
+  const procs: ChildProcess[] = [];
+  const conf = ensureDesktopConfig({ dir: opts.configDir, env: opts.env });
+  const denv = { ...opts.env, DISPLAY: display };
+  const wm = opts.which('openbox');
+  if (wm) {
+    const p = opts.spawnFn(wm, conf.openboxArgs, { stdio: 'ignore', env: denv });
+    supervise(p, `desktop:${label}:wm`);
+    procs.push(p);
+  }
+  const panel = opts.which('tint2');
+  if (panel) {
+    ensureChromeLauncherFlags({ env: opts.env }); // the panel's Chrome icon must start in a pod too
+    const p = opts.spawnFn(panel, conf.tint2Args, { stdio: 'ignore', env: denv });
+    supervise(p, `desktop:${label}:panel`);
+    procs.push(p);
+  }
+  return procs;
+}
+
 async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   const { display, vncPort } = await allocateFree();
   const displayNum = display.slice(1);
@@ -143,6 +174,11 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
     killTree(xvfb.pid);
     throw e;
   }
+  // The session's terminal opens in the session's working directory.
+  const s = state.getSession(sessionId);
+  const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId };
+  if (s?.cwd) sessionEnv.ARIGAMI_TERMINAL_CWD = s.cwd.replace(/^~(?=$|\/)/, os.homedir());
+  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR });
 
   const vncArgs = [
     '-display', display,
@@ -157,13 +193,14 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   } catch (e) {
     killTree(xvfb.pid);
     killTree(x11vnc.pid);
+    for (const p of extras) killTree(p.pid);
     throw e;
   }
 
   const forget = () => { const c = alive.get(sessionId); if (c?.xvfb === xvfb || c?.x11vnc === x11vnc) alive.delete(sessionId); };
   xvfb.on('exit', forget);
   x11vnc.on('exit', forget);
-  alive.set(sessionId, { xvfb, x11vnc });
+  alive.set(sessionId, { xvfb, x11vnc, extras });
 
   state.patchSession(sessionId, { metadata: { screen: { display, vncPort } } });
   return { display, vncHost: '127.0.0.1', vncPort };
@@ -202,6 +239,7 @@ export function releaseDesktop(sessionId: string): void {
   if (procs) {
     killTree(procs.xvfb.pid);
     killTree(procs.x11vnc.pid);
+    for (const p of procs.extras) killTree(p.pid);
     alive.delete(sessionId);
   }
   const s = state.getSession(sessionId);
@@ -241,6 +279,7 @@ export interface GlobalDesktopOpts {
   portBusy?: (port: number) => Promise<boolean>;
   spawnFn?: typeof spawn;
   env?: NodeJS.ProcessEnv;
+  configDir?: string; // generated openbox/tint2/terminal files (default <ARIGAMI_DIR>/desktop)
   startTimeoutMs?: number; // how long to wait for the X socket / VNC port
 }
 
@@ -284,19 +323,7 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
     killTree(xvfb.pid);
     return { started: false, reason: `Xvfb did not come up: ${(e as Error).message}` };
   }
-  const denv = { ...env, DISPLAY: display };
-  const wm = w('openbox');
-  if (wm) {
-    const p = sp(wm, [], { stdio: 'ignore', env: denv });
-    supervise(p, 'desktop:global:wm');
-    globalProcs.push(p);
-    if (p.pid) pids.push(p.pid);
-  }
-  const panel = w('tint2');
-  if (panel) {
-    ensureChromeLauncherFlags({ env }); // the panel's Chrome icon must start in a pod too
-    const p = sp(panel, [], { stdio: 'ignore', env: denv });
-    supervise(p, 'desktop:global:panel');
+  for (const p of spawnShell(display, 'global', { which: w, spawnFn: sp, env, configDir: opts.configDir || DESKTOP_CONFIG_DIR })) {
     globalProcs.push(p);
     if (p.pid) pids.push(p.pid);
   }
