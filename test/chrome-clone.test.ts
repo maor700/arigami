@@ -14,7 +14,7 @@ const LOGIN = [
   'Default/Preferences',
   'Default/Local Storage/leveldb/CURRENT',
   'Default/Session Storage/CURRENT',
-  'Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/CURRENT',
+  'Default/IndexedDB/https_app.example.com_0.indexeddb.leveldb/CURRENT',
   'Default/Storage/ext/abc/def/Local Storage/leveldb/CURRENT',
   'Default/Extensions/abc/1.0/manifest.json',
 ];
