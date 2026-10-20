@@ -105,10 +105,12 @@ test('one key owner: Enter while a question option is focused activates THAT opt
   expect(host.querySelector('[data-question-card]').getAttribute('data-live')).toBe('true');
   const first = host.querySelector('button[data-opt]');
   expect(document.activeElement).toBe(first); // the live question focused its first option
-  await key('Escape'); // skips the question — must NOT deny the permission
+  await key('Escape'); // skips the question (after the Undo window) — must NOT deny the permission
+  expect(permPosts().length).toBe(0);
+  expect(host.querySelector('[data-question-card] [data-undo]')).toBeTruthy();
+  await act(async () => root.unmount()); // leaving mid-countdown still sends the skip
   expect(permPosts().length).toBe(0);
   expect(questionPosts().length).toBe(1); // '(no answer)' delivered through the question channel
-  await act(async () => root.unmount());
 });
 
 test('lightbox: Escape closes the lightbox only — no request behind it is answered', async () => {
@@ -121,10 +123,12 @@ test('lightbox: Escape closes the lightbox only — no request behind it is answ
   await key('Escape');
   expect(document.querySelector('[data-lightbox]')).toBeNull();
   expect(permPosts().length).toBe(0);
-  // with the lightbox gone the permission owns Escape again
+  // with the lightbox gone the permission owns Escape again (a deny with Undo)
   await key('Escape');
-  expect(permPosts().length).toBe(1);
+  expect(host.querySelector('[data-permission-card] [data-undo]')).toBeTruthy();
+  expect(permPosts().length).toBe(0);
   await act(async () => root.unmount());
+  expect(permPosts().length).toBe(1);
 });
 
 test('closed question: options are disabled and a click posts nothing', async () => {

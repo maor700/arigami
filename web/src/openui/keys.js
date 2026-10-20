@@ -4,6 +4,10 @@
 // focused, never approve something else).
 import { isVncInputTarget } from '../lib/useScreenConnection.js';
 
+// How long a skipped question / denied permission waits before it reaches the
+// agent — the card's "Undo" window.
+export const UNDO_MS = 5000;
+
 export const CARD_SELECTOR = '[data-question-card],[data-permission-card],[data-screen-request]';
 
 export function keysBlocked(e, cardEl) {
