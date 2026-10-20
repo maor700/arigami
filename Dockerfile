@@ -83,6 +83,11 @@ RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx && bun --version
 RUN npm install -g @anthropic-ai/claude-code@2.1.302 && claude --version \
     && npm cache clean --force && rm -rf /root/.npm
 
+# --- Codex CLI (the second engine: codex sessions, Accounts "add Codex account",
+#     connect-codex). Pinned like claude above; bin → /usr/local/bin/codex. ---
+RUN npm install -g @openai/codex@0.156.1 && codex --version \
+    && npm cache clean --force && rm -rf /root/.npm
+
 # --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs).
 #     No bundled Playwright Chromium: the MCP is registered by the entrypoint
 #     with `--executable-path $CHROME_BIN`, so it drives the same Chrome/
