@@ -6302,6 +6302,32 @@ export async function handle(
     // Dismiss the sticky action bar without answering — the human chose none of
     // the options and just wants it gone. The request_action tool_use already
     // returned, so the model isn't blocked; clearing the state is enough.
+    // POLICY: the generated policy mod (ext-plugin/hooks) asks here before a tool runs, on a tool's output and on a
+    // typed prompt. Only the session itself may ask (its own bearer), and the answer is the extensions' verdict.
+    if (sub === 'policy' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const gate = String(body.gate || '');
+      const ext = await import('./extensions.js');
+      if (!ext.POLICY_GATES.includes(gate)) return badRequest(res, `unknown policy gate: ${gate}`);
+      const ev =
+        gate === 'prompt.before'
+          ? { sessionId: id, text: String(body.text ?? '') }
+          : { sessionId: id, tool: String(body.tool || ''), input: body.input && typeof body.input === 'object' ? body.input : {}, ...(gate === 'tool.after' ? { output: String(body.output ?? '') } : {}) };
+      const v = await ext.runPolicyGate(gate, ev);
+      // The human sees every intervention in the transcript; a clean pass stays silent.
+      if (!v.ok || v.changedBy.length) {
+        const what = gate === 'prompt.before' ? 'Prompt' : `${(ev as any).tool || 'Tool'} ${gate === 'tool.after' ? 'output' : 'call'}`;
+        claude.appendChat(id, {
+          kind: 'ext-card',
+          ext: !v.ok ? v.ext : v.changedBy.join(', '),
+          title: !v.ok ? `${what} blocked by policy` : `${what} redacted by policy`,
+          body: !v.ok ? v.reason : `Rewritten by ${v.changedBy.join(', ')} before ${gate === 'tool.before' ? 'it ran' : 'the model read it'}.`,
+        });
+      }
+      return json(res, v);
+    }
     if (sub === 'action/dismiss' && m === 'POST') {
       const { actionId } = (await readBody(req)) as any;
       if (!actionId || (state.getSession(id)?.action as any)?.id !== actionId)

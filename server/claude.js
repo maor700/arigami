@@ -60,7 +60,7 @@ function userPluginDir() {
 // installed extensions' docs[]. '' when nothing contributed a skill.
 function extPluginDir() {
   try {
-    return extensions.extPluginHasSkills() ? extensions.EXT_PLUGIN_DIR : '';
+    return extensions.extPluginHasSkills() || extensions.extPluginHasPolicyMod() ? extensions.EXT_PLUGIN_DIR : '';
   } catch {
     return '';
   }

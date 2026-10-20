@@ -405,6 +405,44 @@ test('gates: pass, refuse with a reason, and FAIL CLOSED when the gate throws', 
   expect(o.none).toEqual({ ok: true }); // a gate nobody implements never blocks
 });
 
+test('policy gates: rewrites chain, a refusal and a throw FAIL CLOSED, and the generated mod follows the gates', () => {
+  const dir = tmp();
+  const o = run(
+    dir,
+    withHello(
+      "const fs=await import('node:fs');const path=await import('node:path');" +
+        "const root=path.join(process.env.ARIGAMI_DIR,'user','extensions','hello');" +
+        "const mf=path.join(root,'manifest.json');const m=JSON.parse(fs.readFileSync(mf,'utf8'));" +
+        "m.hooks.gates=['tool.before','tool.after','prompt.before'];fs.writeFileSync(mf,JSON.stringify(m,null,2));" +
+        "fs.writeFileSync(path.join(root,'hooks.ts'),\"export const hooks={gates:{" +
+        "'tool.before':async(ev)=>ev.input.command==='rm -rf /'?{ok:false,reason:'nope'}:{ok:true,input:{...ev.input,checked:true}}," +
+        "'tool.after':async(ev)=>({ok:true,output:ev.output.replace(/AKIA[0-9A-Z]{16}/g,'[KEY]')})," +
+        "'prompt.before':async(ev)=>{if(ev.text==='boom')throw new Error('gate blew up');return {ok:true}}}};\");" +
+        "await ext.reload({only:['hello']});ext.ensureExtPlugin();" +
+        "const before=await ext.runPolicyGate('tool.before',{tool:'Bash',input:{command:'ls'}});" +
+        "const refused=await ext.runPolicyGate('tool.before',{tool:'Bash',input:{command:'rm -rf /'}});" +
+        "const after=await ext.runPolicyGate('tool.after',{tool:'Bash',input:{},output:'key AKIAIOSFODNN7EXAMPLE'});" +
+        "const clean=await ext.runPolicyGate('prompt.before',{text:'hi'});" +
+        "const threw=await ext.runPolicyGate('prompt.before',{text:'boom'});" +
+        "const modOn=ext.extPluginHasPolicyMod();const src=fs.readFileSync(path.join(ext.EXT_PLUGIN_DIR,'hooks','arigami-policy.mjs'),'utf8');" +
+        "m.hooks.gates=['merge.before'];fs.writeFileSync(mf,JSON.stringify(m,null,2));" +
+        "fs.writeFileSync(path.join(root,'hooks.ts'),\"export const hooks={gates:{'merge.before':async()=>({ok:true})}};\");" +
+        "await ext.reload({only:['hello']});ext.ensureExtPlugin();" +
+        "emit({before,refused,after,clean,threw,modOn,gatesInMod:src.includes('[\\\"tool.before\\\",\\\"tool.after\\\",\\\"prompt.before\\\"]'),modOff:ext.extPluginHasPolicyMod(),active:ext.activePolicyGates()});"
+    )
+  );
+  expect(o.before).toEqual({ ok: true, input: { command: 'ls', checked: true }, changedBy: ['hello'] });
+  expect(o.refused).toEqual({ ok: false, reason: 'nope', ext: 'hello', changedBy: [] });
+  expect(o.after).toEqual({ ok: true, output: 'key [KEY]', changedBy: ['hello'] });
+  expect(o.clean).toEqual({ ok: true, changedBy: [] }); // a pass that rewrites nothing carries no field
+  expect(o.threw.ok).toBe(false);
+  expect(o.threw.reason).toContain('gate blew up'); // fail closed
+  expect(o.modOn).toBe(true);
+  expect(o.gatesInMod).toBe(true);
+  expect(o.modOff).toBe(false); // no policy gate left → no mod, no per-call round-trip
+  expect(o.active).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // bus + hooks + notify
 // ---------------------------------------------------------------------------

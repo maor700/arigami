@@ -178,6 +178,27 @@ it never stops the host. A **gate** that throws or times out (5 min) **fails
 closed**: the merge is refused with the gate's message. That is the point of a
 gate.
 
+### Policy gates (inside the agent's turn)
+
+`tool.before`, `tool.after` and `prompt.before` are gates on what an agent does, not on a merge. While any enabled
+extension implements one, the host generates a Claude Code **mod** into `$ARIGAMI_DIR/ext-plugin/hooks/` that asks the
+host (`POST /__api/sessions/<id>/policy`, the session's own token) before every tool call, on every tool result before
+the model reads it, and on every typed prompt. Each gate can refuse, or rewrite the one field it owns:
+
+```ts
+gates: {
+  'tool.before': async ({ tool, input }) => (tool === 'Bash' && /curl .*pastebin/.test(String(input.command)) ? { ok: false, reason: 'no paste sites' } : { ok: true }),
+  'tool.after': async ({ output }) => ({ ok: true, output: output.replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]') }),
+  'prompt.before': async ({ text }) => ({ ok: true }),
+}
+```
+
+Extensions run in load order and each sees the previous one's rewrite. A refusal, a throw or a 20 s timeout **fails
+closed** (the tool does not run, its result is withheld, the prompt is dropped), and every intervention leaves a card in
+the session's transcript. A redacted result reaches the model as `Redacted by policy (<ext>): <output>`. Sessions
+spawned before the gate appeared pick the mod up on their next restart. A mod that fails to load fails **open** — keep
+the generated file untouched.
+
 ---
 
 ## Tools

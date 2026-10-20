@@ -290,9 +290,24 @@ export interface HookCtx {
 
 export type GateResult = { ok: true } | { ok: false; reason: string };
 
+/** Policy gates — run inside an agent's turn by the generated policy mod (Claude Code mods, ext-plugin/hooks). */
+export interface PolicyToolBeforeEvent { sessionId: string; tool: string; input: Record<string, unknown> }
+export interface PolicyToolAfterEvent extends PolicyToolBeforeEvent { /** what the tool returned, as text (JSON for structured results) */ output: string }
+export interface PolicyPromptEvent { sessionId: string; text: string }
+/** Pass (optionally rewriting the one field the gate owns), or refuse. A throw or a 20s timeout refuses (fails closed). */
+export type PolicyResult<F extends string, T> = ({ ok: true } & Partial<Record<F, T>>) | { ok: false; reason: string };
+export interface PolicyGates {
+  /** before a tool runs: refuse it, or rewrite its arguments (`input`) */
+  'tool.before'?: (ev: PolicyToolBeforeEvent, ctx: HookCtx) => Promise<PolicyResult<'input', Record<string, unknown>>> | PolicyResult<'input', Record<string, unknown>>;
+  /** after a tool ran, before the model reads it: withhold it, or replace it (`output`, e.g. redacted) */
+  'tool.after'?: (ev: PolicyToolAfterEvent, ctx: HookCtx) => Promise<PolicyResult<'output', string>> | PolicyResult<'output', string>;
+  /** a prompt the human typed, before it is sent: drop it, or rewrite it (`text`) */
+  'prompt.before'?: (ev: PolicyPromptEvent, ctx: HookCtx) => Promise<PolicyResult<'text', string>> | PolicyResult<'text', string>;
+}
+
 export interface Hooks {
   on?: Partial<Record<string, (ev: any, ctx: HookCtx) => Promise<void> | void>>;
-  gates?: Partial<Record<'merge.before' | string, (ev: any, ctx: HookCtx) => Promise<GateResult> | GateResult>>;
+  gates?: PolicyGates & Partial<Record<'merge.before' | string, (ev: any, ctx: HookCtx) => Promise<GateResult> | GateResult>>;
 }
 
 /** hooks.ts may also `export const channels = { telegram: async (payload, ctx) => {} }`. */
