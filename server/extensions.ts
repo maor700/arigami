@@ -1381,10 +1381,25 @@ async function ask($, gate, body) {
 
 const refusal = (v) => 'Blocked by policy' + (v.ext ? ' (' + v.ext + ')' : '') + ': ' + v.reason
 
+// The text a tool handed back: a shell's stdout/stderr, a file's content, else the result as JSON.
 function resultText(r) {
   if (r == null) return ''
   if (typeof r === 'string') return r
+  if (typeof r.stdout === 'string') return [r.stdout, r.stderr].filter(Boolean).join('\\n')
+  if (typeof r.file?.content === 'string') return r.file.content
+  if (typeof r.content === 'string') return r.content
   try { return JSON.stringify(r) } catch { return String(r) }
+}
+
+// Put the rewritten text back where resultText() took it from, so Claude reads a normal (masked) result. null when
+// the shape is not one we know: the caller then withholds the original and hands Claude the masked text instead.
+function withOutput(res, text) {
+  const r = res?.result ?? res
+  if (r == null || typeof r !== 'object') return null
+  const put = (inner) => (res?.result !== undefined ? { ...res, result: inner } : inner)
+  if (typeof r.stdout === 'string') return put({ ...r, stdout: text, stderr: '' })
+  if (typeof r.file?.content === 'string') return put({ ...r, file: { ...r.file, content: text } })
+  return null
 }
 
 export function register(on) {
@@ -1401,8 +1416,7 @@ export function register(on) {
       if (!GATES.has('tool.after') || result?.deny) return result
       const v = await ask($, 'tool.after', { tool, input, output: resultText(result.result ?? result) })
       if (!v.ok) return { deny: refusal(v) }
-      // Withholding is the one rewrite every tool's result shape accepts: Claude reads this text instead.
-      if (typeof v.output === 'string') return { deny: 'Redacted by policy (' + v.changedBy.join(', ') + '):\\n' + v.output }
+      if (typeof v.output === 'string') return withOutput(result, v.output) ?? { deny: 'Redacted by policy (' + v.changedBy.join(', ') + '); the masked output, usable as is:\\n' + v.output }
       return result
     }).catch(async ($, e, next) => (next.called ? next(e) : { deny: 'Policy check failed, so this tool call was not run: ' + next.error.kind }))
   }
