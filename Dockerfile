@@ -53,7 +53,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 #     (server/lib/desktop-clipboard.ts); scrot is capture_screen's fallback
 #     when the VNC grab fails (server/vnc.ts). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal xclip \
+      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal xclip scrot \
       fonts-noto-core fonts-noto-color-emoji fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
