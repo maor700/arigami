@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ensureDesktopConfig, tint2Config, openboxRc, openboxMenu, terminalScript } from '../server/lib/desktop-terminal.ts';
+import { ensureDesktopConfig, tint2Config, tint2ClockConfig, openboxRc, openboxMenu, terminalScript } from '../server/lib/desktop-terminal.ts';
 
 const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
 const STOCK_OPENBOX = '<openbox_config>\n<menu>\n  <file>/var/lib/openbox/debian-menu.xml</file>\n  <file>menu.xml</file>\n</menu>\n</openbox_config>\n';
@@ -34,9 +34,13 @@ test('tint2Config: terminal first, no tint2 settings icon, a centred dock with 4
   const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop');
   const items = rc.split('\n').filter((l) => l.startsWith('launcher_item_app'));
   expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = google-chrome.desktop']);
-  for (const l of ['panel_size = 100% 56', 'panel_shrink = 1', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
+  for (const l of ['panel_items = LT', 'panel_size = 100% 56', 'panel_shrink = 1', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
     expect(rc.split('\n').filter((x) => x.startsWith(l.split(' =')[0] + ' '))).toEqual([l]);
   expect(tint2Config(null, '/x')).toBeNull();
+  const clock = tint2ClockConfig(STOCK_TINT2);
+  expect(clock).toMatch(/^panel_items = C$/m);
+  expect(clock).toMatch(/^panel_position = bottom right horizontal$/m);
+  expect(clock).toMatch(/^panel_size = 100% 56$/m);
   expect(tint2Config('panel_items = TSC\n', '/x')).toBeNull();
 });
 
@@ -57,7 +61,7 @@ test('ensureDesktopConfig writes the launcher, icon, configs and lxterminal defa
   const dir = path.join(root, 'desktop');
   expect(conf.terminal).toBe(path.join(dir, 'arigami-terminal'));
   expect(fs.statSync(conf.terminal).mode & 0o111).toBeTruthy();
-  expect(conf.tint2Args).toEqual(['-c', path.join(dir, 'tint2rc')]);
+  expect(conf.tint2Args).toEqual([['-c', path.join(dir, 'tint2rc')], ['-c', path.join(dir, 'tint2rc-clock')]]);
   expect(conf.openboxArgs).toEqual(['--config-file', path.join(dir, 'openbox-rc.xml')]);
   expect(fs.readFileSync(path.join(dir, 'tint2rc'), 'utf8')).toContain(`launcher_item_app = ${path.join(dir, 'terminal.desktop')}`);
   const entry = fs.readFileSync(path.join(dir, 'terminal.desktop'), 'utf8');
@@ -76,7 +80,7 @@ test("a user's own tint2/openbox/lxterminal config is left alone", () => {
     fs.writeFileSync(path.join(home, '.config', f), 'mine');
   }
   const conf = run();
-  expect(conf.tint2Args).toEqual([]);
+  expect(conf.tint2Args).toEqual([[]]);
   expect(conf.openboxArgs).toEqual([]);
   expect(fs.readFileSync(path.join(home, '.config/lxterminal/lxterminal.conf'), 'utf8')).toBe('mine');
 });
@@ -84,7 +88,7 @@ test("a user's own tint2/openbox/lxterminal config is left alone", () => {
 test('no stock configs (non-Debian layout): no args, the launcher script is still there', () => {
   const root = tmp();
   const conf = ensureDesktopConfig({ dir: path.join(root, 'd'), env: { HOME: root }, stockTint2rc: '/nonexistent', stockOpenboxRc: '/nonexistent' });
-  expect(conf.tint2Args).toEqual([]);
+  expect(conf.tint2Args).toEqual([[]]);
   expect(conf.openboxArgs).toEqual([]);
   expect(fs.existsSync(conf.terminal)).toBe(true);
 });

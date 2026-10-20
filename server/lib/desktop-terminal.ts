@@ -5,7 +5,7 @@
 //   - `arigami-terminal`      a launcher script that picks whatever terminal exists (system choice first) and opens it
 //                             in the session's working directory with a UTF-8 locale
 //   - `terminal.desktop/.svg` the tint2 launcher icon for that script
-//   - `tint2rc`               the stock tint2 config with the terminal icon first, as a centred dock
+//   - `tint2rc`(+`-clock`)    the stock tint2 config as a centred dock, terminal icon first, + an edge clock panel
 //   - `openbox-rc.xml`/`openbox-menu.xml`  the stock openbox config whose right-click menu opens with "Terminal"
 //   - lxterminal's defaults   (font, scrollback) — only when the user has no lxterminal config of their own
 // The generated tint2/openbox configs are passed with `-c`/`--config-file`, and only when the user has no config of
@@ -64,8 +64,10 @@ Categories=System;TerminalEmulator;
 }
 
 // Panel look on top of the stock tint2rc: a 56px panel that shrinks to its content and sits centred at the bottom
-// (a dock), 48px launcher icons, no "desktop 1" label.
+// (a dock: launcher + open windows), 48px launcher icons, no "desktop 1" label. The clock is a second tint2 panel on
+// the bottom-right edge (tint2ClockConfig) — one panel can't hold a centred launcher and an edge clock.
 const TINT2_OVERRIDES: Record<string, string> = {
+  panel_items: 'LT',
   panel_size: '100% 56',
   panel_shrink: '1',
   panel_position: 'bottom center horizontal',
@@ -84,11 +86,23 @@ export function tint2Config(stock: string | null, desktopEntry: string): string 
   let body = stock
     .replace(/^launcher_item_app\s*=\s*tint2conf\.desktop\s*\n/m, '')
     .replace(/^launcher_item_app\s*=/m, `${line}\nlauncher_item_app =`);
-  for (const [k, v] of Object.entries(TINT2_OVERRIDES)) {
+  return `# ${MARK} from the stock tint2rc — terminal launcher first, centred dock.\n${withSettings(body, TINT2_OVERRIDES)}`;
+}
+
+/** The clock panel: the stock tint2rc showing only the clock, shrunk to it, on the bottom-right edge. Pure. */
+export function tint2ClockConfig(stock: string | null): string | null {
+  if (!stock) return null;
+  const body = withSettings(stock, { ...TINT2_OVERRIDES, panel_items: 'C', panel_position: 'bottom right horizontal' });
+  return `# ${MARK} from the stock tint2rc — the clock, bottom right.\n${body}`;
+}
+
+function withSettings(rc: string, settings: Record<string, string>): string {
+  let body = rc;
+  for (const [k, v] of Object.entries(settings)) {
     const re = new RegExp(`^${k}\\s*=.*$`, 'm');
     body = re.test(body) ? body.replace(re, `${k} = ${v}`) : `${body.replace(/\n?$/, '\n')}${k} = ${v}\n`;
   }
-  return `# ${MARK} from the stock tint2rc — terminal launcher first, centred dock.\n${body}`;
+  return body;
 }
 
 /** openbox rc.xml = the stock one with its own `menu.xml` swapped for ours. Null when the stock file can't be adapted. Pure. */
@@ -145,7 +159,7 @@ export interface DesktopConfigOpts {
 
 export interface DesktopConfig {
   terminal: string; // the launcher script
-  tint2Args: string[]; // [] = tint2 reads the user's own / stock config
+  tint2Args: string[][]; // one tint2 per entry; [[]] = a single tint2 on the user's own / stock config
   openboxArgs: string[];
 }
 
@@ -167,7 +181,7 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
   const home = opts.home || env.HOME || os.homedir();
   const xdgConfig = env.XDG_CONFIG_HOME || path.join(home, '.config');
   const terminal = path.join(opts.dir, 'arigami-terminal');
-  const out: DesktopConfig = { terminal, tint2Args: [], openboxArgs: [] };
+  const out: DesktopConfig = { terminal, tint2Args: [[]], openboxArgs: [] };
   try {
     fs.mkdirSync(opts.dir, { recursive: true });
     writeIfChanged(terminal, terminalScript(), 0o755);
@@ -177,11 +191,15 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
     writeIfChanged(entry, terminalDesktopEntry(terminal, icon));
 
     if (!fs.existsSync(path.join(xdgConfig, 'tint2', 'tint2rc'))) {
-      const rc = tint2Config(readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc'), entry);
-      if (rc) {
+      const stock = readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
+      const rc = tint2Config(stock, entry);
+      const clock = tint2ClockConfig(stock);
+      if (rc && clock) {
         const p = path.join(opts.dir, 'tint2rc');
+        const c = path.join(opts.dir, 'tint2rc-clock');
         writeIfChanged(p, rc);
-        out.tint2Args = ['-c', p];
+        writeIfChanged(c, clock);
+        out.tint2Args = [['-c', p], ['-c', c]];
       }
     }
 

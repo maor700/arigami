@@ -153,9 +153,11 @@ function spawnShell(display: string, label: string, opts: { which: (bin: string)
   const panel = opts.which('tint2');
   if (panel) {
     ensureChromeLauncherFlags({ env: opts.env }); // the panel's Chrome icon must start in a pod too
-    const p = opts.spawnFn(panel, conf.tint2Args, { stdio: 'ignore', env: denv });
-    supervise(p, `desktop:${label}:panel`);
-    procs.push(p);
+    conf.tint2Args.forEach((args, i) => {
+      const p = opts.spawnFn(panel, args, { stdio: 'ignore', env: denv });
+      supervise(p, `desktop:${label}:panel${i || ''}`);
+      procs.push(p);
+    });
   }
   return procs;
 }
