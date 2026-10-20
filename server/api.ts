@@ -2454,6 +2454,30 @@ export function startEmptySession(opts: {
 // sessions get the message now, busy ones get it queued with auto-play so it
 // plays as soon as the current turn ends. Used by the task_session channel
 // (controller → child) and by cron's 'existing:<sessionId>' sessionMode.
+/**
+ * Run a policy gate for one session and leave a card in its transcript when an extension refused or rewrote
+ * something (a clean pass stays silent). Shared by the engine adapters (POST .../policy, .../policy/check) and by
+ * the host's own prompt path, which gates a human's message before ANY engine sees it.
+ */
+async function sessionPolicy(id: string, gate: string, body: any) {
+  const ext = await import('./extensions.js');
+  const ev =
+    gate === 'prompt.before'
+      ? { sessionId: id, text: String(body.text ?? '') }
+      : { sessionId: id, tool: String(body.tool || ''), input: body.input && typeof body.input === 'object' ? body.input : {}, ...(gate === 'tool.after' ? { output: String(body.output ?? '') } : {}) };
+  const v = await ext.runPolicyGate(gate, ev);
+  if (!v.ok || v.changedBy.length) {
+    const what = gate === 'prompt.before' ? 'Prompt' : `${(ev as any).tool || 'Tool'} ${gate === 'tool.after' ? 'output' : 'call'}`;
+    claude.appendChat(id, {
+      kind: 'ext-card',
+      ext: !v.ok ? v.ext : v.changedBy.join(', '),
+      title: !v.ok ? `${what} blocked by policy` : `${what} redacted by policy`,
+      body: !v.ok ? v.reason : `Rewritten by ${v.changedBy.join(', ')} before ${gate === 'tool.before' ? 'it ran' : gate === 'prompt.before' ? 'the agent got it' : 'the model read it'}.`,
+    });
+  }
+  return v;
+}
+
 export function deliverToSession(id: string, text: string): { delivered: 'now' | 'queued' } {
   const s = state.getSession(id);
   if (!s) throw new Error(`unknown session: ${id}`);
@@ -5717,7 +5741,12 @@ export async function handle(
     if (sub === 'policy/check' && m === 'POST') {
       const body = (await readBody(req)) as any;
       const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), String(body?.tool_name || ''), body?.input ?? {}, id);
-      return json(res, v);
+      if (!v.allow) return json(res, v);
+      // POLICY: the same hook carries the extensions' tool.before gates (codex sessions; claude uses its mod).
+      const ext = await import('./extensions.js');
+      if (!body?.gates || !ext.hasGates('tool.before')) return json(res, v);
+      const g = await sessionPolicy(id, 'tool.before', { tool: body?.tool_name, input: body?.input });
+      return json(res, g.ok ? { allow: true, ...(g.input ? { input: g.input } : {}) } : { allow: false, reason: `${g.ext ? g.ext + ': ' : ''}${g.reason}` });
     }
     if (sub === 'tabs' && m === 'POST') {
       const body = (await readBody(req)) as any;
@@ -5969,8 +5998,15 @@ export async function handle(
         : [];
       if (!text.trim() && !attachments.length)
         return badRequest(res, 'text or attachments required');
+      // POLICY prompt.before: the host is the gate in front of every engine — judged here, before claude or codex see it.
+      let sendText = text;
+      if (text.trim() && (await import('./extensions.js')).hasGates('prompt.before')) {
+        const g = await sessionPolicy(id, 'prompt.before', { text });
+        if (!g.ok) return json(res, { error: `Blocked by policy${g.ext ? ` (${g.ext})` : ''}: ${g.reason}`, policy: true }, 403);
+        if (typeof g.text === 'string') sendText = g.text;
+      }
       try {
-        claude.sendMessage(id, text, attachments);
+        claude.sendMessage(id, sendText, attachments);
       } catch (e) {
         // A5 (#5): a turn past the agent's daily cap is refused with the same 429
         // line as a new session — and with the structured budget for the UI (#11).
@@ -6302,31 +6338,15 @@ export async function handle(
     // Dismiss the sticky action bar without answering — the human chose none of
     // the options and just wants it gone. The request_action tool_use already
     // returned, so the model isn't blocked; clearing the state is enough.
-    // POLICY: the generated policy mod (ext-plugin/hooks) asks here before a tool runs, on a tool's output and on a
-    // typed prompt. Only the session itself may ask (its own bearer), and the answer is the extensions' verdict.
+    // POLICY: the engine adapters ask here — Claude's generated mod (ext-plugin/hooks), codex's hooks.json
+    // (mcp/policy-hook.js). Only the session itself may ask (its own bearer); the answer is the extensions' verdict.
     if (sub === 'policy' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
       const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
-      const gate = String(body.gate || '');
       const ext = await import('./extensions.js');
-      if (!ext.POLICY_GATES.includes(gate)) return badRequest(res, `unknown policy gate: ${gate}`);
-      const ev =
-        gate === 'prompt.before'
-          ? { sessionId: id, text: String(body.text ?? '') }
-          : { sessionId: id, tool: String(body.tool || ''), input: body.input && typeof body.input === 'object' ? body.input : {}, ...(gate === 'tool.after' ? { output: String(body.output ?? '') } : {}) };
-      const v = await ext.runPolicyGate(gate, ev);
-      // The human sees every intervention in the transcript; a clean pass stays silent.
-      if (!v.ok || v.changedBy.length) {
-        const what = gate === 'prompt.before' ? 'Prompt' : `${(ev as any).tool || 'Tool'} ${gate === 'tool.after' ? 'output' : 'call'}`;
-        claude.appendChat(id, {
-          kind: 'ext-card',
-          ext: !v.ok ? v.ext : v.changedBy.join(', '),
-          title: !v.ok ? `${what} blocked by policy` : `${what} redacted by policy`,
-          body: !v.ok ? v.reason : `Rewritten by ${v.changedBy.join(', ')} before ${gate === 'tool.before' ? 'it ran' : 'the model read it'}.`,
-        });
-      }
-      return json(res, v);
+      if (!ext.POLICY_GATES.includes(String(body.gate || ''))) return badRequest(res, `unknown policy gate: ${body.gate}`);
+      return json(res, await sessionPolicy(id, String(body.gate), body));
     }
     if (sub === 'action/dismiss' && m === 'POST') {
       const { actionId } = (await readBody(req)) as any;

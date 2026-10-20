@@ -339,8 +339,7 @@ export function checkToolCall(p: Policy | null, toolName: string, input: unknown
 }
 
 /** The `--settings` JSON that installs the PreToolUse hook (claude.js). */
-export function hookSettings(hookCmd: string): string {
-  return JSON.stringify({
-    hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: hookCmd, timeout: 20 }] }] },
-  });
+export function hookSettings(hookCmd: string, opts: { post?: boolean } = {}): string {
+  const entry = [{ matcher: '', hooks: [{ type: 'command', command: hookCmd, timeout: 30 }] }];
+  return JSON.stringify({ hooks: { PreToolUse: entry, ...(opts.post ? { PostToolUse: entry } : {}) } });
 }

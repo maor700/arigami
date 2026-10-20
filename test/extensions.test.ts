@@ -428,7 +428,7 @@ test('policy gates: rewrites chain, a refusal and a throw FAIL CLOSED, and the g
         "m.hooks.gates=['merge.before'];fs.writeFileSync(mf,JSON.stringify(m,null,2));" +
         "fs.writeFileSync(path.join(root,'hooks.ts'),\"export const hooks={gates:{'merge.before':async()=>({ok:true})}};\");" +
         "await ext.reload({only:['hello']});ext.ensureExtPlugin();" +
-        "emit({before,refused,after,clean,threw,modOn,gatesInMod:src.includes('[\\\"tool.before\\\",\\\"tool.after\\\",\\\"prompt.before\\\"]'),modOff:ext.extPluginHasPolicyMod(),active:ext.activePolicyGates()});"
+        "emit({before,refused,after,clean,threw,modOn,gatesInMod:src.includes('[\\\"tool.before\\\",\\\"tool.after\\\"]'),promptInMod:src.includes('prompt.submit'),modOff:ext.extPluginHasPolicyMod(),active:ext.activePolicyGates()});"
     )
   );
   expect(o.before).toEqual({ ok: true, input: { command: 'ls', checked: true }, changedBy: ['hello'] });
@@ -438,7 +438,8 @@ test('policy gates: rewrites chain, a refusal and a throw FAIL CLOSED, and the g
   expect(o.threw.ok).toBe(false);
   expect(o.threw.reason).toContain('gate blew up'); // fail closed
   expect(o.modOn).toBe(true);
-  expect(o.gatesInMod).toBe(true);
+  expect(o.gatesInMod).toBe(true); // the mod carries only the tool gates…
+  expect(o.promptInMod).toBe(false); // …prompts are judged by the host in front of every engine (api.ts .../message)
   expect(o.modOff).toBe(false); // no policy gate left → no mod, no per-call round-trip
   expect(o.active).toEqual([]);
 });

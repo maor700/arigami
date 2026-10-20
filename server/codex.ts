@@ -76,6 +76,7 @@ import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
+import { activePolicyGates } from './extensions.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
   appendChat,
@@ -416,12 +417,17 @@ function linkMcpCredentials(codexHome: string): void {
 /** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
 export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
 
+/** A codex session runs the policy hook for an A3 allowlist, or while an extension implements a tool policy gate. */
+export const needsPolicyHook = (s: Session): boolean =>
+  !!restrictedAgentOf(s) || activePolicyGates().some((g) => g === 'tool.before' || g === 'tool.after');
+
 function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   const codexHome = codexHomeFor(s.id);
   fs.mkdirSync(codexHome, { recursive: true });
 
   // A3: the policy hook (mcp/policy-hook.js), rewritten per spawn; codexBuildSpawn adds the trust flag for the same sessions.
-  if (restrictedAgentOf(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy')) + '\n');
+  // POLICY gates (extensions.ts) ride the same hook: codex has no mods, its Claude-shaped hooks are the adapter.
+  if (needsPolicyHook(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy', ['--gates']), { post: activePolicyGates().includes('tool.after') }) + '\n');
   else fs.rmSync(codexHooksFile(codexHome), { force: true });
 
   // One login, many sessions: auth.json stays where the ACCOUNT keeps it and
@@ -487,7 +493,7 @@ function codexBuildSpawn(s: Session, { resume, sessionId }: { resume: boolean; s
     // grants claude bypassPermissions — same posture, different flag name.
     '--dangerously-bypass-approvals-and-sandbox',
     // A3: without this flag codex silently skips the hooks.json prepare() wrote (measured).
-    ...(restrictedAgentOf(s) ? ['--dangerously-bypass-hook-trust'] : []),
+    ...(needsPolicyHook(s) ? ['--dangerously-bypass-hook-trust'] : []),
     // A session cwd is often a plain directory (~/repos, an artifact dir), not a repo.
     '--skip-git-repo-check',
     ...codexModelArgs({ model: s.claude?.modelChoice, effort: s.claude?.effort }),

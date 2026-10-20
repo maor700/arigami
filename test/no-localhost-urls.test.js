@@ -13,6 +13,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // [file, substring the matching line must contain]
 const ALLOW = [
   ['server/lib/config.ts', 'hostBase:'], // the internal base itself
+  ['server/extensions.ts', '$.http.fetch((base ||'], // the generated policy mod → its own host (ARIGAMI_URL fallback), never a link
   ['server/lib/public-url.ts', 'cfg.hostBase ||'], // absoluteUrl() loopback fallback
   ['server/claude.js', 'ARIGAMI_URL: cfg.hostBase ||'], // internal env for the agent
   ['server/claude.js', 'pass http://localhost:$PORT'], // guidance: give it to open_tab, not the human
