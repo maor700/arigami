@@ -49,9 +49,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 #     lxterminal is the desktop's terminal (panel icon + right-click "Terminal",
 #     wired by server/lib/desktop-terminal.ts): VTE-based, so Hebrew/Arabic get
 #     real BiDi, and ~+3MB because Chrome already pulls in GTK3 (xterm costs the
-#     same and has no BiDi). ---
+#     same and has no BiDi). xclip backs cockpit → desktop paste
+#     (server/lib/desktop-clipboard.ts); scrot is capture_screen's fallback
+#     when the VNC grab fails (server/vnc.ts). ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal \
+      xvfb x11vnc openbox tint2 x11-utils xauth dbus-x11 lxterminal xclip \
       fonts-noto-core fonts-noto-color-emoji fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
