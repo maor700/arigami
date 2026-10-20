@@ -1073,8 +1073,8 @@ global `:99` and every per-session desktop (`server/lib/desktops.ts`) — run
 openbox + tint2 and open a terminal from two places:
 
 - **the panel**: the first tint2 launcher icon (a `>_` glyph, tooltip "Terminal"),
-  next to the browser. The generated panel is a 40px dock centred at the bottom
-  (32px icons, open windows next to them; no clock and no tint2-settings icon);
+  next to the browser. The generated panel is a 56px dock centred at the bottom
+  (48px icons, open windows next to them; no clock and no tint2-settings icon);
 - **the right-click menu** on the desktop background: "Terminal" (then "Reconfigure").
 
 Both run `<ARIGAMI_DIR>/desktop/arigami-terminal`, which

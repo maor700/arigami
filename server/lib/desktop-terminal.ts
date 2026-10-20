@@ -63,14 +63,14 @@ Categories=System;TerminalEmulator;
 `;
 }
 
-// Panel look on top of the stock tint2rc: a 40px panel that shrinks to its content and sits centred at the bottom
-// (a dock), 32px launcher icons, no "desktop 1" label and no clock.
+// Panel look on top of the stock tint2rc: a 56px panel that shrinks to its content and sits centred at the bottom
+// (a dock), 48px launcher icons, no "desktop 1" label and no clock.
 const TINT2_OVERRIDES: Record<string, string> = {
   panel_items: 'LTS', // no clock: it would push the icons off centre
-  panel_size: '100% 40',
+  panel_size: '100% 56',
   panel_shrink: '1',
   panel_position: 'bottom center horizontal',
-  launcher_icon_size: '32',
+  launcher_icon_size: '48',
   taskbar_name: '0',
 };
 
