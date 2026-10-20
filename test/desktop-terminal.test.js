@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureDesktopConfig, tint2Config, openboxRc, openboxMenu, terminalScript } from '../server/lib/desktop-terminal.ts';
 
-const STOCK_TINT2 = 'panel_items = LTSC\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
+const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
 const STOCK_OPENBOX = '<openbox_config>\n<menu>\n  <file>/var/lib/openbox/debian-menu.xml</file>\n  <file>menu.xml</file>\n</menu>\n</openbox_config>\n';
 
 function tmp() {
@@ -30,10 +30,12 @@ function fixture() {
   return { root, home, run };
 }
 
-test('tint2Config puts the terminal launcher first and keeps the stock entries', () => {
+test('tint2Config: terminal first, no tint2 settings icon, a centred dock with 32px icons', () => {
   const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop');
   const items = rc.split('\n').filter((l) => l.startsWith('launcher_item_app'));
-  expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = tint2conf.desktop', 'launcher_item_app = google-chrome.desktop']);
+  expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = google-chrome.desktop']);
+  for (const l of ['panel_items = LTS', 'panel_size = 100% 40', 'panel_shrink = 1', 'launcher_icon_size = 32', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
+    expect(rc.split('\n').filter((x) => x.startsWith(l.split(' =')[0] + ' '))).toEqual([l]);
   expect(tint2Config(null, '/x')).toBeNull();
   expect(tint2Config('panel_items = TSC\n', '/x')).toBeNull();
 });

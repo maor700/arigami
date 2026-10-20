@@ -5,7 +5,7 @@
 //   - `arigami-terminal`      a launcher script that picks whatever terminal exists (system choice first) and opens it
 //                             in the session's working directory with a UTF-8 locale
 //   - `terminal.desktop/.svg` the tint2 launcher icon for that script
-//   - `tint2rc`               the stock tint2 config with the terminal icon first in its launcher
+//   - `tint2rc`               the stock tint2 config with the terminal icon first, as a centred dock
 //   - `openbox-rc.xml`/`openbox-menu.xml`  the stock openbox config whose right-click menu opens with "Terminal"
 //   - lxterminal's defaults   (font, scrollback) — only when the user has no lxterminal config of their own
 // The generated tint2/openbox configs are passed with `-c`/`--config-file`, and only when the user has no config of
@@ -63,15 +63,33 @@ Categories=System;TerminalEmulator;
 `;
 }
 
+// Panel look on top of the stock tint2rc: a 40px panel that shrinks to its content and sits centred at the bottom
+// (a dock), 32px launcher icons, no "desktop 1" label and no clock.
+const TINT2_OVERRIDES: Record<string, string> = {
+  panel_items: 'LTS', // no clock: it would push the icons off centre
+  panel_size: '100% 40',
+  panel_shrink: '1',
+  panel_position: 'bottom center horizontal',
+  launcher_icon_size: '32',
+  taskbar_name: '0',
+};
+
 /**
- * tint2 config = the stock one with `launcher` pointing at the terminal entry first (the stock browser entries stay;
- * tint2 skips the ones that aren't installed). Null when there's no stock config with a launcher to extend. Pure.
+ * tint2 config = the stock one with the terminal entry first in `launcher` (the stock browser entries stay; tint2
+ * skips the ones that aren't installed), tint2's own settings icon dropped, and TINT2_OVERRIDES applied. Null when
+ * there's no stock config with a launcher to extend. Pure.
  */
 export function tint2Config(stock: string | null, desktopEntry: string): string | null {
   if (!stock || !/^launcher_item_app\s*=/m.test(stock)) return null;
   const line = `launcher_item_app = ${desktopEntry}`;
-  const body = stock.replace(/^launcher_item_app\s*=/m, `${line}\nlauncher_item_app =`);
-  return `# ${MARK} from the stock tint2rc — the terminal launcher comes first.\n${body}`;
+  let body = stock
+    .replace(/^launcher_item_app\s*=\s*tint2conf\.desktop\s*\n/m, '')
+    .replace(/^launcher_item_app\s*=/m, `${line}\nlauncher_item_app =`);
+  for (const [k, v] of Object.entries(TINT2_OVERRIDES)) {
+    const re = new RegExp(`^${k}\\s*=.*$`, 'm');
+    body = re.test(body) ? body.replace(re, `${k} = ${v}`) : `${body.replace(/\n?$/, '\n')}${k} = ${v}\n`;
+  }
+  return `# ${MARK} from the stock tint2rc — terminal launcher first, centred dock.\n${body}`;
 }
 
 /** openbox rc.xml = the stock one with its own `menu.xml` swapped for ours. Null when the stock file can't be adapted. Pure. */
