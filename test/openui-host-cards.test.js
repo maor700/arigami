@@ -173,9 +173,26 @@ test('merge: merged / conflict records and the approved-session merge panel rend
   expect(html).toContain('53ba82c');
   expect(html).toContain('data-merge-event="conflict"');
   expect(html).toContain('server/api.ts, web/src/App.jsx');
-  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session: { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'reviewer' } } } } }));
+  const session = { id: 's1', metadata: { branch: 'child/x', review: { state: 'approved', by: 'reviewer' } } };
+  const can = { kind: 'local', base: 'main', canMerge: true, reason: null, offer: { show: true, reason: null } };
+  const panel = render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session, status: can } }));
   expect(panel).toContain('data-merge-panel');
   expect(panel).toContain('child/x');
+  expect(panel).toContain('data-merge-target="main"');
+  // the dense (Changes tab) face names the base and the no-gates warning too
+  const dense = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: can } }));
+  expect(dense).toContain('Merge child/x into main');
+  expect(dense).toContain('data-merge-hint');
+  // a remote PR names the PR and its base
+  const pr = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: { ...can, kind: 'pr', base: 'develop', pr: { number: 42 } } } }));
+  expect(pr).toContain('Merge PR #42 into develop');
+  // the viewer can't merge here: no button — a passive line saying why
+  const passive = render(h(host.HostCard, { name: 'MergePanel', props: { dense: true, sessionId: 's1', session, status: { kind: 'pr', offer: { show: false, reason: 'not-your-pr' } } } }));
+  expect(passive).toContain('data-merge-passive="not-your-pr"');
+  expect(passive).not.toContain('data-merge-button');
+  expect(passive).not.toContain('data-merge-target');
+  // status not known yet → nothing (no control flashing in)
+  expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, sessionId: 's1', session } }))).toBe('');
   // not approved / already merged → nothing
   expect(render(h(host.HostCard, { name: 'MergePanel', props: { dark: true, session: { id: 's1', metadata: { branch: 'child/x', merged: { sha: 'abc' } } } } }))).toBe('');
 });

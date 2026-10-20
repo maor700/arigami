@@ -124,7 +124,7 @@ The human may be on a phone, another machine or a tailnet — a
 
 1. **The child never merges.** It commits on its branch and calls
    `request_review` (human) + `report_to_master` (you).
-2. **The human approves.** Their `✓ Verified` / review-approve stamps
+2. **The human approves.** Their **Approve** (review card or Changes tab — one action) stamps
    `metadata.review = {state:"approved", at, by}` on the child. You can read it
    from `list_sessions`. Nothing you do can stamp it.
 3. **After approval, merging is one call for you: `merge_session({session_id,

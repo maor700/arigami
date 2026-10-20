@@ -9,7 +9,8 @@ import { defaultChangesMode, explanationSwitchOffer, newestExplanation, changesQ
 import { Truncate } from './Truncate.jsx';
 import { DiffView } from './DiffView.jsx';
 import { CommentThread, CommentComposer } from './Comments.jsx';
-import { MergePill, MergePanel } from './MergeCard.jsx';
+import { MergePill, MergePanel, useMergeStatus } from './MergeCard.jsx';
+import { approveEffect } from '../lib/approval.js';
 import {
   Badge, Button, StatusDot, Tip, Textarea,
   Tabs, TabsList, TabsTrigger,
@@ -62,7 +63,10 @@ const SECTION_LABEL = 'px-3 pt-3 pb-1 text-2xs font-medium text-muted-foreground
 // pr→remote) and follows mode changes until the user overrides it.
 // `mergeReady`: the review is approved and the Merge control is showing — Merge
 // is then the view's one primary action and Approve steps back to neutral.
-function ReviewBar({ count, onSubmit, mode, desktop, mergeReady }) {
+// Approve is THE approve action (same as the review card's): one label, its
+// effect in the hint, and "Approved" (disabled) once the approval is current.
+// The local/remote target only routes comments and change requests.
+function ReviewBar({ count, onSubmit, mode, desktop, mergeReady, approval }) {
   const t = useT();
   const defaultTarget = mode === 'pr' ? 'remote' : 'local';
   const [summary, setSummary] = useState('');
@@ -75,7 +79,7 @@ function ReviewBar({ count, onSubmit, mode, desktop, mergeReady }) {
   const pickTarget = (t) => { touched.current = true; setTarget(t); };
   const submit = (verdict) => { onSubmit(verdict, summary.trim(), target); setSummary(''); setOpen(false); setExpanded(false); };
   const canComment = count > 0 || summary.trim();
-  const approveLabel = target === 'remote' ? t('chat.approvePr') : t('chat.approve');
+  const approved = !!approval?.approved;
   const full = desktop || expanded;
   const pending = t(count === 1 ? 'chat.pendingCommentOne' : 'chat.pendingCommentMany', { n: count });
 
@@ -135,10 +139,13 @@ function ReviewBar({ count, onSubmit, mode, desktop, mergeReady }) {
           <Button variant="outline" disabled={!canComment} onClick={() => submit('comment')}>
             {t('chat.comment')}
           </Button>
-          <Tip label={target === 'remote' ? t('chat.approvePrTitle') : t('chat.approveLocalTitle')}>
-            <Button variant={mergeReady ? 'default' : 'primary'} onClick={() => submit('approve')}>
-              <CheckIcon className="size-4" /> {approveLabel}
-            </Button>
+          <Tip label={t(...approveEffect(approval))}>
+            {/* span keeps the tooltip reachable while the button is disabled */}
+            <span>
+              <Button variant={mergeReady || approved ? 'default' : 'primary'} disabled={approved} data-approve={approved ? 'approved' : ''} onClick={() => submit('approve')}>
+                <CheckIcon className="size-4" /> {approved ? t('chat.approved') : t('chat.approve')}
+              </Button>
+            </span>
           </Tip>
         </div>
       </div>
@@ -341,6 +348,18 @@ export default function ChangesTab({ session, active }) {
     api.get(`/sessions/${session.id}/changes/refs${baseSel ? `?base=${encodeURIComponent(baseSel)}` : ''}`).then(setRefs).catch(() => setRefs(null));
   }, [active, session.id, baseSel, session.metadata?.base, session.metadata?.prBase, session.metadata?.worktree]);
 
+  // What Approve does here, whether it is already approved, and whether the
+  // viewer can merge — one host answer (merge/status), re-read when the review
+  // stamp, the merge, or the pending review card changes.
+  const { st: reviewStatus, refresh: refreshReviewStatus } = useMergeStatus(
+    session.id,
+    active,
+    `${session.metadata?.review?.at || ''}|${session.metadata?.merged?.sha || ''}|${session.action?.id || ''}|${session.metadata?.pr || ''}`
+  );
+  const approvalInfo = reviewStatus && !reviewStatus.error
+    ? { approved: !!reviewStatus.approved, mode: reviewStatus.mode, pr: reviewStatus.pr?.number, branch: reviewStatus.branch, base: reviewStatus.base }
+    : null;
+
   // review comments (live via session-updated)
   const comments = session.review?.comments || [];
   const R = `/sessions/${session.id}/review`;
@@ -358,8 +377,13 @@ export default function ChangesTab({ session, active }) {
   const submitReview = (verdict, summary, target) =>
     api
       .post(`${R}/submit`, { verdict, summary, target })
-      .then(() => toastSuccess(target === 'remote' ? t('chat.reviewPosted') : t('chat.reviewSubmitted')))
-      .catch((e) => toastError(t('chat.couldntSubmitReview', { err: e?.message || e })));
+      .then((r) => {
+        if (verdict !== 'approve') toastSuccess(target === 'remote' ? t('chat.reviewPosted') : t('chat.reviewSubmitted'));
+        else if (r?.already) toastSuccess(t('chat.alreadyApproved'));
+        else toastSuccess(r?.mode === 'pr-review' ? t('chat.approvedPostingToast', { n: r.pr }) : t('chat.approvedToast'));
+        refreshReviewStatus();
+      })
+      .catch((e) => toastError(t('chat.couldntSubmitReview', { err: String(e?.message || e).replace(/^HTTP \d+ — /, '') })));
   // Shared comment-thread handlers (edit/reply/resolve/delete + suggestion accept/reject).
   const threadProps = {
     onDelete: delComment,
@@ -602,7 +626,10 @@ export default function ChangesTab({ session, active }) {
     </div>
   );
 
-  const mergeReady = session.metadata?.review?.state === 'approved' && !session.metadata?.merged;
+  // the Merge strip shows only when this viewer can actually merge (or, once
+  // approved, as a passive line saying why not)
+  const mergeReady = !!reviewStatus?.offer?.show && !session.metadata?.merged;
+  const mergeStrip = session.metadata?.review?.state === 'approved' && !session.metadata?.merged && !!(reviewStatus?.offer?.show || reviewStatus?.offer?.reason);
   const md = session.metadata || {};
   const pillShown = !!(md.merged || ((md.review?.state === 'approved' || md.review?.state === 'changes-requested') && md.branch));
   const hasMeta = desktop ? !!(data?.branch || files.length > 0 || expl || outdated || pillShown) : !!(outdated || pillShown);
@@ -755,9 +782,9 @@ export default function ChangesTab({ session, active }) {
         </div>
       )}
       {/* F7: approved → the Merge control lives with the diff it approves */}
-      {mergeReady && (
+      {mergeStrip && (
         <div className="shrink-0 border-b border-border bg-card/60 px-3 py-1" data-merge-strip="">
-          <MergePanel session={session} dense />
+          <MergePanel session={session} dense status={reviewStatus} onRefresh={refreshReviewStatus} />
         </div>
       )}
       {noWorktree ? (
@@ -912,7 +939,7 @@ export default function ChangesTab({ session, active }) {
             </div>
           </div>
 
-          <ReviewBar count={comments.filter((c) => !c.resolved).length} onSubmit={submitReview} mode={changesMode} desktop={desktop} mergeReady={mergeReady} />
+          <ReviewBar count={comments.filter((c) => !c.resolved).length} onSubmit={submitReview} mode={changesMode} desktop={desktop} mergeReady={mergeReady} approval={approvalInfo} />
         </>
       )}
     </div>

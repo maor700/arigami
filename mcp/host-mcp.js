@@ -173,7 +173,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'merge_session',
       description:
         'Merge an APPROVED child branch into its base — executed by the HOST (git merge in the base checkout), not by any agent turn. ' +
-        'Rules: the child never merges; the HUMAN approves (review verdict approve / ✓ Verified stamps metadata.review.state="approved"); ' +
+        'Rules: the child never merges; the HUMAN approves (Approve — on the review card or in the Changes tab, one action — stamps metadata.review.state="approved"); ' +
         'after that the merge is one click for the human or this one call for you (the child\'s master/controller). ' +
         'Refused (409) if not approved, the base checkout is dirty, or the base branch is not checked out; on a conflict the merge is ' +
         'aborted and you get {conflict:true, files:[…]} (plus a chat line) — resolve with the human, never force. ' +
@@ -685,7 +685,7 @@ export async function createArigamiServer(env = process.env) {
     },
     {
       name: 'request_review',
-      description: 'Sugar: set status to "In Review" and show a review action bar (Request changes / Verified).',
+      description: 'Sugar: set status to "In Review" and show a review card (Request changes / Approve). Approve is the one approval action (same as the Changes tab\'s): for your own work it stamps metadata.review.state="approved" (a child branch then becomes mergeable by the host); for someone else\'s PR it posts an APPROVE review. Already approved and unchanged → the card shows Approved. The answer arrives as a message.',
       inputSchema: obj({ summary: { type: 'string' }, ...SID_PROP }),
       run: async (a) => {
         const id = sid(a);
@@ -695,7 +695,7 @@ export async function createArigamiServer(env = process.env) {
           kind: 'review',
           buttons: [
             { label: 'Request changes', value: 'request-changes' },
-            { label: '✓ Verified', value: 'verified', style: 'primary' },
+            { label: 'Approve', value: 'approve', style: 'primary' },
           ],
         });
       },

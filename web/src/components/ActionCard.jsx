@@ -13,6 +13,21 @@ import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, agentRef, z } from '../openui/define.js';
 import { buttonVariants } from './ui/button.jsx';
 import { CardFrame, Btn, ReceiptLine, ErrorNote, Prose, AgentAvatar, ACCENT } from '../openui/primitives.jsx';
+import { useStore } from '../lib/store.js';
+import { isApproveValue, approvalIsCurrent, approveEffect } from '../lib/approval.js';
+
+// A review card (request_review) carries THE approve action — the same one as
+// the Changes tab's button: one label, and an already-approved state instead of
+// a second approve. `review` = {approved, effect:[key, params]} | null.
+function useReviewState(sessionId, action) {
+  const session = useStore().sessions.find((s) => s.id === sessionId);
+  if (action?.kind !== 'review') return null;
+  return {
+    approved: approvalIsCurrent(session?.metadata, action.approval, action.at),
+    effect: approveEffect(action.approval),
+  };
+}
+const buttonLabel = (t, review, b) => (review && isApproveValue(b.value) ? (review.approved ? t('chat.approved') : t('chat.approve')) : b.label);
 
 // The transcript card — rendered inline (not pinned under the input). Buttons
 // are human-click-only; the answer is delivered as a message.
@@ -27,6 +42,7 @@ function ActionCardView({ props: { sessionId, action } }) {
   // CHAT1: an answer the host refused (session archived, over budget, host
   // unreachable) is shown on the card — never a click that silently does nothing.
   const [err, setErr] = useState(null);
+  const review = useReviewState(sessionId, action);
   if (!action || !Array.isArray(action.buttons)) return null;
   const canAuto = !!(action.agent && action.kind && action.kind !== 'review');
   const answer = async (value) => {
@@ -82,10 +98,16 @@ function ActionCardView({ props: { sessionId, action } }) {
     >
       <Prose className="mt-2">{action.prompt}</Prose>
       <div className="mt-2.5 flex flex-wrap gap-2">
-        {action.buttons.map((b, i) => (
-          <Btn key={i} variant={variant(b.style)} disabled={busy} onClick={() => answer(b.value)}>{b.label}</Btn>
-        ))}
+        {action.buttons.map((b, i) => {
+          const done = !!review?.approved && isApproveValue(b.value);
+          return (
+            <Btn key={i} variant={variant(b.style)} disabled={busy || done} data-approve={review && isApproveValue(b.value) ? (done ? 'approved' : '') : undefined} onClick={() => answer(b.value)}>
+              {review && isApproveValue(b.value) && <Icon icon={faCheck} />} {buttonLabel(t, review, b)}
+            </Btn>
+          );
+        })}
       </div>
+      {review && <div data-approve-effect="" dir="auto" className={`mt-1.5 text-xs ${ACCENT.dim}`}>{t(...review.effect)}</div>}
       {canAuto && (
         <label data-action-auto className={`mt-2.5 flex cursor-pointer items-center gap-1.5 text-xs ${ACCENT.fg}`}>
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
@@ -144,6 +166,7 @@ export function ActionBar({ session }) {
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(false); // A3: auto-approve this kind from now on
   const [err, setErr] = useState(null); // CHAT1: a refused answer is shown, not swallowed
+  const review = useReviewState(session.id, action);
   if (!action || !Array.isArray(action.buttons)) return null;
   const canAuto = !!(action.agent && action.kind && action.kind !== 'review');
   const answer = async (value) => {
@@ -189,11 +212,12 @@ export function ActionBar({ session }) {
           <button
             key={i}
             type="button"
-            disabled={busy}
+            disabled={busy || (!!review?.approved && isApproveValue(b.value))}
             onClick={() => answer(b.value)}
+            title={review && isApproveValue(b.value) ? t(...review.effect) : undefined}
             className={`${actionBtnClass(b.style)} disabled:opacity-50`}
           >
-            {b.label}
+            {buttonLabel(t, review, b)}
           </button>
         ))}
       </span>

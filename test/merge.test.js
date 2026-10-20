@@ -307,3 +307,96 @@ test('request-changes withdraws an approval: no merge (not even forced) until a 
   await removeWorktree(repo, wt.dir);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ---- ONE approve action (docs/REVIEW-AND-MERGE.md) -----------------------------------------
+
+test('approveSession: one path for card and Changes tab — local stamp, one message, then already-approved (no second send)', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'unified', reposDir: repos });
+  commit(wt.dir, 'u.txt', 'reviewed', 'reviewed');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-unified-'));
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts');
+    const sent=[]; const send=(id,m)=>sent.push(m);
+    const s=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:{branch:${JSON.stringify(wt.branch)},base:'master'}});
+    st.patchSession(s.id,{action:{id:'act_r',at:new Date().toISOString(),kind:'review',prompt:'p',buttons:[]}});
+    const first=await api.approveSession(s.id,'human',{send});
+    const after=st.getSession(s.id);
+    const second=await api.approveSession(s.id,'human',{send});
+    const status=await api.mergeStatus(st.getSession(s.id),{kind:'user',user:{id:'u',role:'admin'},via:'cookie'});
+    const asChild=await api.mergeStatus(st.getSession(s.id),{kind:'session',sessionId:s.id});
+    Bun.spawnSync(['git','-C',s.cwd,'commit','--allow-empty','-m','more work']);
+    const third=await api.approveSession(s.id,'human',{send});
+    emit({first,second,third,sent,review:after.metadata.review,status:after.status,action:after.action||null,offer:status.offer,mode:status.mode,childOffer:asChild.offer}); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  expect(r.ok).toBe(true);
+  const o = r.out[0];
+  expect(o.first).toEqual({ ok: true, mode: 'local' });
+  expect(o.review).toMatchObject({ state: 'approved', by: 'human' });
+  expect(o.status).toBe('Approved');
+  expect(o.action).toBeNull(); // the pending review card closes
+  expect(o.second).toEqual({ ok: true, already: true, mode: 'local' });
+  expect(o.mode).toBe('local');
+  expect(o.offer).toEqual({ show: true, reason: null });
+  expect(o.childOffer).toEqual({ show: false, reason: 'no-permission' }); // the child never merges itself
+  expect(o.third).toEqual({ ok: true, mode: 'local' }); // new commits → a real re-approval
+  expect(o.sent.length).toBe(2);
+  expect(o.sent[0]).toContain('Approved');
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('approveSession on a PR: someone else\'s → an APPROVE review handed to the agent, never a merge; own → local stamp + GitHub merge offer; GitHub unreachable → refused', async () => {
+  const wt = await provisionChildWorktree({ parentDir: repo, subtask: 'pr-modes', reposDir: repos });
+  commit(wt.dir, 'p.txt', 'reviewed', 'reviewed');
+  const head = sh(wt.dir, 'git', 'rev-parse', 'HEAD');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f7-prmodes-'));
+  const r = runInChild(`
+    const st=await import('./server/state.ts'); const api=await import('./server/api.ts'); const ra=await import('./server/lib/review-approval.ts');
+    let author='bob', down=false; const ghCalls=[];
+    ra.setGhRunner(async (a)=>{ ghCalls.push(a.join(' ')); if(down) return {ok:false,out:'offline'};
+      if(a[0]==='pr'&&a[1]==='view') return {ok:true,out:JSON.stringify({author:{login:author},state:'OPEN',isDraft:false,mergeable:'MERGEABLE',baseRefName:'develop',headRefOid:${JSON.stringify(head)}})};
+      if(a[0]==='api') return {ok:true,out:'alice'}; if(a[0]==='repo') return {ok:true,out:'WRITE'}; return {ok:true,out:''}; });
+    const sent=[]; const send=(id,m)=>sent.push(m); const admin={kind:'user',user:{id:'u',role:'admin'},via:'cookie'};
+    const md={branch:${JSON.stringify(wt.branch)},pr:'https://github.com/acme/widgets/pull/42'};
+    const rev=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:md});
+    const a1=await api.approveSession(rev.id,'human',{send});
+    const revReview=st.getSession(rev.id).metadata.review;
+    const a2=await api.approveSession(rev.id,'human',{send});
+    const revStatus=await api.mergeStatus(st.getSession(rev.id),admin);
+    const revMerge=await api.mergeSession(st.getSession(rev.id),{},'human',admin);
+    author='alice'; ra.clearPrFactsCache();
+    const own=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:md});
+    const o1=await api.approveSession(own.id,'human',{send});
+    const ownStatus=await api.mergeStatus(st.getSession(own.id),admin);
+    const ownBySession=await api.mergeSession(st.getSession(own.id),{},'x',{kind:'session',sessionId:'sess_master'});
+    const ownMerge=await api.mergeSession(st.getSession(own.id),{strategy:'squash'},'human',admin);
+    down=true; ra.clearPrFactsCache();
+    const off=st.createSession({cwd:${JSON.stringify(wt.dir)},metadata:md});
+    const d1=await api.approveSession(off.id,'human',{send});
+    emit({a1,a2,revReview,revStatus,revMerge,o1,ownStatus,ownBySession,ownMerge,merged:st.getSession(own.id).metadata.merged,d1,offReview:st.getSession(off.id).metadata.review||null,sent,merges:ghCalls.filter(c=>c.startsWith('pr merge'))}); st.flushState();
+  `, { ARIGAMI_DIR: dir, ARIGAMI_STATE_FILE: path.join(dir, 'state.json') });
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  // someone else's PR: Approve = a posted APPROVE review, stamped with the PR head; once
+  expect(o.a1).toEqual({ ok: true, mode: 'pr-review', pr: 42 });
+  expect(o.revReview).toMatchObject({ state: 'approved', target: 'github', pr: 42, sha: head });
+  expect(o.a2).toEqual({ ok: true, already: true, mode: 'pr-review', pr: 42 });
+  expect(o.sent[0]).toContain('Publish this as a GitHub PR review (event `APPROVE`)');
+  // ...and nothing to merge from here: a passive reason, and the route refuses
+  expect(o.revStatus).toMatchObject({ kind: 'pr', mode: 'pr-review', approved: true, base: 'develop', offer: { show: false, reason: 'not-your-pr' } });
+  expect(o.revMerge).toMatchObject({ status: 409, reason: 'not-your-pr' });
+  // own PR: local stamp (GitHub refuses self-approval), merge on GitHub offered into the PR base
+  expect(o.o1).toEqual({ ok: true, mode: 'pr-own', pr: 42 });
+  expect(o.sent[1]).toContain('Local-changes review');
+  expect(o.ownStatus).toMatchObject({ kind: 'pr', mode: 'pr-own', approved: true, base: 'develop', offer: { show: true, reason: null } });
+  expect(o.ownBySession).toMatchObject({ status: 403 }); // a PR is merged by a person
+  expect(o.ownMerge).toMatchObject({ ok: true, pr: 42, base: 'develop', sha: head, strategy: 'squash' });
+  expect(o.merged).toMatchObject({ pr: 42, sha: head });
+  expect(o.merges).toEqual([`pr merge 42 --repo acme/widgets --squash --match-head-commit ${head}`]);
+  // GitHub unreachable: neither a post nor a stamp
+  expect(o.d1).toMatchObject({ status: 502 });
+  expect(o.offReview).toBeNull();
+  expect(o.sent.length).toBe(2);
+  await removeWorktree(repo, wt.dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
