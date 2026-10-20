@@ -144,7 +144,11 @@ ENV ARIGAMI_IMAGE=${ARIGAMI_IMAGE} \
     ARIGAMI_COMMIT=${ARIGAMI_COMMIT} \
     ARIGAMI_BRANCH=${ARIGAMI_BRANCH} \
     ARIGAMI_SUPERVISOR=docker
+# LANG/LC_ALL: the slim base leaves the locale at POSIX, so git octal-escapes
+# non-ASCII paths and terminals show raw bytes; C.UTF-8 ships with libc.
 ENV HOME=/data/home \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
     ARIGAMI_PORT=3099 \
     ARIGAMI_DIR=/data/.arigami \
     ARIGAMI_STATE_FILE=/data/.arigami/state.json \
