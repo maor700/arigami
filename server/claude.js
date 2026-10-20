@@ -60,7 +60,7 @@ function userPluginDir() {
 // installed extensions' docs[]. '' when nothing contributed a skill.
 function extPluginDir() {
   try {
-    return extensions.extPluginHasSkills() || extensions.extPluginHasPolicyMod() ? extensions.EXT_PLUGIN_DIR : '';
+    return extensions.extPluginHasSkills() ? extensions.EXT_PLUGIN_DIR : '';
   } catch {
     return '';
   }
@@ -73,7 +73,12 @@ function extPluginDir() {
  */
 export function pluginDirArgs() {
   const ext = extPluginDir();
-  return ['--plugin-dir', ROOT, '--plugin-dir', userPluginDir(), ...(ext ? ['--plugin-dir', ext] : [])];
+  // MODS: Claude Code runs the extensions' mods natively (server/mods.ts is the runtime for engines that cannot).
+  // arigami-bridge goes first: it echoes the mods' $.ui.log/toast/notice into the chat (mods/arigami-bridge).
+  let mods = [];
+  try { mods = extensions.extensionMods().map((m) => m.dir); } catch {}
+  if (mods.length) mods.unshift(path.join(ROOT, 'mods', 'arigami-bridge'));
+  return ['--plugin-dir', ROOT, '--plugin-dir', userPluginDir(), ...(ext ? ['--plugin-dir', ext] : []), ...mods.flatMap((d) => ['--plugin-dir', d])];
 }
 
 // Base env for every spawned `claude`, with the inherited CLAUDE_CODE_OAUTH_TOKEN

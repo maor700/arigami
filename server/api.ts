@@ -2454,28 +2454,15 @@ export function startEmptySession(opts: {
 // sessions get the message now, busy ones get it queued with auto-play so it
 // plays as soon as the current turn ends. Used by the task_session channel
 // (controller → child) and by cron's 'existing:<sessionId>' sessionMode.
-/**
- * Run a policy gate for one session and leave a card in its transcript when an extension refused or rewrote
- * something (a clean pass stays silent). Shared by the engine adapters (POST .../policy, .../policy/check) and by
- * the host's own prompt path, which gates a human's message before ANY engine sees it.
- */
-async function sessionPolicy(id: string, gate: string, body: any) {
-  const ext = await import('./extensions.js');
-  const ev =
-    gate === 'prompt.before'
-      ? { sessionId: id, text: String(body.text ?? '') }
-      : { sessionId: id, tool: String(body.tool || ''), input: body.input && typeof body.input === 'object' ? body.input : {}, ...(gate === 'tool.after' ? { output: String(body.output ?? '') } : {}) };
-  const v = await ext.runPolicyGate(gate, ev);
-  if (!v.ok || v.changedBy.length) {
-    const what = gate === 'prompt.before' ? 'Prompt' : `${(ev as any).tool || 'Tool'} ${gate === 'tool.after' ? 'output' : 'call'}`;
-    claude.appendChat(id, {
-      kind: 'ext-card',
-      ext: !v.ok ? v.ext : v.changedBy.join(', '),
-      title: !v.ok ? `${what} blocked by policy` : `${what} redacted by policy`,
-      body: !v.ok ? v.reason : `Rewritten by ${v.changedBy.join(', ')} before ${gate === 'tool.before' ? 'it ran' : gate === 'prompt.before' ? 'the agent got it' : 'the model read it'}.`,
-    });
-  }
-  return v;
+/** What the mods runtime (server/mods.ts) needs of a session: its id, its cwd, its agent env, a way to post a card. */
+function modsCtx(s: { id: string; cwd?: string | null; metadata?: Record<string, unknown> | null }) {
+  const cwd = String((s.metadata?.worktree as string) || s.cwd || '');
+  return {
+    id: s.id,
+    cwd,
+    env: { ARIGAMI_SESSION_ID: s.id, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(s.id) } as Record<string, string>,
+    card: (mod: string, text: string) => claude.appendChat(s.id, { kind: 'ext-card', ext: mod, title: text }),
+  };
 }
 
 export function deliverToSession(id: string, text: string): { delivered: 'now' | 'queued' } {
@@ -5742,11 +5729,12 @@ export async function handle(
       const body = (await readBody(req)) as any;
       const v = policy.checkToolCall(policy.policyFor(sessionAgent(s)), String(body?.tool_name || ''), body?.input ?? {}, id);
       if (!v.allow) return json(res, v);
-      // POLICY: the same hook carries the extensions' tool.before gates (codex sessions; claude uses its mod).
-      const ext = await import('./extensions.js');
-      if (!body?.gates || !ext.hasGates('tool.before')) return json(res, v);
-      const g = await sessionPolicy(id, 'tool.before', { tool: body?.tool_name, input: body?.input });
-      return json(res, g.ok ? { allow: true, ...(g.input ? { input: g.input } : {}) } : { allow: false, reason: `${g.ext ? g.ext + ': ' : ''}${g.reason}` });
+      // MODS: the same hook carries the mods' tool.call chain for engines without native mods (codex).
+      if (!body?.mods) return json(res, v);
+      const mods = await import('./mods.js');
+      const pre = await mods.toolPre(modsCtx(s), { tool: String(body?.tool_name || ''), input: body?.input && typeof body.input === 'object' ? body.input : {}, id: String(body?.tool_use_id || '') });
+      if (!pre.allow) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body?.tool_name || 'Tool'} call blocked by a mod`, body: pre.reason });
+      return json(res, pre);
     }
     if (sub === 'tabs' && m === 'POST') {
       const body = (await readBody(req)) as any;
@@ -5998,12 +5986,20 @@ export async function handle(
         : [];
       if (!text.trim() && !attachments.length)
         return badRequest(res, 'text or attachments required');
-      // POLICY prompt.before: the host is the gate in front of every engine — judged here, before claude or codex see it.
+      // MODS prompt.submit: Claude runs the mods itself; for every other engine the host is the adapter — the
+      // prompt goes through the mods here, before the engine sees it.
       let sendText = text;
-      if (text.trim() && (await import('./extensions.js')).hasGates('prompt.before')) {
-        const g = await sessionPolicy(id, 'prompt.before', { text });
-        if (!g.ok) return json(res, { error: `Blocked by policy${g.ext ? ` (${g.ext})` : ''}: ${g.reason}`, policy: true }, 403);
-        if (typeof g.text === 'string') sendText = g.text;
+      if (text.trim() && (await import('./lib/oneshot.js')).sessionEngine(s) !== 'claude') {
+        const mods = await import('./mods.js');
+        if (mods.hasMods()) {
+          const out = await mods.promptSubmit(modsCtx(s), text);
+          if ('drop' in out) {
+            claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: 'Prompt dropped by a mod', body: out.drop });
+            return json(res, { error: `Prompt dropped by a mod: ${out.drop}`, mod: true }, 403);
+          }
+          if (out.text !== text) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: 'Prompt rewritten by a mod', body: 'The agent got the rewritten prompt.' });
+          sendText = out.text;
+        }
       }
       try {
         claude.sendMessage(id, sendText, attachments);
@@ -6338,15 +6334,26 @@ export async function handle(
     // Dismiss the sticky action bar without answering — the human chose none of
     // the options and just wants it gone. The request_action tool_use already
     // returned, so the model isn't blocked; clearing the state is enough.
-    // POLICY: the engine adapters ask here — Claude's generated mod (ext-plugin/hooks), codex's hooks.json
-    // (mcp/policy-hook.js). Only the session itself may ask (its own bearer); the answer is the extensions' verdict.
-    if (sub === 'policy' && m === 'POST') {
+    // MODS: codex's PostToolUse (mcp/policy-hook.js --mods) hands a tool's result back to the mods chain that
+    // PreToolUse (.../policy/check) suspended at next(). Only the session itself may call (its own bearer).
+    // MODS: arigami-bridge (mods/arigami-bridge) forwards what a mod shows with $.ui.log/toast/notice in a Claude session.
+    if (sub === 'mods/notice' && m === 'POST') {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
       const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
-      const ext = await import('./extensions.js');
-      if (!ext.POLICY_GATES.includes(String(body.gate || ''))) return badRequest(res, `unknown policy gate: ${body.gate}`);
-      return json(res, await sessionPolicy(id, String(body.gate), body));
+      const text = String(body.text || '').slice(0, 2000);
+      if (text) claude.appendChat(id, { kind: 'ext-card', ext: String(body.plugin || 'mod').slice(0, 64), title: text });
+      return json(res, { ok: true });
+    }
+    if (sub === 'mods/tool-post' && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'session' && me.sessionId === id) && !auth.isAdmin(me)) return json(res, { error: 'session token required' }, 403);
+      const body = ((await readBody(req).catch(() => ({}))) || {}) as any;
+      const mods = await import('./mods.js');
+      const v = await mods.toolPost(modsCtx(s), { id: String(body.tool_use_id || ''), output: body.output });
+      if ('replace' in v) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body.tool || 'Tool'} output rewritten by a mod`, body: 'The agent got the rewritten output.' });
+      if ('block' in v) claude.appendChat(id, { kind: 'ext-card', ext: 'mods', title: `${body.tool || 'Tool'} output withheld by a mod`, body: v.block });
+      return json(res, v);
     }
     if (sub === 'action/dismiss' && m === 'POST') {
       const { actionId } = (await readBody(req)) as any;

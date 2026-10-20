@@ -52,6 +52,7 @@ const ENTRIES: { src: string; required: boolean }[] = [
   { src: 'skills', required: true },
   { src: '.claude-plugin', required: true },
   { src: 'mcp', required: true },
+  { src: 'mods', required: true }, // arigami-bridge: a Claude Code mod loaded into sessions that run extension mods
   { src: 'profiles', required: true },
   { src: 'server/assets', required: true },
   { src: 'server/lib/pty-bridge.py', required: true },

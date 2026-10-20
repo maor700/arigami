@@ -1,0 +1,5 @@
+{
+  "name": "arigami-bridge",
+  "version": "0.1.0",
+  "description": "Arigami's bridge for Claude Code mods: what an installed mod shows with $.ui.log / toast / notice also lands in the Arigami chat (Arigami does not render Claude Code's own UI)."
+}

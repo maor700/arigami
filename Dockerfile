@@ -120,6 +120,7 @@ RUN bun install
 # --- app source + built web cockpit ---
 COPY server/ ./server/
 COPY mcp/ ./mcp/
+COPY mods/ ./mods/
 COPY skills/ ./skills/
 COPY profiles/ ./profiles/
 COPY bin/ ./bin/

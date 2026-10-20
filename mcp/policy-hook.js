@@ -9,10 +9,10 @@
 // silently evaporates when the host hiccups is no policy). Sessions without
 // ARIGAMI_AGENT never get this hook, so nothing else is affected.
 //
-// POLICY gates: with `--gates` (codex sessions — codex has no mods, so this hook IS its adapter) the same call also
-// runs the extensions' tool.before gates, and PostToolUse runs tool.after. Claude sessions get those through the
-// generated mod instead, so the flag is off there and nothing is judged twice.
-const GATES = process.argv.includes('--gates');
+// MODS: with `--mods` (codex sessions — codex has no mods, so this hook IS their adapter) PreToolUse also runs the
+// extensions' mods' tool.call hooks up to next() in the host (server/mods.ts), and PostToolUse hands the tool's
+// result back to the suspended chain. Claude sessions run the same mods natively, so the flag is off there.
+const MODS = process.argv.includes('--mods');
 const HOST = process.env.ARIGAMI_URL || 'http://127.0.0.1:3099';
 const TOKEN = process.env.ARIGAMI_TOKEN || '';
 const SID = process.env.ARIGAMI_SESSION_ID || '';
@@ -35,37 +35,34 @@ const post = (route, body) =>
     return v;
   });
 
-// POLICY tool.after (PostToolUse, codex sessions): the extensions see what the tool returned. An MCP tool's result can
-// be replaced outright; a built-in's cannot through a hook, so a refusal/redaction is fed back as a blocking reason.
-if (ev.hook_event_name === 'PostToolUse' && !GATES) process.exit(0); // only the gates path judges outputs
+// MODS tool.call, after the tool ran (PostToolUse): the chain that was suspended at next() decides. An MCP tool's
+// result can be replaced outright; a built-in's cannot through a hook, so it is blocked with the new text as the reason.
 if (ev.hook_event_name === 'PostToolUse') {
-  let out = ev.tool_response ?? '';
-  if (typeof out !== 'string') try { out = JSON.stringify(out); } catch { out = String(out); }
   try {
-    const v = await post('policy', { gate: 'tool.after', tool: toolName, input: ev.tool_input ?? {}, output: out });
-    if (v.ok && typeof v.output !== 'string') process.exit(0);
-    if (v.ok && toolName.startsWith('mcp__')) {
-      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', updatedMCPToolOutput: v.output } }));
-      process.exit(0);
+    const v = await post('mods/tool-post', { tool: toolName, tool_use_id: ev.tool_use_id || '', output: ev.tool_response ?? '' });
+    if (v.replace !== undefined && toolName.startsWith('mcp__')) {
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', updatedMCPToolOutput: v.replace } }));
+    } else if (v.replace !== undefined) {
+      process.stdout.write(JSON.stringify({ decision: 'block', reason: `A mod replaced the ${toolName} output; use this instead:\n${v.replace}` }));
+    } else if (v.block !== undefined) {
+      process.stdout.write(JSON.stringify({ decision: 'block', reason: v.block }));
     }
-    const reason = v.ok ? `Redacted by policy (${(v.changedBy || []).join(', ')}): treat the previous ${toolName} output as replaced by:\n${v.output}` : `Blocked by policy${v.ext ? ` (${v.ext})` : ''}: ${v.reason}. Do not use the ${toolName} output.`;
-    process.stdout.write(JSON.stringify({ decision: 'block', reason }));
     process.exit(0);
   } catch (e) {
-    process.stdout.write(JSON.stringify({ decision: 'block', reason: `[arigami policy] could not check the ${toolName} output (${e?.message || e}); do not use it.` }));
+    process.stdout.write(JSON.stringify({ decision: 'block', reason: `[arigami mods] could not check the ${toolName} output (${e?.message || e}); do not use it.` }));
     process.exit(0);
   }
 }
 
 try {
-  // A3 allowlist, then the extensions' tool.before gates — one round-trip (api.ts .../policy/check).
-  const v = await post('policy/check', { tool_name: toolName, input: ev.tool_input ?? {}, gates: GATES });
+  // A3 allowlist, then the mods' tool.call hooks up to next() — one round-trip (api.ts .../policy/check).
+  const v = await post('policy/check', { tool_name: toolName, input: ev.tool_input ?? {}, mods: MODS, tool_use_id: ev.tool_use_id || '' });
   if (v.allow === false) {
     process.stderr.write(`[arigami policy] blocked: ${v.reason || 'not allowed for this agent'}\n`);
     process.exit(2);
   }
   if (v.input && typeof v.input === 'object') {
-    // A gate rewrote the arguments: the engine runs the call with these.
+    // A mod passed changed arguments to next(): the engine runs the call with these.
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: v.input } }));
   }
   process.exit(0);

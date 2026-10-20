@@ -76,7 +76,7 @@ import { looksLikeCodexLimit, setCodexCatalogSource, setCodexWindowSource } from
 import { codexRealHome, codexAuthPathFor, codexHomeOfAccount, getActiveId } from './accounts.js';
 import { policyFor, isRestrictive, hookSettings, serverTouched } from './agent-policy.js';
 import { bunExecShell } from './lib/bun-exec.js';
-import { activePolicyGates } from './extensions.js';
+import { hasMods } from './mods.js';
 import { expirePendingPermissions, expirePendingScreenRequests } from './api.js';
 import {
   appendChat,
@@ -417,17 +417,17 @@ function linkMcpCredentials(codexHome: string): void {
 /** $CODEX_HOME/hooks.json — codex reads Claude Code's hooks shape verbatim. */
 export const codexHooksFile = (codexHome: string): string => path.join(codexHome, 'hooks.json');
 
-/** A codex session runs the policy hook for an A3 allowlist, or while an extension implements a tool policy gate. */
-export const needsPolicyHook = (s: Session): boolean =>
-  !!restrictedAgentOf(s) || activePolicyGates().some((g) => g === 'tool.before' || g === 'tool.after');
+/** A codex session runs the policy hook for an A3 allowlist, or while an extension contributes a mod. */
+export const needsPolicyHook = (s: Session): boolean => !!restrictedAgentOf(s) || hasMods();
 
 function codexPrepare(s: Session, _opts: { resume: boolean }): void {
   const codexHome = codexHomeFor(s.id);
   fs.mkdirSync(codexHome, { recursive: true });
 
   // A3: the policy hook (mcp/policy-hook.js), rewritten per spawn; codexBuildSpawn adds the trust flag for the same sessions.
-  // POLICY gates (extensions.ts) ride the same hook: codex has no mods, its Claude-shaped hooks are the adapter.
-  if (needsPolicyHook(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy', ['--gates']), { post: activePolicyGates().includes('tool.after') }) + '\n');
+  // MODS: codex has none, so the extensions' mods run in the host (server/mods.ts) and this same hook is their
+  // adapter — PreToolUse/PostToolUse carry tool.call across the tool run.
+  if (needsPolicyHook(s)) fs.writeFileSync(codexHooksFile(codexHome), hookSettings(bunExecShell('policy', hasMods() ? ['--mods'] : []), { post: hasMods() }) + '\n');
   else fs.rmSync(codexHooksFile(codexHome), { force: true });
 
   // One login, many sessions: auth.json stays where the ACCOUNT keeps it and

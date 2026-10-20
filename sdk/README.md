@@ -178,32 +178,33 @@ it never stops the host. A **gate** that throws or times out (5 min) **fails
 closed**: the merge is refused with the gate's message. That is the point of a
 gate.
 
-### Policy gates (inside the agent's turn, any engine)
+### Mods (Claude Code's mods API, on every engine)
 
-`tool.before`, `tool.after` and `prompt.before` are gates on what an agent does, not on a merge. Arigami sits in front
-of every engine, so the gates are judged by the host and each engine only needs a thin adapter:
+An extension can ship **Claude Code mods** — the same plugin dirs, the same `register(on)`, the same API — listed in
+`manifest.mods`:
 
-| gate | Claude Code sessions | Codex sessions |
-|---|---|---|
-| `prompt.before` | the host, before the message reaches the engine | same |
-| `tool.before` | a generated **mod** (`$ARIGAMI_DIR/ext-plugin/hooks/`) | the `PreToolUse` hook (`mcp/policy-hook.js --gates`) |
-| `tool.after` | the mod — any tool's result is replaced | the `PostToolUse` hook — an MCP tool's result is replaced; a built-in's is blocked with the redacted text as the reason |
-
-Both adapters ask `POST /__api/sessions/<id>/policy` (or `.../policy/check`) with the session's own token. Each gate can
-refuse, or rewrite the one field it owns:
-
-```ts
-gates: {
-  'tool.before': async ({ tool, input }) => (tool === 'Bash' && /curl .*pastebin/.test(String(input.command)) ? { ok: false, reason: 'no paste sites' } : { ok: true }),
-  'tool.after': async ({ output }) => ({ ok: true, output: output.replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]') }),
-  'prompt.before': async ({ text }) => ({ ok: true }),
-}
+```json
+{ "mods": ["mod"] }
+```
+```
+mod/.claude-plugin/plugin.json
+mod/hooks/hooks.json        { "modules": ["./register.js"] }
+mod/hooks/register.js       export function register(on) { on('tool.call', async ($, e, next) => …) }
 ```
 
-Extensions run in load order and each sees the previous one's rewrite. A refusal, a throw or a 20 s timeout **fails
-closed** (the tool does not run, its result is withheld, the prompt is refused), and every intervention leaves a card in
-the session's transcript. Sessions spawned before a gate appeared pick up the adapter on their next restart. A mod that
-fails to load fails **open** — keep the generated file untouched.
+Where the engine has mods, it runs them itself; where it does not, Arigami does:
+
+| engine | how the mod runs |
+|---|---|
+| Claude Code | natively (`--plugin-dir`), the whole mods API. `mods/arigami-bridge` (loaded first) copies what a mod shows with `$.ui.log` / `toast` / `notice` into the Arigami chat. |
+| Codex (and any engine without mods) | in the host's mods runtime (`server/mods.ts`): `tool.call` through the engine's `PreToolUse` → `next()` → `PostToolUse` hooks (the chain is suspended at `next()` while the tool runs), `prompt.submit` on the host before the engine sees the prompt, `session.start` once. |
+
+The runtime implements `$.plugin`, `$.env`, `$.http.fetch`, `$.fs`, `$.process.run`, `$.store`, `$.session`,
+`$.clock` and `$.ui.log/toast/notice` (→ a chat card). Anything else throws "not available in Arigami's mods runtime",
+a hook on an event the runtime does not fire is reported once, and a hook that throws is reported — a mod never fails
+open silently. Hook semantics follow Claude Code: middleware `next(e)`, `{ deny }` / `{ result }` / `{ drop }`, a throw
+or a 10 s budget before `next()` skips the hook (or runs its `.catch`). Engine limits: on Codex a built-in tool's result
+cannot be replaced — a rewritten result is delivered as a blocking reason; an MCP tool's result is replaced outright.
 
 ---
 
