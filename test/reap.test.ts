@@ -79,67 +79,67 @@ test('orphans only counts OUR processes of sessions that no longer exist', () =>
 
 // ---- worktree verdicts -----------------------------------------------------
 
-test('a clean, pushed worktree is removed along with its branch', () => {
+test('a clean, pushed worktree is removed along with its branch', async () => {
   const { root, main } = repo();
   const dir = path.join(root, 'wt-pushed');
   sh(main, `git worktree add -q -b feat ${dir} && cd ${dir} && echo b > b.txt && git add b.txt && git commit -qm b && git push -q origin feat`);
-  const r = wt.reap(dir);
+  const r = await wt.reap(dir);
   expect(r.outcome).toBe('removed');
   expect(r.branchDeleted).toBe(true);
   expect(fs.existsSync(dir)).toBe(false);
   expect(sh(main, 'git branch --list feat')).toBe('');
 });
 
-test('uncommitted changes keep the worktree', () => {
+test('uncommitted changes keep the worktree', async () => {
   const { root, main } = repo();
   const dir = path.join(root, 'wt-dirty');
   sh(main, `git worktree add -q -b dirty ${dir} && echo edit >> ${dir}/a.txt`);
-  const r = wt.reap(dir);
+  const r = await wt.reap(dir);
   expect(r.outcome).toBe('kept');
   expect(r.reasons?.[0]).toMatch(/uncommitted/);
   expect(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8')).toContain('edit');
 });
 
-test('an untracked file counts as work too', () => {
+test('an untracked file counts as work too', async () => {
   const { root, main } = repo();
   const dir = path.join(root, 'wt-untracked');
   sh(main, `git worktree add -q -b untracked ${dir} && echo new > ${dir}/new.txt`);
-  expect(wt.reap(dir).outcome).toBe('kept');
+  expect((await wt.reap(dir)).outcome).toBe('kept');
 });
 
-test('a committed-but-never-pushed branch is kept — the case seen in practice', () => {
+test('a committed-but-never-pushed branch is kept — the case seen in practice', async () => {
   // a feature branch whose upstream was still origin/main: never pushed at all.
   const { root, main } = repo();
   const dir = path.join(root, 'wt-local');
   sh(main, `git worktree add -q -b local ${dir} && cd ${dir} && echo c > c.txt && git add c.txt && git commit -qm c`);
-  const r = wt.reap(dir);
+  const r = await wt.reap(dir);
   expect(r.outcome).toBe('kept');
   expect(r.reasons?.join(' ')).toMatch(/1 commit not on any remote or other branch/);
   expect(sh(main, 'git branch --list local')).toContain('local');
 });
 
-test('a branch merged into local main (not pushed) is safe to remove', () => {
+test('a branch merged into local main (not pushed) is safe to remove', async () => {
   const { root, main } = repo();
   const dir = path.join(root, 'wt-merged');
   sh(main, `git worktree add -q -b merged ${dir} && cd ${dir} && echo m > m.txt && git add m.txt && git commit -qm m`);
   sh(main, 'git merge -q --ff-only merged');
-  expect(wt.reap(dir).outcome).toBe('removed');
+  expect((await wt.reap(dir)).outcome).toBe('removed');
 });
 
-test('a detached PR checkout held by a remote-tracking ref is removed', () => {
+test('a detached PR checkout held by a remote-tracking ref is removed', async () => {
   // pr_prepare now fetches pull/<n>/head into refs/remotes/origin/pr/<n>.
   const { root, main } = repo();
   const sha = sh(main, 'git rev-parse HEAD');
   sh(main, `git update-ref refs/remotes/origin/pr/7 ${sha}`);
   const dir = path.join(root, 'wt-pr');
   sh(main, `git worktree add -q --detach ${dir} ${sha}`);
-  expect(wt.reap(dir).outcome).toBe('removed');
+  expect((await wt.reap(dir)).outcome).toBe('removed');
 });
 
-test('a main checkout is never treated as a removable worktree', () => {
+test('a main checkout is never treated as a removable worktree', async () => {
   const { main } = repo();
-  expect(wt.inspect(main).action).toBe('not-a-worktree');
-  expect(wt.reap(main).outcome).toBe('not-a-worktree');
+  expect((await wt.inspect(main)).action).toBe('not-a-worktree');
+  expect((await wt.reap(main)).outcome).toBe('not-a-worktree');
   expect(fs.existsSync(path.join(main, 'a.txt'))).toBe(true);
 });
 
@@ -306,3 +306,119 @@ test.skipIf(isWin)('sweep retries kept worktrees: removes the one that became cl
   expect(fs.existsSync(dirty)).toBe(true);
   expect(r.out[0].kept).toEqual([dirty]);
 }, 60_000);
+
+// ---- worktrees whose commits live in a PR on GitHub ------------------------
+// The leak: review worktrees and squash-merged ticket branches read as
+// "unpushed" and were kept forever, ~1.6 GB each. GitHub is never really
+// asked here — the probe is injected.
+
+const fakeGitHub = (known: Record<string, wt.PrHit[]>, calls: string[] = []): wt.GitHubProbe => async ({ slug, sha }) => {
+  calls.push(`${slug}@${sha}`);
+  return { ok: true, prs: known[sha] || [] };
+};
+const ghDown: wt.GitHubProbe = async () => ({ ok: false, err: 'gh: command not found' });
+
+/** A PR head that exists on origin only under refs/pull/<n>/head. */
+function prHead(root: string, main: string, n: number): string {
+  sh(main, `git checkout -q -b tmp-pr && echo p > p.txt && git add p.txt && git commit -qm pr && git push -q origin HEAD:refs/pull/${n}/head`);
+  const sha = sh(main, 'git rev-parse HEAD');
+  sh(main, 'git checkout -q main && git branch -q -D tmp-pr');
+  return sha;
+}
+
+test('a detached PR-review worktree (FETCH_HEAD only) is removed when GitHub has HEAD in the PR', async () => {
+  const { root, main } = repo();
+  const sha = prHead(root, main, 3855);
+  sh(main, 'git fetch -q origin pull/3855/head');
+  const dir = path.join(root, 'app-pr-3855');
+  sh(main, `git worktree add -q --detach ${dir} FETCH_HEAD`);
+  // Without GitHub, this is exactly the old false "unpushed work".
+  expect((await wt.inspect(dir, { github: null })).action).toBe('keep');
+  const calls: string[] = [];
+  const r = await wt.reap(dir, { hints: { repo: 'o/app', prNumber: 3855 }, github: fakeGitHub({ [sha]: [{ number: 3855, state: 'open', merged: false }] }, calls) });
+  expect(r.outcome).toBe('removed');
+  expect(calls).toEqual([`o/app@${sha}`]);
+  expect(fs.existsSync(dir)).toBe(false);
+});
+
+test('a PR head held by a local refs/pull/* ref needs no network', async () => {
+  const { root, main } = repo();
+  prHead(root, main, 12);
+  sh(main, 'git fetch -q origin +refs/pull/12/head:refs/pull/12/head');
+  const dir = path.join(root, 'wt-pull-ref');
+  sh(main, `git worktree add -q --detach ${dir} refs/pull/12/head`);
+  expect((await wt.reap(dir, { github: null })).outcome).toBe('removed');
+});
+
+test("the session's recorded PR head SHA vouches for a detached review checkout", async () => {
+  const { root, main } = repo();
+  const sha = prHead(root, main, 9);
+  sh(main, 'git fetch -q origin pull/9/head');
+  const dir = path.join(root, 'wt-reviewed');
+  sh(main, `git worktree add -q --detach ${dir} FETCH_HEAD`);
+  // a SHA alone, without the PR it came from, is not trusted
+  expect((await wt.inspect(dir, { hints: { reviewedSha: sha }, github: null })).action).toBe('keep');
+  expect((await wt.reap(dir, { hints: { prNumber: 9, reviewedSha: sha }, github: null })).outcome).toBe('removed');
+});
+
+test('a squash-merged ticket branch whose remote branch was deleted is removed, branch too', async () => {
+  const { root, main } = repo();
+  const dir = path.join(root, 'dem-1');
+  sh(main, `git worktree add -q -b dem-1 ${dir} && cd ${dir} && echo t > t.txt && git add t.txt && git commit -qm t && git push -q origin dem-1`);
+  const sha = sh(dir, 'git rev-parse HEAD');
+  // GitHub squash-merges, auto-deletes the branch; the next fetch prunes it.
+  sh(main, 'git push -q origin --delete dem-1 && git fetch -q --prune origin');
+  expect((await wt.inspect(dir, { github: null })).action).toBe('keep');
+  const r = await wt.reap(dir, { hints: { repo: 'o/app' }, github: fakeGitHub({ [sha]: [{ number: 1, state: 'closed', merged: true }] }) });
+  expect(r.outcome).toBe('removed');
+  expect(r.branchDeleted).toBe(true);
+  expect(sh(main, 'git branch --list dem-1')).toBe('');
+});
+
+test('a genuinely unpushed commit on top of a merged PR is still kept', async () => {
+  const { root, main } = repo();
+  const dir = path.join(root, 'dem-2');
+  sh(main, `git worktree add -q -b dem-2 ${dir} && cd ${dir} && echo t > t.txt && git add t.txt && git commit -qm t && git push -q origin dem-2`);
+  const pushed = sh(dir, 'git rev-parse HEAD');
+  sh(main, 'git push -q origin --delete dem-2 && git fetch -q --prune origin');
+  sh(dir, 'echo more > u.txt && git add u.txt && git commit -qm "local only"');
+  const r = await wt.reap(dir, { hints: { repo: 'o/app' }, github: fakeGitHub({ [pushed]: [{ number: 2, state: 'closed', merged: true }] }) });
+  expect(r.outcome).toBe('kept');
+  expect(r.reasons?.join(' ')).toMatch(/2 commits not on any remote or other branch \(HEAD is in no pull request on GitHub\)/);
+  expect(fs.existsSync(path.join(dir, 'u.txt'))).toBe(true);
+});
+
+test('a dirty tree is kept even when its PR is merged — and GitHub is not even asked', async () => {
+  const { root, main } = repo();
+  const dir = path.join(root, 'dem-3');
+  sh(main, `git worktree add -q -b dem-3 ${dir} && cd ${dir} && echo t > t.txt && git add t.txt && git commit -qm t && git push -q origin dem-3`);
+  const sha = sh(dir, 'git rev-parse HEAD');
+  sh(main, 'git push -q origin --delete dem-3 && git fetch -q --prune origin');
+  sh(dir, 'echo edit >> a.txt');
+  const calls: string[] = [];
+  const r = await wt.reap(dir, { hints: { repo: 'o/app' }, github: fakeGitHub({ [sha]: [{ number: 3, state: 'closed', merged: true }] }, calls) });
+  expect(r.outcome).toBe('kept');
+  expect(r.reasons?.[0]).toMatch(/uncommitted/);
+  expect(calls).toEqual([]);
+});
+
+test('no answer from GitHub keeps the worktree (fail closed)', async () => {
+  const { root, main } = repo();
+  const sha = prHead(root, main, 4);
+  sh(main, 'git fetch -q origin pull/4/head');
+  const dir = path.join(root, 'wt-offline');
+  sh(main, `git worktree add -q --detach ${dir} ${sha}`);
+  const r = await wt.reap(dir, { hints: { repo: 'o/app', prNumber: 4 }, github: ghDown });
+  expect(r.outcome).toBe('kept');
+  expect(r.reasons?.join(' ')).toMatch(/GitHub could not confirm: gh: command not found/);
+});
+
+test('hintsFrom and githubSlug read what sessions and remotes actually carry', () => {
+  expect(wt.hintsFrom({ pr: 'https://github.com/mind-security/app/pull/3921' })).toEqual({ repo: 'mind-security/app', prNumber: 3921 });
+  expect(wt.hintsFrom({ repo: 'a/b', prNumber: '7', reviewedSha: 'abc1234' })).toEqual({ repo: 'a/b', prNumber: 7, reviewedSha: 'abc1234' });
+  expect(wt.hintsFrom({ repo: 'not a slug; rm -rf', prNumber: -1, reviewedSha: 'HEAD' })).toEqual({});
+  expect(wt.hintsFrom(undefined)).toEqual({});
+  expect(wt.githubSlug('https://github.com/mind-security/app.git')).toBe('mind-security/app');
+  expect(wt.githubSlug('git@github.com:maor700/arigami.git')).toBe('maor700/arigami');
+  expect(wt.githubSlug('/tmp/origin.git')).toBe(null);
+});
