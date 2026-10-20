@@ -42,10 +42,9 @@ beforeAll(async () => {
   prefs.setPrefs({ language: 'he' });
 });
 
-test('strongDirOf / dirOf / fieldDir: first strong character wins, neutral falls back', () => {
+test('strongDirOf / dirOf / fieldDir: RTL once RTL letters pass a small share, neutral falls back', () => {
   const { strongDirOf, dirOf, fieldDir } = i18n;
   expect(strongDirOf('שלום world')).toBe('rtl');
-  expect(strongDirOf('world שלום')).toBe('ltr');
   expect(strongDirOf('12:30 - פגישה')).toBe('rtl'); // digits and punctuation are neutral
   expect(strongDirOf('مرحبا')).toBe('rtl');
   expect(strongDirOf('')).toBeNull();
@@ -57,11 +56,48 @@ test('strongDirOf / dirOf / fieldDir: first strong character wins, neutral falls
   expect(fieldDir('hello')).toBe('ltr');
 });
 
+test('strongDirOf: Hebrew that opens with an English token is still Hebrew; English with a stray Hebrew word stays English', () => {
+  const { strongDirOf, RTL_SHARE } = i18n;
+  expect(RTL_SHARE).toBeLessThanOrEqual(0.25);
+  const rtl = [
+    'Vite מפעיל שרת פיתוח מהיר',
+    'esbuild מקמפל את הקוד מראש',
+    'WebSocket פתוח בין הדפדפן לשרת',
+    'HMR boundary — הקובץ הראשון שמקבל את העדכון',
+    'React Fast Refresh שומר על ה-state של הקומפוננטה',
+    'UX-TEST: ענה במילה אחת — בדיקת מובייל',
+    '.policy.badge.deleted מפתח חדש', // identifier is an island, not the language
+    'https://example.com/a/b/c הוא הקישור', // so is a URL
+    '~/repo/web/src/components/Md.jsx מכיל את הבאג',
+    'כחול #1E40AF',
+  ];
+  for (const s of rtl) expect([s, strongDirOf(s)]).toEqual([s, 'rtl']);
+  const ltr = [
+    'Run the tests before you push',
+    'Opened a pull request for the login flow of דני',
+    'https://example.com/a/b',
+    'web/src/lib/i18n.js',
+  ];
+  for (const s of ltr) expect([s, strongDirOf(s)]).toEqual([s, 'ltr']);
+});
+
+test('bidiParts: URLs, paths, identifiers and #hex inside RTL text become LTR islands; English text is untouched', () => {
+  const { bidiParts } = i18n;
+  expect(bidiParts('כחול #1E40AF')).toEqual(['כחול ', { ltr: '#1E40AF' }]);
+  expect(bidiParts('.policy.badge.deleted מפתח חדש')).toEqual([{ ltr: '.policy.badge.deleted' }, ' מפתח חדש']);
+  expect(bidiParts('ראה https://example.com/x/y.')).toEqual(['ראה ', { ltr: 'https://example.com/x/y' }, '.']);
+  expect(bidiParts('הקובץ ~/a/b.js נמחק')).toEqual(['הקובץ ', { ltr: '~/a/b.js' }, ' נמחק']);
+  expect(bidiParts('see https://example.com/x and a/b.js')).toEqual(['see https://example.com/x and a/b.js']);
+  expect(bidiParts('link text https://example.com/x', true)).toEqual(['link text ', { ltr: 'https://example.com/x' }]); // a fragment of an RTL block
+});
+
 test('nodeDir: inline code is ignored, nested text is found, nothing strong → ltr', () => {
   const text = (value) => ({ type: 'text', value });
   const el = (tagName, ...children) => ({ type: 'element', tagName, children });
   expect(nodeDir(el('p', el('code', text('Rail.jsx')), text(' מכיל באג')))).toBe('rtl');
-  expect(nodeDir(el('li', el('p', text('hello שלום'))))).toBe('ltr');
+  expect(nodeDir(el('li', el('p', text('hello world, שלום'))))).toBe('rtl');
+  expect(nodeDir(el('li', el('p', text('hello world')), el('code', text('שלום'))))).toBe('ltr');
+  expect(nodeDir(el('p', text('Vite'), el('strong', text(' מפעיל שרת'))))).toBe('rtl'); // all the block's text counts, not the first run
   expect(nodeDir(el('ul', el('li', text('1. ')), el('li', text('פריט'))))).toBe('rtl');
   expect(nodeDir(el('p', text('123')))).toBe('ltr');
 });
@@ -78,13 +114,71 @@ test('Md: every block carries its own dir; Hebrew list in an English doc and vic
   expect(dirsOf(html, 'table')).toEqual(['rtl']);
   expect(dirsOf(html, 'h2')).toEqual(['rtl']);
   expect(dirsOf(html, 'p').every((d) => d === 'rtl')).toBe(true);
-  const en = render(h(Md, null, '- first\n- second with עברית\n\n> a quote\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nconst x = "שלום";\n```'));
+  const en = render(h(Md, null, '- first item\n- second item, one word in עברית\n\n> a quote\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nconst x = "שלום";\n```'));
   expect(dirsOf(en, 'ul')).toEqual(['ltr']);
   expect(dirsOf(en, 'blockquote')).toEqual(['ltr']);
   expect(dirsOf(en, 'table')).toEqual(['ltr']);
   expect(dirsOf(en, 'pre')).toEqual(['ltr']);
   // a Hebrew paragraph that starts with inline code is still Hebrew
   expect(dirsOf(render(h(Md, null, '`Rail.jsx` מכיל באג')), 'p')).toEqual(['rtl']);
+});
+
+test('Md: a Hebrew reply whose blocks open with English tokens renders 0 LTR blocks; islands are isolated', () => {
+  const reply = [
+    'Vite מפעיל שרת פיתוח שמגיש את הקבצים ישירות (Hot Module Replacement).',
+    '',
+    '1. Vite — מגיש מודולים בלי bundle',
+    '2. esbuild — מקמפל תלויות מ-node_modules',
+    '3. WebSocket — ערוץ העדכונים לדפדפן',
+    '4. HMR boundary — הקובץ הראשון שמקבל את העדכון',
+    '5. React Fast Refresh — שומר על ה-state',
+    '',
+    '- `vite.config.js` מגדיר את הפורט',
+    '',
+    'הקישור: https://example.com/docs/hmr והקובץ ~/web/src/main.jsx',
+  ].join('\n');
+  const html = render(h(Md, null, reply));
+  for (const tag of ['p', 'ul', 'ol']) for (const d of dirsOf(html, tag)) expect([tag, d]).toEqual([tag, 'rtl']);
+  expect(html).not.toContain('<div dir="ltr">'); // no Hebrew item got an LTR wrapper
+  expect(html).toContain('<bdi dir="ltr">https://example.com/docs/hmr</bdi>');
+  expect(html).toContain('<bdi dir="ltr">~/web/src/main.jsx</bdi>');
+  // a wholly-English item in a Hebrew list orders its own words but keeps the list's side
+  const mixed = render(h(Md, null, '- פריט ראשון בעברית\n- פריט שני בעברית\n- run the tests.'));
+  expect(dirsOf(mixed, 'ul')).toEqual(['rtl']);
+  expect(mixed).toContain('<li><div dir="ltr">run the tests.</div></li>');
+  // English docs get no isolates
+  expect(render(h(Md, null, 'See https://example.com/x and a/b.js'))).not.toContain('<bdi');
+});
+
+test('dirIn + QuestionCard: mixed-script options follow the question, single-script ones keep their own', async () => {
+  const { dirIn } = i18n;
+  expect(dirIn('CSS variable בשם --accent-ok', 'rtl')).toBe('rtl');
+  expect(dirIn('Keep current', 'rtl')).toBe('ltr');
+  expect(dirIn('כחול', 'ltr')).toBe('rtl');
+  expect(dirIn('CSS variable בשם --accent-ok')).toBe('ltr'); // no context: the share decides
+  const { default: QuestionCard } = await import(web('components/QuestionCard.jsx'));
+  const event = { kind: 'tool-use', name: 'AskUserQuestion', toolUseId: 't1', input: { questions: [{ header: 'צבע', question: 'איזה צבע ראשי לכפתור ב-dark mode?', options: [
+    { label: 'כחול #1E40AF', description: 'dark mode — ניגודיות גבוהה' },
+    { label: 'ירוק', description: 'CSS variable בשם --accent-ok' },
+    { label: 'Keep current', description: 'No change' },
+  ] }] } };
+  const html = render(h(QuestionCard, { sessionId: 's1', event }));
+  expect(html).toContain('<bdi dir="ltr">#1E40AF</bdi>');
+  expect(html).toMatch(/dir="rtl"[^>]*>CSS variable בשם/);
+  expect(html).toMatch(/<span dir="ltr"[^>]*>(?:<span[^>]*>3<\/span>)?<span class="min-w-0">Keep current/);
+  // multi-select keeps its checkboxes, laid out on the label's own side
+  const multi = render(h(QuestionCard, { sessionId: 's1', event: { ...event, toolUseId: 't2', input: { questions: [{ ...event.input.questions[0], multiSelect: true }] } } }));
+  expect(multi).toMatch(/<span dir="rtl"[^>]*><span aria-hidden="true" data-checkbox="off"/);
+  expect(multi).toContain('<bdi dir="ltr">#1E40AF</bdi>');
+});
+
+test('BidiText: own direction, per-line direction, LTR islands in RTL text', async () => {
+  const { default: BidiText } = await import(web('components/BidiText.jsx'));
+  expect(render(h(BidiText, { text: 'UX-TEST: ענה במילה אחת' }))).toBe('<div dir="rtl">UX-TEST: ענה במילה אחת</div>');
+  expect(render(h(BidiText, { text: 'כחול #1E40AF', as: 'span' }))).toBe('<span dir="rtl">כחול <bdi dir="ltr">#1E40AF</bdi></span>');
+  expect(render(h(BidiText, { text: 'Plain English' }))).toBe('<div dir="ltr">Plain English</div>');
+  const multi = render(h(BidiText, { text: 'Vite מפעיל שרת\n\nDone.', lines: true }));
+  expect(multi).toBe('<div dir="rtl"><div dir="rtl">Vite מפעיל שרת</div><div dir="rtl">\u200b</div><div dir="ltr">Done.</div></div>');
 });
 
 test('Truncate: user text gets its own dir (ellipsis at its end) and aligns to the UI start edge; neutral text stays untouched', () => {
@@ -149,9 +243,10 @@ test('source guard: no physical left/right utilities in the app (use logical ms-
   expect(hits).toEqual([]);
 });
 
-test('CSS: .md blocks no longer rely on unicode-bidi: plaintext; ui-start exists', () => {
+test('CSS: .md blocks no longer rely on unicode-bidi: plaintext (first-strong); ui-start exists', () => {
   const css = fs.readFileSync(web('index.css'), 'utf8');
   expect(css).toContain('.ui-start');
   expect(css).toMatch(/html\[dir='rtl'\] \.ui-start\[dir='ltr'\]/);
   expect(css).not.toMatch(/\.md li,[\s\S]{0,120}unicode-bidi:\s*plaintext/);
+  expect(css).not.toMatch(/\.md li \{[^}]*unicode-bidi:\s*plaintext/);
 });

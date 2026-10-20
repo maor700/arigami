@@ -8,7 +8,8 @@
 import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from './ChatIcon.jsx';
-import { useT } from '../lib/i18n.js';
+import { useT, dirOf } from '../lib/i18n.js';
+import BidiText, { Isolated } from './BidiText.jsx';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, agentRef, z } from '../openui/define.js';
 import { buttonVariants } from './ui/button.jsx';
@@ -137,7 +138,7 @@ function ActionAutoLineView({ props: { event } }) {
     <ReceiptLine data-action-auto-line="">
       {event.agent && <AgentAvatar agent={event.agent} size={14} />}
       <span className="font-medium">{t('chat.actionAutoApproved', { kind: event.actionKind || '' })}</span>
-      <span dir="auto" className="min-w-0 truncate">{event.prompt}</span>
+      <BidiText as="span" text={event.prompt} className="min-w-0 truncate" />
       <span className="ms-auto rounded bg-[var(--term-accent-border)] px-1.5">{event.label || event.value}</span>
     </ReceiptLine>
   );
@@ -190,8 +191,8 @@ export function ActionBar({ session }) {
           {action.kind && <span className="text-xs text-fgdim">· {action.kind}</span>}
         </span>
       )}
-      <span className="min-w-0 flex-1 basis-52 text-xs leading-snug text-fg">
-        {action.prompt}{' '}
+      <span dir={dirOf(String(action.prompt ?? ''))} className="min-w-0 flex-1 basis-52 text-xs leading-snug text-fg">
+        <Isolated text={String(action.prompt ?? '')} />{' '}
         <span className="text-xs text-fgdim">
           {t('rail.revealedBy')}
         </span>

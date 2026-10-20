@@ -590,12 +590,10 @@ body {
 }
 .md li {
   margin: 0.15em 0;
-  /* the marker and indent belong to the LIST (its dir, set in Md.jsx); an item in
-     the other script still orders its own words/punctuation (plaintext) but stays
-     flush with the list's edge */
-  unicode-bidi: plaintext;
 }
-/* plaintext resolves `start` per item, so pin the edge to the list's side */
+/* the marker and indent belong to the LIST (its dir, set in Md.jsx); an item in
+   the other script orders its words in a wrapper with its own dir but stays
+   flush with the list's edge */
 .md ul[dir='ltr'] > li,
 .md ol[dir='ltr'] > li {
   text-align: left;
@@ -655,7 +653,7 @@ body {
   border-top: 1px solid var(--term-border);
   margin: 0.8em 0;
 }
-/* RTL only when needed: each text block carries its own dir="auto" (see
+/* RTL only when needed: each text block carries its own dir (computed in
    components/Md.jsx) so markers, indents and quote bars follow the block's
    language, not the app's; code/pre stay LTR. */
 .md pre,

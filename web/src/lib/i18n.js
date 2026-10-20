@@ -74,21 +74,67 @@ export function t(key, vars) {
   return lang === 'he' && !globalThis.__ARIGAMI_PLAIN_T ? isolateLatin(s) : s; // flag: test seam (test/_preload.ts) — tests compare exact literals
 }
 
-// Direction of a string by its first strong directional character. Neutral or
-// empty content defaults to LTR — English, numbers, and punctuation stay
-// left-aligned; only genuine RTL-script content (Hebrew, Arabic, …) flips to rtl.
-// This avoids dir="auto"'s trap where a leading "/", digit, or space makes the
-// field inherit the app's RTL direction and mis-aligns English text.
-const RTL_STRONG = /[֐-׿؀-ۿ܀-ݏݐ-ݿ߀-߿ࡠ-ࣿיִ-ﭏﭐ-﷿ﹰ-﻿]/;
-const LTR_STRONG = /[A-Za-zÀ-ʸͰ-ӿ]/;
-// strongDirOf is the same scan but says null for neutral-only text, so a caller
-// stitching several text runs together (markdown blocks) can keep looking.
+// Direction of a block of user/agent text. Not first-strong: a Hebrew sentence
+// that opens with a product or file name ("Vite מפעיל…", "`Rail.jsx` מכיל באג")
+// is still Hebrew, and laying it out LTR scrambles it. So the block is RTL once
+// RTL letters make up a small share of its prose letters; identifiers, paths,
+// URLs and hex/hashtag tokens are left out of the count (they are LTR islands,
+// not the sentence's language). No letters at all → null, so callers choose the
+// fallback: dirOf says LTR (English, numbers and punctuation stay left-aligned),
+// fieldDir follows the app language. dir="auto" is avoided for the same reason
+// as first-strong: a leading "/", digit or Latin word decides the whole block.
+const RTL_LETTER = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\u0750-\u077F\u07C0-\u07FF\u0860-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/g;
+const LTR_LETTER = /[A-Za-z\u00C0-\u02B8\u0370-\u04FF]/g;
+// Below this share of RTL letters a block stays LTR ("Opened a PR for <name>").
+export const RTL_SHARE = 0.2;
+// LTR islands inside prose: URLs, e-mails, paths, dotted identifiers (".a.b",
+// "Rail.jsx"), snake/env names, "#1E40AF" / "#123". Shared by the counter above
+// and by bidiParts below, which wraps each one in an LTR isolate.
+const ISLAND = new RegExp([
+  '[a-z][a-z0-9+.-]*://[^\\s<>"\'`]*[^\\s<>"\'`.,;:!?)\\]]', // URL (trailing punctuation belongs to the sentence)
+  '[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+', // e-mail
+  '(?:~|\\.{1,2})?/[\\w.@%+~-]+(?:/[\\w.@%+~-]+)*/?', // absolute / home / relative path
+  '[\\w@.-]+(?:/[\\w.@%+~-]+)+/?', // a/b/c
+  '\\$\\{?[A-Za-z_]\\w*\\}?', // $ENV
+  '#[0-9A-Fa-f]{3,8}\\b|#\\d+\\b', // colours, issue numbers
+  '\\.?[A-Za-z_][\\w-]*(?:\\.[A-Za-z_\\d][\\w-]*)+(?:\\(\\))?', // dotted identifiers / file names
+  '[A-Za-z]\\w*_\\w+', // snake_case
+].join('|'), 'g');
+
+const count = (s, re) => (s.match(re) || []).length;
 export function strongDirOf(s) {
-  for (const ch of s || '') {
-    if (RTL_STRONG.test(ch)) return 'rtl';
-    if (LTR_STRONG.test(ch)) return 'ltr';
+  const text = String(s ?? '');
+  const prose = text.replace(ISLAND, ' ');
+  const rtl = count(prose, RTL_LETTER);
+  const ltr = count(prose, LTR_LETTER);
+  // only islands (a bare path or URL) → LTR; only neutrals ("123 / -") → undecided
+  if (!rtl && !ltr) return count(text, LTR_LETTER) ? 'ltr' : null;
+  return rtl >= RTL_SHARE * (rtl + ltr) ? 'rtl' : 'ltr';
+}
+// Split text into prose and LTR islands ({ ltr: '…' }) — only in RTL text (an
+// English line needs no isolates): `rtl` says so for a fragment of a larger
+// block (a link's text inside a Hebrew paragraph); left out, the text decides. Render each island as
+// <bdi dir="ltr"> so its own neutrals ("#", "/", ".", "()") keep their places.
+export function bidiParts(s, rtl = undefined) {
+  const text = String(s ?? '');
+  if (!(rtl ?? count(text, RTL_LETTER) > 0)) return [text];
+  const out = [];
+  let last = 0;
+  for (const m of text.matchAll(ISLAND)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push({ ltr: m[0] });
+    last = m.index + m[0].length;
   }
-  return null;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+// Direction of a short piece inside a larger block (an option of a question
+// card): text in ONE script keeps its own direction, mixed text follows the
+// block's — a 3-word label is too short for the share to mean much.
+export function dirIn(s, context) {
+  const prose = String(s ?? '').replace(ISLAND, ' ');
+  if (context && count(prose, RTL_LETTER) && count(prose, LTR_LETTER)) return context;
+  return dirOf(s);
 }
 export function dirOf(s) {
   return strongDirOf(s) || 'ltr';

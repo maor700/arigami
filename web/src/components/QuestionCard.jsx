@@ -7,7 +7,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { Icon } from './ChatIcon.jsx';
-import { useT } from '../lib/i18n.js';
+import { useT, dirOf, dirIn } from '../lib/i18n.js';
+import BidiText, { Isolated } from './BidiText.jsx';
 import { keysBlocked, UNDO_MS } from '../openui/keys.js';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../openui/define.js';
@@ -223,15 +224,15 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
         // One-tap: a question freezes on its first pick. Submit card: the
         // options stay live until the whole card is sent.
         const settled = closed || sent || (!needsSubmit && chosenSet.length > 0);
+        // the question's language decides its mixed-script options (see dirIn)
+        const qDir = dirOf([q.header, q.question, ...options.map((o) => (typeof o === 'string' ? o : `${o?.label ?? ''} ${o?.description ?? ''}`))].join(' '));
         return (
           <div key={qi} data-qi={qi} className="mt-3 first:mt-2.5">
             {q.header && (
-              <div className="mb-0.5 text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase">
-                {q.header}
-              </div>
+              <BidiText text={q.header} dir={dirIn(q.header, qDir)} className="mb-0.5 text-xs tracking-[0.06em] text-[var(--term-accent-dim)] uppercase" />
             )}
             {q.question && (
-              <div className="mb-2 text-[13px] leading-snug text-[var(--term-accent-fg)]">{q.question}</div>
+              <BidiText text={q.question} dir={dirIn(q.question, qDir)} lines className="mb-2 text-[13px] leading-snug text-[var(--term-accent-fg)]" />
             )}
             {multi && !settled && !wasSkipped && (
               <div data-multi-hint className="-mt-1 mb-2 text-xs text-[var(--term-accent-dim)]">{t('chat.selectSeveral')}</div>
@@ -277,6 +278,7 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
                     }`}
                   >
                     <span
+                      dir={dirIn(label, qDir)}
                       className="flex items-center text-[13px] font-medium text-[var(--term-accent-strong)]"
                     >
                       {multi && (
@@ -293,15 +295,16 @@ function QuestionCardView({ props: { sessionId, event, live, stale } }) {
                       {oi < 9 && !settled && (
                         <span className="me-1.5 text-xs text-[var(--term-accent-dim)]">{oi + 1}</span>
                       )}
-                      <span className="min-w-0">{label}</span>
+                      <span className="min-w-0"><Isolated text={label} /></span>
                       {isChosen && !multi && <Icon icon={faCheck} className="ms-1" />}
                     </span>
                     {description && (
-                      <span
+                      <BidiText
+                        as="span"
+                        text={description}
+                        dir={dirIn(description, qDir)}
                         className="mt-0.5 block text-xs leading-snug text-[var(--term-accent-dim)]"
-                      >
-                        {description}
-                      </span>
+                      />
                     )}
                   </button>
                 );

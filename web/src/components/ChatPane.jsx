@@ -11,6 +11,7 @@ import { usePrefs, termViewFrom } from '../lib/prefs.js';
 import { hiddenInSimple, isAction, groupHasSubstance } from '../lib/chatMode.js';
 import { agoTime } from '../lib/time.js';
 import { useT, dirOf } from '../lib/i18n.js';
+import BidiText from './BidiText.jsx';
 import { prettyInput } from '../lib/pretty-input.js';
 import {
   ArchiveIcon,
@@ -174,7 +175,7 @@ function UserMsg({ event }) {
         dir={d}
         className="max-w-[85%] rounded-lg border border-[var(--term-userborder)] bg-[var(--term-userbg)] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-[var(--term-userfg)]"
       >
-        {text}
+        <BidiText as="div" text={text} lines dir={d} />
         {atts.length > 0 && (
           <div className={`flex flex-wrap gap-1.5 ${text ? 'mt-2' : ''}`}>
             {atts.map((a, i) => {

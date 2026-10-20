@@ -21,6 +21,7 @@ import {
 } from './ui/index.js';
 import { useIsDesktop } from '../lib/useMedia.js';
 import { useT } from '../lib/i18n.js';
+import BidiText from './BidiText.jsx';
 import { fmtDateTime } from '../lib/time.js';
 
 // File status letter (M/A/D/??) — the colour is the status, the letter keeps it
@@ -40,8 +41,8 @@ const baseName = (p) => String(p || '').split('/').pop();
 const dirName = (p) => { const parts = String(p || '').split('/'); parts.pop(); return parts.join('/'); };
 
 // Explanation prose — may be any language; dir comes from the skill ('rtl'/'ltr')
-// or falls back to 'auto' (the browser detects per content).
-function ExplainCard({ label, title, body, dir = 'auto' }) {
+// or, left out, from the text itself (BidiText), line by line.
+function ExplainCard({ label, title, body, dir }) {
   const t = useT();
   if (!title && !body) return null;
   return (
@@ -50,8 +51,8 @@ function ExplainCard({ label, title, body, dir = 'auto' }) {
         <WandSparklesIcon className="size-3.5" aria-hidden="true" />
         <span>{label}</span>
       </div>
-      {title && <div dir={dir} className="text-base leading-snug font-semibold text-foreground">{title}</div>}
-      {body && <div dir={dir} className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{body}</div>}
+      {title && <BidiText text={title} dir={dir} className="text-base leading-snug font-semibold text-foreground" />}
+      {body && <BidiText text={body} dir={dir} lines className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground" />}
     </div>
   );
 }
@@ -579,7 +580,7 @@ export default function ChangesTab({ session, active }) {
               >
                 <WandSparklesIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
-                  <span dir={ft.dir || 'auto'} className="block text-sm leading-snug font-medium text-foreground">{ft.title}</span>
+                  <BidiText as="span" text={ft.title} dir={ft.dir} className="block text-sm leading-snug font-medium text-foreground" />
                   <span className="text-xs text-muted-foreground tabular-nums">{t('chat.filesCount', { n: (ft.files || []).length })}</span>
                 </span>
               </button>
@@ -835,11 +836,9 @@ export default function ChangesTab({ session, active }) {
             <div className={`flex min-w-0 flex-col bg-background ${fsActive ? 'fixed inset-0 z-40' : 'min-h-0 flex-1'}`}>
               {curFeature ? (
                 <div className="thin-scroll min-h-0 flex-1 overflow-auto">
-                  <ExplainCard label={t('chat.feature')} title={curFeature.title} body={curFeature.summary} dir={curFeature.dir || 'auto'} />
+                  <ExplainCard label={t('chat.feature')} title={curFeature.title} body={curFeature.summary} dir={curFeature.dir} />
                   {curFeature.details && (
-                    <div dir={curFeature.dir || 'auto'} className="mx-3.5 -mt-1 mb-3 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                      {curFeature.details}
-                    </div>
+                    <BidiText text={curFeature.details} dir={curFeature.dir} lines className="mx-3.5 -mt-1 mb-3 text-sm leading-relaxed whitespace-pre-wrap text-foreground" />
                   )}
                   <div className={SECTION_LABEL}>{t('chat.filesInFeature')}</div>
                   <div className="flex flex-col gap-px px-1.5">
@@ -909,7 +908,7 @@ export default function ChangesTab({ session, active }) {
                   </div>
                   <div className="thin-scroll min-h-0 flex-1 overflow-auto">
                     {selected && fileExpl(selected)?.summary && (
-                      <ExplainCard label={t('chat.whatChanged')} body={fileExpl(selected).summary} dir={fileExpl(selected).dir || 'auto'} />
+                      <ExplainCard label={t('chat.whatChanged')} body={fileExpl(selected).summary} dir={fileExpl(selected).dir} />
                     )}
                     {(fileComments.length > 0 || fileComposer) && (
                       <div className="m-3 flex flex-col gap-2">
