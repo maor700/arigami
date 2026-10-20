@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInChild } from './_child.js';
-import { compareVersions, parseVersion, isNewer, createUpdater, DEFAULT_MIN_FREE_MB } from '../server/lib/claude-update.js';
+import { compareVersions, parseVersion, isNewer, createUpdater, DEFAULT_MIN_FREE_MB, updateArgs } from '../server/lib/claude-update.js';
 
 // ---- version compare ------------------------------------------------------------
 
@@ -336,4 +336,20 @@ test('codex updater: events and notification carry the codex name; never auto-ap
 test('startClaudeUpdater does not arm the daily check when no claude binary resolves', async () => {
   const { startClaudeUpdater } = await import('../server/lib/claude-update.js');
   expect(await startClaudeUpdater({ bin: 'claude' })).toBeNull();
+});
+
+// A binary the host can't write (the image's root-owned npm install) is replaced by a native install in ~/.local.
+
+test('updateArgs: `update` where the install dir is writable, `install latest` where it is not (follows symlinks)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-upd-'));
+  const real = path.join(dir, 'versions', '2.1.0');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.writeFileSync(real, '');
+  const link = path.join(dir, 'claude');
+  fs.symlinkSync(real, link);
+  const seen: string[] = [];
+  expect(updateArgs(link, (d: string) => (seen.push(d), true))).toEqual(['update']);
+  expect(seen).toEqual([path.dirname(real)]);
+  expect(updateArgs(link, () => false)).toEqual(['install', 'latest']);
+  expect(updateArgs(link)).toEqual(['update']);
 });

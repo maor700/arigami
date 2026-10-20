@@ -87,12 +87,24 @@ async function probeInstalled(force = false) {
   return v ? parseVersion(v) : null;
 }
 
-// Real runner: `claude update` under the host, output captured, killed on timeout.
+/**
+ * `claude update` replaces the binary where it is installed. When the host can't write there — the container image's
+ * root-owned npm global install, run as an unprivileged user — `claude install latest` instead drops a native build
+ * into ~/.local (the persistent volume in the image, whose ~/.local/bin comes first on PATH), and claude-bin.js
+ * resolves that one from then on.
+ */
+export function updateArgs(bin, canWrite = (dir) => { try { fs.accessSync(dir, fs.constants.W_OK); return true; } catch { return false; } }) {
+  let real = bin;
+  try { real = fs.realpathSync(bin); } catch {}
+  return canWrite(path.dirname(real)) ? ['update'] : ['install', 'latest'];
+}
+
+// Real runner: `claude update` (or install, see updateArgs) under the host, output captured, killed on timeout.
 function runClaudeUpdate({ timeoutMs = APPLY_TIMEOUT_MS } = {}) {
   return new Promise(async (resolve) => {
     const { claudeBin } = await import('./claude-bin.js');
     const bin = claudeBin({ force: true });
-    execFile(bin, ['update'], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, CI: '1' } }, (err, stdout, stderr) => {
+    execFile(bin, updateArgs(bin), { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, CI: '1' } }, (err, stdout, stderr) => {
       const output = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim();
       resolve({ code: err ? (err.code === undefined || typeof err.code === 'string' ? 1 : err.code) : 0, timedOut: !!err?.killed, output, error: err ? err.message : null });
     });
