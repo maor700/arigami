@@ -28,6 +28,7 @@ import * as desktops from './lib/desktops.js';
 import { pickDriver } from './lib/screen-driver.js';
 import * as chrome from './lib/chrome.js';
 import * as reap from './reap.js';
+import * as ticketProvision from './ticket-provision.js';
 import * as browserActions from './lib/browser-actions.js';
 import * as caps from './capabilities.js';
 import * as agents from './agents.js';
@@ -2850,6 +2851,8 @@ function allocatePort(): number | null {
       .map((s: any) => Number(s.metadata?.port))
       .filter((n) => Number.isFinite(n) && n > 0)
   );
+  // a port a ticket launcher is showing right now is spoken for too
+  for (const p of ticketProvision.reservedPorts()) used.add(p);
   for (let p = lo; p <= hi; p++) if (!used.has(p)) return p;
   return null;
 }
@@ -4635,6 +4638,7 @@ export async function handle(
       }
       if (!body.ticket) return badRequest(res, 'ticket or kind:"empty" required');
       const item = t.deferTicket(String(body.ticket), body.title, body.prompt, {
+        permissionMode: body.permissionMode,
         skill: body.skill,
         model: body.model,
         effort: body.effort,
@@ -5524,6 +5528,14 @@ export async function handle(
       const full = u.searchParams.get('full') === '1' && canReadFullList((req as any).auth ?? null);
       return json(res, full ? state.listSessions({ archived }) : state.listSessionsForWire({ archived }));
     }
+    // The ticket launcher's plan panel: the worktree, branch and (reserved) port a
+    // `provision` launch will get. Re-post with the returned `reservation` to keep
+    // the same port across re-plans (e.g. a repo change).
+    if (p === '/__api/ticket-plan' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      if (!body?.ticket) return badRequest(res, 'ticket required');
+      return json(res, await ticketProvision.planTicket({ ticket: String(body.ticket), title: body.title, repo: body.repo, reservation: body.reservation }));
+    }
     if (p === '/__api/sessions' && m === 'POST') {
       const body = (await readBody(req)) as any;
       // A1: born from an agent — inherit its model (unless overridden), its
@@ -5564,6 +5576,29 @@ export async function handle(
         body.permissionMode = wired.permissionMode;
         body.metadata = { ...(body.metadata || {}), ...wired.metadata };
       }
+      // Ticket launch with `provision`: the host makes the worktree + claims the
+      // port the plan panel showed, whatever skill runs — so the session starts
+      // in its worktree with $PORT set, and the first chat event says what happened.
+      let provisioned: ticketProvision.TicketProvision | null = null;
+      const provTicket = body.metadata?.ticket ? String(body.metadata.ticket) : '';
+      if (provTicket && body.provision && !(body.master && kind)) {
+        const pv = typeof body.provision === 'object' ? body.provision : {};
+        provisioned = await ticketProvision.provisionTicket({ ticket: provTicket, title: body.title, repo: pv.repo, reservation: pv.reservation });
+        body.metadata = {
+          ...(body.metadata || {}),
+          ...(provisioned.port != null ? { port: provisioned.port } : {}),
+          ...(provisioned.ok
+            ? {
+                worktree: provisioned.dir,
+                branch: provisioned.branch,
+                base: provisioned.base,
+                repo: provisioned.repo,
+                ...(provisioned.reused ? {} : { cleanup: defaultCleanupCmds(provisioned.dir, provisioned.branch) }),
+              }
+            : {}),
+        };
+        if (provisioned.ok) body.cwd = provisioned.dir;
+      }
       // S1: cwd names a registered repo that isn't cloned (or a path that
       // doesn't exist) → ask for `repo:<name>` instead of spawning claude in
       // a missing directory.
@@ -5598,6 +5633,8 @@ export async function handle(
         folderId: body.folderId,
         folderName: body.master && kind ? undefined : body.folderName,
       });
+      // The provisioning result is the session's first chat event (before the spawn).
+      if (provisioned) claude.appendChat(s.id, { kind: 'system', text: ticketProvision.provisionReport(provisioned), provision: provisioned });
       // needs_screen (T8): allocate the desktop BEFORE the first spawn so
       // claude.js picks up metadata.screen.display and injects DISPLAY into
       // the session's env from the start. Not fatal — a failed allocation
@@ -5611,10 +5648,13 @@ export async function handle(
       // something to build from — leaves the dispatch/worker path (which
       // always sends its own explicit task prompt) untouched.
       const ticketId = body.metadata?.ticket ? String(body.metadata.ticket) : undefined;
-      const prompt =
+      let prompt =
         body.skill || body.prompt || ticketId
           ? buildFirstPrompt({ skill: body.skill, prompt: body.prompt, ticket: ticketId })
           : null;
+      if (provisioned) {
+        prompt = `${prompt || ''}\n\n${ticketProvision.provisionPromptBlock(provisioned)}`.trim();
+      }
       if (prompt) {
         try {
           claude.sendMessage(s.id, prompt);

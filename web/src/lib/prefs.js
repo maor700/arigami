@@ -37,6 +37,7 @@ const DEFAULTS = {
   sessionDefaultPresetId: '', // id of the preset applied when the launcher opens, any tab
   sessionDefaultPresetByMode: { ticket: '', empty: '', trigger: '' }, // per-launcher-tab override
   autonomyWarningDismissed: false, // "don't show again" for the autonomous-trigger warning
+  launcherPermissionMode: '', // the launcher's last-picked permission mode ('' = never picked → acceptEdits)
   usageExpanded: false, // rail usage panel: collapsed = one 5h-session line, expanded = full session+week charts
   accent: '', // brand accent hex (#rrggbb); '' = built-in default (jade)
   logo: DEFAULT_LOGO, // origami logo preset: 'star' (brand) | 'crane' | 'fold' | 'plane' | 'boat'
@@ -183,6 +184,7 @@ function sanitize(raw) {
     sessionDefaultPresetId: typeof p.sessionDefaultPresetId === 'string' ? p.sessionDefaultPresetId : '',
     sessionDefaultPresetByMode: sanitizeByMode(p.sessionDefaultPresetByMode),
     autonomyWarningDismissed: p.autonomyWarningDismissed === true,
+    launcherPermissionMode: ['default', 'acceptEdits', 'plan', 'bypassPermissions'].includes(p.launcherPermissionMode) ? p.launcherPermissionMode : '',
     usageExpanded: p.usageExpanded === true,
     accent: /^#[0-9a-fA-F]{6}$/.test(p.accent) ? p.accent : '',
     // No UI exposes a logo picker (Appearance.jsx keeps it out — SETTINGS-IA
