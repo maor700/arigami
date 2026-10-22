@@ -86,3 +86,57 @@ test('claude.js composes the first turn from the registry: an override reaches a
   expect(out.full).toBe('');
   expect(out.every).toBe(out.def);
 });
+
+// ---- phase 2: what an agent and a session inherit ----------------------------------------------------------------------
+
+test('cleanLayer keeps off / on / own text, drops junk, and returns null when nothing is left', () => {
+  const { out } = inChild(
+    "emit({l:pb.cleanLayer({links:'off',identity:'on',login:{text:'mine',engines:['codex','x']},'Bad Id':'off',junk:42,blank:{text:'  '},flow:{text:'f',when:'every-turn'}}),n:pb.cleanLayer({x:7}),a:pb.cleanLayer([1])});"
+  );
+  expect(out.l).toEqual({ links: 'off', identity: 'on', login: { text: 'mine', engines: ['codex'] }, flow: { text: 'f', when: 'every-turn' } });
+  expect(out.n).toBeNull();
+  expect(out.a).toBeNull();
+});
+
+test('layers resolve session over agent over the owner, each block marked with the layer that decided it', () => {
+  const { out } = inChild(
+    "pb.saveBlock('links',{enabled:false});" +
+      "const b=pb.applyLayers(pb.listBlocks(),{agent:{links:'on',login:{text:'AGENT login'},extra:{text:'AGENT own'}},session:{login:'off',identity:{text:'SESSION identity'}}});" +
+      "const by=Object.fromEntries(b.map(x=>[x.id,{enabled:x.enabled,source:x.source,text:x.text.slice(0,20)}]));" +
+      "emit({by,first:pb.render('first-turn',{},b)});"
+  );
+  expect(out.by.links).toEqual({ enabled: true, source: 'agent', text: out.by.links.text }); // the owner turned it off, the agent back on
+  expect(out.by.login).toMatchObject({ enabled: false, source: 'session' }); // the session wins over the agent
+  expect(out.by.identity).toMatchObject({ enabled: true, source: 'session', text: 'SESSION identity' });
+  expect(out.by['host-rules'].source).toBe('default');
+  expect(out.by.extra).toMatchObject({ enabled: true, source: 'agent', text: 'AGENT own' });
+  expect(out.first).toContain('Arigami links');
+  expect(out.first).not.toContain('AGENT login');
+  expect(out.first).toContain('SESSION identity');
+  expect(out.first.indexOf('AGENT own')).toBeLessThan(out.first.indexOf('SESSION identity')); // own blocks before identity
+});
+
+test("a new session gets its agent's and its own layer; the preview says which layer decided each block", () => {
+  const { out } = inChild(
+    "const ag=await import('./server/agents.ts');const st=await import('./server/state.ts');const c=await import('./server/claude.js');" +
+      "ag.createAgent({name:'Writer',slug:'writer'});const u=ag.updateAgent('writer',{prompts:{links:{text:'WRITER links'},'Bad':'off'}});" +
+      "const s=st.createSession({title:'t',metadata:{agent:'writer'}});st.patchSession(s.id,{metadata:{prompts:{'host-rules':'off'}}});" +
+      "const pv=c.firstTurnPreview({session:s.id});const pa=c.firstTurnPreview({agent:'writer'});" +
+      "emit({stored:u.agent.prompts,first:pv.firstTurn,blocks:pv.blocks,agentOnly:pa.firstTurn});"
+  );
+  expect(out.stored).toEqual({ links: { text: 'WRITER links' } });
+  expect(out.first).toContain('WRITER links');
+  expect(out.first).not.toContain('Temporary files go under $TMPDIR'); // the session turned host-rules off
+  expect(out.blocks.find((b) => b.id === 'host-rules')).toMatchObject({ enabled: false, source: 'session' });
+  expect(out.blocks.find((b) => b.id === 'links')).toMatchObject({ source: 'agent' });
+  expect(out.agentOnly).toContain('WRITER links');
+  expect(out.agentOnly).toContain('Temporary files go under $TMPDIR'); // the agent alone did not turn it off
+});
+
+test('only a person sets a layer: the session PATCH and the agent PATCH drop `prompts` coming from a session token (source-level)', () => {
+  const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/api.ts'), 'utf8');
+  const sess = src.slice(src.indexOf("'prompts' in body.metadata"), src.indexOf("'prompts' in body.metadata") + 600);
+  expect(sess).toContain("me?.kind === 'session'");
+  expect(sess).toContain('cleanLayer');
+  expect(src).toMatch(/auth\?\.kind === 'session'\) delete \(patch as Record<string, unknown>\)\.prompts/);
+});

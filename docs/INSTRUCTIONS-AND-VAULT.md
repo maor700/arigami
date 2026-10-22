@@ -1,7 +1,7 @@
 # Editable instructions, per-agent/session inheritance, and a credential vault — design
 
-Status: **phase 1 built** (server/prompt-blocks.ts, Settings › Customization); phases 2–3 are
-still proposals. Three phases, each shippable on its own.
+Status: **phases 1–2 built** (server/prompt-blocks.ts, Settings › Customization, agent and session Advanced); phase 3 is
+still a proposal. Three phases, each shippable on its own.
 
 Goal: automate everything that can be automated and take load off the owner — without the model, the chat or the
 host's disk ever holding a password.

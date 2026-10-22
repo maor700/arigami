@@ -298,3 +298,57 @@ export function resetBlock(id: string): void {
   if (BUILTIN.some((b) => b.id === id)) fs.rmSync(path.join(PROMPTS_DIR(), `${id}.md`), { force: true });
   else fs.rmSync(path.join(CUSTOM_DIR(), `${id}.md`), { force: true });
 }
+
+// ---- layers: what an agent or a session inherits (phase 2) ----------------------------------------------------------
+//
+// Resolution, most specific last: Arigami default → the owner's override (above) → the agent's layer → the session's
+// layer. A layer maps a block id to 'off', 'on', or its own text; a missing id inherits. An id that matches no block is
+// a block of that layer's own (first turn unless it says otherwise).
+
+export type LayerEntry = 'off' | 'on' | { text: string; when?: When; engines?: Engine[] };
+export type Layer = Record<string, LayerEntry>;
+export type LayerSource = 'default' | 'owner' | 'agent' | 'session';
+export interface LayeredBlock extends BlockView { source: LayerSource }
+
+const MAX_LAYER_TEXT = 20_000;
+
+/** A layer as stored: unknown shapes dropped, ids checked, texts capped. Null when nothing is left. */
+export function cleanLayer(input: unknown): Layer | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const out: Layer = {};
+  for (const [id, v] of Object.entries(input as Record<string, unknown>)) {
+    if (!ID_RE.test(id)) continue;
+    if (v === 'off' || v === 'on') out[id] = v;
+    else if (v && typeof v === 'object' && typeof (v as any).text === 'string' && (v as any).text.trim()) {
+      const e: { text: string; when?: When; engines?: Engine[] } = { text: (v as any).text.replace(/\r\n/g, '\n').slice(0, MAX_LAYER_TEXT) };
+      if ((v as any).when === 'every-turn' || (v as any).when === 'first-turn') e.when = (v as any).when;
+      const engines = Array.isArray((v as any).engines) ? (v as any).engines.filter((x: unknown): x is Engine => x === 'claude' || x === 'codex') : [];
+      if (engines.length) e.engines = engines;
+      out[id] = e;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** The blocks after the agent's and the session's layers, each marked with the layer that decided it. */
+export function applyLayers(blocks: BlockView[], layers: { agent?: Layer | null; session?: Layer | null }): LayeredBlock[] {
+  const out: LayeredBlock[] = blocks.map((b) => ({ ...b, source: b.builtin ? (b.edited ? 'owner' : 'default') : 'owner' }));
+  for (const name of ['agent', 'session'] as const) {
+    const layer = layers[name];
+    if (!layer) continue;
+    for (const [id, e] of Object.entries(layer)) {
+      const b = out.find((x) => x.id === id);
+      if (b) {
+        if (e === 'off') Object.assign(b, { enabled: false, source: name });
+        else if (e === 'on') Object.assign(b, { enabled: true, source: name });
+        else Object.assign(b, { text: e.text, enabled: true, source: name, ...(e.when && !b.builtin ? { when: e.when } : {}), ...(e.engines ? { engines: e.engines } : {}) });
+      } else if (typeof e === 'object') {
+        out.push({
+          id, title: id, description: '', when: e.when || 'first-turn', engines: e.engines || null, builtin: false, guardrail: false,
+          vars: [], enabled: true, edited: true, defaultText: null, text: e.text, source: name,
+        });
+      }
+    }
+  }
+  return out;
+}

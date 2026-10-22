@@ -1389,6 +1389,8 @@ async function handleAgents(req: IncomingMessage, res: ServerResponse, u: URL, p
   if (!sub && m === 'PATCH') {
     const body = (await readBody(req)) as any;
     const { homeSessionId: _h, slug: _s, createdAt: _c, ...patch } = body || {};
+    // PROMPT1 phase 2: an agent's instruction layer is the owner's to set — not a session's (update_agent).
+    if ((req as any).auth?.kind === 'session') delete (patch as Record<string, unknown>).prompts;
     const r = agents.updateAgent(slug, patch);
     return r.ok ? json(res, r.agent) : json(res, { ok: false, error: r.error }, r.status || 400);
   }
@@ -3886,7 +3888,8 @@ export async function handle(
       if (p === '/__api/prompts/preview' && m === 'GET') {
         const engine = u.searchParams.get('engine') === 'codex' ? 'codex' : 'claude';
         const agent = u.searchParams.get('agent') || null;
-        return json(res, claude.firstTurnPreview({ engine, agent }));
+        const session = u.searchParams.get('session') || null;
+        return json(res, claude.firstTurnPreview({ engine, agent, session }));
       }
       const id = decodeURIComponent(p.slice('/__api/prompts/'.length));
       try {
@@ -5875,6 +5878,19 @@ export async function handle(
           if (!s.metadata?.port) {
             const port = allocatePort();
             if (port) body.metadata.port = port;
+          }
+        }
+        // PROMPT1 phase 2: a session's own layer over the instruction blocks. Set by a person (the session's
+        // Advanced settings), never by the session itself through set_metadata — an agent does not get to switch off
+        // its own rules. Stored cleaned; null clears it.
+        if (body.metadata && typeof body.metadata === 'object' && 'prompts' in body.metadata) {
+          const me = (req as any).auth as import('./auth.js').Principal | null;
+          if (me?.kind === 'session') {
+            const { prompts: _drop, ...rest } = body.metadata as Record<string, unknown>;
+            body.metadata = rest;
+          } else {
+            const pb = await import('./prompt-blocks.js');
+            (body.metadata as Record<string, unknown>).prompts = pb.cleanLayer((body.metadata as any).prompts);
           }
         }
         // UX1: `agentHome` is minted by ensureHomeSession alone — set_metadata

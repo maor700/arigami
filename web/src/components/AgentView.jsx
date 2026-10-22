@@ -42,6 +42,7 @@ import { DialogTitle } from './ui/dialog.jsx';
 import { Popover, PopoverTrigger, PopoverContent } from './ui/popover.jsx';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu.jsx';
 import { Tip } from './ui/tooltip.jsx';
+import InstructionLayer from './settings/InstructionLayer.jsx';
 import { faXmark, faIdBadge, faBrain, faListCheck, faLink, faClock, faComments, faTrash, faCaretDown, faCaretRight, faDiagramProject, faEllipsis, faBars, faCircleInfo } from '@fortawesome/free-solid-svg-icons';
 
 export const TABS = ['home', 'persona', 'memory', 'connections', 'routine', 'activity', 'runs'];
@@ -71,11 +72,11 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
   const [form, setForm] = useState({
     name: agent.name, slug: agent.slug || '', emoji: agent.emoji, color: agent.color, engine: agent.engine || '', model: agent.model || '', persona: agent.persona || '',
     skills: agent.skills || [], tools: agent.tools || [], budget: agent.budget?.tokensPerDay ? String(agent.budget.tokensPerDay) : '',
-    domains: (agent.domains || []).join(', '), autoApprove: agent.autoApprove || [],
+    domains: (agent.domains || []).join(', '), autoApprove: agent.autoApprove || [], prompts: agent.prompts || null,
   });
   const [busy, setBusy] = useState(false);
   // Advanced (model/budget/tools/skills) opens only when something is already set there.
-  const [advanced, setAdvanced] = useState(!!(agent.engine || agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length));
+  const [advanced, setAdvanced] = useState(!!(agent.engine || agent.model || agent.budget?.tokensPerDay || agent.tools?.length || agent.skills?.length || agent.domains?.length || agent.autoApprove?.length || (agent.prompts && Object.keys(agent.prompts).length)));
   useEffect(() => { api.get('/skills').then((r) => setSkillNames((r?.skills || []).map((s) => s.name))).catch(() => {}); }, []);
   const set = (k) => (e) => setForm((c) => ({ ...c, [k]: e.target.value }));
   const toggle = (k, v) => setForm((c) => ({ ...c, [k]: c[k].includes(v) ? c[k].filter((x) => x !== v) : [...c[k], v] }));
@@ -85,7 +86,7 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
       const body = {
         name: form.name.trim(), emoji: form.emoji.trim() || '🤖', color: form.color, engine: form.engine || null, model: form.model || null, persona: form.persona,
         skills: form.skills, tools: form.tools, budget: Number(form.budget) > 0 ? { tokensPerDay: Number(form.budget) } : null,
-        domains: form.domains.split(',').map((d) => d.trim()).filter(Boolean), autoApprove: form.autoApprove,
+        domains: form.domains.split(',').map((d) => d.trim()).filter(Boolean), autoApprove: form.autoApprove, prompts: form.prompts,
       };
       const a = isNew
         ? await api.post('/agents', { ...body, slug: form.slug.trim() || undefined })
@@ -181,6 +182,11 @@ function PersonaTab({ agent, onSaved, onDeleted, onOpenHome, isNew }) {
             )}
           </div>
         </div>
+        {!isNew && (
+          <div className="mt-4">
+            <InstructionLayer scope="agent" value={form.prompts} onChange={(prompts) => setForm((c) => ({ ...c, prompts }))} />
+          </div>
+        )}
       </section>
       )}
       <div className="flex flex-wrap items-center gap-2">

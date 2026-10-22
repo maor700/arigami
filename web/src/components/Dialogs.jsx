@@ -9,6 +9,7 @@ import { Input, Textarea } from './ui/input.jsx';
 import { Label } from './ui/label.jsx';
 import { Checkbox } from './ui/checkbox.jsx';
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from './ui/dialog.jsx';
+import InstructionLayer from './settings/InstructionLayer.jsx';
 
 // Modal shell on the ui Dialog (Radix: focus trap + restore, Esc, outside
 // click, portaled to <body> so Rail's transformed box can't clip it). Same
@@ -144,6 +145,7 @@ export function EditSessionDialog({ session, onClose }) {
   const [title, setTitle] = useState(session.title || '');
   const [status, setStatus] = useState(session.status || '');
   const [description, setDescription] = useState(session.metadata?.description || '');
+  const [prompts, setPrompts] = useState(session.metadata?.prompts || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -154,7 +156,7 @@ export function EditSessionDialog({ session, onClose }) {
       await api.patch(`/sessions/${session.id}`, {
         title: title.trim() || session.title,
         status: status.trim(),
-        metadata: { description: description.trim() },
+        metadata: { description: description.trim(), prompts },
       });
       onClose();
     } catch (e) {
@@ -209,6 +211,7 @@ export function EditSessionDialog({ session, onClose }) {
             className="resize-none"
           />
         </div>
+        <InstructionLayer scope="session" value={prompts} onChange={setPrompts} />
       </div>
       {error && <div className={ERR}>{error}</div>}
       <DialogFooter>

@@ -2121,6 +2121,12 @@ function blockCtx(p, extra = {}) {
   };
 }
 
+// PROMPT1 phase 2: what this agent and this session inherit — their layers over the owner's blocks.
+function layeredBlocks(agentSlug, metadata) {
+  const agent = agentSlug ? getAgent(agentSlug) : null;
+  return promptBlocks.applyLayers(promptBlocks.listBlocks(), { agent: agent?.prompts || null, session: metadata?.prompts || null });
+}
+
 // F8: who the agent is and what it can do — the `identity` block, with the connectable capabilities (probed at spawn,
 // capabilitiesHint) and the installed extensions filled in. Kept as a function for its callers.
 export function identityReminder(hint) {
@@ -2180,7 +2186,8 @@ refreshCapabilitiesHint().catch(() => {});
 }
 
 function memoryBootstrapPrefix(p) {
-  const blocks = promptBlocks.render('first-turn', blockCtx(p)); // links, login, host rules, …, the owner's own, identity
+  // links, login, host rules, …, the owner's own, identity — after the agent's and the session's layers
+  const blocks = promptBlocks.render('first-turn', blockCtx(p), layeredBlocks(p?.agent, p?.id ? getSession(p.id)?.metadata : p?.metadata));
   // A1: a session born from an agent gets the agent's persona block and boots
   // with USER.md + the AGENT's MEMORY.md (its namespace), not the shared one.
   const persona = p?.agent ? personaBlock(p.agent) : '';
@@ -2204,16 +2211,26 @@ export const SIMPLE_MODE_REMINDER = promptBlocks.wrap(promptBlocks.BUILTIN.find(
 
 /** The every-turn blocks: Simple mode while it is on, plus the owner's own every-turn blocks. */
 export function chatModePrefix(metadata, engine) {
-  return promptBlocks.render('every-turn', blockCtx({ engine }, { simpleMode: !!metadata && metadata.chatMode === 'simple' }));
+  const agent = typeof metadata?.agent === 'string' ? metadata.agent : null;
+  return promptBlocks.render('every-turn', blockCtx({ engine }, { simpleMode: !!metadata && metadata.chatMode === 'simple' }), layeredBlocks(agent, metadata));
 }
 
 /**
- * What a fresh session would get in front of its first message — Settings' "as a session sees it".
- * @param {{ engine?: string, agent?: string | null }} [o]
+ * What a fresh session would get in front of its first message — Settings' "as a session sees it". With `session`,
+ * that session's own layer (and its agent's) applies, and the engine is the session's.
+ * @param {{ engine?: string, agent?: string | null, session?: string | null }} [o]
  */
-export function firstTurnPreview({ engine = 'claude', agent = null } = {}) {
-  const p = { engine, agent, capabilitiesHint: capabilitiesHint(agent ? `agent:${agent}` : 'global', engine) };
-  return { firstTurn: memoryBootstrapPrefix(p), everyTurn: chatModePrefix({ chatMode: 'simple' }, engine) };
+export function firstTurnPreview({ engine = 'claude', agent = null, session = null } = {}) {
+  const s = session ? getSession(session) : null;
+  const slug = agent || (typeof s?.metadata?.agent === 'string' ? s.metadata.agent : null);
+  const eng = s?.engine || engine;
+  const p = { id: s?.id, engine: eng, agent: slug, capabilitiesHint: capabilitiesHint(slug ? `agent:${slug}` : 'global', eng) };
+  const meta = { ...(s?.metadata || {}), agent: slug, chatMode: 'simple' };
+  return {
+    firstTurn: memoryBootstrapPrefix(p),
+    everyTurn: chatModePrefix(meta, eng),
+    blocks: layeredBlocks(slug, s?.metadata).map(({ id, title, enabled, source, when }) => ({ id, title, enabled, source, when })),
+  };
 }
 
 // Engine-agnostic turn-text assembly (persona/memory bootstrap, LADDER1 preamble, Simple-mode reminder), run once before the engine's own writeMessage().
