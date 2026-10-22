@@ -64,6 +64,11 @@ function BlockEditor({ block, onSaved }) {
           {block.edited && <span className="rounded border border-hair px-1 text-[10px] text-fgdim">{block.builtin ? t('instructions.edited') : t('instructions.own')}</span>}
           <span className="text-[10px] text-fgdim">{block.when === 'every-turn' ? t('instructions.everyTurn') : t('instructions.firstTurn')}</span>
         </button>
+        {block.builtin && (
+          <button type="button" disabled={busy || !block.edited} onClick={reset} title={block.edited ? undefined : t('instructions.isDefault')} className={`${BTN_SM} disabled:opacity-40`}>
+            {t('instructions.reset')}
+          </button>
+        )}
         <Toggle on={block.enabled} disabled={busy} onChange={toggle} aria-label={t('instructions.enabled', { title: block.title })} />
       </div>
       {open && (
@@ -77,7 +82,7 @@ function BlockEditor({ block, onSaved }) {
             {block.builtin && block.defaultText !== null && text !== block.defaultText && (
               <button type="button" disabled={busy} onClick={() => setText(block.defaultText)} className={BTN_SM}>{t('instructions.showDefault')}</button>
             )}
-            {block.edited && <button type="button" disabled={busy} onClick={reset} className={block.builtin ? BTN_SM : BTN_DANGER}>{block.builtin ? t('instructions.reset') : t('instructions.delete')}</button>}
+            {!block.builtin && <button type="button" disabled={busy} onClick={reset} className={BTN_DANGER}>{t('instructions.delete')}</button>}
           </div>
         </div>
       )}

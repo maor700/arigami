@@ -38,6 +38,7 @@ export const en = {
   'instructions.discard': 'Discard',
   'instructions.showDefault': 'Load the default text',
   'instructions.reset': 'Back to the default',
+  'instructions.isDefault': 'Already the default',
   'instructions.delete': 'Delete',
   'instructions.saved': 'Saved: {title}. New sessions get it.',
   'instructions.resetTitle': 'Put "{title}" back to the default?',

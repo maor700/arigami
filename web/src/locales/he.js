@@ -37,6 +37,7 @@ export const he = {
   'instructions.discard': 'בטל שינויים',
   'instructions.showDefault': 'טען את טקסט ברירת המחדל',
   'instructions.reset': 'חזרה לברירת המחדל',
+  'instructions.isDefault': 'כבר בברירת המחדל',
   'instructions.delete': 'מחק',
   'instructions.saved': 'נשמר: {title}. סשנים חדשים יקבלו אותו.',
   'instructions.resetTitle': 'להחזיר את "{title}" לברירת המחדל?',
