@@ -24,6 +24,8 @@ import { supervise, killTree } from './children.js';
 import { portFree } from './hostlock.js';
 import { ensureChromeLauncherFlags } from './chrome-launcher.js';
 import { ensureDesktopConfig } from './desktop-terminal.js';
+import { paintDesktop, SHARED_DESKTOP } from './desktop-wallpaper.js';
+import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
 
@@ -39,6 +41,30 @@ export interface DesktopInfo {
 // Xvfb/x11vnc pid was already caught by children.ts's startup sweep.
 const alive = new Map<string, { xvfb: ChildProcess; x11vnc: ChildProcess; extras: ChildProcess[] }>();
 const pending = new Map<string, Promise<DesktopInfo>>();
+
+// The wallpaper (desktop-wallpaper.ts) shows the session's color and title: repaint a live desktop when either
+// changes. `painted` holds what was last painted, so the metadata patches a desktop sees all the time cost nothing.
+const painted = new Map<string, string>();
+const repaintTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function paintSession(sessionId: string): void {
+  const s = state.getSession(sessionId);
+  const display = (s?.metadata as any)?.screen?.display as string | undefined;
+  if (!s || !display || !alive.has(sessionId)) return;
+  const override = (s.metadata as any)?.wallpaper;
+  const key = JSON.stringify([display, s.title, s.color, override]);
+  if (painted.get(sessionId) === key) return;
+  painted.set(sessionId, key);
+  void paintDesktop({ display, color: s.color, title: s.title || sessionId, subtitle: `${sessionId} · ${display}`, seed: sessionId, override })
+    .then((r) => { if (!r.ok) console.warn(`[desktop] wallpaper for ${sessionId}: ${r.reason}`); });
+}
+
+subscribe((msg: any) => {
+  const id = msg?.type === 'session-updated' ? msg.session?.id : null;
+  if (!id || !alive.has(id)) return;
+  clearTimeout(repaintTimers.get(id));
+  repaintTimers.set(id, setTimeout(() => { repaintTimers.delete(id); paintSession(id); }, 500));
+});
 
 function usedPorts(): Set<number> {
   const used = new Set<number>();
@@ -205,6 +231,7 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   alive.set(sessionId, { xvfb, x11vnc, extras });
 
   state.patchSession(sessionId, { metadata: { screen: { display, vncPort } } });
+  paintSession(sessionId);
   return { display, vncHost: '127.0.0.1', vncPort };
 }
 
@@ -244,6 +271,9 @@ export function releaseDesktop(sessionId: string): void {
     for (const p of procs.extras) killTree(p.pid);
     alive.delete(sessionId);
   }
+  painted.delete(sessionId);
+  clearTimeout(repaintTimers.get(sessionId));
+  repaintTimers.delete(sessionId);
   const s = state.getSession(sessionId);
   if ((s?.metadata as any)?.screen) state.patchSession(sessionId, { metadata: { screen: null } });
 }
@@ -345,5 +375,10 @@ export async function ensureGlobalDesktop(opts: GlobalDesktopOpts = {}): Promise
     globalProcs.length = 0;
     return { started: false, reason: `x11vnc did not come up: ${(e as Error).message}` };
   }
+  // Only a desktop this process started gets a wallpaper (and never under a test's spawnFn): one somebody else runs
+  // keeps whatever background its owner gave it.
+  if (!opts.spawnFn)
+    void paintDesktop({ display, ...SHARED_DESKTOP, subtitle: display }, env)
+      .then((r) => { if (!r.ok) console.warn(`[desktop] shared wallpaper: ${r.reason}`); });
   return { started: true, display, vncPort, pids };
 }

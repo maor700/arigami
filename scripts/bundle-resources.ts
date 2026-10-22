@@ -56,6 +56,7 @@ const ENTRIES: { src: string; required: boolean }[] = [
   { src: 'profiles', required: true },
   { src: 'server/assets', required: true },
   { src: 'server/lib/pty-bridge.py', required: true },
+  { src: 'server/lib/x11-wallpaper.py', required: true }, // sets a desktop's wallpaper (server/lib/desktop-wallpaper.ts)
   { src: 'package.json', required: true },
   { src: 'VERSION', required: true },
 ];

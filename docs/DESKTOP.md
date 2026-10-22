@@ -1114,3 +1114,27 @@ with `LANG=C.UTF-8`, rendering mixed Hebrew/English output in the right order;
 the right-click menu shows "Terminal" and opens a second window; a per-session
 desktop gets openbox + tint2 with the session's cwd and id, and
 `releaseDesktop()` takes them down with Xvfb/x11vnc.
+
+## A wallpaper per desktop
+
+Every X11 desktop the host starts gets its own background, so a screenshot (or two VNC views side by side) says at a
+glance whose desktop it is: a landscape photo tinted in the session's color (the one the rail shows), with the
+session's title in the bottom-right corner and `<session id> · <display>` under it. The shared `:99` gets a neutral
+slate and "Shared desktop" — but only when the host started it; a `:99` somebody else runs keeps its own background.
+
+- **The photos** are a closed set of CC0 landscapes in `server/assets/wallpapers/` (stored grayscale; sources and
+  photographers in its `CREDITS.md`). Images (`.jpg`, `.png`, `.webp`) in `<ARIGAMI_DIR>/user/wallpapers/` join the
+  set — in the user repo, so they travel with it.
+- **The pick** is stable: a hash of the session id, so a session keeps its photo across restarts. Two sessions can
+  share a photo; their colors still tell them apart. `metadata.wallpaper` pins one by file name (`desert-dunes`
+  or `desert-dunes.jpg`), or `none` for a flat color.
+- **Repaint**: renaming or recoloring a session repaints its live desktop within half a second.
+- **How**: one `ffmpeg` run per paint (scale, gray, a duotone lut — shadows at a quarter of the color, highlights 60%
+  toward white — vignette, the title in Liberation Sans Bold, which covers Latin and Hebrew), raw BGRA piped into
+  `server/lib/x11-wallpaper.py`, which sets the root window's background pixmap through libX11 (ctypes, stdlib only;
+  it also sets `_XROOTPMAP_ID`, which is why the tint2 dock shows the photo through). About 200 ms. Without `ffmpeg`
+  the desktop gets the flat color; without `python3` it stays black. A failed paint is a warning in the host log,
+  never a failed desktop. `ARIGAMI_DESKTOP_WALLPAPER=0` turns it off.
+
+Verified on the VM: a session desktop painted with a Hebrew+English title in the right order; the test suite
+(`test/desktop-wallpaper.test.js`) paints a throwaway Xvfb and reads the pixels back.

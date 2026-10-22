@@ -97,7 +97,8 @@ RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx && bun --version
 #     (server/lib/engine-install.ts). Both then update in place there, so they
 #     follow their own release channel instead of the image's. ---
 
-# --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs).
+# --- Playwright MCP + ffmpeg (visual ticket skills: screenshots/GIFs; ffmpeg also renders the desktop
+#     wallpapers, server/lib/desktop-wallpaper.ts).
 #     No bundled Playwright Chromium: the MCP is registered by the entrypoint
 #     with `--executable-path $CHROME_BIN`, so it drives the same Chrome/
 #     Chromium as the desktop (saves ~700MB vs `playwright install --with-deps`). ---
