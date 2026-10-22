@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ensureDesktopConfig, tint2Config, tint2ClockConfig, openboxRc, openboxMenu, terminalScript } from '../server/lib/desktop-terminal.ts';
+import { ensureDesktopConfig, tint2Config, tint2ClockConfig, openboxRc, openboxMenu, terminalScript, sessionTint2Config, chromeScript } from '../server/lib/desktop-terminal.ts';
 import { tmpDir } from './_tmp.js';
 
 const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
@@ -128,4 +128,76 @@ posix('launcher script: ARIGAMI_TERMINAL overrides; nothing installed exits non-
   const none = runScript([]);
   expect(none.status).toBe(1);
   expect(none.err).toMatch(/No terminal emulator/);
+});
+
+// Per-session desktops: the dock's browser icon opens the SESSION's Chrome (through the host), not the default-profile
+// Chrome — which, when the owner already runs it, only opens a window on the shared :99.
+test('sessionTint2Config swaps the first browser launcher (bare or by path) for the session one and drops the rest', () => {
+  const rc = 'panel_items = LTSC\nlauncher_item_app = /x/terminal.desktop\nlauncher_item_app = firefox.desktop\nlauncher_item_app = /usr/share/applications/google-chrome.desktop\nlauncher_item_app = chromium-browser.desktop\nclock_format = %H:%M\n';
+  const out = sessionTint2Config(rc, '/d/session-chrome.desktop');
+  const launchers = out.split('\n').filter((l) => l.startsWith('launcher_item_app'));
+  expect(launchers).toEqual(['launcher_item_app = /x/terminal.desktop', 'launcher_item_app = /d/session-chrome.desktop']);
+  expect(out).toContain('clock_format = %H:%M');
+  expect(sessionTint2Config('launcher_item_app = /x/terminal.desktop\n', '/d/s.desktop')).toBeNull(); // no browser: left as it is
+  expect(sessionTint2Config(null, '/d/s.desktop')).toBeNull();
+});
+
+test('a session desktop runs the generated dock with the session browser; the shared one keeps the stock browser', () => {
+  const { root, home } = fixture();
+  const opts = { dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml') };
+  const shared = ensureDesktopConfig(opts);
+  const session = ensureDesktopConfig({ ...opts, session: true });
+  expect(shared.tint2Args[0]).toEqual(['-c', path.join(root, 'desktop', 'tint2rc')]);
+  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')], shared.tint2Args[1]]);
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain(`launcher_item_app = ${path.join(root, 'desktop', 'session-chrome.desktop')}`);
+  expect(rc).not.toMatch(/google-chrome\.desktop/);
+  expect(rc).toContain(path.join(root, 'desktop', 'terminal.desktop')); // the terminal stays first
+  const entry = fs.readFileSync(path.join(root, 'desktop', 'session-chrome.desktop'), 'utf8');
+  expect(entry).toContain(`Exec="${path.join(root, 'desktop', 'arigami-chrome')}"`);
+  expect(fs.statSync(path.join(root, 'desktop', 'arigami-chrome')).mode & 0o111).toBeTruthy();
+});
+
+test("a session desktop over the user's own dock: a copy of it with the session browser; theirs is untouched", () => {
+  const { home, run, root } = fixture();
+  const mine = 'panel_items = LTSC\nlauncher_item_app = /usr/share/applications/xfce4-terminal.desktop\nlauncher_item_app = /usr/share/applications/google-chrome.desktop\n';
+  fs.mkdirSync(path.join(home, '.config', 'tint2'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), mine);
+  expect(run().tint2Args).toEqual([[]]);
+  const session = ensureDesktopConfig({ dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml'), session: true });
+  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')]]);
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain('launcher_item_app = /usr/share/applications/xfce4-terminal.desktop');
+  expect(rc).toContain(`launcher_item_app = ${path.join(root, 'desktop', 'session-chrome.desktop')}`);
+  expect(fs.readFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), 'utf8')).toBe(mine);
+});
+
+// The browser launcher against fake curl / chrome binaries that log how they were called.
+function runChrome(fakes, env = {}) {
+  const root = tmp();
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const log = path.join(root, 'log');
+  for (const [name, code] of Object.entries(fakes)) {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\necho "${name} $*" >> ${log}\nexit ${code}\n`, { mode: 0o755 });
+  }
+  const script = path.join(root, 'arigami-chrome');
+  fs.writeFileSync(script, chromeScript(), { mode: 0o755 });
+  const r = spawnSync('/bin/sh', [script, 'https://example.com'], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, encoding: 'utf8' });
+  return { status: r.status, stderr: r.stderr, log: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' };
+}
+
+test("the dock's browser icon asks the host for the session's Chrome, with a new window", () => {
+  const env = { ARIGAMI_SESSION_ID: 'sess_1', ARIGAMI_URL: 'http://127.0.0.1:9', ARIGAMI_TOKEN: 'tok' };
+  const ok = runChrome({ curl: 0, 'google-chrome-stable': 0 }, env);
+  expect(ok.status).toBe(0);
+  expect(ok.log).toContain('http://127.0.0.1:9/__api/sessions/sess_1/browser');
+  expect(ok.log).toContain('{"window":true}');
+  expect(ok.log).toContain('Bearer tok');
+  expect(ok.log).not.toContain('google-chrome-stable'); // never the default-profile Chrome on a session desktop
+  const down = runChrome({ curl: 7, 'google-chrome-stable': 0, xmessage: 0 }, env);
+  expect(down.log).toContain("xmessage -center Could not open this session's browser"); // said on the desktop
+  expect(down.log).not.toContain('google-chrome-stable');
+  const off = runChrome({ curl: 0, 'google-chrome-stable': 0 }); // no session: a regular Chrome
+  expect(off.log.trim()).toBe('google-chrome-stable https://example.com');
 });

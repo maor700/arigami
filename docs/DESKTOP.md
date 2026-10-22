@@ -1115,6 +1115,16 @@ the right-click menu shows "Terminal" and opens a second window; a per-session
 desktop gets openbox + tint2 with the session's cwd and id, and
 `releaseDesktop()` takes them down with Xvfb/x11vnc.
 
+**The browser icon on a session's desktop** opens that session's own Chrome — its profile, on its desktop, the
+browser the agent drives — not the system launcher's default-profile Chrome. That one, on a host whose owner already
+runs it (the shared `:99`), only hands the click to the running instance, so a window opened on `:99` and nothing on
+the session's desktop. A per-session desktop runs `<ARIGAMI_DIR>/desktop/tint2rc-session`: the dock it would
+otherwise run (the user's own `~/.config/tint2/tint2rc`, or the generated one) with its browser launcher(s) swapped
+for `session-chrome.desktop` → `arigami-chrome`, which POSTs `/__api/sessions/<id>/browser` with `{"window":true}`
+(the desktop carries the session's `ARIGAMI_URL`/`ARIGAMI_TOKEN`, as its engine does). The host starts the session's
+Chrome, or — already running — opens a new window in it over DevTools, so a click always shows one. If the host does
+not answer, an `xmessage` says so. The user's own tint2rc is never written; the shared `:99` keeps its dock.
+
 ## A wallpaper per desktop
 
 Every X11 desktop the host starts gets its own background, so a screenshot (or two VNC views side by side) says at a

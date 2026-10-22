@@ -6654,6 +6654,12 @@ export async function handle(
       const body = (await readBody(req)) as any;
       try {
         const r = await chrome.openChrome(id, body?.url ? String(body.url) : undefined);
+        // `window: true` is a person's click on the dock icon (desktop-terminal.ts chromeScript): a browser that is
+        // already up gets a new window, so the click always shows one. chrome.sh (agents) leaves it off.
+        if (body?.window && r.alreadyRunning) {
+          const cdp = await import('./lib/chrome-cdp.js');
+          await cdp.newWindow(id).catch((e: Error) => console.warn(`[browser] new window for ${id}: ${e.message}`));
+        }
         return json(res, { ok: true, ...r });
       } catch (e) {
         return json(res, { ok: false, error: `browser open failed: ${(e as Error).message}` }, 503);

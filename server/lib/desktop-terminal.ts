@@ -8,6 +8,10 @@
 //   - `tint2rc`(+`-clock`)    the stock tint2 config as a centred dock, terminal icon first, + an edge clock panel
 //   - `openbox-rc.xml`/`openbox-menu.xml`  the stock openbox config whose right-click menu opens with "Terminal"
 //   - lxterminal's defaults   (font, scrollback) — only when the user has no lxterminal config of their own
+//   - on a per-session desktop: `arigami-chrome` + `session-chrome.desktop`, and `tint2rc-session` — the dock with
+//     its browser icon(s) swapped for one that opens the SESSION's own Chrome (its profile, on its desktop), through
+//     the host like browser_open. The system icon would start the default-profile Chrome, which on a host whose
+//     owner already runs it just opens a window on the shared :99 and nothing on this desktop.
 // The generated tint2/openbox configs are passed with `-c`/`--config-file`, and only when the user has no config of
 // their own in ~/.config — a hand-tuned desktop on a bare-VM install is left exactly as it is.
 import fs from 'node:fs';
@@ -61,6 +65,70 @@ Icon=${icon}
 Terminal=false
 Categories=System;TerminalEmulator;
 `;
+}
+
+/** The session-desktop browser launcher: asks the host to open this session's Chrome (chrome.sh does the same). */
+export function chromeScript(): string {
+  return `#!/bin/sh
+# ${MARK} — regenerated at every desktop start.
+# Opens THIS session's own Chrome on this desktop: the host starts it on the session's profile (the browser the
+# agent drives), or opens a new window in it when it is already running. Off a session desktop it starts a regular
+# Chrome.
+have() { command -v "$1" >/dev/null 2>&1; }
+if [ -n "\${ARIGAMI_SESSION_ID:-}" ] && [ -n "\${ARIGAMI_URL:-}" ] && have curl; then
+  if curl -sf -m 60 -X POST -H "Authorization: Bearer \${ARIGAMI_TOKEN:-}" -H 'Content-Type: application/json' -d '{"window":true}' \\
+    "$ARIGAMI_URL/__api/sessions/$ARIGAMI_SESSION_ID/browser" >/dev/null; then exit 0; fi
+  msg="Could not open this session's browser: the Arigami host did not answer."
+  if have xmessage; then exec xmessage -center "$msg"; fi
+  echo "$msg" >&2
+  exit 1
+fi
+for b in "\${CHROME_BIN:-}" google-chrome-stable google-chrome chromium chromium-browser; do
+  if [ -n "$b" ] && have "$b"; then exec "$b" "$@"; fi
+done
+exit 1
+`;
+}
+
+export function chromeDesktopEntry(script: string, icon: string): string {
+  return `[Desktop Entry]
+# ${MARK}
+Type=Application
+Name=Browser
+Comment=Open this session's browser
+Exec="${script}"
+Icon=${icon}
+Terminal=false
+Categories=Network;WebBrowser;
+`;
+}
+
+// The stock and the users' docks name their browser by launcher file, bare or by path.
+const BROWSER_LAUNCHER = /^launcher_item_app\s*=\s*\S*\b(?:google-chrome[\w.-]*|com\.google\.Chrome|chromium[\w.-]*|firefox[\w.-]*|iceweasel)\.desktop\s*$/;
+
+/**
+ * A session desktop's dock: `rc` with its browser launcher(s) replaced by one entry for the session's Chrome, in the
+ * place of the first. Null when `rc` has no browser launcher — that dock is left as it is. Pure.
+ */
+export function sessionTint2Config(rc: string | null, browserEntry: string): string | null {
+  if (!rc) return null;
+  let swapped = false;
+  const lines = rc.split('\n').flatMap((line) => {
+    if (!BROWSER_LAUNCHER.test(line)) return [line];
+    if (swapped) return [];
+    swapped = true;
+    return [`launcher_item_app = ${browserEntry}`];
+  });
+  return swapped ? `# ${MARK} — the session's own browser in the dock.\n${lines.join('\n')}` : null;
+}
+
+/** The icon the system Chrome (or Chromium) launcher uses, so the session's browser looks like a browser. */
+function systemBrowserIcon(): string {
+  for (const f of ['/usr/share/applications/google-chrome.desktop', '/usr/share/applications/chromium.desktop', '/usr/share/applications/chromium-browser.desktop']) {
+    const m = /^Icon=(.+)$/m.exec(readOr(f) || '');
+    if (m) return m[1].trim();
+  }
+  return 'web-browser';
 }
 
 // Panel look on top of the stock tint2rc: a 56px panel that shrinks to its content and sits centred at the bottom
@@ -155,6 +223,7 @@ export interface DesktopConfigOpts {
   env?: NodeJS.ProcessEnv;
   stockTint2rc?: string; // default /etc/xdg/tint2/tint2rc
   stockOpenboxRc?: string; // default /etc/xdg/openbox/rc.xml
+  session?: boolean; // a per-session desktop: its dock's browser icon opens the session's Chrome
 }
 
 export interface DesktopConfig {
@@ -200,6 +269,23 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
         writeIfChanged(p, rc);
         writeIfChanged(c, clock);
         out.tint2Args = [['-c', p], ['-c', c]];
+      }
+    }
+
+    if (opts.session) {
+      const script = path.join(opts.dir, 'arigami-chrome');
+      writeIfChanged(script, chromeScript(), 0o755);
+      const browserEntry = path.join(opts.dir, 'session-chrome.desktop');
+      writeIfChanged(browserEntry, chromeDesktopEntry(script, systemBrowserIcon()));
+      // The dock this desktop would run (the user's own, or the generated one), with the session's browser in it.
+      const userRc = path.join(xdgConfig, 'tint2', 'tint2rc');
+      const [first, ...rest] = out.tint2Args;
+      const base = first.length ? readOr(first[1]) : readOr(userRc) ?? readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
+      const rc = sessionTint2Config(base, browserEntry);
+      if (rc) {
+        const p = path.join(opts.dir, 'tint2rc-session');
+        writeIfChanged(p, rc);
+        out.tint2Args = [['-c', p], ...rest];
       }
     }
 

@@ -28,6 +28,7 @@ import { paintDesktop, SHARED_DESKTOP } from './desktop-wallpaper.js';
 import { subscribe } from '../bus.js';
 import { ARIGAMI_DIR } from './instance.js';
 import * as state from '../state.js';
+import { auth } from '../auth.js';
 
 export interface DesktopInfo {
   display: string; // ':100'
@@ -166,9 +167,9 @@ const DESKTOP_CONFIG_DIR = path.join(ARIGAMI_DIR, 'desktop');
  * openbox + tint2 on `display`, when installed — so a desktop has a right-click menu and a panel, both of which open a
  * terminal (desktop-terminal.ts). Shared by the global and the per-session desktops.
  */
-function spawnShell(display: string, label: string, opts: { which: (bin: string) => string | null; spawnFn: typeof spawn; env: NodeJS.ProcessEnv; configDir: string }): ChildProcess[] {
+function spawnShell(display: string, label: string, opts: { which: (bin: string) => string | null; spawnFn: typeof spawn; env: NodeJS.ProcessEnv; configDir: string; session?: boolean }): ChildProcess[] {
   const procs: ChildProcess[] = [];
-  const conf = ensureDesktopConfig({ dir: opts.configDir, env: opts.env });
+  const conf = ensureDesktopConfig({ dir: opts.configDir, env: opts.env, session: opts.session });
   const denv = { ...opts.env, DISPLAY: display };
   const wm = opts.which('openbox');
   if (wm) {
@@ -204,9 +205,11 @@ async function spawnDesktop(sessionId: string): Promise<DesktopInfo> {
   }
   // The session's terminal opens in the session's working directory.
   const s = state.getSession(sessionId);
-  const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId };
+  // The dock's browser icon asks the host for this session's Chrome (desktop-terminal.ts chromeScript), so the desktop
+  // carries the session's host address and token, like the session's own engine process does.
+  const sessionEnv: NodeJS.ProcessEnv = { ...process.env, ARIGAMI_SESSION_ID: sessionId, ARIGAMI_URL: cfg.hostBase || '', ARIGAMI_TOKEN: auth.tokenForSession(sessionId) };
   if (s?.cwd) sessionEnv.ARIGAMI_TERMINAL_CWD = s.cwd.replace(/^~(?=$|\/)/, os.homedir());
-  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR });
+  const extras = spawnShell(display, sessionId, { which, spawnFn: spawn, env: sessionEnv, configDir: DESKTOP_CONFIG_DIR, session: true });
 
   const vncArgs = [
     '-display', display,
