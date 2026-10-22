@@ -22,10 +22,11 @@ import { ENGINE_IDS, engineLabel, normalizeEngine } from '../../lib/engines.js';
 import { relTime } from '../../lib/time.js';
 import Budgets from './Budgets.jsx';
 import Health from './Health.jsx';
+import Instructions from './Instructions.jsx';
 import { WhoAmI, UsersAdvanced, ScreenShare, DangerZone } from './Access.jsx';
 import { useShell, openMachines } from '../../lib/shell.js';
 
-export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-legacy', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'danger'];
+export const HOST_ADVANCED_IDS = ['cli-details', 'manager', 'upgrade-legacy', 'upgrade-log', 'backup-options', 'budgets', 'health', 'users-list', 'screen', 'instructions', 'danger'];
 
 // VER1: sessionStorage is absent when the page is rendered server-side (tests).
 const ss = () => (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
@@ -533,6 +534,7 @@ export default function Host({ section = '' }) {
         <Health />
         <UsersAdvanced />
         <ScreenShare />
+        <Instructions />
         <DangerZone />
       </Advanced>
     </>

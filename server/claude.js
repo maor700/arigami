@@ -48,6 +48,7 @@ import {
 import { runClaudeOneShot, runOneShot, sessionEngine } from './lib/oneshot.js';
 import { appendIncident } from './incidents.js';
 import * as extensions from './extensions.js';
+import * as promptBlocks from './prompt-blocks.js';
 import { detectArchiveKind, extractArchive, formatTree } from './archive.js';
 
 // $ARIGAMI_DIR/user-plugin — generated on demand so a fresh instance (or a
@@ -726,6 +727,7 @@ function spawnProc(s, resume) {
   if (agentSlug) refreshCapabilitiesHint(`agent:${agentSlug}`).catch(() => {}); // A2: keep the agent's line fresh for its next spawn
   const p = {
     id: s.id, // SIMPLE1: writeUserMessage reads the session's live metadata (chat mode) per turn
+    engine: s.engine || 'claude', // PROMPT1: blocks of the owner's can be for one engine only
     capabilitiesHint: capabilitiesHint(agentSlug ? `agent:${agentSlug}` : 'global', s.engine || 'claude'), // F8: the connectable-capabilities line for the first turn (A2: per agent)
     tokenSig: tokenSig(built.env.CLAUDE_CODE_OAUTH_TOKEN), // which access token this child holds (see tryAuthRecover)
     hadToken: !!built.env.CLAUDE_CODE_OAUTH_TOKEN, // F8: spawned with an account token? (a session started BEFORE Connect Claude has none)
@@ -2106,41 +2108,23 @@ export function removeStreamedAttachment(id, filePath) {
 // A3: how to SHOW things to the human. Sessions are reached from laptops,
 // phones and tailnets alike — a `http://localhost:…` link only works on the
 // host box. Goes in the first turn only (same prompt-cache reasoning as memory).
-export const URL_GUIDANCE =
-  '<system-reminder>\n' +
-  'Arigami links: to show the human anything, call publish_artifact (static file/dir → /__artifacts/<id>/) or ' +
-  'open_tab (a LIVE dev server — pass http://localhost:$PORT, the host proxies it into a cockpit tab). ' +
-  'Never write http://localhost:… URLs in replies, reports, pushes or messages: the human may be on a phone or ' +
-  'another machine. The host returns host-RELATIVE paths (/__host/?session=…, /__artifacts/…) — pass them on as-is. ' +
-  '$ARIGAMI_URL is an internal base for your own API calls only, not a link for people. ' +
-  'Need a port for a dev server? call allocate_port (or set_metadata({patch:{needs_server:true}})) and use $PORT / the returned port.\n' +
-  '</system-reminder>\n\n';
+// PROMPT1: the texts the host puts in front of a session's messages live in server/prompt-blocks.ts — one registry
+// the owner can edit (Settings › Host › Advanced › Instructions). This file only gathers what they are rendered with.
+function blockCtx(p, extra = {}) {
+  return {
+    engine: p?.engine || 'claude',
+    sharedDisplay: cfg.screen?.display || ':99',
+    capabilities: p?.capabilitiesHint || '',
+    extensions: extSummary(),
+    docker: process.env.ARIGAMI_SUPERVISOR === 'docker',
+    ...extra,
+  };
+}
 
-// F8: who the agent is and what it can do — so the first answer introduces
-// Arigami (browser, WhatsApp, mail, sessions, triggers…) in the human's
-// language instead of "I am Claude, I write code". The connectable list is
-// probed at spawn (capabilitiesHint) and names the capabilities that are NOT
-// connected yet, so the agent knows they exist and asks (request_setup)
-// rather than answering "I have no access to WhatsApp".
+// F8: who the agent is and what it can do — the `identity` block, with the connectable capabilities (probed at spawn,
+// capabilitiesHint) and the installed extensions filled in. Kept as a function for its callers.
 export function identityReminder(hint) {
-  return (
-    '<system-reminder>\n' +
-    'You are the agent inside Arigami — the human\'s self-hosted cockpit (this session is one of its sessions). ' +
-    'Introduce yourself as Arigami\'s agent, not by the name of the CLI/model behind you ("Claude", "Codex"); ' +
-    'answer in the language the human writes in. ' +
-    'What you can do here: browse and screenshot websites on this session\'s own desktop (open the browser, capture_screen, publish_artifact); ' +
-    'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
-    'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
-    'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
-    'and hand the desktop over to the human (request_screen) for logins. ' +
-    'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
-    (hint ? `\n${hint}\n` : '') +
-    // EXT: the third channel by which a session learns an extension exists
-    // ("that there is") — the skill description says WHEN, the tool schemas say
-    // HOW. Empty string when nothing is installed, so nothing changes.
-    (extSummary() ? `\n${extSummary()}\n` : '') +
-    '</system-reminder>\n\n'
-  );
+  return promptBlocks.renderOne('identity', blockCtx(null, { capabilities: hint || '' }));
 }
 
 function extSummary() {
@@ -2196,18 +2180,18 @@ refreshCapabilitiesHint().catch(() => {});
 }
 
 function memoryBootstrapPrefix(p) {
-  const identity = identityReminder(p?.capabilitiesHint || '');
+  const blocks = promptBlocks.render('first-turn', blockCtx(p)); // links, login, host rules, …, the owner's own, identity
   // A1: a session born from an agent gets the agent's persona block and boots
   // with USER.md + the AGENT's MEMORY.md (its namespace), not the shared one.
   const persona = p?.agent ? personaBlock(p.agent) : '';
   const { userMd, memoryMd, agentMd } = getMemoryBootstrap(p?.agent || null);
-  if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return URL_GUIDANCE + identity + persona;
+  if (!userMd.trim() && !memoryMd.trim() && !(agentMd || '').trim()) return blocks + persona;
   let block = "<system-reminder>\nArigami memory snapshot (owned by the host — this instance's own memory, not your agent CLI's own per-project memory). Frozen at session start; call memory_search for anything not shown here.\n";
   if (userMd.trim()) block += `\n## USER.md\n${userMd.trim()}\n`;
   if (memoryMd.trim()) block += `\n## MEMORY.md\n${memoryMd.trim()}\n`;
   if ((agentMd || '').trim()) block += `\n## MEMORY.md (agent ${p.agent})\n${agentMd.trim()}\n`;
   block += '</system-reminder>\n\n';
-  return URL_GUIDANCE + identity + persona + block;
+  return blocks + persona + block;
 }
 
 // SIMPLE1: the "Simple" chat view. While a session is in Simple mode the human
@@ -2216,18 +2200,20 @@ function memoryBootstrapPrefix(p) {
 // carries the same preference globally; this is the hard per-session rule.
 // Re-read from session metadata on EVERY turn (not the spawn-time snapshot) so
 // flipping the toggle takes effect on the next message without a restart.
-export const SIMPLE_MODE_REMINDER =
-  '<system-reminder>\n' +
-  'Simple chat mode is ON for this session: the human switched the cockpit to the "Simple" view, where only ' +
-  'your prose reaches them — tool calls, edits, bash output and thinking are folded away behind a counter. ' +
-  'Hard rule for what you write to the human in this chat: at most two sentences by default — the outcome and the one ' +
-  'thing that matters. Details only when asked. No headers, tables, bullet lists, code dumps or step-by-step narration ' +
-  'of what you did. Bad news is said first and plainly. This is a per-session rule and overrides longer-form formatting ' +
-  'guidance from anywhere else. It limits only what you write to the human — not your tool use or the work itself.\n' +
-  '</system-reminder>\n\n';
+export const SIMPLE_MODE_REMINDER = promptBlocks.wrap(promptBlocks.BUILTIN.find((b) => b.id === 'simple-mode').text); // the default
 
-export function chatModePrefix(metadata) {
-  return metadata && metadata.chatMode === 'simple' ? SIMPLE_MODE_REMINDER : '';
+/** The every-turn blocks: Simple mode while it is on, plus the owner's own every-turn blocks. */
+export function chatModePrefix(metadata, engine) {
+  return promptBlocks.render('every-turn', blockCtx({ engine }, { simpleMode: !!metadata && metadata.chatMode === 'simple' }));
+}
+
+/**
+ * What a fresh session would get in front of its first message — Settings' "as a session sees it".
+ * @param {{ engine?: string, agent?: string | null }} [o]
+ */
+export function firstTurnPreview({ engine = 'claude', agent = null } = {}) {
+  const p = { engine, agent, capabilitiesHint: capabilitiesHint(agent ? `agent:${agent}` : 'global', engine) };
+  return { firstTurn: memoryBootstrapPrefix(p), everyTurn: chatModePrefix({ chatMode: 'simple' }, engine) };
 }
 
 // Engine-agnostic turn-text assembly (persona/memory bootstrap, LADDER1 preamble, Simple-mode reminder), run once before the engine's own writeMessage().
@@ -2243,7 +2229,7 @@ export function composeTurnText(p, text) {
     txt = p.preamble + txt;
     p.preamble = '';
   }
-  txt = chatModePrefix(getSession(p.id)?.metadata) + txt;
+  txt = chatModePrefix(getSession(p.id)?.metadata, p.engine) + txt;
   return txt;
 }
 

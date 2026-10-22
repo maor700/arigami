@@ -3876,6 +3876,43 @@ export async function handle(
     // signed-in caller (and to agents through the host_resources tool) because
     // the whole point is that a session can ask before it starts something
     // expensive — see server/lib/resources.ts.
+    // PROMPT1: the instruction blocks (server/prompt-blocks.ts) — Settings › Host › Advanced › Instructions. They
+    // shape every agent, so reading and editing them is the owner's (admin) only, never a session's.
+    if (p === '/__api/prompts' || p.startsWith('/__api/prompts/')) {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
+      const pb = await import('./prompt-blocks.js');
+      if (p === '/__api/prompts' && m === 'GET') return json(res, { blocks: pb.listBlocks() });
+      if (p === '/__api/prompts/preview' && m === 'GET') {
+        const engine = u.searchParams.get('engine') === 'codex' ? 'codex' : 'claude';
+        const agent = u.searchParams.get('agent') || null;
+        return json(res, claude.firstTurnPreview({ engine, agent }));
+      }
+      const id = decodeURIComponent(p.slice('/__api/prompts/'.length));
+      try {
+        if (m === 'PUT') {
+          const body = (await readBody(req).catch(() => ({}))) as any;
+          const block = pb.saveBlock(id, {
+            text: typeof body?.text === 'string' ? body.text : undefined,
+            enabled: typeof body?.enabled === 'boolean' ? body.enabled : undefined,
+            title: typeof body?.title === 'string' ? body.title : undefined,
+            when: body?.when === 'every-turn' || body?.when === 'first-turn' ? body.when : undefined,
+            engines: Array.isArray(body?.engines) ? body.engines.filter((e: unknown) => e === 'claude' || e === 'codex') : undefined,
+          });
+          (await import('./extensions.js')).autoCommit(`instructions: ${id}`);
+          return json(res, { ok: true, block });
+        }
+        if (m === 'DELETE') {
+          pb.resetBlock(id);
+          (await import('./extensions.js')).autoCommit(`instructions: reset ${id}`);
+          return json(res, { ok: true, blocks: pb.listBlocks() });
+        }
+      } catch (e) {
+        if (e instanceof pb.PromptError) return json(res, { error: e.message }, 400);
+        throw e;
+      }
+      return json(res, { error: 'not found' }, 404);
+    }
     // "My browser": the owner's own profile, where they sign in once. Opening it
     // and listing it are a person's actions, never a session's.
     if (p === '/__api/browser/vault' && m === 'GET') {

@@ -69,7 +69,7 @@ test('composeTurnText prepends the reminder per turn (source-level: after the fi
   const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/claude.js'), 'utf8');
   const fn = src.slice(src.indexOf('function composeTurnText('), src.indexOf('function writeUserMessage('));
   const boot = fn.indexOf('memoryBootstrapPrefix(p)');
-  const mode = fn.indexOf('chatModePrefix(getSession(p.id)?.metadata)');
+  const mode = fn.indexOf('chatModePrefix(getSession(p.id)?.metadata');
   expect(boot).toBeGreaterThan(-1);
   expect(mode).toBeGreaterThan(boot);
   // the proc record carries the session id so the metadata is re-read live

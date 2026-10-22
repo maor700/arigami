@@ -16,7 +16,7 @@ const ALLOW = [
   ['server/extensions.ts', '$.http.fetch((base ||'], // the generated policy mod → its own host (ARIGAMI_URL fallback), never a link
   ['server/lib/public-url.ts', 'cfg.hostBase ||'], // absoluteUrl() loopback fallback
   ['server/claude.js', 'ARIGAMI_URL: cfg.hostBase ||'], // internal env for the agent
-  ['server/claude.js', 'pass http://localhost:$PORT'], // guidance: give it to open_tab, not the human
+  ['server/prompt-blocks.ts', 'pass http://localhost:$PORT'], // the links block: give it to open_tab, not the human
   ['server/lib/chrome-cdp.ts', '/json/list'], // F8: loopback DevTools port of the session Chrome — host-internal
   ['server/lib/chrome-cdp.ts', '/json/version'], // newWindow: the dock's browser icon → a window in the session Chrome, over its loopback DevTools port
   ['server/lib/chrome.ts', '/json/version'], // idle close: Browser.close over the session Chrome's loopback DevTools port

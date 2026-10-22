@@ -1245,19 +1245,10 @@ export async function createArigamiServer(env = process.env) {
     },
   ];
 
-  // Server instructions ride in the MCP initialize result, so every session gets
-  // them without a skill. Kept to the two rules that decide what a deleted
-  // session leaves behind (server/reap.ts).
-  const INSTRUCTIONS = [
-    'Temporary files go under $TMPDIR — it is this session\'s own scratch directory and the host deletes it with the session. Do not write to /tmp directly: nothing owns files there, so they outlive you.',
-    'Your browser starts with no logins. Before signing in to any site, call browser_logins / request_login: the owner may already be signed in and can hand that one site over. Never ask for a password in the chat — a fresh sign-in is request_screen, with the owner typing.',
-    'Nothing you send to a person leaves on your call: WhatsApp messages, Slack messages, emails and comments through Arigami\'s tools become a card with your exact text, and the host sends them only when the owner presses Send. Write the final text, then stop and wait for the "[host] …" outcome. Never look for another way to send.',
-    'Teardown is the host\'s job. delete_session stops every process this session started (detached ones included) and removes the worktree it owns unless it holds unpushed work. Do not rm -rf, git worktree remove, or kill things yourself as "cleanup".',
-    // A container (Docker image / Kubernetes tenant): sudo works, but only apt installs and $HOME survive a restart.
-    ...(env.ARIGAMI_SUPERVISOR === 'docker'
-      ? ['This host runs in a container where you have passwordless sudo. Its root filesystem resets on restart, except that packages installed with `sudo apt-get install` (after `sudo apt-get update`) are kept on the volume and reinstalled at start. Anything else installed outside $HOME is lost — for those, install per user: `pip install --user <pkg>` or `python3 -m venv`, `npm i -g --prefix ~/.local <pkg>`, or a static binary into ~/.local/bin (first on PATH, persistent).']
-      : []),
-  ].join('\n');
+  // The host's rules for a session (scratch files, logins, outbound cards, teardown, the container note) moved to the
+  // first message, as editable blocks (server/prompt-blocks.ts) that every engine gets — an engine that does not show
+  // MCP server instructions used to miss them, and the owner could not change them. This line only points there.
+  const INSTRUCTIONS = "Arigami's tools. The host's rules for this session are in its first message.";
 
   const server = new Server({ name: 'arigami', version: '0.1.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
 
