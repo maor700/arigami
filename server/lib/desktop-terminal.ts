@@ -5,7 +5,7 @@
 //   - `arigami-terminal`      a launcher script that picks whatever terminal exists (system choice first) and opens it
 //                             in the session's working directory with a UTF-8 locale
 //   - `terminal.desktop/.svg` the tint2 launcher icon for that script
-//   - `tint2rc`(+`-clock`)    the stock tint2 config as a centred dock, terminal icon first, + an edge clock panel
+//   - `tint2rc`               the stock tint2 config as one full-width bar: launcher centred, terminal first, clock right
 //   - `openbox-rc.xml`/`openbox-menu.xml`  the stock openbox config whose right-click menu opens with "Terminal"
 //   - lxterminal's defaults   (font, scrollback) — only when the user has no lxterminal config of their own
 //   - on a per-session desktop: `arigami-chrome` + `session-chrome.desktop`, and `tint2rc-session` — the dock with
@@ -131,37 +131,72 @@ function systemBrowserIcon(): string {
   return 'web-browser';
 }
 
-// Panel look on top of the stock tint2rc: a 56px panel that shrinks to its content and sits centred at the bottom
-// (a dock: launcher + open windows), 48px launcher icons, no "desktop 1" label. The clock is a second tint2 panel on
-// the bottom-right edge (tint2ClockConfig) — one panel can't hold a centred launcher and an edge clock.
+// Panel look on top of the stock tint2rc: one bar along the whole bottom edge, black at 50% over the wallpaper, 56px
+// tall. In it, left to right: an empty spacer, the launcher (48px icons), open windows, the clock — the spacer is sized
+// so the launcher sits at the centre of the screen, the taskbar takes what is left, which pushes the clock to the right
+// edge. No "desktop 1" label, no window names.
 const TINT2_OVERRIDES: Record<string, string> = {
-  panel_items: 'LT',
+  panel_items: ':LTC',
   panel_size: '100% 56',
-  panel_shrink: '1',
+  panel_shrink: '0',
   panel_position: 'bottom center horizontal',
+  panel_padding: '0 0 0',
   launcher_icon_size: '48',
+  launcher_padding: '0 4 8',
   taskbar_name: '0',
 };
+const SCREEN_WIDTH = 1280; // the Xvfb geometry desktops.ts starts every desktop with
+const ICON = 48;
+const ICON_GAP = 8; // launcher_padding's third value
+const SPACER_MARK = '# Arigami: centring spacer';
+const APP_DIRS = [path.join(os.homedir(), '.local', 'share', 'applications'), '/usr/local/share/applications', '/usr/share/applications'];
 
-/**
- * tint2 config = the stock one with the terminal entry first in `launcher` (the stock browser entries stay; tint2
- * skips the ones that aren't installed), tint2's own settings icon dropped, and TINT2_OVERRIDES applied. Null when
- * there's no stock config with a launcher to extend. Pure.
- */
-export function tint2Config(stock: string | null, desktopEntry: string): string | null {
-  if (!stock || !/^launcher_item_app\s*=/m.test(stock)) return null;
-  const line = `launcher_item_app = ${desktopEntry}`;
-  let body = stock
-    .replace(/^launcher_item_app\s*=\s*tint2conf\.desktop\s*\n/m, '')
-    .replace(/^launcher_item_app\s*=/m, `${line}\nlauncher_item_app =`);
-  return `# ${MARK} from the stock tint2rc — terminal launcher first, centred dock.\n${withSettings(body, TINT2_OVERRIDES)}`;
+/** Whether tint2 will find a launcher entry: an absolute path that exists, or a bare name in the applications dirs. */
+function launcherExists(item: string): boolean {
+  if (path.isAbsolute(item)) return fs.existsSync(item);
+  return APP_DIRS.some((d) => fs.existsSync(path.join(d, item)));
 }
 
-/** The clock panel: the stock tint2rc showing only the clock, shrunk to it, on the bottom-right edge. Pure. */
-export function tint2ClockConfig(stock: string | null): string | null {
-  if (!stock) return null;
-  const body = withSettings(stock, { ...TINT2_OVERRIDES, panel_items: 'C', panel_position: 'bottom right horizontal' });
-  return `# ${MARK} from the stock tint2rc — the clock, bottom right.\n${body}`;
+/**
+ * The bar's layout over a launcher list: entries tint2 would skip (not installed) dropped, the panel background at
+ * 50%, and the spacer re-sized to centre what is left. Run again whenever the launcher list changes. Pure but for
+ * `exists`.
+ */
+export function dockLayout(rc: string, exists: (item: string) => boolean = launcherExists, screenWidth = SCREEN_WIDTH): string {
+  let body = rc
+    .split('\n')
+    .filter((l) => { const m = /^launcher_item_app\s*=\s*(.+?)\s*$/.exec(l); return !m || exists(m[1]); })
+    .join('\n');
+  // Background 1 is the panel's: the first background_color in the file.
+  body = body.replace(/^background_color\s*=.*$/m, 'background_color = #000000 50');
+  const n = (body.match(/^launcher_item_app\s*=/gm) || []).length;
+  const launcherWidth = n * ICON + Math.max(0, n - 1) * ICON_GAP;
+  const spacer = Math.max(0, Math.floor((screenWidth - launcherWidth) / 2));
+  const block = `${SPACER_MARK}\nseparator = new\nseparator_background_id = 0\nseparator_color = #000000 0\nseparator_style = empty\nseparator_size = ${spacer}\nseparator_padding = 0 0\n`;
+  const at = body.indexOf(SPACER_MARK);
+  if (at >= 0) body = body.slice(0, at) + block + body.slice(at).replace(/^[\s\S]*?separator_padding[^\n]*\n/, '');
+  else body = `${body.replace(/\n?$/, '\n')}\n${block}`;
+  return body;
+}
+
+/**
+ * tint2 config = the stock one with the terminal entry first in `launcher`, tint2's own settings icon dropped,
+ * TINT2_OVERRIDES applied and the bar laid out (dockLayout). Null when there's no stock config with a launcher to
+ * extend.
+ */
+export function tint2Config(stock: string | null, desktopEntry: string, exists?: (item: string) => boolean): string | null {
+  const base = tint2Base(stock, desktopEntry);
+  return base === null ? null : dockLayout(base, exists);
+}
+
+/** tint2Config before dockLayout: the launcher list still unpruned, so a session can swap its browser in first. */
+function tint2Base(stock: string | null, desktopEntry: string): string | null {
+  if (!stock || !/^launcher_item_app\s*=/m.test(stock)) return null;
+  const line = `launcher_item_app = ${desktopEntry}`;
+  const body = stock
+    .replace(/^launcher_item_app\s*=\s*tint2conf\.desktop\s*\n/m, '')
+    .replace(/^launcher_item_app\s*=/m, `${line}\nlauncher_item_app =`);
+  return `# ${MARK} from the stock tint2rc — terminal launcher first, a full-width bar.\n${withSettings(body, TINT2_OVERRIDES)}`;
 }
 
 function withSettings(rc: string, settings: Record<string, string>): string {
@@ -264,15 +299,13 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
     // be stuck on the stock panel (no terminal, a settings icon, no dock) for good.
     const stock = readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
     const userTint2 = readOr(path.join(xdgConfig, 'tint2', 'tint2rc'));
-    if (userTint2 === null || (stock !== null && userTint2 === stock)) {
-      const rc = tint2Config(stock, entry);
-      const clock = tint2ClockConfig(stock);
-      if (rc && clock) {
+    const generated = userTint2 === null || (stock !== null && userTint2 === stock) ? tint2Base(stock, entry) : null;
+    if (generated !== null) {
+      const rc = dockLayout(generated);
+      if (rc) {
         const p = path.join(opts.dir, 'tint2rc');
-        const c = path.join(opts.dir, 'tint2rc-clock');
         writeIfChanged(p, rc);
-        writeIfChanged(c, clock);
-        out.tint2Args = [['-c', p], ['-c', c]];
+        out.tint2Args = [['-c', p]];
       }
     }
 
@@ -282,13 +315,13 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
       const browserEntry = path.join(opts.dir, 'session-chrome.desktop');
       writeIfChanged(browserEntry, chromeDesktopEntry(script, systemBrowserIcon()));
       // The dock this desktop would run (the user's own, or the generated one), with the session's browser in it.
-      const [first, ...rest] = out.tint2Args;
-      const base = first.length ? readOr(first[1]) : userTint2 ?? stock;
-      const rc = sessionTint2Config(base, browserEntry);
+      // Swap first, prune and centre after: the swap must see the stock browser entries tint2 would have skipped.
+      const swapped = sessionTint2Config(generated ?? userTint2 ?? stock, browserEntry);
+      const rc = swapped && generated !== null ? dockLayout(swapped) : swapped;
       if (rc) {
         const p = path.join(opts.dir, 'tint2rc-session');
         writeIfChanged(p, rc);
-        out.tint2Args = [['-c', p], ...rest];
+        out.tint2Args = [['-c', p]];
       }
     }
 

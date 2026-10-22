@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ensureDesktopConfig, tint2Config, tint2ClockConfig, openboxRc, openboxMenu, terminalScript, sessionTint2Config, chromeScript } from '../server/lib/desktop-terminal.ts';
+import { ensureDesktopConfig, tint2Config, dockLayout, openboxRc, openboxMenu, terminalScript, sessionTint2Config, chromeScript } from '../server/lib/desktop-terminal.ts';
 import { tmpDir } from './_tmp.js';
 
 const STOCK_TINT2 = 'panel_items = LTSC\npanel_size = 100% 30\npanel_shrink = 0\nlauncher_icon_size = 24\nlauncher_icon_theme_override = 0\nlauncher_item_app = tint2conf.desktop\nlauncher_item_app = google-chrome.desktop\n';
@@ -31,18 +31,25 @@ function fixture() {
   return { root, home, run };
 }
 
-test('tint2Config: terminal first, no tint2 settings icon, a centred dock with 48px icons', () => {
-  const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop');
+test('tint2Config: terminal first, no tint2 settings icon, one full-width bar with the launcher centred and the clock right', () => {
+  const rc = tint2Config(STOCK_TINT2 + 'background_color = #000000 60\n', '/d/terminal.desktop', () => true);
   const items = rc.split('\n').filter((l) => l.startsWith('launcher_item_app'));
   expect(items).toEqual(['launcher_item_app = /d/terminal.desktop', 'launcher_item_app = google-chrome.desktop']);
-  for (const l of ['panel_items = LT', 'panel_size = 100% 56', 'panel_shrink = 1', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
+  for (const l of ['panel_items = :LTC', 'panel_size = 100% 56', 'panel_shrink = 0', 'launcher_icon_size = 48', 'panel_position = bottom center horizontal', 'taskbar_name = 0'])
     expect(rc.split('\n').filter((x) => x.startsWith(l.split(' =')[0] + ' '))).toEqual([l]);
+  expect(rc).toMatch(/^background_color = #000000 50$/m); // the bar: black at 50% over the wallpaper
+  expect(rc).toMatch(/^separator_size = 588$/m); // (1280 - 2×48 - 8) / 2: the two icons sit at the centre
   expect(tint2Config(null, '/x')).toBeNull();
-  const clock = tint2ClockConfig(STOCK_TINT2);
-  expect(clock).toMatch(/^panel_items = C$/m);
-  expect(clock).toMatch(/^panel_position = bottom right horizontal$/m);
-  expect(clock).toMatch(/^panel_size = 100% 56$/m);
   expect(tint2Config('panel_items = TSC\n', '/x')).toBeNull();
+});
+
+test('dockLayout drops launchers tint2 would skip and re-centres on what is left, idempotently', () => {
+  const rc = tint2Config(STOCK_TINT2, '/d/terminal.desktop', () => true);
+  const one = dockLayout(rc, (item) => item.startsWith('/'));
+  expect(one.split('\n').filter((l) => l.startsWith('launcher_item_app'))).toEqual(['launcher_item_app = /d/terminal.desktop']);
+  expect(one).toMatch(/^separator_size = 616$/m); // (1280 - 48) / 2
+  expect(dockLayout(one, () => true)).toBe(one);
+  expect((one.match(/^separator = new$/gm) || []).length).toBe(1);
 });
 
 test('openboxRc swaps only the stock menu.xml for ours; openboxMenu opens with Terminal', () => {
@@ -62,7 +69,7 @@ test('ensureDesktopConfig writes the launcher, icon, configs and lxterminal defa
   const dir = path.join(root, 'desktop');
   expect(conf.terminal).toBe(path.join(dir, 'arigami-terminal'));
   expect(fs.statSync(conf.terminal).mode & 0o111).toBeTruthy();
-  expect(conf.tint2Args).toEqual([['-c', path.join(dir, 'tint2rc')], ['-c', path.join(dir, 'tint2rc-clock')]]);
+  expect(conf.tint2Args).toEqual([['-c', path.join(dir, 'tint2rc')]]);
   expect(conf.openboxArgs).toEqual(['--config-file', path.join(dir, 'openbox-rc.xml')]);
   expect(fs.readFileSync(path.join(dir, 'tint2rc'), 'utf8')).toContain(`launcher_item_app = ${path.join(dir, 'terminal.desktop')}`);
   const entry = fs.readFileSync(path.join(dir, 'terminal.desktop'), 'utf8');
@@ -148,7 +155,8 @@ test('a session desktop runs the generated dock with the session browser; the sh
   const shared = ensureDesktopConfig(opts);
   const session = ensureDesktopConfig({ ...opts, session: true });
   expect(shared.tint2Args[0]).toEqual(['-c', path.join(root, 'desktop', 'tint2rc')]);
-  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')], shared.tint2Args[1]]);
+  expect(session.tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc-session')]]);
+  expect(fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8')).toMatch(/^separator_size = \d+$/m); // re-centred
   const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
   expect(rc).toContain(`launcher_item_app = ${path.join(root, 'desktop', 'session-chrome.desktop')}`);
   expect(rc).not.toMatch(/google-chrome\.desktop/);
@@ -206,9 +214,8 @@ test("a tint2rc that is only tint2's own copy of the stock config is not the use
   const { root, home, run } = fixture();
   fs.mkdirSync(path.join(home, '.config', 'tint2'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), STOCK_TINT2); // what tint2 writes on its first run without -c
-  expect(run().tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc')], ['-c', path.join(root, 'desktop', 'tint2rc-clock')]]);
+  expect(run().tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc')]]);
   const session = ensureDesktopConfig({ dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml'), session: true });
-  expect(session.tint2Args[1]).toEqual(['-c', path.join(root, 'desktop', 'tint2rc-clock')]);
   const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
   expect(rc).toContain(path.join(root, 'desktop', 'terminal.desktop')); // the terminal is back
   expect(rc).not.toContain('tint2conf.desktop');
