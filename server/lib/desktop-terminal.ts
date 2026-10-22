@@ -259,8 +259,12 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
     const entry = path.join(opts.dir, 'terminal.desktop');
     writeIfChanged(entry, terminalDesktopEntry(terminal, icon));
 
-    if (!fs.existsSync(path.join(xdgConfig, 'tint2', 'tint2rc'))) {
-      const stock = readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
+    // tint2 copies the stock config into ~/.config/tint2/tint2rc the first time it runs without `-c` (an older image,
+    // a hand-started tint2). That copy is nobody's choice: treat it as no config of the user's own, or the desktop would
+    // be stuck on the stock panel (no terminal, a settings icon, no dock) for good.
+    const stock = readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
+    const userTint2 = readOr(path.join(xdgConfig, 'tint2', 'tint2rc'));
+    if (userTint2 === null || (stock !== null && userTint2 === stock)) {
       const rc = tint2Config(stock, entry);
       const clock = tint2ClockConfig(stock);
       if (rc && clock) {
@@ -278,9 +282,8 @@ export function ensureDesktopConfig(opts: DesktopConfigOpts): DesktopConfig {
       const browserEntry = path.join(opts.dir, 'session-chrome.desktop');
       writeIfChanged(browserEntry, chromeDesktopEntry(script, systemBrowserIcon()));
       // The dock this desktop would run (the user's own, or the generated one), with the session's browser in it.
-      const userRc = path.join(xdgConfig, 'tint2', 'tint2rc');
       const [first, ...rest] = out.tint2Args;
-      const base = first.length ? readOr(first[1]) : readOr(userRc) ?? readOr(opts.stockTint2rc || '/etc/xdg/tint2/tint2rc');
+      const base = first.length ? readOr(first[1]) : userTint2 ?? stock;
       const rc = sessionTint2Config(base, browserEntry);
       if (rc) {
         const p = path.join(opts.dir, 'tint2rc-session');

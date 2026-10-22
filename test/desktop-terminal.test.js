@@ -201,3 +201,17 @@ test("the dock's browser icon asks the host for the session's Chrome, with a new
   const off = runChrome({ curl: 0, 'google-chrome-stable': 0 }); // no session: a regular Chrome
   expect(off.log.trim()).toBe('google-chrome-stable https://example.com');
 });
+
+test("a tint2rc that is only tint2's own copy of the stock config is not the user's: the generated dock is used", () => {
+  const { root, home, run } = fixture();
+  fs.mkdirSync(path.join(home, '.config', 'tint2'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), STOCK_TINT2); // what tint2 writes on its first run without -c
+  expect(run().tint2Args).toEqual([['-c', path.join(root, 'desktop', 'tint2rc')], ['-c', path.join(root, 'desktop', 'tint2rc-clock')]]);
+  const session = ensureDesktopConfig({ dir: path.join(root, 'desktop'), env: { HOME: home }, stockTint2rc: path.join(root, 'tint2rc'), stockOpenboxRc: path.join(root, 'rc.xml'), session: true });
+  expect(session.tint2Args[1]).toEqual(['-c', path.join(root, 'desktop', 'tint2rc-clock')]);
+  const rc = fs.readFileSync(path.join(root, 'desktop', 'tint2rc-session'), 'utf8');
+  expect(rc).toContain(path.join(root, 'desktop', 'terminal.desktop')); // the terminal is back
+  expect(rc).not.toContain('tint2conf.desktop');
+  fs.writeFileSync(path.join(home, '.config', 'tint2', 'tint2rc'), STOCK_TINT2 + 'panel_size = 100% 40\n'); // one change makes it theirs
+  expect(run().tint2Args).toEqual([[]]);
+});
