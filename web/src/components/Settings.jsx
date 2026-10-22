@@ -19,11 +19,12 @@ import { Icon } from '../lib/icons.js';
 import { useT } from '../lib/i18n.js';
 import { useStore } from '../lib/store.js';
 import { useIsDesktop } from '../lib/useMedia.js';
-import { faXmark, faSliders, faLink, faServer, faPuzzlePiece } from '@fortawesome/free-solid-svg-icons';
+import { faXmark, faSliders, faLink, faServer, faPuzzlePiece, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import General from './settings/Appearance.jsx';
 import Connections from './settings/Connections.jsx';
 import HostPage from './settings/Host.jsx';
 import ExtensionsPage from './settings/Extensions.jsx';
+import CustomizationPage from './settings/Customization.jsx';
 import SettingsFind from './settings/Find.jsx';
 
 // Route ids App.jsx accepts. The first four are the nav; `voice` and
@@ -31,9 +32,11 @@ import SettingsFind from './settings/Find.jsx';
 // EXT added `extensions` as a category of its own rather than a block inside
 // Host: installing one is a decision about running foreign code, and it needs
 // room for a permission list and a settings form per extension.
-export const SETTINGS_CATEGORIES = ['appearance', 'connections', 'host', 'extensions', 'voice', 'automation'];
-export const SETTINGS_NAV = ['appearance', 'connections', 'host', 'extensions'];
-const ICONS = { appearance: faSliders, connections: faLink, host: faServer, extensions: faPuzzlePiece };
+// PROMPT1 added `customization`: how the agents behave (the instruction blocks; later per-agent/session inheritance)
+// is not a fact about the machine, so it is not Host.
+export const SETTINGS_CATEGORIES = ['appearance', 'connections', 'host', 'extensions', 'customization', 'voice', 'automation'];
+export const SETTINGS_NAV = ['appearance', 'connections', 'host', 'extensions', 'customization'];
+const ICONS = { appearance: faSliders, connections: faLink, host: faServer, extensions: faPuzzlePiece, customization: faWandMagicSparkles };
 
 // Legacy category → {cat, section}. `automation` without a section opens the
 // heartbeat (its only user-facing control); `voice` opens the voice block.
@@ -108,6 +111,7 @@ export default function Settings({ category = 'appearance', section = '', initia
   if (cat === 'connections') body = <Connections initialAdd={initialAdd} section={sec} />;
   else if (cat === 'host') body = <HostPage section={sec} />;
   else if (cat === 'extensions') body = <ExtensionsPage />;
+  else if (cat === 'customization') body = <CustomizationPage section={sec} />;
   else body = <General section={sec} voiceEnabled={voiceEnabled} recording={recordingHotkey} setRecording={setRecordingHotkey} />;
 
   return (

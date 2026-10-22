@@ -2109,7 +2109,7 @@ export function removeStreamedAttachment(id, filePath) {
 // phones and tailnets alike — a `http://localhost:…` link only works on the
 // host box. Goes in the first turn only (same prompt-cache reasoning as memory).
 // PROMPT1: the texts the host puts in front of a session's messages live in server/prompt-blocks.ts — one registry
-// the owner can edit (Settings › Host › Advanced › Instructions). This file only gathers what they are rendered with.
+// the owner can edit (Settings › Customization). This file only gathers what they are rendered with.
 function blockCtx(p, extra = {}) {
   return {
     engine: p?.engine || 'claude',

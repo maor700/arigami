@@ -3876,7 +3876,7 @@ export async function handle(
     // signed-in caller (and to agents through the host_resources tool) because
     // the whole point is that a session can ask before it starts something
     // expensive — see server/lib/resources.ts.
-    // PROMPT1: the instruction blocks (server/prompt-blocks.ts) — Settings › Host › Advanced › Instructions. They
+    // PROMPT1: the instruction blocks (server/prompt-blocks.ts) — Settings › Customization. They
     // shape every agent, so reading and editing them is the owner's (admin) only, never a session's.
     if (p === '/__api/prompts' || p.startsWith('/__api/prompts/')) {
       const me = (req as any).auth as import('./auth.js').Principal | null;

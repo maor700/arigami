@@ -18,6 +18,8 @@ export const he = {
   'settings.cat.automation': 'אוטומציה',
   'settings.cat.host': 'מארח',
   'settings.cat.extensions': 'הרחבות',
+  'settings.cat.customization': 'התאמה אישית',
+  'customization.intro': 'איך הסוכנים מתנהגים כאן. הכל עובד גם בלי לגעת בעמוד הזה.',
   'settings.connections.claude': 'חשבונות',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'מתקדם',

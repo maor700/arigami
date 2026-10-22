@@ -1,4 +1,4 @@
-// PROMPT1 — Settings › Host › Advanced › Instructions (expert): the blocks the host puts in front of every session's
+// PROMPT1 — Settings › Customization (expert): the blocks the host puts in front of every session's
 // messages (server/prompt-blocks.ts). Deliberately out of the way: one more collapsed row inside the already collapsed
 // Advanced drawer, closed by default. Nothing is fetched until it is opened. GET/PUT/DELETE /__api/prompts[/:id].
 import { useEffect, useState } from 'react';

@@ -19,6 +19,8 @@ export const en = {
   'settings.cat.automation': 'Automation',
   'settings.cat.host': 'Host',
   'settings.cat.extensions': 'Extensions',
+  'settings.cat.customization': 'Customization',
+  'customization.intro': 'How the agents behave here. Everything works without touching this page.',
   'settings.connections.claude': 'Accounts',
   // AUDIT2 — 3 pages + "advanced" drawer
   'settings.advanced': 'Advanced',

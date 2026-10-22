@@ -586,7 +586,8 @@ test('bridge: dispose stops everything', async () => {
 /* ---------- Settings ------------------------------------------------------ */
 
 test('Settings: "extensions" is the fourth nav page and a valid route id', () => {
-  expect(SettingsMod.SETTINGS_NAV).toEqual(['appearance', 'connections', 'host', 'extensions']);
+  expect(SettingsMod.SETTINGS_NAV.slice(0, 4)).toEqual(['appearance', 'connections', 'host', 'extensions']);
+  expect(SettingsMod.resolveCategory('customization')).toEqual({ cat: 'customization', section: '' }); // PROMPT1's page, after it
   expect(SettingsMod.SETTINGS_CATEGORIES).toContain('extensions');
   expect(SettingsMod.resolveCategory('extensions')).toEqual({ cat: 'extensions', section: '' });
 });
