@@ -53,11 +53,11 @@ test('duotone, color parsing, title fit and the flat fallback', () => {
   expect(o.lut).toEqual({ r: '8+157*val/255', g: '39+176*val/255', b: '33+172*val/255' });
   expect(o.bad).toEqual({ r: 0x3d, g: 0x4b, b: 0x5c }); // an unparseable color → the neutral default
   expect(o.c).toEqual({ r: 31, g: 156, b: 130 });
-  expect(o.short).toEqual({ text: 'Linear UI', size: 64 });
+  expect(o.short).toEqual({ text: 'Linear UI', size: 32 });
   expect([...o.long.text].length).toBe(48);
   expect(o.long.text.endsWith('…')).toBe(true);
-  expect(o.long.size).toBe(41);
-  expect(o.heb.size).toBe(64);
+  expect(o.long.size).toBe(20);
+  expect(o.heb.size).toBe(32);
   expect(o.empty.text).toBe('');
   expect(o.px).toEqual([130, 156, 31, 255, 130, 156, 31, 255]); // BGRA
   const vf = o.args[o.args.indexOf('-vf') + 1];

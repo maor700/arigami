@@ -73,7 +73,7 @@ export function fitTitle(title: unknown): { text: string; size: number } {
   let text = String(title ?? '').replace(/\s+/g, ' ').trim();
   if ([...text].length > 48) text = [...text].slice(0, 47).join('').trimEnd() + '…';
   const len = Math.max(1, [...text].length);
-  const size = Math.max(32, Math.min(64, Math.round(1100 / (len * 0.56))));
+  const size = Math.max(16, Math.min(32, Math.round(550 / (len * 0.56))));
   return { text, size };
 }
 
@@ -108,8 +108,8 @@ export function ffmpegArgs(o: FfmpegArgsIn): string[] {
     'format=rgb24',
     `lutrgb=r=${ffEscape(lut.r)}:g=${ffEscape(lut.g)}:b=${ffEscape(lut.b)}`,
     'vignette=PI/5',
-    `drawtext=${font}textfile=${ffEscape(o.titleFile)}:fontcolor=white:shadowcolor=black@0.5:shadowx=2:shadowy=2:fontsize=${o.titleSize}:x=w-tw-48:y=h-th-150`,
-    `drawtext=${font}textfile=${ffEscape(o.subtitleFile)}:fontcolor=white@0.85:fontsize=22:x=w-tw-50:y=h-th-112`,
+    `drawtext=${font}textfile=${ffEscape(o.titleFile)}:fontcolor=white:shadowcolor=black@0.5:shadowx=1:shadowy=1:fontsize=${o.titleSize}:x=w-tw-32:y=h-th-98`,
+    `drawtext=${font}textfile=${ffEscape(o.subtitleFile)}:fontcolor=white@0.85:fontsize=12:x=w-tw-33:y=h-th-80`,
   ].join(',');
   return ['-loglevel', 'error', '-nostdin', '-i', o.image, '-frames:v', '1', '-vf', vf, '-f', 'rawvideo', '-pix_fmt', 'bgra', 'pipe:1'];
 }
