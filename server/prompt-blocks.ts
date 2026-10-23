@@ -121,7 +121,8 @@ export const BUILTIN: BuiltinBlock[] = [
       'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
       'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
       'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
-      'and hand the desktop over to the human (request_screen) for logins. ' +
+      'sign in to sites without ever seeing the password (request_credentials: the human fills the form from their vault); ' +
+      'and hand the desktop over to the human (request_screen) for a CAPTCHA, a payment or an approval on their phone. ' +
       'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
       '\n{{capabilities}}\n\n{{extensions}}',
   },

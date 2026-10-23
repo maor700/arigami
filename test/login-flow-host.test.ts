@@ -167,7 +167,8 @@ test('a linked-device site is refused outright, with what to do instead', async 
   const r = await call('POST', `/__api/sessions/${sid}/login-request`, 'session', { site: 'web.whatsapp.com' });
   expect(r.json.available).toBe(false);
   expect(r.json.policy).toBe('never');
-  expect(r.json.next).toMatch(/request_screen/);
+  expect(r.json.next).toMatch(/request_credentials/); // a password form: the card
+  expect(r.json.next).toMatch(/QR code.*request_screen/); // a device link: the human's phone
 });
 
 test('a site with no login in the owner browser says so', async () => {

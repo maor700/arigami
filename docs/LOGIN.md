@@ -9,7 +9,9 @@ rung that works.
    opening anything; it costs the human nothing.
 3. **The browser**, in this order:
    1. **The session's isolated Chrome over CDP** (`browser_open`, `request_login` / the login vault). Best for in-page
-      work: DOM-precise, cheap, concurrent.
+      work: DOM-precise, cheap, concurrent. No login to hand over → a fresh sign-in on the site's form with
+      `request_credentials`: the human fills it from their credential vault (or types it once on the card), the host
+      puts it into the page, and the agent never sees it.
    2. **Blocked by automation detection** (Google "this browser may not be secure", a CAPTCHA, Cloudflare Turnstile)
       → do the SSO in the **shared machine's Chrome** (the desktop icon; the human's own profile, already signed in to
       Google), driven with `desktop_*`. This saves the human an intervention. If Google asks for the password again,
@@ -17,7 +19,8 @@ rung that works.
    3. **Keep the result.** Close that Chrome **gracefully** (`browser_close` does; a SIGTERM loses fresh cookies), then
       open the CDP Chrome on a **copy of that profile directory** (see below) and carry on.
 
-Passwords, 2FA and OTP are never typed by the agent.
+Passwords, 2FA and OTP are never typed by the agent: a sign-in form is `request_credentials`; a CAPTCHA, a payment or a
+push approval is `request_screen`.
 
 ## Why a profile copy, not exported cookies
 

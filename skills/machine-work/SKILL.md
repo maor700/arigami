@@ -1,5 +1,5 @@
 ---
-description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot only at the few required moments (first page, before/after a hand-over, the end), hand over to the human at login / 2FA / CAPTCHA / payment via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
+description: Convention for any session that drives a browser or the shared desktop (VNC machine) on the human's behalf — narrate what you do, screenshot only at the few required moments (first page, before/after a hand-over, the end), sign-in forms through request_credentials (the human fills it, you never see it), hand over to the human at CAPTCHA / payment / push approvals via request_screen, verify after they click Done, and summarize at the end. Load this (or follow it) from every skill that opens a browser.
 ---
 
 # Machine work — narrate, capture, hand over, verify
@@ -20,10 +20,11 @@ over**, complete it, click **Done**, and you continue.
 | `browser_snapshot({caption?})` | screenshot + `{url, title, text}` of the current page, plus `{needsHuman, reason, hint}` — check this before clicking/typing further |
 | `browser_click({x,y}\|{text})` | click by viewport coordinates (from a snapshot screenshot) or by visible text |
 | `browser_type({text, submit?})` | type into the focused field. Refuses (returns `needsHuman:true`) on a password/OTP field or a CAPTCHA — see §3 |
+| `request_credentials({site, reason})` | **the way to sign in on a form** (username / password / one-time code): the human fills it from their vault, or types it once on a card — you never see it. Stop and wait for the `[host]` message — see §3 |
 | `browser_scroll({dx?,dy?})` | scroll the page |
 | `browser_close()` | close this session's browser (safe even if not running) |
 | `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
-| `request_screen({prompt, reason?, hint?})` | when only the human can proceed (login, 2FA, CAPTCHA, payment, unexpected dialog). Blocks until Done. Sends a push. |
+| `request_screen({prompt, reason?, hint?})` | when only the human's hands can proceed: CAPTCHA, payment, a push/app approval, an unexpected dialog — or a sign-in the human chose to type themselves. Blocks until Done. Sends a push. |
 | `request_action({prompt, buttons})` | when you need a *decision*, not a hand — never for things they have to do on the machine |
 | `browser_logins()` | which sites the human is signed in to in THEIR browser — names only. Check before signing in anywhere |
 | `request_login({site, reason})` | ask for the human's login to ONE site; they approve on a card and it lands in your browser. Stop and wait for the `[host]` message |
@@ -72,7 +73,7 @@ and its own Chrome profile, allocated the first time you touch any of this —
 with **no logins**. The human signs in to sites once, in their own browser
 ("My browser" in the cockpit); when you need a site, `request_login` asks them
 for that one site. Never ask for a password in the chat — a fresh sign-in is
-`request_screen`, with the human typing. Your browser closes itself after ~10
+`request_credentials` on the site's sign-in form (§3). Your browser closes itself after ~10
 minutes unused and reopens, with its tabs, on your next browser step.
 
 **Opening a browser:** use the helper, never launch `google-chrome` yourself:
@@ -95,17 +96,17 @@ respawn is enough if it was allocated after your process started). If you're
 driving X directly instead of through the Chrome helper, use `$DISPLAY`, not
 a hardcoded `:99` (that's the *global* desktop, not yours).
 
-**Saving logins:** after you complete a login/2FA/payment flow yourself (no
-`request_screen` involved), call `save_browser_logins()` so the next session
-starts already signed in. If the human did it via `request_screen` Take
-over → Done, this happens automatically — no need to call it yourself.
+**Saving logins:** once you are signed in to a site (by `request_credentials`
+or a take-over), offer `save_login({site})` — the human approves it on a card,
+and later sessions get that site through `request_login` with no password at
+all. An agent session keeps its own identity with `save_browser_logins()`.
 
 ## The convention
 
 ### 1. Opening message
 Before touching the machine, post one line in chat:
 
-> Working on the machine: **<goal>** — <2–4 steps you expect> · I'll only get stuck at login/2FA/CAPTCHA/payment, and then I'll ask you to take over.
+> Working on the machine: **<goal>** — <2–4 steps you expect> · at a sign-in form I'll ask you on a card (from your vault, I never see it); at a CAPTCHA/payment I'll ask you to take over.
 
 (Write this in the human's own language — match whatever language they've been writing to you in, English included.)
 Set `set_progress` with those steps.
@@ -131,13 +132,26 @@ screen hasn't changed since the last capture the server returns
 Captions: short and factual — "Login page loaded", "Order form filled, not
 submitted yet", "Error: card declined".
 
-### 3. Blocked → hand over with `request_screen`
-When you reach a step only the human can do:
+### 3. Sign-in forms → `request_credentials`; everything else only a human can do → `request_screen`
 
-If you're driving with `browser_*`: `browser_type` refuses on its own when the focused field looks
-like a password/OTP input or the page shows a CAPTCHA (`{ok:false, needsHuman:true, reason, hint}`),
-and `browser_snapshot` reports the same `{needsHuman, reason, hint}` proactively — don't wait to be
-refused, check it. Either way the next step is the same: `request_screen`, never typing it yourself.
+`browser_type` refuses on its own when the focused field looks like a password/OTP input or the page
+shows a CAPTCHA (`{ok:false, needsHuman:true, reason, hint}`), and `browser_snapshot` reports the same
+`{needsHuman, reason, hint}` proactively — don't wait to be refused, check it. Then:
+
+**A sign-in form** (username, password, or a one-time code field) → `request_credentials({site, reason})`
+on that page. It is not "typing a password yourself": the host shows the human a card, they fill it
+from their vault (or type it once and save it), and the host puts it into the page. You get
+`{pending:true}` — **stop and wait** for the `[host] …` line, then `browser_snapshot` to check. You never
+see the values; never read a password field, never ask for one in the chat.
+- `{manual:true}` → the human types this site themselves: `request_screen` (reason `login`).
+- `{ok:false, refused:true}` (Google, GitHub) → ask the human, in one line, to sign in to it in
+  "My browser", then `request_login(site)`.
+- `{ok:false, next}` (no sign-in field yet) → do what `next` says.
+- After the `[host]` line says it was filled: a code field next → `request_credentials` again; a
+  push/app approval → `request_screen` (reason `2fa`).
+
+**Anything else only the human can do** — CAPTCHA, payment, a push approval on their phone, an
+unexpected dialog — hand the screen over with `request_screen`:
 
 1. `capture_screen` (or `browser_snapshot`) first (required moment #2 — the card shows where you are).
 2. Post one short line in chat: what you were doing and why you stopped.
@@ -156,8 +170,9 @@ refused, check it. Either way the next step is the same: `request_screen`, never
 4. Do nothing else while it blocks. Don't retry, don't poll, don't open other
    tabs on the machine — the human is driving it.
 
-Never ask for passwords, codes or card numbers in chat. The human types them
-on the machine; you never see them.
+Never ask for passwords, codes or card numbers in chat. They reach the page
+through the card (`request_credentials`) or the human's own hands (`request_screen`);
+you never see them.
 
 If a listener can do it without the human (e.g. `sms-listener` for an OTP the
 human agreed to forward), prefer that and mention it — but fall back to
@@ -202,6 +217,8 @@ a human reviews the diff before it touches the live skill.
 - Calling `request_screen` with only a prompt and no hint ("please help").
 - Using `request_action` for "I'm on the login page" — that's status, not a decision.
 - Asking the human to paste a code into chat.
+- Handing the screen over (`request_screen`) for an ordinary password form — that is `request_credentials`.
+- Getting round the sign-in some other way (a published demo password, `curl` with typed credentials).
 - Continuing after Done without checking the page.
 - Screenshotting every step "for the record" — only the four required moments plus what you need to see yourself.
 - Sending several `request_screen` in a row — each one is a push to their phone.

@@ -671,7 +671,7 @@ export async function createArigamiServer(env = process.env) {
         'Show an action bar with buttons in the session UI. Answers come ONLY from a human click (delivered as a user message). ' +
         'Sends a push notification to the human\'s phone, so use it for real decisions, not status updates (use set_status_summary / set_progress for those). ' +
         'Best practice: one short question in `prompt` (what you need decided and why, ≤200 chars — that is the notification body), 2–4 buttons with clear labels, ' +
-        'and stop working until the answer arrives. Do NOT use it for things the human has to DO on the machine (login, 2FA, CAPTCHA, payment) — that is request_screen.',
+        'and stop working until the answer arrives. Do NOT use it for things the human has to DO: a sign-in form is request_credentials; CAPTCHA, payment, a push approval is request_screen.',
       inputSchema: obj({
         prompt: { type: 'string' },
         buttons: {
@@ -775,14 +775,14 @@ export async function createArigamiServer(env = process.env) {
     {
       name: 'request_screen',
       description:
-        'Hand the shared desktop over to the human for a step only they can do — manual login, 2FA / OTP code, CAPTCHA, payment, an interactive installer. ' +
+        'Hand the shared desktop over to the human for a step only their hands can do — CAPTCHA, payment, a push/app approval, an interactive installer, or a sign-in they chose to type themselves (request_credentials answered {manual:true}). An ordinary sign-in form is request_credentials, not this. ' +
         'Shows a live embedded view in the chat with a "Take over" / "Done" control and pushes a notification to the human\'s phone. ' +
         'BLOCKS until they click Done (or ~30 min timeout); the response may include a short note about what they did. ' +
         'Best practice (see the machine-work skill): (1) call capture_screen right before, so the human sees where you are; ' +
         '(2) `prompt` = one sentence on what you were trying to do and where you got stuck; (3) set `reason` to the closest category — it drives the notification title; ' +
         '(4) `hint` = exactly what the human should do and what "done" looks like (e.g. "enter the SMS code and wait for the dashboard, then click Done"); ' +
         '(5) after it returns, verify the state yourself (re-read the page / capture_screen) before continuing — do not assume it worked; ' +
-        '(6) never ask for passwords or codes in chat — let the human type them on the machine. ' +
+        '(6) never ask for passwords or codes in chat. An ordinary sign-in form (username / password / one-time code) is NOT this tool: call request_credentials — come here for it only when that answers {manual:true}. ' +
         'Opens in Watch (view-only) mode; the human can click "Take over" to drive the machine, then "Done". Returns {takenOver: boolean, note?: string} — takenOver=true means the human actually intervened. ' +
         'Do not call it for questions or decisions — use request_action for those.',
       inputSchema: obj(
@@ -810,7 +810,7 @@ export async function createArigamiServer(env = process.env) {
         'The host posts a Setup card in the chat (with a QR / token field / OAuth button / Auto-Manual switch as appropriate) and pushes "the agent needs <capability>" to the human\'s phone. ' +
         'mode: omit to let the host pick — "auto" when a Google identity is connected and the capability is auto-capable, else "manual". ' +
         'ALWAYS BLOCKS (≤15 min) until the human acts on the card: connects it manually → {state:"done"}, clicks "Not now" → {state:"skipped"}, nobody → {state:"timeout"}, or clicks "Connect automatically" (consent) → {state:"auto", id, playbook}. `mode` only PRESELECTS the card switch — there is never auto without that click. On "skipped"/"timeout" offer an alternative, never nag. ' +
-        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself, request_screen for those, ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
+        'AUTO: YOU then run the named playbook skill (connect-<provider>, machine-work rules: never type passwords/2FA yourself — a sign-in form is request_credentials, CAPTCHA / push approval is request_screen — ≤2 attempts, one final screenshot as evidence), narrate with report_setup({capability, line}) and finish with report_setup({capability, ok}). ' +
         'If the capability is already connected you get {state:"done", already:true} at once (one audit line is still written). why: one short clause the card shows ("read your inbox"); defaults to the capability title.',
       inputSchema: obj(
         {
@@ -903,7 +903,7 @@ export async function createArigamiServer(env = process.env) {
         'Coordinates in the image are screen pixels — exactly what desktop_pointer takes; `width`/`height` are the screen size. ' +
         'Look at the screen before every action that depends on it, and again after it: this tool never returns a cached frame. ' +
         'For anything inside a browser page prefer the browser_* tools (precise, cheap); use the desktop tools for what is outside the page — other windows, menus, installers, apps. ' +
-        'Never use them to type passwords, 2FA or other secrets: that is request_screen, the human types.',
+        'Never use them to type passwords, 2FA or other secrets: a sign-in form is request_credentials (the human fills it, you never see it).',
       inputSchema: obj({ ...SID_PROP }),
       run: async (a) => {
         const r = await api('POST', `/__api/sessions/${sid(a)}/desktop/screenshot`, {});
@@ -932,7 +932,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'desktop_keyboard',
       description:
         'Type text (printable ASCII; `text`) or press a key / combo (`key`, e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4) on this session\'s own desktop, into whatever has focus. ' +
-        'Click the target first. NEVER type passwords, 2FA or OTP codes — hand the screen to the human with request_screen.',
+        'Click the target first. NEVER type passwords, 2FA or OTP codes — on a sign-in form call request_credentials (the human fills it, you never see it).',
       inputSchema: obj({
         text: { type: 'string', description: 'Printable ASCII to type' },
         key: { type: 'string', description: 'A key or combo like ctrl+l' },
@@ -978,7 +978,7 @@ export async function createArigamiServer(env = process.env) {
         'Your browser starts with no logins; this is the only way one gets in. The owner sees a card and chooses: use their login, always for this site, sign in fresh, or no. ' +
         'Returns {available:false, next} when there is nothing to hand over or the site must never be copied (WhatsApp Web, banks) — then do what `next` says. ' +
         'Returns {pending:true} when a card is up: STOP and wait — the host messages you "[host] …" with the outcome, and on approval the login is already in your browser. ' +
-        "Never ask the owner to type a password into the chat: for a fresh sign-in, open the login page and call request_screen so they type it on the machine.",
+        "Never ask the owner to type a password into the chat: for a fresh sign-in, open the login page and call request_credentials.",
       inputSchema: obj({
         site: { type: 'string', description: "The site: a name ('google'), a domain ('linear.app') or a url" },
         reason: { type: 'string', description: 'One short line shown on the card: what you need the login for' },
@@ -1052,7 +1052,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'browser_snapshot',
       description:
         'Look at the current page: a screenshot card (posted in chat, deduped like capture_screen) PLUS the page\'s url, title and visible text (innerText, truncated). ' +
-        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop and call request_screen instead of clicking/typing further. ' +
+        'Also reports {needsHuman, reason, hint} when the page shows a credential/OTP field or a CAPTCHA — if needsHuman is true, stop: a credential/OTP field → request_credentials; a CAPTCHA → request_screen. ' +
         'This is the browser_* equivalent of capture_screen — use it at the required moments (first page, before/after a hand-over, the end), not after every click.',
       inputSchema: obj({ caption: { type: 'string', description: 'What this snapshot shows (short, factual) — used as the screenshot caption.' }, ...SID_PROP }),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/snapshot`, { caption: a.caption }),
@@ -1074,7 +1074,7 @@ export async function createArigamiServer(env = process.env) {
       description:
         'Type text into whatever has focus on the page (CDP Input.insertText, unicode ok), optionally pressing Enter after (`submit:true`). ' +
         'REFUSES and returns {ok:false, needsHuman:true, reason, hint} instead of typing when the focused field looks like a password/OTP/2FA input, or the page shows a CAPTCHA — ' +
-        'call request_screen in that case, per the machine-work rule (never type credentials/codes yourself). Click the field first with browser_click if it is not already focused.',
+        'then call request_credentials for a password/OTP field (the human fills it from their vault — you never see it), or request_screen for a CAPTCHA. Click the field first with browser_click if it is not already focused.',
       inputSchema: obj({ text: { type: 'string' }, submit: { type: 'boolean', description: 'Press Enter after typing (default false)' }, ...SID_PROP }, ['text']),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/browser/type`, { text: a.text, submit: a.submit === true }),
     },

@@ -1136,6 +1136,8 @@ const SHARE_KIND = 'share';
 // Login cards (login-vault.ts): answered only by a person, and acted on by the
 // host — the agent never touches the owner's browser itself.
 const LOGIN_KIND = 'login';
+// What a session does when there is no login to hand over: the sign-in card (VAULT1), never a take-over for a password.
+const SIGN_IN_FRESH = "sign in fresh: open the site's login page with browser_open, then request_credentials — the human fills it, you never see it";
 const LOGIN_SAVE_KIND = 'login-save';
 // Outbound cards (lib/outbound.ts): a message to a PERSON, shown verbatim; the
 // host sends it only on a person's Send.
@@ -6444,12 +6446,12 @@ export async function handle(
         const d = lv.detect(raw);
         const dec = ls.decide(d.site, d.storageOrigins.length ? ['(unread)'] : []);
         if (dec.policy === 'never')
-          return json(res, { available: false, site: d.site.id, policy: 'never', reason: dec.reason, next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+          return json(res, { available: false, site: d.site.id, policy: 'never', reason: dec.reason, next: SIGN_IN_FRESH + '; a QR code or a device link to scan (WhatsApp Web) is request_screen' });
         if (!d.present)
-          return json(res, { available: false, site: d.site.id, reason: "there is no login for this site in the owner's browser", next: "sign in fresh: open the site's login page, then request_screen so the human types the credentials themselves" });
+          return json(res, { available: false, site: d.site.id, reason: "there is no login for this site in the owner's browser", next: SIGN_IN_FRESH });
         if (lv.grants()[d.site.id]) {
           const r = await lv.transfer(id, raw);
-          return json(res, { available: true, autoApproved: true, ...r, ...(r.ok ? {} : { next: 'sign in fresh with request_screen' }) });
+          return json(res, { available: true, autoApproved: true, ...r, ...(r.ok ? {} : { next: SIGN_IN_FRESH }) });
         }
         const unknown = dec.source === 'default' || dec.source === 'storage';
         const action = {
@@ -6633,7 +6635,7 @@ export async function handle(
           const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
           line = r.ok
             ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
-            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: open the login page, then request_screen so the human types the credentials themselves.`;
+            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: open the login page, then call request_credentials — the human fills it, you never see it.`;
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)
             setTimeout(() => {
@@ -6645,7 +6647,7 @@ export async function handle(
                 .catch(() => {});
             }, 120_000).unref?.();
         } else if (v === 'fresh') {
-          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. Open the site's login page, then call request_screen so the human types the credentials themselves — do not ask for a password in the chat.`;
+          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. Open the site's login page, then call request_credentials — the human fills it, you never see it. Do not ask for a password in the chat.`;
         } else {
           line = `[host] The human REFUSED the ${label} login. Do not sign in to ${label} and do not ask again in this turn.`;
         }
