@@ -1,7 +1,8 @@
 # Editable instructions, per-agent/session inheritance, and a credential vault — design
 
-Status: **phases 1–2 built** (server/prompt-blocks.ts, Settings › Customization, agent and session Advanced); phase 3 is
-still a proposal. Three phases, each shippable on its own.
+Status: **phases 1, 2 and 3a built** (server/prompt-blocks.ts, Settings › Customization, agent and session Advanced;
+server/lib/credentials.ts, web/src/lib/vault.worker.js, the sign-in card, Settings › Connections › Passwords). Phase 3b
+(passkey unlock, TOTP filling, the sync setting) is still a proposal. Each phase is shippable on its own.
 
 Goal: automate everything that can be automated and take load off the owner — without the model, the chat or the
 host's disk ever holding a password.
@@ -157,6 +158,24 @@ the site through `request_login` without any password at all.
   `innerText` already doesn't; this adds a test that pins it.
 - Residual, documented: an agent with Bash can reach the session Chrome's DevTools port and read a field. Agents meant
   to sign in can be given the `browser` family without `Bash`.
+
+### As built (3a) — what changed from the proposal above
+
+- **Roles, not selectors.** The cockpit names `username` / `password` / `otp`; the host finds those fields with the
+  same in-page detector the card's inspection used, so a value can't be aimed at any other field. The origin check runs
+  inside the page in the same tick as the fill. A username-first form gets its password on the next screen (same tab,
+  same origin, up to 10 s).
+- **The host's record is the card.** The session's `credentialRequest` is a mirror for the UI; the fill and answer
+  routes read the host's own pending record, and a session PATCH can never set the field (an agent that could rename
+  the site on its card could get one site's password typed into another).
+- **The owner's cockpit cookie only** for fill and answer — not a session token, not the host token, not an API token.
+- **Non-blocking**, like `request_login`: the tool returns `{pending:true}` and the outcome arrives as a "[host] …" line.
+- **No `type="password"` in the cockpit.** The card's secret inputs are text inputs drawn as dots; a real password input
+  made the owner's own browser offer to save the value into its password manager.
+- **Automatic** = the owner ticked "Remember this choice" after filling from the vault; any cockpit tab with the vault
+  unlocked then fills it without a tap, only with exactly one saved entry for that exact origin.
+- Lives in Settings › Connections › **Passwords** (status, lock, entries, unlock window, per-site choices, download the
+  `.kdbx` for KeePassXC).
 
 ## Order of work
 

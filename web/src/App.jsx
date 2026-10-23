@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import VaultAutoFill from './components/VaultAutoFill.jsx';
 import { api } from './lib/api.js';
 import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenRequest, interruptSession, restartSession, getState, screenPanelOpen, closeScreenTakeover } from './lib/store.js';
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
@@ -1170,6 +1171,7 @@ function Cockpit() {
       </Suspense>
       <ConfirmHost />
       <Toaster />
+      <VaultAutoFill />
     </div>
   );
 }

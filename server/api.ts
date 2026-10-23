@@ -3880,6 +3880,48 @@ export async function handle(
     // expensive — see server/lib/resources.ts.
     // PROMPT1: the instruction blocks (server/prompt-blocks.ts) — Settings › Customization. They
     // shape every agent, so reading and editing them is the owner's (admin) only, never a session's.
+    // VAULT1: the owner's credential vault — a KDBX 4 file the cockpit encrypts and decrypts itself; the host only
+    // stores the ciphertext (lib/credentials.ts) and the per-site sign-in preferences (no secrets). Owner only.
+    if (p === '/__api/vault/file' || p === '/__api/vault/prefs') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      if (!(me?.kind === 'off' || (me?.kind === 'user' && auth.isAdmin(me)))) return json(res, { error: 'admin only' }, 403);
+      const cr = await import('./lib/credentials.js');
+      if (p === '/__api/vault/prefs') {
+        if (m === 'GET') return json(res, { prefs: cr.prefs() });
+        if (m === 'PUT') {
+          const body = (await readBody(req).catch(() => ({}))) as any;
+          const origin = String(body?.origin || '');
+          if (!/^https?:\/\/[^/]+$/.test(origin)) return badRequest(res, 'origin required');
+          const pref = body?.pref === 'auto' || body?.pref === 'manual' ? body.pref : null;
+          return json(res, { prefs: cr.setPref(origin, pref) });
+        }
+        return notFound(res);
+      }
+      if (m === 'GET') {
+        const f = cr.vaultFile();
+        if (!f) return json(res, { exists: false }, 404);
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', ETag: f.etag, 'Cache-Control': 'no-store' });
+        return void res.end(f.buf);
+      }
+      if (m === 'PUT') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const c of req as AsyncIterable<Buffer>) {
+          size += c.length;
+          if (size > cr.VAULT_MAX_BYTES) return json(res, { error: 'vault file too large' }, 413);
+          chunks.push(c);
+        }
+        try {
+          const out = cr.writeVaultFile(Buffer.concat(chunks), (req.headers['if-match'] as string) || null);
+          res.setHeader('ETag', out.etag);
+          return json(res, { ok: true, etag: out.etag });
+        } catch (e) {
+          const err = e as Error & { status?: number };
+          return json(res, { error: err.message }, err.status || 500);
+        }
+      }
+      return notFound(res);
+    }
     if (p === '/__api/prompts' || p.startsWith('/__api/prompts/')) {
       const me = (req as any).auth as import('./auth.js').Principal | null;
       if (!auth.isAdmin(me)) return json(res, { error: 'admin only' }, 403);
@@ -5899,6 +5941,10 @@ export async function handle(
           const { agentHome: _drop, ...rest } = body.metadata as Record<string, unknown>;
           body.metadata = rest;
         }
+        // VAULT1: the sign-in card is the host's alone (it is built from the page it inspected). Nobody rewrites it
+        // through a PATCH — an agent that could change the site the card names could get one site's password typed
+        // into another.
+        delete body.credentialRequest;
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
@@ -6316,6 +6362,70 @@ export async function handle(
     if (parts[3] === 'prompts' && parts[4] && m === 'DELETE') {
       const removed = state.removePendingPrompt(id, parts[4]);
       return removed ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
+    }
+    // ---- VAULT1: the sign-in card (lib/credentials.ts) ---------------------------------------------------------------
+    // The agent asks (its own session token is enough); only the owner, in the cockpit, fills or answers. The fill's
+    // body holds the values: it is never logged, echoed, or put in the chat — the agent hears "filled" and nothing else.
+    if (sub === 'credentials/request' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const cr = await import('./lib/credentials.js');
+      const out = await cr.request(id, { site: body?.site ? String(body.site) : undefined, reason: body?.reason ? String(body.reason) : undefined });
+      // ok:false answers are 200 so the agent's tool sees `next` (the MCP client turns a non-2xx into a bare error)
+      if (out.status === 'error') return json(res, { ok: false, error: out.error, ...(out.next ? { next: out.next } : {}) });
+      if (out.status === 'refused')
+        return json(res, { ok: false, refused: true, site: out.site.id, error: `${out.site.label} is never signed in to with a password here`, next: `ask the owner to sign in to ${out.site.label} in My browser (Settings › My browser), then call request_login for it` });
+      if (out.status === 'manual')
+        return json(res, { ok: true, manual: true, host: out.host, next: `the owner types ${out.host} sign-ins themselves: call request_screen now (reason "login") and wait` });
+      state.patchSession(id, { credentialRequest: out.request });
+      pushIntervention(id, 'action', `Sign in to ${out.request.host}` + (out.request.reason ? ` — ${out.request.reason}` : ''), 'waiting for your sign-in');
+      return json(res, { ok: true, pending: true, requestId: out.request.requestId, host: out.request.host, fields: out.request.fields, note: 'Stop and wait: the host messages you when the owner has filled the sign-in or chosen to type it. Do not type into the form meanwhile, and never read a password field.' }, 202);
+    }
+    if ((sub === 'credentials/fill' || sub === 'credentials/answer') && m === 'POST') {
+      const me = (req as any).auth as import('./auth.js').Principal | null;
+      // the owner's own browser only: not an agent's session token, not the host token, not an API token
+      if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+        return json(res, { error: 'only the owner, in the cockpit, can answer a sign-in card' }, 403);
+      const body = (await readBody(req, 64_000).catch(() => null)) as any;
+      if (!body || typeof body.requestId !== 'string') return badRequest(res, 'requestId required');
+      const cr = await import('./lib/credentials.js');
+      // the host's own record of the request — never the session's copy of the card
+      const card = cr.getPending(id, body.requestId)?.request;
+      if (!card) {
+        if ((s as any).credentialRequest?.requestId === body.requestId) state.patchSession(id, { credentialRequest: null });
+        return notFound(res, 'this sign-in request is no longer open');
+      }
+      if (sub === 'credentials/answer') {
+        const choice = body.choice === 'manual' ? 'manual' : 'cancel';
+        if (choice === 'manual' && body.remember === true) cr.setPref(card.origin, 'manual');
+        cr.forget(card.requestId);
+        state.patchSession(id, { credentialRequest: null });
+        claude.appendChat(id, { kind: 'system', text: choice === 'manual' ? `🔑 You chose to type the ${card.host} sign-in yourself.` : `🔑 Sign-in to ${card.host} cancelled.` });
+        const line = choice === 'manual'
+          ? `[host] The owner will type the ${card.host} sign-in themselves. Call request_screen now (reason "login", hint: what to sign in to) and wait for it.`
+          : `[host] The owner CANCELLED the ${card.host} sign-in. Do not sign in to ${card.host} and do not ask again in this turn.`;
+        try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+        return json(res, { ok: true });
+      }
+      let r;
+      try {
+        r = await cr.fill(id, card.requestId, body.values && typeof body.values === 'object' ? body.values : {}, { submit: body.submit !== false });
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        if (err.status === 404 || err.status === 410) {
+          state.patchSession(id, { credentialRequest: null });
+          cr.forget(card.requestId);
+        }
+        return json(res, { error: err.message }, err instanceof cr.FillError ? err.status : 500);
+      }
+      if (body.remember === true) cr.setPref(card.origin, 'auto');
+      state.patchSession(id, { credentialRequest: null });
+      claude.appendChat(id, { kind: 'system', text: `🔑 Signed in to ${card.host} from your vault${body.auto === true ? ' (automatically)' : ''} — the agent did not see the details.` });
+      const line =
+        `[host] The owner filled the ${card.host} sign-in (${r.filled.join(', ') || 'nothing'})${r.submitted ? ' and it was submitted' : ' — not submitted: press the sign-in button with browser_click'}. ` +
+        'Check the page with browser_snapshot and continue. Never read a password field. ' +
+        `If the site asks for a one-time code next, call request_credentials again. Once signed in, offer save_login so later sessions need no password.`;
+      try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+      return json(res, { ok: true, filled: r.filled, submitted: r.submitted });
     }
     // ---- logins: one site at a time, only with the owner's approval ----------
     // (login-vault.ts). The agent learns WHICH sites have a login — never a value.

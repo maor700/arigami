@@ -987,6 +987,21 @@ export async function createArigamiServer(env = process.env) {
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/login-request`, { site: a.site, reason: a.reason }),
     },
     {
+      name: 'request_credentials',
+      description:
+        "Sign in on the page that is open in your browser now (a sign-in form: username, password, or a one-time code), without ever seeing the details. " +
+        "The host looks at the form and shows the owner a card: they fill it from their vault (or type it once, and save it for next time), or choose to type it themselves. " +
+        'Returns {pending:true} when the card is up: STOP and wait — the host messages you "[host] …" once it is filled (and submitted), or tells you to call request_screen when the owner types it themselves. ' +
+        'Returns {manual:true, next} when the owner always types this site themselves, and {ok:false, next} when the page has no sign-in field or the site is never signed in to with a password (Google, GitHub) — do what `next` says. ' +
+        'Before it: browser_logins / request_login (the owner may already be signed in). Never type a password, never read a password field, never ask for one in the chat.',
+      inputSchema: obj({
+        site: { type: 'string', description: "The site you expect the form to be on (a domain or url) — the card only fills a page on that site" },
+        reason: { type: 'string', description: 'One short line shown on the card: what you need to sign in for' },
+        ...SID_PROP,
+      }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/credentials/request`, { site: a.site, reason: a.reason }),
+    },
+    {
       name: 'save_login',
       description:
         "After a fresh sign-in in this session, offer to save THAT site's login to the owner's own browser so future sessions can request it. " +

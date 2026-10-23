@@ -70,9 +70,11 @@ export const BUILTIN: BuiltinBlock[] = [
       "3. The browser. Yours (browser_open) is this session's own profile and starts with no logins:\n" +
       '   a. browser_logins → if the owner is signed in to that site, request_login(site) and wait for the "[host] …" outcome; ' +
       'on approval the login is already in your browser.\n' +
-      '   b. Otherwise sign in fresh in your browser. At a password / 2FA / CAPTCHA / payment step: capture_screen, then ' +
-      'request_screen with a hint that says what "done" looks like — the owner types it on the machine. Once signed in, ' +
-      'offer save_login(site) so later sessions can request it instead.\n' +
+      '   b. Otherwise sign in fresh in your browser. On the sign-in form (username / password / one-time code): ' +
+      'request_credentials({site, reason}) and wait — the owner fills it from their vault or types it once, and you never see ' +
+      'the details; never read a password field. When the owner chooses to type it, or at a CAPTCHA / payment step: ' +
+      'capture_screen, then request_screen with a hint that says what "done" looks like. Once signed in, offer ' +
+      'save_login(site) so later sessions can request it instead.\n' +
       "   c. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): " +
       'ask the owner, in one line, to sign in to it in "My browser" (the cockpit opens it on the shared desktop {{sharedDisplay}} — ' +
       "their own profile, a browser they drive themselves; you cannot open it), wait for their word, then request_login(site) " +

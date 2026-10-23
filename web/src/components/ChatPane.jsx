@@ -1005,6 +1005,8 @@ export default function ChatPane({ sessionId, events, working, action, loading, 
           // A current action with no record in the visible transcript (raised before cards were
           // recorded, or scrolled out of the window) still has to be answerable: show it last.
           if (action && !actionRendered && !loading) out.push(<HostCard key="action-fallback" name="ActionCard" props={{ sessionId, action }} />);
+          // VAULT1: an open sign-in card is session state (no chat event — it never carries values): always last.
+          if (session?.credentialRequest && !loading) out.push(<HostCard key={`cred-${session.credentialRequest.requestId}`} name="CredentialCard" props={{ sessionId, request: session.credentialRequest }} />);
           // An approval with no record in the visible transcript (approved before offers were recorded,
           // or scrolled out of the window) still offers the merge — last, and dismissable.
           if (mergeOfferLive && !mergeOfferRendered && !loading) out.push(<HostCard key="merge-fallback" name="MergePanel" props={{ session, dark: true, onDismiss: dismissMergeOffer }} />);

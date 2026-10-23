@@ -78,6 +78,25 @@ export function ensureSessionProfile(sessionId: string): string {
   return dir;
 }
 
+/**
+ * VAULT1: a session's Chrome never offers to save a password. A password the sign-in card filled would otherwise land
+ * in the profile's `Login Data`, which `--password-store=basic` barely protects — and the profile is copied around
+ * (agent seeds, My browser). Written before every launch (Chrome rewrites Preferences while it runs).
+ */
+export function disablePasswordSaving(profileDir: string): void {
+  const file = path.join(profileDir, 'Default', 'Preferences');
+  let prefs: Record<string, any> = {};
+  try { prefs = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* a new profile */ }
+  if (prefs.credentials_enable_service === false && prefs.profile?.password_manager_enabled === false) return;
+  prefs.credentials_enable_service = false;
+  prefs.credentials_enable_autosignin = false;
+  prefs.profile = { ...(prefs.profile || {}), password_manager_enabled: false };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(prefs));
+  } catch { /* best-effort: a read-only profile still launches */ }
+}
+
 // Caches and Chrome's own downloads are what make a profile hundreds of MB;
 // none of them is identity, and Chrome rebuilds each on demand. What a login
 // lives in — Cookies, Local Storage, Session Storage, IndexedDB, Login Data,
@@ -180,7 +199,9 @@ export async function openChrome(sessionId: string, url?: string): Promise<{ dis
   const existing = running.get(sessionId);
   if (existing && isChromeRunning(sessionId)) return { display, pid: existing.pid!, alreadyRunning: true };
 
-  const args = sessionChromeArgs(ensureSessionProfile(sessionId), url);
+  const profileDir = ensureSessionProfile(sessionId);
+  disablePasswordSaving(profileDir);
+  const args = sessionChromeArgs(profileDir, url);
   const { env, extraArgs } = await driver.browserLaunch(sessionId);
   const child = spawn(chromeBin(), chromeExtraFlags().concat(extraArgs, args), {
     env,

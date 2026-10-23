@@ -48,7 +48,7 @@ export async function humanGate(sessionId: string): Promise<HumanGate> {
   try {
     const r = (await pageEvaluate(sessionId, HUMAN_GATE_JS)) as { credentialField?: boolean; captcha?: boolean } | undefined;
     if (r?.credentialField)
-      return { needsHuman: true, reason: 'credentials', hint: 'This looks like a password/OTP field — never type credentials or codes here. Call request_screen and let the human do it.' };
+      return { needsHuman: true, reason: 'credentials', hint: 'This looks like a password/OTP field — never type credentials or codes here. Call request_credentials (the owner fills it from their vault without you seeing it), or request_screen to let the human type it.' };
     if (r?.captcha)
       return { needsHuman: true, reason: 'captcha', hint: 'This page shows a CAPTCHA — call request_screen so the human can solve it.' };
     return { needsHuman: false };

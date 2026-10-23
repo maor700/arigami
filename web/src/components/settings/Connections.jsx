@@ -26,6 +26,7 @@ import Accounts, { AccountsFooter } from './Accounts.jsx';
 import AddConnection, { composioCap } from './AddConnection.jsx';
 import { Webhooks } from './Channels.jsx';
 import AgentConnectionsPanel from './AgentConnections.jsx';
+import Passwords from './Passwords.jsx';
 import { AgentAvatar } from '../AgentCard.jsx';
 import { Tip } from '../ui/tooltip.jsx';
 import { Section, SettingCard, StatusPill, Field, Toggle, CopyRow, ErrorLine, BTN, BTN_SM, BTN_PRIMARY, BTN_DANGER, ROW, LIST, INPUT, fmtWhen, Advanced } from './shared.jsx';
@@ -296,6 +297,8 @@ export default function Connections({ initialAdd = false, section = '' }) {
           <button type="button" data-add-connection-btn onClick={() => setPicker(true)} className={BTN_PRIMARY}><Icon icon={faPlus} /> {t('settings.connections.add')}</button>
         </div>
       </Section>
+
+      {admin && <Passwords />}
 
       <Notifications />
 

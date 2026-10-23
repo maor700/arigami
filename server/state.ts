@@ -325,6 +325,8 @@ export interface Session {
   metadata: Record<string, unknown>;
   progress: unknown;
   action: unknown;
+  // VAULT1: an open sign-in card (lib/credentials.ts) — which fields, which origin; never a value.
+  credentialRequest?: import('./lib/credentials.js').CredentialRequest | null;
   tabs: Tab[];
   activeTabId: string;
   artifacts?: Artifact[];
@@ -738,6 +740,7 @@ const PATCHABLE = new Set([
   'progress',
   'archived',
   'action',
+  'credentialRequest',
   'folderId',
 ]);
 

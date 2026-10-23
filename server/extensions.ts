@@ -126,7 +126,7 @@ const hostLog = (msg: string) => process.stderr.write(`[ext] ${msg}\n`);
 // ---------------------------------------------------------------------------
 // §1 — the user repo: $ARIGAMI_DIR/user
 // ---------------------------------------------------------------------------
-const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', '.arigami-reload.*', '.arigami-reload/', ''].join('\n');
+const GITIGNORE = ['node_modules/', '*.sqlite', '*.sqlite-*', '.env', '.env.*', '*.log', '.arigami-reload.*', '.arigami-reload/', 'vault/', ''].join('\n');
 
 function isDir(p: string): boolean {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
