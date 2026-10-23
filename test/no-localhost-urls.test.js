@@ -19,6 +19,8 @@ const ALLOW = [
   ['server/prompt-blocks.ts', 'pass http://localhost:$PORT'], // the links block: give it to open_tab, not the human
   ['server/lib/chrome-cdp.ts', '/json/list'], // F8: loopback DevTools port of the session Chrome — host-internal
   ['server/lib/chrome-cdp.ts', '/json/version'], // newWindow: the dock's browser icon → a window in the session Chrome, over its loopback DevTools port
+  ['server/lib/sso.ts', '/json/version'], // SSO1: My browser's loopback DevTools port — opens the agent's own tab there
+  ['server/lib/sso.ts', '/json/close/'], // SSO1: closes that tab when the window ends
   ['server/lib/chrome.ts', '/json/version'], // idle close: Browser.close over the session Chrome's loopback DevTools port
   ['server/lib/login-vault.ts', '/json/version'], // the vault Chrome's loopback DevTools port — host-internal
   ['server/lib/site-state.ts', '/json/version'], // browser-level DevTools socket for the login hand-over — host-internal

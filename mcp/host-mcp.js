@@ -978,7 +978,7 @@ export async function createArigamiServer(env = process.env) {
         'Your browser starts with no logins; this is the only way one gets in. The owner sees a card and chooses: use their login, always for this site, sign in fresh, or no. ' +
         'Returns {available:false, next} when there is nothing to hand over or the site must never be copied (WhatsApp Web, banks) — then do what `next` says. ' +
         'Returns {pending:true} when a card is up: STOP and wait — the host messages you "[host] …" with the outcome, and on approval the login is already in your browser. ' +
-        "Never ask the owner to type a password into the chat: for a fresh sign-in, open the login page and call request_credentials.",
+        "Never ask the owner to type a password into the chat: for a fresh sign-in, sso_login if the site offers SSO, else open the login page and call request_credentials.",
       inputSchema: obj({
         site: { type: 'string', description: "The site: a name ('google'), a domain ('linear.app') or a url" },
         reason: { type: 'string', description: 'One short line shown on the card: what you need the login for' },
@@ -993,13 +993,51 @@ export async function createArigamiServer(env = process.env) {
         "The host looks at the form and shows the owner a card: they fill it from their vault (or type it once, and save it for next time), or choose to type it themselves. " +
         'Returns {pending:true} when the card is up: STOP and wait — the host messages you "[host] …" once it is filled (and submitted), or tells you to call request_screen when the owner types it themselves. ' +
         'Returns {manual:true, next} when the owner always types this site themselves, and {ok:false, next} when the page has no sign-in field or the site is never signed in to with a password (Google, GitHub) — do what `next` says. ' +
-        'Before it: browser_logins / request_login (the owner may already be signed in). Never type a password, never read a password field, never ask for one in the chat.',
+        'Before it: browser_logins / request_login (the owner may already be signed in), and sso_login when the site offers SSO (Continue with Google / Microsoft…). Never type a password, never read a password field, never ask for one in the chat.',
       inputSchema: obj({
         site: { type: 'string', description: "The site you expect the form to be on (a domain or url) — the card only fills a page on that site" },
         reason: { type: 'string', description: 'One short line shown on the card: what you need to sign in for' },
         ...SID_PROP,
       }),
       run: (a) => api('POST', `/__api/sessions/${sid(a)}/credentials/request`, { site: a.site, reason: a.reason }),
+    },
+    {
+      name: 'sso_login',
+      description:
+        "Sign in to a site through the owner's identity provider (\"Continue with Google\", \"Sign in with Microsoft\", Apple, Okta, company SSO) — " +
+        "the first way into a site that offers SSO, once browser_logins / request_login has nothing for it. SSO only works in the owner's own browser (\"My browser\", signed in to their account); your session's browser cannot. " +
+        'The owner approves on a card; then the site opens in a tab of its own in My browser and you drive it with sso_look / sso_click / sso_navigate — only that site and the sign-in pages, no typing. ' +
+        'Returns {pending:true}: STOP and wait for the "[host] …" line. {available:true, next} = the owner is already signed in there, do what next says. When signed in: sso_done brings the login into your browser.',
+      inputSchema: obj({
+        site: { type: 'string', description: "The site's sign-in page url (or its domain)" },
+        reason: { type: 'string', description: 'One short line shown on the card' },
+        ...SID_PROP,
+      }, ['site']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso-request`, { site: a.site, reason: a.reason }),
+    },
+    {
+      name: 'sso_look',
+      description: "See the SSO tab in My browser (after sso_login was approved): a screenshot, its url and text, and needsHuman when it asks for a password or a code — that part is the owner's. Nothing is shown when the tab is outside the site and the sign-in pages.",
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/look`, {}),
+    },
+    {
+      name: 'sso_click',
+      description: 'Click in the SSO tab of My browser — by visible text ("Continue with Google", the account email) or by {x,y} from sso_look. Only inside the site and the sign-in pages. There is no typing tool, on purpose.',
+      inputSchema: obj({ text: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/click`, { text: a.text, x: a.x, y: a.y }),
+    },
+    {
+      name: 'sso_navigate',
+      description: "Move the SSO tab of My browser to another page of the same site (e.g. its /login) or of a sign-in provider. Anywhere else is refused.",
+      inputSchema: obj({ url: { type: 'string' }, ...SID_PROP }, ['url']),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/navigate`, { url: a.url }),
+    },
+    {
+      name: 'sso_done',
+      description: "The SSO sign-in landed (the site shows you signed in): close the tab in My browser and bring that one site's login into your own browser. Then browser_open the site and carry on there.",
+      inputSchema: obj({ ...SID_PROP }),
+      run: (a) => api('POST', `/__api/sessions/${sid(a)}/sso/done`, {}),
     },
     {
       name: 'save_login',

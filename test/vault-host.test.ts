@@ -211,3 +211,32 @@ test('per-site choices: set, read, and back to "ask"', async () => {
   expect((await call('PUT', '/__api/vault/prefs', 'person', { origin: 'not an origin', pref: 'auto' })).status).toBe(400);
   expect((await call('PUT', '/__api/vault/prefs', 'person', { origin: 'https://a.example', pref: null })).json.prefs).toEqual({});
 });
+
+// ---- SSO1: SSO in My browser -------------------------------------------------------------------------------------------
+
+test('SSO: the session asks, the owner answers — the session can neither answer nor plant the card', async () => {
+  const asked = await call('POST', `/__api/sessions/${sid}/sso-request`, 'session', { site: 'https://app.acme-sso.example/login', reason: 'read the reports' });
+  expect(asked.status).toBe(202);
+  expect(asked.json).toMatchObject({ pending: true, site: 'acme-sso.example' });
+  const card = (await call('GET', `/__api/sessions/${sid}`, 'person')).json.action;
+  expect(card).toMatchObject({ kind: 'sso', sso: { site: 'acme-sso.example' } });
+  expect((await call('POST', `/__api/sessions/${sid}/action/answer`, 'session', { actionId: card.id, value: 'use' })).status).toBe(403);
+  // a planted host card — a login hand-over or an SSO window onto Gmail — is refused, from anyone
+  const plant = { id: 'act_x', kind: 'sso', sso: { site: 'google.com', label: 'Google', url: 'https://mail.google.com/' }, prompt: 'ok?', buttons: [{ label: 'ok', value: 'use' }] };
+  expect((await call('PATCH', `/__api/sessions/${sid}`, 'session', { action: plant })).status).toBe(403);
+  expect((await call('PATCH', `/__api/sessions/${sid}`, 'session', { action: { ...plant, kind: 'login', login: { site: 'bank.example' } } })).status).toBe(403);
+  // the owner says no: the card goes, the agent is told to use the sign-in card instead
+  const no = await call('POST', `/__api/sessions/${sid}/action/answer`, 'person', { actionId: card.id, value: 'deny' });
+  expect(no.status).toBe(200);
+  expect((await call('GET', `/__api/sessions/${sid}`, 'person')).json.action ?? null).toBeNull();
+});
+
+test('SSO: never onto an identity provider itself, and nothing to drive without an approved window', async () => {
+  const g = await call('POST', `/__api/sessions/${sid}/sso-request`, 'session', { site: 'https://accounts.google.com/' });
+  expect(g.json).toMatchObject({ ok: false });
+  expect(g.json.error).toMatch(/identity provider/);
+  for (const sub of ['look', 'click', 'navigate', 'done']) {
+    const r = await call('POST', `/__api/sessions/${sid}/sso/${sub}`, 'session', { text: 'x', url: 'https://x.example/' });
+    expect(r.json.ok).toBe(false);
+  }
+});

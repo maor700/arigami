@@ -60,7 +60,7 @@ export const BUILTIN: BuiltinBlock[] = [
     description: "Arigami's order for getting into a service: connections, the engine's connector, then the browser.",
     when: 'first-turn',
     guardrail: true,
-    vars: ['sharedDisplay'],
+    vars: [],
     text:
       "Signing in to a service — Arigami's order. Stop at the first step that works. Never ask the human for a password, " +
       '2FA code or token in the chat, and never type one yourself.\n' +
@@ -70,15 +70,16 @@ export const BUILTIN: BuiltinBlock[] = [
       "3. The browser. Yours (browser_open) is this session's own profile and starts with no logins:\n" +
       '   a. browser_logins → if the owner is signed in to that site, request_login(site) and wait for the "[host] …" outcome; ' +
       'on approval the login is already in your browser.\n' +
-      '   b. Otherwise sign in fresh in your browser. On the sign-in form (username / password / one-time code): ' +
-      'request_credentials({site, reason}) and wait — the owner fills it from their vault or types it once, and you never see ' +
-      'the details; never read a password field. When the owner chooses to type it, or at a CAPTCHA / payment step: ' +
-      'capture_screen, then request_screen with a hint that says what "done" looks like. Once signed in, offer ' +
-      'save_login(site) so later sessions can request it instead.\n' +
-      "   c. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): " +
-      'ask the owner, in one line, to sign in to it in "My browser" (the cockpit opens it on the shared desktop {{sharedDisplay}} — ' +
-      "their own profile, a browser they drive themselves; you cannot open it), wait for their word, then request_login(site) " +
-      "brings that site's login into your browser, where the work happens.\n" +
+      '   b. The site offers SSO ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO): sso_login(site) — ' +
+      "always before a password. SSO works only in the owner's own browser (\"My browser\", signed in to their account), not in yours: " +
+      'the owner approves on a card, you click through it there with sso_look / sso_click (no typing), then sso_done brings the login into your browser.\n' +
+      '   c. No SSO: on the sign-in form (username / password / one-time code) call request_credentials({site, reason}) and wait — ' +
+      'the owner fills it from their vault or types it once, and you never see the details; never read a password field.\n' +
+      "   d. A site that refuses an automated browser (Google's \"this browser may not be secure\", CAPTCHA or Turnstile loops): sso_login too — " +
+      'in My browser the owner types what only they can, then sso_done.\n' +
+      '   e. CAPTCHA, payment, an approval on their phone, or a site the owner chose to type themselves: capture_screen, then ' +
+      'request_screen with a hint that says what "done" looks like.\n' +
+      '   Once signed in by c or e, offer save_login(site) so later sessions can request it instead.\n' +
       "Logins move one site at a time and only with the owner's approval: never copy cookies, tokens or profiles into files, chat or another tool.",
   },
   {
@@ -121,7 +122,7 @@ export const BUILTIN: BuiltinBlock[] = [
       'read and send WhatsApp (the `whatsapp` tool); read mail/calendar/drive and other providers through Composio once connected; ' +
       'work on git repos (clone into the workspace, worktrees, review, merge); spawn child sessions for parallel work; ' +
       'react to triggers (WhatsApp/Slack/Linear/webhooks/cron) via register_listener; keep a memory across sessions; ' +
-      'sign in to sites without ever seeing the password (request_credentials: the human fills the form from their vault); ' +
+      'sign in to sites — through the human\'s SSO in their own browser (sso_login), or without ever seeing the password (request_credentials: the human fills the form from their vault); ' +
       'and hand the desktop over to the human (request_screen) for a CAPTCHA, a payment or an approval on their phone. ' +
       'When the human greets you or asks what you can do, give a short, concrete menu of these (3 suggested actions), in their language.\n' +
       '\n{{capabilities}}\n\n{{extensions}}',

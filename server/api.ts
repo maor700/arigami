@@ -1137,8 +1137,29 @@ const SHARE_KIND = 'share';
 // host — the agent never touches the owner's browser itself.
 const LOGIN_KIND = 'login';
 // What a session does when there is no login to hand over: the sign-in card (VAULT1), never a take-over for a password.
-const SIGN_IN_FRESH = "sign in fresh: open the site's login page with browser_open, then request_credentials — the human fills it, you never see it";
+const SIGN_IN_FRESH = "sign in fresh: if the site offers SSO (Continue with Google / Microsoft…), sso_login(site) — first; otherwise open its login page with browser_open and call request_credentials — the human fills it, you never see it";
 const LOGIN_SAVE_KIND = 'login-save';
+// SSO1: "sign in to <site> through your identity provider, in My browser" (lib/sso.ts).
+const SSO_KIND = 'sso';
+
+/** Open the approved site in its own tab of My browser (opened on the shared desktop if it is not) for this session. */
+async function startSso(sessionId: string, url: string): Promise<{ ok: true; site: string } | { ok: false; error: string }> {
+  const lv = await import('./lib/login-vault.js');
+  const sso = await import('./lib/sso.js');
+  const display = process.platform === 'linux' ? cfg.screen?.display || ':99' : null;
+  const env = display ? { ...process.env, DISPLAY: display } : process.env;
+  try {
+    await lv.openVisible(env);
+    const r = await sso.start(sessionId, url, await lv.visiblePort());
+    return { ok: true, site: r.site };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+const SSO_HOW =
+  'Use sso_look to see the tab (a screenshot and its text) and sso_click to press the SSO button ("Continue with Google", "Sign in with Microsoft"…) and pick the account; ' +
+  "sso_navigate only within the site and the sign-in providers. There is no typing: a password or 2FA prompt there is the owner's — tell them in one line and wait for their word. " +
+  "When the site shows you signed in, call sso_done: the tab closes and the site's login moves into your browser.";
 // Outbound cards (lib/outbound.ts): a message to a PERSON, shown verbatim; the
 // host sends it only on a person's Send.
 const OUTBOUND_KIND = 'outbound';
@@ -5947,6 +5968,10 @@ export async function handle(
         // through a PATCH — an agent that could change the site the card names could get one site's password typed
         // into another.
         delete body.credentialRequest;
+        // The host's own cards (a login hand-over, an SSO window, a share link, an outbound send, a review) carry what the
+        // host acts on when the owner presses the button — they are raised by the host's routes only, never PATCHed in.
+        if (body.action && typeof body.action === 'object' && [LOGIN_KIND, LOGIN_SAVE_KIND, SSO_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(String((body.action as any).kind)))
+          return json(res, { error: 'this card is raised by the host only' }, 403);
         const updated = state.patchSession(id, body);
         if (body.archived === true && !wasArchived) {
           claude.kill(id);
@@ -6365,6 +6390,75 @@ export async function handle(
       const removed = state.removePendingPrompt(id, parts[4]);
       return removed ? json(res, { ok: true }) : notFound(res, `no such prompt: ${parts[4]}`);
     }
+    // ---- SSO1: SSO in My browser, driven by the agent inside a narrow window (lib/sso.ts) ----------------------------
+    if (sub === 'sso-request' && m === 'POST') {
+      const body = (await readBody(req)) as any;
+      const ls = await import('./lib/login-sites.js');
+      const lv = await import('./lib/login-vault.js');
+      const sso = await import('./lib/sso.js');
+      const rawUrl = String(body?.url || body?.site || '').trim();
+      if (!rawUrl) return badRequest(res, 'site required');
+      const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl.replace(/^\/+/, '')}/`;
+      const host = ls.hostOf(url);
+      const site = sso.siteOf(host);
+      if (!site || !sso.allowed(site, url)) return json(res, { ok: false, error: `not an https site: ${rawUrl}` });
+      if (sso.providerOf(url) || (await import('./lib/credentials.js')).refusedSite(host))
+        return json(res, { ok: false, error: `${host} is an identity provider itself — use a connection (check_setup / request_setup) for it`, next: 'request_setup' });
+      if (lv.detect(site).present)
+        return json(res, { ok: true, available: true, site, next: `the owner is already signed in to ${site} in their browser: call request_login("${site}")` });
+      const label = ls.resolve(site).label || site;
+      const reason = String(body?.reason || '').slice(0, 200);
+      if (lv.grants()['sso:' + site]) {
+        const r = await startSso(id, url);
+        return json(res, r.ok ? { ok: true, started: true, site, note: SSO_HOW } : { ok: false, error: r.error, next: 'request_credentials' });
+      }
+      const action = {
+        id: 'act_' + nano(),
+        at: new Date().toISOString(),
+        kind: SSO_KIND,
+        sso: { site, label, url },
+        prompt: `Sign in to ${label} with your Google / Microsoft account, in your browser?` + (reason ? ` — ${reason}` : '') +
+          ' The agent opens it in a tab of its own there and clicks through the sign-in; it cannot type, and sees only that site and the sign-in pages.',
+        buttons: [
+          { label: 'Sign me in', value: 'use', style: 'primary' },
+          { label: `Always for ${label}`, value: 'always' },
+          { label: 'No', value: 'deny', style: 'danger' },
+        ],
+      };
+      state.patchSession(id, { action });
+      claude.appendChat(id, { kind: 'action-request', actionId: action.id, prompt: action.prompt });
+      pushIntervention(id, 'action', action.prompt, 'waiting for your answer');
+      return json(res, { ok: true, pending: true, site, note: 'Stop and wait: the host messages you after the owner answers.' }, 202);
+    }
+    if (sub.startsWith('sso/') && m === 'POST') {
+      const sso = await import('./lib/sso.js');
+      const body = (await readBody(req).catch(() => ({}))) as any;
+      try {
+        if (sub === 'sso/look') {
+          const r = await sso.look(id);
+          return json(res, {
+            ok: true, url: r.url, provider: r.provider, text: r.text, needsHuman: r.needsHuman,
+            ...(r.needsHuman ? { hint: "a password / code field: the owner's to fill — tell them in one line (it is open in My browser on the shared desktop) and wait" } : {}),
+            __image: { data: r.image, mimeType: 'image/jpeg' },
+          });
+        }
+        if (sub === 'sso/click') return json(res, { ok: true, ...(await sso.click(id, { text: body?.text ? String(body.text) : undefined, x: body?.x, y: body?.y })) });
+        if (sub === 'sso/navigate') { await sso.navigate(id, String(body?.url || '')); return json(res, { ok: true }); }
+        if (sub === 'sso/done') {
+          const site = await sso.finish(id);
+          if (!site) return json(res, { ok: false, error: 'no SSO sign-in is open for this session' });
+          const lv = await import('./lib/login-vault.js');
+          const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+          return json(res, r.ok
+            ? { ok: true, site, note: `the ${site} login is in your browser now — open the site with browser_open and continue; offer nothing else, it is already saved in the owner's browser` }
+            : { ok: false, site, error: r.error, next: 'if the owner is signed in there now, request_login; otherwise request_credentials' });
+        }
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        return json(res, { ok: false, error: err.message });
+      }
+      return notFound(res);
+    }
     // ---- VAULT1: the sign-in card (lib/credentials.ts) ---------------------------------------------------------------
     // The agent asks (its own session token is enough); only the owner, in the cockpit, fills or answers. The fill's
     // body holds the values: it is never logged, echoed, or put in the chat — the agent hears "filled" and nothing else.
@@ -6549,7 +6643,8 @@ export async function handle(
         return json(res, { error: 'This request has expired. Use the current action card.' }, 409);
       if (!cur.buttons?.some((b: any) => b.value === value)) return badRequest(res, 'value is not a current action option');
       const cardKind = cur.kind;
-      if ([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session')
+      if (([LOGIN_KIND, LOGIN_SAVE_KIND, SHARE_KIND, OUTBOUND_KIND, 'review'].includes(cardKind) && (req as any).auth?.kind === 'session') ||
+        (cardKind === SSO_KIND && ['session', 'host'].includes((req as any).auth?.kind)))
         return json(res, { error: 'only a person can answer this card' }, 403);
       // The review card's Approve ('verified' = cards raised before the rename)
       // is THE approve action — same path as the Changes tab's.
@@ -6618,6 +6713,24 @@ export async function handle(
         }
         return json(res, { ok: true });
       }
+      if (cardKind === SSO_KIND && (cur as any).sso?.site) {
+        const { site, label, url } = (cur as any).sso as { site: string; label: string; url: string };
+        const v = String(value);
+        let line: string;
+        if (v === 'use' || v === 'always') {
+          const lv = await import('./lib/login-vault.js');
+          if (v === 'always') lv.grantAlways('sso:' + site);
+          const r = await startSso(id, url);
+          line = r.ok
+            ? `[host] The owner APPROVED signing in to ${label} through SSO in their browser. ${label} is open in a tab of its own there. ${SSO_HOW}`
+            : `[host] The owner approved, but My browser could not be opened: ${r.error}. Sign in with request_credentials instead.`;
+        } else {
+          line = `[host] The owner does NOT want the SSO sign-in to ${label} in their browser. Use request_credentials on the site's form instead, or ask them.`;
+        }
+        state.patchSession(id, { action: null });
+        try { claude.sendMessage(id, line); } catch (e) { return json(res, { error: (e as Error).message }, 500); }
+        return json(res, { ok: true });
+      }
       if ((cardKind === LOGIN_KIND || cardKind === LOGIN_SAVE_KIND) && (cur as any).login?.site) {
         const { site, label } = (cur as any).login as { site: string; label: string };
         const lv = await import('./lib/login-vault.js');
@@ -6635,7 +6748,7 @@ export async function handle(
           const r = await lv.transfer(id, site).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
           line = r.ok
             ? `[host] The human APPROVED their ${label} login for this session; it is now in your browser${r.check ? ` (checked: ${r.check.url})` : ''}. Open the site and continue.`
-            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: open the login page, then call request_credentials — the human fills it, you never see it.`;
+            : `[host] The human approved, but the ${label} login could not be used: ${r.error}. Sign in fresh: SSO on the site → sso_login; otherwise its login page with request_credentials — the human fills it, you never see it.`;
           // Some sites allow one session only: check the owner kept theirs.
           if (r.ok)
             setTimeout(() => {
@@ -6647,7 +6760,7 @@ export async function handle(
                 .catch(() => {});
             }, 120_000).unref?.();
         } else if (v === 'fresh') {
-          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. Open the site's login page, then call request_credentials — the human fills it, you never see it. Do not ask for a password in the chat.`;
+          line = `[host] The human wants a FRESH ${label} sign-in, not their own login. SSO on the site → sso_login; otherwise open its login page and call request_credentials — the human fills it, you never see it. Do not ask for a password in the chat.`;
         } else {
           line = `[host] The human REFUSED the ${label} login. Do not sign in to ${label} and do not ask again in this turn.`;
         }

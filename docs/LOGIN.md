@@ -9,7 +9,10 @@ rung that works.
    opening anything; it costs the human nothing.
 3. **The browser**, in this order:
    1. **The session's isolated Chrome over CDP** (`browser_open`, `request_login` / the login vault). Best for in-page
-      work: DOM-precise, cheap, concurrent. No login to hand over → a fresh sign-in on the site's form with
+      work: DOM-precise, cheap, concurrent. A site that offers **SSO** (Continue with Google / Microsoft…) → `sso_login`
+      first: the SSO runs in the owner's own browser ("My browser" — the only one signed in to their account), the
+      agent clicks through it in a tab of its own (no typing, only that site and the sign-in pages), and `sso_done`
+      carries the login into the session. No SSO → a fresh sign-in on the site's form with
       `request_credentials`: the human fills it from their credential vault (or types it once on the card), the host
       puts it into the page, and the agent never sees it.
    2. **Blocked by automation detection** (Google "this browser may not be secure", a CAPTCHA, Cloudflare Turnstile)

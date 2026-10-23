@@ -60,7 +60,7 @@ export const CRON_BUILTINS = ['CronCreate', 'CronDelete', 'CronList'];
 // browser_logins / request_login / save_login ride with the browser: a login is
 // only useful to an agent that can drive one, and each hand-over is still
 // approved by a person on a card.
-const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'browser_logins', 'request_login', 'request_credentials', 'save_login'];
+const BROWSER_TOOLS = ['browser_open', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_scroll', 'browser_close', 'browser_logins', 'request_login', 'sso_login', 'sso_look', 'sso_click', 'sso_navigate', 'sso_done', 'request_credentials', 'save_login'];
 
 export const FAMILIES: Record<string, string[]> = {
   desktop: ['open_tab', 'update_tab', 'close_tab', 'activate_tab', 'capture_screen', 'request_screen', 'save_browser_logins', ...BROWSER_TOOLS],

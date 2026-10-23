@@ -231,6 +231,12 @@ export function isVisibleOpen(): boolean {
   return !!(visible && visible.exitCode === null);
 }
 
+/** SSO1: the DevTools port of the visible "my browser", once it listens (sso.ts drives one tab of it). */
+export async function visiblePort(dir = VAULT_DIR): Promise<number> {
+  if (!visible || visible.exitCode !== null) throw new Error('my browser is not open');
+  return waitPort(dir, visible);
+}
+
 // ---- moving one site ---------------------------------------------------------
 
 async function sessionCdp(sessionId: string): Promise<Cdp> {

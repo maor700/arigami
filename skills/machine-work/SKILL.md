@@ -20,7 +20,8 @@ over**, complete it, click **Done**, and you continue.
 | `browser_snapshot({caption?})` | screenshot + `{url, title, text}` of the current page, plus `{needsHuman, reason, hint}` — check this before clicking/typing further |
 | `browser_click({x,y}\|{text})` | click by viewport coordinates (from a snapshot screenshot) or by visible text |
 | `browser_type({text, submit?})` | type into the focused field. Refuses (returns `needsHuman:true`) on a password/OTP field or a CAPTCHA — see §3 |
-| `request_credentials({site, reason})` | **the way to sign in on a form** (username / password / one-time code): the human fills it from their vault, or types it once on a card — you never see it. Stop and wait for the `[host]` message — see §3 |
+| `sso_login({site, reason})` → `sso_look` / `sso_click` / `sso_navigate` / `sso_done` | **a site that offers SSO** ("Continue with Google", Microsoft, Apple, company SSO) — first, before any password. Runs in the human's own browser ("My browser"), the only one signed in to their account; they approve on a card, you click through it (no typing), `sso_done` brings the login into your browser |
+| `request_credentials({site, reason})` | **the way to sign in on a form without SSO** (username / password / one-time code): the human fills it from their vault, or types it once on a card — you never see it. Stop and wait for the `[host]` message — see §3 |
 | `browser_scroll({dx?,dy?})` | scroll the page |
 | `browser_close()` | close this session's browser (safe even if not running) |
 | `capture_screen({caption?})` | **required moments only** (see §2) — a screenshot card appears in the chat timeline. Identical frames are deduped server-side |
@@ -132,7 +133,19 @@ screen hasn't changed since the last capture the server returns
 Captions: short and factual — "Login page loaded", "Order form filled, not
 submitted yet", "Error: card declined".
 
-### 3. Sign-in forms → `request_credentials`; everything else only a human can do → `request_screen`
+### 3. Signing in: saved login → SSO → `request_credentials`; what only a human can do → `request_screen`
+
+The order (the `login` block in your first message says the same): a connection the host has → your
+engine's connector → the browser: `browser_logins` / `request_login` → **SSO** with `sso_login` when the
+site offers it → a password form with `request_credentials` → `request_screen` for the rest.
+
+**SSO** ("Continue with Google", "Sign in with Microsoft", Apple, Okta, company SSO) is always tried before
+a password, and only in the human's own browser: `sso_login({site, reason})`, wait for the `[host]` line,
+then `sso_look` (screenshot + text), `sso_click({text:"Continue with Google"})`, pick the account the same
+way, and `sso_done` once the site shows you signed in — the login moves into your browser and you go on
+there. You cannot type in that browser and see only the site and the sign-in pages. A password or code
+prompt there (`needsHuman`) is the human's: say so in one line and wait.
+
 
 `browser_type` refuses on its own when the focused field looks like a password/OTP input or the page
 shows a CAPTCHA (`{ok:false, needsHuman:true, reason, hint}`), and `browser_snapshot` reports the same

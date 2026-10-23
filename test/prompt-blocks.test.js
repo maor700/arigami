@@ -20,7 +20,9 @@ test('defaults: every built-in renders on its turn, container and simple-mode on
   expect(out.ids).toEqual(['links', 'login', 'host-rules', 'container', 'identity', 'simple-mode']);
   const order = ['Arigami links', 'Signing in to a service', 'Temporary files go under $TMPDIR', 'You are the agent inside Arigami'].map((s) => out.first.indexOf(s));
   expect(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1]))).toBe(true);
-  expect(out.first).toContain('shared desktop :99');
+  // the browser order: a saved login, then SSO in the owner's browser, then the sign-in card, then a take-over
+  const order2 = ['request_login(site)', 'sso_login(site)', 'request_credentials({site, reason})', 'request_screen with a hint'].map((x) => out.first.indexOf(x));
+  expect(order2.every((i, k) => i >= 0 && (k === 0 || i > order2[k - 1]))).toBe(true);
   expect(out.first).toContain('CAPS');
   expect(out.first).not.toContain('{{');
   expect(out.first).not.toContain('passwordless sudo');
