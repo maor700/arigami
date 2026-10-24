@@ -261,9 +261,14 @@ export interface Config {
   telemetry: TelemetryConfig;
   memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
-  // 'sonnet', 'haiku', 'opus[1m]', or a full id). null/'' = don't pass --model,
-  // letting the Claude Code CLI pick its own default. Per-session dropdown wins.
+  // 'sonnet', 'haiku', 'opus[1m]', or a full id). Default 'best' = the CLI's
+  // own "most capable available model" alias, so a new release is picked up
+  // without naming it here. null/'' (older config files wrote null) = 'best';
+  // set 'default' to let the Claude Code CLI pick. Per-session dropdown wins.
   defaultModel: string | null;
+  // Reasoning effort every NEW claude session starts on ('low'…'max').
+  // null/'' = 'high'; 'default' = the CLI's own default.
+  defaultEffort: string | null;
   // Engine a new session runs on when neither the caller, its agent nor its parent names one; unknown = claude.
   defaultEngine: 'claude' | 'codex';
   // RES1 — the host-wide model ladder. When every pooled account has hit its
@@ -394,7 +399,8 @@ export const DEFAULTS: Config = {
   memory: {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
-  defaultModel: null,
+  defaultModel: 'best',
+  defaultEffort: 'high',
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
   codexModelChain: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
@@ -612,6 +618,8 @@ export const cfg: Config = {
   runDir: path.join(CONFIG_DIR, 'run'),
   pidFile: path.join(CONFIG_DIR, 'run', 'host.pid'),
   publicUrl: String(merged.publicUrl || '').replace(/\/+$/, ''),
+  defaultModel: merged.defaultModel || DEFAULTS.defaultModel,
+  defaultEffort: merged.defaultEffort === 'default' ? null : merged.defaultEffort || DEFAULTS.defaultEffort,
   defaultEngine: merged.defaultEngine === 'codex' ? 'codex' : 'claude',
   codexTransport: merged.codexTransport === 'exec' ? 'exec' : 'app-server',
   codexApprovals: merged.codexApprovals === 'on-request' || merged.codexApprovals === 'untrusted' ? merged.codexApprovals : 'never',

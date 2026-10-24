@@ -28,6 +28,8 @@ export const strings = {
   'chat.questionClosed': 'This question is closed — it was answered elsewhere, timed out, or the session moved on. No answer can be given here.',
   'chat.screenDoneFailed': 'Could not deliver "Done" — the request is no longer open.',
   'chat.permissionRequest': 'Permission request',
+  'chat.permissionWants': 'The agent wants to run:',
+  'chat.permissionNoParams': 'no parameters',
   'chat.screenRequest': '{engine} wants you to look at the screen',
   'chat.screenRequestDone': 'Done',
   'chat.screenRequestNotePlaceholder': 'Optional note back to {engine}…',

@@ -28,6 +28,8 @@ export const strings = {
   'chat.questionClosed': 'השאלה הזו נסגרה — נענתה במקום אחר, פג תוקפה או שהשיחה המשיכה הלאה. אי אפשר לענות עליה כאן.',
   'chat.screenDoneFailed': 'לא ניתן היה למסור "סיימתי" — הבקשה כבר לא פתוחה.',
   'chat.permissionRequest': 'בקשת הרשאה',
+  'chat.permissionWants': 'הסוכן מבקש לבצע:',
+  'chat.permissionNoParams': 'בלי פרמטרים',
   'chat.screenRequest': '{engine} מבקש שתסתכל על המסך',
   'chat.screenRequestDone': 'סיימתי',
   'chat.screenRequestNotePlaceholder': 'הערה אופציונלית ל-{engine}…',

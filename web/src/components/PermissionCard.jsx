@@ -9,7 +9,7 @@ import { answerPermission } from '../lib/store.js';
 import { Icon } from './ChatIcon.jsx';
 import { useT } from '../lib/i18n.js';
 import { keysBlocked, UNDO_MS } from '../openui/keys.js';
-import { prettyInput } from '../lib/pretty-input.js';
+import { prettyInput, toolDisplayName, inputRows } from '../lib/pretty-input.js';
 import { faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { defineHostComponent, loose, str, any, bool, z } from '../openui/define.js';
 import { CardFrame, Btn, SettledLine, ACCENT } from '../openui/primitives.jsx';
@@ -23,6 +23,8 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
   const [expired, setExpired] = useState(false);
   const answered = event.answered;
   const toolName = event.toolName ?? event.tool_name ?? event.name ?? 'tool';
+  const { source, action } = toolDisplayName(toolName);
+  const rows = inputRows(event.input);
   const allowRef = useRef(null);
   const cardRef = useRef(null);
   const answer = async (behavior) => {
@@ -79,8 +81,22 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live]);
   return (
-    <CardFrame ref={cardRef} tone="accent" live={!frozen} label={t('chat.permissionRequest')} meta={<span className={ACCENT.dim}>{toolName}</span>} data-permission-card={answered || (expired ? 'expired' : stale ? 'stale' : 'open')} data-live={live || undefined}>
-      {event.input != null && (
+    <CardFrame ref={cardRef} tone="accent" live={!frozen} label={t('chat.permissionRequest')} meta={source ? <span className={ACCENT.dim}>{source}</span> : null} data-permission-card={answered || (expired ? 'expired' : stale ? 'stale' : 'open')} data-live={live || undefined}>
+      <div className="mt-1.5 text-[13px] text-[var(--term-fg)]">
+        {t('chat.permissionWants')} <span dir="ltr" className="font-medium text-[var(--term-strong)]" title={toolName}>{action}</span>
+      </div>
+      {rows && rows.length === 0 && <div className="mt-1 text-xs text-[var(--term-dim)]">{t('chat.permissionNoParams')}</div>}
+      {rows && rows.length > 0 && (
+        <dl dir="ltr" className="thin-scroll mt-2 max-h-40 overflow-auto rounded-md bg-[var(--term-codebg)] p-2.5 text-xs leading-relaxed">
+          {rows.map((r) => (
+            <div key={r.key} className={r.long ? 'flex flex-col' : 'flex gap-2'}>
+              <dt className="shrink-0 text-[var(--term-faint)]">{r.key}</dt>
+              <dd className="min-w-0 font-mono break-words whitespace-pre-wrap text-[var(--term-dim)]">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {rows === null && (
         <pre dir="ltr" data-code className="thin-scroll mt-2 max-h-40 overflow-auto rounded-md bg-[var(--term-codebg)] p-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-[var(--term-dim)]">
           {prettyInput(event.input)}
         </pre>

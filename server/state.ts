@@ -716,10 +716,13 @@ export function createSession({
       // Claude token it could not use (server/lib/providers.ts).
       accountId: pickSessionAccount(providerForEngine(eng)) || null,
       // Seed the session's model from the caller's pick, falling back to the
-      // configured default (cfg.defaultModel); null means "no --model flag",
-      // so the CLI picks. The per-session dropdown can still override later.
+      // configured default (cfg.defaultModel, 'best' unless set); 'default'
+      // means "no --model choice", so the CLI picks. The per-session dropdown can still override later.
       modelChoice: model || (eng === 'claude' ? cfg.defaultModel : null) || null,
-      effort: effort || null,
+      // Seed the effort the same way (cfg.defaultEffort, claude only — a codex
+      // model keeps its own default_reasoning_level); 'default' from a caller
+      // means "no override" and also gets the configured default.
+      effort: (effort && effort !== 'default' ? effort : eng === 'claude' ? cfg.defaultEffort : null) || null,
     },
     bg: [],
   };

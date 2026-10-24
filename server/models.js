@@ -128,6 +128,23 @@ function fetchFromCli() {
   });
 }
 
+// The picker's first row: the CLI's `best` alias — "the most capable model
+// this CLI offers", so the host default (cfg.defaultModel) never has to name a
+// model and follows each new release. The CLI's own list doesn't carry it.
+export function withBest(list) {
+  const models = Array.isArray(list?.models) ? list.models : [];
+  if (!models.length || models.some((m) => m?.value === 'best')) return list;
+  const effort = models.find((m) => m?.supportsEffort) || {};
+  const best = {
+    value: 'best',
+    displayName: 'Best available',
+    description: 'The most capable model your Claude Code offers — follows new releases',
+    supportsEffort: !!effort.supportsEffort,
+    supportedEffortLevels: effort.supportedEffortLevels,
+  };
+  return { ...list, models: [best, ...models] };
+}
+
 // Cached model list. Refetched when `force`, when the 24h TTL lapses, or when
 // the `claude` CLI version no longer matches the one the cache was built from
 // (including a pre-versioning cache, which has no `cliVersion` at all). Never

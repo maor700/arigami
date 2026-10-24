@@ -5199,8 +5199,8 @@ export async function handle(
       return json(res, await (mcp as any).logout(body?.name, body?.cwd));
     }
     if (p === '/__api/models' && m === 'GET') {
-      const { getModels } = await import('./models.js');
-      const list = await (getModels as any)();
+      const { getModels, withBest } = await import('./models.js');
+      const list = withBest(await (getModels as any)());
       // Codex's catalog comes from the engine at runtime (app-server model/list, cached 5 min per login).
       const { refreshCodexModels, codexModels, codexVersion } = await import('./codex.js');
       const codex = await Promise.race([refreshCodexModels(), new Promise<ReturnType<typeof codexModels>>((r) => setTimeout(() => r(codexModels()), 3000))]);
@@ -5214,10 +5214,10 @@ export async function handle(
       return json(res, { ...list, codex, codexVersion: await codexVersion(), cliUpdate });
     }
     if (p === '/__api/models/refresh' && m === 'POST') {
-      const { getModels } = await import('./models.js');
+      const { getModels, withBest } = await import('./models.js');
       const { refreshCodexModels, codexVersion } = await import('./codex.js');
       const [list, codex] = await Promise.all([(getModels as any)(true), refreshCodexModels({ force: true })]);
-      return json(res, { ...list, codex, codexVersion: await codexVersion() });
+      return json(res, { ...withBest(list), codex, codexVersion: await codexVersion() });
     }
     // C3 §7.8: Tailscale Funnel for ONLY /__api/webhooks (public internet →
     // the self-authenticating webhook routes; nothing else leaves the tailnet).
