@@ -153,15 +153,19 @@ test('isDirtyStatus: tracked changes are dirty, untracked-only is clean', () => 
   expect(isDirtyStatus('UU conflict.ts\n')).toBe(true);
 });
 
-test('upgradePlan: fetch → ancestry check → ff-only pull → frozen install → web build, in the right dirs', () => {
+test('upgradePlan: fetch → ancestry check → ff-only pull → frozen installs (root, web) → web build, in the right dirs', () => {
   const plan = upgradePlan('/r');
-  expect(plan.map((s) => s.name)).toEqual(['fetch', 'check', 'pull', 'install', 'build']);
+  expect(plan.map((s) => s.name)).toEqual(['fetch', 'check', 'pull', 'install', 'install-web', 'build']);
   expect(plan[0].cmd).not.toContain('--prune'); // VER1: pruning is how a rewritten remote loses its merge base
   expect(plan[1].cmd).toEqual(['git', 'merge-base', '--is-ancestor', 'HEAD', '@{u}']);
   expect(plan[1].failMessage).toBe(NOT_FF_ERROR);
   expect(plan[2].cmd).toContain('--ff-only');
   expect(plan[3].cmd).toContain('--frozen-lockfile');
+  expect(plan[3].cwd).toBe('/r');
+  // the cockpit's own packages (web/package.json): a new one there must be installed before the build
+  expect(plan[4].cmd).toEqual(['bun', 'install', '--frozen-lockfile']);
   expect(plan[4].cwd).toBe(path.join('/r', 'web'));
+  expect(plan[5].cwd).toBe(path.join('/r', 'web'));
 });
 
 // VER1: the dirty list the card shows — status code + path, untracked skipped.

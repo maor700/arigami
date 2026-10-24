@@ -261,6 +261,8 @@ export function upgradePlan(root: string): UpgradeStep[] {
     { name: 'check', cmd: ['git', 'merge-base', '--is-ancestor', 'HEAD', '@{u}'], cwd: root, failMessage: NOT_FF_ERROR },
     { name: 'pull', cmd: ['git', 'pull', '--ff-only', '--quiet'], cwd: root },
     { name: 'install', cmd: ['bun', 'install', '--frozen-lockfile'], cwd: root },
+    // the cockpit has packages of its own (web/package.json — e.g. the vault's kdbxweb); the root install does not reach them
+    { name: 'install-web', cmd: ['bun', 'install', '--frozen-lockfile'], cwd: path.join(root, 'web') },
     { name: 'build', cmd: ['bun', 'run', 'build'], cwd: path.join(root, 'web') },
   ];
 }
@@ -392,7 +394,7 @@ export async function hostStatus() {
 export function currentUpgrade(): UpgradeJob | null { return current; }
 
 /**
- * git fetch → pull --ff-only → bun install → web build → restart.
+ * git fetch → pull --ff-only → bun install (root, then web) → web build → restart.
  * Resolves as soon as the job is accepted (progress streams on the bus as
  * `host` events {kind:'upgrade-progress'|'upgrade-done'|'upgrade-failed'}).
  */
