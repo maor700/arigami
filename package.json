@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "build:web": "cd web && bun run build",
     "test": "bun test",
-    "release": "bun scripts/release.ts"
+    "release": "bun scripts/release.ts",
+    "postinstall": "bun -e \"const fs=require('fs');if(fs.existsSync('web/package.json'))require('child_process').execSync('bun install --frozen-lockfile',{cwd:'web',stdio:'inherit'})\""
   },
   "dependencies": {
     "@composio/client": "2.0.0-rc.3",
