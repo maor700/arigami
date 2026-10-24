@@ -716,7 +716,7 @@ export function createSession({
       // Claude token it could not use (server/lib/providers.ts).
       accountId: pickSessionAccount(providerForEngine(eng)) || null,
       // Seed the session's model from the caller's pick, falling back to the
-      // configured default (cfg.defaultModel, 'best' unless set); 'default'
+      // configured default (cfg.defaultModel, 'opus' unless set); 'default'
       // means "no --model choice", so the CLI picks. The per-session dropdown can still override later.
       modelChoice: model || (eng === 'claude' ? cfg.defaultModel : null) || null,
       // Seed the effort the same way (cfg.defaultEffort, claude only — a codex

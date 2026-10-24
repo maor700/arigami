@@ -261,9 +261,9 @@ export interface Config {
   telemetry: TelemetryConfig;
   memory: MemoryConfig;
   // Model every NEW session starts on (a `claude --model` value: 'opus',
-  // 'sonnet', 'haiku', 'opus[1m]', or a full id). Default 'best' = the CLI's
-  // own "most capable available model" alias, so a new release is picked up
-  // without naming it here. null/'' (older config files wrote null) = 'best';
+  // 'sonnet', 'haiku', 'opus[1m]', 'best', or a full id). Default 'opus' = the
+  // CLI's alias for its current Opus, so a new release is picked up without
+  // naming a version here. null/'' (older config files wrote null) = 'opus';
   // set 'default' to let the Claude Code CLI pick. Per-session dropdown wins.
   defaultModel: string | null;
   // Reasoning effort every NEW claude session starts on ('low'…'max').
@@ -399,7 +399,7 @@ export const DEFAULTS: Config = {
   memory: {
     learning: { mode: 'auto', minBatch: 40, maxAgeHours: 48, minFreeMb: 600 },
   },
-  defaultModel: 'best',
+  defaultModel: 'opus',
   defaultEffort: 'high',
   defaultEngine: 'claude',
   modelChain: ['fable', 'sonnet', 'haiku'],
