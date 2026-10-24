@@ -176,8 +176,11 @@ coordinates. Only if that doesn't move it either, say what you see and hand over
 **Code steps:** tick "remember this device" / "זכור מכשיר זה" first, so the next login skips it. A code
 split into one-digit boxes: click each box and type one digit, then screenshot and check the order
 before submitting — boxes can run left-to-right on a right-to-left page, and a wrong code burns an
-attempt. If the human writes the code in the chat on their own and asks you to enter it, enter it —
-don't send them back to a card.
+attempt.
+
+**Never refuse to type.** Whatever the human writes in the chat on their own — a code, a username, a
+password — and asks you to enter, enter it right away: no second confirmation, no card, no lecture.
+(You still never *ask* for one in the chat; the card is the default.)
 
 **If the human cancels a card:** don't just stop — ask in one line what they'd rather do (type it
 themselves, a different method, later).
@@ -212,6 +215,28 @@ you never see them.
 If a listener can do it without the human (e.g. `sms-listener` for an OTP the
 human agreed to forward), prefer that and mention it — but fall back to
 `request_screen` if it doesn't arrive within a minute or two.
+
+### Sign-in problems and fixes
+Go through these yourself before you go back to the human. They hear from you with a result, or with
+one clear blocker after you tried — not with every hiccup, and not with a string of approval questions.
+
+| Symptom | Fix |
+| --- | --- |
+| `browser_click` returns `x:0,y:0`, or the click changes nothing | `desktop_screenshot` → `desktop_pointer` click on the screen coordinates (page y + the browser's top bar, ~87px) |
+| "[host] … submitted" but the page is still on the same form | the host's submit didn't land: click the submit button with `desktop_pointer` |
+| The next field (password, code) doesn't appear after "Continue" | same — the click was synthetic; real mouse click, then snapshot |
+| `browser_snapshot` says `needsHuman: captcha` but no challenge is visible | an invisible reCAPTCHA — ignore the flag and keep going with real clicks; `request_screen` only for a challenge you can actually see |
+| "Wrong details" right after the card filled the form | click submit once more with the real mouse (the first submit may have been the synthetic one); still wrong → tell the human the site rejected the details |
+| `browser_type` / `insertText` fills only the first of several code boxes | click each box and send one digit with `desktop_keyboard({key})`; screenshot and check the order before submitting |
+| Code boxes show the digits reversed | the boxes run left-to-right even on a Hebrew page — start from the leftmost |
+| Keystrokes get lost (a box stays empty, the cursor jumps) | re-click that box and type its digit again; never submit before a screenshot shows all of them |
+| "Wrong code" | look at what was actually submitted before blaming the code; ask for "send again" only once you know it was really entered right |
+| A surprise 2FA step after the password | expected on a new device: tick "remember this device", `request_credentials` for the code (or enter the one the human wrote in the chat) |
+| The human cancelled a card | don't just stop — one line: what they'd rather do (type it here, another method, later) |
+| The site blocks automated browsers outright (Google, Turnstile loop) | `sso_login` — the human signs in in their own browser, then `sso_done` |
+
+After a site needed one of these, save the site's quirks in memory (flow, which clicks must be real,
+code-box order), so the next session goes straight through.
 
 ### 4. After Done → verify, then continue
 `request_screen` returns `{ok, note?}`. The note is what the human says
@@ -252,6 +277,7 @@ a human reviews the diff before it touches the live skill.
 - Calling `request_screen` with only a prompt and no hint ("please help").
 - Using `request_action` for "I'm on the login page" — that's status, not a decision.
 - Asking the human to paste a code into chat — or, once they did and asked you to enter it, refusing and sending them to a card.
+- Going back to the human at the first hiccup, or asking for approval on each step of a sign-in.
 - Handing the screen over because a button "doesn't respond" before trying a real `desktop_pointer` click.
 - Handing the screen over (`request_screen`) for an ordinary password form — that is `request_credentials`.
 - Getting round the sign-in some other way (a published demo password, `curl` with typed credentials).

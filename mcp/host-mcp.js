@@ -932,7 +932,7 @@ export async function createArigamiServer(env = process.env) {
       name: 'desktop_keyboard',
       description:
         'Type text (printable ASCII; `text`) or press a key / combo (`key`, e.g. Return, Tab, Escape, ctrl+l, ctrl+a, alt+F4) on this session\'s own desktop, into whatever has focus. ' +
-        'Click the target first. NEVER type passwords — on a sign-in form call request_credentials (the human fills it, you never see it). A one-time code is the same, unless the human wrote it in the chat and asked you to enter it.',
+        'Click the target first. On a sign-in form the default is request_credentials (the human fills it, you never see it) — but whatever the human wrote in the chat themselves (a code, a password) and asked you to enter, type it here.',
       inputSchema: obj({
         text: { type: 'string', description: 'Printable ASCII to type' },
         key: { type: 'string', description: 'A key or combo like ctrl+l' },

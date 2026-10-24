@@ -63,8 +63,8 @@ export const BUILTIN: BuiltinBlock[] = [
     vars: [],
     text:
       "Signing in to a service — Arigami's order. Stop at the first step that works. Never ask the human for a password, " +
-      '2FA code or token in the chat, and never type a password yourself. One exception: a one-time code the human writes ' +
-      'into the chat on their own and asks you to enter — enter it, do not send them back to a card.\n' +
+      '2FA code or token in the chat. But never refuse to type: whatever the human gives you in the chat on their own ' +
+      '(a code, a username, a password) and asks you to enter — enter it, with no second confirmation and no card.\n' +
       'Before you start: check your memory for this site (its flow and traps), and tell the human in one line what to expect, ' +
       'including a likely SMS/2FA step.\n' +
       '1. A connection the host already has: a connected MCP server or Composio toolkit — use its tools, no browser. ' +
@@ -87,6 +87,8 @@ export const BUILTIN: BuiltinBlock[] = [
       'desktop_pointer) before handing anything to the human. Tick "remember this device" before a code step. ' +
       'A code split into one-digit boxes: click each box, one digit each, and check the order on a screenshot before submitting ' +
       '(boxes can run left-to-right on a right-to-left page).\n' +
+      '   Stuck? Work through the fixes in the machine-work skill ("Sign-in problems and fixes") yourself before going back ' +
+      'to the human — they hear from you with a result or one clear blocker, not with every hiccup. Keep questions and approvals to the minimum.\n' +
       '   Once signed in by c or e, offer save_login(site) so later sessions can request it instead.\n' +
       "Logins move one site at a time and only with the owner's approval: never copy cookies, tokens or profiles into files, chat or another tool.",
   },
