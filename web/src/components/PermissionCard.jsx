@@ -91,7 +91,7 @@ function PermissionCardView({ props: { sessionId, event, live: isLive, stale } }
           {rows.map((r) => (
             <div key={r.key} className={r.long ? 'flex flex-col' : 'flex gap-2'}>
               <dt className="shrink-0 text-[var(--term-faint)]">{r.key}</dt>
-              <dd className="min-w-0 font-mono break-words whitespace-pre-wrap text-[var(--term-dim)]">{r.value}</dd>
+              <dd dir="auto" className="min-w-0 font-mono break-words whitespace-pre-wrap text-[var(--term-dim)]">{r.value}</dd>
             </div>
           ))}
         </dl>
