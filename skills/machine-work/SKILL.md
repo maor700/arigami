@@ -163,6 +163,28 @@ see the values; never read a password field, never ask for one in the chat.
 - After the `[host]` line says it was filled: a code field next → `request_credentials` again; a
   push/app approval → `request_screen` (reason `2fa`).
 
+**Before the first sign-in step:** look up what memory says about this site (flow, tabs, traps) and
+tell the human in one line what to expect — "a password card, then the site will probably text you a
+code". A surprise 2FA step reads as you being lost.
+
+**Every step: check that the page moved on.** `browser_click` answering `x:0,y:0`, or a submit button
+that leaves the page as it was (also after "[host] … submitted"), means the click didn't land — many
+sign-in forms (invisible reCAPTCHA, React handlers) ignore synthetic CDP clicks. Click it again with a
+real mouse: `desktop_screenshot`, then `desktop_pointer({action:"click", x, y})` on the screen
+coordinates. Only if that doesn't move it either, say what you see and hand over.
+
+**Code steps:** tick "remember this device" / "זכור מכשיר זה" first, so the next login skips it. A code
+split into one-digit boxes: click each box and type one digit, then screenshot and check the order
+before submitting — boxes can run left-to-right on a right-to-left page, and a wrong code burns an
+attempt. If the human writes the code in the chat on their own and asks you to enter it, enter it —
+don't send them back to a card.
+
+**If the human cancels a card:** don't just stop — ask in one line what they'd rather do (type it
+themselves, a different method, later).
+
+**Signed in:** one line with the outcome and the one useful fact (the name/balance in the header),
+then `save_login`.
+
 **Anything else only the human can do** — CAPTCHA, payment, a push approval on their phone, an
 unexpected dialog — hand the screen over with `request_screen`:
 
@@ -229,7 +251,8 @@ a human reviews the diff before it touches the live skill.
 ## Anti-patterns
 - Calling `request_screen` with only a prompt and no hint ("please help").
 - Using `request_action` for "I'm on the login page" — that's status, not a decision.
-- Asking the human to paste a code into chat.
+- Asking the human to paste a code into chat — or, once they did and asked you to enter it, refusing and sending them to a card.
+- Handing the screen over because a button "doesn't respond" before trying a real `desktop_pointer` click.
 - Handing the screen over (`request_screen`) for an ordinary password form — that is `request_credentials`.
 - Getting round the sign-in some other way (a published demo password, `curl` with typed credentials).
 - Continuing after Done without checking the page.

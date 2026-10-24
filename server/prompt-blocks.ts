@@ -63,7 +63,10 @@ export const BUILTIN: BuiltinBlock[] = [
     vars: [],
     text:
       "Signing in to a service — Arigami's order. Stop at the first step that works. Never ask the human for a password, " +
-      '2FA code or token in the chat, and never type one yourself.\n' +
+      '2FA code or token in the chat, and never type a password yourself. One exception: a one-time code the human writes ' +
+      'into the chat on their own and asks you to enter — enter it, do not send them back to a card.\n' +
+      'Before you start: check your memory for this site (its flow and traps), and tell the human in one line what to expect, ' +
+      'including a likely SMS/2FA step.\n' +
       '1. A connection the host already has: a connected MCP server or Composio toolkit — use its tools, no browser. ' +
       'check_setup lists what is connected. A tool that answers {needs_setup} → request_setup({capability, why}) and do what the owner picks.\n' +
       "2. Your engine's own connector for the service, if it has one.\n" +
@@ -79,6 +82,11 @@ export const BUILTIN: BuiltinBlock[] = [
       'in My browser the owner types what only they can, then sso_done.\n' +
       '   e. CAPTCHA, payment, an approval on their phone, or a site the owner chose to type themselves: capture_screen, then ' +
       'request_screen with a hint that says what "done" looks like.\n' +
+      '   On every step check that the page moved on (browser_snapshot). A click that changes nothing (browser_click answering ' +
+      'x:0,y:0, a submit that stays put, even after "[host] … submitted") → click it again with a real mouse (desktop_screenshot + ' +
+      'desktop_pointer) before handing anything to the human. Tick "remember this device" before a code step. ' +
+      'A code split into one-digit boxes: click each box, one digit each, and check the order on a screenshot before submitting ' +
+      '(boxes can run left-to-right on a right-to-left page).\n' +
       '   Once signed in by c or e, offer save_login(site) so later sessions can request it instead.\n' +
       "Logins move one site at a time and only with the owner's approval: never copy cookies, tokens or profiles into files, chat or another tool.",
   },
