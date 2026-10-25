@@ -26,9 +26,16 @@ import {
 import {
   classifyGhError,
   diffPr,
+  buildPrBatchQuery,
+  parsePrBatch,
+  prKey,
+  quotaPausedUntil,
+  PR_BATCH_SIZE,
   type PrSnapshot,
   type PrWatermark,
   type PrDiff,
+  type PrTarget,
+  type RateLimitInfo,
 } from './listeners-pr.js';
 import {
   classifyLinearError,
@@ -147,13 +154,90 @@ async function fetchPrSnapshot(
   };
 }
 
+// Fold one snapshot (or the error that replaced it) into the shape pollOne's
+// shared outcome handling expects.
+function prOutcome(l: Listener, snap: PrSnapshot | undefined, err: { kind: PollOutcome['kind']; message?: string } | undefined): PollOutcome {
+  if (!snap) return { kind: err?.kind || 'transient', error: err?.message };
+  const ignoreLogin = snap.meta?.user?.login as string | undefined;
+  const diff = diffPr(snap, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin });
+  return { kind: 'ok', diff, ignoreLogin };
+}
+
 async function pollGithubPr(l: Listener): Promise<PollOutcome> {
   const { owner, repo, number } = l.params as { owner: string; repo: string; number: number };
   const { snap, err } = await fetchPrSnapshot(owner, repo, number);
   if (err) return { kind: classifyGhError(err.status, err.stderr), error: err.stderr };
-  const ignoreLogin = snap!.meta?.user?.login as string | undefined;
-  const diff = diffPr(snap!, l.watermark as PrWatermark, { fireOn: l.fireOn, ignoreLogin });
-  return { kind: 'ok', diff, ignoreLogin };
+  return prOutcome(l, snap, undefined);
+}
+
+// ---- github-pr batch (one GraphQL query per tick) ---------------------------
+// Polling each github-pr listener on its own cost six REST calls every 30s —
+// with a few dozen live PRs that alone exhausted the 5000/hour budget. The tick
+// now groups the due listeners by PR, asks GitHub for all of them in one
+// GraphQL query (an alias per distinct PR) and runs diffPr per listener against
+// its own watermark. Registration (`fetchPrSnapshot`) stays on REST: it is a
+// one-off per listener, not a loop.
+
+// What the last response said was left of the GraphQL bucket (null = unknown).
+let ghRate: RateLimitInfo | null = null;
+
+async function ghGraphql(query: string, vars: Record<string, string | number>): Promise<GhResult> {
+  // -f sends a string, -F types it (so $n is an Int). Values go through argv,
+  // never a shell.
+  const args = ['api', 'graphql', '-f', `query=${query}`];
+  for (const [k, v] of Object.entries(vars)) args.push(typeof v === 'number' ? '-F' : '-f', `${k}=${v}`);
+  try {
+    const { stdout } = await execFileP('gh', args, { maxBuffer: 32e6, timeout: 30_000 });
+    return { ok: true, status: 200, data: JSON.parse(stdout) };
+  } catch (e: any) {
+    const stderr = `${e?.stderr || ''}${e?.message || ''}`;
+    const m = /HTTP (\d{3})/.exec(stderr);
+    // `gh api` exits non-zero on a partial GraphQL error but still prints the
+    // body — a NOT_FOUND for one alias must not discard the other results.
+    const body = String(e?.stdout || '').trim();
+    if (body.startsWith('{')) {
+      try {
+        return { ok: true, status: 200, data: JSON.parse(body) };
+      } catch {
+        /* fall through to the failure */
+      }
+    }
+    return { ok: false, status: m ? Number(m[1]) : 0, stderr };
+  }
+}
+
+// Fetch every distinct PR the due listeners watch; resolve to listenerId → outcome.
+async function pollGithubPrBatch(due: Listener[], now: number): Promise<Map<string, PollOutcome>> {
+  const out = new Map<string, PollOutcome>();
+  const byPr = new Map<string, { target: PrTarget; listeners: Listener[] }>();
+  for (const l of due) {
+    const t = l.params as unknown as PrTarget;
+    const k = prKey(t);
+    const g = byPr.get(k) || { target: { owner: t.owner, repo: t.repo, number: Number(t.number) }, listeners: [] };
+    g.listeners.push(l);
+    byPr.set(k, g);
+  }
+  const groups = [...byPr.values()];
+  for (let i = 0; i < groups.length; i += PR_BATCH_SIZE) {
+    const chunk = groups.slice(i, i + PR_BATCH_SIZE);
+    const { query, vars } = buildPrBatchQuery(chunk.map((g) => g.target));
+    const res = await ghGraphql(query, vars);
+    if (!res.ok) {
+      const err = { kind: classifyGhError(res.status, res.stderr), message: res.stderr };
+      for (const g of chunk) for (const l of g.listeners) out.set(l.id, prOutcome(l, undefined, err));
+      continue;
+    }
+    const { results, rate } = parsePrBatch(res.data?.data, res.data?.errors, chunk.length);
+    if (rate) ghRate = rate;
+    chunk.forEach((g, j) => {
+      const r = results[j];
+      for (const l of g.listeners)
+        out.set(l.id, 'snap' in r ? prOutcome(l, r.snap, undefined) : prOutcome(l, undefined, r.err));
+    });
+    // Stop spending the bucket mid-run: the rest waits for the next tick.
+    if (quotaPausedUntil(ghRate, now)) break;
+  }
+  return out;
 }
 
 // ---- linear-issue poller ------------------------------------------------------
@@ -594,7 +678,7 @@ export async function deliverExtWebhook(
 
 // ---- scheduler --------------------------------------------------------------
 
-async function pollOne(l: Listener): Promise<void> {
+async function pollOne(l: Listener, pre?: PollOutcome): Promise<void> {
   const now = Date.now();
   if (now > l.ttlAt) {
     llog(l.id, 'info', 'TTL expired — listener stopped');
@@ -686,7 +770,7 @@ async function pollOne(l: Listener): Promise<void> {
 
   let outcome: PollOutcome;
   try {
-    if (l.type === 'github-pr') outcome = await pollGithubPr(l);
+    if (l.type === 'github-pr') outcome = pre ?? (await pollGithubPr(l));
     else if (l.type === 'linear-issue') outcome = await pollLinearIssue(l);
     else if (l.type === 'slack') outcome = await pollSlack(l);
     else {
@@ -880,11 +964,40 @@ async function tick(): Promise<void> {
       const live = new Set(listListeners().map((l) => l.id));
       for (const id of logs.keys()) if (!live.has(id)) logs.delete(id);
     }
-    const due = listListeners().filter((l) => l.status === 'watching' && l.nextPollAt <= now);
+    let due = listListeners().filter((l) => l.status === 'watching' && l.nextPollAt <= now);
+
+    // A github-pr listener whose session is gone (deleted, not merely archived)
+    // would poll GitHub forever for nobody — drop it.
+    for (const l of due.filter((x) => x.type === 'github-pr' && !getSession(x.sessionId))) {
+      llog(l.id, 'info', 'session no longer exists — listener removed');
+      stateRemoveListener(l.id);
+    }
+    due = due.filter((l) => l.type !== 'github-pr' || getSession(l.sessionId));
+
+    // github-pr: one GraphQL query for every due PR, unless the bucket is nearly
+    // empty — then they all wait for the window to reset (not an error).
+    let prOutcomes = new Map<string, PollOutcome>();
+    const pr = due.filter((l) => l.type === 'github-pr' && now <= l.ttlAt);
+    if (pr.length) {
+      const resumeAt = quotaPausedUntil(ghRate, now);
+      if (resumeAt) {
+        llog(pr[0].id, 'warn', `GitHub quota low (${ghRate?.remaining} left) — github-pr polling paused until ${new Date(resumeAt).toISOString()}`);
+        for (const l of pr) patchListener(l.id, { nextPollAt: resumeAt });
+        due = due.filter((l) => l.type !== 'github-pr' || now > l.ttlAt);
+      } else {
+        try {
+          prOutcomes = await pollGithubPrBatch(pr, now);
+        } catch (e: any) {
+          console.error('[listeners] github-pr batch failed:', e?.message);
+        }
+        // Over budget partway through: those the batch did not reach stay due.
+        due = due.filter((l) => l.type !== 'github-pr' || now > l.ttlAt || prOutcomes.has(l.id));
+      }
+    }
     // Sequential — small N, and keeps gh load gentle.
     for (const l of due) {
       try {
-        await pollOne(l);
+        await pollOne(l, prOutcomes.get(l.id));
       } catch (e: any) {
         console.error('[listeners] poll failed:', l.id, e?.message);
       }

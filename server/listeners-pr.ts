@@ -173,3 +173,138 @@ export function diffPr(
     summary: shouldFire ? `🔔 Listener: ${tag} — ${parts.join('; ')}. ${url}\n${hint}` : '',
   };
 }
+
+// ---- batched GraphQL fetch --------------------------------------------------
+// One GraphQL query (an alias per distinct PR) replaces the six REST calls each
+// github-pr listener used to make every poll. Pure: building the query, mapping
+// a node to the REST-shaped PrSnapshot diffPr already consumes, and the quota
+// guard. The `gh` call itself lives in listeners.ts.
+
+export interface PrTarget {
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+export const prKey = (t: PrTarget): string => `${t.owner}/${t.repo}#${t.number}`;
+
+// GraphQL node cost grows with the alias count, so a big fleet is split into
+// several queries rather than one that GitHub rejects.
+export const PR_BATCH_SIZE = 20;
+
+const PR_FRAGMENT = `fragment PrFields on PullRequest {
+  number url state merged mergeable headRefOid
+  author { login }
+  baseRepository { name owner { login } }
+  reviews(last: 100) { nodes { databaseId state author { login } } }
+  comments(last: 100) { nodes { databaseId author { login } } }
+  reviewThreads(last: 50) { nodes { comments(last: 20) { nodes { databaseId author { login } } } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+    __typename
+    ... on CheckRun { name status conclusion }
+    ... on StatusContext { context state }
+  } } } } } }
+}`;
+
+// owner/repo/number travel as GraphQL variables, never spliced into the query
+// text — a PR URL is user input and `[^/]+` accepts quotes and braces.
+export function buildPrBatchQuery(targets: PrTarget[]): { query: string; vars: Record<string, string | number> } {
+  const decl: string[] = [];
+  const body: string[] = [];
+  const vars: Record<string, string | number> = {};
+  targets.forEach((t, i) => {
+    decl.push(`$o${i}: String!, $r${i}: String!, $n${i}: Int!`);
+    body.push(`p${i}: repository(owner: $o${i}, name: $r${i}) { pullRequest(number: $n${i}) { ...PrFields } }`);
+    vars[`o${i}`] = t.owner;
+    vars[`r${i}`] = t.repo;
+    vars[`n${i}`] = t.number;
+  });
+  const query = `query(${decl.join(', ')}) {\n  rateLimit { cost remaining resetAt }\n  ${body.join('\n  ')}\n}\n${PR_FRAGMENT}`;
+  return { query, vars };
+}
+
+const nodes = (c: any): any[] => (Array.isArray(c?.nodes) ? c.nodes.filter(Boolean) : []);
+const lower = (s: unknown): string => (typeof s === 'string' ? s.toLowerCase() : '');
+const asUser = (a: any) => ({ login: a?.author?.login });
+// databaseId is the REST `id` — the watermark was always in those units, so a
+// listener armed before this change keeps its cursor.
+const asRow = (n: any) => ({ id: n.databaseId, user: asUser(n), state: n.state });
+
+// Map one GraphQL PullRequest node onto the REST-shaped snapshot. Returns null
+// for a missing node (deleted PR / no access).
+export function snapshotFromGraphql(pr: any): PrSnapshot | null {
+  if (!pr || typeof pr !== 'object') return null;
+  const rollup = nodes(pr.commits)[0]?.commit?.statusCheckRollup;
+  const ctxs = nodes(rollup?.contexts);
+  const gqlState: string = pr.state || '';
+  return {
+    meta: {
+      number: pr.number,
+      html_url: pr.url,
+      state: gqlState === 'OPEN' ? 'open' : 'closed',
+      merged: pr.merged === true || gqlState === 'MERGED',
+      // REST calls a conflicted PR mergeable_state "dirty"; GraphQL says CONFLICTING.
+      mergeable_state: pr.mergeable === 'CONFLICTING' ? 'dirty' : lower(pr.mergeable) || 'unknown',
+      head: { sha: pr.headRefOid || '' },
+      user: { login: pr.author?.login },
+      base: { repo: { name: pr.baseRepository?.name, owner: { login: pr.baseRepository?.owner?.login } } },
+    },
+    reviews: nodes(pr.reviews).map(asRow),
+    issueComments: nodes(pr.comments).map(asRow),
+    reviewComments: nodes(pr.reviewThreads).flatMap((t) => nodes(t.comments).map(asRow)),
+    checkRuns: ctxs
+      .filter((c) => c.__typename === 'CheckRun')
+      .map((c) => ({ name: c.name, status: lower(c.status), conclusion: lower(c.conclusion) })),
+    statusContexts: ctxs
+      .filter((c) => c.__typename === 'StatusContext')
+      .map((c) => ({ context: c.context, state: lower(c.state) })),
+  };
+}
+
+export type PrBatchResult = { snap: PrSnapshot } | { err: { kind: GhErrorKind; message: string } };
+
+export interface RateLimitInfo {
+  remaining: number;
+  resetAt: number; // epoch ms
+}
+
+// Split a GraphQL response into one result per alias. A PR GitHub cannot find
+// (NOT_FOUND on that alias's path) is `gone` for that listener only; any other
+// per-alias error is transient so one bad PR never stops the rest of the batch.
+export function parsePrBatch(
+  data: any,
+  errors: any[] | undefined,
+  count: number
+): { results: PrBatchResult[]; rate: RateLimitInfo | null } {
+  const byAlias = new Map<string, any[]>();
+  for (const e of errors || []) {
+    const a = Array.isArray(e?.path) ? String(e.path[0]) : '';
+    byAlias.set(a, [...(byAlias.get(a) || []), e]);
+  }
+  const results: PrBatchResult[] = [];
+  for (let i = 0; i < count; i++) {
+    const snap = snapshotFromGraphql(data?.[`p${i}`]?.pullRequest);
+    if (snap) {
+      results.push({ snap });
+      continue;
+    }
+    const errs = byAlias.get(`p${i}`) || [];
+    const message = errs.map((e) => e?.message).filter(Boolean).join('; ');
+    const missing = errs.some((e) => e?.type === 'NOT_FOUND') || (!errs.length && data?.[`p${i}`] !== undefined);
+    results.push({ err: { kind: missing ? 'gone' : 'transient', message: message || 'pull request not found' } });
+  }
+  const rl = data?.rateLimit;
+  const resetAt = Date.parse(rl?.resetAt);
+  const rate = typeof rl?.remaining === 'number' ? { remaining: rl.remaining, resetAt: Number.isFinite(resetAt) ? resetAt : 0 } : null;
+  return { results, rate };
+}
+
+// Quota guard. GraphQL gets its own 5000-point hourly bucket; once fewer than
+// `floor` points remain, polling pauses until the window resets instead of
+// spending the last of it (the same token backs `gh pr create` and the agents'
+// own calls). Returns the epoch ms to resume at, or null to go ahead.
+export const RATE_FLOOR = 200;
+export function quotaPausedUntil(rate: RateLimitInfo | null, now: number, floor = RATE_FLOOR): number | null {
+  if (!rate || rate.remaining >= floor) return null;
+  return rate.resetAt > now ? rate.resetAt : null;
+}
