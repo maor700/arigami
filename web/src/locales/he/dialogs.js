@@ -43,6 +43,12 @@ export const strings = {
   'dialogs.createFolder': 'צור תיקייה',
   'dialogs.renameFolder': 'שינוי שם תיקייה',
   'dialogs.newFolder': 'תיקייה חדשה',
+  'dialogs.newProjectTitle': 'פרויקט חדש',
+  'dialogs.newProjectBody': 'תיקייה עם סשן מנהל משלה: הוא מתכנן את העבודה, פותח לה סשנים ועוקב אחריהם. אתה עדיין מאשר כל שינוי.',
+  'dialogs.newProjectName': 'שם',
+  'dialogs.newProjectGoal': 'מטרה (לא חובה)',
+  'dialogs.newProjectGoalPlaceholder': 'מה הפרויקט אמור להשיג? המנהל מתחיל מזה.',
+  'dialogs.newProjectCreate': 'צור פרויקט',
 
   // make project
   'dialogs.makeProjectTitle': 'להפוך את “{name}” לתיקיית פרויקט?',

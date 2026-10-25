@@ -2148,8 +2148,9 @@ function TriggerTab() {
 export default function Launcher({ config, sessions, onClose, onCreated, onNeedsSetup, initialMode }) {
   const t = useT();
   const prefs = usePrefs();
-  // F8: "From a ticket" only exists once Linear is connected — a new user does
-  // not know what Linear is. Until then the launcher opens on the empty form.
+  // F8: "From a ticket" is never the default until Linear is connected — a new user
+  // does not know what Linear is, so the launcher opens on the empty form. The tab
+  // itself is always there: opened, it offers to connect Linear (ConnectLinear).
   const [linear, setLinear] = useState(null); // null = unknown yet
   useEffect(() => {
     let alive = true;
@@ -2157,9 +2158,10 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
     return () => { alive = false; };
   }, []);
   const [mode, setModeRaw] = useState(initialMode || 'empty');
-  const setMode = (m) => setModeRaw(m);
+  const picked = useRef(false); // the person chose a tab themselves — never move them off it
+  const setMode = (m) => { picked.current = true; setModeRaw(m); };
   useEffect(() => {
-    if (linear === false && mode === 'ticket') setModeRaw('empty');
+    if (linear === false && mode === 'ticket' && !picked.current) setModeRaw('empty');
   }, [linear, mode]);
   // Extension-contributed modes (manifest `openFrom: ["launcher"]`). The core
   // launcher deliberately knows nothing about what they are for — a PR review,
@@ -2354,9 +2356,7 @@ export default function Launcher({ config, sessions, onClose, onCreated, onNeeds
         <span className="text-sm font-semibold">{t('launcher.header.title')}</span>
         <Tabs value={mode} onValueChange={setMode} className="min-w-0 max-md:order-last max-md:w-full md:ms-3">
           <TabsList variant="segmented" aria-label={t('launcher.header.title')} className="max-w-full overflow-x-auto">
-            {linear && (
-              <TabsTrigger value="ticket" className="coarse:h-10">{t('launcher.header.fromTicket')}</TabsTrigger>
-            )}
+            <TabsTrigger value="ticket" className="coarse:h-10">{t('launcher.header.fromTicket')}</TabsTrigger>
             <TabsTrigger value="empty" className="coarse:h-10">{t('launcher.header.emptySession')}</TabsTrigger>
             <TabsTrigger value="trigger" className="coarse:h-10">{t('launcher.header.fromTrigger')}</TabsTrigger>
             {extModes.map((x) => (

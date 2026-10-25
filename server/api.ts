@@ -5701,7 +5701,9 @@ export async function handle(
             ctl.id,
             `Use the project-manager skill. You are the controller of the project folder "${folder.name}" (folder ${folder.id}).\n\n` +
               `Current member sessions you manage:\n${roster || '- (none yet)'}\n\n` +
-              `Ask the human what this project should achieve if it isn't obvious from the members.`
+              (String(body?.goal || '').trim()
+                ? `The human's goal for this project:\n${String(body.goal).trim().slice(0, 4000)}\n\nPlan it, then start.`
+                : `Ask the human what this project should achieve if it isn't obvious from the members.`)
           );
         } catch {}
         return json(res, state.getSession(ctl.id), 201);

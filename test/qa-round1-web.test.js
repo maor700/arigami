@@ -273,7 +273,9 @@ test('heavy, rarely used parts are code-split: noVNC, highlighter, settings, lau
 test('the terminal gear carries the reading group: chat view, text size, direction, chat theme (values translated)', () => {
   const src = read('components/TermControls.jsx');
   // D10: the header no longer has a gear — only the agent home (no composer) keeps TermControls
-  expect(read('components/SessionView.jsx')).toContain('<ContextChip session={session} />');
+  // the context meter lives in the composer only (data-composer-context); the header no longer repeats it
+  expect(read('components/SessionView.jsx')).not.toContain('<ContextChip');
+  expect(read('components/Composer.jsx')).toContain('data-composer-context');
   expect(read('components/SessionView.jsx').match(/<TermControls/g).length).toBe(1);
   expect(read('components/SessionView.jsx')).toContain("restartSession(session)");
   expect(src).toContain('export function ChatDisplayItems');

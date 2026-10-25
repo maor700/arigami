@@ -407,6 +407,63 @@ export function MakeProjectDialog({ folder, defaultCwd, onClose }) {
   );
 }
 
+// The rail's "New project" button: one step instead of "new folder" → "make project folder". Creates the folder,
+// makes it a project (its controller session, seeded with the goal when one is given) and opens that session.
+export function NewProjectDialog({ defaultCwd, onClose }) {
+  const t = useT();
+  const [name, setName] = useState('');
+  const [goal, setGoal] = useState('');
+  const [cwd, setCwd] = useState(defaultCwd || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const create = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const folder = await api.post('/folders', { name: name.trim(), sortOrder: -1 });
+      const ctl = await api.post(`/folders/${folder.id}/make-project`, {
+        ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+        ...(goal.trim() ? { goal: goal.trim() } : {}),
+      });
+      onClose();
+      if (ctl?.id) window.dispatchEvent(new CustomEvent('host:select-session', { detail: { id: ctl.id } }));
+    } catch (e) {
+      setError(String(e.message || e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Overlay onClose={onClose} size="md">
+      <DialogHeader>
+        <DialogTitle>{t('dialogs.newProjectTitle')}</DialogTitle>
+        <p className="text-sm text-fgdim">{t('dialogs.newProjectBody')}</p>
+      </DialogHeader>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="new-project-name">{t('dialogs.newProjectName')}</Label>
+        <Input id="new-project-name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && create()} autoFocus dir="auto" data-new-project-name />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="new-project-goal">{t('dialogs.newProjectGoal')}</Label>
+        <Textarea id="new-project-goal" value={goal} onChange={(e) => setGoal(e.target.value)} dir="auto" rows={3} placeholder={t('dialogs.newProjectGoalPlaceholder')} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="new-project-cwd">{t('dialogs.controllerWorkingDir')}</Label>
+        <Input id="new-project-cwd" value={cwd} onChange={(e) => setCwd(e.target.value)} dir="ltr" placeholder={t('dialogs.controllerCwdPlaceholder')} className="font-mono text-xs" />
+      </div>
+      {error && <div className={ERR}>{error}</div>}
+      <DialogFooter>
+        <Button onClick={onClose}>{t('dialogs.cancel')}</Button>
+        <Button variant="primary" onClick={create} disabled={busy || !name.trim()} data-new-project-create>
+          {busy ? t('dialogs.creating') : t('dialogs.newProjectCreate')}
+        </Button>
+      </DialogFooter>
+    </Overlay>
+  );
+}
+
 // Two exits: ungroup (children return to the rail) or purge (kill them all).
 // Purge is the only place a folder action can destroy sessions — the server
 // runs cleanup only for sessions that own their worktree.

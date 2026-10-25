@@ -40,7 +40,7 @@ import { Truncate } from './Truncate.jsx';
 import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamPanel } from './SlashCommands.jsx';
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
-import TermControls, { ContextChip, ChatDisplayItems } from './TermControls.jsx';
+import TermControls, { ChatDisplayItems } from './TermControls.jsx';
 import LadderBadge from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -453,7 +453,6 @@ function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }
         <ListenersChipCompact session={session} />
         <SummaryChip session={session} />
         <MachineChip session={session} />
-        <ContextChip session={session} />
         <HeaderMenu session={session} mode={mode} meta={meta} onEdit={onEdit} onArchive={onArchive} onRestore={onRestore} setAddTabOpen={setAddTabOpen} />
       </div>
       {procPanel && <BgProcessesPanel session={session} onClose={() => setProcPanel(false)} />}

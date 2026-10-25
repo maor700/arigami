@@ -10,6 +10,7 @@ import {
   Eye,
   Folder,
   FolderPlus,
+  FolderKanban,
   FolderTree,
   Globe,
   GripVertical,
@@ -49,6 +50,7 @@ import {
   FolderNameDialog,
   DeleteFolderDialog,
   MakeProjectDialog,
+  NewProjectDialog,
 } from './Dialogs.jsx';
 import { Truncate } from './Truncate.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
@@ -1881,6 +1883,11 @@ export default function Rail({
             </Button>
           </Tip>
         )}
+        <Tip label={t('rail.newProject')}>
+          <Button variant="ghost" size="icon-sm" aria-label={t('rail.newProject')} data-rail-new-project onClick={() => setFolderDialog({ type: 'new-project' })} className="text-muted-foreground">
+            <FolderKanban />
+          </Button>
+        </Tip>
         <span role="group" aria-label={t('rail.flatList')} className="flex shrink-0 items-center gap-0.5 rounded-md bg-muted p-0.5">
           {[
             ['flat', Rows3, t('rail.flatList')],
@@ -2171,6 +2178,9 @@ export default function Rail({
           children={folderDialog.kids}
           onClose={() => setFolderDialog(null)}
         />
+      )}
+      {folderDialog?.type === 'new-project' && (
+        <NewProjectDialog defaultCwd={config?.defaultCwd || ''} onClose={() => setFolderDialog(null)} />
       )}
       {folderDialog?.type === 'make-project' && (
         <MakeProjectDialog

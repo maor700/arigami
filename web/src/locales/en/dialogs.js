@@ -43,6 +43,12 @@ export const strings = {
   'dialogs.createFolder': 'Create folder',
   'dialogs.renameFolder': 'Rename folder',
   'dialogs.newFolder': 'New folder',
+  'dialogs.newProjectTitle': 'New project',
+  'dialogs.newProjectBody': 'A folder with a manager session of its own: it plans the work, opens sessions for it and keeps track of them. You still approve every change.',
+  'dialogs.newProjectName': 'Name',
+  'dialogs.newProjectGoal': 'Goal (optional)',
+  'dialogs.newProjectGoalPlaceholder': 'What should this project achieve? The manager starts from this.',
+  'dialogs.newProjectCreate': 'Create project',
 
   // make project
   'dialogs.makeProjectTitle': 'Make “{name}” a project folder?',

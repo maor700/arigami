@@ -136,6 +136,7 @@ export const strings = {
   'rail.groupedByStatus': 'Grouped by status',
   'rail.activeCount': 'Active · {n}',
   'rail.newFolder': 'New folder',
+  'rail.newProject': 'New project',
   'rail.flatList': 'Flat list',
   'rail.groupByStatus': 'Group by status',
   'rail.emptyFolderDrop': 'Empty folder — drop sessions here',

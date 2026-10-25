@@ -133,6 +133,7 @@ export const strings = {
   'rail.groupedByStatus': 'מקובץ לפי סטטוס',
   'rail.activeCount': 'פעיל · {n}',
   'rail.newFolder': 'תיקייה חדשה',
+  'rail.newProject': 'פרויקט חדש',
   'rail.flatList': 'רשימה שטוחה',
   'rail.groupByStatus': 'קיבוץ לפי סטטוס',
   'rail.emptyFolderDrop': 'תיקייה ריקה — גררו סשנים לכאן',

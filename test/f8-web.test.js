@@ -58,10 +58,12 @@ test('FirstRun (he): the question and chips are Hebrew', () => {
   prefs.setPrefs({ language: 'en' });
 });
 
-test('Launcher source: ticket tab gated on Linear, empty form has an Advanced fold, default tab is empty', () => {
+test('Launcher source: the ticket tab is always there but never the default without Linear; empty form has an Advanced fold', () => {
   const src = fs.readFileSync(web('components/Launcher.jsx'), 'utf8');
   expect(src).toMatch(/useState\(initialMode \|\| 'empty'\)/);
-  expect(src).toMatch(/\{linear && \(\s*<TabsTrigger value="ticket"/);
+  expect(src).not.toMatch(/\{linear && \(\s*<TabsTrigger value="ticket"/); // shown with a Connect Linear offer inside
+  expect(src).toMatch(/<TabsTrigger value="ticket"/);
+  expect(src).toMatch(/linear === false && mode === 'ticket' && !picked\.current/);
   expect(src).toMatch(/launcher\.empty\.advanced/);
   expect(src).toMatch(/api\.get\('\/linear\/status'\)/);
 });
