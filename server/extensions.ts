@@ -460,6 +460,18 @@ export async function validateExtension(dir: string): Promise<ValidateResult> {
     file(str(d.file), `docs[${d.skill}].file`);
   }
 
+  // proxy.sites: which other origins a proxied site's tab reaches through the proxy too (proxy.ts).
+  const sites = (m as any).proxy?.sites;
+  if (sites !== undefined) {
+    if (!Array.isArray(sites)) errors.push('proxy.sites must be an array');
+    else {
+      if (!(m.permissions || []).includes('proxy:sites')) errors.push('proxy.sites needs the "proxy:sites" permission (the owner sees it at install)');
+      for (const site of sites) {
+        if (!parseProxySite(site)) errors.push(`proxy.sites: ${JSON.stringify(site).slice(0, 120)} — needs {target: "https://host", origins: ["https://host" | "https://*.domain"]}`);
+      }
+    }
+  }
+
   for (const t of (m.tools || []) as ManifestTool[]) {
     if (!str(t.name)) errors.push('tools[]: name is required');
     if (t.kind === 'module') file(str((t as any).module), `tools[${t.name}].module`);
@@ -1867,6 +1879,35 @@ export async function patchExtension(name: string, patch: { enabled?: boolean; s
 // POST /__api/ext/:name/tool/:tool — one call to an extension's own MCP server
 // ---------------------------------------------------------------------------
 /** Does the manifest allow a tab to call this tool? (`tools:<name>` permission.) */
+// ---- proxy.sites -----------------------------------------------------------------------------------------------------
+// An extension can say: when a tab shows <target> through the proxy, the page's requests to these other origins go
+// through the proxy too (an app whose API lives on a sibling host), and — with rewriteQuery — the upstream sees the
+// target's own origin where the page put the proxy's (a redirect_uri the site only accepts for itself). The host stays
+// generic: which sites, which hosts, live in the extension.
+export interface ProxySite { target: string; origins: string[]; rewriteQuery: boolean }
+const ORIGIN_RE = /^https?:\/\/(\*\.)?[a-z0-9.-]+(:\d+)?$/i;
+export function parseProxySite(raw: any): ProxySite | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const target = String(raw.target || '').replace(/\/+$/, '');
+  if (!ORIGIN_RE.test(target) || target.includes('*')) return null;
+  const origins = Array.isArray(raw.origins) ? raw.origins.map((o: unknown) => String(o).replace(/\/+$/, '')) : [];
+  if (origins.some((o: string) => !ORIGIN_RE.test(o))) return null;
+  return { target: target.toLowerCase(), origins: origins.map((o: string) => o.toLowerCase()), rewriteQuery: raw.rewriteQuery === true };
+}
+
+/** Every loaded, enabled extension's proxy.sites — read by the proxy per request (cheap: a few entries). */
+export function proxySites(): ProxySite[] {
+  const out: ProxySite[] = [];
+  for (const e of extensions.values()) {
+    if (e.state !== 'loaded' || !(e.manifest?.permissions || []).includes('proxy:sites')) continue;
+    for (const raw of (e.manifest as any)?.proxy?.sites || []) {
+      const site = parseProxySite(raw);
+      if (site) out.push(site);
+    }
+  }
+  return out;
+}
+
 export function toolPermitted(ext: string, tool: string): boolean {
   const e = extensions.get(ext);
   if (!e || e.state !== 'loaded') return false;

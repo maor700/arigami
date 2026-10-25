@@ -152,6 +152,7 @@ so a fresh box still gets history.
 | `webhooks[]` | a custom webhook `ext-<name>-<id>` routed to a listener's `onWebhook` | a wake, like a poll |
 | `tabs[]` | static pages at `/__ext/<name>/…` (sandboxed, or trusted — §7.1) | `open_tab({type:'ext', ext})` |
 | `settings.schema` | a form in Settings → Extensions | `ctx.settings`, `EXT_SETTINGS` |
+| `proxy.sites` | more origins a proxied site's tab reaches through the proxy (needs `proxy:sites`) | — (the tab just works) |
 | `daemons[]` | **parsed, not run** in this version | — |
 
 Two naming details worth knowing:
@@ -161,6 +162,28 @@ Two naming details worth knowing:
   (`mcp__ext-<name>__*` and `mcp__ext-<name>-*`).
 * `docs[].description` is the **trigger text**. It is the line Claude reads when
   deciding whether a skill is relevant, so write "Use when the user …".
+
+### A proxied site that talks to its sibling hosts
+
+A site opened in a tab runs on the host's origin (the `?__target=` proxy). An app whose API sits on another host
+of its own (`app.example.com` calling `api.example.com`) is then blocked by that API's CORS allowlist, and a login
+that only redirects to its own origin bounces out of the tab. An extension can declare the fix for its site:
+
+```json
+{
+  "permissions": ["proxy:sites"],
+  "proxy": { "sites": [
+    { "target": "https://app.example.com", "origins": ["https://*.example.com"], "rewriteQuery": true }
+  ] }
+}
+```
+
+- `origins`: the page's requests to these hosts go through the proxy too, with the site's own origin as their
+  `Origin` — exact origins, or `https://*.domain` for any subdomain.
+- `rewriteQuery`: in requests to the site, the host's own origin in a query string (a `redirect_uri`) becomes the
+  site's; the redirect the site then answers with is brought back into the tab.
+
+The host knows nothing about which sites; the extension says so, and the owner sees `proxy:sites` at install.
 
 ### Tools without writing MCP
 

@@ -13,10 +13,23 @@ interface TargetSplit {
   path: string;
 }
 
+/** An extension's proxy.sites entry (extensions.ts parseProxySite): more origins a proxied site reaches through us. */
+export interface ProxySiteRoute { target: string; origins: string[]; rewriteQuery: boolean }
+
 interface ProxyOptions {
   vercelBypass?: string;
   devServerPorts?: number[];
+  /** Read per request: the sites extensions declared (proxy.sites). */
+  sites?: () => ProxySiteRoute[];
 }
+
+/** Does `origin` match a declared one — exact, or "https://*.example.com" for any subdomain of it. */
+export const originMatches = (pattern: string, origin: string): boolean => {
+  const m = /^(https?:\/\/)\*\.(.+)$/i.exec(pattern);
+  if (!m) return pattern.toLowerCase() === origin.toLowerCase();
+  const o = origin.toLowerCase();
+  return o.startsWith(m[1].toLowerCase()) && o.endsWith('.' + m[2].toLowerCase());
+};
 
 interface StatusResponse {
   targets: Array<{ target: TargetOrigin; lastSeen: number }>;
@@ -40,6 +53,25 @@ export const targetOrigin = (raw: string | null | undefined): TargetOrigin => {
   } catch {
     return null;
   }
+};
+
+/** Every origin the browser may know this host by (direct, or behind a loopback TLS proxy such as tailscale serve). */
+export const ownOrigins = (req: IncomingMessage): string[] => {
+  const hosts = new Set<string>();
+  for (const h of [req.headers['x-forwarded-host'], req.headers.host]) if (typeof h === 'string' && h) hosts.add(h.split(',')[0].trim());
+  const out: string[] = [];
+  for (const h of hosts) out.push(`https://${h}`, `http://${h}`);
+  return out;
+};
+
+/** Replace this host's origin with the target's in a path's query string — raw and percent-encoded forms. */
+export const rewriteHostInQuery = (url: string, req: IncomingMessage, target: string): string => {
+  const q = url.indexOf('?');
+  let query = url.slice(q);
+  for (const own of ownOrigins(req)) {
+    query = query.split(encodeURIComponent(own)).join(encodeURIComponent(target)).split(own).join(target);
+  }
+  return url.slice(0, q) + query;
 };
 
 export const rewriteLocation = (
@@ -209,10 +241,37 @@ self.addEventListener('activate', (e) => e.waitUntil((async () => {
   await self.clients.claim();
 })()));
 
+// ROUTES (prepended when served): [{target, origins}] from extensions' proxy.sites. A page pinned to <target> that
+// calls one of <origins> directly (its API on a sibling host) is sent through the proxy as well, so the upstream
+// sees the site's own origin and the browser sees one origin — no CORS, one cookie jar.
+const MATCH = (p, o) => { const i = p.indexOf('://*.'); return i < 0 ? p === o : o.startsWith(p.slice(0, i + 3)) && o.endsWith(p.slice(i + 4)); };
+const SIBLING = (page, origin) => { for (const r of ROUTES) if (r.target === page && r.origins.some((p) => MATCH(p, origin))) return true; return false; };
+const DECLARED = (origin) => ROUTES.some((r) => r.origins.some((p) => MATCH(p, origin)));
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) {
+    if (!DECLARED(url.origin)) return;
+    event.respondWith((async () => {
+      // which site the page shows: its own url (pinned by __target) — the worker may have restarted and lost MEM
+      let page = MEM.get(event.clientId) || null;
+      if (!page) { try { const c = await self.clients.get(event.clientId); if (c) page = targetOf(c.url); } catch (e) {} }
+      if (!page || !SIBLING(page, url.origin)) return fetch(req);
+      const h = new Headers();
+      for (const [k, v] of req.headers) {
+        const lk = k.toLowerCase();
+        if (lk === 'origin' || lk.startsWith('sec-fetch-')) continue;
+        h.set(k, v);
+      }
+      h.set('x-poc-target', url.origin);
+      h.set('x-poc-page', page);
+      const init = { method: req.method, headers: h, credentials: 'include', redirect: 'follow' };
+      if (req.method !== 'GET' && req.method !== 'HEAD') init.body = await req.blob();
+      return fetch(new Request(self.location.origin + url.pathname + url.search, init));
+    })());
+    return;
+  }
   if (SKIP(url.pathname)) return;
 
   if (req.mode !== 'navigate' && targetOf(req.referrer)) return;
@@ -346,10 +405,17 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
           : cookie;
       }
     }
-    if (headers.origin) {
+    // a sibling request (SW above) speaks for the page's site: that is the origin its upstream expects
+    const page = targetOrigin(req.headers['x-poc-page'] as string | undefined);
+    const sibling = !!page && (opts.sites?.() || []).some((r) => r.target === page && r.origins.some((o) => originMatches(o, upstream.origin)));
+    delete headers['x-poc-page'];
+    if (sibling) {
+      headers.origin = page!;
+      headers.referer = page + '/';
+    } else if (headers.origin) {
       headers.origin = upstream.origin;
     }
-    if (headers.referer) {
+    if (!sibling && headers.referer) {
       const referer = headers.referer as string | string[];
       if (typeof referer === 'string') {
         headers.referer = referer.split(hostOrigin(req)).join(upstream.origin);
@@ -510,7 +576,8 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
         'service-worker-allowed': '/',
         'cache-control': 'no-cache',
       });
-      res.end(SW_SOURCE);
+      const routes = (opts.sites?.() || []).map((r) => ({ target: r.target, origins: r.origins }));
+      res.end(`const ROUTES = ${JSON.stringify(routes)};\n` + SW_SOURCE);
       return;
     }
 
@@ -578,6 +645,11 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
       req.url =
         u.pathname + (rest ? '?' + rest : '');
     }
+
+    // proxy.sites rewriteQuery: where the page put the proxy's own origin in a query (a redirect_uri), the upstream sees
+    // the site's — a site that only redirects to itself then sends us a Location rewriteLocation brings back here.
+    const route = (opts.sites?.() || []).find((r) => r.target === target && r.rewriteQuery);
+    if (route && req.url && req.url.includes('?')) req.url = rewriteHostInQuery(req.url, req, target);
 
     pinned.set(target, Date.now());
     proxyRequest(req, res, target, targetForInjection);

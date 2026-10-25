@@ -124,7 +124,9 @@ let hasTarget: (req: IncomingMessage) => boolean = (): boolean => false;
 
 try {
   const mod = (await import('./proxy.js')) as ProxyModule;
-  proxy = mod.createProxy({ cfg });
+  // proxy.sites: the sibling origins extensions declare for a proxied site (docs/EXTENSIONS.md)
+  const extMod = await import('./extensions.js');
+  proxy = mod.createProxy({ cfg, sites: () => extMod.proxySites() } as any);
   if (typeof mod.hasTarget === 'function')
     hasTarget = (req: IncomingMessage) => mod.hasTarget!(req);
   else if (typeof proxy?.hasTarget === 'function')
