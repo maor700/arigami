@@ -156,7 +156,9 @@ export function mcpIssueToTicket(it) {
     createdAt: it.createdAt, updatedAt: it.updatedAt, startedAt: it.startedAt, dueDate: it.dueDate,
     estimate: it.estimate,
     priority: nameOf(it.priority),
+    priorityValue: typeof it.priority === 'object' && it.priority ? it.priority.value : undefined,
     status: nameOf(it.status) || it.status,
+    statusType: it.statusType || (it.state && it.state.type),
     statusColor: it.statusColor || (it.state && it.state.color),
     assignee: nameOf(it.assignee),
     creator: nameOf(it.createdBy) || nameOf(it.creator),
@@ -167,7 +169,10 @@ export function mcpIssueToTicket(it) {
       ? it.labels.map((l) => (typeof l === 'string' ? { name: l } : { name: l.name, color: l.color }))
       : [],
     attachments: Array.isArray(it.attachments) ? it.attachments : [],
-    comments: Array.isArray(it.comments) ? it.comments : [],
+    // list_comments: {id, body, author:{name}, createdAt, parentId, resolvedAt, quotedText}
+    comments: Array.isArray(it.comments)
+      ? it.comments.map((c) => ({ id: c.id, body: c.body || '', author: nameOf(c.author) || c.author || 'Someone', createdAt: c.createdAt, parentId: c.parentId || null, resolvedAt: c.resolvedAt || null, quotedText: c.quotedText || '' }))
+      : [],
     parent: it.parent || null,
     children: Array.isArray(it.children) ? it.children : [],
     relations: Array.isArray(it.relations) ? it.relations : [],
@@ -300,6 +305,18 @@ export function mdToHtml(md) {
   return out.join('\n');
 }
 
+// Linear's own colours for a workflow state type, and a stable avatar colour per person.
+const STATUS_COLORS = { triage: '#fc7840', backlog: '#bec2c8', unstarted: '#e2e2e2', started: '#f2c94c', completed: '#5e6ad2', canceled: '#95a2b3' };
+const AVATAR_COLORS = ['#5e6ad2', '#26b5ce', '#4cb782', '#f2994a', '#eb5757', '#bb87fc', '#f7c8c1', '#0f783c'];
+const displayName = (n) => {
+  const s = String(n || 'Someone');
+  // an email login ("first.last@org") reads as "first.last"
+  return s.includes('@') ? s.split('@')[0] : s;
+};
+const initialsOf = (n) => displayName(n).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
+const avatarColor = (n) => { let h = 0; for (const ch of String(n || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return AVATAR_COLORS[h % AVATAR_COLORS.length]; };
+const fmtDay = (iso) => { if (!iso) return ''; try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return iso; } };
+
 export const isPrUrl = (u) => /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(u || '');
 const LINEAR_ISSUE = (idf) => `https://linear.app/${cfg.linearWorkspace}/issue/${encodeURIComponent(idf)}`;
 
@@ -326,12 +343,31 @@ export function ticketData(t, id, pr) {
     : '';
   const replies = {}, tops = [];
   (t.comments || []).forEach((c) => { if (c.parentId) (replies[c.parentId] = replies[c.parentId] || []).push(c); else tops.push(c); });
-  const mapC = (c) => ({ author: c.author || 'Someone', time: fmtDate(c.createdAt), resolved: !!c.resolvedAt, quotedText: c.quotedText || '', bodyHtml: mdToHtml(c.body), replies: (replies[c.id] || []).map(mapC) });
-  const comments = tops.map(mapC);
+  const byTime = (a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+  const mapC = (c) => ({ author: displayName(c.author), initials: initialsOf(c.author), avatar: avatarColor(c.author), at: c.createdAt || '', time: fmtDate(c.createdAt), resolved: !!c.resolvedAt, quotedText: c.quotedText || '', bodyHtml: mdToHtml(c.body), replies: (replies[c.id] || []).sort(byTime).map(mapC) });
+  const comments = tops.sort(byTime).map(mapC);
   const ghAtt = (t.attachments || []).find((a) => isPrUrl(a.url));
+  // the sidebar, in Linear's order — only what the ticket has
+  const statusType = t.statusType || '';
+  const props = [
+    { key: 'status', label: 'Status', value: t.status || '—', color: t.statusColor || STATUS_COLORS[statusType] || '#8a8f98', kind: statusType || 'unstarted' },
+    t.priority && { key: 'priority', label: 'Priority', value: t.priority, level: t.priorityValue ?? null },
+    { key: 'assignee', label: 'Assignee', value: t.assignee ? displayName(t.assignee) : 'Unassigned', initials: t.assignee ? initialsOf(t.assignee) : '', avatar: t.assignee ? avatarColor(t.assignee) : '' },
+    labels.length && { key: 'labels', label: 'Labels', labels },
+    t.project && { key: 'project', label: 'Project', value: t.project },
+    t.milestone && { key: 'milestone', label: 'Milestone', value: t.milestone },
+    t.team && { key: 'team', label: 'Team', value: t.team },
+    t.estimate != null && t.estimate !== '' && { key: 'estimate', label: 'Estimate', value: String(t.estimate) },
+    t.dueDate && { key: 'due', label: 'Due date', value: fmtDay(t.dueDate) },
+    t.creator && { key: 'creator', label: 'Created by', value: displayName(t.creator) },
+    t.createdAt && { key: 'created', label: 'Created', value: fmtDay(t.createdAt) },
+    t.updatedAt && { key: 'updated', label: 'Updated', value: fmtDate(t.updatedAt) },
+    t.branchName && { key: 'branch', label: 'Branch', value: t.branchName, mono: true },
+  ].filter(Boolean);
+  const links = (t.attachments || []).map((a) => ({ title: a.title || a.url, url: a.url, kind: isPrUrl(a.url) ? 'pr' : /sentry\.io/.test(a.url || '') ? 'sentry' : 'link' }));
   const ticket = {
-    identifier: t.identifier || id, title: t.title, url: t.url,
-    status: t.status || '—', statusColor: t.statusColor || '#3fb950',
+    identifier: t.identifier || id, title: t.title, url: t.url, team: t.team || '', props, links,
+    status: t.status || '—', statusColor: t.statusColor || STATUS_COLORS[statusType] || '#3fb950',
     labels, meta, descriptionHtml: mdToHtml(t.description || '_No description_'),
     relations, otherLinksHtml, comments, ghUrl: ghAtt ? ghAtt.url : '',
   };
@@ -380,10 +416,53 @@ export function prViewModel(pr, fallbackUrl = '') {
 // Styles for the card (the card mounts only the active tab, so no toggling here).
 const TICKET_CSS = `
   :root{color-scheme:dark}*{box-sizing:border-box}
-  body{margin:0;font:13px/1.6 ui-sans-serif,system-ui,-apple-system;background:#0d1117;color:#c9d1d9}
-  a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
-  code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 5px;font:12px ui-monospace,Menlo,monospace}
-  img{max-width:100%;border-radius:8px;margin:8px 0;border:1px solid #21262d}
+  body{margin:0;font:14px/1.6 "Inter Variable",Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:#16171a;color:#d2d3e0;-webkit-font-smoothing:antialiased}
+  a{color:#8f9bff;text-decoration:none}a:hover{text-decoration:underline}
+  code{background:#232429;border:1px solid #2e2f35;border-radius:4px;padding:1px 5px;font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#e2e3ea}
+  pre{background:#1d1e22;border:1px solid #2a2b31;border-radius:6px;padding:10px 12px;overflow:auto}
+  img{max-width:100%;border-radius:6px;margin:10px 0;border:1px solid #2a2b31;display:block}
+  /* the Linear ticket page (card.jsx App) */
+  .lin{height:100%;display:flex;flex-direction:column;min-height:0}
+  .lin-top{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 20px;border-bottom:1px solid #26272c;font-size:13px;color:#8a8f98}
+  .crumb{display:flex;align-items:center;gap:6px;min-width:0}.crumb .sep{color:#55565e}.crumb .mono{color:#b4b6c3}
+  .topr{display:flex;align-items:center;gap:10px}
+  .open{color:#b4b6c3;font-size:12.5px;border:1px solid #2e2f35;border-radius:6px;padding:3px 9px}.open:hover{background:#1f2024;text-decoration:none;color:#fff}
+  .lin-body{flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start}
+  .lin-main{flex:1;min-width:0;max-width:860px;margin:0 auto;padding:28px 36px 48px}
+  .lin-title{font-size:22px;line-height:1.3;font-weight:600;color:#f7f8f8;margin:0 0 14px;letter-spacing:-.01em}
+  .lin-desc{color:#d2d3e0;font-size:14.5px}
+  .desc p{margin:6px 0}.desc ul{margin:6px 0;padding-left:22px}.desc li{margin:2px 0}
+  .desc h3,.desc h4,.desc h5,.desc h6{color:#f7f8f8;font-weight:600}
+  .desc h3{font-size:17px}.desc h4{font-size:15.5px}
+  .lin-sec{margin-top:22px}.sec-h{font-size:12px;color:#8a8f98;margin-bottom:6px;font-weight:500}
+  .rel{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;color:#d2d3e0}.rel:hover{background:#1f2024;text-decoration:none}
+  .rel .rlbl{font-size:11px;color:#8a8f98;min-width:58px}.rel b{color:#8a8f98;font-size:12px;font-weight:500}.rtitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lin-tabs{display:flex;gap:4px;margin:30px 0 10px;border-bottom:1px solid #26272c}
+  .lt{padding:7px 10px;font-size:13px;font-weight:500;color:#8a8f98;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
+  .lt.on{color:#f7f8f8;border-bottom-color:#5e6ad2}.lt .cnt{margin-left:6px;font-size:11px;color:#8a8f98;background:#232429;border-radius:999px;padding:0 6px}
+  .thread{background:#1b1c20;border:1px solid #26272c;border-radius:8px;margin:10px 0;overflow:hidden}
+  .lc{padding:12px 14px}.lc.reply{border-top:1px solid #26272c;padding-left:44px}
+  .lc-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .lc-author{font-weight:500;color:#f7f8f8;font-size:13.5px}.lc-time{font-size:12px;color:#8a8f98}
+  .lc-body{font-size:14px}.lc-body img{max-height:520px;object-fit:contain}
+  .av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:600;flex:0 0 auto;line-height:1}
+  .lin-side{flex:0 0 260px;align-self:flex-start;position:sticky;top:0;min-height:100%;border-left:1px solid #26272c;padding:22px 18px;background:#18191c;font-size:13px}
+  .prop{display:flex;align-items:flex-start;gap:10px;padding:6px 0;min-height:30px}
+  .plbl{flex:0 0 86px;color:#8a8f98;padding-top:2px}
+  .pval{flex:1;min-width:0;display:flex;align-items:center;gap:7px;color:#d2d3e0;flex-wrap:wrap;word-break:break-word}
+  .pval .mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#b4b6c3}.dim{color:#8a8f98}
+  .ico{width:14px;height:14px;flex:0 0 auto}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #2e2f35;border-radius:999px;padding:1px 8px 1px 6px;font-size:12px;color:#d2d3e0}
+  .side-sec{margin-top:14px;padding-top:12px;border-top:1px solid #26272c}.side-sec .plbl{margin-bottom:6px}
+  .slink{display:flex;align-items:center;gap:7px;padding:4px 6px;margin:0 -6px;border-radius:6px;color:#d2d3e0;font-size:12.5px}.slink:hover{background:#222328;text-decoration:none}
+  .slink .li{color:#8a8f98;width:12px;text-align:center}.slink .lt2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media (max-width:760px){
+    .lin-body{flex-direction:column-reverse;align-items:stretch}
+    .lin-side{flex:0 0 auto;position:static;min-height:0;border-left:0;border-bottom:1px solid #26272c;padding:12px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));column-gap:16px}
+    .lin-main{padding:20px 18px 40px}
+    .side-sec{grid-column:1/-1}
+  }
   blockquote.quote{margin:6px 0;padding:4px 10px;border-left:3px solid #30363d;color:#8b949e;background:#0f141a;border-radius:0 6px 6px 0}
   h3,h4,h5,h6{margin:14px 0 6px;line-height:1.3}
   html,body,#app{height:100%}
@@ -415,7 +494,7 @@ const TICKET_CSS = `
   .chead{display:flex;align-items:center;gap:8px;margin-bottom:2px}
   .cauthor{font-weight:600;color:#e6edf3}.ctime{font-size:11px;color:#6e7681}
   .cloc{font:600 11px ui-monospace,Menlo,monospace;color:#d2a8ff;background:#1b2027;border:1px solid #30363d;border-radius:5px;padding:1px 6px}
-  .resolved{font-size:10px;color:#3fb950;border:1px solid #3fb95055;border-radius:999px;padding:1px 6px}
+  .resolved{font-size:11px;color:#4cb782;border:1px solid #4cb78255;border-radius:999px;padding:0 7px}
   .empty{color:#6e7681}
   .gtabs{display:flex;gap:2px;margin:10px 0 8px;border-bottom:1px solid #21262d}
   .gtab{padding:6px 10px;font-size:12px;font-weight:600;color:#8b949e;cursor:pointer;border-bottom:2px solid transparent}

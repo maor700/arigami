@@ -50,18 +50,69 @@ function FontControls() {
   );
 }
 
-const LinearComment = ({ c }) => (
-  <div class={'cmt' + (c.reply ? ' reply' : '')}>
-    <div class="chead">
-      <span class="cauthor">{c.author}</span>
-      <span class="ctime">{c.time}</span>
-      {c.resolved && <span class="resolved">resolved</span>}
-    </div>
-    {c.quotedText && <blockquote class="quote">{c.quotedText}</blockquote>}
-    <Html class="cbody" html={c.bodyHtml} />
-    {(c.replies || []).map((r) => <LinearComment c={{ ...r, reply: true }} />)}
-  </div>
+// ---- the Linear ticket page look ------------------------------------------------------------------------------------
+const Avatar = ({ initials, color, size = 22 }) => (
+  <span class="av" style={{ background: color || '#5e6ad2', width: size + 'px', height: size + 'px', fontSize: Math.round(size * 0.45) + 'px' }}>{initials || '?'}</span>
 );
+
+// Linear's workflow-state glyphs: an empty ring, a half-filled one, a check, a cross.
+function StatusIcon({ kind, color }) {
+  const c = color || '#8a8f98';
+  if (kind === 'completed') return <svg class="ico" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill={c} /><path d="M4.2 7.2l1.9 1.9 3.8-4" stroke="#1b1c1f" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>;
+  if (kind === 'canceled') return <svg class="ico" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill={c} /><path d="M5 5l4 4M9 5l-4 4" stroke="#1b1c1f" stroke-width="1.6" stroke-linecap="round" /></svg>;
+  if (kind === 'started') return <svg class="ico" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke={c} stroke-width="1.5" /><path d="M7 3.5a3.5 3.5 0 0 1 0 7z" fill={c} /></svg>;
+  if (kind === 'backlog' || kind === 'triage') return <svg class="ico" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke={c} stroke-width="1.5" stroke-dasharray="2 1.6" /></svg>;
+  return <svg class="ico" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke={c} stroke-width="1.5" /></svg>;
+}
+
+// Urgent = an orange square with "!"; high / medium / low = 3 / 2 / 1 lit bars; none = three dashes.
+function PriorityIcon({ level }) {
+  if (level === 1) return <svg class="ico" viewBox="0 0 14 14"><rect x="1" y="1" width="12" height="12" rx="3" fill="#fc7840" /><path d="M7 3.8v4M7 10v.2" stroke="#1b1c1f" stroke-width="1.8" stroke-linecap="round" /></svg>;
+  const lit = level === 2 ? 3 : level === 3 ? 2 : level === 4 ? 1 : 0;
+  if (!lit) return <svg class="ico" viewBox="0 0 14 14">{[2, 6, 10].map((x) => <rect x={x} y="6.3" width="2.4" height="1.4" rx=".7" fill="#8a8f98" />)}</svg>;
+  return <svg class="ico" viewBox="0 0 14 14">{[0, 1, 2].map((i) => <rect x={1.5 + i * 4} y={9 - i * 3} width="3" height={3 + i * 3} rx="1" fill={i < lit ? '#d2d3e0' : '#4b4c55'} />)}</svg>;
+}
+
+function Prop({ p }) {
+  let v;
+  if (p.key === 'status') v = <><StatusIcon kind={p.kind} color={p.color} /><span>{p.value}</span></>;
+  else if (p.key === 'priority') v = <><PriorityIcon level={p.level} /><span>{p.value}</span></>;
+  else if (p.key === 'assignee') v = p.initials ? <><Avatar initials={p.initials} color={p.avatar} size={18} /><span>{p.value}</span></> : <span class="dim">{p.value}</span>;
+  else if (p.key === 'labels') v = <span class="chips">{p.labels.map((l) => <span class="chip"><span class="dot" style={{ background: l.color && l.color !== '#79c0ff' ? l.color : '#8a8f98' }} />{l.name}</span>)}</span>;
+  else v = <span class={p.mono ? 'mono' : ''}>{p.value}</span>;
+  return (
+    <div class="prop">
+      <div class="plbl">{p.label}</div>
+      <div class="pval">{v}</div>
+    </div>
+  );
+}
+
+function Comment({ c, reply }) {
+  return (
+    <div class={'lc' + (reply ? ' reply' : '')}>
+      <div class="lc-head">
+        <Avatar initials={c.initials} color={c.avatar} size={reply ? 20 : 22} />
+        <span class="lc-author">{c.author}</span>
+        <span class="lc-time" title={c.at}>{c.time}</span>
+        {c.resolved && <span class="resolved">Resolved</span>}
+      </div>
+      {c.quotedText && <blockquote class="quote">{c.quotedText}</blockquote>}
+      <Html class="lc-body desc" html={c.bodyHtml} />
+    </div>
+  );
+}
+
+function Thread({ c }) {
+  return (
+    <div class="thread">
+      <Comment c={c} />
+      {(c.replies || []).map((r) => <Comment c={r} reply />)}
+    </div>
+  );
+}
+
+const LINK_ICON = { pr: '⑂', sentry: '◆', link: '↗' };
 
 function GitHubTab({ pr, ghUrl }) {
   const [sub, setSub] = useState('ov');
@@ -118,42 +169,55 @@ function GitHubTab({ pr, ghUrl }) {
 const TAB0 = document.documentElement.dataset.tab;
 function App() {
   const [d, retry] = useData(ID);
-  const [tab, setTab] = useState(['details', 'comments', 'github'].includes(TAB0) ? TAB0 : 'details');
-  if (!d) return <p class="empty" style="padding:20px">Loading {ID}…</p>;
+  const [tab, setTab] = useState(TAB0 === 'github' ? 'github' : 'activity');
+  if (!d) return <p class="empty" style="padding:24px">Loading {ID}…</p>;
   if (d.error || !d.ticket) return (
-    <p class="empty" style="padding:20px">
+    <p class="empty" style="padding:24px">
       <b>{ID}</b>{FALLBACK_TITLE ? <> — {FALLBACK_TITLE}</> : ''} isn't loaded.
       {' '}Live Linear details couldn't be fetched (Linear not connected, or not cached yet).
       {' '}<a href="#" onClick={(e) => { e.preventDefault(); retry(); }}>Retry ↻</a>
     </p>
   );
   const t = d.ticket;
-  const tabs = [['details', 'Details'], ['comments', `Comments ${t.comments.length}`], ['github', `GitHub${d.pr ? ' ' + d.pr.stateLabel : ''}`]];
+  const count = t.comments.reduce((n, c) => n + 1 + (c.replies || []).length, 0);
+  const hasGh = !!(d.pr || t.ghUrl);
   return (
-    <div class="app">
-      <div class="head">
-        <div class="topbar">
-          <div class="id">{t.identifier} · <a href={t.url} target="_blank">Open in Linear ↗</a></div>
+    <div class="lin">
+      <div class="lin-top">
+        <div class="crumb">{t.team && <><span>{t.team}</span><span class="sep">›</span></>}<span class="mono">{t.identifier}</span></div>
+        <div class="topr">
+          <a class="open" href={t.url} target="_blank">Open in Linear ↗</a>
           <FontControls />
         </div>
-        <h1>{t.title}</h1>
-        <div class="metarow"><Pill color={t.statusColor}>{t.status}</Pill>{t.labels.map((l) => <Pill color={l.color}>{l.name}</Pill>)}</div>
-        <div class="metarow">{t.meta.map((m) => <span class={m.mono ? 'mono' : ''}>{m.text}</span>)}</div>
-        <div class="tabs">{tabs.map(([k, l]) => <div class={'tab' + (tab === k ? ' active' : '')} onClick={() => setTab(k)}>{l}</div>)}</div>
       </div>
-      <div class="body">
-        {tab === 'details' && (
-          <section>
-            <Html class="desc" html={t.descriptionHtml} />
-            {t.relations.length > 0 && <h4>Relations</h4>}
-            {t.relations.map((r) => (
-              <div class="rrow"><span class="rlbl">{r.kind}</span><a class="ref" href={r.url} target="_blank"><span class="dot" style={{ background: r.color }} /><b>{r.identifier}</b> {r.title}</a></div>
-            ))}
-            {t.otherLinksHtml && <Html html={t.otherLinksHtml} />}
-          </section>
-        )}
-        {tab === 'comments' && <section>{t.comments.length ? t.comments.map((c) => <LinearComment c={c} />) : <p class="empty">No comments.</p>}</section>}
-        {tab === 'github' && <section><GitHubTab pr={d.pr} ghUrl={t.ghUrl} /></section>}
+      <div class="lin-body">
+        <main class="lin-main">
+          <h1 class="lin-title">{t.title}</h1>
+          <Html class="desc lin-desc" html={t.descriptionHtml} />
+          {t.relations.length > 0 && (
+            <div class="lin-sec">
+              <div class="sec-h">Relations</div>
+              {t.relations.map((r) => (
+                <a class="rel" href={r.url} target="_blank"><span class="rlbl">{r.kind}</span><span class="dot" style={{ background: r.color }} /><b class="mono">{r.identifier}</b><span class="rtitle">{r.title}</span></a>
+              ))}
+            </div>
+          )}
+          <div class="lin-tabs">
+            <div class={'lt' + (tab === 'activity' ? ' on' : '')} onClick={() => setTab('activity')}>Activity{count ? <span class="cnt">{count}</span> : ''}</div>
+            {hasGh && <div class={'lt' + (tab === 'github' ? ' on' : '')} onClick={() => setTab('github')}>GitHub{d.pr ? <span class="cnt">{d.pr.stateLabel}</span> : ''}</div>}
+          </div>
+          {tab === 'activity' && (t.comments.length ? t.comments.map((c) => <Thread c={c} />) : <p class="empty">No comments yet.</p>)}
+          {tab === 'github' && <GitHubTab pr={d.pr} ghUrl={t.ghUrl} />}
+        </main>
+        <aside class="lin-side">
+          {t.props.map((p) => <Prop p={p} />)}
+          {t.links.length > 0 && (
+            <div class="side-sec">
+              <div class="plbl">Links</div>
+              {t.links.map((l) => <a class="slink" href={l.url} target="_blank" title={l.url}><span class="li">{LINK_ICON[l.kind]}</span><span class="lt2">{l.title}</span></a>)}
+            </div>
+          )}
+        </aside>
       </div>
     </div>
   );

@@ -147,7 +147,9 @@ try {
   mod.setLiveTicketFetcher?.(async (id: string) => {
     const mcp = (await import('./linear-mcp.js')) as any;
     if (!mcp.status().connected) return null;
-    return await mcp.getIssue(id);
+    // get_issue carries no comments: fetch them alongside (a failure there still shows the ticket)
+    const [issue, comments] = await Promise.all([mcp.getIssue(id), mcp.listComments(id).catch(() => [])]);
+    return issue && typeof issue === 'object' ? { ...issue, comments } : issue;
   });
 } catch (e) {
   const error = e instanceof Error ? e : new Error(String(e));
