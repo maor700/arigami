@@ -419,7 +419,7 @@ function GhCheck({ pr, c }) {
     <div class={'ghcheck ' + c.state}>
       <div class="ghcheckrow">
         <GhCheckIcon s={c.state} />
-        <span class="ghcname">{c.name}</span>
+        <span class="ghcname">{c.name}</span>{c.required && <span class="ghreq">Required</span>}
         <span class="ghdim">{c.detail}{c.duration ? ` · ${c.duration}` : ''}</span>
         <span class="ghcact">
           {c.state === 'bad' && c.jobId && <button class="ghbtn small" onClick={show}>{log && log !== 'loading' ? 'Hide log' : 'Show error'}</button>}
@@ -472,6 +472,157 @@ function GhChecks({ pr, reload, say }) {
   );
 }
 
+// The session's chat, when this page is a tab of a session (SessionView answers the hello) — else null.
+function useHostChat() {
+  const [ok, setOk] = useState(false);
+  useEffect(() => {
+    if (window.parent === window) return;
+    const on = (e) => { if (e.source === window.parent && e.data?.type === 'arigami:host-page' && e.data.op === 'hello-ack') setOk(true); };
+    window.addEventListener('message', on);
+    window.parent.postMessage({ type: 'arigami:host-page', op: 'hello' }, location.origin);
+    return () => window.removeEventListener('message', on);
+  }, []);
+  if (!ok) return null;
+  return (text) => new Promise((resolve, reject) => {
+    const id = Math.random().toString(36).slice(2);
+    const on = (e) => {
+      if (e.source !== window.parent || e.data?.type !== 'arigami:host-page' || e.data.op !== 'sent' || e.data.id !== id) return;
+      window.removeEventListener('message', on);
+      e.data.error ? reject(new Error(e.data.error)) : resolve(e.data.delivered);
+    };
+    window.addEventListener('message', on);
+    window.parent.postMessage({ type: 'arigami:host-page', op: 'sendPrompt', id, text }, location.origin);
+  });
+}
+
+const MERGE_LABEL = { squash: 'Squash and merge', merge: 'Merge pull request', rebase: 'Rebase and merge' };
+const MERGE_MENU = {
+  merge: ['Create a merge commit', 'All commits from this branch will be added to the base branch via a merge commit.'],
+  squash: ['Squash and merge', 'The commits from this branch will be combined into one commit in the base branch.'],
+  rebase: ['Rebase and merge', 'The commits from this branch will be rebased and added to the base branch.'],
+};
+
+// GitHub's merge box: each requirement with its state, then the merge button (method menu, auto-merge, bypass) —
+// and "Merge via chat" when something an agent can fix is in the way.
+function GhMergeBox({ pr, reload, say }) {
+  const mg = pr.merge;
+  const chat = useHostChat();
+  const [method, setMethod] = useState(mg?.method || 'merge');
+  const [menu, setMenu] = useState(false);
+  const [confirm, setConfirm] = useState(null); // null | 'merge' | 'auto'
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [bypass, setBypass] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!mg) return null;
+  const act = async (op, payload, doing, done) => {
+    setBusy(true); say(doing);
+    try { await prAct(pr, op, payload); say(done); setConfirm(null); setTimeout(reload, 1500); } catch (e) { say(e.message, true); } finally { setBusy(false); }
+  };
+  if (mg.status === 'merged') return (
+    <div class="ghitem ghmerge"><span class="ghmicon merged">⇄</span>
+      <div class="ghbox"><div class="ghmrow"><div><b>Pull request successfully merged and closed</b><div class="ghdim">{mg.by ? `Merged by ${mg.by}` : 'Merged'}{mg.at ? ` · ${new Date(mg.at).toLocaleString()}` : ''}</div></div></div></div>
+    </div>
+  );
+  if (mg.status === 'closed') return (
+    <div class="ghitem ghmerge"><span class="ghmicon closed">⇄</span>
+      <div class="ghbox"><div class="ghmrow"><div><b>Closed with unmerged commits</b><div class="ghdim">This pull request is closed.</div></div></div></div>
+    </div>
+  );
+  const tone = mg.canMerge ? 'ok' : mg.rows.some((r) => r.s === 'bad') ? 'bad' : 'pending';
+  const startConfirm = (kind) => { setSubject(mg.defaultTitle[method] || ''); setBody(''); setConfirm(kind); setMenu(false); };
+  const doMerge = () => act('merge', {
+    method, auto: confirm === 'auto', admin: bypass && !mg.canMerge, sha: mg.headSha,
+    ...(method !== 'rebase' && subject.trim() && subject !== mg.defaultTitle[method] ? { subject: subject.trim() } : {}),
+    ...(method !== 'rebase' && body.trim() ? { body } : {}),
+  }, confirm === 'auto' ? 'Enabling auto-merge…' : 'Merging…', confirm === 'auto' ? 'Auto-merge enabled.' : 'Merged.');
+  const viaChat = async () => {
+    const text = `Merge PR #${pr.number} (${pr.url}) into ${pr.base}, ${MERGE_MENU[method][0].toLowerCase()}. In the way right now: ${mg.fixable.join('; ')}.\n` +
+      `Get it mergeable yourself: bring the branch up to date with ${pr.base} and resolve any conflicts, fix failing required checks, push, and wait for the required checks to pass. ` +
+      `Then merge with \`gh pr merge ${pr.number} --repo ${pr.owner}/${pr.repo} --${method}\`. Don't bypass branch rules or merge as admin — if something only a person can give (an approval) is still missing, stop and tell me.`;
+    setBusy(true);
+    try { const how = await chat(text); say(how === 'now' ? 'Sent to the chat.' : 'Queued in the chat — it runs when the current turn ends.'); } catch (e) { say(e.message, true); } finally { setBusy(false); }
+  };
+  const live = mg.canMerge || bypass;
+  const autoMode = !mg.canMerge && !bypass && mg.canAuto;
+  return (
+    <div class="ghitem ghmerge">
+      <span class={'ghmicon ' + tone}>⇄</span>
+      <div class={'ghbox ghmbox ' + tone}>
+        {mg.rows.map((r) => (
+          <div class="ghmrow">
+            <GhCheckIcon s={r.s === 'warn' ? 'pending' : r.s} />
+            <div class="ghmtext"><b>{r.title}</b>{r.detail && <div class="ghdim">{r.detail}</div>}</div>
+            {r.action === 'update' && (
+              <span class="ghcact">
+                <button class="ghbtn small" disabled={busy} onClick={() => act('update-branch', {}, 'Updating the branch…', 'Branch updated — checks run again.')}>Update branch</button>
+                <button class="ghbtn small" disabled={busy} title="Rebase the branch onto the base instead of a merge commit" onClick={() => act('update-branch', { rebase: true }, 'Rebasing the branch…', 'Branch rebased — checks run again.')}>Update with rebase</button>
+              </span>
+            )}
+            {r.action === 'ready' && <span class="ghcact"><button class="ghbtn small" disabled={busy} onClick={() => act('ready', {}, 'Marking ready…', 'Ready for review.')}>Ready for review</button></span>}
+          </div>
+        ))}
+        {mg.auto && (
+          <div class="ghmrow">
+            <GhCheckIcon s="ok" />
+            <div class="ghmtext"><b>Auto-merge enabled</b><div class="ghdim">Will be merged ({mg.auto.method}) as soon as every requirement is met{mg.auto.by ? ` · enabled by ${mg.auto.by}` : ''}.</div></div>
+            {mg.canDisableAuto && <span class="ghcact"><button class="ghbtn small" disabled={busy} onClick={() => act('disable-auto', {}, 'Turning auto-merge off…', 'Auto-merge disabled.')}>Disable auto-merge</button></span>}
+          </div>
+        )}
+        <div class="ghmfoot">
+          {confirm ? (
+            <div class="ghmconfirm">
+              {method !== 'rebase' && <>
+                <input class="ghinput" value={subject} onInput={(e) => setSubject(e.currentTarget.value)} placeholder="Commit title" />
+                <textarea class="ghinput" rows={3} value={body} onInput={(e) => setBody(e.currentTarget.value)} placeholder="Commit message — leave empty for the repository's default" />
+              </>}
+              <div class="ghcrow">
+                <button class={'ghbtn ' + (bypass && !mg.canMerge ? 'danger' : 'primary')} disabled={busy} onClick={doMerge}>
+                  {confirm === 'auto' ? `Confirm auto-merge (${method})` : `Confirm ${MERGE_MENU[method][0].toLowerCase()}`}
+                </button>
+                <button class="ghbtn" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
+                {mg.deleteBranch && confirm === 'merge' && <span class="ghdim">The branch is deleted after the merge (repository setting).</span>}
+              </div>
+            </div>
+          ) : (
+            <>
+              {!mg.canMerge && <div class="ghmsum"><b>{mg.canAuto ? 'Merging is blocked — auto-merge can wait for it' : 'Merging is blocked'}</b></div>}
+              {mg.canMerge && mg.unstable && <div class="ghmsum ghdim">Some checks failed, but none of them is required.</div>}
+              <div class="ghcrow ghmbtns">
+                <span class="ghsplit">
+                  <button class={'ghbtn ' + (bypass && !mg.canMerge ? 'danger' : live || autoMode ? 'primary' : '')} disabled={busy || (!live && !autoMode) || !mg.methods.length}
+                    onClick={() => startConfirm(autoMode ? 'auto' : 'merge')}>
+                    {autoMode ? 'Enable auto-merge' : bypass && !mg.canMerge ? 'Bypass rules and merge' : MERGE_LABEL[method]}
+                  </button>
+                  {mg.methods.length > 1 && <button class={'ghbtn caret ' + (bypass && !mg.canMerge ? 'danger' : live || autoMode ? 'primary' : '')} disabled={busy} onClick={() => setMenu(!menu)} aria-label="Merge method">▾</button>}
+                  {menu && (
+                    <div class="menu ghmmenu">
+                      {mg.methods.map((m) => (
+                        <div class={'mi' + (m === method ? ' on' : '')} onClick={() => { setMethod(m); setMenu(false); }}>
+                          <span class="mchk">{m === method ? '✓' : ''}</span>
+                          <span><b>{MERGE_MENU[m][0]}</b><div class="ghdim">{MERGE_MENU[m][1]}</div></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </span>
+                {chat && mg.fixable.length > 0 && (
+                  <button class="ghbtn" disabled={busy} onClick={viaChat} title="This session's agent updates the branch, resolves conflicts and fixes failing checks, then merges">
+                    Merge via chat
+                  </button>
+                )}
+              </div>
+              {mg.canAdmin && !mg.canMerge && (
+                <label class="ghbypass"><input type="checkbox" checked={bypass} onChange={(e) => setBypass(e.currentTarget.checked)} /> Merge without waiting for requirements to be met (bypass rules)</label>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GitHubTab({ pr, ghUrl, reload = () => {}, embedded }) {
   const [sub, setSub] = useState('conv');
   const [note, setNote] = useState(null);
@@ -512,6 +663,7 @@ function GitHubTab({ pr, ghUrl, reload = () => {}, embedded }) {
                 </div>
               </div>
             ))}
+            <GhMergeBox pr={pr} reload={reload} say={say} />
             <div class="ghitem"><span class="ghav" style="width:32px;height:32px" /><GhComposer pr={pr} reload={reload} say={say} /></div>
           </div>
           <aside class="ghside">

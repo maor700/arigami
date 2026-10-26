@@ -882,6 +882,39 @@ function UrlTab({ tab, active, session }) {
       bridgeRef.current = null;
     };
   }, [extName, session?.id, tab.id]);
+  // The host's own PR / ticket pages (server/assets/card.jsx) may hand this session's chat a prompt — the PR tab's
+  // "Merge via chat". Only from that iframe, and only while it still shows one of those pages (a same-origin
+  // proxied site could post too, so the document's path is checked, not just the window).
+  useEffect(() => {
+    if (extName || !session?.id || !/^\/__(pr|ticket)\//.test(String(tab.url || ''))) return;
+    const onMsg = async (e) => {
+      const w = iframeRef.current?.contentWindow;
+      const d = e.data;
+      if (!w || e.source !== w || !d || d.type !== 'arigami:host-page') return;
+      let path = '';
+      try { path = w.location.pathname; } catch { return; }
+      if (!/^\/__(pr|ticket)\//.test(path)) return;
+      const reply = (m) => { try { w.postMessage({ type: 'arigami:host-page', ...m }, '*'); } catch { /* gone */ } };
+      if (d.op === 'hello') return reply({ op: 'hello-ack' });
+      if (d.op !== 'sendPrompt') return;
+      try {
+        const text = String(d.text || '').slice(0, 8000);
+        if (!text.trim()) throw new Error('empty prompt');
+        const s = liveRef.current?.session;
+        // the host's own delivery rule: an idle session gets it now; a busy one queues it and plays it when the turn ends
+        if (s?.claude?.state === 'idle') await api.post(`/sessions/${s.id}/message`, { text });
+        else {
+          await api.post(`/sessions/${s.id}/prompts`, { text });
+          await api.post(`/sessions/${s.id}/prompts/autoplay`, { on: true });
+        }
+        reply({ op: 'sent', id: d.id, delivered: s?.claude?.state === 'idle' ? 'now' : 'queued' });
+      } catch (err) {
+        reply({ op: 'sent', id: d.id, error: String(err?.message || err) });
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [extName, session?.id, tab.url]);
   // A live theme switch must reach the tab: it is a separate document that
   // cannot see our CSS, so without this it keeps the palette it booted with.
   // Re-sending the context is enough — the SDK treats init as idempotent.

@@ -268,3 +268,11 @@ test("the PR tab's check log and re-run are the owner's", async () => {
   expect((await call('POST', '/__api/github/pr/o/r/1/rerun', 'session', { runId: '5' })).status).toBe(403);
   expect((await call('POST', '/__api/github/pr/o/r/1/rerun', 'person', {})).status).toBe(400);
 });
+
+test("the PR tab's merge box acts only for the owner — an agent's session token can't merge", async () => {
+  for (const sub of ['merge', 'disable-auto', 'update-branch', 'ready']) {
+    expect((await call('POST', `/__api/github/pr/o/r/1/${sub}`, 'session', { method: 'squash' })).status).toBe(403);
+  }
+  // the owner passes the gate; a malformed head sha is refused before gh runs
+  expect((await call('POST', '/__api/github/pr/o/r/1/merge', 'person', { method: 'squash', sha: 'not-a-sha;rm' })).status).toBe(400);
+});

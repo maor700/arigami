@@ -5766,6 +5766,29 @@ export async function handle(
         }
         return notFound(res);
       }
+      // the merge box: merge (a method, maybe auto / as admin), turn auto-merge off, update the branch, ready for review
+      const mg = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(merge|disable-auto|update-branch|ready)$/.exec(p);
+      if (mg && m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can merge from here' }, 403);
+        const [, owner, repo, num, op] = mg;
+        const body = ((await readBody(req)) || {}) as any;
+        const gmod = await import('./lib/gh-merge.js');
+        const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : undefined);
+        try {
+          if (op === 'merge') {
+            const sha = str(body.sha, 64);
+            if (sha && !/^[0-9a-f]{7,64}$/i.test(sha)) return badRequest(res, 'bad sha');
+            await gmod.merge(owner, repo, num, { method: String(body.method || ''), subject: str(body.subject, 500), body: str(body.body, 20000), admin: body.admin === true, auto: body.auto === true, sha });
+          } else if (op === 'disable-auto') await gmod.disableAuto(owner, repo, num);
+          else if (op === 'update-branch') await gmod.updateBranch(owner, repo, num, body.rebase === true);
+          else await gmod.markReady(owner, repo, num);
+          return json(res, { ok: true });
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+      }
       const gm = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(comment|reply)$/.exec(p);
       if (gm && m === 'POST') {
         const me = (req as any).auth as import('./auth.js').Principal | null;

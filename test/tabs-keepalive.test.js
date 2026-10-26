@@ -124,8 +124,8 @@ test('PR fetches: concurrent asks share one gh round, a reload within the TTL re
   const o = r.out[0];
   expect(o.num).toBe(7);
   expect(o.same).toBe(true);
-  expect(o.one).toBe(6); // `gh pr view` + five `gh api` calls — once for both asks
-  expect(o.cached).toBe(6);
-  expect(o.fresh).toBe(12);
-  expect(o.other).toBe(18);
+  expect(o.one).toBe(7); // `gh pr view` + five `gh api` calls + the merge box's one (mergeInfo) — once for both asks
+  expect(o.cached).toBe(7);
+  expect(o.fresh).toBe(14);
+  expect(o.other).toBe(21);
 });

@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import { cfg } from './lib/config.js';
 import { secret } from './lib/secrets.js';
 import { resourceRoot } from './lib/resource-root.js';
+import { mergeInfo, mergeModel, requiredChecks } from './lib/gh-merge.js';
 
 // Linear ticket data sources, in order:
 //   1. Live Linear GraphQL when a personal API key is set (auto-fresh).
@@ -394,6 +395,7 @@ export function prViewModel(pr, fallbackUrl = '') {
   const who = (u) => ({ login: (u && (u.login || u.name)) || 'ghost', avatar: (u && u.avatar_url) || '' });
   const state = r.merged || pr.state === 'MERGED' ? 'merged' : (r.draft || pr.isDraft) ? 'draft' : pr.state === 'CLOSED' || r.state === 'closed' ? 'closed' : 'open';
   const checks = Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup : [];
+  const required = requiredChecks(pr.mergeInfo);
   const checkItems = checks.map((c) => {
     const v = String(c.conclusion || c.state || c.status || '').toUpperCase();
     const st = /SUCCESS|NEUTRAL|SKIPPED/.test(v) ? 'ok' : /FAIL|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED/.test(v) ? 'bad' : 'pending';
@@ -406,6 +408,7 @@ export function prViewModel(pr, fallbackUrl = '') {
       detail: st === 'pending' ? String(c.status || c.state || '').toLowerCase().replace(/_/g, ' ') : String(c.conclusion || c.state || '').toLowerCase().replace(/_/g, ' '),
       duration: secs == null || secs < 0 ? '' : secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`,
       runId: ids ? ids[1] : '', jobId: ids ? ids[2] : '',
+      required: required.has(c.name || c.context),
     };
   });
   const count = (k) => checkItems.filter((c) => c.state === k).length;
@@ -452,6 +455,7 @@ export function prViewModel(pr, fallbackUrl = '') {
     checks: { total: checkItems.length, ok: count('ok'), bad: count('bad'), pending: count('pending'), items: checkItems },
     timeline,
     files: fileArr.map((f) => { const name = f.filename || f.path; return { name, status: f.status || '', additions: f.additions || 0, deletions: f.deletions || 0, diffHtml: diffHtml(f.patch), threads: threadsByPath[name] || [] }; }),
+    merge: mergeModel(pr.mergeInfo, { number: pr.number, title: pr.title || r.title || '', base: pr.baseRefName || r.base?.ref || '', head: pr.headRefName || r.head?.ref || '', checks: checkItems }),
     // the Linear tab's GitHub pill
     stateLabel: { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' }[state],
   };
@@ -592,6 +596,19 @@ const TICKET_CSS = `
   .ghcheck{border-top:1px solid var(--g-border)}.ghcheck:first-of-type{border-top:0}
   .ghcheckrow{display:flex;align-items:center;gap:10px;padding:8px 14px;font-size:13px}.ghcname{font-weight:500;color:var(--g-text)}
   .ghbtn.small{padding:2px 10px;font-size:12px}
+  .ghreq{font-size:11.5px;color:var(--g-dim);border:1px solid var(--g-border);border-radius:2em;padding:0 7px;margin-inline-start:6px}
+  .ghmerge{position:relative}.ghmicon{flex:0 0 32px;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;background:var(--g-gray)}
+  .ghmicon.ok{background:var(--g-green)}.ghmicon.bad{background:var(--g-red)}.ghmicon.pending{background:var(--g-gray)}.ghmicon.merged{background:var(--g-purple)}.ghmicon.closed{background:var(--g-red)}
+  .ghmbox{overflow:visible}.ghmbox.ok{border-color:var(--g-green)}.ghmbox.bad{border-color:var(--g-red)}
+  .ghmrow{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--g-border)}.ghmrow .ghck{margin-top:2px}
+  .ghmrow .ghcact{margin-inline-start:auto;display:flex;gap:8px;flex-wrap:wrap}.ghmtext{min-width:0}.ghmtext b{color:var(--g-text)}
+  .ghmfoot{padding:14px 16px;background:var(--g-head);border-radius:0 0 6px 6px}.ghmsum{margin:0 0 10px}.ghmfoot .ghcrow{padding:0;background:transparent}
+  .ghmbtns{justify-content:flex-start;gap:10px}.ghsplit{position:relative;display:inline-flex}
+  .ghsplit .ghbtn:first-child:not(:only-child){border-start-end-radius:0;border-end-end-radius:0}.ghbtn.caret{border-start-start-radius:0;border-end-start-radius:0;border-inline-start:1px solid rgba(0,0,0,.25);padding:4px 9px}
+  .ghbtn.danger{background:var(--g-red);border-color:rgba(240,246,252,.1);color:#fff}
+  .ghmmenu{inset-inline-end:auto;inset-inline-start:0;top:calc(100% + 4px);min-width:320px;max-width:min(380px,92vw)}.ghmmenu .mi{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;cursor:pointer;border-radius:6px}.ghmmenu .mi:hover{background:var(--g-muted)}.ghmmenu .mchk{width:14px;flex:0 0 14px}
+  .ghmconfirm{display:flex;flex-direction:column;gap:8px}.ghinput{width:100%;font:inherit;font-size:14px;padding:6px 10px;border:1px solid var(--g-border);border-radius:6px;background:var(--g-bg);color:var(--g-text);resize:vertical}
+  .ghbypass{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;color:var(--g-dim);cursor:pointer}
   a.ghbtn{text-decoration:none!important;display:inline-block}a.ghbtn.primary{color:#fff!important}
   .ghlog{margin:0;padding:10px 14px 12px 40px;background:var(--g-code);border-top:1px solid var(--g-border);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;color:var(--g-text)}
   .ghlog.err{color:#f85149;white-space:normal}
@@ -723,13 +740,15 @@ async function fetchPRNow(owner, repo, num) {
     const out = await execFileP('gh', ['pr', 'view', String(num), '--repo', base, '--json', fields]);
     const pr = JSON.parse(out);
     pr.owner = owner; pr.repo = repo;
-    const [rest, issueComments, reviews, reviewComments, files] = await Promise.all([
+    const [rest, issueComments, reviews, reviewComments, files, merge] = await Promise.all([
       ghJson([`repos/${base}/pulls/${num}`]),
       ghJson([`repos/${base}/issues/${num}/comments?per_page=100`]),
       ghJson([`repos/${base}/pulls/${num}/reviews?per_page=100`]),
       ghJson([`repos/${base}/pulls/${num}/comments?per_page=100`]),
       ghJson([`repos/${base}/pulls/${num}/files?per_page=100`]),
+      mergeInfo(owner, repo, num),
     ]);
+    pr.mergeInfo = merge;
     pr.rest = rest || {};
     pr.issueComments = issueComments || [];
     pr.restReviews = reviews || [];
