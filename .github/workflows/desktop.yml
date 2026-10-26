@@ -344,3 +344,20 @@ jobs:
               echo 'nothing produced'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The landing page (arigami-site on Vercel) links the installers of the
+  # LATEST GitHub Release at build time. Once every platform has uploaded its
+  # files, ask Vercel to rebuild so the download buttons move to this version
+  # within minutes. The hook URL is the repo secret SITE_DEPLOY_HOOK (Vercel →
+  # arigami-site → Settings → Git → Deploy Hooks); without it this is a no-op.
+  site-rebuild:
+    needs: [gate, build]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.gate.outputs.ci_test != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: ping the Vercel deploy hook
+        env:
+          HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "::notice::SITE_DEPLOY_HOOK not set — the site keeps its last build"; exit 0; fi
+          curl -fsS -X POST "$HOOK" >/dev/null && echo "site rebuild requested"
