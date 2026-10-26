@@ -457,7 +457,8 @@ const TICKET_CSS = `
   .lc{padding:12px 14px}.lc.reply{border-top:1px solid var(--border);padding-left:44px}
   .lc-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
   .lc-author{font-weight:500;color:var(--title);font-size:13.5px}.lc-time{font-size:12px;color:var(--dim)}
-  .lc-body{font-size:14px}.lc-body img{max-height:520px;object-fit:contain}
+  .lc-body{font-size:14px}.lc-body img{max-width:min(100%,480px);max-height:300px;width:auto;height:auto;object-fit:contain}
+  .lin-desc img{max-width:min(100%,720px);max-height:460px;width:auto;height:auto;object-fit:contain}
   .av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:600;flex:0 0 auto;line-height:1}
   .lin-side{flex:0 0 260px;align-self:flex-start;position:sticky;top:0;min-height:100%;border-left:1px solid var(--border);padding:22px 18px;background:var(--side);font-size:13px}
   .prop{display:flex;align-items:flex-start;gap:10px;padding:6px 0;min-height:30px}
