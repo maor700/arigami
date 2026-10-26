@@ -41,7 +41,7 @@ import { SlashPalette, CapabilitiesPanel, buildSlashItems, MentionPalette, TeamP
 import { useSkills, skillSlashItems, agentCommandItems, resolveSubmission, mentionQuery, completeMention, buildMentionItems } from '../lib/composer.js';
 import { ProcessChip, BgProcessesPanel } from './BgProcesses.jsx';
 import TermControls, { ChatDisplayItems } from './TermControls.jsx';
-import LadderBadge from './LadderBadge.jsx';
+import LadderBadge, { ladderText } from './LadderBadge.jsx';
 import { ActionBar } from './ActionCard.jsx';
 import { AgentAvatar } from './AgentCard.jsx';
 import { openAgent } from './DelegatedLine.jsx';
@@ -299,13 +299,19 @@ function MachineChip({ session }) {
  * to the agent surface. The agent's own home chat never renders this header (it
  * is the Home tab of the agent surface instead).
  */
-export function BornFromChip({ session, className = '' }) {
-  const tt = useT();
+function useBornFrom(session) {
   const { agents } = useStore();
   const slug = session.metadata?.agent;
   if (!slug || session.metadata?.agentHome) return null;
   const agent = (agents || []).find((a) => a.slug === slug) || { slug, name: slug };
-  const name = agent.name || slug;
+  return { slug, agent, name: agent.name || slug };
+}
+
+export function BornFromChip({ session, className = '' }) {
+  const tt = useT();
+  const born = useBornFrom(session);
+  if (!born) return null;
+  const { slug, agent, name } = born;
   return (
     <Tip label={tt('session.bornFromTitle', { name })}>
       <button
@@ -345,6 +351,9 @@ export { ChatModeItems };
 // clicks away (… then the item).
 function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddTabOpen }) {
   const t = useT();
+  const isDesktop = useIsDesktop();
+  const born = useBornFrom(session);
+  const ladder = ladderText(session.claude?.ladder, t);
   const account = useSessionAccount(session);
   const accountName = account ? account.email || account.label || t('rail.accountFallback') : null;
   return (
@@ -360,8 +369,16 @@ function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddT
         <DropdownMenuLabel className="flex flex-col gap-0.5 font-normal">
           <span className="text-2xs text-muted-foreground">{engineTermName(session.engine)}</span>
           {meta && <bdi className="truncate text-xs text-foreground">{meta}</bdi>}
+          {/* phones show only the model's name in the header chip — the whole sentence lives here */}
+          {!isDesktop && ladder && <span data-header-menu-ladder className="text-xs text-[#d9a521]">{ladder.full}</span>}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {/* phones: the "born from <agent>" chip does not fit the header row */}
+        {!isDesktop && born && (
+          <DropdownMenuItem data-header-menu-born-from onSelect={() => openAgent(born.slug)}>
+            <AgentAvatar agent={born.agent} size={16} /> <span className="min-w-0 truncate">{t('session.bornFrom', { name: born.name })}</span>
+          </DropdownMenuItem>
+        )}
         {onEdit && (
           <DropdownMenuItem onSelect={() => onEdit(session)}>
             <Pencil /> {t('rail.editDetails')}
@@ -423,6 +440,7 @@ function HeaderMenu({ session, mode, meta, onEdit, onArchive, onRestore, setAddT
 }
 
 function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }) {
+  const isDesktop = useIsDesktop();
   const [procPanel, setProcPanel] = useState(false);
   const mode = useChatModeDefault(session);
   // Same derivation the rail row uses (Rail.jsx Row) — the header had no
@@ -434,20 +452,26 @@ function TerminalHeader({ session, onEdit, onArchive, onRestore, setAddTabOpen }
     <div data-engine={engineTermName(session.engine)} className="flex min-h-11 shrink-0 items-center gap-x-2 border-b border-border bg-background px-3 text-sm text-foreground md:px-4">
       <Dot color={session.color} size={9} />
       <Tip label={meta || undefined}>
-        <span className="min-w-0 shrink">
+        <span className="min-w-12 shrink-[20]">
           <Truncate text={name} className="block text-sm font-medium text-foreground" />
         </span>
       </Tip>
-      <StatusChip session={session} />
-      <BornFromChip session={session} />
-      {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
-      <LadderBadge session={session} />
-      {session.metadata?.fromTriggerName && (
-        <TriggerTag
-          name={session.metadata.fromTriggerName}
-          className="hidden max-w-[10rem] text-xs text-muted-foreground sm:inline-flex"
-        />
-      )}
+      {/* The chips give way (clipped) before the buttons do: a long status or
+          ladder sentence used to push ⋯ and the summary off a phone screen.
+          The title's larger shrink lets it truncate down to its min-w first. */}
+      <div className="flex min-w-0 shrink items-center gap-x-2 overflow-hidden">
+        <StatusChip session={session} />
+        {/* phones: born-from and the full ladder sentence move into the ⋯ menu */}
+        {isDesktop && <BornFromChip session={session} />}
+        {/* LADDER1: "running on haiku · fable's quota resets at 18:50" while on a weaker rung */}
+        <LadderBadge session={session} compact={!isDesktop} />
+        {session.metadata?.fromTriggerName && (
+          <TriggerTag
+            name={session.metadata.fromTriggerName}
+            className="hidden max-w-[10rem] text-xs text-muted-foreground sm:inline-flex"
+          />
+        )}
+      </div>
       <div className="ms-auto flex shrink-0 items-center gap-0.5">
         <ProcessChip session={session} onClick={() => setProcPanel(true)} />
         <ListenersChipCompact session={session} />
@@ -687,7 +711,7 @@ function ListenersPanel({ session, initialId, onClose }) {
                       <button
                         type="button"
                         onClick={() => cancel(sel.id)}
-                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10"
+                        className="ms-auto flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-[1.5px] border-danger bg-transparent px-2.5 py-1 text-[11.5px] md:text-[10.5px] font-bold text-danger hover:bg-danger/10 coarse:min-h-11"
                       >
                         <Icon icon={faStop} className="text-[11px] md:text-[9px]" /> {t('rail.cancelLower')}
                       </button>
@@ -887,13 +911,13 @@ function UrlTab({ tab, active, session }) {
   const src = tabSrc(tab.url);
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hair bg-panel px-2.5 coarse:h-11">
         <button
           type="button"
           onClick={() => { setLoading(true); setReloadKey((k) => k + 1); }}
           title={t('rail.reloadPreview')}
           aria-label={t('rail.reloadPreviewAria')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+          className="flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg coarse:h-10 coarse:min-w-11"
         >
           <Icon icon={faRotateRight} />
         </button>
@@ -906,7 +930,7 @@ function UrlTab({ tab, active, session }) {
           rel="noreferrer"
           title={t('rail.openInNewTab')}
           aria-label={t('rail.openInNewTab')}
-          className="shrink-0 cursor-pointer rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg"
+          className="flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] border border-border px-1.5 leading-[18px] text-fgdim hover:border-ink hover:text-fg coarse:h-10 coarse:min-w-11"
         >
           ↗
         </a>

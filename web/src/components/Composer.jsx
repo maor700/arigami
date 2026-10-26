@@ -14,6 +14,8 @@ import {
   ListIcon,
   PaperclipIcon,
   PlayIcon,
+  PlusIcon,
+  SlashIcon,
   SquareIcon,
   ChevronDownIcon,
   XIcon,
@@ -35,7 +37,7 @@ import { contextColor } from './ui.jsx';
 import ContextModal from './ContextModal.jsx';
 import MicButton from './MicButton.jsx';
 import ComposerPill from './ComposerPill.jsx';
-import { Button, Switch, Tip, TooltipProvider } from './ui/index.js';
+import { Button, Switch, Tip, TooltipProvider, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from './ui/index.js';
 
 /* ---------- pending prompts (queued while busy) ---------------------------- */
 
@@ -651,29 +653,63 @@ export function ChatFooter({ session }) {
             hidden
             onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
           />
-          <Tip label={t('rail.attachFiles')}>
-            <Button variant="ghost" size="icon-sm" data-composer-attach aria-label={t('rail.attachFiles')} onClick={() => fileRef.current?.click()}>
-              <PaperclipIcon />
-            </Button>
-          </Tip>
-          <Tip label="@">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              data-composer-mention
-              aria-label="@"
-              onClick={() => { setText((v) => (v && !/\s$/.test(v) ? `${v} @` : `${v}@`)); focusInput(); }}
-            >
-              <AtSignIcon />
-            </Button>
-          </Tip>
-          {/* phones: typing "/" opens the same palette — the button isn't worth
-              the composer width it costs */}
-          <Tip label={t('rail.slashCommandsCapabilities')}>
-            <Button variant="ghost" size="icon-sm" data-composer-slash aria-label={t('rail.slashCommandsCapabilities')} onClick={() => setPanelTab('commands')} className="hidden font-mono text-sm sm:inline-flex">
-              /
-            </Button>
-          </Tip>
+          {isDesktop ? (
+            <>
+              <Tip label={t('rail.attachFiles')}>
+                <Button variant="ghost" size="icon-sm" data-composer-attach aria-label={t('rail.attachFiles')} onClick={() => fileRef.current?.click()}>
+                  <PaperclipIcon />
+                </Button>
+              </Tip>
+              <Tip label="@">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  data-composer-mention
+                  aria-label="@"
+                  onClick={() => { setText((v) => (v && !/\s$/.test(v) ? `${v} @` : `${v}@`)); focusInput(); }}
+                >
+                  <AtSignIcon />
+                </Button>
+              </Tip>
+              <Tip label={t('rail.slashCommandsCapabilities')}>
+                <Button variant="ghost" size="icon-sm" data-composer-slash aria-label={t('rail.slashCommandsCapabilities')} onClick={() => setPanelTab('commands')} className="font-mono text-sm">
+                  /
+                </Button>
+              </Tip>
+            </>
+          ) : (
+            // Phones: the row is narrower than its buttons (Send ended up off
+            // the screen while a turn ran), so the secondary actions share one
+            // menu and the row keeps only what is used every turn.
+            <DropdownMenu>
+              <Tip label={t('rail.composerMore')}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" data-composer-more aria-label={t('rail.composerMore')}>
+                    <PlusIcon />
+                  </Button>
+                </DropdownMenuTrigger>
+              </Tip>
+              <DropdownMenuContent side="top" align="start" className="w-60" onCloseAutoFocus={(e) => e.preventDefault()}>
+                <DropdownMenuItem data-composer-attach onSelect={() => fileRef.current?.click()}>
+                  <PaperclipIcon /> {t('rail.attachFiles')}
+                </DropdownMenuItem>
+                <DropdownMenuItem data-composer-mention onSelect={() => { setText((v) => (v && !/\s$/.test(v) ? `${v} @` : `${v}@`)); focusInput(); }}>
+                  <AtSignIcon /> {t('rail.mention')}
+                </DropdownMenuItem>
+                <DropdownMenuItem data-composer-slash onSelect={() => setPanelTab('commands')}>
+                  <SlashIcon /> {t('rail.slashCommandsCapabilities')}
+                </DropdownMenuItem>
+                {working && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem data-composer-queue disabled={!text.trim()} onSelect={queue}>
+                      <HourglassIcon /> {t('rail.queuePending')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <ComposerPill session={session} />
           {ctx?.ctxPct != null && (
             <Tip label={t('rail.context')}>
@@ -691,7 +727,7 @@ export function ChatFooter({ session }) {
                 </Button>
               </Tip>
             )}
-            {working && (
+            {working && isDesktop && (
               <Tip label={t('rail.queuePendingHint')}>
                 <Button variant="ghost" size="icon-sm" data-composer-queue aria-label={t('rail.queuePendingHint')} onClick={queue} disabled={!text.trim()}>
                   <HourglassIcon />

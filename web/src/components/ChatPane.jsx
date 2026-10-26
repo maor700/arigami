@@ -420,7 +420,7 @@ function ToolResult({ event, sessionId }) {
           type="button"
           onClick={toggle}
           disabled={fetching}
-          className="ms-2 inline-flex min-h-6 cursor-pointer items-center font-sans text-[var(--term-faint)] underline underline-offset-2 hover:text-[var(--term-dim)] disabled:opacity-50 coarse:min-h-11"
+          className="ms-2 inline-flex min-h-6 cursor-pointer items-center font-sans text-[var(--term-faint)] underline underline-offset-2 hover:text-[var(--term-dim)] disabled:opacity-50 coarse:min-h-11 coarse:min-w-11 coarse:justify-center"
         >
           {fetching ? <span className="host-spinner inline-block size-3" /> : open ? t('chat.less') : moreLabel}
         </button>
