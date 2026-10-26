@@ -56,3 +56,38 @@ test('the ticket page follows the cockpit theme (same-origin prefs, live) and zo
   const lin = pages.slice(pages.indexOf('/* the Linear ticket page'), pages.indexOf('@media (max-width:760px)'));
   expect(lin).not.toMatch(/#(16171a|18191c|1b1c20|26272c|d2d3e0|f7f8f8)/i);
 });
+
+test("GitHub's rendered HTML is used, with anything active stripped (this page shares the cockpit's origin)", () => {
+  const r = runInChild(
+    "const p=await import('./server/pages.js');" +
+      "emit(p.safeHtml('<p>ok</p><table><tr><td>x</td></tr></table><script>alert(1)</script><img src=x onerror=\"alert(2)\"><a href=\"javascript:alert(3)\">l</a><iframe src=\"//evil\"></iframe><style>body{}</style><img src=\"data:image/png;base64,AA\">'));",
+    { ARIGAMI_DIR: tmpDir('arigami-safehtml-'), ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const h = r.out[0];
+  expect(h).toContain('<p>ok</p><table>');
+  expect(h).not.toMatch(/<script|onerror|javascript:|<iframe|<style/i);
+  expect(h).toContain('src="data:image/png'); // an inline image is not active content
+});
+
+test('the PR model: GitHub-rendered body, a timeline of comments and reviews with their threads, reviewers', () => {
+  const r = runInChild(
+    "const p=await import('./server/pages.js');" +
+      "emit(p.prViewModel({number:7,owner:'o',repo:'r',state:'OPEN',baseRefName:'main',headRefName:'feat',statusCheckRollup:[{name:'ci',conclusion:'SUCCESS'},{name:'lint',conclusion:'FAILURE'}]," +
+      "rest:{title:'T',body_html:'<table><tr><td>a</td></tr></table>',user:{login:'al',avatar_url:'https://a/x'},labels:[{name:'bug',color:'d73a4a'}],requested_reviewers:[{login:'bo'}]}," +
+      "issueComments:[{id:1,user:{login:'cy'},created_at:'2026-01-02T00:00:00Z',body_html:'<p>hi</p>'}]," +
+      "restReviews:[{id:9,user:{login:'di'},state:'APPROVED',submitted_at:'2026-01-03T00:00:00Z',body:''}]," +
+      "reviewComments:[{id:20,pull_request_review_id:9,user:{login:'di'},path:'a.ts',line:4,diff_hunk:'@@ -1 +1 @@\\n-a\\n+b',created_at:'2026-01-03T00:00:00Z',body_html:'<p>nit</p>'},{id:21,in_reply_to_id:20,user:{login:'al'},created_at:'2026-01-04T00:00:00Z',body_html:'<p>done</p>'}],fileList:[{filename:'a.ts',additions:1,deletions:1,patch:'@@ -1 +1 @@\\n-a\\n+b'}]}));",
+    { ARIGAMI_DIR: tmpDir('arigami-prvm-'), ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const m = r.out[0];
+  expect(m).toMatchObject({ title: 'T', state: 'open', base: 'main', head: 'feat', stateLabel: 'Open' });
+  expect(m.bodyHtml).toContain('<table>');
+  expect(m.timeline.map((e) => [e.kind, e.login])).toEqual([['comment', 'cy'], ['review', 'di']]);
+  expect(m.timeline[1].threads[0].comments.map((c) => c.login)).toEqual(['di', 'al']); // the reply stays in its thread
+  expect(m.reviewers.map((u) => [u.login, u.state])).toEqual([['di', 'approved'], ['bo', 'pending']]);
+  expect(m.checks).toMatchObject({ total: 2, ok: 1, bad: 1 });
+  expect(m.files[0].threads).toHaveLength(1);
+  expect(m.labels[0]).toEqual({ name: 'bug', color: '#d73a4a' });
+});

@@ -5269,6 +5269,34 @@ export async function handle(
         return json(res, []);
       }
     }
+    // The PR tab's actions (server/assets/card.jsx): comment on the PR, reply to a review thread — with the host's gh
+    // login, as the owner. The owner's browser only (its cookie), like the Linear tab's actions below.
+    {
+      const gm = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(comment|reply)$/.exec(p);
+      if (gm && m === 'POST') {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can comment on a pull request from here' }, 403);
+        const [, owner, repo, num, op] = gm;
+        const body = (await readBody(req)) as any;
+        const text = String(body?.body || '').trim();
+        if (!text) return badRequest(res, 'body required');
+        if (text.length > 60000) return badRequest(res, 'comment too long');
+        const replyTo = op === 'reply' ? String(body?.inReplyTo || '') : '';
+        if (op === 'reply' && !/^\d{1,15}$/.test(replyTo)) return badRequest(res, 'inReplyTo required');
+        const endpoint = op === 'reply' ? `repos/${owner}/${repo}/pulls/${num}/comments/${replyTo}/replies` : `repos/${owner}/${repo}/issues/${num}/comments`;
+        try {
+          const { execFile } = await import('node:child_process');
+          await new Promise<void>((resolve, reject) => {
+            const child = execFile('gh', ['api', '-X', 'POST', endpoint, '--input', '-'], { timeout: 30000 }, (err, _out, errOut) => (err ? reject(new Error(String(errOut || err.message).trim().slice(0, 300))) : resolve()));
+            child.stdin?.end(JSON.stringify({ body: text }));
+          });
+          return json(res, { ok: true });
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+      }
+    }
     // The ticket tab's actions (server/assets/card.jsx): comment, status, assignee, priority, labels — done in Linear
     // as the owner, through the host's Linear grant. The owner's browser only (its cookie): not a session's token, not
     // an API token — an agent reaches Linear through its own tools, where its changes show up as its own.

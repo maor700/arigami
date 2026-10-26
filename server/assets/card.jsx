@@ -303,54 +303,130 @@ function Menu({ onClose, children, search, setSearch }) {
 const TYPE_COLOR = { triage: '#fc7840', backlog: '#bec2c8', unstarted: '#e2e2e2', started: '#f2c94c', completed: '#5e6ad2', canceled: '#95a2b3' };
 const PRIORITIES = [[0, 'No priority'], [1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low']];
 
-function GitHubTab({ pr, ghUrl }) {
-  const [sub, setSub] = useState('ov');
+// ---- the pull request, GitHub-style ----------------------------------------------------------------------------------
+async function prAct(pr, op, body) {
+  const r = await fetch(`/__api/github/pr/${encodeURIComponent(pr.owner)}/${encodeURIComponent(pr.repo)}/${pr.number}/${op}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+}
+const GH_STATE = { open: ['Open', 'open'], draft: ['Draft', 'draft'], merged: ['Merged', 'merged'], closed: ['Closed', 'closed'] };
+const REVIEW_TEXT = { approved: 'approved these changes', changes_requested: 'requested changes', commented: 'reviewed', dismissed: 'had a review dismissed' };
+const Av = ({ u, size = 20 }) => (u.avatar ? <img class="ghav" src={u.avatar + (u.avatar.includes('?') ? '&' : '?') + 's=' + size * 2} width={size} height={size} alt="" /> : <span class="ghav" style={{ width: size + 'px', height: size + 'px' }} />);
+
+function GhComposer({ pr, inReplyTo, reload, say, onDone }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true); say('Sending…');
+    try { await prAct(pr, inReplyTo ? 'reply' : 'comment', { body: text, ...(inReplyTo ? { inReplyTo } : {}) }); setText(''); say(''); onDone?.(); reload(); } catch (e) { say(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div class={'ghbox ghcompose' + (inReplyTo ? ' reply' : '')}>
+      <textarea value={text} onInput={(e) => setText(e.currentTarget.value)} rows={inReplyTo ? 2 : 4} placeholder={inReplyTo ? 'Reply…' : 'Leave a comment'}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} />
+      <div class="ghcrow">
+        <span class="ghhint">Markdown · Ctrl+Enter</span>
+        {onDone && <button class="ghbtn" onClick={onDone}>Cancel</button>}
+        <button class="ghbtn primary" disabled={busy || !text.trim()} onClick={send}>{inReplyTo ? 'Reply' : 'Comment'}</button>
+      </div>
+    </div>
+  );
+}
+
+function GhComment({ c, head }) {
+  return (
+    <div class="ghitem">
+      <Av u={c} size={32} />
+      <div class="ghbox">
+        <div class="ghboxh"><b>{c.login}</b> <span class="ghdim">{head || 'commented'} {c.time}</span>{c.assoc && c.assoc !== 'none' && <span class="ghassoc">{c.assoc}</span>}</div>
+        <Html class="ghbody desc" html={c.html} />
+      </div>
+    </div>
+  );
+}
+
+function GhThread({ t, pr, reload, say }) {
+  const [replying, setReplying] = useState(false);
+  return (
+    <div class="ghthread">
+      <div class="ghthreadh"><span class="mono">{t.path}</span>{t.line ? <span class="ghdim">line {t.line}</span> : ''}{t.outdated && <span class="ghassoc">outdated</span>}</div>
+      <Html html={t.hunkHtml} />
+      {t.comments.map((c) => (
+        <div class="ghtc">
+          <div class="ghboxh"><Av u={c} size={20} /><b>{c.login}</b> <span class="ghdim">{c.time}</span></div>
+          <Html class="ghbody desc" html={c.html} />
+        </div>
+      ))}
+      {replying ? <GhComposer pr={pr} inReplyTo={t.id} reload={reload} say={say} onDone={() => setReplying(false)} /> : <div class="ghreply"><button class="ghbtn" onClick={() => setReplying(true)}>Reply…</button></div>}
+    </div>
+  );
+}
+
+function GhCheckIcon({ s }) {
+  return <span class={'ghck ' + s}>{s === 'ok' ? '✓' : s === 'bad' ? '✕' : '●'}</span>;
+}
+
+function GitHubTab({ pr, ghUrl, reload = () => {}, embedded }) {
+  const [sub, setSub] = useState('conv');
+  const [note, setNote] = useState(null);
+  const say = (text, err) => setNote(text ? { text, err } : null);
   if (!pr) return ghUrl
     ? <p class="empty">Couldn't load the PR (is <code>gh</code> authed?). <a href={ghUrl} target="_blank">Open on GitHub ↗</a></p>
     : <p class="empty">No linked PR.</p>;
-  const subs = [['ov', 'Overview'], ['files', `Files ${pr.files.length}`], ['conv', `Comments ${pr.comments.length}`]];
+  const [stLabel, stCls] = GH_STATE[pr.state] || GH_STATE.open;
+  const ck = pr.checks;
   return (
-    <div>
-      <div class="metarow">
-        <Pill color={pr.stateColor}>{pr.stateLabel}</Pill>
-        {pr.review && <Pill color={pr.reviewColor}>{pr.review}</Pill>}
-        {pr.checks && <Pill color={pr.checks.color}>{pr.checks.label}</Pill>}
-        <a href={pr.url} target="_blank">GitHub ↗</a>
+    <div class="gh">
+      {note && <div class={'note' + (note.err ? ' err' : '')} onClick={() => setNote(null)}>{note.text}</div>}
+      <div class="ghhead">
+        <h1 class="ghtitle">{pr.title} <span class="ghnum">#{pr.number}</span></h1>
+        <div class="ghmeta">
+          <span class={'ghstate ' + stCls}>{stLabel}</span>
+          <span><b>{pr.author.login}</b> wants to merge {pr.commits} commit{pr.commits === 1 ? '' : 's'} into <code class="ghref">{pr.base}</code> from <code class="ghref">{pr.head}</code></span>
+          {!embedded && <a class="ghopen" href={pr.url} target="_blank">Open on GitHub ↗</a>}
+        </div>
       </div>
-      <div class="metarow mono">
-        {pr.baseRefName} ← {pr.headRefName} · <span style="color:#3fb950">+{pr.additions}</span> <span style="color:#f85149">−{pr.deletions}</span> · {pr.changedFiles} files
+      <div class="ghtabs">
+        <div class={'ghtab' + (sub === 'conv' ? ' on' : '')} onClick={() => setSub('conv')}>Conversation <span class="ghcount">{pr.timeline.length}</span></div>
+        <div class={'ghtab' + (sub === 'checks' ? ' on' : '')} onClick={() => setSub('checks')}>Checks <span class="ghcount">{ck.total}</span></div>
+        <div class={'ghtab' + (sub === 'files' ? ' on' : '')} onClick={() => setSub('files')}>Files changed <span class="ghcount">{pr.changedFiles}</span></div>
+        <span class="ghdiffstat"><span class="add">+{pr.additions}</span> <span class="del">−{pr.deletions}</span></span>
       </div>
-      <div class="gtabs">
-        {subs.map(([k, l]) => <div class={'gtab' + (sub === k ? ' active' : '')} onClick={() => setSub(k)}>{l}</div>)}
-      </div>
-      {sub === 'ov' && <Html class="desc" html={pr.bodyHtml} />}
-      {sub === 'files' && (pr.files.length
-        ? pr.files.map((f) => (
-            <details class="file" open={f.comments && f.comments.length > 0}>
-              <summary><span class="fp">{f.name}</span><span class="fd">{f.comments && f.comments.length > 0 && <span class="fcct">💬 {f.comments.length}</span>} <span style="color:#3fb950">+{f.additions}</span> <span style="color:#f85149">−{f.deletions}</span></span></summary>
-              <Html html={f.diffHtml} />
-              {f.comments && f.comments.length > 0 && (
-                <div class="filecmts">
-                  {f.comments.map((c) => (
-                    <div class="filecmt">
-                      <div class="chead"><span class="cauthor">@{c.author}</span>{c.line && <span class="cloc">line {c.line}</span>}<span class="ctime">{c.time}</span></div>
-                      <Html class="cbody" html={c.bodyHtml} />
-                    </div>
-                  ))}
+      {sub === 'conv' && (
+        <div class="ghcols">
+          <div class="ghmain">
+            <GhComment c={{ ...pr.author, time: pr.created, html: pr.bodyHtml }} />
+            {pr.timeline.map((e) => e.kind === 'comment' ? <GhComment c={e} /> : (
+              <div class="ghitem ghreview">
+                <span class={'ghrvicon ' + e.state}>{e.state === 'approved' ? '✓' : e.state === 'changes_requested' ? '±' : '👁'}</span>
+                <div class="ghrvbody">
+                  <div class="ghrvline"><Av u={e} size={20} /><b>{e.login}</b> <span class="ghdim">{REVIEW_TEXT[e.state] || e.state} {e.time}</span></div>
+                  {e.html && <div class="ghbox"><Html class="ghbody desc" html={e.html} /></div>}
+                  {(e.threads || []).map((t) => <GhThread t={t} pr={pr} reload={reload} say={say} />)}
                 </div>
-              )}
-            </details>
-          ))
-        : <p class="empty">No files.</p>)}
-      {sub === 'conv' && (pr.comments.length
-        ? pr.comments.map((c) => (
-            <div class="cmt">
-              <div class="chead"><span class="cauthor">@{c.author}</span>{c.state && <Pill color={c.stateColor}>{c.state}</Pill>}{c.loc && <span class="cloc">{c.loc}</span>}<span class="ctime">{c.time}</span></div>
-              {c.codeHtml && <Html html={c.codeHtml} />}
-              <Html class="cbody" html={c.bodyHtml} />
-            </div>
-          ))
-        : <p class="empty">No PR comments.</p>)}
+              </div>
+            ))}
+            <div class="ghitem"><span class="ghav" style="width:32px;height:32px" /><GhComposer pr={pr} reload={reload} say={say} /></div>
+          </div>
+          <aside class="ghside">
+            <div class="ghsec"><div class="ghsech">Reviewers</div>{pr.reviewers.length ? pr.reviewers.map((u) => <div class="ghsrow"><Av u={u} size={20} /><span>{u.login}</span><span class={'ghrv ' + u.state}>{u.state === 'approved' ? '✓' : u.state === 'changes_requested' ? '±' : '●'}</span></div>) : <div class="ghdim">No reviews</div>}</div>
+            <div class="ghsec"><div class="ghsech">Assignees</div>{pr.assignees.length ? pr.assignees.map((u) => <div class="ghsrow"><Av u={u} size={20} /><span>{u.login}</span></div>) : <div class="ghdim">No one</div>}</div>
+            <div class="ghsec"><div class="ghsech">Labels</div>{pr.labels.length ? <div class="ghlabels">{pr.labels.map((l) => <span class="ghlabel" style={{ '--lc': l.color }}>{l.name}</span>)}</div> : <div class="ghdim">None yet</div>}</div>
+            <div class="ghsec"><div class="ghsech">Checks</div>{ck.total ? <div class="ghsrow"><GhCheckIcon s={ck.bad ? 'bad' : ck.pending ? 'pending' : 'ok'} /><span>{ck.ok} passed{ck.bad ? `, ${ck.bad} failed` : ''}{ck.pending ? `, ${ck.pending} pending` : ''}</span></div> : <div class="ghdim">None</div>}</div>
+          </aside>
+        </div>
+      )}
+      {sub === 'checks' && (
+        <div class="ghbox ghchecks">{ck.items.length ? ck.items.map((c) => <div class="ghsrow"><GhCheckIcon s={c.state} />{c.url ? <a href={c.url} target="_blank">{c.name}</a> : <span>{c.name}</span>}</div>) : <p class="empty">No checks.</p>}</div>
+      )}
+      {sub === 'files' && (pr.files.length ? pr.files.map((f) => (
+        <details class="ghfile" open={f.threads.length > 0 || pr.files.length <= 6}>
+          <summary><span class="mono">{f.name}</span><span class="ghfstat">{f.threads.length > 0 && <span class="ghdim">💬 {f.threads.length}</span>} <span class="add">+{f.additions}</span> <span class="del">−{f.deletions}</span></span></summary>
+          <Html html={f.diffHtml} />
+          {f.threads.map((t) => <GhThread t={t} pr={pr} reload={reload} say={say} />)}
+        </details>
+      )) : <p class="empty">No files.</p>)}
     </div>
   );
 }
@@ -404,7 +480,7 @@ function App() {
               <Composer t={t} reload={retry} say={say} />
             </>
           )}
-          {tab === 'github' && <GitHubTab pr={d.pr} ghUrl={t.ghUrl} />}
+          {tab === 'github' && <GitHubTab pr={d.pr} ghUrl={t.ghUrl} reload={retry} embedded />}
         </main>
         <aside class="lin-side">
           <Props t={t} reload={retry} say={say} />
@@ -423,23 +499,17 @@ function App() {
 // PR-only mode for the standalone /__pr/<owner>/<repo>/<num> page.
 function PrApp() {
   const [d, retry] = useData(PR_REF, '/__pr-data/');
-  if (!d) return <p class="empty" style="padding:20px">Loading {PR_REF}…</p>;
+  if (!d) return <p class="empty" style="padding:24px">Loading {PR_REF}…</p>;
   if (d.error || !d.pr) return (
-    <p class="empty" style="padding:20px">
+    <p class="empty" style="padding:24px">
       <b>{PR_REF}</b> couldn't be loaded — is <code>gh</code> authenticated?
       {' '}<a href="#" onClick={(e) => { e.preventDefault(); retry(); }}>Retry ↻</a>
     </p>
   );
-  const pr = d.pr;
   return (
-    <div class="app">
-      <div class="head">
-        <div class="topbar">
-          <div class="id">{PR_REF.split('/').slice(0, 2).join('/')}#{pr.number} · <a href={pr.url} target="_blank">Open on GitHub ↗</a></div>
-          <FontControls />
-        </div>
-      </div>
-      <div class="body"><section><GitHubTab pr={pr} ghUrl={pr.url} /></section></div>
+    <div class="ghpage">
+      <div class="ghtop"><span class="mono">{PR_REF.split('/').slice(0, 2).join('/')}</span><FontControls /></div>
+      <div class="ghscroll"><GitHubTab pr={d.pr} ghUrl={d.pr.url} reload={retry} /></div>
     </div>
   );
 }

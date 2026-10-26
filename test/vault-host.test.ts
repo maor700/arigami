@@ -252,3 +252,12 @@ test("the ticket tab's Linear actions are the owner's: a session token gets 403,
     expect(o.json.error).toMatch(/Linear is not connected/);
   }
 });
+
+test("the PR tab's comment and reply are the owner's: a session token gets 403", async () => {
+  for (const sub of ['comment', 'reply']) {
+    const s = await call('POST', `/__api/github/pr/o/r/1/${sub}`, 'session', { body: 'hi', inReplyTo: '5' });
+    expect(s.status).toBe(403);
+  }
+  const bad = await call('POST', '/__api/github/pr/o/r/1/reply', 'person', { body: 'hi' });
+  expect(bad.status).toBe(400); // the owner passes the gate; a reply needs its thread
+});

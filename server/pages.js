@@ -389,39 +389,62 @@ export function ticketData(t, id, pr) {
 // PR → the view-model the card's GitHubTab renders. Shared by the ticket page
 // (linked PR) and the standalone /__pr page.
 export function prViewModel(pr, fallbackUrl = '') {
-  {
-    const ghAtt = fallbackUrl ? { url: fallbackUrl } : null;
-    const st = pr.isDraft ? { l: 'Draft', c: '#8b949e' } : pr.state === 'MERGED' ? { l: 'Merged', c: '#a371f7' } : pr.state === 'CLOSED' ? { l: 'Closed', c: '#f85149' } : { l: 'Open', c: '#3fb950' };
-    const checks = Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup : [];
-    const ok = checks.filter((c) => /SUCCESS|NEUTRAL|SKIPPED/i.test(c.conclusion || c.state || '')).length;
-    const bad = checks.filter((c) => /FAIL|ERROR|TIMED_OUT|CANCELLED/i.test(c.conclusion || c.state || '')).length;
-    const fileArr = (pr.fileList && pr.fileList.length ? pr.fileList : (pr.files || [])).slice(0, 80);
-    const BOT = /^(linear-code|vercel|github-actions|coderabbit)/i; // drop linkback/deploy bot noise
-    const prC = (pr.comments || []).filter((c) => !BOT.test((c.author && (c.author.login || c.author.name)) || '')).map((c) => ({ a: (c.author && (c.author.login || c.author.name)) || '?', body: c.body, at: c.createdAt }));
-    const prR = (pr.reviews || []).filter((r) => r.body || (r.state && r.state !== 'COMMENTED')).map((r) => ({ a: (r.author && (r.author.login || r.author.name)) || '?', body: r.body, at: r.submittedAt, state: r.state }));
-    const prRC = (pr.reviewComments || []).map((c) => ({
-      a: (c.user && c.user.login) || '?', body: c.body, at: c.created_at,
-      loc: c.path ? c.path + (c.line || c.original_line ? ':' + (c.line || c.original_line) : '') : '',
-      code: (c.diff_hunk || '').split('\n').slice(-5).join('\n'),
-    }));
-    const conv = prC.concat(prR).concat(prRC).sort((a, b) => ((a.at || '') < (b.at || '') ? -1 : 1));
-    const rcByPath = {};
-    (pr.reviewComments || []).forEach((c) => {
-      if (!c.path) return;
-      (rcByPath[c.path] = rcByPath[c.path] || []).push({ author: (c.user && c.user.login) || '?', line: c.line || c.original_line || '', time: fmtDate(c.created_at), bodyHtml: mdToHtml(c.body || '') });
-    });
-    return {
-      number: pr.number, url: pr.url || (ghAtt && ghAtt.url),
-      stateLabel: st.l, stateColor: st.c,
-      review: pr.reviewDecision ? pr.reviewDecision.replace(/_/g, ' ').toLowerCase() : '',
-      reviewColor: pr.reviewDecision === 'APPROVED' ? '#3fb950' : pr.reviewDecision === 'CHANGES_REQUESTED' ? '#f85149' : '#d29922',
-      checks: checks.length ? { label: `checks ✓${ok}${bad ? ' ✗' + bad : ''}`, color: bad ? '#f85149' : '#3fb950' } : null,
-      baseRefName: pr.baseRefName, headRefName: pr.headRefName, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles,
-      bodyHtml: mdToHtml(pr.body || '_No description_'),
-      files: fileArr.map((f) => { const name = f.filename || f.path; return { name, additions: f.additions || 0, deletions: f.deletions || 0, diffHtml: diffHtml(f.patch), comments: rcByPath[name] || [] }; }),
-      comments: conv.map((c) => ({ author: c.a, time: fmtDate(c.at), state: c.state ? c.state.replace(/_/g, ' ').toLowerCase() : '', stateColor: c.state === 'APPROVED' ? '#3fb950' : c.state === 'CHANGES_REQUESTED' ? '#f85149' : '#8b949e', loc: c.loc || '', codeHtml: c.code ? diffHtml(c.code) : '', bodyHtml: mdToHtml(c.body || '') })),
-    };
+  const r = pr.rest || {};
+  const who = (u) => ({ login: (u && (u.login || u.name)) || 'ghost', avatar: (u && u.avatar_url) || '' });
+  const state = r.merged || pr.state === 'MERGED' ? 'merged' : (r.draft || pr.isDraft) ? 'draft' : pr.state === 'CLOSED' || r.state === 'closed' ? 'closed' : 'open';
+  const checks = Array.isArray(pr.statusCheckRollup) ? pr.statusCheckRollup : [];
+  const checkItems = checks.map((c) => {
+    const v = String(c.conclusion || c.state || c.status || '').toUpperCase();
+    const st = /SUCCESS|NEUTRAL|SKIPPED/.test(v) ? 'ok' : /FAIL|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED/.test(v) ? 'bad' : 'pending';
+    return { name: c.name || c.context || 'check', state: st, url: c.detailsUrl || c.targetUrl || '' };
+  });
+  const count = (k) => checkItems.filter((c) => c.state === k).length;
+  // review threads: replies hang off their root comment; a root belongs to the review it was submitted with
+  const rc = (pr.reviewComments || []).slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const threads = new Map();
+  for (const c of rc) {
+    const root = c.in_reply_to_id || c.id;
+    if (!threads.has(root)) threads.set(root, { id: root, path: c.path || '', line: c.line || c.original_line || '', outdated: c.line == null, hunkHtml: diffHtml((c.diff_hunk || '').split('\n').slice(-6).join('\n')), reviewId: c.pull_request_review_id, comments: [] });
+    threads.get(root).comments.push({ id: c.id, ...who(c.user), at: c.created_at, time: fmtDate(c.created_at), html: safeHtml(c.body_html || mdToHtml(c.body || '')) });
   }
+  const threadList = [...threads.values()];
+  const timeline = [];
+  for (const c of pr.issueComments || []) {
+    timeline.push({ kind: 'comment', id: c.id, ...who(c.user), assoc: (c.author_association || '').toLowerCase(), at: c.created_at, time: fmtDate(c.created_at), html: safeHtml(c.body_html || mdToHtml(c.body || '')) });
+  }
+  for (const rv of pr.restReviews || []) {
+    const mine = threadList.filter((t) => t.reviewId === rv.id);
+    if (rv.state === 'COMMENTED' && !rv.body && !mine.length) continue;
+    timeline.push({ kind: 'review', id: rv.id, ...who(rv.user), at: rv.submitted_at, time: fmtDate(rv.submitted_at), state: String(rv.state || '').toLowerCase(), html: rv.body ? safeHtml(rv.body_html || mdToHtml(rv.body)) : '', threads: mine });
+  }
+  // threads whose review is not in the list (e.g. a pending one) still show
+  const shown = new Set(timeline.flatMap((e) => (e.threads || []).map((t) => t.id)));
+  for (const t of threadList) if (!shown.has(t.id)) timeline.push({ kind: 'review', id: 't' + t.id, ...t.comments[0], state: 'commented', html: '', threads: [t] });
+  timeline.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+  // reviewers: the latest decisive review of each person, then the still-requested ones
+  const reviewers = new Map();
+  for (const rv of pr.restReviews || []) if (rv.user && rv.state !== 'COMMENTED') reviewers.set(rv.user.login, { ...who(rv.user), state: String(rv.state).toLowerCase() });
+  for (const u of r.requested_reviewers || []) if (!reviewers.has(u.login)) reviewers.set(u.login, { ...who(u), state: 'pending' });
+  const threadsByPath = {};
+  for (const t of threadList) (threadsByPath[t.path] = threadsByPath[t.path] || []).push(t);
+  const fileArr = (pr.fileList && pr.fileList.length ? pr.fileList : (pr.files || [])).slice(0, 100);
+  return {
+    owner: pr.owner || '', repo: pr.repo || '', number: pr.number, title: pr.title || r.title || '', url: pr.url || fallbackUrl,
+    state, author: who(r.user || pr.author), createdAt: r.created_at || '', created: fmtDate(r.created_at),
+    base: pr.baseRefName || r.base?.ref || '', head: pr.headRefName || r.head?.ref || '',
+    commits: Array.isArray(pr.commits) ? pr.commits.length : r.commits || 0,
+    additions: pr.additions || 0, deletions: pr.deletions || 0, changedFiles: pr.changedFiles || fileArr.length,
+    reviewDecision: String(pr.reviewDecision || '').toLowerCase(),
+    bodyHtml: r.body_html ? safeHtml(r.body_html) : mdToHtml(pr.body || '_No description provided._'),
+    labels: (r.labels || []).map((l) => ({ name: l.name, color: '#' + (l.color || '8b949e') })),
+    assignees: (r.assignees || []).map(who),
+    reviewers: [...reviewers.values()],
+    checks: { total: checkItems.length, ok: count('ok'), bad: count('bad'), pending: count('pending'), items: checkItems },
+    timeline,
+    files: fileArr.map((f) => { const name = f.filename || f.path; return { name, status: f.status || '', additions: f.additions || 0, deletions: f.deletions || 0, diffHtml: diffHtml(f.patch), threads: threadsByPath[name] || [] }; }),
+    // the Linear tab's GitHub pill
+    stateLabel: { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' }[state],
+  };
 }
 
 // Styles for the card (the card mounts only the active tab, so no toggling here).
@@ -494,6 +517,72 @@ const TICKET_CSS = `
   .lbox .lbar a,.lbox .lbar button{font:500 12.5px system-ui;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:4px 10px;cursor:pointer;text-decoration:none}
   .lbox .lcap{position:fixed;bottom:14px;left:0;right:0;text-align:center;color:#d6d7dd;font-size:12.5px}
   @keyframes lbin{from{opacity:0}to{opacity:1}}
+  /* the pull request (card.jsx GitHubTab) — GitHub's own palette in both themes */
+  .gh{--g-bg:#0d1117;--g-panel:#151b23;--g-head:#151b23;--g-border:#3d444d;--g-muted:#262c36;--g-text:#f0f6fc;--g-dim:#9198a1;--g-link:#4493f8;--g-green:#238636;--g-purple:#8957e5;--g-red:#da3633;--g-gray:#656c76;--g-add-bg:rgba(46,160,67,.15);--g-add-tx:#aff5b4;--g-del-bg:rgba(248,81,73,.15);--g-del-tx:#ffdcd7;--g-hunk:#79c0ff;--g-code:#262c36;color:var(--g-text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif}
+  html[data-theme=light] .gh{--g-bg:#ffffff;--g-panel:#ffffff;--g-head:#f6f8fa;--g-border:#d1d9e0;--g-muted:#eff2f5;--g-text:#1f2328;--g-dim:#59636e;--g-link:#0969da;--g-green:#1f883d;--g-purple:#8250df;--g-red:#cf222e;--g-gray:#59636e;--g-add-bg:#dafbe1;--g-add-tx:#1f2328;--g-del-bg:#ffebe9;--g-del-tx:#1f2328;--g-hunk:#0550ae;--g-code:#eff2f5}
+  .ghpage{height:100%;display:flex;flex-direction:column;background:var(--bg)}
+  html[data-theme=light] .ghpage{background:#fff}html:not([data-theme=light]) .ghpage{background:#0d1117}
+  .ghtop{display:flex;justify-content:space-between;align-items:center;padding:8px 20px;border-bottom:1px solid var(--border);color:var(--dim);font-size:13px}
+  .ghscroll{flex:1;overflow:auto;padding:20px 24px 40px}
+  .gh a{color:var(--g-link)}
+  .gh code{background:var(--g-code);border:0;color:var(--g-text);border-radius:6px;padding:.15em .4em;font-size:85%}
+  .ghtitle{font-size:26px;font-weight:400;line-height:1.25;margin:0 0 8px;color:var(--g-text)}.ghnum{color:var(--g-dim);font-weight:300}
+  .ghmeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:var(--g-dim);font-size:14px;padding-bottom:14px;border-bottom:1px solid var(--g-border)}
+  .ghmeta b{color:var(--g-text);font-weight:600}.ghref{color:var(--g-link)!important;background:rgba(56,139,253,.12)!important}
+  .ghopen{margin-inline-start:auto;font-size:13px}
+  .ghstate{display:inline-flex;align-items:center;border-radius:2em;padding:4px 12px;font-weight:500;color:#fff;font-size:14px}
+  .ghstate.open{background:var(--g-green)}.ghstate.merged{background:var(--g-purple)}.ghstate.closed{background:var(--g-red)}.ghstate.draft{background:var(--g-gray)}
+  .ghtabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--g-border);margin:14px 0 18px}
+  .ghtab{padding:8px 14px;cursor:pointer;color:var(--g-dim);border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
+  .ghtab.on{color:var(--g-text);border-bottom-color:#fd8c73;font-weight:600}
+  .ghcount{display:inline-block;min-width:20px;padding:0 6px;margin-inline-start:4px;border-radius:2em;background:var(--g-muted);font-size:12px;font-weight:500;text-align:center;color:var(--g-text)}
+  .ghdiffstat{margin-inline-start:auto;font-size:12.5px;font-family:ui-monospace,monospace}
+  .gh .add{color:#3fb950}.gh .del{color:#f85149}html[data-theme=light] .gh .add{color:#1a7f37}html[data-theme=light] .gh .del{color:#d1242f}
+  .ghcols{display:flex;gap:24px;align-items:flex-start}.ghmain{flex:1;min-width:0}
+  .ghside{flex:0 0 240px;font-size:12px}.ghsec{padding:0 0 14px;margin-bottom:14px;border-bottom:1px solid var(--g-border)}
+  .ghsech{font-weight:600;color:var(--g-dim);margin-bottom:8px}.ghsrow{display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--g-text);font-size:12.5px}
+  .ghrv{margin-inline-start:auto}.ghrv.approved{color:#3fb950}.ghrv.changes_requested{color:#f85149}.ghrv.pending{color:#d29922}
+  .ghlabels{display:flex;flex-wrap:wrap;gap:4px}
+  .ghlabel{font-size:12px;font-weight:500;padding:0 8px;line-height:20px;border-radius:2em;border:1px solid color-mix(in srgb,var(--lc) 60%,transparent);background:color-mix(in srgb,var(--lc) 18%,transparent);color:color-mix(in srgb,var(--lc) 70%,var(--g-text))}
+  .ghav{border-radius:50%;flex:0 0 auto;background:var(--g-muted);display:inline-block;margin:0;border:0}
+  .ghitem{display:flex;gap:12px;margin:0 0 16px;position:relative}
+  .ghbox{flex:1;min-width:0;border:1px solid var(--g-border);border-radius:6px;background:var(--g-panel);overflow:hidden}
+  .ghboxh{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--g-head);border-bottom:1px solid var(--g-border);font-size:14px;color:var(--g-text)}
+  .ghdim{color:var(--g-dim);font-weight:400}.ghassoc{margin-inline-start:auto;font-size:12px;border:1px solid var(--g-border);border-radius:2em;padding:0 7px;color:var(--g-dim);text-transform:capitalize}
+  .ghbody{padding:14px 16px;font-size:14px;color:var(--g-text);overflow-x:auto}
+  .ghbody p{margin:0 0 12px}.ghbody p:last-child{margin-bottom:0}
+  .ghbody table{border-collapse:collapse;margin:0 0 14px;display:block;width:max-content;max-width:100%;overflow:auto}
+  .ghbody table,.ghbody table *{border-color:var(--g-border)!important}
+  .ghbody th,.ghbody td{border:1px solid var(--g-border);padding:6px 13px}.ghbody th{font-weight:600;background:var(--g-head)}
+  .ghbody tr:nth-child(2n) td{background:color-mix(in srgb,var(--g-muted) 45%,transparent)}
+  .ghbody pre{background:var(--g-code);border:0;border-radius:6px;padding:14px;overflow:auto;font-size:85%}.ghbody pre code{background:none;padding:0;font-size:100%}
+  .ghbody img{max-width:min(100%,560px);max-height:420px;border:0;display:inline-block}
+  .ghbody blockquote{margin:0 0 12px;padding:0 1em;color:var(--g-dim);border-inline-start:.25em solid var(--g-border)}
+  .ghbody ul,.ghbody ol{padding-inline-start:2em;margin:0 0 12px}.ghbody h1,.ghbody h2{border-bottom:1px solid var(--g-border);padding-bottom:.3em}
+  .ghbody h1{font-size:1.6em}.ghbody h2{font-size:1.35em}.ghbody h3{font-size:1.15em}
+  .ghbody details{margin:0 0 12px}.ghbody summary{cursor:pointer}.ghbody input[type=checkbox]{margin-inline-end:6px}
+  .ghreview{align-items:flex-start}.ghrvicon{width:32px;height:32px;border-radius:50%;flex:0 0 32px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;background:var(--g-gray)}
+  .ghrvicon.approved{background:var(--g-green)}.ghrvicon.changes_requested{background:var(--g-red)}
+  .ghrvbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}.ghrvline{display:flex;align-items:center;gap:6px;min-height:32px}
+  .ghthread{border:1px solid var(--g-border);border-radius:6px;overflow:hidden;background:var(--g-panel)}
+  .ghthreadh{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--g-head);border-bottom:1px solid var(--g-border);font-size:12.5px}
+  .ghtc{border-top:1px solid var(--g-border)}.ghtc .ghboxh{background:transparent;border:0;padding:10px 14px 0}.ghtc .ghbody{padding:6px 14px 12px 42px}
+  .ghreply{padding:8px 14px;border-top:1px solid var(--g-border)}
+  .ghcompose textarea{width:100%;min-height:90px;border:0;border-bottom:1px solid var(--g-border);background:var(--g-bg);color:var(--g-text);padding:10px 12px;font:14px/1.5 inherit;font-family:inherit;resize:vertical;outline:none}
+  .ghcompose.reply{border:0;border-top:1px solid var(--g-border);border-radius:0}.ghcompose.reply textarea{min-height:56px}
+  .ghcrow{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--g-head)}.ghhint{margin-inline-end:auto;font-size:12px;color:var(--g-dim)}
+  .ghbtn{font:500 13px inherit;font-family:inherit;border-radius:6px;padding:4px 14px;cursor:pointer;border:1px solid var(--g-border);background:var(--g-muted);color:var(--g-text)}
+  .ghbtn.primary{background:var(--g-green);border-color:rgba(240,246,252,.1);color:#fff}.ghbtn:disabled{opacity:.5;cursor:default}
+  .ghchecks{padding:8px 14px}.ghck{width:16px;text-align:center;font-weight:700}.ghck.ok{color:#3fb950}.ghck.bad{color:#f85149}.ghck.pending{color:#d29922}
+  details.ghfile{border:1px solid var(--g-border);border-radius:6px;margin:0 0 14px;background:var(--g-panel);overflow:hidden}
+  details.ghfile>summary{display:flex;justify-content:space-between;gap:10px;padding:8px 14px;background:var(--g-head);cursor:pointer;list-style:none;font-size:12.5px;color:var(--g-text);position:sticky;top:0}
+  details.ghfile>summary::-webkit-details-marker{display:none}.ghfstat{white-space:nowrap;font-family:ui-monospace,monospace}
+  .gh .diff{margin:0;padding:0;border:0;border-radius:0;overflow-x:auto;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;background:var(--g-bg);color:var(--g-text)}
+  .gh .diff span{display:block;padding:0 12px}
+  .gh .diff span.add{background:var(--g-add-bg);color:var(--g-add-tx)}.gh .diff span.del{background:var(--g-del-bg);color:var(--g-del-tx)}
+  .gh .diff span.hunk{background:color-mix(in srgb,var(--g-link) 12%,transparent);color:var(--g-dim)}
+  .gh .ghthread .diff{border-bottom:1px solid var(--g-border)}
+  @media (max-width:900px){.ghcols{flex-direction:column-reverse}.ghside{flex:0 0 auto;width:100%;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 16px}}
   @media (max-width:760px){
     .lin-body{flex-direction:column-reverse;align-items:stretch}
     .lin-side{flex:0 0 auto;position:static;min-height:0;border-left:0;border-bottom:1px solid var(--border);padding:12px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));column-gap:16px}
@@ -577,26 +666,45 @@ export const parsePrUrl = (u) => {
   return m ? { owner: m[1], repo: m[2], num: m[3] } : null;
 };
 
+// GitHub renders markdown itself (tables, task lists, code, signed image links) — `full+json` hands back body_html.
+const GH_HTML = ['-H', 'Accept: application/vnd.github.full+json'];
+async function ghJson(pathArgs) {
+  try { return JSON.parse(await execFileP('gh', ['api', ...GH_HTML, ...pathArgs])); } catch { return null; }
+}
 async function fetchPR(owner, repo, num) {
   const base = `${owner}/${repo}`;
-  const fields = 'number,title,state,isDraft,author,headRefName,baseRefName,additions,deletions,changedFiles,url,body,reviewDecision,statusCheckRollup,files,comments,reviews';
+  const fields = 'number,title,state,isDraft,author,headRefName,baseRefName,additions,deletions,changedFiles,url,body,reviewDecision,statusCheckRollup,files,comments,reviews,commits';
   try {
     const out = await execFileP('gh', ['pr', 'view', String(num), '--repo', base, '--json', fields]);
     const pr = JSON.parse(out);
-    // file patches (diffs) aren't in `gh pr view`; pull them from the REST endpoint
-    try {
-      const filesOut = await execFileP('gh', ['api', `repos/${base}/pulls/${num}/files?per_page=100`]);
-      pr.fileList = JSON.parse(filesOut);
-    } catch { pr.fileList = []; }
-    // inline review comments (per diff-line) aren't in `gh pr view` either
-    try {
-      const rcOut = await execFileP('gh', ['api', `repos/${base}/pulls/${num}/comments?per_page=100`]);
-      pr.reviewComments = JSON.parse(rcOut);
-    } catch { pr.reviewComments = []; }
+    pr.owner = owner; pr.repo = repo;
+    const [rest, issueComments, reviews, reviewComments, files] = await Promise.all([
+      ghJson([`repos/${base}/pulls/${num}`]),
+      ghJson([`repos/${base}/issues/${num}/comments?per_page=100`]),
+      ghJson([`repos/${base}/pulls/${num}/reviews?per_page=100`]),
+      ghJson([`repos/${base}/pulls/${num}/comments?per_page=100`]),
+      ghJson([`repos/${base}/pulls/${num}/files?per_page=100`]),
+    ]);
+    pr.rest = rest || {};
+    pr.issueComments = issueComments || [];
+    pr.restReviews = reviews || [];
+    pr.reviewComments = reviewComments || [];
+    pr.fileList = files || [];
     return pr;
   } catch {
     return null;
   }
+}
+
+// GitHub's body_html is already sanitized by GitHub; this page is same-origin with the cockpit, so strip anything
+// active on top of that anyway — a script here would act with the owner's session.
+export function safeHtml(html) {
+  return String(html || '')
+    .replace(/<\s*(script|style|iframe|object|embed|form|link|meta|base)\b[\s\S]*?(<\s*\/\s*\1\s*>|\/>|$)/gi, '')
+    .replace(/<\s*(script|style|iframe|object|embed|form|link|meta|base)\b[^>]*>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src|xlink:href|action|formaction)\s*=\s*(["']?)\s*(javascript|vbscript|data):(?!image\/)/gi, '$1=$2#blocked:')
+    .replace(/<a\s/gi, '<a target="_blank" rel="noopener" ');
 }
 
 // ---- the card bundle ------------------------------------------------------------
