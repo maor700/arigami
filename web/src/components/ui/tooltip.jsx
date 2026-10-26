@@ -35,6 +35,11 @@ const TooltipContent = React.forwardRef(function TooltipContent({ className, sid
   );
 });
 
+// A finger has no hover: Radix opens the tooltip on focus instead, and a menu
+// handing focus back to its trigger left the label pinned over the next
+// buttons on a phone. Touch screens get the aria-label alone.
+const COARSE = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
 /**
  * The one-liner to replace a `title=` attribute:
  *   <Tip label="Archive" shortcut="⌘⌫"><IconButton …/></Tip>
@@ -42,7 +47,7 @@ const TooltipContent = React.forwardRef(function TooltipContent({ className, sid
  */
 function Tip({ label, shortcut, side, children, ...props }) {
   const hasProvider = React.useContext(HasProvider);
-  if (!label) return children;
+  if (!label || COARSE) return children;
   const tip = (
     <Tooltip {...props}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>

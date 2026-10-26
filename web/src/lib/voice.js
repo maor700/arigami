@@ -24,7 +24,7 @@ import { getPrefs, voiceLangFrom } from './prefs.js';
 import { normalizeEngine } from './engines.js';
 
 let state = {
-  status: 'idle', // idle | recording | thinking | review | error
+  status: 'idle', // idle | recording | thinking | review | error | nokey
   mode: 'command', // 'dictate' | 'command' — set when a recording starts
   transcript: '',
   plan: null, // { actions, say, kind: 'ask'|'act'|'answer'|'end'|'noop', question }
@@ -137,9 +137,22 @@ export function modeOf(opts) {
   return opts && typeof opts === 'object' && opts.mode === 'dictate' ? 'dictate' : 'command';
 }
 
+// False once the host says it has no Groq key (config.voiceEnabled): a take
+// would only fail at the STT step, so the HUD explains how to get one instead
+// of opening the mic. null = not known yet (record and let the host answer).
+let hostHasKey = null;
+// Groq's own walkthrough for creating an API key — where the "no key" HUD and Settings point.
+export const GROQ_KEY_GUIDE = 'https://console.groq.com/docs/quickstart';
+export function setVoiceAvailable(v) { hostHasKey = v == null ? null : !!v; }
+const isNoKeyError = (msg) => /no GROQ_API_KEY/i.test(String(msg || ''));
+
 export async function startRecording(opts) {
   if (state.status === 'recording' || state.status === 'thinking') return;
   const mode = modeOf(opts);
+  if (hostHasKey === false) {
+    set({ status: 'nokey', mode, transcript: '', plan: null, error: '' });
+    return;
+  }
   const auto = mode === 'command' && !!(opts && typeof opts === 'object' && opts.auto);
   clearRelisten();
   // A dictation take is never part of a command conversation.
@@ -203,7 +216,7 @@ export function cancel() {
 
 export function toggleRecording(opts) {
   if (state.status === 'recording') stopRecording();
-  else if (state.status === 'idle' || state.status === 'error' || state.status === 'review') startRecording(opts);
+  else if (state.status === 'idle' || state.status === 'error' || state.status === 'review' || state.status === 'nokey') startRecording(opts);
 }
 
 async function finalize(mimeType, mode) {
@@ -240,7 +253,13 @@ export async function processClip(blob, mode = state.mode) {
     if (!transcript) { set({ status: 'idle' }); return; }
     await handleTranscript(transcript, mode);
   } catch (e) {
-    set({ status: 'error', error: String(e.message || e) });
+    const msg = String(e.message || e);
+    if (isNoKeyError(msg)) {
+      hostHasKey = false;
+      set({ status: 'nokey', error: '' });
+      return;
+    }
+    set({ status: 'error', error: msg });
   }
 }
 

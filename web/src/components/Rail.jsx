@@ -1899,7 +1899,7 @@ export default function Rail({
                 aria-label={title}
                 aria-pressed={mode === key}
                 onClick={() => setMode(key)}
-                className={`flex size-6 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-ring coarse:size-9 ${
+                className={`flex size-6 cursor-pointer items-center justify-center rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-ring coarse:size-10 ${
                   mode === key ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >

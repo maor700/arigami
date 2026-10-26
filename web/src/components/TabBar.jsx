@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, FolderTree, Menu, Plus, Diff, X } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, FolderTree, Menu, Plus, Diff, X } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { tabSrc } from '../lib/hostUrl.js';
 import { useStore } from '../lib/store.js';
@@ -11,6 +11,8 @@ import { Button } from './ui/button.jsx';
 import { Input } from './ui/input.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.jsx';
 import { Tip } from './ui/tooltip.jsx';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu.jsx';
+import { useIsDesktop } from '../lib/useMedia.js';
 
 function Badge({ badge }) {
   if (badge == null || badge === '') return null;
@@ -157,6 +159,7 @@ function AddTabForm({ sessionId, onClose }) {
 // mobile hamburger (the agent page) — skip it here.
 export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivate, addOpen, setAddOpen, embedded = false }) {
   const t = useT();
+  const isDesktop = useIsDesktop();
   const tabs = tabsProp?.length
     ? tabsProp
     : session.tabs?.length
@@ -196,6 +199,35 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
     if (stripRef.current.scrollWidth <= stripRef.current.clientWidth + 4) return;
     el.scrollIntoView({ block: 'nearest', inline: 'center' });
   }, [activeTabId, tabs.length]);
+
+  // Phones: when the strip scrolls, a ⌄ menu lists every tab (and the "+"),
+  // so a tab — or the way back to the chat — is never only reachable by
+  // guessing that the strip scrolls sideways.
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el || isDesktop || typeof ResizeObserver === 'undefined') {
+      setOverflowing(false);
+      return;
+    }
+    const check = () => setOverflowing(el.scrollWidth > el.clientWidth + 4);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isDesktop, tabs.length]);
+  const openAddTab = () => {
+    stripRef.current?.querySelector('[data-add-tab]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    setAddOpen?.(true);
+  };
+  const tabLabel = (tab) =>
+    tab.type === 'session'
+      ? tab.title && tab.title !== 'Session' ? tab.title : t('rail.tabSession')
+      : tab.type === 'changes'
+        ? tab.title || t('rail.tabChanges')
+        : tab.type === 'orchestration'
+          ? tab.title || t('rail.tabOrchestration')
+          : tab.title || tab.type;
 
   // The tab itself: hairline row, the active one carries a 2px neutral
   // underline (tabs are navigation, not the primary action).
@@ -242,7 +274,8 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                   activate(tab);
                 }
               }}
-              className={`${tabCls(active)} ${isSession ? 'min-w-[7.5rem] md:min-w-[4rem] md:flex-[0_1_auto]' : ''}`}
+              // phones: the Session tab stays pinned while the other tabs scroll under it
+              className={`${tabCls(active)} ${isSession ? 'sticky start-0 z-[1] min-w-[7.5rem] bg-background md:relative md:z-auto md:bg-transparent md:min-w-[4rem] md:flex-[0_1_auto]' : ''}`}
             >
               {isSession ? (
                 <>
@@ -274,7 +307,7 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
                       tabIndex={-1}
                       aria-label={t('rail.closeTab')}
                       onClick={(e) => closeTab(e, tab)}
-                      className="-me-1 ms-0.5 hidden size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground group-hover:inline-flex coarse:inline-flex coarse:size-8"
+                      className="-me-1 ms-0.5 hidden size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground group-hover:inline-flex coarse:inline-flex coarse:size-10"
                     >
                       <X className="size-3.5" />
                     </span>
@@ -303,6 +336,44 @@ export default function TabBar({ session, tabs: tabsProp, activeTabId, onActivat
           </PopoverContent>
         </Popover>
       </div>
+      {overflowing && (
+        <DropdownMenu>
+          <Tip label={t('rail.allTabs')}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={t('rail.allTabs')} data-tabs-menu className="shrink-0 self-center text-muted-foreground aria-expanded:text-foreground">
+                <ChevronDown />
+              </Button>
+            </DropdownMenuTrigger>
+          </Tip>
+          <DropdownMenuContent align="end" className="w-64">
+            {tabs.map((tab) => (
+              <DropdownMenuItem
+                key={tab.id}
+                data-tabs-menu-item={tab.id}
+                aria-current={tab.id === activeTabId ? 'page' : undefined}
+                className={tab.id === activeTabId ? 'bg-muted font-medium' : undefined}
+                onSelect={() => activate(tab)}
+              >
+                {tab.type === 'session' ? (
+                  <Dot color={color} size={8} />
+                ) : tab.type === 'changes' ? (
+                  <Diff />
+                ) : tab.type === 'orchestration' ? (
+                  <FolderTree />
+                ) : (
+                  <span className="size-3 shrink-0 rounded-[3px]" style={{ background: tab.color || 'var(--hb-faint)' }} />
+                )}
+                <span dir="auto" className="min-w-0 truncate">{tabLabel(tab)}</span>
+                {isExternal(tab) && <ArrowUpRight className="ms-auto size-3" />}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem data-tabs-menu-add onSelect={openAddTab}>
+              <Plus /> {t('rail.openUrlAsTab')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
