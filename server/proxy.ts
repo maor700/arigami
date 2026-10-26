@@ -100,6 +100,9 @@ export const rewriteSetCookie = (cookies: string[]): string[] =>
         .replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
     );
 
+/** Only a loopback upstream (a dev server on this box) gets the tunnel's X-Forwarded-Host — see proxyRequest. */
+export const keepsForwardedHost = (hostname: string): boolean => /^(127\.0\.0\.1|localhost|\[::1\])$/i.test(hostname);
+
 export const stripFrameAncestors = (v: HeaderValue): HeaderValue => {
   const strip = (s: string): string =>
     String(s)
@@ -386,6 +389,10 @@ export function createProxy(opts: ProxyOptions = {}): ProxyHandlers {
       }
     }
     headers.host = upstream.host;
+    // X-Forwarded-Host names OUR public address (the tunnel in front of the host), not the upstream's. A local dev
+    // server may use it to build links back to us; a real site checks it against its own hosts and answers
+    // "Invalid Host header" — so it goes only to loopback upstreams.
+    if (!keepsForwardedHost(upstream.hostname)) delete headers['x-forwarded-host'];
 
     if (VERCEL_BYPASS && /\.vercel\.app$/i.test(upstream.hostname)) {
       headers['x-vercel-protection-bypass'] = VERCEL_BYPASS;

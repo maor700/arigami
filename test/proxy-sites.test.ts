@@ -52,3 +52,9 @@ test('an extension declares proxy.sites only with the "proxy:sites" permission, 
   expect((await ext.validateExtension(mk([]))).errors.join(' ')).toMatch(/proxy:sites/);
   expect((await ext.validateExtension(mk(['proxy:sites']))).errors).toEqual([]);
 });
+
+test("the tunnel's X-Forwarded-Host reaches only a dev server on this box — a real site rejects a host it doesn't own", async () => {
+  const { keepsForwardedHost } = await import('../server/proxy.ts');
+  for (const h of ['127.0.0.1', 'localhost', '[::1]']) expect(keepsForwardedHost(h)).toBe(true);
+  for (const h of ['www.example.com', 'app.example.io', '127.0.0.1.example.com', '10.0.0.5']) expect(keepsForwardedHost(h)).toBe(false);
+});
