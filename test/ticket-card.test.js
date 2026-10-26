@@ -91,3 +91,14 @@ test('the PR model: GitHub-rendered body, a timeline of comments and reviews wit
   expect(m.files[0].threads).toHaveLength(1);
   expect(m.labels[0]).toEqual({ name: 'bug', color: '#d73a4a' });
 });
+
+test('a failed job log comes down to its ##[error] lines and what led to them', async () => {
+  const gc = await import('../server/lib/gh-checks.ts');
+  const raw = ['2026-10-25T16:42:09.1Z setup', ...Array.from({ length: 30 }, (_, i) => `2026-10-25T16:42:10.${i}Z line ${i}`), '2026-10-25T16:42:11.0Z \x1b[31m##[error]Process completed with exit code 1.\x1b[0m', '2026-10-25T16:42:12.0Z cleanup'].join('\n');
+  const ex = gc.logExcerpt(raw, 3);
+  expect(ex.errors).toBe(1);
+  expect(ex.lines).toEqual(['line 27', 'line 28', 'line 29', '✕ Process completed with exit code 1.']);
+  expect(gc.logExcerpt('a\nb\n').lines).toEqual(['a', 'b']);
+  expect(gc.actionsIds('https://github.com/o/r/actions/runs/12/job/34')).toEqual({ runId: '12', jobId: '34' });
+  expect(gc.actionsIds('https://vercel.com/x')).toBeNull();
+});

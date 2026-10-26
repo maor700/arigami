@@ -261,3 +261,9 @@ test("the PR tab's comment and reply are the owner's: a session token gets 403",
   const bad = await call('POST', '/__api/github/pr/o/r/1/reply', 'person', { body: 'hi' });
   expect(bad.status).toBe(400); // the owner passes the gate; a reply needs its thread
 });
+
+test("the PR tab's check log and re-run are the owner's", async () => {
+  expect((await call('GET', '/__api/github/pr/o/r/1/check-log?job=5', 'session')).status).toBe(403);
+  expect((await call('POST', '/__api/github/pr/o/r/1/rerun', 'session', { runId: '5' })).status).toBe(403);
+  expect((await call('POST', '/__api/github/pr/o/r/1/rerun', 'person', {})).status).toBe(400);
+});

@@ -367,6 +367,72 @@ function GhCheckIcon({ s }) {
   return <span class={'ghck ' + s}>{s === 'ok' ? '✓' : s === 'bad' ? '✕' : '●'}</span>;
 }
 
+// One check row; a failed GitHub Actions job can show what its log said.
+function GhCheck({ pr, c }) {
+  const [log, setLog] = useState(null); // null | 'loading' | {lines, errors} | {error}
+  const show = async () => {
+    if (log && log !== 'loading') return setLog(null);
+    setLog('loading');
+    try {
+      const r = await fetch(`/__api/github/pr/${encodeURIComponent(pr.owner)}/${encodeURIComponent(pr.repo)}/${pr.number}/check-log?job=${c.jobId}`);
+      const j = await r.json();
+      setLog(r.ok ? j : { error: j.error || `HTTP ${r.status}` });
+    } catch (e) { setLog({ error: e.message }); }
+  };
+  return (
+    <div class={'ghcheck ' + c.state}>
+      <div class="ghcheckrow">
+        <GhCheckIcon s={c.state} />
+        <span class="ghcname">{c.name}</span>
+        <span class="ghdim">{c.detail}{c.duration ? ` · ${c.duration}` : ''}</span>
+        <span class="ghcact">
+          {c.state === 'bad' && c.jobId && <button class="ghbtn small" onClick={show}>{log && log !== 'loading' ? 'Hide log' : 'Show error'}</button>}
+          {c.url && <a href={c.url} target="_blank">Details ↗</a>}
+        </span>
+      </div>
+      {log === 'loading' && <div class="ghlog ghdim">Reading the log…</div>}
+      {log && log !== 'loading' && (log.error ? <div class="ghlog err">{log.error}</div> : <pre class="ghlog">{log.lines.join('\n') || '(empty log)'}</pre>)}
+    </div>
+  );
+}
+
+function GhChecks({ pr, reload, say }) {
+  const groups = new Map();
+  for (const c of pr.checks.items) {
+    const k = c.workflow || 'Checks';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const order = (cs) => (cs.some((c) => c.state === 'bad') ? 0 : cs.some((c) => c.state === 'pending') ? 1 : 2);
+  const list = [...groups.entries()].sort((a, b) => order(a[1]) - order(b[1]) || a[0].localeCompare(b[0]));
+  const rerun = async (runId) => {
+    say('Re-running the failed jobs…');
+    try { await prAct(pr, 'rerun', { runId }); say('Re-run started — the checks update as it runs.'); setTimeout(reload, 4000); } catch (e) { say(e.message, true); }
+  };
+  if (!list.length) return <div class="ghbox ghchecks"><p class="empty">No checks.</p></div>;
+  const ck = pr.checks;
+  return (
+    <>
+      <div class={'ghcksum ' + (ck.bad ? 'bad' : ck.pending ? 'pending' : 'ok')}>
+        <GhCheckIcon s={ck.bad ? 'bad' : ck.pending ? 'pending' : 'ok'} />
+        <b>{ck.bad ? 'Some checks were not successful' : ck.pending ? 'Some checks haven’t completed yet' : 'All checks have passed'}</b>
+        <span class="ghdim">{ck.ok} successful{ck.bad ? `, ${ck.bad} failing` : ''}{ck.pending ? `, ${ck.pending} in progress` : ''}</span>
+      </div>
+      {list.map(([wf, cs]) => {
+        const failedRuns = [...new Set(cs.filter((c) => c.state === 'bad' && c.runId).map((c) => c.runId))];
+        return (
+          <div class="ghbox ghwf">
+            <div class="ghboxh"><GhCheckIcon s={order(cs) === 0 ? 'bad' : order(cs) === 1 ? 'pending' : 'ok'} /><b>{wf}</b><span class="ghdim">{cs.length} check{cs.length === 1 ? '' : 's'}</span>
+              {failedRuns.length > 0 && <span class="ghcact">{failedRuns.map((r) => <button class="ghbtn small" onClick={() => rerun(r)}>Re-run failed jobs</button>)}</span>}
+            </div>
+            {cs.map((c) => <GhCheck pr={pr} c={c} />)}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function GitHubTab({ pr, ghUrl, reload = () => {}, embedded }) {
   const [sub, setSub] = useState('conv');
   const [note, setNote] = useState(null);
@@ -417,9 +483,7 @@ function GitHubTab({ pr, ghUrl, reload = () => {}, embedded }) {
           </aside>
         </div>
       )}
-      {sub === 'checks' && (
-        <div class="ghbox ghchecks">{ck.items.length ? ck.items.map((c) => <div class="ghsrow"><GhCheckIcon s={c.state} />{c.url ? <a href={c.url} target="_blank">{c.name}</a> : <span>{c.name}</span>}</div>) : <p class="empty">No checks.</p>}</div>
-      )}
+      {sub === 'checks' && <GhChecks pr={pr} reload={reload} say={say} />}
       {sub === 'files' && (pr.files.length ? pr.files.map((f) => (
         <details class="ghfile" open={f.threads.length > 0 || pr.files.length <= 6}>
           <summary><span class="mono">{f.name}</span><span class="ghfstat">{f.threads.length > 0 && <span class="ghdim">💬 {f.threads.length}</span>} <span class="add">+{f.additions}</span> <span class="del">−{f.deletions}</span></span></summary>

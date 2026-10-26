@@ -5272,6 +5272,31 @@ export async function handle(
     // The PR tab's actions (server/assets/card.jsx): comment on the PR, reply to a review thread — with the host's gh
     // login, as the owner. The owner's browser only (its cookie), like the Linear tab's actions below.
     {
+      const ck = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/\d{1,7}\/(check-log|rerun)$/.exec(p);
+      if (ck) {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit' }, 403);
+        const [, owner, repo, op] = ck;
+        const gc = await import('./lib/gh-checks.js');
+        try {
+          if (op === 'check-log' && m === 'GET') {
+            const jobId = u.searchParams.get('job') || '';
+            if (!/^\d{1,15}$/.test(jobId)) return badRequest(res, 'job required');
+            return json(res, await gc.jobLog(owner, repo, jobId));
+          }
+          if (op === 'rerun' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const runId = String(body?.runId || '');
+            if (!/^\d{1,15}$/.test(runId)) return badRequest(res, 'runId required');
+            await gc.rerunFailed(owner, repo, runId);
+            return json(res, { ok: true });
+          }
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+        return notFound(res);
+      }
       const gm = /^\/__api\/github\/pr\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/(\d{1,7})\/(comment|reply)$/.exec(p);
       if (gm && m === 'POST') {
         const me = (req as any).auth as import('./auth.js').Principal | null;

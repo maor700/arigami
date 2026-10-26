@@ -396,7 +396,16 @@ export function prViewModel(pr, fallbackUrl = '') {
   const checkItems = checks.map((c) => {
     const v = String(c.conclusion || c.state || c.status || '').toUpperCase();
     const st = /SUCCESS|NEUTRAL|SKIPPED/.test(v) ? 'ok' : /FAIL|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED/.test(v) ? 'bad' : 'pending';
-    return { name: c.name || c.context || 'check', state: st, url: c.detailsUrl || c.targetUrl || '' };
+    const url = c.detailsUrl || c.targetUrl || '';
+    const ids = /\/actions\/runs\/(\d+)\/job\/(\d+)/.exec(url);
+    const secs = c.startedAt && c.completedAt ? Math.round((Date.parse(c.completedAt) - Date.parse(c.startedAt)) / 1000) : null;
+    return {
+      name: c.name || c.context || 'check', state: st, url,
+      workflow: c.workflowName || (c.__typename === 'StatusContext' ? 'Other checks' : ''),
+      detail: st === 'pending' ? String(c.status || c.state || '').toLowerCase().replace(/_/g, ' ') : String(c.conclusion || c.state || '').toLowerCase().replace(/_/g, ' '),
+      duration: secs == null || secs < 0 ? '' : secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`,
+      runId: ids ? ids[1] : '', jobId: ids ? ids[2] : '',
+    };
   });
   const count = (k) => checkItems.filter((c) => c.state === k).length;
   // review threads: replies hang off their root comment; a root belongs to the review it was submitted with
@@ -574,6 +583,13 @@ const TICKET_CSS = `
   .ghbtn{font:500 13px inherit;font-family:inherit;border-radius:6px;padding:4px 14px;cursor:pointer;border:1px solid var(--g-border);background:var(--g-muted);color:var(--g-text)}
   .ghbtn.primary{background:var(--g-green);border-color:rgba(240,246,252,.1);color:#fff}.ghbtn:disabled{opacity:.5;cursor:default}
   .ghchecks{padding:8px 14px}.ghck{width:16px;text-align:center;font-weight:700}.ghck.ok{color:#3fb950}.ghck.bad{color:#f85149}.ghck.pending{color:#d29922}
+  .ghcksum{display:flex;align-items:center;gap:10px;padding:12px 16px;margin:0 0 14px;border:1px solid var(--g-border);border-radius:6px;background:var(--g-head)}
+  .ghwf{margin:0 0 12px}.ghwf .ghboxh .ghcact,.ghcheckrow .ghcact{margin-inline-start:auto;display:flex;gap:10px;align-items:center;font-size:12.5px}
+  .ghcheck{border-top:1px solid var(--g-border)}.ghcheck:first-of-type{border-top:0}
+  .ghcheckrow{display:flex;align-items:center;gap:10px;padding:8px 14px;font-size:13px}.ghcname{font-weight:500;color:var(--g-text)}
+  .ghbtn.small{padding:2px 10px;font-size:12px}
+  .ghlog{margin:0;padding:10px 14px 12px 40px;background:var(--g-code);border-top:1px solid var(--g-border);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;color:var(--g-text)}
+  .ghlog.err{color:#f85149;white-space:normal}
   details.ghfile{border:1px solid var(--g-border);border-radius:6px;margin:0 0 14px;background:var(--g-panel);overflow:hidden}
   details.ghfile>summary{display:flex;justify-content:space-between;gap:10px;padding:8px 14px;background:var(--g-head);cursor:pointer;list-style:none;font-size:12.5px;color:var(--g-text);position:sticky;top:0}
   details.ghfile>summary::-webkit-details-marker{display:none}.ghfstat{white-space:nowrap;font-family:ui-monospace,monospace}
