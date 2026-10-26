@@ -387,7 +387,10 @@ function GhCheck({ pr, c }) {
         <span class="ghdim">{c.detail}{c.duration ? ` · ${c.duration}` : ''}</span>
         <span class="ghcact">
           {c.state === 'bad' && c.jobId && <button class="ghbtn small" onClick={show}>{log && log !== 'loading' ? 'Hide log' : 'Show error'}</button>}
-          {c.url && <a href={c.url} target="_blank">Details ↗</a>}
+          {/* a failing check that lives on another service (a visual review, a deploy) is acted on THERE — its own page */}
+          {c.url && (c.state === 'bad' && !c.jobId
+            ? <a class="ghbtn small primary" href={c.url} target="_blank" rel="noopener">Review ↗</a>
+            : <a href={c.url} target="_blank" rel="noopener">Details ↗</a>)}
         </span>
       </div>
       {log === 'loading' && <div class="ghlog ghdim">Reading the log…</div>}

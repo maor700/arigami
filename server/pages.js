@@ -588,6 +588,7 @@ const TICKET_CSS = `
   .ghcheck{border-top:1px solid var(--g-border)}.ghcheck:first-of-type{border-top:0}
   .ghcheckrow{display:flex;align-items:center;gap:10px;padding:8px 14px;font-size:13px}.ghcname{font-weight:500;color:var(--g-text)}
   .ghbtn.small{padding:2px 10px;font-size:12px}
+  a.ghbtn{text-decoration:none!important;display:inline-block}a.ghbtn.primary{color:#fff!important}
   .ghlog{margin:0;padding:10px 14px 12px 40px;background:var(--g-code);border-top:1px solid var(--g-border);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;color:var(--g-text)}
   .ghlog.err{color:#f85149;white-space:normal}
   details.ghfile{border:1px solid var(--g-border);border-radius:6px;margin:0 0 14px;background:var(--g-panel);overflow:hidden}
