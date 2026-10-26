@@ -1,10 +1,12 @@
 // The ONE mic trigger (VOICE1), mounted twice:
 //   mode 'dictate' — in the session composer: the transcript goes into the draft.
 //   mode 'command' — in the rail (desktop + mobile drawer): the voice-command router.
+// Neither renders while the host has no Groq key (config.voiceEnabled).
 // Both wear a tiny badge with the language the mic listens in (he/en/…) and
 // turn into a red dot while THIS mode is recording. `className` replaces the
 // button's box styling so each host keeps its own button size.
 import { useVoice, toggleRecording } from '../lib/voice.js';
+import { useStore } from '../lib/store.js';
 import { useVoiceLang } from './VoiceLangPicker.jsx';
 import { useT } from '../lib/i18n.js';
 import { CircleIcon, MicIcon } from 'lucide-react';
@@ -14,8 +16,12 @@ const BOX = 'flex size-7 shrink-0 cursor-pointer items-center justify-center rou
 
 export default function MicButton({ mode = 'command', className = BOX, title }) {
   const t = useT();
+  const { config } = useStore();
   const { status, mode: activeMode } = useVoice();
   const lang = useVoiceLang();
+  // No Groq key on the host → no mic at all (it could only fail). The hotkey
+  // still opens the HUD, which says why and links the key guide.
+  if (!config?.voiceEnabled) return null;
   const rec = status === 'recording' && activeMode === mode;
   const label = title || (mode === 'dictate' ? t('rail.dictateHint') : t('rail.voiceControlHint'));
   return (

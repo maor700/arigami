@@ -19,6 +19,7 @@ import ChatTextSize from './ChatTextSize.jsx';
 import { VoiceMain, VoiceAdvanced } from './Voice.jsx';
 import { BrainHeartbeat, TelemetryToggle } from './Automation.jsx';
 import MemoryLearning from './MemoryLearning.jsx';
+import { GROQ_KEY_GUIDE } from '../../lib/voice.js';
 
 export const GENERAL_ADVANCED_IDS = ['voice-advanced', 'heartbeat', 'telemetry'];
 
@@ -116,7 +117,10 @@ export default function General({ section = '', voiceEnabled = false, recording,
         <Section id={voiceEnabled ? 'voice-advanced' : 'voice'} title={t('chrome.voice.section')}>
           {!voiceEnabled && (
             <>
-              <div data-voice-off className="mb-1 text-xs text-fgdim">{t('settings.voice.off')}</div>
+              <div data-voice-off className="mb-1 text-xs text-fgdim">
+                {t('settings.voice.off')}{' '}
+                <a href={GROQ_KEY_GUIDE} target="_blank" rel="noreferrer" className="text-info underline underline-offset-2">{t('dialogs.voiceNoKeyGuide')}</a>
+              </div>
               <VoiceMain recording={recording} setRecording={setRecording} />
             </>
           )}

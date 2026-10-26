@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { useVoice, stopRecording, cancel, clearPlan, startRecording, endConversation } from '../lib/voice.js';
+import { useVoice, stopRecording, cancel, clearPlan, startRecording, endConversation, GROQ_KEY_GUIDE } from '../lib/voice.js';
 import { runAction } from '../lib/commands.js';
 import { useStore } from '../lib/store.js';
 import { usePrefs } from '../lib/prefs.js';
 import { sessionLabel } from './ui.jsx';
 import { t as tr, useT, fieldDir } from '../lib/i18n.js';
 import { Icon } from '../lib/icons.js';
-import { faCheck, faMicrophone, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faCheck, faMicrophone, faMicrophoneSlash, faTriangleExclamation, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/button.jsx';
 import VoiceLangPicker from './VoiceLangPicker.jsx';
 
@@ -151,6 +151,8 @@ export default function VoiceHUD() {
             <span className="host-spinner h-3.5 w-3.5" />
           ) : status === 'error' ? (
             <span className="text-danger"><Icon icon={faTriangleExclamation} /></span>
+          ) : status === 'nokey' ? (
+            <span className="text-[13px] text-fgdim"><Icon icon={faMicrophoneSlash} /></span>
           ) : (
             <span className="text-[13px]"><Icon icon={faMicrophone} /></span>
           )}
@@ -159,11 +161,27 @@ export default function VoiceHUD() {
             {status === 'thinking' && (dictate ? t('dialogs.voiceTranscribingOnly') : t('dialogs.voiceTranscribing'))}
             {status === 'review' && (relisten ? t('dialogs.voiceRelisten') : plan?.kind === 'ask' ? t('dialogs.voiceQuestion') : t('dialogs.voiceCommand'))}
             {status === 'error' && (dictate ? t('dialogs.voiceDictation') : t('dialogs.voiceError'))}
+            {status === 'nokey' && t('dialogs.voiceNoKeyTitle')}
           </span>
           <button type="button" onClick={close} title={t('dialogs.cancel')} className="cursor-pointer px-1 text-[15px] text-fgdim hover:text-fg"><Icon icon={faXmark} /></button>
         </div>
 
         <div className="px-4 py-3">
+          {/* no Groq key on the host: say so, and where to get one */}
+          {status === 'nokey' && (
+            <div data-voice-nokey className="text-[12px] leading-snug text-fg">
+              <p className="mb-2">{t('dialogs.voiceNoKeyBody')}</p>
+              <a
+                href={GROQ_KEY_GUIDE}
+                target="_blank"
+                rel="noreferrer"
+                data-voice-nokey-guide
+                className="inline-flex min-h-7 items-center gap-1.5 font-medium text-info underline underline-offset-2 coarse:min-h-11"
+              >
+                {t('dialogs.voiceNoKeyGuide')} <Icon icon={faArrowUpRightFromSquare} className="text-[10px] rtl:-scale-x-100" />
+              </a>
+            </div>
+          )}
           {/* VOICE2: the earlier turns of this exchange, chat-style */}
           {history.length > 0 && (
             <div className="mb-2.5 max-h-32 overflow-y-auto border-s-2 border-hair ps-2.5" data-voice-turns>
@@ -234,15 +252,19 @@ export default function VoiceHUD() {
 
         <div className="flex items-center justify-between gap-2 border-t border-hair px-4 py-2 font-mono text-[11.5px] md:text-[10px] text-fgdim">
           {/* VOICE1: the mic language, changeable right here (same pref as Settings) */}
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {status === 'nokey' ? <span /> : <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="shrink-0">{t('dialogs.voiceLang')}</span>
             <VoiceLangPicker compact />
             {/* one hint, truncated: how to END while the loop is live, else the shortcut */}
             {!dictate && (listeningForAnswer || relisten || plan?.kind === 'ask' || plan?.kind === 'answer'
               ? <span className="hidden min-w-0 truncate sm:inline" data-voice-stop-hint>· {t('dialogs.voiceStopHint')}</span>
               : hotkey && <span className="hidden min-w-0 truncate sm:inline" data-voice-hotkey>· {hotkey} {t('dialogs.mic')}</span>)}
-          </span>
-          {status === 'recording' ? (
+          </span>}
+          {status === 'nokey' ? (
+            <Button variant="outline" size="sm" onClick={close}>
+              {t('dialogs.close')}
+            </Button>
+          ) : status === 'recording' ? (
             <span className="flex shrink-0 items-center gap-1.5">
               {listeningForAnswer && (
                 <Button variant="outline" size="sm" onClick={() => endConversation('stop')} data-voice-cancel>

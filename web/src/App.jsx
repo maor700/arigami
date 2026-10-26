@@ -5,7 +5,7 @@ import { useStore, loadChat, setAttentionHandler, needsAttention, hasOpenScreenR
 import { usePrefs, setPrefs, getPrefs, setTermOverride } from './lib/prefs.js';
 import { useIsDesktop } from './lib/useMedia.js';
 import { isVncInputTarget } from './lib/useScreenConnection.js';
-import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext } from './lib/voice.js';
+import { stopRecording, hotkeyPress, composerFocused, matchesHotkey, setSelectedContext, setVoiceAvailable } from './lib/voice.js';
 import { setCommandHandlers } from './lib/commands.js';
 import { useT, currentLang, t as tNow } from './lib/i18n.js';
 import { toast, dismissToast } from './lib/toast.js';
@@ -485,6 +485,11 @@ function Cockpit() {
   useEffect(() => {
     setSelectedContext(selectedId);
   }, [selectedId]);
+
+  // No Groq key on the host → the hotkey opens the HUD's "no key" card, not the mic.
+  useEffect(() => {
+    setVoiceAvailable(config ? !!config.voiceEnabled : null);
+  }, [config]);
 
   // Auto-compact is now a real `claude --autocompact <tokens>` spawn flag
   // (server/claude.js setAutoCompact), applied per-session from the context
