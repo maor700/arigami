@@ -31,3 +31,16 @@ test('the live fetcher asks for the comments alongside the issue (get_issue carr
   const src = fs.readFileSync(path.resolve(import.meta.dir, '../server/index.ts'), 'utf8');
   expect(src).toMatch(/Promise\.all\(\[mcp\.getIssue\(id\), mcp\.listComments\(id\)\.catch\(\(\) => \[\]\)\]\)/);
 });
+
+test("Linear's <linear-image> tags render as images (and other uploads as links)", () => {
+  const r = runInChild(
+    "const p=await import('./server/pages.js');" +
+      "emit(p.mdToHtml('before\\n<linear-image>{\"type\":\"image\",\"attrs\":{\"src\":\"https://uploads.linear.app/a/b?signature=s.t\",\"alt\":\"Shot 1.png\"}}</linear-image>\\n<linear-file>{\"type\":\"file\",\"attrs\":{\"href\":\"https://uploads.linear.app/c\",\"title\":\"log.txt\"}}</linear-file>\\n<linear-image>{not json}</linear-image>'));",
+    { ARIGAMI_DIR: tmpDir('arigami-ticket-img-'), ARIGAMI_PORT: '' }
+  );
+  if (!r.ok) throw new Error(r.error);
+  const html = r.out[0];
+  expect(html).toContain('<img alt="Shot 1.png" src="https://uploads.linear.app/a/b?signature=s.t"');
+  expect(html).toContain('<a href="https://uploads.linear.app/c" target="_blank" rel="noopener">log.txt</a>');
+  expect(html).toContain('&lt;linear-image&gt;{not json}'); // unparseable: shown as it came, escaped
+});

@@ -280,7 +280,18 @@ export function diffHtml(patch) {
 // /__ticket-img/<file>).
 export function mdToHtml(md) {
   // Linear user mentions come as <user id="...">Name</user> — turn into @Name first.
-  const pre = String(md || '').replace(/<user\b[^>]*>([^<]*)<\/user>/g, '@$1');
+  const pre = String(md || '')
+    .replace(/<user\b[^>]*>([^<]*)<\/user>/g, '@$1')
+    // Linear's MCP sends uploads as <linear-image>{"type":"image","attrs":{"src","alt"}}</linear-image> (and
+    // <linear-file>/<linear-video> alike) — an image becomes markdown, anything else a link with its name
+    .replace(/<linear-(\w+)>\s*(\{[\s\S]*?\})\s*<\/linear-\1>/g, (whole, kind, json) => {
+      let a;
+      try { a = JSON.parse(json).attrs || {}; } catch { return whole; }
+      const src = String(a.src || a.href || a.url || '');
+      if (!/^https?:\/\//.test(src)) return whole;
+      const name = String(a.alt || a.title || a.name || kind).replace(/[\[\]]/g, '');
+      return kind === 'image' ? `![${name}](${src})` : `[${name}](${src})`;
+    });
   const lines = esc(pre).split('\n');
   const out = [];
   let inList = false;
