@@ -16,6 +16,43 @@ const ZOOM0 = parseFloat(document.documentElement.dataset.zoom || '1') || 1;
 // snapshot) — shown if that fetch fails instead of a bare "isn't loaded".
 const FALLBACK_TITLE = document.documentElement.dataset.fallbackTitle || '';
 
+// The cockpit's theme (this page is same-origin: it reads the cockpit's own prefs) — and live, when it changes there.
+function applyTheme() {
+  let theme = '';
+  try { theme = JSON.parse(localStorage.getItem('arigami-prefs') || '{}').theme || ''; } catch {}
+  if (theme !== 'light' && theme !== 'dark') theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+}
+applyTheme();
+addEventListener('storage', (e) => { if (!e.key || e.key === 'arigami-prefs') applyTheme(); });
+matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
+
+// Click an image in a description or comment → it opens large, like Linear; Esc or a click outside closes it.
+function Lightbox() {
+  const [img, setImg] = useState(null);
+  useEffect(() => {
+    const onClick = (e) => {
+      const t = e.target;
+      if (t && t.tagName === 'IMG' && t.closest('.desc')) { e.preventDefault(); setImg({ src: t.currentSrc || t.src, alt: t.alt || '' }); }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setImg(null); };
+    document.addEventListener('click', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('click', onClick); document.removeEventListener('keydown', onKey); };
+  }, []);
+  if (!img) return null;
+  return (
+    <div class="lbox" onClick={() => setImg(null)} role="dialog" aria-label={img.alt}>
+      <div class="lbar" onClick={(e) => e.stopPropagation()}>
+        <a href={img.src} target="_blank" rel="noopener">Open original ↗</a>
+        <button onClick={() => setImg(null)}>✕</button>
+      </div>
+      <img src={img.src} alt={img.alt} onClick={(e) => e.stopPropagation()} />
+      {img.alt && <div class="lcap">{img.alt}</div>}
+    </div>
+  );
+}
+
 const Pill = ({ children, color = '#79c0ff' }) => (
   <span class="pill" style={{ background: color + '22', color, borderColor: color + '55' }}>{children}</span>
 );
@@ -69,8 +106,8 @@ function StatusIcon({ kind, color }) {
 function PriorityIcon({ level }) {
   if (level === 1) return <svg class="ico" viewBox="0 0 14 14"><rect x="1" y="1" width="12" height="12" rx="3" fill="#fc7840" /><path d="M7 3.8v4M7 10v.2" stroke="#1b1c1f" stroke-width="1.8" stroke-linecap="round" /></svg>;
   const lit = level === 2 ? 3 : level === 3 ? 2 : level === 4 ? 1 : 0;
-  if (!lit) return <svg class="ico" viewBox="0 0 14 14">{[2, 6, 10].map((x) => <rect x={x} y="6.3" width="2.4" height="1.4" rx=".7" fill="#8a8f98" />)}</svg>;
-  return <svg class="ico" viewBox="0 0 14 14">{[0, 1, 2].map((i) => <rect x={1.5 + i * 4} y={9 - i * 3} width="3" height={3 + i * 3} rx="1" fill={i < lit ? '#d2d3e0' : '#4b4c55'} />)}</svg>;
+  if (!lit) return <svg class="ico" viewBox="0 0 14 14">{[2, 6, 10].map((x) => <rect x={x} y="6.3" width="2.4" height="1.4" rx=".7" fill="var(--dim)" />)}</svg>;
+  return <svg class="ico" viewBox="0 0 14 14">{[0, 1, 2].map((i) => <rect x={1.5 + i * 4} y={9 - i * 3} width="3" height={3 + i * 3} rx="1" fill={i < lit ? 'var(--text)' : 'var(--chip-off)'} />)}</svg>;
 }
 
 function Prop({ p }) {
@@ -247,4 +284,4 @@ function PrApp() {
   );
 }
 
-render(PR_REF ? <PrApp /> : <App />, document.getElementById('app'));
+render(<>{PR_REF ? <PrApp /> : <App />}<Lightbox /></>, document.getElementById('app'));

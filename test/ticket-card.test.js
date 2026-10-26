@@ -44,3 +44,15 @@ test("Linear's <linear-image> tags render as images (and other uploads as links)
   expect(html).toContain('<a href="https://uploads.linear.app/c" target="_blank" rel="noopener">log.txt</a>');
   expect(html).toContain('&lt;linear-image&gt;{not json}'); // unparseable: shown as it came, escaped
 });
+
+test('the ticket page follows the cockpit theme (same-origin prefs, live) and zooms images', () => {
+  const card = fs.readFileSync(path.resolve(import.meta.dir, '../server/assets/card.jsx'), 'utf8');
+  const pages = fs.readFileSync(path.resolve(import.meta.dir, '../server/pages.js'), 'utf8');
+  expect(card).toContain("localStorage.getItem('arigami-prefs')");
+  expect(card).toMatch(/addEventListener\('storage'/);
+  expect(card).toContain('<Lightbox />');
+  expect(pages).toMatch(/html\[data-theme=light\]\{color-scheme:light;--bg:/);
+  // no hard-coded dark colour left in the Linear page rules
+  const lin = pages.slice(pages.indexOf('/* the Linear ticket page'), pages.indexOf('@media (max-width:760px)'));
+  expect(lin).not.toMatch(/#(16171a|18191c|1b1c20|26272c|d2d3e0|f7f8f8)/i);
+});
