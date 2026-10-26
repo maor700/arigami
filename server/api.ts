@@ -5269,6 +5269,50 @@ export async function handle(
         return json(res, []);
       }
     }
+    // The ticket tab's actions (server/assets/card.jsx): comment, status, assignee, priority, labels — done in Linear
+    // as the owner, through the host's Linear grant. The owner's browser only (its cookie): not a session's token, not
+    // an API token — an agent reaches Linear through its own tools, where its changes show up as its own.
+    {
+      const lm = /^\/__api\/linear\/issues\/([A-Za-z0-9-]{1,64})\/(options|comment|update)$/.exec(p);
+      if (lm) {
+        const me = (req as any).auth as import('./auth.js').Principal | null;
+        if (!(me?.kind === 'off' || (me?.kind === 'user' && me.via === 'cookie' && auth.isAdmin(me))))
+          return json(res, { error: 'only the owner, in the cockpit, can change a Linear issue from here' }, 403);
+        const mcp = await import('./linear-mcp.js');
+        if (!mcp.status().connected) return json(res, { error: 'Linear is not connected' }, 409);
+        const [, issue, op] = lm;
+        try {
+          if (op === 'options' && m === 'GET') {
+            const team = u.searchParams.get('team') || '';
+            if (!team) return badRequest(res, 'team required');
+            return json(res, await mcp.teamOptions(team));
+          }
+          if (op === 'comment' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const text = String(body?.body || '').trim();
+            if (!text) return badRequest(res, 'body required');
+            if (text.length > 20000) return badRequest(res, 'comment too long');
+            await mcp.addComment(issue, text, body?.parentId ? String(body.parentId) : undefined);
+            return json(res, { ok: true });
+          }
+          if (op === 'update' && m === 'POST') {
+            const body = (await readBody(req)) as any;
+            const patch: import('./linear-mcp.js').IssuePatch = {};
+            if (typeof body?.state === 'string' && body.state) patch.state = body.state;
+            if (body?.assignee === null || (typeof body?.assignee === 'string' && body.assignee)) patch.assignee = body.assignee;
+            if (Number.isInteger(body?.priority) && body.priority >= 0 && body.priority <= 4) patch.priority = body.priority;
+            for (const k of ['addLabels', 'removeLabels'] as const)
+              if (Array.isArray(body?.[k]) && body[k].length) patch[k] = body[k].map(String).slice(0, 20);
+            if (!Object.keys(patch).length) return badRequest(res, 'nothing to change');
+            await mcp.updateIssue(issue, patch);
+            return json(res, { ok: true });
+          }
+        } catch (e) {
+          return json(res, { error: (e as Error).message }, 502);
+        }
+        return notFound(res);
+      }
+    }
     if (p === '/__api/linear/status' && m === 'GET') {
       const mcp = await import('./linear-mcp.js');
       return json(res, mcp.status());

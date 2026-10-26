@@ -240,3 +240,15 @@ test('SSO: never onto an identity provider itself, and nothing to drive without 
     expect(r.json.ok).toBe(false);
   }
 });
+
+// ---- the Linear ticket tab's actions ----------------------------------------------------------------------------------
+
+test("the ticket tab's Linear actions are the owner's: a session token gets 403, the owner reaches Linear", async () => {
+  for (const [method, sub, body] of [['GET', 'options?team=Web', undefined], ['POST', 'comment', { body: 'hi' }], ['POST', 'update', { state: 'Done' }]] as const) {
+    const s = await call(method, `/__api/linear/issues/ABC-1/${sub}`, 'session', body);
+    expect(s.status).toBe(403);
+    const o = await call(method, `/__api/linear/issues/ABC-1/${sub}`, 'person', body);
+    expect(o.status).toBe(409); // past the gate: this test host has no Linear connection
+    expect(o.json.error).toMatch(/Linear is not connected/);
+  }
+});

@@ -355,7 +355,7 @@ export function ticketData(t, id, pr) {
   const replies = {}, tops = [];
   (t.comments || []).forEach((c) => { if (c.parentId) (replies[c.parentId] = replies[c.parentId] || []).push(c); else tops.push(c); });
   const byTime = (a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
-  const mapC = (c) => ({ author: displayName(c.author), initials: initialsOf(c.author), avatar: avatarColor(c.author), at: c.createdAt || '', time: fmtDate(c.createdAt), resolved: !!c.resolvedAt, quotedText: c.quotedText || '', bodyHtml: mdToHtml(c.body), replies: (replies[c.id] || []).sort(byTime).map(mapC) });
+  const mapC = (c) => ({ id: c.id || '', author: displayName(c.author), initials: initialsOf(c.author), avatar: avatarColor(c.author), at: c.createdAt || '', time: fmtDate(c.createdAt), resolved: !!c.resolvedAt, quotedText: c.quotedText || '', bodyHtml: mdToHtml(c.body), replies: (replies[c.id] || []).sort(byTime).map(mapC) });
   const comments = tops.sort(byTime).map(mapC);
   const ghAtt = (t.attachments || []).find((a) => isPrUrl(a.url));
   // the sidebar, in Linear's order — only what the ticket has
@@ -470,6 +470,22 @@ const TICKET_CSS = `
   .side-sec{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}.side-sec .plbl{margin-bottom:6px}
   .slink{display:flex;align-items:center;gap:7px;padding:4px 6px;margin:0 -6px;border-radius:6px;color:var(--text);font-size:12.5px}.slink:hover{background:var(--hover);text-decoration:none}
   .slink .li{color:var(--dim);width:12px;text-align:center}.slink .lt2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .propwrap{position:relative}
+  .pval.editable{cursor:pointer;border-radius:6px;margin:-3px -6px;padding:3px 6px}.pval.editable:hover{background:var(--hover)}
+  .menu{position:absolute;z-index:20;top:100%;inset-inline-end:0;min-width:220px;max-width:min(300px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.28);padding:4px;font-size:13px}
+  .msearch{width:100%;font:inherit;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;margin-bottom:4px;outline:none}
+  .mlist{max-height:300px;overflow:auto}
+  .mitem{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;color:var(--text)}.mitem:hover{background:var(--hover)}
+  .mitem.on{font-weight:600}.mitem .check{margin-inline-start:auto;color:var(--accent)}.small{font-size:11.5px}
+  .composer{position:relative;margin:14px 0 6px;border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:8px}
+  .composer.reply{margin:0;border:0;border-top:1px solid var(--border);border-radius:0;padding:10px 14px 10px 44px;background:transparent}
+  .composer textarea{width:100%;resize:vertical;min-height:44px;font:14px/1.5 inherit;font-family:inherit;background:transparent;color:var(--text);border:0;outline:none}
+  .composer .mentions{top:auto;bottom:calc(100% - 6px);inset-inline-start:8px}
+  .crow{display:flex;justify-content:flex-end;gap:6px}
+  .crow button,.replyrow button{font:500 12.5px inherit;font-family:inherit;border-radius:6px;padding:4px 12px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text)}
+  .crow .send{background:var(--accent);border-color:var(--accent);color:#fff}.crow .send:disabled{opacity:.45;cursor:default}
+  .replyrow{border-top:1px solid var(--border);padding:6px 14px 6px 44px}.replyrow button{border:0;color:var(--dim);padding:2px 0}.replyrow button:hover{color:var(--text)}
+  .note{position:sticky;top:0;z-index:30;padding:6px 20px;font-size:12.5px;background:var(--panel);border-bottom:1px solid var(--border);color:var(--dim);cursor:pointer}.note.err{color:#eb5757}
   .desc img{cursor:zoom-in}
   .lbox{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;cursor:zoom-out;animation:lbin .12s ease-out}
   .lbox img{max-width:94vw;max-height:88vh;border:0;border-radius:6px;margin:0;box-shadow:0 10px 40px rgba(0,0,0,.5);cursor:default}

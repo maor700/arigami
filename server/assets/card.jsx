@@ -5,7 +5,7 @@
 // Removed vs the PoC: the 💬 Chat tab (the old /__chat relay is replaced by the
 // host's session chat) and the /__prefs zoom persistence (zoom is local-only).
 import { render } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 
 // The shell sets these on <html data-ticket data-zoom>; the server provides all
 // rendered HTML chunks (markdown, diffs) via /__ticket-data so this stays UI-only.
@@ -64,8 +64,8 @@ function useData(id, urlPrefix = '/__ticket-data/') {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    setD(null);
-    fetch(urlPrefix + id)
+    if (attempt === 0) setD(null); // a reload after an action keeps the page (and its scroll) until the new data lands
+    fetch(urlPrefix + id + (attempt ? `?r=${attempt}` : ''))
       .then((r) => r.json())
       .then((j) => live && setD(j))
       .catch(() => live && setD({ error: true }));
@@ -110,7 +110,7 @@ function PriorityIcon({ level }) {
   return <svg class="ico" viewBox="0 0 14 14">{[0, 1, 2].map((i) => <rect x={1.5 + i * 4} y={9 - i * 3} width="3" height={3 + i * 3} rx="1" fill={i < lit ? 'var(--text)' : 'var(--chip-off)'} />)}</svg>;
 }
 
-function Prop({ p }) {
+function Prop({ p, edit }) {
   let v;
   if (p.key === 'status') v = <><StatusIcon kind={p.kind} color={p.color} /><span>{p.value}</span></>;
   else if (p.key === 'priority') v = <><PriorityIcon level={p.level} /><span>{p.value}</span></>;
@@ -120,7 +120,112 @@ function Prop({ p }) {
   return (
     <div class="prop">
       <div class="plbl">{p.label}</div>
-      <div class="pval">{v}</div>
+      <div class={'pval' + (edit ? ' editable' : '')} onClick={edit || undefined} role={edit ? 'button' : undefined} tabIndex={edit ? 0 : undefined}>{v}</div>
+    </div>
+  );
+}
+
+// The sidebar with its pickers. Every change goes to Linear, then the page reloads what Linear now says.
+function Props({ t, reload, say }) {
+  const [open, setOpen] = useState(null);
+  const [search, setSearch] = useState('');
+  const [opts, loadOpts] = useOptions(t.team);
+  const busy = useRef(false);
+  const run = async (patch, label) => {
+    if (busy.current) return;
+    busy.current = true; setOpen(null); say(`Saving ${label}…`);
+    try { await act('update', patch); say(''); reload(); } catch (e) { say(e.message, true); } finally { busy.current = false; }
+  };
+  const editable = { status: 1, priority: 1, assignee: 1, labels: 1 };
+  const openMenu = (key) => () => { setSearch(''); loadOpts(); setOpen(open === key ? null : key); };
+  const cur = Object.fromEntries(t.props.map((p) => [p.key, p]));
+  const q = search.trim().toLowerCase();
+  const list = (items) => (opts?.error ? <div class="mitem dim">{opts.error}</div> : !opts ? <div class="mitem dim">Loading…</div> : items);
+  return (
+    <>
+      {t.props.map((p) => (
+        <div class="propwrap">
+          <Prop p={p} edit={editable[p.key] ? openMenu(p.key) : null} />
+          {open === p.key && p.key === 'status' && (
+            <Menu onClose={() => setOpen(null)}>
+              {list(opts?.statuses.map((st) => <div class={'mitem' + (st.name === p.value ? ' on' : '')} onClick={() => st.name !== p.value && run({ state: st.name }, 'status')}><StatusIcon kind={st.type} color={st.color || TYPE_COLOR[st.type]} /><span>{st.name}</span></div>))}
+            </Menu>
+          )}
+          {open === p.key && p.key === 'priority' && (
+            <Menu onClose={() => setOpen(null)}>
+              {PRIORITIES.map(([lv, name]) => <div class={'mitem' + (lv === p.level ? ' on' : '')} onClick={() => lv !== p.level && run({ priority: lv }, 'priority')}><PriorityIcon level={lv} /><span>{name}</span></div>)}
+            </Menu>
+          )}
+          {open === p.key && p.key === 'assignee' && (
+            <Menu onClose={() => setOpen(null)} search={search} setSearch={setSearch}>
+              <div class="mitem" onClick={() => run({ assignee: null }, 'assignee')}><span class="dim">Unassigned</span></div>
+              {list(opts?.users.filter((u) => !q || u.name.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q)).slice(0, 60).map((u) => (
+                <div class="mitem" onClick={() => run({ assignee: u.id }, 'assignee')}><span>{u.name}</span>{u.email && <span class="dim small">{u.email}</span>}</div>
+              )))}
+            </Menu>
+          )}
+          {open === p.key && p.key === 'labels' && (
+            <Menu onClose={() => setOpen(null)} search={search} setSearch={setSearch}>
+              {list(opts?.labels.filter((l) => !q || l.name.toLowerCase().includes(q)).slice(0, 80).map((l) => {
+                const has = (cur.labels?.labels || []).some((x) => x.name === l.name);
+                return <div class={'mitem' + (has ? ' on' : '')} onClick={() => run(has ? { removeLabels: [l.name] } : { addLabels: [l.name] }, 'labels')}><span class="dot" style={{ background: l.color || '#8a8f98' }} /><span>{l.name}</span>{has && <span class="check">✓</span>}</div>;
+              }))}
+            </Menu>
+          )}
+        </div>
+      ))}
+      {!cur.labels && (
+        <div class="propwrap">
+          <Prop p={{ key: 'labels', label: 'Labels', labels: [] }} edit={openMenu('labels-new')} />
+          {open === 'labels-new' && (
+            <Menu onClose={() => setOpen(null)} search={search} setSearch={setSearch}>
+              {list(opts?.labels.filter((l) => !q || l.name.toLowerCase().includes(q)).slice(0, 80).map((l) => <div class="mitem" onClick={() => run({ addLabels: [l.name] }, 'labels')}><span class="dot" style={{ background: l.color || '#8a8f98' }} /><span>{l.name}</span></div>))}
+            </Menu>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Writing a comment or a reply, with @mention completion from the team's members. Ctrl/⌘+Enter sends.
+function Composer({ t, parentId, reload, onDone, say }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [mention, setMention] = useState(null); // {q, start}
+  const [opts, loadOpts] = useOptions(t.team);
+  const ta = useRef(null);
+  const onInput = (e) => {
+    const v = e.currentTarget.value;
+    setText(v);
+    const caret = e.currentTarget.selectionStart;
+    const m = /(^|\s)@([\w.-]*)$/.exec(v.slice(0, caret));
+    if (m) { loadOpts(); setMention({ q: m[2].toLowerCase(), start: caret - m[2].length - 1 }); } else setMention(null);
+  };
+  const pick = (u) => {
+    const el = ta.current;
+    const caret = el.selectionStart;
+    const v = text.slice(0, mention.start) + '@' + u.handle + ' ' + text.slice(caret);
+    setText(v); setMention(null);
+    requestAnimationFrame(() => { el.focus(); const pos = mention.start + u.handle.length + 2; el.setSelectionRange(pos, pos); });
+  };
+  const send = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true); say('Sending…');
+    try { await act('comment', { body: text, ...(parentId ? { parentId } : {}) }); setText(''); say(''); onDone?.(); reload(); } catch (e) { say(e.message, true); } finally { setBusy(false); }
+  };
+  const matches = mention && opts?.users ? opts.users.filter((u) => u.handle.toLowerCase().startsWith(mention.q) || u.name.toLowerCase().includes(mention.q)).slice(0, 8) : [];
+  return (
+    <div class={'composer' + (parentId ? ' reply' : '')}>
+      <textarea ref={ta} value={text} onInput={onInput} rows={parentId ? 2 : 3} placeholder={parentId ? 'Leave a reply…' : 'Leave a comment…'}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } if (e.key === 'Escape' && mention) setMention(null); }} />
+      {mention && matches.length > 0 && (
+        <div class="menu mentions">{matches.map((u) => <div class="mitem" onMouseDown={(e) => { e.preventDefault(); pick(u); }}><span>{u.name}</span><span class="dim small">@{u.handle}</span></div>)}</div>
+      )}
+      <div class="crow">
+        {onDone && <button class="ghost" onClick={onDone}>Cancel</button>}
+        <button class="send" disabled={busy || !text.trim()} onClick={send}>{parentId ? 'Reply' : 'Comment'}</button>
+      </div>
     </div>
   );
 }
@@ -140,16 +245,63 @@ function Comment({ c, reply }) {
   );
 }
 
-function Thread({ c }) {
+function Thread({ c, t, reload, say }) {
+  const [replying, setReplying] = useState(false);
   return (
     <div class="thread">
       <Comment c={c} />
       {(c.replies || []).map((r) => <Comment c={r} reply />)}
+      {c.id && (replying
+        ? <Composer t={t} parentId={c.id} reload={reload} say={say} onDone={() => setReplying(false)} />
+        : <div class="replyrow"><button class="ghost" onClick={() => setReplying(true)}>Reply</button></div>)}
     </div>
   );
 }
 
 const LINK_ICON = { pr: '⑂', sentry: '◆', link: '↗' };
+
+// ---- acting on the issue (owner only: /__api/linear/issues/:id/*, same-origin cookie) ---------------------------------
+async function act(path, body) {
+  const r = await fetch(`/__api/linear/issues/${encodeURIComponent(ID)}/${path}`, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+let optionsCache = null;
+function useOptions(team) {
+  const [o, setO] = useState(optionsCache);
+  // one fetch per page, shared by the sidebar and every composer
+  const load = () => {
+    if (!team) return;
+    if (!optionsCache) {
+      optionsCache = act(`options?team=${encodeURIComponent(team)}`).catch((e) => ({ error: e.message }));
+      optionsCache.then((v) => { optionsCache = v; });
+    }
+    Promise.resolve(optionsCache).then(setO);
+  };
+  useEffect(() => { if (optionsCache && !(optionsCache instanceof Promise)) setO(optionsCache); }, []);
+  return [o instanceof Promise ? null : o, load];
+}
+
+// A small menu anchored under a property; closes on a click outside or Esc.
+function Menu({ onClose, children, search, setSearch }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const out = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    setTimeout(() => document.addEventListener('mousedown', out), 0);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', out); document.removeEventListener('keydown', esc); };
+  }, []);
+  return (
+    <div class="menu" ref={ref}>
+      {setSearch && <input class="msearch" autoFocus placeholder="Search…" value={search} onInput={(e) => setSearch(e.currentTarget.value)} />}
+      <div class="mlist">{children}</div>
+    </div>
+  );
+}
+const TYPE_COLOR = { triage: '#fc7840', backlog: '#bec2c8', unstarted: '#e2e2e2', started: '#f2c94c', completed: '#5e6ad2', canceled: '#95a2b3' };
+const PRIORITIES = [[0, 'No priority'], [1, 'Urgent'], [2, 'High'], [3, 'Medium'], [4, 'Low']];
 
 function GitHubTab({ pr, ghUrl }) {
   const [sub, setSub] = useState('ov');
@@ -207,6 +359,8 @@ const TAB0 = document.documentElement.dataset.tab;
 function App() {
   const [d, retry] = useData(ID);
   const [tab, setTab] = useState(TAB0 === 'github' ? 'github' : 'activity');
+  const [note, setNote] = useState(null); // {text, err}
+  const say = (text, err) => setNote(text ? { text, err } : null);
   if (!d) return <p class="empty" style="padding:24px">Loading {ID}…</p>;
   if (d.error || !d.ticket) return (
     <p class="empty" style="padding:24px">
@@ -227,6 +381,7 @@ function App() {
           <FontControls />
         </div>
       </div>
+      {note && <div class={'note' + (note.err ? ' err' : '')} onClick={() => setNote(null)}>{note.text}</div>}
       <div class="lin-body">
         <main class="lin-main">
           <h1 class="lin-title">{t.title}</h1>
@@ -243,11 +398,16 @@ function App() {
             <div class={'lt' + (tab === 'activity' ? ' on' : '')} onClick={() => setTab('activity')}>Activity{count ? <span class="cnt">{count}</span> : ''}</div>
             {hasGh && <div class={'lt' + (tab === 'github' ? ' on' : '')} onClick={() => setTab('github')}>GitHub{d.pr ? <span class="cnt">{d.pr.stateLabel}</span> : ''}</div>}
           </div>
-          {tab === 'activity' && (t.comments.length ? t.comments.map((c) => <Thread c={c} />) : <p class="empty">No comments yet.</p>)}
+          {tab === 'activity' && (
+            <>
+              {t.comments.length ? t.comments.map((c) => <Thread c={c} t={t} reload={retry} say={say} />) : <p class="empty">No comments yet.</p>}
+              <Composer t={t} reload={retry} say={say} />
+            </>
+          )}
           {tab === 'github' && <GitHubTab pr={d.pr} ghUrl={t.ghUrl} />}
         </main>
         <aside class="lin-side">
-          {t.props.map((p) => <Prop p={p} />)}
+          <Props t={t} reload={retry} say={say} />
           {t.links.length > 0 && (
             <div class="side-sec">
               <div class="plbl">Links</div>

@@ -417,6 +417,50 @@ export async function listStatuses(): Promise<{ name: string; type: string }[]> 
     });
 }
 
+// ---- the ticket tab's actions (server/api.ts /__api/linear/issues/:id/*, owner only) ---------------------------------
+
+/** What the ticket tab's pickers offer for an issue of `team`: its statuses, its members, and the labels it can take. */
+export async function teamOptions(team: string): Promise<{ statuses: { name: string; type: string; color?: string }[]; users: { id: string; name: string; email?: string; handle: string }[]; labels: { name: string; color?: string }[] }> {
+  const call = await caller();
+  const safe = async (name: string, args: Record<string, unknown>) => { try { return arrayFrom(parseToolResult(await call(name, args))); } catch { return []; } };
+  const [st, us, tl, wl] = await Promise.all([
+    safe('list_issue_statuses', { team }),
+    safe('list_users', { team, limit: 250 }),
+    safe('list_issue_labels', { team, limit: 250 }),
+    safe('list_issue_labels', { limit: 250 }),
+  ]);
+  const statuses = st
+    .map((x: any) => ({ name: String(x?.name || x || ''), type: String(x?.type || ''), color: x?.color }))
+    .filter((x) => x.name)
+    .sort((a, b) => (STATE_TYPE_ORDER.indexOf(a.type) + 1 || 99) - (STATE_TYPE_ORDER.indexOf(b.type) + 1 || 99));
+  const users = us
+    .filter((x: any) => x && x.active !== false && !x.isGuest)
+    .map((x: any) => ({ id: String(x.id || ''), name: String(x.name || x.displayName || x.email || ''), email: x.email, handle: String(x.displayName || (x.email ? String(x.email).split('@')[0] : x.name) || '') }))
+    .filter((x) => x.id && x.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const seen = new Set<string>();
+  const labels: { name: string; color?: string }[] = [];
+  for (const l of [...tl, ...wl] as any[]) {
+    const name = typeof l === 'string' ? l : l?.name;
+    if (!name || seen.has(name) || l?.isGroup || l?.retiredAt) continue;
+    seen.add(name);
+    labels.push({ name, color: l?.color });
+  }
+  labels.sort((a, b) => a.name.localeCompare(b.name));
+  return { statuses, users, labels };
+}
+
+export async function addComment(issueId: string, body: string, parentId?: string): Promise<any> {
+  const call = await caller();
+  return parseToolResult(await call('save_comment', parentId ? { body, parentId } : { body, issueId }));
+}
+
+export interface IssuePatch { state?: string; assignee?: string | null; priority?: number; addLabels?: string[]; removeLabels?: string[] }
+export async function updateIssue(id: string, patch: IssuePatch): Promise<any> {
+  const call = await caller();
+  return parseToolResult(await call('save_issue', { id, ...patch }));
+}
+
 export async function getIssue(id: string): Promise<any> {
   const call = await caller();
   const res = await call('get_issue', { id });
