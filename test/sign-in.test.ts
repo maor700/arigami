@@ -191,6 +191,19 @@ test('sharedFillGuard: only into the owner Chrome, only on the site or a sign-in
   expect(si.sharedFillGuard({ ...okFacts(), lastUrl: { url: 'https://accounts.google.com/v3/signin', ageMs: 1 } })).toMatchObject({ ok: true, origin: 'https://accounts.google.com' });
 });
 
+test('focusedVisit: the focused tab\'s page, not another tab\'s newer redirect (bench S3-t1)', () => {
+  const visits = [
+    { url: 'https://www.reddit.com/?rdt=1', title: 'Reddit - The heart of the internet', t: 3 },
+    { url: 'https://the-internet.herokuapp.com/login', title: 'The Internet', t: 2 },
+    { url: 'https://www.facebook.com/', title: 'Facebook', t: 1 },
+  ];
+  expect(si.pageTitleOf('The Internet - Google Chrome')).toBe('The Internet');
+  expect(si.focusedVisit(visits, 'The Internet - Google Chrome')).toEqual({ url: 'https://the-internet.herokuapp.com/login', t: 2, matched: true });
+  expect(si.focusedVisit(visits, 'Untitled thing - Google Chrome')).toMatchObject({ url: 'https://www.reddit.com/?rdt=1', matched: false });
+  expect(si.focusedVisit(visits, null)).toMatchObject({ matched: false, t: 3 });
+  expect(si.focusedVisit([], 'x')).toBe(null);
+});
+
 test("isOwnerChromeCmd: the owner's everyday Chrome, not a CDP / headless / session Chrome", () => {
   const def = '/home/o/.config/google-chrome';
   expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome-stable', '--no-sandbox'], def, def)).toBe(true);

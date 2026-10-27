@@ -1434,13 +1434,14 @@ async function signInFill(id: string, field: string, reason: string): Promise<Si
   }
   const facts = async () => {
     const L = sharedDesktop.get();
+    const active = await dc().sharedActiveWindow().catch(() => null);
     return si.sharedFillGuard({
       sessionId: id,
       holder: L.holder ? { sessionId: L.holder.sessionId, site: L.holder.site } : null,
       job: job ? { site: job.site, profileDir: job.profile.profileDir } : null,
-      active: await dc().sharedActiveWindow().catch(() => null),
+      active,
       ownerPids: job ? si.ownerChromePids(job.profile.userDataDir) : [],
-      lastUrl: job ? si.lastVisit(job.profile.profilePath) : null,
+      lastUrl: job ? si.lastVisit(job.profile.profilePath, Date.now(), active?.title) : null,
     });
   };
   const gate = await facts();

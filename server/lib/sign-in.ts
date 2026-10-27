@@ -230,8 +230,27 @@ export function ownerChromePids(userDataDir: string): number[] {
 // Chrome stores times as microseconds since 1601-01-01.
 const CHROME_EPOCH_OFFSET_MS = 11644473600_000;
 
-/** The last page a profile navigated to (its History db, read from a copy), or null. Chrome commits it within ~10 s. */
-export function lastVisit(profilePath: string, now = Date.now()): { url: string; ageMs: number } | null {
+/** Pure: the page title in a Chrome window title ("Log in to Facebook - Google Chrome" → "Log in to Facebook"). */
+export const pageTitleOf = (windowTitle: string): string => String(windowTitle || '').replace(/ - (Google Chrome|Chromium)( \(.*\))?$/, '').trim();
+
+/**
+ * Pure: of a profile's recent visits (newest first), the page the focused tab shows — the newest whose title is the
+ * window's page title. The profile's history is shared by all its tabs (another tab's redirect is "the newest visit"),
+ * so the title ties it to the tab that has the focus; without a match, the newest visit.
+ */
+export function focusedVisit(visits: { url: string; title: string; t: number }[], windowTitle: string | null | undefined): { url: string; t: number; matched: boolean } | null {
+  if (!visits.length) return null;
+  const want = pageTitleOf(windowTitle || '');
+  const hit = want ? visits.find((v) => v.title && v.title.trim() === want) : undefined;
+  const v = hit || visits[0];
+  return { url: v.url, t: v.t, matched: !!hit };
+}
+
+/**
+ * The page a profile's focused tab is on (its History db, read from a copy), or null. Chrome commits it within ~10 s.
+ * `windowTitle` = the focused window's title (xprop), to pick that tab's visit out of the profile's history.
+ */
+export function lastVisit(profilePath: string, now = Date.now(), windowTitle?: string | null): { url: string; ageMs: number } | null {
   const src = path.join(profilePath, 'History');
   if (!fs.existsSync(src)) return null;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arigami-history-'));
@@ -242,9 +261,10 @@ export function lastVisit(profilePath: string, now = Date.now()): { url: string;
     const { Database } = require('bun:sqlite') as typeof import('bun:sqlite');
     const db = new Database(copy, { readonly: true });
     try {
-      const r = db.query('select u.url as url, v.visit_time as t from visits v join urls u on u.id = v.url order by v.visit_time desc limit 1').get() as { url: string; t: number } | null;
-      if (!r) return null;
-      return { url: String(r.url), ageMs: Math.max(0, now - (Number(r.t) / 1000 - CHROME_EPOCH_OFFSET_MS)) };
+      const rows = db.query('select u.url as url, u.title as title, v.visit_time as t from visits v join urls u on u.id = v.url order by v.visit_time desc limit 50').all() as { url: string; title: string | null; t: number }[];
+      const v = focusedVisit(rows.map((r) => ({ url: String(r.url), title: String(r.title || ''), t: Number(r.t) })), windowTitle);
+      if (!v) return null;
+      return { url: v.url, ageMs: Math.max(0, now - (v.t / 1000 - CHROME_EPOCH_OFFSET_MS)) };
     } finally {
       db.close();
     }
