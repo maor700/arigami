@@ -160,6 +160,12 @@ export function detect(input: string, dir = VAULT_DIR, own: owner.OwnerProfile |
   return { site, ...first, sources, ...(hit.length ? { profiles: hit.map((x) => x.p.profileDir) } : {}) };
 }
 
+/** The httpOnly cookie NAMES a profile holds for `input` (never a value) — sign_in diffs them across a sign-in. */
+export function sessionCookieNames(input: string, p: owner.OwnerProfile): string[] {
+  const site = sites.resolve(input);
+  return profileCookies(p.profilePath).filter((r) => sites.cookieBelongs(r.host_key, site) && Number(r.is_httponly) === 1).map((r) => String(r.name));
+}
+
 /** Is `input` signed in in this ONE profile of the owner's Chrome? */
 export function detectProfile(input: string, p: owner.OwnerProfile, o: { weak?: boolean } = {}): One {
   return detectAt(sites.resolve(input), p.profilePath, true, o);
@@ -385,8 +391,11 @@ export interface TransferResult {
 }
 
 /** Carry ONE site's login from the vault — or, failing that, the owner's Chrome — into a session's browser. */
-export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean } = {}): Promise<TransferResult> {
-  const d = detect(input, dir, ownIn, o);
+export async function transfer(sessionId: string, input: string, dir = VAULT_DIR, ownIn: owner.OwnerProfile | owner.OwnerProfile[] | null = owner.ownerProfiles(), o: { weak?: boolean; force?: boolean } = {}): Promise<TransferResult> {
+  // force: sign_in just watched the sign-in land in this one profile (a new session cookie) — copy from it
+  const d0 = detect(input, dir, ownIn, o);
+  const only = asList(ownIn);
+  const d = o.force && !d0.present && only.length === 1 ? { ...d0, present: true, sources: ['chrome' as LoginSource], profiles: [only[0].profileDir] } : d0;
   // ONE profile is the source — the first that holds a session (sign_in passes the one the owner's account is in).
   const own = asList(ownIn).find((p) => d.profiles?.includes(p.profileDir)) || null;
   const site = d.site;

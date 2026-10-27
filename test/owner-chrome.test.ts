@@ -59,18 +59,18 @@ test('detect / list: the owner Chrome joins the vault; keyring cookies are not o
   const vault = tmpDir('owner-vault-');
   const ud = tmpDir('owner-ud-');
   fakeChrome(ud, 'Profile 1', [
-    ['.todoist.com', 'auth_session', 1, 1, 'v10'], // a session NAME (sessionIndicator), not an anonymous framework cookie
+    ['.notes.example', 'auth_session', 1, 1, 'v10'], // a session NAME (sessionIndicator), not an anonymous framework cookie
     ['.ads.example', 'track', 0, 0, 'v10'],
     ['.keyring.example', 'auth_sid', 1, 1, 'v11'],
   ]);
   const own = resolveOwnerProfile({ platform: 'linux', env: { ARIGAMI_OWNER_CHROME: ud } })!;
-  const d = lv.detect('todoist.com', vault, own);
+  const d = lv.detect('notes.example', vault, own);
   expect(d.present).toBe(true);
   expect(d.sources).toEqual(['chrome']);
   expect(lv.detect('keyring.example', vault, own).present).toBe(false);
-  expect(lv.detect('todoist.com', vault, null).present).toBe(false); // no owner Chrome: the vault alone, as before
+  expect(lv.detect('notes.example', vault, null).present).toBe(false); // no owner Chrome: the vault alone, as before
   const ids = lv.list(vault, own).map((s) => `${s.id}:${s.sources.join('+')}`);
-  expect(ids).toContain('todoist.com:chrome');
+  expect(ids).toContain('notes.example:chrome');
   expect(ids.join()).not.toContain('keyring.example');
   expect(ids.join()).not.toContain('ads.example'); // not a login
   expect(JSON.stringify(lv.list(vault, own))).not.toContain('xxxxxxxx'); // names only

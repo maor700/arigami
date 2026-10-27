@@ -86,7 +86,7 @@ test('sessionIndicator: Facebook visitor cookies are not a login; c_user + xs is
 });
 
 test('sessionIndicator: a site without a list — an auth-named httpOnly cookie; a plain framework session only after a seen sign-in', () => {
-  const s = ls.resolve('todoist.com');
+  const s = ls.resolve('notes.example');
   expect(ls.sessionIndicator(s, [row('__Secure-next-auth.session-token')]).signedIn).toBe(true);
   expect(ls.sessionIndicator(s, [row('auth_token')]).signedIn).toBe(true);
   expect(ls.sessionIndicator(s, [row('remember_user_token')]).signedIn).toBe(true);
@@ -154,7 +154,7 @@ test('chooseProfile: an account hint wins; one holder; two holders = say which; 
   expect((pick(ps, { account: 'me@work.example' }) as any).profile.profileDir).toBe('Profile 1');
   expect((pick(ps, { account: '@work.example' }) as any).profile.profileDir).toBe('Profile 1');
   expect((pick(ps, { account: 'Default' }) as any).profile.profileDir).toBe('Default');
-  expect(pick(ps, { account: 'elad@other.com' })).toMatchObject({ ok: false });
+  expect(pick(ps, { account: 'someone@else.example' })).toMatchObject({ ok: false });
   expect((pick(ps, { signedInIn: ['Default'] }) as any).profile.profileDir).toBe('Default');
   const two = pick(ps, { signedInIn: ['Default', 'Profile 1'] });
   expect(two.ok).toBe(false);
@@ -208,6 +208,13 @@ test('focusedVisit: the focused tab\'s page, not another tab\'s newer redirect (
   expect(si.focusedVisit([], 'x')).toBe(null);
 });
 
+test('newSessionCookies: what a sign-in added (Todoist todoistd), not visitor / CSRF cookies or ones there before', () => {
+  const before = ['__cf_bm', 'csrf'];
+  expect(si.newSessionCookies(before, ['__cf_bm', 'csrf', 'todoistd', 'tduser', '_ga', 'XSRF-TOKEN'], ls.VISITOR_COOKIES)).toEqual(['tduser', 'todoistd']);
+  expect(si.newSessionCookies(['todoistd'], ['todoistd'], ls.VISITOR_COOKIES)).toEqual([]); // nothing new: not this sign-in's doing
+  expect(ls.sessionIndicator(ls.resolve('app.todoist.com'), [row('todoistd')]).signedIn).toBe(true);
+});
+
 test("isOwnerChromeCmd: the owner's everyday Chrome, not a CDP / headless / session Chrome", () => {
   const def = '/home/o/.config/google-chrome';
   expect(si.isOwnerChromeCmd(['/usr/bin/google-chrome-stable', '--no-sandbox'], def, def)).toBe(true);
@@ -232,7 +239,7 @@ test('vault fill gating: one field per card, typed only after the page is checke
   const waiting = cr.waitSettled(r.requestId, 5000);
   expect(cr.hasWaiter(r.requestId)).toBe(true);
   // the cockpit sends more than the card asked for: only the card's one field is typed
-  const out = await cr.fill('sess-a', r.requestId, { username: 'me@x.com', password: SECRET });
+  const out = await cr.fill('sess-a', r.requestId, { username: 'me@site.example', password: SECRET });
   expect(out).toEqual({ filled: ['password'], submitted: false, origin: 'https://www.facebook.com' });
   expect(typed).toEqual([SECRET]);
   expect(await waiting).toBe('filled');
@@ -240,7 +247,7 @@ test('vault fill gating: one field per card, typed only after the page is checke
   const req2 = (cr.requestShared('sess-a', { origin: 'https://www.facebook.com', field: 'username', recheck: async () => moved }) as any).request;
   const w2 = cr.waitSettled(req2.requestId, 5000);
   moved = 'the page moved to evil.example';
-  await expect(cr.fill('sess-a', req2.requestId, { username: 'me@x.com' })).rejects.toThrow(/nothing was typed: the page moved/);
+  await expect(cr.fill('sess-a', req2.requestId, { username: 'me@site.example' })).rejects.toThrow(/nothing was typed: the page moved/);
   expect(typed).toHaveLength(1);
   expect(await w2).toBe('cancel');
   // a card for another session's request id is not this session's to fill

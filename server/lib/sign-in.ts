@@ -193,6 +193,18 @@ export function sharedFillGuard(f: FillFacts): FillGate {
   return { ok: true, origin: u.origin, host: u.hostname };
 }
 
+// ---- did THIS sign-in land? (pure) ------------------------------------------------------------------------------------
+
+/**
+ * Pure: the httpOnly cookies that appeared during this sign-in (before = when sign_in opened the page, after = at done),
+ * minus visitor / CSRF ones. A site whose session cookie has no telling name (Todoist's `todoistd`) still shows it here:
+ * it was not there before the agent signed in, and it is there once the page shows the agent signed in.
+ */
+export function newSessionCookies(before: string[], after: string[], visitor: Set<string>): string[] {
+  const had = new Set(before);
+  return [...new Set(after)].filter((n) => !had.has(n) && !visitor.has(n.toLowerCase()) && !/csrf|xsrf/i.test(n)).sort();
+}
+
 // ---- the owner's Chrome, from the outside -------------------------------------------------------------------------
 
 /**

@@ -74,6 +74,7 @@ export const BUILTIN: SiteDef[] = [
   B({ id: 'x.com', label: 'X', domains: ['.x.com', '.twitter.com'], policy: 'cookies', sessionCookies: [['auth_token']], checkUrl: 'https://x.com/home' }),
   B({ id: 'amazon.com', label: 'Amazon', domains: ['.amazon.com'], policy: 'cookies', sessionCookies: [['at-main'], ['sess-at-main']], checkUrl: 'https://www.amazon.com/gp/css/homepage.html' }),
   B({ id: 'reddit.com', label: 'Reddit', domains: ['.reddit.com'], policy: 'cookies', sessionCookies: [['reddit_session']], checkUrl: 'https://www.reddit.com/settings/account' }),
+  B({ id: 'todoist.com', label: 'Todoist', domains: ['.todoist.com'], policy: 'cookies', sessionCookies: [['todoistd']] }),
   B({ id: 'notion.so', label: 'Notion', domains: ['.notion.so', '.notion.com'], policy: 'cookies', sessionCookies: [['token_v2']] }),
   B({ id: 'figma.com', label: 'Figma', domains: ['.figma.com'], policy: 'cookies', sessionCookies: [['figma.authn'], ['__Host-figma.authn']], checkUrl: 'https://www.figma.com/files/recents-and-sharing' }),
   B({ id: 'slack.com', label: 'Slack', domains: ['.slack.com'], policy: 'copy', sessionCookies: [['d']], origins: ['https://app.slack.com'] }),

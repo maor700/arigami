@@ -1233,6 +1233,8 @@ interface SignInJob {
   label: string;
   gcloud?: { done: Promise<{ ok: boolean }>; proc: import('node:child_process').ChildProcess };
   doneTries: number;
+  /** The site's httpOnly cookie names in the profile when sign_in opened the page (names only) — diffed at done. */
+  before?: string[];
 }
 const signInJobs = new Map<string, SignInJob>();
 /** The session is gone: its sign-in (and a gcloud login waiting on a browser) goes with it. */
@@ -1357,7 +1359,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
     g.done.then(() => { if (signInJobs.get(id)?.gcloud === g) sharedDesktop.get().touch(id); });
     return { status: 'driving', site: 'gcloud', account: label, next: `gcloud auth login opened Google's consent page in the owner's Chrome (${label}) on the shared desktop. Pick the account and press Continue / Allow there — gcloud gets the answer on its own, there is no code to copy. ${si.DRIVE_HOW.replace('sign_in({site, done:true})', 'sign_in({site:"gcloud", done:true})')}` };
   }
-  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0 });
+  signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile) });
   if (!fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
   const url = si.startUrl(raw);
   const launched = dc().sharedLaunch(bin, [`--profile-directory=${profile.profileDir}`, url]);
@@ -1523,11 +1525,17 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   // Chrome writes cookies to disk in batches (about every 30 s): look for the session for up to 45 s.
   // after a sign-in the agent saw land, a plain session cookie counts too (weak); "already signed in" needs a strong one
   const weak = !o.already;
-  let det = lv.detectProfile(job.input, job.profile, { weak });
+  const look = () => {
+    const d = lv.detectProfile(job.input, job.profile, { weak });
+    if (d.present || !weak || !job.before) return d;
+    const fresh = si.newSessionCookies(job.before, lv.sessionCookieNames(job.input, job.profile), ls.VISITOR_COOKIES);
+    return fresh.length ? { ...d, present: true, by: `${fresh.join('+')} (new since the sign-in started)` } : d;
+  };
+  let det = look();
   for (let i = 0; !det.present && i < (o.already ? 0 : 15); i++) {
     L.touch(id);
     await new Promise((r2) => setTimeout(r2, 3000));
-    det = lv.detectProfile(job.input, job.profile, { weak });
+    det = look();
   }
   if (!det.present) {
     job.doneTries++;
@@ -1539,7 +1547,7 @@ async function signInDone(id: string, o: { already?: boolean } = {}): Promise<Si
   const policy = ls.decide(site, det.storageOrigins.length ? ['(unread)'] : []).policy;
   if (policy === 'never')
     return { status: 'signed_in', site: job.site, via: 'shared-chrome', account: job.label, next: `${site.label} is signed in in the owner's Chrome (${job.label}); it does not accept a copied session, so work there: shared_desktop_acquire({site:"${job.site}"}) and desktop_*({shared:true}).` };
-  const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
+  const r = await lv.transfer(id, job.input, undefined, [job.profile], { weak, force: true }).catch((e) => ({ ok: false, error: (e as Error).message }) as any);
   if (!r.ok) return si.blocked(job.site, `signed in in the owner's Chrome (${job.label}), but the copy into your browser failed: ${r.error}`);
   return { status: 'signed_in', site: job.site, via: o.already ? 'saved' : 'shared-chrome', account: job.label, next: `${o.already ? 'the owner was already signed in there; ' : ''}the ${site.label} login is in your browser now${r.check ? ` (checked: ${r.check.url})` : ''} — browser_open the site and continue. The shared desktop is released.` };
 }
