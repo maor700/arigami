@@ -69,13 +69,17 @@ export function cliFor(input: string): Cli | null {
 /** Pure: the site a sign-in is FOR — its registrable domain ("www.facebook.com/login" → facebook.com). */
 export function siteKey(input: string): string {
   const s = String(input || '').trim();
+  // a bare name ("facebook", "microsoft") is a site the host knows by name, not a host called "microsoft"
+  if (s && !/[./:]/.test(s)) return resolveSite(s).id;
   const host = hostOf(/^[a-z]+:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, '')}`);
   return siteOf(host) || resolveSite(s).id;
 }
 
 /** Pure: the page a fresh sign-in starts on. A url given keeps its path; a bare site gets its home page. */
-export function startUrl(input: string): string {
+export function startUrl(input: string, signInUrl?: string): string {
   const s = String(input || '').trim();
+  // just a site (no path) of an account provider: its sign-in page, not its home page
+  if (signInUrl && !/^[a-z]+:\/\/[^/]+\/./i.test(s) && !/^[^/]+\/./.test(s)) return signInUrl;
   if (/^https:\/\//i.test(s)) return s;
   if (/^http:\/\//i.test(s)) return s.replace(/^http:/i, 'https:');
   return `https://${s.replace(/^\/+/, '')}${s.includes('/') ? '' : '/'}`;

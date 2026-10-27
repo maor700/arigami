@@ -1369,7 +1369,7 @@ async function signInStart(id: string, body: any): Promise<SignInOutcome> {
   }
   signInJobs.set(id, { site, input: raw, profile, label, doneTries: 0, before: lv.sessionCookieNames(raw, profile), ...(consent ? { consent: true } : {}) });
   if (!consent && !fresh && lv.detectProfile(raw, profile).present) return signInDone(id, { already: true });
-  const url = consent || si.startUrl(raw);
+  const url = consent || si.startUrl(raw, ls.resolve(raw).signInUrl);
   const launched = dc().sharedLaunch(bin, [...oc.OWNER_CHROME_FLAGS, `--profile-directory=${profile.profileDir}`, url]);
   sharedDesktop.get().touch(id);
   console.log(`[sign-in] ${new Date().toISOString()} ${id} opened ${hostOfUrl(url)} in owner Chrome ${profile.profileDir} (pid ${launched.pid})`);
@@ -2665,7 +2665,8 @@ async function applyManualSetup(capability: string, body: any, req: IncomingMess
     // F6: no email typed → read the signed-in account from the session's Chrome profile (or chrome-base).
     const email = String(body?.email || '').trim() || chrome.googleAccountEmail(String(body?.sessionId || req.headers['x-session-id'] || '') || null) || '';
     if (!email) throw new Error('identity: no Google sign-in detected in the agent\'s browser — pass the account email');
-    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined }, owner);
+    if (body?.provider !== undefined && !caps.isIdentityProvider(body.provider)) throw new Error(`identity: provider is one of ${caps.IDENTITY_PROVIDERS.join(', ')}`);
+    const identity = caps.writeIdentity({ email, chromeProfile: body?.chromeProfile ? String(body.chromeProfile) : undefined, ...(body?.provider ? { provider: body.provider } : {}) }, owner);
     out = { identity, email: identity.email, owner };
   } else if (capability === 'desktop') {
     const enable = body?.enable !== false;

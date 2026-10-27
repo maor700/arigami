@@ -21,6 +21,8 @@ const LIB = path.join(SKILLS, '_lib');
 // domains for non-Google Composio toolkits). Extend deliberately, never ad hoc.
 const APPROVED_DOMAINS = new Set([
   'accounts.google.com', 'myaccount.google.com', 'google.com',
+  // the other identity providers connect-identity signs in (Microsoft work + personal accounts, Apple Account)
+  'login.microsoftonline.com', 'login.live.com', 'account.microsoft.com', 'myaccount.microsoft.com', 'appleid.apple.com', 'account.apple.com',
   'claude.ai', 'claude.com', 'platform.claude.com', 'console.anthropic.com',
   'auth.openai.com', 'openai.com', 'chatgpt.com',
   'backend.composio.dev', 'composio.dev',

@@ -32,7 +32,7 @@ Server side: `server/remote.js` via `GET/POST /__api/remote` (exists).
    "Access denied"/"sudo"/"operator" → rule 1 → fail with that line.
 3. `connect.sh open "<login url>"`, `wait-url 'login\.tailscale\.com' 30`, `shot first`,
    `capture_screen({caption:"Tailscale login page loaded"})`.
-4. **Sign in with Google**: finish it in the owner's Chrome, where their Google is signed in: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here.
+4. **Sign in with Google**: finish it in the owner's Chrome, where their identity's provider (Google / Microsoft / Apple — `GET /__api/setup/capabilities` → identity) is signed in; choose "Continue with <that provider>" when the page offers several: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here.
    A non-Google SSO's username/password form → `sign_in({site, browser:true})` for that provider, then reload.
    A Google password/2FA screen or a push approval → boundary:
    `capture_screen`, `request_screen({prompt:"Connecting this machine to your tailnet — Tailscale asks you to sign in.", reason:"login", hint:"Sign in, click Connect on the device page, wait for 'Success', then click Done."})`.

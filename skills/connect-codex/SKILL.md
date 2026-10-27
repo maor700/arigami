@@ -30,7 +30,7 @@ Server side: `server/codex-account.ts` via `POST /__api/accounts/login/start|cod
 3. Decide from the screenshot:
    - **Consent / "Continue" screen** (already signed in): click it.
    - **Login screen** (email box / "Continue with Google"): with `identity` connected,
-     finish it in the owner's Chrome, where their Google is signed in: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; an OpenAI email/password or code form →
+     finish it in the owner's Chrome, where their identity's provider (Google / Microsoft / Apple — `GET /__api/setup/capabilities` → identity) is signed in; choose "Continue with <that provider>" when the page offers several: `sign_in({site:"<service>", url:"<the page's current URL>", reason})`, pick the identity email and Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true), then `sign_in({site, done:true})` and continue polling here; an OpenAI email/password or code form →
      `sign_in` (rule 1); anything else only the human can do: `capture_screen`,
      `request_screen({prompt:"Connecting your Codex account — OpenAI asks you to sign in.", reason:"login", hint:"Sign in and approve; the page ends on a 'signed in' screen. Then click Done."})`.
 4. The redirect goes to codex's loopback on this host, and the session Chrome IS on this host,

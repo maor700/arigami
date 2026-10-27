@@ -48,6 +48,8 @@ export interface SiteDef {
   loggedOut?: RegExp;
   /** Why a site is `never`, for the agent and the approval card. */
   note?: string;
+  /** Where a fresh sign-in starts when sign_in is given just the site (an identity provider's sign-in page). */
+  signInUrl?: string;
   /**
    * The cookies that ARE a signed-in session, as alternatives of all-of groups: [['c_user', 'xs']] = both;
    * [['SID'], ['__Secure-1PSID']] = either. A site with this list counts as signed in only when one group is all there
@@ -66,7 +68,11 @@ export const BUILTIN: SiteDef[] = [
   // a copy of the raw Cookies file worked in some runs and not in later ones.
   // The owner's own browser stayed signed in throughout. A copy that works
   // sometimes is not one to hand an agent — Google is a fresh sign-in.
-  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'never', sessionCookies: [['SID'], ['__Secure-1PSID'], ['__Secure-3PSID']], checkUrl: 'https://myaccount.google.com/', loggedOut: /google\.[a-z.]+\/account\/about|accounts\.google\.com\/.*(signin|accountchooser)/i, note: 'Google does not reliably accept its session in a second browser. Sign in fresh in the session (request_screen).' }),
+  B({ id: 'google.com', label: 'Google', domains: ['.google.com', '.youtube.com', '.googleusercontent.com'], patterns: [/(^|\.)google\.(com?\.)?[a-z]{2,3}$/], policy: 'never', sessionCookies: [['SID'], ['__Secure-1PSID'], ['__Secure-3PSID']], signInUrl: 'https://accounts.google.com/', checkUrl: 'https://myaccount.google.com/', loggedOut: /google\.[a-z.]+\/account\/about|accounts\.google\.com\/.*(signin|accountchooser)/i, note: 'Google does not reliably accept its session in a second browser. Sign in fresh in the session (request_screen).' }),
+  // Account providers ("Continue with Microsoft / Apple"). Like Google, their session is the owner's identity: it stays in
+  // the owner's Chrome, where every "Continue with …" uses it; nothing copies it out (not verified to survive a copy).
+  B({ id: 'microsoft.com', label: 'Microsoft', domains: ['.microsoftonline.com', '.live.com', '.microsoft.com'], policy: 'never', sessionCookies: [['ESTSAUTHPERSISTENT'], ['ESTSAUTH'], ['__Host-MSAAUTH'], ['MSPAuth']], signInUrl: 'https://login.microsoftonline.com/', note: 'A Microsoft account is the owner\'s identity: it stays signed in in their own Chrome, where "Continue with Microsoft" uses it.' }),
+  B({ id: 'apple.com', label: 'Apple', domains: ['.apple.com'], policy: 'never', sessionCookies: [['myacinfo']], signInUrl: 'https://account.apple.com/sign-in', note: 'An Apple Account is the owner\'s identity: it stays signed in in their own Chrome, where "Sign in with Apple" uses it.' }),
   B({ id: 'facebook.com', label: 'Facebook', domains: ['.facebook.com'], policy: 'cookies', sessionCookies: [['c_user', 'xs']], checkUrl: 'https://www.facebook.com/me' }),
   B({ id: 'instagram.com', label: 'Instagram', domains: ['.instagram.com'], policy: 'cookies', sessionCookies: [['sessionid']], checkUrl: 'https://www.instagram.com/accounts/edit/' }),
   B({ id: 'github.com', label: 'GitHub', domains: ['.github.com', 'github.com'], policy: 'cookies', sessionCookies: [['user_session'], ['__Host-user_session_same_site']], checkUrl: 'https://github.com/settings/profile' }),

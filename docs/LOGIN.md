@@ -72,17 +72,20 @@ personal) live in two Chrome profiles: `sign_in({site, account})` picks one (an 
 domain); a site signed in under two profiles without `account` is `blocked` until the agent says which. Without either,
 a new sign-in uses the profile signed in to the owner's identity (Google SSO works there), else the one Chrome last used.
 
-## Google once, at setup — and a Chrome to sign in to
+## The identity once, at setup — and a Chrome to sign in to
 
 * **The profile exists from the first boot.** The installer puts Chrome and the shared desktop on the host; on boot the
   host opens the owner's everyday Chrome there once if it has no profile yet (`seedOwnerChrome`, server/index.ts —
   default instance, Linux, not in a container, not turned off), the way a person would: no DevTools port,
   `--password-store=basic` so its cookies stay readable to the host.
-* **The Google identity is signed in there.** Settings › Connections › Google identity runs `connect-identity`, which is
-  `sign_in({site:"accounts.google.com"})` in that Chrome — the password from the vault, the owner approves Google's
-  push — and records which profile it is (`identity.json` `chromeProfile: "chrome:<dir>"`). A new sign-in then defaults
-  to that profile, so "Continue with Google" anywhere goes through without the owner.
-* **Connect playbooks finish their Google step there too.** A consent page that wants Google (Composio, Claude, Codex,
+* **The identity is signed in there — Google, Microsoft or Apple.** Settings › Connections › Sign-in identity runs
+  `connect-identity`: `sign_in` to that provider (`accounts.google.com`, `microsoft` → login.microsoftonline.com /
+  login.live.com, `apple` → account.apple.com) in that Chrome — the password from the vault, the owner approves the
+  provider's push — and records the provider and the profile (`identity.json` `provider`, `chromeProfile:
+  "chrome:<dir>"`). A new sign-in then defaults to that profile, so "Continue with <provider>" anywhere goes through
+  without the owner. Chrome's own sign-in (sync) is Google-only and not needed: the provider is signed in INSIDE a
+  profile, and a profile without a Chrome account is named by its profile name ("Work", "Personal").
+* **Connect playbooks finish their provider step there too.** A consent page that wants the identity's provider (Composio, Claude, Codex,
   Tailscale, MCP vendors) is handed over with `sign_in({site, url})`: it opens that page in the identity's profile, the
   agent picks the account and allows, `done` gives the desktop back, and the playbook keeps polling its own result.
 

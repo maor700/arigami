@@ -366,3 +366,26 @@ test("chooseProfile: the identity's own profile (identity.json chrome:<dir>) is 
   expect((pick(ps, { identityProfile: 'Gone' }) as any).profile.profileDir).toBe('Default');
   expect((pick(ps, { identityProfile: 'Profile 2', signedInIn: ['Profile 1'] }) as any).profile.profileDir).toBe('Profile 1'); // already signed in wins
 });
+
+// ---- identities other than Google ---------------------------------------------------------------------------------------
+
+test('Microsoft and Apple: known by name, signed in by their session cookie, started on their sign-in page, never copied', () => {
+  expect(si.siteKey('microsoft')).toBe('microsoft.com');
+  expect(si.siteKey('facebook')).toBe('facebook.com'); // a bare name is the known site, not a host called "facebook"
+  expect(si.siteKey('apple')).toBe('apple.com');
+  const ms = ls.resolve('login.microsoftonline.com');
+  expect(ms.id).toBe('microsoft.com');
+  expect(ls.resolve('login.live.com').id).toBe('microsoft.com');
+  expect(ls.sessionIndicator(ms, [row('buid'), row('fpc'), row('esctx')]).signedIn).toBe(false);
+  expect(ls.sessionIndicator(ms, [row('ESTSAUTHPERSISTENT')]).signedIn).toBe(true);
+  expect(ls.sessionIndicator(ms, [row('__Host-MSAAUTH')]).signedIn).toBe(true); // a personal account
+  expect(ls.sessionIndicator(ls.resolve('appleid.apple.com'), [row('myacinfo')]).signedIn).toBe(true);
+  expect(si.startUrl('microsoft', ms.signInUrl)).toBe('https://login.microsoftonline.com/');
+  expect(si.startUrl('https://outlook.office.com/mail/', ms.signInUrl)).toBe('https://outlook.office.com/mail/'); // a page asked for: that page
+  expect(si.startUrl('apple', ls.resolve('apple').signInUrl)).toBe('https://account.apple.com/sign-in');
+  expect(ls.decide(ms).policy).toBe('never');
+  // the sign-in page of a provider is a page the host may type a vault value into, during that provider's sign-in
+  const f = { ...okFacts(), holder: { sessionId: 's1', site: 'microsoft.com' }, job: { site: 'microsoft.com', profileDir: 'Default' } };
+  expect(si.sharedFillGuard({ ...f, lastUrl: { url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize', ageMs: 1 } })).toMatchObject({ ok: true });
+  expect(si.sharedFillGuard({ ...f, lastUrl: { url: 'https://login.live.com/ppsecure/post.srf', ageMs: 1 } })).toMatchObject({ ok: true });
+});

@@ -251,3 +251,22 @@ test('doctor: capabilities CLI lists the registry offline (no network) and the w
   expect(text).toContain('[auto]');
   expect(text).toMatch(/identity: none/);
 });
+
+test('identity.json: Google, Microsoft or Apple — the provider is kept, anything else refused; chrome:<dir> profile', () => {
+  const dir = fresh();
+  const r = runInChild(
+    `const c=await import('./server/capabilities.js');` +
+      "const ms=c.writeIdentity({email:'me@work.example',provider:'microsoft',chromeProfile:'chrome:Profile 2'});" +
+      "const kept=c.writeIdentity({email:'me@work.example'});" +
+      "const ap=c.writeIdentity({email:'me@icloud.example',provider:'apple'});" +
+      "let bad=null;try{c.writeIdentity({email:'me@x.example',provider:'yahoo'})}catch(e){bad=e.message}" +
+      'emit({ms,kept,ap,bad});',
+    env(dir)
+  );
+  if (!r.ok) throw new Error(r.error);
+  const o = r.out[0];
+  expect(o.ms).toMatchObject({ provider: 'microsoft', chromeProfile: 'chrome:Profile 2' });
+  expect(o.kept.provider).toBe('microsoft'); // same account, no provider given: kept
+  expect(o.ap.provider).toBe('apple');
+  expect(o.bad).toMatch(/provider is one of google, microsoft, apple/);
+});

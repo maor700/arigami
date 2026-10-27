@@ -49,7 +49,7 @@ Follow `skills/machine-work/SKILL.md`. Helpers: `skills/_lib/connect.sh`.
 3. **Account chooser** ("Choose an account"): click the row whose email equals the
    identity email (`GET /__api/setup/capabilities` → identity detail). Never "Use
    another account". If Google asks to sign in instead (this session's browser is not signed in to Google), finish
-   the consent in the owner's Chrome, where it is: `sign_in({site:"composio.dev", url:"<the page's current URL>",
+   the consent in the owner's Chrome, where the identity's provider is signed in: `sign_in({site:"composio.dev", url:"<the page's current URL>",
    reason})`, pick the identity email / Allow there (`desktop_screenshot` / `desktop_pointer` with shared:true; a
    password box → `sign_in({site, fill:"password"})`), then `sign_in({site, done:true})` and re-verify from step 5.
    If `sign_in` answers blocked (no shared desktop on this host): `capture_screen`, then
