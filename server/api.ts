@@ -1470,6 +1470,9 @@ async function signInFill(id: string, field: string, reason: string): Promise<Si
   }
   if (settled === 'filled') return { status: 'driving', site: job!.site, account: job!.label, next: `the host typed the ${field} from the vault into the focused field (nobody saw it). Submit it (Enter with desktop_keyboard, or click the button), then desktop_screenshot({shared:true}) and go on.` };
   if (settled === 'manual') return signInHuman(id, `type your ${field} for ${req.host} in the field that is focused`);
+  // blocked: the desktop goes back now, not after its idle minute
+  signInJobs.delete(id);
+  sharedDesktop.get().release(id);
   if (settled === 'cancel') return si.blocked(job!.site, `the owner cancelled the ${req.host} sign-in`);
   cr.forget(req.requestId, 'expired');
   return si.blocked(job!.site, `nobody answered the ${req.host} sign-in card in ${SIGN_IN_WAIT_MS / 60_000} minutes (the vault may be locked in the cockpit)`);
